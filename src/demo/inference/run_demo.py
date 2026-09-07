@@ -162,6 +162,52 @@ def _carry_wrist_locked(T_obj_now: np.ndarray, T_obj_in_wrist: np.ndarray,
     return T_obj_target @ np.linalg.inv(T_obj_in_wrist)
 
 
+def _goal_wrist(T_obj_now: np.ndarray, T_obj_in_wrist: np.ndarray,
+                T_obj_goal: np.ndarray, *, mode: str = "yaw") -> tuple[np.ndarray, dict]:
+    """Wrist pose that carries the held object onto a measured goal pose.
+
+    ``mode="yaw"`` keeps the attitude the object was actually picked with and
+    matches only the goal's rotation about world z.  That is what a tabletop
+    goal means: the object was resting on the same face when the goal was
+    recorded, so its tilt is already right, and demanding the full recorded
+    rotation would reject grasps for no gain.  ``mode="full"`` commands the
+    recorded rotation exactly and is correspondingly harder to reach.
+
+    Height is deliberately left at the carry height: the descent onto the goal
+    is the ``place_surface_z`` lay-down, not this transfer.
+    """
+    T_now = np.asarray(T_obj_now, dtype=np.float64)
+    T_goal = np.asarray(T_obj_goal, dtype=np.float64)
+    if mode not in {"yaw", "full"}:
+        raise ValueError("mode must be 'yaw' or 'full'")
+    # Yaw is the turn about world z between the two attitudes, measured on the
+    # object axis that is most horizontal.  Reading it off ``R_goal @ R_now.T``
+    # is only correct when both are upright: a tilted pick mixes the tilt into
+    # that matrix and reports a yaw the object never had.
+    axis = int(np.argmax(np.linalg.norm(
+        np.stack([T_now[:2, i] for i in range(3)]), axis=1)))
+    now_xy = T_now[:2, axis]
+    goal_xy = T_goal[:2, axis]
+    if min(np.linalg.norm(now_xy), np.linalg.norm(goal_xy)) < 1e-6:
+        raise ValueError("cannot measure a goal yaw: the object frame is vertical")
+    yaw = float(np.arctan2(now_xy[0] * goal_xy[1] - now_xy[1] * goal_xy[0],
+                           float(now_xy @ goal_xy)))
+    if mode == "full":
+        R_target = T_goal[:3, :3]
+    else:
+        c, sn = np.cos(yaw), np.sin(yaw)
+        R_target = np.array([[c, -sn, 0.0], [sn, c, 0.0], [0.0, 0.0, 1.0]]) @ T_now[:3, :3]
+    T_obj_target = np.eye(4)
+    T_obj_target[:3, :3] = R_target
+    T_obj_target[:3, 3] = [T_goal[0, 3], T_goal[1, 3], T_now[2, 3]]
+    return T_obj_target @ np.linalg.inv(np.asarray(T_obj_in_wrist, dtype=np.float64)), {
+        "mode": mode,
+        "goal_xy": [float(T_goal[0, 3]), float(T_goal[1, 3])],
+        "goal_yaw_deg": float(np.rad2deg(yaw)),
+        "carry_z": float(T_now[2, 3]),
+    }
+
+
 def _arc_delta(current_angle: float, target_angle: float,
                joint0: float = 0.0,
                joint0_limits: tuple[float, float] | None = None) -> float:
@@ -200,7 +246,8 @@ def _joint0_limits(planner) -> tuple[float, float] | None:
 def _joint0_arc_trajectory(planner, fk_wrist, start_full_qpos: np.ndarray,
                             arm_dof: int, T_obj_in_wrist: np.ndarray,
                             target_angle_rad: float,
-                            reference_xy: np.ndarray | None = None
+                            reference_xy: np.ndarray | None = None,
+                            turn_rad: float | None = None
                             ) -> tuple[np.ndarray, dict]:
     """Build a constant-height transfer that changes only arm joint 0.
 
@@ -212,6 +259,12 @@ def _joint0_arc_trajectory(planner, fk_wrist, start_full_qpos: np.ndarray,
     joint range); every other arm and hand joint stays measured/current.
     The target J0 is formed as ``measured J0 + delta`` and is never reused
     from the dry-run trajectory.
+
+    ``turn_rad`` switches to the other way of stating the same motion: turn J0
+    by exactly this much, whatever bearing that lands on.  ``target_angle_rad``
+    is then only reported, not commanded.  A demo whose release spot is defined
+    by "rotate about this far" rather than by a surveyed direction wants this,
+    since the commanded bearing and the resulting sweep are not the same number.
     """
     start = np.asarray(start_full_qpos, dtype=np.float32)
     if start.ndim != 1 or len(start) <= arm_dof:
@@ -221,8 +274,21 @@ def _joint0_arc_trajectory(planner, fk_wrist, start_full_qpos: np.ndarray,
     object_angle = float(np.arctan2(T_obj_start[1, 3], T_obj_start[0, 3]))
     target_angle = float(target_angle_rad)
     measured_joint0 = float(start[0])
-    delta = _arc_delta(object_angle, target_angle, measured_joint0,
-                       _joint0_limits(planner))
+    if turn_rad is None:
+        delta = _arc_delta(object_angle, target_angle, measured_joint0,
+                           _joint0_limits(planner))
+    else:
+        # An explicit turn is commanded as given; only the joint range clamps
+        # it, and the clamp is reported rather than silently applied.
+        delta = float(turn_rad)
+        limits = _joint0_limits(planner)
+        if limits is not None:
+            lo, hi = limits
+            clamped = float(np.clip(measured_joint0 + delta, lo, hi)) - measured_joint0
+            if abs(clamped - delta) > 1e-6:
+                print(f"    J0 turn clamped from {np.rad2deg(delta):.1f} deg to "
+                      f"{np.rad2deg(clamped):.1f} deg by the joint limit")
+                delta = clamped
     target_joint0 = measured_joint0 + delta
     n_waypoints = max(2, int(np.ceil(abs(delta) / np.deg2rad(1.0))) + 1)
     traj = np.tile(start, (n_waypoints, 1))
@@ -242,6 +308,9 @@ def _joint0_arc_trajectory(planner, fk_wrist, start_full_qpos: np.ndarray,
         "object_angle_deg": float(np.rad2deg(object_angle)),
         "target_angle_deg": float(np.rad2deg(target_angle)),
         "joint0_delta_deg": float(np.rad2deg(delta)),
+        "commanded": ("turn" if turn_rad is not None else "bearing"),
+        "object_angle_end_deg": float(np.rad2deg(
+            np.arctan2(T_obj_end[1, 3], T_obj_end[0, 3]))),
         "direction": "clockwise" if delta < 0 else "counter_clockwise",
         "n_waypoints": n_waypoints,
         "predicted_object_xy": T_obj_end[:2, 3].tolist(),
@@ -482,8 +551,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def run_once(args, *, orch, planner, executor, rcc, target_xyz: np.ndarray,
              run_dir: Path, grasps: list[DemoGrasp], pipeline=None,
-             semantic_router=None, execution_recorder=None) -> dict:
-    """Perceive once, then pick the object and drop it into the target box."""
+             semantic_router=None, execution_recorder=None,
+             scene_cfg_hook=None, place_surface_z: float | None = None,
+             place_clearance: float = 0.01,
+             joint0_turn_deg: float | None = None,
+             place_object_pose: np.ndarray | None = None,
+             place_pose_mode: str = "yaw") -> dict:
+    """Perceive once, then pick the object and drop it into the target box.
+
+    ``scene_cfg_hook`` may return a modified planning scene once it has been
+    built, which is how the box-to-tray demo adds its measured box walls and
+    tray without forking this runner.  ``place_surface_z`` turns the fixed
+    ``--drop-h`` descent into a *lay-down*: the descent is measured at runtime
+    from the held object's own mesh bottom to that robot-frame surface, so the
+    object is set down ``place_clearance`` above it instead of being dropped
+    from a fixed height.  ``joint0_turn_deg`` replaces the bearing target with
+    an explicit J0 sweep, for a demo that is specified as "turn about this far"
+    rather than "release in this direction".  ``place_object_pose`` carries the
+    held object onto a previously *measured* goal pose instead of a bearing or
+    a turn, which is how the demo puts an object back exactly where the
+    operator showed it; it overrides the transfer mode, since a goal pose needs
+    xy control that a J0-only sweep cannot give.  All of them default to the
+    unchanged original behaviour.
+    """
     import time
 
     from paradex.calibration.utils import (load_c2r, save_current_C2R,
@@ -513,7 +603,13 @@ def run_once(args, *, orch, planner, executor, rcc, target_xyz: np.ndarray,
     lift_height = (0.15 if args.drop_target == "fixed-box" else LIFT_HEIGHT)
     if args.lift_height is not None:
         lift_height = args.lift_height
-    drop_mode = "direct" if args.drop_target == "fixed-box" else args.drop_mode
+    # ``fixed-box`` releases above a container it never measures, so it forces
+    # the direct release.  A caller that supplies a measured ``place_surface_z``
+    # has the height needed to set the object down, so its explicit --drop-mode
+    # is honoured instead.
+    drop_mode = ("direct" if (args.drop_target == "fixed-box"
+                              and place_surface_z is None)
+                 else args.drop_mode)
     joint0_target_bearing_deg = float(args.joint0_drop_bearing_deg)
     joint0_target_angle = np.deg2rad(joint0_target_bearing_deg)
     adof = getattr(executor, "arm_dof", 6)
@@ -652,6 +748,9 @@ def run_once(args, *, orch, planner, executor, rcc, target_xyz: np.ndarray,
     # through the table.
     scene_cfg = add_obstacles(
         pose_world_to_scene_cfg(pose_world, c2r, args.obj, obj_root), "table")
+    if scene_cfg_hook is not None:
+        scene_cfg = scene_cfg_hook(scene_cfg)
+        record["scene_cuboids"] = sorted((scene_cfg.get("cuboid") or {}).keys())
     record["object_pose_robot"] = (np.linalg.inv(c2r) @ pose_world).tolist()
 
     T_obj_grasp = cart2se3(scene_cfg["mesh"]["target"]["pose"])
@@ -1098,9 +1197,21 @@ def run_once(args, *, orch, planner, executor, rcc, target_xyz: np.ndarray,
     task_timing["grasp_lift_s"] = record["grasp_exec_s"]
 
     # ── 5. carry over the target and drop ────────────────────────────────────
-    drop_label = (f"controlled {args.drop_h * 100:.0f}cm descend"
-                  if drop_mode == "controlled" else "direct release")
-    if args.transfer_mode == "joint0-arc":
+    if drop_mode != "controlled":
+        drop_label = "direct release"
+    elif place_surface_z is not None:
+        drop_label = f"lay-down onto z={float(place_surface_z):.3f} m"
+    else:
+        drop_label = f"controlled {args.drop_h * 100:.0f}cm descend"
+    if place_object_pose is not None:
+        goal_xy = np.asarray(place_object_pose, dtype=np.float64)[:2, 3]
+        print(f"[5/5] Carry to the measured goal pose "
+              f"{np.round(goal_xy, 3).tolist()} ({place_pose_mode} attitude) "
+              f"+ {drop_label}...")
+    elif args.transfer_mode == "joint0-arc" and joint0_turn_deg is not None:
+        print(f"[5/5] Turn J0 by {joint0_turn_deg:+.1f}° at constant height "
+              f"+ {drop_label}...")
+    elif args.transfer_mode == "joint0-arc":
         print("[5/5] Rotate J0 at constant height to robot bearing "
               f"{joint0_target_bearing_deg:.1f}° + {drop_label}...")
     else:
@@ -1130,11 +1241,38 @@ def run_once(args, *, orch, planner, executor, rcc, target_xyz: np.ndarray,
         return dict(record, success=False, reason="carry_clearance_after_lift_too_low",
                     scene_info=result.scene_info,
                     action="object_held_for_operator_check")
-    if args.transfer_mode == "joint0-arc":
+    if place_object_pose is not None:
+        # A measured goal pose fixes xy and attitude, so the J0-only sweep
+        # cannot express it; plan the same collision-checked carry the
+        # Cartesian mode uses.
+        T_wrist_target, goal_info = _goal_wrist(
+            T_obj_now, T_oiw, place_object_pose, mode=place_pose_mode)
+        # hold_vec_weight is [rx, ry, rz, x, y, z], 1 = hold the initial value.
+        # The goal fixes xy and a rotation, so those have to be free; the
+        # carried tilt is held in "yaw" mode and released in "full" mode.
+        goal_weights = ([1, 1, 0, 0, 0, 1] if place_pose_mode == "yaw"
+                        else [0, 0, 0, 0, 0, 1])
+        goal_info["hold_vec_weight"] = goal_weights
+        record["goal_transfer"] = goal_info
+        traj_repose = planner.plan_pose_constrained(
+            start_full, T_wrist_target, hold_vec_weight=goal_weights,
+            scene_cfg=scene_cfg, include_obj_obstacle=False)
+        if traj_repose is None:
+            print("    goal-pose carry plan failed — not carrying the held object")
+            _stop_execution_recording()
+            _rcc_start(rcc, "stream", False, fps=args.stream_fps)
+            _save_execution_timing()
+            _finalize_timing()
+            return dict(record, success=False, reason="goal_carry_plan_failed",
+                        scene_info=result.scene_info,
+                        action="object_held_for_operator_check")
+    elif args.transfer_mode == "joint0-arc":
         # ``start_full`` was measured immediately after the actual lift.
         traj_repose, runtime_transfer = _joint0_arc_trajectory(
             planner, _fk_wrist, start_full, adof, T_oiw,
-            joint0_target_angle, np.asarray(target_xyz)[:2])
+            joint0_target_angle, np.asarray(target_xyz)[:2],
+            turn_rad=(None if joint0_turn_deg is None
+                      else float(np.deg2rad(joint0_turn_deg))))
         record["joint0_transfer_runtime"] = runtime_transfer
     else:
         if args.carry_orientation == "locked":
@@ -1174,7 +1312,10 @@ def run_once(args, *, orch, planner, executor, rcc, target_xyz: np.ndarray,
     executor._move_joints(traj_repose[:, :adof],
                           np.tile(s_hand, (len(traj_repose), 1)))
     task_timing["transfer_s"] = round(time.perf_counter() - transfer_t0, 3)
-    if args.transfer_mode == "joint0-arc":
+    if place_object_pose is not None:
+        print(f"    goal carry OK (yaw {record['goal_transfer']['goal_yaw_deg']:+.1f}deg, "
+              f"object clearance >= {runtime_clearance * 100:.1f}cm)")
+    elif args.transfer_mode == "joint0-arc":
         print("    J0-only arc OK "
               f"(object bearing={runtime_transfer['target_angle_deg']:.1f}°, "
               f"ΔJ0={runtime_transfer['joint0_delta_deg']:.1f}°, "
@@ -1182,6 +1323,29 @@ def run_once(args, *, orch, planner, executor, rcc, target_xyz: np.ndarray,
     else:
         print(f"    carry OK (object clearance ≥ {runtime_clearance * 100:.1f}cm)")
 
+    drop_h = float(args.drop_h)
+    if place_surface_z is not None and drop_mode == "controlled":
+        # Lay the object down instead of dropping it: measure where the held
+        # object's mesh bottom is now and descend exactly the distance that
+        # leaves it ``place_clearance`` above the target surface.  Never
+        # descend further than the wrist can travel without hitting it, and
+        # never command a negative (upward) "descent".
+        T_wrist_final = _fk_wrist(planner, np.concatenate(
+            [np.asarray(executor.arm.get_data()["qpos"][:adof], dtype=np.float32),
+             current_hand_qpos]))
+        object_bottom = _object_clearance(
+            vertices, T_wrist_final @ T_oiw, 0.0)
+        drop_h = float(object_bottom - (float(place_surface_z) + float(place_clearance)))
+        drop_h = float(np.clip(drop_h, 0.0, float(args.drop_h)))
+        record["lay_down"] = {
+            "surface_z": float(place_surface_z),
+            "clearance_m": float(place_clearance),
+            "object_bottom_z": float(object_bottom),
+            "descend_m": drop_h,
+            "descend_cap_m": float(args.drop_h),
+        }
+        print(f"    lay-down: object bottom {object_bottom:.3f} m, surface "
+              f"{float(place_surface_z):.3f} m -> descend {drop_h * 100:.1f} cm")
     release_t0 = time.perf_counter()
     if drop_mode == "direct":
         # Deliberately no target wrist below the carry pose and no place():
@@ -1197,7 +1361,7 @@ def run_once(args, *, orch, planner, executor, rcc, target_xyz: np.ndarray,
                       "target": args.drop_target,
                       "hand_opened_to": ("fully_open" if release_kwargs
                                          else "pregrasp"),
-                      "drop_height_ignored_m": float(args.drop_h)}
+                      "drop_height_ignored_m": drop_h}
         print("    direct release from carry height (no placement descent)"
               + (" — hand opened fully" if release_kwargs else ""))
     else:
@@ -1206,10 +1370,10 @@ def run_once(args, *, orch, planner, executor, rcc, target_xyz: np.ndarray,
         # cuRobo FK and handed over explicitly; use_current_wrist would rebuild
         # it from the measured frame, which carries the 107mm ee_link offset.
         T_place = _wrist_now(planner, executor, adof, result.grasp_pose)
-        T_place[2, 3] -= args.drop_h
+        T_place[2, 3] -= drop_h
         place_kwargs = {"grasp_wrist": T_place} if args.arm == "franka" else {}
         place_info = executor.place(result, planner=planner, scene_cfg=scene_cfg,
-                                    lift_height=args.drop_h, **place_kwargs)
+                                    lift_height=drop_h, **place_kwargs)
         print(f"    place: {place_info}")
         if args.arm != "franka":
             _safe("release", executor.release, result)

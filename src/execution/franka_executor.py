@@ -113,6 +113,18 @@ class FrankaExecutor:
         self._arm_init = np.asarray(FR3_INIT, dtype=np.float64)          # 7-DOF home
         self._clear_view = self._arm_init.copy()
         self._clear_view[0] += np.deg2rad(CLEAR_VIEW_J0_DEG)
+        # When true, the post-release return keeps the wrist attitude while it
+        # travels back over the setup and only reorients once it is above the
+        # home position.  The plain joint-space retract is collision-free but
+        # unconstrained in attitude, so it can roll the wrist through a
+        # palm-down swing halfway home.  Off by default: existing demos keep
+        # the motion they were tuned with.
+        self.retract_hold_orientation = False
+        # Where every retract/reset parks the arm.  It is the clear-view pose by
+        # default so perception is never occluded; a caller whose cameras see
+        # the object anyway can park at FR3_INIT instead and save the J0 swing
+        # that ``execute`` would otherwise undo at the next approach.
+        self.retract_goal = self._clear_view
         self._hand_init = np.asarray(INSPIRE_INIT, dtype=np.float64)
         # Finger config (planner order, radians) the hand was last commanded to.
         # reset() plans its retract from this, so it must track reality.
@@ -1053,7 +1065,7 @@ class FrankaExecutor:
         retract_traj = planner.plan_js_to_init(
             placed_scene, post_lift_traj[-1, :7],
             start_hand_qpos=post_release_hand,
-            goal_arm_qpos=self._clear_view[:7])
+            goal_arm_qpos=self.retract_goal[:7])
         if retract_traj is None:
             raise RuntimeError(
                 "post-release retract preflight failed; object remains held")
@@ -1174,7 +1186,7 @@ class FrankaExecutor:
                 "lift_n_waypoints": int(pending["post_release_lift_n_waypoints"]),
                 "n_waypoints": int(len(retract)),
                 "final_qpos_err": float(np.linalg.norm(
-                    final_qpos - self._clear_view[:7])),
+                    final_qpos - self.retract_goal[:7])),
             }
         if plan_result is None or not plan_result.success or planner is None:
             # This method is reached after the hand has opened.  A direct
@@ -1221,16 +1233,22 @@ class FrankaExecutor:
             planner, start_full, wrist_start, wrist_lift, new_scene,
             include_obj_obstacle=True, label="post-release reset lift")
 
+        approach_traj = None
+        if self.retract_hold_orientation:
+            approach_traj = self._plan_attitude_held_return(
+                planner, lift_traj[-1, :7], start_hand, new_scene)
+        retract_start = (lift_traj[-1, :7] if approach_traj is None
+                         else approach_traj[-1, :7])
         print("[franka] planning reset retract from lifted hand ...", flush=True)
         retract = planner.plan_js_to_init(
-            new_scene, lift_traj[-1, :7], start_hand_qpos=start_hand,
-            goal_arm_qpos=self._clear_view[:7])
+            new_scene, retract_start, start_hand_qpos=start_hand,
+            goal_arm_qpos=self.retract_goal[:7])
         if retract is None:
             raise RuntimeError(
                 "post-release retract preflight failed after a valid lift; "
                 "refusing to move sideways near the object")
 
-        # ── Both segments passed: execute the vertical clearance first ──────
+        # ── Every segment passed: execute the vertical clearance first ──────
         lift_hand = np.tile(self._convert(start_hand), (len(lift_traj), 1))
         print(f"[franka] post-release lift: +{POST_RELEASE_LIFT_HEIGHT_M * 100:.0f}cm",
               flush=True)
@@ -1239,6 +1257,13 @@ class FrankaExecutor:
         self._follow(
             lift_traj[:, :7], lift_hand,
             slowdown_wrist_references=release_refs)
+
+        if approach_traj is not None:
+            print("[franka] attitude-held return over the home position", flush=True)
+            approach_hand = np.tile(self._convert(start_hand), (len(approach_traj), 1))
+            self._follow(
+                approach_traj[:, :7], approach_hand,
+                slowdown_wrist_references=release_refs)
 
         # Follow the planned hand columns during the now-clear retract. The
         # planner checks their gradual opening against the placed object rather
@@ -1253,18 +1278,54 @@ class FrankaExecutor:
         self._log("reset_done")
         final_qpos = np.asarray(self.arm.get_data()["qpos"][:7], dtype=np.float64)
         return {
-            "mode": "post_release_lift_then_plan_js_to_init",
+            "mode": ("post_release_lift_then_attitude_held_return_then_js"
+                     if approach_traj is not None
+                     else "post_release_lift_then_plan_js_to_init"),
             "lift_height_m": POST_RELEASE_LIFT_HEIGHT_M,
             "lift_n_waypoints": int(len(lift_traj)),
+            "attitude_held_n_waypoints": (None if approach_traj is None
+                                          else int(len(approach_traj))),
             "n_waypoints": int(len(retract)),
             "final_qpos_err": float(np.linalg.norm(
-                final_qpos - self._clear_view[:7])),
+                final_qpos - self.retract_goal[:7])),
         }
 
     # ── run_auto compatibility ───────────────────────────────────────────────
     # run_auto drives the xarm through reset -> reset_hybrid -> reset_fallback.
     # Every rung uses the same preflighted lift-then-retract route: after
     # release, an unplanned direct clear-view move is unsafe.
+
+    def _plan_attitude_held_return(self, planner, arm_qpos, start_hand,
+                                   scene_cfg) -> Optional[np.ndarray]:
+        """Plan a return over the home position that keeps the wrist attitude.
+
+        The joint-space retract that follows then only has to reorient near
+        home instead of rolling the wrist over the setup on the way.  This
+        only *plans*: like every other segment of ``reset``, it is executed
+        once the whole chain has been preflighted.  Returns ``None`` when the
+        segment cannot be planned, so the caller keeps the plain retract.
+        """
+        home_wrist = self._trajectory_wrist_target(self.retract_goal[:7], warn=False)
+        wrist_now = self._trajectory_wrist_target(arm_qpos, warn=False)
+        if home_wrist is None or wrist_now is None:
+            return None
+        target = np.asarray(wrist_now, dtype=np.float64).copy()
+        # Home's position, today's attitude: nothing rotates in this segment.
+        target[:3, 3] = np.asarray(home_wrist, dtype=np.float64)[:3, 3]
+        target[2, 3] = max(float(target[2, 3]), float(wrist_now[2, 3]))
+        start_full = np.concatenate([
+            np.asarray(arm_qpos[:7], dtype=np.float32),
+            np.asarray(start_hand, dtype=np.float32)])
+        print("[franka] planning attitude-held return over the home position ...",
+              flush=True)
+        traj = planner.plan_pose_constrained(
+            start_full, target, hold_vec_weight=[1, 1, 1, 0, 0, 0],
+            scene_cfg=scene_cfg, include_obj_obstacle=True)
+        if traj is None:
+            print("[franka] attitude-held return not plannable — using the plain "
+                  "joint-space retract", flush=True)
+            return None
+        return np.asarray(traj)
 
     def reset_hybrid(self, plan_result: PlanResult, planner=None,
                      scene_cfg: dict = None) -> dict:

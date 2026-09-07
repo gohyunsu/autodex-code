@@ -71,3 +71,95 @@ class Joint0TransferTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Joint0ExplicitTurnTest(unittest.TestCase):
+    """``turn_rad`` commands the sweep itself, not a direction to end up facing."""
+
+    def test_turn_is_applied_verbatim_and_only_joint0_moves(self):
+        start = np.array([0.20, -0.4, 0.3, -1.2, 0.1, 0.8, 1.0, 2.0])
+        object_in_wrist = np.eye(4)
+        object_in_wrist[:2, 3] = [0.0, 0.3]
+
+        traj, info = _joint0_arc_trajectory(
+            None, _planar_wrist_fk, start, 6, object_in_wrist,
+            target_angle_rad=1.0, turn_rad=np.deg2rad(-100.0))
+
+        np.testing.assert_allclose(traj[:, 1:], np.tile(start[1:], (len(traj), 1)))
+        self.assertAlmostEqual(info["joint0_delta_deg"], -100.0, places=6)
+        self.assertAlmostEqual(float(traj[-1, 0]),
+                               float(start[0]) + np.deg2rad(-100.0), places=6)
+        self.assertEqual(info["commanded"], "turn")
+        self.assertEqual(info["direction"], "clockwise")
+
+    def test_bearing_mode_is_unchanged_by_the_new_argument(self):
+        start = np.array([0.20, -0.4, 0.3, -1.2, 0.1, 0.8, 1.0, 2.0])
+        object_in_wrist = np.eye(4)
+        object_in_wrist[:2, 3] = [0.0, 0.3]
+
+        turned, turn_info = _joint0_arc_trajectory(
+            None, _planar_wrist_fk, start, 6, object_in_wrist, 1.0, turn_rad=None)
+        default, default_info = _joint0_arc_trajectory(
+            None, _planar_wrist_fk, start, 6, object_in_wrist, 1.0)
+
+        np.testing.assert_allclose(turned, default)
+        self.assertEqual(default_info["commanded"], "bearing")
+        # The two ways of stating the motion genuinely differ: asking for
+        # bearing 1.0 rad here is not a 100 deg sweep.
+        self.assertNotAlmostEqual(turn_info["joint0_delta_deg"], -100.0, places=1)
+
+
+class GoalWristTest(unittest.TestCase):
+    """Carrying a held object onto a measured goal pose."""
+
+    @staticmethod
+    def _rot_z(deg):
+        a = np.deg2rad(deg)
+        T = np.eye(4)
+        T[:2, :2] = [[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]]
+        return T
+
+    def test_yaw_mode_matches_the_goal_yaw_and_keeps_the_carried_tilt(self):
+        from src.demo.inference.run_demo import _goal_wrist
+
+        # Object picked tilted 20 deg about x, carried at z=0.45.
+        tilt = np.eye(4)
+        tilt[1:3, 1:3] = [[np.cos(0.35), -np.sin(0.35)], [np.sin(0.35), np.cos(0.35)]]
+        T_obj_now = self._rot_z(10.0) @ tilt
+        T_obj_now[:3, 3] = [0.55, 0.10, 0.45]
+        T_goal = self._rot_z(70.0)
+        T_goal[:3, 3] = [0.40, -0.30, 0.06]
+        object_in_wrist = np.eye(4)
+        object_in_wrist[:3, 3] = [0.0, 0.0, -0.05]
+
+        wrist, info = _goal_wrist(T_obj_now, object_in_wrist, T_goal, mode="yaw")
+        placed = wrist @ object_in_wrist
+        # xy comes from the goal, z stays the carry height (the descent is the
+        # separate lay-down), and the yaw difference is applied about world z.
+        np.testing.assert_allclose(placed[:2, 3], [0.40, -0.30], atol=1e-9)
+        self.assertAlmostEqual(placed[2, 3], 0.45, places=9)
+        self.assertAlmostEqual(info["goal_yaw_deg"], 60.0, places=6)
+        # The carried tilt is preserved: only rotation about z changed.
+        relative = placed[:3, :3] @ T_obj_now[:3, :3].T
+        np.testing.assert_allclose(relative[2, :2], [0.0, 0.0], atol=1e-9)
+        np.testing.assert_allclose(relative[:2, 2], [0.0, 0.0], atol=1e-9)
+
+    def test_full_mode_commands_the_recorded_rotation(self):
+        from src.demo.inference.run_demo import _goal_wrist
+
+        T_obj_now = np.eye(4)
+        T_obj_now[:3, 3] = [0.55, 0.10, 0.45]
+        T_goal = self._rot_z(70.0)
+        T_goal[:3, 3] = [0.40, -0.30, 0.06]
+        object_in_wrist = np.eye(4)
+
+        wrist, info = _goal_wrist(T_obj_now, object_in_wrist, T_goal, mode="full")
+        placed = wrist @ object_in_wrist
+        np.testing.assert_allclose(placed[:3, :3], T_goal[:3, :3], atol=1e-9)
+        self.assertEqual(info["mode"], "full")
+
+    def test_unknown_mode_is_rejected(self):
+        from src.demo.inference.run_demo import _goal_wrist
+
+        with self.assertRaises(ValueError):
+            _goal_wrist(np.eye(4), np.eye(4), np.eye(4), mode="whatever")

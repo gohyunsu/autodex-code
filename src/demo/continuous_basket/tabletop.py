@@ -75,17 +75,24 @@ def snap_pose_world_to_table(
     c2r: np.ndarray,
     vertices: np.ndarray,
     *,
+    surface_z: float | None = None,
     max_raise_m: float = 0.015,
 ) -> Tuple[np.ndarray, dict]:
-    """Apply :func:`raise_to_table` while preserving the external world pose API."""
+    """Apply :func:`raise_to_table` while preserving the external world pose API.
+
+    ``surface_z`` names the surface the object actually rests on.  It defaults
+    to the table; the box-to-tray demo passes the measured box floor, which is
+    several centimetres higher than the table the object never touches.
+    """
     pose_robot = np.linalg.inv(np.asarray(c2r, dtype=np.float64)) @ np.asarray(
         pose_world, dtype=np.float64
     )
+    surface = table_surface_z() if surface_z is None else float(surface_z)
     corrected_robot, applied, bottom = raise_to_table(
-        pose_robot, vertices, max_raise_m=max_raise_m
+        pose_robot, vertices, surface_z=surface, max_raise_m=max_raise_m
     )
     return np.asarray(c2r, dtype=np.float64) @ corrected_robot, {
-        "surface_z_robot": table_surface_z(),
+        "surface_z_robot": surface,
         "mesh_bottom_z_robot": bottom,
         "raise_m": applied,
         "max_raise_m": float(max_raise_m),
