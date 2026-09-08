@@ -35,13 +35,25 @@ def _to_home_relative(p) -> str:
 
 
 def _parse_multipart(parts: List[bytes]):
+    """Decode the current Paradex envelope, with legacy JSON fallback.
+
+    ``snapshot_daemon`` uses ``DataPublisher``, which migrated from
+    ``[b'data', metadata_json, *blobs]`` to the shared msgpack envelope.
+    Parsing only the historical JSON header made every valid JPEG look like an
+    unknown packet, yielding a misleading ``0/20`` snapshot result.
+    """
+    try:
+        from paradex.io.capture_pc.envelope import decode
+        msg = decode(parts)
+        return msg.meta, list(msg.bufs)
+    except Exception:
+        pass
     if len(parts) < 2 or parts[0] != b"data":
         return None, []
     try:
-        meta = json.loads(parts[1].decode("utf-8"))
+        return json.loads(parts[1].decode("utf-8")), list(parts[2:])
     except Exception:
         return None, []
-    return meta, list(parts[2:])
 
 
 class _SnapBuffer:
@@ -101,26 +113,46 @@ class _SubThread(threading.Thread):
         mon_sock.close(0)
 
         self.buffer = buffer
-        self._stop = threading.Event()
+        # Do not shadow ``threading.Thread._stop``: join() calls that internal
+        # method after the thread exits.
+        self._stop_evt = threading.Event()
 
     def stop(self):
-        self._stop.set()
+        self._stop_evt.set()
 
     def run(self):
-        while not self._stop.is_set():
+        try:
+            while not self._stop_evt.is_set():
+                try:
+                    if self.sock.poll(timeout=100):
+                        parts = self.sock.recv_multipart(flags=zmq.NOBLOCK)
+                        meta, blobs = _parse_multipart(parts)
+                        if meta is None:
+                            continue
+                        # New ``DataPublisher`` sends its per-camera metadata
+                        # as a list; retain the former {"items": [...]} and
+                        # single-dict encodings for old daemons.
+                        if isinstance(meta, list):
+                            items = meta
+                        elif isinstance(meta, dict) and "items" in meta:
+                            items = meta["items"]
+                        elif isinstance(meta, dict):
+                            items = [meta]
+                        else:
+                            continue
+                        for item, blob in zip(items, blobs):
+                            self.buffer.put(int(item["req_id"]),
+                                            str(item["serial"]), blob)
+                except zmq.Again:
+                    pass
+                except Exception as exc:
+                    logger.warning(f"[snapshot_sub] {exc}")
+        finally:
             try:
-                if self.sock.poll(timeout=100):
-                    parts = self.sock.recv_multipart(flags=zmq.NOBLOCK)
-                    meta, blobs = _parse_multipart(parts)
-                    if meta is None:
-                        continue
-                    for item, blob in zip(meta.get("items", []), blobs):
-                        self.buffer.put(int(item["req_id"]),
-                                        str(item["serial"]), blob)
-            except zmq.Again:
+                self.sock.setsockopt(zmq.LINGER, 0)
+                self.sock.close()
+            except Exception:
                 pass
-            except Exception as exc:
-                logger.warning(f"[snapshot_sub] {exc}")
 
 
 class SnapshotOrchestrator:
@@ -231,12 +263,20 @@ class SnapshotOrchestrator:
     def close(self):
         self._sub_thread.stop()
         try:
+            self._sub_thread.join(timeout=3.0)
+            if self._sub_thread.is_alive():
+                logger.warning("[snapshot close] subscriber did not exit in 3s")
+        except Exception:
+            pass
+        try:
             for s in self.cmd.sockets.values():
                 try:
                     s.setsockopt(zmq.LINGER, 0)
                 except Exception:
                     pass
                 s.close()
-            self.cmd.context.term()
         except Exception:
             pass
+        # CommandSender uses zmq.Context.instance(), shared by the already-live
+        # InitOrchestrator and camera controller.  Terminating that singleton
+        # here tears down their sockets before FoundPose gets its first run.

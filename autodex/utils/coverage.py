@@ -46,7 +46,22 @@ def _coverage_path(obj_name: str, version: str = "v8") -> str:
 # stall at the top of every trial. Cache both, keyed so a stale read cannot
 # survive a write.
 _JSON_CACHE: Dict[str, Tuple[Tuple[int, int], dict]] = {}
-_SUCCESS_CACHE: Dict[Tuple[str, str, str, Optional[str]], Set[Tuple[str, str, str]]] = {}
+_SUCCESS_CACHE: Dict[Tuple[str, str, str, Optional[str], Optional[str]], Set[Tuple[str, str, str]]] = {}
+
+
+def experiment_candidate_state_root(exp_name: str, hand: str,
+                                    version: str, obj_name: str) -> str:
+    """Return an experiment-private mirror for candidate outcome records.
+
+    Candidate geometry always comes from ``candidates/<hand>/<version>``.
+    This root contains only ``result.json``/``stats.json`` state for a single
+    collection campaign, so a demo can use the normal coverage policy without
+    reading or mutating the shared v8 outcomes.
+    """
+    return os.path.join(
+        project_dir, "experiment", exp_name, "candidate_state",
+        hand, version, obj_name,
+    )
 
 
 def _load_coverage_json(path: str) -> dict:
@@ -130,6 +145,7 @@ def load_coverage_map(
     hand: str = "inspire_left",
     version: str = "v8",
     arm: Optional[str] = None,
+    success_root: Optional[str] = None,
 ) -> Optional[dict]:
     """Return ``dict[(type, sid_str, gid_str) -> n_remaining_uncovered]``
     for every grasp in the v8 coverage json (optionally filtered to a
@@ -151,7 +167,8 @@ def load_coverage_map(
     if tabletop_pose_stem is not None:
         grasps = [g for g in grasps
                   if str(g.get("pose_idx", "")) == str(tabletop_pose_stem)]
-    success_keys = _disk_success_keys(obj_name, hand, version, arm=arm)
+    success_keys = _disk_success_keys(
+        obj_name, hand, version, arm=arm, success_root=success_root)
     # Build set of scenes already covered by any successful grasp.
     covered_scenes: Set[int] = set()
     # NOTE: use the unfiltered grasp list so cross-tabletop successes also
@@ -173,6 +190,7 @@ def load_coverage_entries(
     hand: str = "inspire_left",
     version: str = "v8",
     arm: Optional[str] = None,
+    success_root: Optional[str] = None,
 ) -> Optional[List[dict]]:
     """Same source as ``load_coverage_map`` but keeps the scene SETS.
 
@@ -193,7 +211,8 @@ def load_coverage_entries(
     if tabletop_pose_stem is not None:
         grasps = _grasps_at_tabletop(all_grasps, tabletop_pose_stem)
 
-    success_keys = _disk_success_keys(obj_name, hand, version, arm=arm)
+    success_keys = _disk_success_keys(
+        obj_name, hand, version, arm=arm, success_root=success_root)
     covered_scenes: Set[int] = set()
     for g in all_grasps:      # unfiltered: a covered scene stays covered
         key = (str(g["type"]), str(g["sid"]), str(g["gid"]))
@@ -214,7 +233,9 @@ def load_coverage_entries(
 
 def _disk_success_keys(obj_name: str, hand: str,
                        version: str = "v8",
-                       arm: Optional[str] = None) -> Set[Tuple[str, str, str]]:
+                       arm: Optional[str] = None,
+                       success_root: Optional[str] = None
+                       ) -> Set[Tuple[str, str, str]]:
     """Walk the candidate dir tree once and collect
     ``(scene_type, scene_id_dir, grasp_id_dir)`` keys whose ``result.json``
     has ``success=True``. Used to compute already-covered scenes.
@@ -228,11 +249,12 @@ def _disk_success_keys(obj_name: str, hand: str,
     Results written before the ``arm`` field existed are all xarm runs, so a
     missing field reads as ``"xarm"``.
     """
-    ck = (obj_name, hand, version, arm)
+    ck = (obj_name, hand, version, arm, success_root)
     hit = _SUCCESS_CACHE.get(ck)
     if hit is not None:
         return hit
-    base = os.path.join(get_candidate_path(hand), version, obj_name)
+    base = success_root or os.path.join(
+        get_candidate_path(hand), version, obj_name)
     if not os.path.isdir(base):
         _SUCCESS_CACHE[ck] = set()
         return _SUCCESS_CACHE[ck]
@@ -265,7 +287,8 @@ def _grasps_at_tabletop(grasps: List[dict], stem: str) -> List[dict]:
 def uncovered_scenes(obj_name: str, tabletop_pose_stem: str,
                      hand: str = "inspire_left",
                      version: str = "v8",
-                     arm: Optional[str] = None) -> Optional[Set[int]]:
+                     arm: Optional[str] = None,
+                     success_root: Optional[str] = None) -> Optional[Set[int]]:
     """Scene indices at ``tabletop_pose_stem`` not yet covered by any
     on-disk successful grasp.
 
@@ -280,7 +303,8 @@ def uncovered_scenes(obj_name: str, tabletop_pose_stem: str,
     all_scenes: Set[int] = set()
     for g in tt_grasps:
         all_scenes.update(g.get("covers", []))
-    success_keys = _disk_success_keys(obj_name, hand, version, arm=arm)
+    success_keys = _disk_success_keys(
+        obj_name, hand, version, arm=arm, success_root=success_root)
     covered: Set[int] = set()
     for g in tt_grasps:
         key = (str(g["type"]), str(g["sid"]), str(g["gid"]))
@@ -290,7 +314,8 @@ def uncovered_scenes(obj_name: str, tabletop_pose_stem: str,
 
 
 def uncovered_tabletop_counts(obj_name: str, hand: str, version: str,
-                              obj_root: str, arm: Optional[str] = None
+                              obj_root: str, arm: Optional[str] = None,
+                              success_root: Optional[str] = None,
                               ) -> Optional[Dict[str, int]]:
     """Remaining coverage count for every tabletop in one asset namespace.
 
@@ -302,7 +327,9 @@ def uncovered_tabletop_counts(obj_name: str, hand: str, version: str,
         return None
     out: Dict[str, int] = {}
     for stem in _tabletop_stems(obj_name, obj_root):
-        remaining = uncovered_scenes(obj_name, stem, hand, version, arm=arm)
+        remaining = uncovered_scenes(
+            obj_name, stem, hand, version, arm=arm,
+            success_root=success_root)
         out[stem] = len(remaining or set())
     return out
 
@@ -327,6 +354,7 @@ def next_grasp_after_success(
     hand: str = "inspire_left",
     version: str = "v8",
     arm: Optional[str] = None,
+    success_root: Optional[str] = None,
 ) -> Optional[Tuple[str, str, str]]:
     """Return the ``(type, sid, gid)`` of the next grasp the greedy set-cover
     will pick *after* ``current_grasp_key`` succeeds.
@@ -353,7 +381,8 @@ def next_grasp_after_success(
             cur_covers = set(g.get("covers", []))
             break
 
-    disk_success = _disk_success_keys(obj_name, hand, version, arm=arm)
+    disk_success = _disk_success_keys(
+        obj_name, hand, version, arm=arm, success_root=success_root)
     covered: Set[int] = set(cur_covers)
     for g in grasps:
         key = (str(g["type"]), str(g["sid"]), str(g["gid"]))
@@ -471,6 +500,7 @@ def pick_reorient_target(obj_name: str, current_stem: str,
                          h_cm: int = 0,
                          obj_root: Optional[str] = None,
                          arm: Optional[str] = None,
+                         success_root: Optional[str] = None,
                          ) -> Optional[Tuple[int, str, int]]:
     """Pick a target tabletop pose to reorient to.
 
@@ -498,7 +528,9 @@ def pick_reorient_target(obj_name: str, current_stem: str,
     for stem in stems:
         if stem == str(current_stem):
             continue
-        rem = uncovered_scenes(obj_name, stem, hand, version, arm=arm)
+        rem = uncovered_scenes(
+            obj_name, stem, hand, version, arm=arm,
+            success_root=success_root)
         if rem is None:
             continue
         n_rem = len(rem)

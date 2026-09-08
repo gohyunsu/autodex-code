@@ -14,6 +14,7 @@ import trimesh
 
 from autodex.utils.conversion import se32cart
 from autodex.utils.path import obj_path
+from autodex.utils.tabletop_geometry import table_cuboid, table_surface_z_at_xy
 
 
 # Physical tabletop top in the robot frame.  Keep the object snap and the
@@ -100,7 +101,8 @@ def check_mesh_frame_match(obj_name: str, perception_mesh: str,
     )
 
 
-def _snap_z_to_table(pose_robot: np.ndarray, mesh_path: str) -> np.ndarray:
+def _snap_z_to_table(pose_robot: np.ndarray, mesh_path: str,
+                     tabletop_geometry: Optional[dict] = None) -> np.ndarray:
     mesh = trimesh.load(mesh_path, process=False)
     if isinstance(mesh, trimesh.Scene):
         mesh = mesh.dump(concatenate=True)
@@ -109,9 +111,11 @@ def _snap_z_to_table(pose_robot: np.ndarray, mesh_path: str) -> np.ndarray:
     verts_robot = (pose_robot @ verts_h.T).T[:, :3]
     bottom_z = verts_robot[:, 2].min()
 
-    if bottom_z < TABLE_SURFACE_Z:
-        delta = TABLE_SURFACE_Z - bottom_z
-        print(f"    [snap] Object bottom {bottom_z:.4f} < table {TABLE_SURFACE_Z:.4f}, raising by {delta:.4f}m")
+    table_z = table_surface_z_at_xy(
+        tabletop_geometry, pose_robot[0, 3], pose_robot[1, 3])
+    if bottom_z < table_z:
+        delta = table_z - bottom_z
+        print(f"    [snap] Object bottom {bottom_z:.4f} < table {table_z:.4f}, raising by {delta:.4f}m")
         pose_robot = pose_robot.copy()
         pose_robot[2, 3] += delta
     return pose_robot
@@ -172,7 +176,8 @@ def _snap_sphere_pose(pose_robot: np.ndarray, obj_name: str,
 
 
 def pose_world_to_scene_cfg(pose_world: np.ndarray, c2r: np.ndarray, obj_name: str,
-                            obj_root: Optional[str] = None) -> dict:
+                            obj_root: Optional[str] = None,
+                            tabletop_geometry: Optional[dict] = None) -> dict:
     """Convert world-frame 4x4 pose to a scene_cfg dict for GraspPlanner.plan().
 
     ``obj_root`` selects which asset tree the planning mesh and the tabletop
@@ -184,6 +189,12 @@ def pose_world_to_scene_cfg(pose_world: np.ndarray, c2r: np.ndarray, obj_name: s
         pose_robot = _snap_sphere_pose(pose_robot, obj_name, obj_root)
     elif obj_name in CYLINDER_OBJECTS:
         pose_robot = _snap_cylinder_pose(pose_robot, obj_name, obj_root)
+    # Preserve the historical perception pose when the optional preflight was
+    # skipped.  With a measured surface, raise only an estimate that would
+    # otherwise put the physical mesh below that plane.
+    if tabletop_geometry is not None:
+        pose_robot = _snap_z_to_table(
+            pose_robot, find_planning_mesh(obj_name, obj_root), tabletop_geometry)
     return {
         "mesh": {
             "target": {
@@ -192,11 +203,6 @@ def pose_world_to_scene_cfg(pose_world: np.ndarray, c2r: np.ndarray, obj_name: s
             }
         },
         "cuboid": {
-            "table": {
-                "dims": [2, 3, TABLE_THICKNESS_Z],
-                # Cuboid pose is its centre, so its upper face is 0.040 m.
-                "pose": [1.1, 0, TABLE_SURFACE_Z - TABLE_THICKNESS_Z / 2,
-                         1, 0, 0, 0],
-            }
+            "table": table_cuboid(tabletop_geometry, thickness_m=TABLE_THICKNESS_Z),
         },
     }

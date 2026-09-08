@@ -48,6 +48,11 @@ INSPIRE_LEFT_LINK6_TO_WRIST = np.array([
 # pose_world_to_scene_cfg().  This is the board's maximum-clearance point;
 # remeasure after moving the board or recalibrating the camera/robot system.
 CHARUCO_BOARD_11_CENTER_XY = np.array([0.608, 0.153], dtype=np.float64)
+# Shared on-board placement policy for normal reposition, rotate recovery, and
+# reset reorientation.  Offsets are along robot-frame X, with Y fixed to the
+# measured board centreline.
+CHARUCO_BOARD_CENTER_X_OFFSETS_M = np.array(
+    [0.0, -0.05, 0.05, -0.10, 0.10], dtype=np.float64)
 
 # ── FR3 (Franka) ─────────────────────────────────────────────────────────────
 # 7-DOF init = the franka HOME pose saved by paradex hand-eye calibration

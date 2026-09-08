@@ -74,7 +74,11 @@ from autodex.utils.path import (
     iter_reset_candidate_roots,
 )
 from autodex.utils.conversion import cart2se3, se32cart
-from autodex.utils.robot_config import CHARUCO_BOARD_11_CENTER_XY
+from autodex.utils.robot_config import (
+    CHARUCO_BOARD_11_CENTER_XY,
+    CHARUCO_BOARD_CENTER_X_OFFSETS_M,
+)
+from autodex.utils.tabletop_geometry import table_surface_z
 from autodex.planner import GraspPlanner
 from autodex.planner.planner import (
     PlanResult, _to_curobo_world, _to_curobo_pose,
@@ -831,6 +835,7 @@ def _plan_reorient_full_chain(
     seeds: dict,
     planner_robot: str,
     release_height_m: float,
+    tabletop_geometry: dict | None = None,
 ) -> dict:
     """Plan every held-object stage for one reset transition.
 
@@ -916,17 +921,34 @@ def _plan_reorient_full_chain(
     planner._cached_world = world_approach
 
     target_rot = target_tabletop_robot[:3, :3]
+    # A successful empty-board preflight is deliberately treated as a level
+    # tabletop: its fitted normal is a quality gate, while this one measured
+    # Z is used for all reset release heights.  Prefer the physical board
+    # centre as the reset release point.  If that complete plan is infeasible,
+    # use symmetric +/-5 cm then +/-10 cm X fallbacks around the same centre.
+    table_z = table_surface_z(tabletop_geometry)
+    release_x = float(CHARUCO_BOARD_11_CENTER_XY[0])
+    release_y = float(CHARUCO_BOARD_11_CENTER_XY[1])
+    if tabletop_geometry is not None:
+        board_center = np.asarray(
+            tabletop_geometry["center_robot_m"], dtype=np.float64).reshape(3)
+        release_x = float(board_center[0])
+        release_y = float(board_center[1])
+        print("[reorient] board-11 release frame from preflight: "
+              f"center=({release_x:.3f}, {release_y:.3f}), "
+              f"table_z={table_z:.4f}")
     target_high = np.array([
-        0.0,
-        0.0,
-        float(target_tabletop_robot[2, 3]) + TABLE_SURFACE_Z + LIFT_HEIGHT_M,
+        release_x,
+        release_y,
+        float(target_tabletop_robot[2, 3]) + table_z + LIFT_HEIGHT_M,
     ])
     target_release = np.array([
-        0.0,
-        0.0,
-        float(target_tabletop_robot[2, 3]) + TABLE_SURFACE_Z + release_height_m,
+        release_x,
+        release_y,
+        float(target_tabletop_robot[2, 3]) + table_z + release_height_m,
     ])
-    x_grid = np.arange(0.35, 0.55, 0.05)
+    x_grid = release_x + CHARUCO_BOARD_CENTER_X_OFFSETS_M
+    y_grid = np.array([release_y])
     yaw_grid = np.linspace(0, 2 * np.pi, 8, endpoint=False)
     cyl_axis_target = get_cyl_axis_local(obj)
     cyl_yaw_grid = get_cyl_yaw_grid(obj)
@@ -968,12 +990,13 @@ def _plan_reorient_full_chain(
         _, sorted_info = planner.plan_obj_placement(
             scene_lift, reorient_start, obj_in_wrist, target_rot, target_high,
             hold_hand_qpos=pregrasp, x_grid=x_grid, yaw_grid=yaw_grid,
+            y_grid=y_grid,
             cyl_yaw_grid=cyl_yaw_grid, cyl_axis_local=cyl_axis_target,
             skip_plan=True)
         sorted_candidates = (sorted_info or {}).get("sorted_candidates", [])
-        x_center = 0.5 * (float(x_grid[0]) + float(x_grid[-1]))
         sorted_candidates = sorted(
-            sorted_candidates, key=lambda candidate: abs(candidate["x"] - x_center))
+            sorted_candidates,
+            key=lambda candidate: abs(candidate["x"] - release_x))
         any_reorient_path = False
         for candidate in sorted_candidates:
             one_x = np.array([candidate["x"]])
@@ -983,6 +1006,7 @@ def _plan_reorient_full_chain(
             reorient_traj, reorient_info = planner.plan_obj_placement(
                 scene_lift, reorient_start, obj_in_wrist, target_rot, target_high,
                 hold_hand_qpos=pregrasp, x_grid=one_x, yaw_grid=one_yaw,
+                y_grid=y_grid,
                 cyl_yaw_grid=one_cyl, cyl_axis_local=cyl_axis_target,
                 skip_plan=False)
             if reorient_traj is None:
@@ -992,6 +1016,7 @@ def _plan_reorient_full_chain(
                 scene_lift, reorient_traj[-1].copy(), obj_in_wrist,
                 target_rot, target_release, hold_hand_qpos=pregrasp,
                 x_grid=one_x, yaw_grid=one_yaw, cyl_yaw_grid=one_cyl,
+                y_grid=y_grid,
                 cyl_axis_local=cyl_axis_target, skip_plan=False)
             if descent_traj is None:
                 continue
@@ -1074,6 +1099,7 @@ def reorient_from_live_scene(
     lift_label_rel: str,
     lift_label_abs: str,
     held_speed_scale: float = 0.25,
+    tabletop_geometry: dict | None = None,
 ) -> dict:
     """Execute a reset transition with the already-live run_auto resources.
 
@@ -1086,15 +1112,22 @@ def reorient_from_live_scene(
     """
     if held_speed_scale <= 0:
         raise ValueError("held_speed_scale must be positive")
+    # Returned to run_pipeline so recovery knows whether the shared camera
+    # acquisition was actually stopped.  A planning-only rejection leaves the
+    # original stream alive and must never be followed by another ``rcc.arm``.
+    camera_capture_stopped = False
     if grasp_version != "v8":
-        return {"success": False, "reason": "reorient_requires_v8_assets"}
+        return {"success": False, "reason": "reorient_requires_v8_assets",
+                "camera_capture_stopped": camera_capture_stopped}
     if arm == "franka" and hand != "inspire":
-        return {"success": False, "reason": "unsupported_franka_hand"}
+        return {"success": False, "reason": "unsupported_franka_hand",
+                "camera_capture_stopped": camera_capture_stopped}
 
     pose_robot_before = cart2se3(scene_cfg["mesh"]["target"]["pose"])
     tabletop_before = classify_tabletop_pose(pose_robot_before, obj, obj_root)
     if tabletop_before is None:
-        return {"success": False, "reason": "reorient_tabletop_unclassified"}
+        return {"success": False, "reason": "reorient_tabletop_unclassified",
+                "camera_capture_stopped": camera_capture_stopped}
     i_int = _pose_int_from_filename(tabletop_before["filename"])
     if i_int == target_j:
         return {
@@ -1102,6 +1135,7 @@ def reorient_from_live_scene(
             "reason": "already_at_reorient_target",
             "i_int": i_int,
             "target_j": target_j,
+            "camera_capture_stopped": camera_capture_stopped,
         }
 
     try:
@@ -1114,6 +1148,7 @@ def reorient_from_live_scene(
             "i_int": i_int,
             "target_j": target_j,
             "mapping_error": str(exc),
+            "camera_capture_stopped": camera_capture_stopped,
         }
     print(f"[reorient] v8 cell {i_int}_{target_j} -> legacy reset cell "
           f"{legacy_i}_{legacy_j}")
@@ -1127,6 +1162,7 @@ def reorient_from_live_scene(
             "reason": "reorient_seed_cell_missing",
             "i_int": i_int,
             "target_j": target_j,
+            "camera_capture_stopped": camera_capture_stopped,
         }
     target_pose = _load_target_tabletop_pose(obj, target_j, obj_root)
     planner_robot = _planner_robot(arm, hand)
@@ -1149,6 +1185,7 @@ def reorient_from_live_scene(
             target_tabletop_robot=target_pose, seeds=seeds,
             planner_robot=planner_robot,
             release_height_m=candidate_h_cm / 100.0,
+            tabletop_geometry=tabletop_geometry,
         )
         if candidate_plan["success"]:
             h_cm = candidate_h_cm
@@ -1167,6 +1204,7 @@ def reorient_from_live_scene(
             "i_int": i_int,
             "target_j": target_j,
             "height_attempts": height_attempts,
+            "camera_capture_stopped": camera_capture_stopped,
         }
 
     result = plan["result"]
@@ -1175,6 +1213,7 @@ def reorient_from_live_scene(
     lift_kwargs = {"held_speed_scale": held_speed_scale} if arm == "franka" else {}
     try:
         rcc.stop()
+        camera_capture_stopped = True
     except Exception as exc:
         print(f"[reorient] rcc.stop before motion failed: {exc!r}")
 
@@ -1208,11 +1247,13 @@ def reorient_from_live_scene(
                 "h_cm": h_cm,
                 "charuco": charuco_info,
                 "plan": plan,
+                "camera_capture_stopped": camera_capture_stopped,
             }
 
         if arm == "franka":
             print(f"[franka] held-object speed scale: {held_speed_scale:.2f} "
-                  "(reorient transfer); free-hand moves use the 25cm→10cm profile")
+                  "(reorient transfer); free-hand moves use the "
+                  "hand-link→object-mesh 50cm→20cm profile")
         reorient_hand = np.tile(squeeze_hand[None], (len(plan["reorient_traj"]), 1))
         _executor_log(executor, "reorient")
         executor._move_joints(
@@ -1254,12 +1295,14 @@ def reorient_from_live_scene(
                 "exception": repr(exc),
                 "recovery_exception": repr(reset_exc),
                 "plan": plan,
+                "camera_capture_stopped": camera_capture_stopped,
             }
         return {
             "success": False,
             "reason": "reorient_execute_failed",
             "exception": repr(exc),
             "plan": plan,
+            "camera_capture_stopped": camera_capture_stopped,
         }
 
     return {
@@ -1275,6 +1318,7 @@ def reorient_from_live_scene(
         "scene_info": result.scene_info,
         "place": place_info if arm == "franka" else None,
         "reset": reset_info,
+        "camera_capture_stopped": camera_capture_stopped,
     }
 
 

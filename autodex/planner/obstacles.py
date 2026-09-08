@@ -14,6 +14,7 @@ All dims are [width, depth, height] matching cuRobo cuboid convention.
 """
 import numpy as np
 from scipy.spatial.transform import Rotation
+from autodex.utils.tabletop_geometry import table_cuboid, table_surface_z_at_xy
 
 
 # Keep this shared obstacle definition aligned with scene_cfg.TABLE_SURFACE_Z.
@@ -37,13 +38,15 @@ def _quat_from_euler(roll=0, pitch=0, yaw=0):
     return [float(xyzw[3]), float(xyzw[0]), float(xyzw[1]), float(xyzw[2])]
 
 
-def get_table_obstacles(obj_pose):
+def get_table_obstacles(obj_pose, tabletop_geometry=None):
     """Table only — no extra obstacles."""
-    return {"table": TABLE_CUBOID}
+    return {"table": table_cuboid(tabletop_geometry,
+                                   thickness_m=TABLE_THICKNESS_Z)}
 
 
 def get_wall_obstacles(obj_pose, wall_gap=0.04, wall_angle=0.0,
-                       wall_thickness=0.02, wall_width=0.5, wall_height=0.4):
+                       wall_thickness=0.02, wall_width=0.5, wall_height=0.4,
+                       tabletop_geometry=None):
     """Wall placed around object, rotated by wall_angle around object center.
 
     wall_angle=0: wall behind (+y), 90: right (+x), 180: front (-y), 270: left (-x).
@@ -57,7 +60,7 @@ def get_wall_obstacles(obj_pose, wall_gap=0.04, wall_angle=0.0,
         wall_height: wall extent along z
     """
     obj_xyz = obj_pose[:3, 3]
-    table_z = TABLE_CUBOID["pose"][2] + TABLE_CUBOID["dims"][2] / 2
+    table_z = table_surface_z_at_xy(tabletop_geometry, obj_xyz[0], obj_xyz[1])
 
     angle_rad = np.radians(wall_angle)
     # Direction from object center to wall center
@@ -75,7 +78,7 @@ def get_wall_obstacles(obj_pose, wall_gap=0.04, wall_angle=0.0,
     wall_quat = _quat_from_euler(yaw=angle_rad)
 
     return {
-        "table": TABLE_CUBOID,
+        "table": table_cuboid(tabletop_geometry, thickness_m=TABLE_THICKNESS_Z),
         "wall": {
             "dims": [wall_width, wall_thickness, wall_height],
             "pose": wall_center + wall_quat,
@@ -85,7 +88,8 @@ def get_wall_obstacles(obj_pose, wall_gap=0.04, wall_angle=0.0,
 
 def get_shelf_obstacles(obj_pose, shelf_width=0.30, shelf_depth=0.30,
                         shelf_height=0.30, shelf_gap=0.02, thickness=0.01,
-                        back=True, sides=True, top=True, shelf_angle=0.0):
+                        back=True, sides=True, top=True, shelf_angle=0.0,
+                        tabletop_geometry=None):
     """Shelf around object with selectable panels.
 
     Args:
@@ -100,7 +104,7 @@ def get_shelf_obstacles(obj_pose, shelf_width=0.30, shelf_depth=0.30,
         top: include top panel
     """
     obj_xyz = obj_pose[:3, 3]
-    table_z = TABLE_CUBOID["pose"][2] + TABLE_CUBOID["dims"][2] / 2
+    table_z = table_surface_z_at_xy(tabletop_geometry, obj_xyz[0], obj_xyz[1])
 
     cx = float(obj_xyz[0])
     cy = float(obj_xyz[1])
@@ -115,7 +119,8 @@ def get_shelf_obstacles(obj_pose, shelf_width=0.30, shelf_depth=0.30,
         c, s = np.cos(angle_rad), np.sin(angle_rad)
         return cx + c * dx - s * dy, cy + s * dx + c * dy
 
-    cuboids = {"table": TABLE_CUBOID}
+    cuboids = {"table": table_cuboid(tabletop_geometry,
+                                      thickness_m=TABLE_THICKNESS_Z)}
     quat = _quat_from_euler(yaw=angle_rad)
 
     if back:
@@ -147,7 +152,8 @@ def get_shelf_obstacles(obj_pose, shelf_width=0.30, shelf_depth=0.30,
 def get_cluttered_obstacles(obj_pose, n_obstacles=4, seed=None,
                             min_dist=0.08, max_dist=0.20,
                             min_size=0.03, max_size=0.10,
-                            min_height=0.05, max_height=0.15):
+                            min_height=0.05, max_height=0.15,
+                            tabletop_geometry=None):
     """Random cubes/cylinders (approximated as cubes) around the object.
 
     Places obstacles on the table around the object at random angles,
@@ -163,9 +169,9 @@ def get_cluttered_obstacles(obj_pose, n_obstacles=4, seed=None,
     """
     rng = np.random.RandomState(seed)
     obj_xyz = obj_pose[:3, 3]
-    table_z = TABLE_CUBOID["pose"][2] + TABLE_CUBOID["dims"][2] / 2
 
-    cuboids = {"table": TABLE_CUBOID}
+    cuboids = {"table": table_cuboid(tabletop_geometry,
+                                      thickness_m=TABLE_THICKNESS_Z)}
 
     for i in range(n_obstacles):
         # Random angle, avoid front 90deg (approach direction = negative y)
@@ -183,7 +189,7 @@ def get_cluttered_obstacles(obj_pose, n_obstacles=4, seed=None,
 
         cx = float(obj_xyz[0] + dist * np.cos(angle_rad))
         cy = float(obj_xyz[1] + dist * np.sin(angle_rad))
-        cz = float(table_z + sz / 2)
+        cz = float(table_surface_z_at_xy(tabletop_geometry, cx, cy) + sz / 2)
 
         # Random yaw rotation
         yaw = rng.uniform(0, np.pi)
@@ -209,7 +215,8 @@ SCENE_TYPES = {
 def add_obstacles(scene_cfg, scene_type, seed=None, wall_gap=0.04, wall_angle=0.0,
                   clutter_min_dist=0.12, clutter_max_dist=0.20, clutter_n=4,
                   shelf_width=0.30, shelf_depth=0.30, shelf_height=0.30, shelf_gap=0.02,
-                  shelf_back=True, shelf_sides=True, shelf_top=True):
+                  shelf_back=True, shelf_sides=True, shelf_top=True,
+                  tabletop_geometry=None):
     """Add virtual obstacles to scene_cfg based on scene type.
 
     Args:
@@ -232,16 +239,23 @@ def add_obstacles(scene_cfg, scene_type, seed=None, wall_gap=0.04, wall_angle=0.
     obj_pose = cart2se3(obj_pose_7d)
 
     if scene_type == "cluttered":
-        cuboids = get_cluttered_obstacles(obj_pose, seed=seed, n_obstacles=clutter_n, min_dist=clutter_min_dist, max_dist=clutter_max_dist)
+        cuboids = get_cluttered_obstacles(
+            obj_pose, seed=seed, n_obstacles=clutter_n,
+            min_dist=clutter_min_dist, max_dist=clutter_max_dist,
+            tabletop_geometry=tabletop_geometry)
     elif scene_type == "wall":
-        cuboids = get_wall_obstacles(obj_pose, wall_gap=wall_gap, wall_angle=wall_angle)
+        cuboids = get_wall_obstacles(
+            obj_pose, wall_gap=wall_gap, wall_angle=wall_angle,
+            tabletop_geometry=tabletop_geometry)
     elif scene_type == "shelf":
         cuboids = get_shelf_obstacles(obj_pose, shelf_width=shelf_width, shelf_depth=shelf_depth,
                                       shelf_height=shelf_height, shelf_gap=shelf_gap,
                                       back=shelf_back, sides=shelf_sides, top=shelf_top,
-                                      shelf_angle=wall_angle)
+                                      shelf_angle=wall_angle,
+                                      tabletop_geometry=tabletop_geometry)
     else:
-        cuboids = SCENE_TYPES[scene_type](obj_pose)
+        cuboids = SCENE_TYPES[scene_type](obj_pose,
+                                          tabletop_geometry=tabletop_geometry)
 
     scene_cfg["cuboid"] = cuboids
     return scene_cfg

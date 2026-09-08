@@ -47,8 +47,14 @@ from autodex.executor.real import RealExecutor
 from autodex.perception.init_orchestrator import InitOrchestrator
 from autodex.perception.snapshot_orchestrator import SnapshotOrchestrator
 
-from autodex.utils.coverage import write_candidate_result
-from autodex.utils.robot_config import CHARUCO_BOARD_11_CENTER_XY
+from autodex.utils.coverage import (
+    experiment_candidate_state_root,
+    write_candidate_result,
+)
+from autodex.utils.robot_config import (
+    CHARUCO_BOARD_11_CENTER_XY,
+    CHARUCO_BOARD_CENTER_X_OFFSETS_M,
+)
 from src.demo.continuous_basket.recording import resolve_signal_generator_params
 from src.execution.scene_cfg import pose_world_to_scene_cfg
 from src.execution.label import auto_label_charuco, get_label
@@ -68,7 +74,8 @@ def _is_coverage_pool(version: str) -> bool:
 
 def _reorient_target_absent_result(*, obj: str, hand: str, version: str,
                                    obj_root: str, dir_idx: str,
-                                   scene_type: str, timing: dict) -> dict:
+                                   scene_type: str, timing: dict,
+                                   success_root: Optional[str] = None) -> dict:
     """Give an accurate terminal reason when reset candidates cannot move us onward.
 
     A missing target is *not* equivalent to all tabletops being covered: it
@@ -78,7 +85,8 @@ def _reorient_target_absent_result(*, obj: str, hand: str, version: str,
     """
     from autodex.utils.coverage import uncovered_tabletop_counts
 
-    counts = uncovered_tabletop_counts(obj, hand, version, obj_root)
+    counts = uncovered_tabletop_counts(
+        obj, hand, version, obj_root, success_root=success_root)
     remaining = {stem: n for stem, n in (counts or {}).items() if n > 0}
     if remaining:
         runtime_root = get_candidate_path(hand)
@@ -179,6 +187,17 @@ def _safe_timestamp_stop(tsm) -> None:
     if not getattr(tsm, "_autodex_started", False):
         return
     _stop_with_timeout("timestamp_monitor", tsm.stop)
+
+
+def _prompt_or_auto(args, prompt: str) -> str:
+    """Return Enter-equivalent in ``--auto``; prompt only in supervised mode."""
+    if args.auto:
+        print(f"{prompt} --auto: continuing without operator confirmation")
+        return ""
+    try:
+        return input(prompt).strip().lower()
+    except KeyboardInterrupt:
+        return "q"
 
 
 def _rcc_start(rcc, mode, sync_mode, save_path=None, fps=30):
@@ -305,14 +324,34 @@ def _clear_camera_errors(rcc, settle_s: float = 1.5, reload_wait_s: float = 6.0,
 
 
 
+def _candidate_state_root(args, hand: str, obj: str) -> Optional[str]:
+    """Return the active outcome store for this run, if it is private."""
+    if not getattr(args, "isolate_experiment", False):
+        return None
+    return experiment_candidate_state_root(
+        args.exp_name, hand, args.grasp_version, obj)
+
+
+def _candidate_state_grasp_dir(args, hand: str, obj: str, scene_info) -> Optional[str]:
+    """Resolve one grasp's mutable outcome directory for this campaign."""
+    if not (isinstance(scene_info, (list, tuple)) and len(scene_info) == 3):
+        return None
+    base = _candidate_state_root(args, hand, obj)
+    if base is None:
+        base = os.path.join(get_candidate_path(hand), args.grasp_version, obj)
+    return os.path.join(base, scene_info[0], scene_info[1], scene_info[2])
+
+
 def _scene_has_success(hand: str, version: str, obj: str,
-                        scene_type: str, scene_id: str) -> bool:
+                        scene_type: str, scene_id: str,
+                        candidate_state_root: Optional[str] = None) -> bool:
     """Return True if any grasp candidate under
     candidates/{hand}/{version}/{obj}/{scene_type}/{scene_id}/ already has
     a result.json marking success=True. Used to skip a whole scene once any
     grasp in it has worked (user policy: 한 scene 성공하면 그 scene 통째로 제외)."""
     from autodex.utils.path import get_candidate_path
-    base = Path(get_candidate_path(hand)) / version / obj
+    base = (Path(candidate_state_root) if candidate_state_root is not None
+            else Path(get_candidate_path(hand)) / version / obj)
     if scene_type:
         base = base / scene_type / scene_id
     else:
@@ -332,6 +371,64 @@ def _scene_has_success(hand: str, version: str, obj: str,
         except Exception:
             continue
     return False
+
+
+def _write_candidate_outcome(args, hand: str, obj: str, scene_info,
+                             payload: dict) -> bool:
+    """Persist a grasp outcome in shared or experiment-private state.
+
+    Geometry stays in ``candidates/<hand>/<version>``.  Isolated campaigns
+    mirror only their small mutable ``result.json`` records under
+    ``experiment/<exp_name>/candidate_state`` so coverage is fully private.
+    """
+    grasp_dir = _candidate_state_grasp_dir(args, hand, obj, scene_info)
+    if grasp_dir is None:
+        return False
+    os.makedirs(grasp_dir, exist_ok=True)
+    cand_result_path = os.path.join(grasp_dir, "result.json")
+    write_candidate_result(cand_result_path, payload)
+    if args.isolate_experiment:
+        print("    [experiment] candidate outcome -> "
+              f"{os.path.relpath(cand_result_path, project_dir)}")
+    return True
+
+
+def _write_experiment_coverage_progress(args, hand: str, obj: str,
+                                        obj_root: str) -> Optional[dict]:
+    """Persist the isolated campaign's remaining-scene count per tabletop."""
+    if (not args.isolate_experiment or args.ignore_coverage
+            or not _is_coverage_pool(args.grasp_version)):
+        return None
+    from autodex.utils.coverage import uncovered_tabletop_counts
+
+    state_root = _candidate_state_root(args, hand, obj)
+    remaining = uncovered_tabletop_counts(
+        obj, hand, args.grasp_version, obj_root,
+        success_root=state_root,
+    )
+    if remaining is None:
+        return None
+    total = sum(remaining.values())
+    payload = {
+        "exp_name": args.exp_name,
+        "hand": hand,
+        "arm": args.arm,
+        "grasp_version": args.grasp_version,
+        "candidate_state_root": state_root,
+        "updated_at": datetime.datetime.now().isoformat(),
+        "remaining_uncovered_by_tabletop": remaining,
+        "total_remaining": total,
+    }
+    progress_path = os.path.join(
+        project_dir, "experiment", args.exp_name, "coverage",
+        hand, args.grasp_version, f"{obj}.json",
+    )
+    os.makedirs(os.path.dirname(progress_path), exist_ok=True)
+    with open(progress_path, "w") as f:
+        json.dump(payload, f, indent=2)
+    print(f"    [experiment coverage] {total} scenes remaining; "
+          f"state -> {os.path.relpath(progress_path, project_dir)}")
+    return payload
 
 
 logging.basicConfig(level=logging.INFO, format="[%(name)s] %(message)s")
@@ -421,6 +518,11 @@ def _wait_for_object_on_table(rcc, args, scene_prefix: str, trial_idx: int,
             return True
         print(f"[precheck] charuco fully visible "
               f"({info.get('covered')}/{info.get('expected')}) — no obj on table.")
+        if args.auto:
+            print("[precheck] --auto: object placement needs an operator; "
+                  "ending instead of waiting for input")
+            _rcc_start(rcc, "stream", False, fps=args.stream_fps)
+            return False
         try:
             cmd = input("    Place obj then press Enter (q to quit): ").strip().lower()
         except KeyboardInterrupt:
@@ -472,6 +574,8 @@ def run_single_trial(
     timestamp_monitor,
     pose_adjust_handler=None,
     reorient_handler=None,
+    tabletop_geometry=None,
+    consecutive_rotate_counts: Optional[Dict[str, int]] = None,
 ) -> dict:
     global _active_vis
     if _active_vis is not None:
@@ -483,6 +587,7 @@ def run_single_trial(
 
     obj = args.obj
     hand = args.hand
+    candidate_state_root = _candidate_state_root(args, hand, obj)
     # xarm = 6, FR3 = 7. Every arm/hand column split below uses this instead of
     # a literal 6, so the same trial body drives both arms.
     adof = getattr(executor, "arm_dof", 6)
@@ -531,11 +636,9 @@ def run_single_trial(
         chime.error()
         # Pause for human — bad pose estimate likely needs operator to
         # reposition object / lights / camera before next attempt.
-        try:
-            cmd = input("    [perception_failed] Fix the scene then press Enter "
-                        "(q to quit): ").strip().lower()
-        except KeyboardInterrupt:
-            cmd = "q"
+        cmd = _prompt_or_auto(
+            args, "    [perception_failed] Fix the scene then press Enter "
+                  "(q to quit): ")
         fail = {"dir_idx": dir_idx, "scene_type": args.scene, "success": False,
                 "reason": reason, "timing": timing}
         if cmd == "q":
@@ -582,7 +685,10 @@ def run_single_trial(
     # Planning mesh and tabletop poses are both resolved from the v8
     # object_processing asset tree, so their pose stems cannot diverge.
     obj_root = get_obj_root(args.grasp_version)
-    scene_cfg = pose_world_to_scene_cfg(pose_world, c2r, obj, obj_root)
+    if tabletop_geometry is not None:
+        timing["tabletop_geometry"] = tabletop_geometry
+    scene_cfg = pose_world_to_scene_cfg(
+        pose_world, c2r, obj, obj_root, tabletop_geometry=tabletop_geometry)
     scene_cfg = add_obstacles(
         scene_cfg, args.scene,
         wall_gap=args.wall_gap, wall_angle=args.wall_angle,
@@ -595,6 +701,7 @@ def run_single_trial(
         shelf_back=not args.no_shelf_back,
         shelf_sides=not args.no_shelf_sides,
         shelf_top=not args.no_shelf_top,
+        tabletop_geometry=tabletop_geometry,
     )
 
     def _run_reorient_handler(target_j: int) -> dict:
@@ -610,6 +717,7 @@ def run_single_trial(
                 planner=planner, executor=executor, rcc=rcc,
                 scene_cfg=scene_cfg, pose_world=pose_world, c2r=c2r,
                 obj_root=obj_root, img_dir=img_dir, scene_prefix=scene_prefix,
+                tabletop_geometry=tabletop_geometry,
             )
         except Exception as reorient_exc:
             print(f"    [pipeline] reorient exception: {reorient_exc!r}")
@@ -633,8 +741,9 @@ def run_single_trial(
         # scene (including the successful grasp itself). Only applies for the
         # table scene (other scenes don't persist per-candidate result.json).
         scene_type_for_check = args.scene if args.scene != "table" else "table"
-        if _scene_has_success(hand, args.grasp_version, obj,
-                               scene_type_for_check, scene_id):
+        if (not args.isolate_experiment and _scene_has_success(
+                hand, args.grasp_version, obj, scene_type_for_check, scene_id,
+                candidate_state_root=candidate_state_root)):
             print(f"    [scene_skip] scene_type={scene_type_for_check} "
                   f"scene_id={scene_id} already has a successful grasp — "
                   f"skipping this trial")
@@ -693,7 +802,8 @@ def run_single_trial(
             from autodex.utils.coverage import load_coverage_map
             _cov = load_coverage_map(
                 obj, tabletop_pose_stem=pose_stem,
-                hand=hand, version=args.grasp_version)
+                hand=hand, version=args.grasp_version,
+                success_root=candidate_state_root)
             if _cov is None:
                 # No coverage json at all. Without this the run reads as
                 # "0/0 candidates -> all scenes done" and stops, which looks
@@ -723,17 +833,19 @@ def run_single_trial(
         from autodex.utils.coverage import uncovered_scenes, pick_reorient_target
         _rem = (None if args.ignore_coverage else
                 uncovered_scenes(obj, pose_stem, hand=hand,
-                                  version=args.grasp_version))
+                                  version=args.grasp_version,
+                                  success_root=candidate_state_root))
         if _rem is not None and len(_rem) == 0:
-            target = pick_reorient_target(obj, pose_stem, hand=hand,
-                                           version=args.grasp_version,
-                                           obj_root=obj_root)
+            target = pick_reorient_target(
+                obj, pose_stem, hand=hand, version=args.grasp_version,
+                obj_root=obj_root, success_root=candidate_state_root)
             print(f"\n    [reorient] tabletop {pose_stem} fully covered.")
             if target is None:
                 done = _reorient_target_absent_result(
                     obj=obj, hand=hand, version=args.grasp_version,
                     obj_root=obj_root, dir_idx=dir_idx,
                     scene_type=args.scene, timing=timing,
+                    success_root=candidate_state_root,
                 )
                 with open(os.path.join(img_dir, "result.json"), "w") as f:
                     json.dump(done, f, indent=2, default=str)
@@ -745,15 +857,12 @@ def run_single_trial(
                              f"--target_j {j_int} --auto "
                              f"--version {args.grasp_version}")
             print(f"    Suggested:\n      {_reorient_cmd}")
-            try:
-                _prompt = ("    Press Enter to RUN integrated reorient now, "
-                           if reorient_handler is not None else
-                           "    Press Enter to RUN reorient now, ")
-                _cmd = input(_prompt +
-                             "'s' to skip-and-continue (you ran it manually), "
-                             "'q' to quit: ").strip().lower()
-            except KeyboardInterrupt:
-                _cmd = "q"
+            _prompt = ("    Press Enter to RUN integrated reorient now, "
+                       if reorient_handler is not None else
+                       "    Press Enter to RUN reorient now, ")
+            _cmd = _prompt_or_auto(
+                args, _prompt + "'s' to skip-and-continue (you ran it manually), "
+                "'q' to quit: ")
             done = {"dir_idx": dir_idx, "scene_type": args.scene,
                     "success": None, "reason": "reorient_needed",
                     "reorient_target_j": j_int,
@@ -786,10 +895,14 @@ def run_single_trial(
         _plan_tabletop_stem = None
         _plan_candidate_order = None
         _plan_priority_map = None
-    # Reposition: ignore skip_done / skip_scenes_with_success so stats-ranked
-    # candidates can be retried.
-    _skip_done_eff = False if (reposition_mode or args.ignore_coverage) else True
-    _skip_scenes_eff = False if (reposition_mode or args.ignore_coverage) else True
+    # Reposition retries stats-ranked candidates.  An isolated campaign keeps
+    # mutable records outside the geometry tree, so its coverage-derived
+    # ``candidate_order`` is the only valid filter; letting load_candidate
+    # inspect shared result.json files would leak v8 collection history.
+    _skip_done_eff = False if (reposition_mode or args.ignore_coverage
+                               or args.isolate_experiment) else True
+    _skip_scenes_eff = False if (reposition_mode or args.ignore_coverage
+                                 or args.isolate_experiment) else True
     result = planner.plan(
         scene_cfg, obj, _eff_grasp_version,
         skip_done=_skip_done_eff,
@@ -815,16 +928,18 @@ def run_single_trial(
         if n_total == 0:
             print(f"    No grasp candidates left at tabletop {pose_stem} "
                   f"for {obj} ({args.grasp_version}).")
-            if _is_coverage_pool(args.grasp_version):
+            if (_is_coverage_pool(args.grasp_version)
+                    and not args.ignore_coverage):
                 from autodex.utils.coverage import pick_reorient_target
-                target = pick_reorient_target(obj, pose_stem, hand=hand,
-                                               version=args.grasp_version,
-                                               obj_root=obj_root)
+                target = pick_reorient_target(
+                    obj, pose_stem, hand=hand, version=args.grasp_version,
+                    obj_root=obj_root, success_root=candidate_state_root)
                 if target is None:
                     done = _reorient_target_absent_result(
                         obj=obj, hand=hand, version=args.grasp_version,
                         obj_root=obj_root, dir_idx=dir_idx,
                         scene_type=args.scene, timing=timing,
+                        success_root=candidate_state_root,
                     )
                     with open(os.path.join(img_dir, "result.json"), "w") as f:
                         json.dump(done, f, indent=2, default=str)
@@ -837,13 +952,10 @@ def run_single_trial(
                       f"--obj {obj} --hand {hand} --arm {args.arm} "
                       f"--target_j {j_int} --auto "
                       f"--version {args.grasp_version}")
-                try:
-                    _prompt = ("    Press Enter to RUN integrated reorient "
-                               "(q to quit): " if reorient_handler is not None
-                               else "    Run reorient then press Enter (q to quit): ")
-                    _cmd = input(_prompt).strip().lower()
-                except KeyboardInterrupt:
-                    _cmd = "q"
+                _prompt = ("    Press Enter to RUN integrated reorient "
+                           "(q to quit): " if reorient_handler is not None
+                           else "    Run reorient then press Enter (q to quit): ")
+                _cmd = _prompt_or_auto(args, _prompt)
                 done = {"dir_idx": dir_idx, "scene_type": args.scene,
                         "success": None, "reason": "reorient_needed",
                         "reorient_target_j": j_int,
@@ -863,9 +975,14 @@ def run_single_trial(
                 with open(os.path.join(img_dir, "result.json"), "w") as f:
                     json.dump(done, f, indent=2, default=str)
                 return _stamp_end(done)
-            print(f"    All scenes already done — nothing left to try.")
+            if args.ignore_coverage:
+                print("    No candidates available in the unrestricted pool.")
+            else:
+                print("    All scenes already done — nothing left to try.")
             done = {"dir_idx": dir_idx, "scene_type": args.scene,
-                    "success": None, "reason": "all_scenes_done",
+                    "success": None,
+                    "reason": ("no_candidates" if args.ignore_coverage
+                               else "all_scenes_done"),
                     "all_done": True, "timing": timing}
             with open(os.path.join(img_dir, "result.json"), "w") as f:
                 json.dump(done, f, indent=2, default=str)
@@ -899,7 +1016,11 @@ def run_single_trial(
                                     if k.startswith("plan") and k.endswith("_s"))
             # Fall through to the normal post-plan code path below.
         else:
-            print("    Planning FAILED after retries — launching visualizer to inspect...")
+            if args.auto:
+                print("    Planning FAILED after retries — automatic recovery; "
+                      "skipping visualizer.")
+            else:
+                print("    Planning FAILED after retries — launching visualizer to inspect...")
         # Match planner.plan()'s actual candidate pool: skip_done=True and
         # skip_scenes_with_success=True so the viewer shows only what was
         # actually attempted (not the full disk pool).
@@ -915,18 +1036,35 @@ def run_single_trial(
             cyl_yaw_grid=_cyl_grid,
             skip_scenes_with_success=_skip_scenes_eff,
         )
-        fv = ScenePlanVisualizer(scene_cfg, None, port=8080,
-                                 hand=_planner_robot(args.arm, hand))
-        fv.add_candidates(wrist_se3, grasp_pose, filtered, ik_failed=ik_failed)
-        fv.start_viewer(use_thread=True)
-        _active_vis = fv
+        if not args.auto:
+            fv = ScenePlanVisualizer(scene_cfg, None, port=8080,
+                                     hand=_planner_robot(args.arm, hand))
+            fv.add_candidates(wrist_se3, grasp_pose, filtered, ik_failed=ik_failed)
+            fv.start_viewer(use_thread=True)
+            _active_vis = fv
         chime.error()
         # Before bouncing to reorient, try an (x, yaw) sweep at the
         # CURRENT tabletop — same obj orientation, just translate /
         # rotate around vertical. If any (r, yaw) makes ≥1 candidate
         # IK-feasible, prefer that (rotate_obj_yaw) over reorienting
         # to a different tabletop.
-        if _is_coverage_pool(args.grasp_version):
+        _rotate_count_key = str(pose_stem) if pose_stem is not None else "__unclassified__"
+        _rotate_count = int((consecutive_rotate_counts or {}).get(
+            _rotate_count_key, 0))
+        _rotate_limit = int(args.max_consecutive_rotates)
+        _rotate_allowed = _rotate_count < _rotate_limit
+        _rotate_cap_info = {
+            "tabletop_stem": pose_stem,
+            "count": _rotate_count,
+            "limit": _rotate_limit,
+        }
+        if (_is_coverage_pool(args.grasp_version)
+                and not args.ignore_coverage and not _rotate_allowed):
+            print(f"    [rotate] consecutive cap reached for tabletop "
+                  f"{pose_stem}: {_rotate_count}/{_rotate_limit}; "
+                  "skipping rotate and proceeding to reorient.")
+        if (_rotate_allowed and _is_coverage_pool(args.grasp_version)
+                and not args.ignore_coverage):
             _ros_yaw = None
             _ros_x = None
             try:
@@ -938,11 +1076,17 @@ def run_single_trial(
                 # via load_candidate). Recover obj-local wrist = inv(T_obj_now) @ world.
                 _wrist_obj_local = np.einsum(
                     "ij,Njk->Nik", np.linalg.inv(T_obj_now), wrist_se3)
-                # Search only x positions that remain over the measured floor
-                # board at its measured centreline; values below 0.50 were
-                # outside board 11 in the 2026-09-06 live verification.
+                # Prefer the physical centre of board 11.  Use the same
+                # symmetric +/-5 cm and +/-10 cm X fallbacks as reorient when
+                # the centre cannot make a useful grasp IK-feasible.
+                _target_x = float(CHARUCO_BOARD_11_CENTER_XY[0])
                 _target_y = float(CHARUCO_BOARD_11_CENTER_XY[1])
-                _xs = np.arange(0.50, 0.71, 0.05)
+                if tabletop_geometry is not None:
+                    _board_center = np.asarray(
+                        tabletop_geometry["center_robot_m"], dtype=np.float64)
+                    _target_x = float(_board_center[0])
+                    _target_y = float(_board_center[1])
+                _xs = _target_x + CHARUCO_BOARD_CENTER_X_OFFSETS_M
                 _yaws = np.deg2rad(np.arange(0, 360, 30))
                 _combos = [(float(x), float(y)) for x in _xs for y in _yaws]
                 # For each (x, yaw), build all wrists and IK batch-check.
@@ -959,7 +1103,11 @@ def run_single_trial(
                     _world_wrists = T_new[None] @ _wlocal
                     _succ = planner.ik_pose_batch(_world_wrists)
                     _n = int(_succ.sum())
-                    if _best_pick is None or _n > _best_pick[0]:
+                    if (_best_pick is None
+                            or _n > _best_pick[0]
+                            or (_n == _best_pick[0]
+                                and abs(_x - _target_x)
+                                < abs(_best_pick[1] - _target_x))):
                         _best_pick = (_n, _x, float(np.degrees(_yaw)))
                 if _best_pick is not None and _best_pick[0] > 0:
                     _, _ros_x, _ros_yaw = _best_pick
@@ -980,17 +1128,15 @@ def run_single_trial(
                              f"--target_y {_target_y:.3f} "
                              f"--grasp_version {args.grasp_version}")
                 print(f"    Suggested (same-tabletop, no reorient):\n      {_cmd_ros}")
-                try:
-                    _cmd = input("    Press Enter to RUN rotate_obj_yaw now, "
-                                 "'s' to skip-and-continue, 'q' to quit: "
-                                 ).strip().lower()
-                except KeyboardInterrupt:
-                    _cmd = "q"
+                _cmd = _prompt_or_auto(
+                    args, "    Press Enter to RUN rotate_obj_yaw now, "
+                    "'s' to skip-and-continue, 'q' to quit: ")
                 fail_record = {"dir_idx": dir_idx, "scene_type": args.scene,
                                "success": False,
                                "reason": "pose_adjust_needed",
                                "pose_adjust": {"x": _ros_x, "y": _target_y,
                                                "yaw_deg": _ros_yaw},
+                               "rotate_recovery": _rotate_cap_info,
                                "timing": timing}
                 if _cmd == "q":
                     fail_record["all_done"] = True
@@ -1026,6 +1172,7 @@ def run_single_trial(
                                 skip_scenes_with_success=_skip_scenes_eff,
                                 cyl_axis_local=_cyl_axis,
                                 cyl_yaw_grid=_cyl_grid,
+                                tabletop_geometry=tabletop_geometry,
                             )
                         except Exception as rotate_exc:
                             rotate_info = {
@@ -1036,15 +1183,28 @@ def run_single_trial(
                             print(f"    [pipeline] rotate exception: {rotate_exc!r}")
                         fail_record["rotation"] = rotate_info
                         if rotate_info.get("success"):
+                            if consecutive_rotate_counts is not None:
+                                _rotate_count += 1
+                                consecutive_rotate_counts[_rotate_count_key] = _rotate_count
+                            rotate_info["consecutive_rotate_count"] = _rotate_count
+                            rotate_info["consecutive_rotate_limit"] = _rotate_limit
+                            fail_record["rotate_recovery"] = {
+                                "tabletop_stem": pose_stem,
+                                "count": _rotate_count,
+                                "limit": _rotate_limit,
+                            }
+                            print(f"    [rotate] consecutive recovery "
+                                  f"{_rotate_count}/{_rotate_limit} for tabletop "
+                                  f"{pose_stem}")
                             fail_record["reason"] = "pose_adjusted"
                             fail_record["retry_current_trial"] = True
                 with open(os.path.join(img_dir, "result.json"), "w") as f:
                     json.dump(fail_record, f, indent=2, default=str)
                 return _stamp_end(fail_record)
             from autodex.utils.coverage import pick_reorient_target
-            target = pick_reorient_target(obj, pose_stem, hand=hand,
-                                           version=args.grasp_version,
-                                           obj_root=obj_root)
+            target = pick_reorient_target(
+                obj, pose_stem, hand=hand, version=args.grasp_version,
+                obj_root=obj_root, success_root=candidate_state_root)
             if target is not None:
                 j_int, stem, n_rem = target
                 print(f"\n    [reorient] all candidates at tabletop {pose_stem} "
@@ -1056,19 +1216,18 @@ def run_single_trial(
                       f"--obj {obj} --hand {hand} --arm {args.arm} "
                       f"--target_j {j_int} --auto "
                       f"--version {args.grasp_version}")
-                try:
-                    _prompt = ("    Press Enter to RUN integrated reorient "
-                               "(q to quit): " if reorient_handler is not None
-                               else "    Run reorient then press Enter (q to quit): ")
-                    _cmd = input(_prompt).strip().lower()
-                except KeyboardInterrupt:
-                    _cmd = "q"
+                _prompt = ("    Press Enter to RUN integrated reorient "
+                           "(q to quit): " if reorient_handler is not None
+                           else "    Run reorient then press Enter (q to quit): ")
+                _cmd = _prompt_or_auto(args, _prompt)
                 fail = {"dir_idx": dir_idx, "scene_type": args.scene,
                         "success": False, "reason": "reorient_needed_ik_fail",
                         "reorient_target_j": j_int,
                         "reorient_target_stem": stem,
                         "reorient_uncovered_n": n_rem,
                         "timing": timing}
+                if not _rotate_allowed:
+                    fail["rotate_recovery"] = _rotate_cap_info
                 if _cmd == "q":
                     fail["all_done"] = True
                     fail["reason"] = "user_quit_reorient"
@@ -1089,7 +1248,10 @@ def run_single_trial(
                 obj=obj, hand=hand, version=args.grasp_version,
                 obj_root=obj_root, dir_idx=dir_idx,
                 scene_type=args.scene, timing=timing,
+                success_root=candidate_state_root,
             )
+            if not _rotate_allowed:
+                absent["rotate_recovery"] = _rotate_cap_info
             with open(os.path.join(img_dir, "result.json"), "w") as f:
                 json.dump(absent, f, indent=2, default=str)
             return _stamp_end(absent)
@@ -1097,6 +1259,8 @@ def run_single_trial(
         fail = {"dir_idx": dir_idx, "scene_type": args.scene, "success": False,
                 "reason": "planning_failed_all_candidates",
                 "all_done": True, "timing": timing}
+        if not _rotate_allowed:
+            fail["rotate_recovery"] = _rotate_cap_info
         with open(os.path.join(img_dir, "result.json"), "w") as f:
             json.dump(fail, f, indent=2, default=str)
         return _stamp_end(fail)
@@ -1115,7 +1279,7 @@ def run_single_trial(
     _precomputed_lift_traj = None
     _precomputed_repo_traj = None
 
-    if args.viz:
+    if args.viz and not args.auto:
         print("    Launching visualizer (http://localhost:8080)...")
         sv = ScenePlanVisualizer(scene_cfg, result, port=8080,
                                  hand=_planner_robot(args.arm, hand))
@@ -1224,6 +1388,8 @@ def run_single_trial(
             print(f"    [viz] phase precompute failed: {_viz_e!r}")
         sv.start_viewer(use_thread=True)
         _active_vis = sv
+    elif args.viz:
+        print("    [viz] --auto: visualizer disabled")
 
     # ── 4. Execute (stream off, video on) ───────────────────────────────────
     print(f"[4/6] Executing on robot...")
@@ -1276,22 +1442,20 @@ def run_single_trial(
         _stop_with_timeout("rcc", rcc.stop)
         # Persist per-candidate fail so we don't pick the same one again.
         if result.scene_info is not None:
-            sei = result.scene_info
-            if isinstance(sei, (list, tuple)) and len(sei) == 3:
-                from autodex.utils.path import get_candidate_path
-                cand_result_path = os.path.join(
-                    get_candidate_path(hand), args.grasp_version, obj,
-                    sei[0], sei[1], sei[2], "result.json",
-                )
-                try:
-                    write_candidate_result(cand_result_path, {
-                        "success": False, "dir_idx": dir_idx,
-                        "arm": args.arm,
-                        "reason": f"execute_{type(_exec_e).__name__}"})
-                except Exception: pass
+            try:
+                _write_candidate_outcome(
+                    args, hand, obj, result.scene_info,
+                    {"success": False, "dir_idx": dir_idx,
+                     "arm": args.arm,
+                     "reason": f"execute_{type(_exec_e).__name__}"})
+            except Exception:
+                pass
         fail = {"dir_idx": dir_idx, "scene_type": args.scene,
                 "success": False, "reason": "execute_exception",
-                "exception": repr(_exec_e), "timing": timing}
+                "exception": repr(_exec_e), "scene_info": result.scene_info,
+                "candidate_result_scope": (
+                    "experiment" if args.isolate_experiment else "shared_v8"),
+                "timing": timing}
         try:
             with open(os.path.join(img_dir, "result.json"), "w") as _f:
                 json.dump(fail, _f, indent=2, default=str)
@@ -1359,20 +1523,17 @@ def run_single_trial(
             # Persist fail to the candidate dir (skip_done filter on next trial).
             # Skipped when the label was unjudgeable — see above.
             if result.scene_info is not None and not _label_unjudgeable:
-                from autodex.utils.path import get_candidate_path
-                sei = result.scene_info
-                if isinstance(sei, (list, tuple)) and len(sei) == 3:
-                    cand_result_path = os.path.join(
-                        get_candidate_path(hand), args.grasp_version, obj,
-                        sei[0], sei[1], sei[2], "result.json",
-                    )
-                    write_candidate_result(cand_result_path, {
-                        "success": False, "dir_idx": dir_idx,
-                        "arm": args.arm, "reason": "charuco_fail"})
+                _write_candidate_outcome(
+                    args, hand, obj, result.scene_info,
+                    {"success": False, "dir_idx": dir_idx,
+                     "arm": args.arm, "reason": "charuco_fail"})
             fail = {"dir_idx": dir_idx, "scene_type": args.scene,
                     "success": None if _label_unjudgeable else False,
                     "reason": ("label_unjudgeable" if _label_unjudgeable
                                else "charuco_fail"),
+                    "scene_info": result.scene_info,
+                    "candidate_result_scope": (
+                        "experiment" if args.isolate_experiment else "shared_v8"),
                     "auto_label": auto_label_info, "timing": timing}
             with open(os.path.join(img_dir, "result.json"), "w") as f:
                 json.dump(fail, f, indent=2, default=str)
@@ -1381,14 +1542,28 @@ def run_single_trial(
         # Resume video for place phase.
         _rcc_start(rcc, "video", True, place_rel)
 
-    # Reposition obj at (x=R_PLACE, y=0, current_z) before place. For v8,
+    # Reposition obj on board 11 before place. The physical board centre is
+    # the default target; all fallbacks use the shared symmetric +/-5 cm and
+    # +/-10 cm on-board grid.
+    # ``obj_z`` intentionally remains the grasp-time object Z: reposition is
+    # a carried-object motion, not a table-height release.
     # pick yaw that makes the NEXT cov-greedy grasp IK-reachable. Hold z so
     # obj doesn't dip / rise during reposition (plan_pose_constrained).
     from autodex.utils.conversion import cart2se3
     from autodex.utils.coverage import next_grasp_after_success
     from autodex.utils.path import get_candidate_path
 
-    R_PLACE_DEFAULT = 0.50
+    _reposition_x = float(CHARUCO_BOARD_11_CENTER_XY[0])
+    _reposition_y = float(CHARUCO_BOARD_11_CENTER_XY[1])
+    if tabletop_geometry is not None:
+        _board_center = np.asarray(
+            tabletop_geometry["center_robot_m"], dtype=np.float64).reshape(3)
+        _reposition_x = float(_board_center[0])
+        _reposition_y = float(_board_center[1])
+        print("    [reposition] board-11 centre from preflight: "
+              f"x={_reposition_x:.3f}, y={_reposition_y:.3f}")
+
+    R_PLACE_DEFAULT = _reposition_x
     R_PLACE = R_PLACE_DEFAULT   # overridden below if yaw_search picks better r
     T_wrist_now = executor.arm.get_data()["position"] @ executor._link6_to_wrist
     T_obj_grasp = cart2se3(scene_cfg["mesh"]["target"]["pose"])
@@ -1406,34 +1581,48 @@ def run_single_trial(
     chosen_yaw = 0.0
     yaw_feasible_n = 0
     _repos = None
-    if _is_coverage_pool(args.grasp_version) and pose_stem is not None:
+    if (_is_coverage_pool(args.grasp_version) and not args.ignore_coverage
+            and pose_stem is not None):
         # Coverage-driven placement: score every (r, yaw) by the UNION of
         # scenes the grasps it makes reachable would newly cover, instead of
         # only chasing the single next set-cover pick below.
         from autodex.utils.reposition import pick_reposition_target, describe
         try:
+            # All on-board placement paths share the exact same centre-first
+            # X grid. ``pick_reposition_target`` ranks coverage first and then
+            # distance to x_preferred, making the centre deterministic when
+            # it is equally useful.
+            _repo_search_kw = {
+                "x_grid": (_reposition_x
+                           + CHARUCO_BOARD_CENTER_X_OFFSETS_M),
+                "y": _reposition_y,
+            }
             _repos = pick_reposition_target(
                 obj, pose_stem, hand, args.grasp_version,
                 planner=planner, R_obj_robot=R_obj_now, obj_z=obj_z,
                 x_preferred=R_PLACE_DEFAULT,
+                success_root=candidate_state_root, **_repo_search_kw,
             )
         except Exception as _re:
             print(f"    [place_yaw] reposition search failed: {_re!r}")
             _repos = None
         print(f"    [place_yaw] coverage: {describe(_repos)}")
         if _repos is not None:
-            R_PLACE = _repos["x"]
+            R_PLACE = float(_repos["x"])
             chosen_yaw = _repos["yaw_rad"]
             yaw_feasible_n = _repos["n_feasible_grasps"]
 
     # Fallback: no coverage json (or nothing left to open) — aim the placement
     # at whichever grasp the set-cover would pick next, as before.
-    if _repos is None and _is_coverage_pool(args.grasp_version) \
-            and result.scene_info is not None:
+    if (_repos is None
+            and _is_coverage_pool(args.grasp_version)
+            and not args.ignore_coverage
+            and result.scene_info is not None):
         cur_key = tuple(str(x) for x in result.scene_info)
         next_key = next_grasp_after_success(
             obj, cur_key, tabletop_pose_stem=pose_stem,
             hand=hand, version=args.grasp_version,
+            success_root=candidate_state_root,
         )
         if next_key is not None:
             next_path = os.path.join(
@@ -1442,12 +1631,11 @@ def run_single_trial(
             )
             if os.path.exists(next_path):
                 next_wrist_obj = np.load(next_path)
-                # Sweep (r, yaw): r in [0.40 .. 0.65] step 0.05, yaw 0..350° step 10°.
-                # Picks (r, yaw) that makes next grasp's wrist target IK-feasible.
-                # Prefer r closest to default (0.55) — keeps placements predictable
-                # on the board when multiple radii work.
+                # Sweep the same centre-first X grid used by coverage, rotate,
+                # and reorient. Prefer the board centre when multiple choices
+                # are otherwise equivalent.
                 yaws = np.deg2rad(np.arange(0, 360, 10))
-                rs = np.arange(0.40, 0.66, 0.05)
+                rs = (_reposition_x + CHARUCO_BOARD_CENTER_X_OFFSETS_M)
                 combos = [(r, y) for r in rs for y in yaws]
                 wrist_targets = np.zeros((len(combos), 4, 4))
                 for i, (r, yaw) in enumerate(combos):
@@ -1455,7 +1643,7 @@ def run_single_trial(
                     Rz = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
                     T_obj_target = np.eye(4)
                     T_obj_target[:3, :3] = Rz @ R_obj_now
-                    T_obj_target[:3, 3] = [float(r), 0.0, obj_z]
+                    T_obj_target[:3, 3] = [float(r), _reposition_y, obj_z]
                     wrist_targets[i] = T_obj_target @ next_wrist_obj
                 succ = planner.ik_pose_batch(wrist_targets)
                 ok_idx = np.where(succ)[0]
@@ -1468,23 +1656,24 @@ def run_single_trial(
                     R_PLACE = float(combos[best][0])
                     chosen_yaw = float(combos[best][1])
                     print(f"    [place_yaw] next={next_key} → "
-                          f"r={R_PLACE:.2f}  yaw={np.degrees(chosen_yaw):.0f}°  "
+                          f"x={R_PLACE:.2f}  yaw={np.degrees(chosen_yaw):.0f}°  "
                           f"({yaw_feasible_n}/{len(combos)} feasible)")
                 else:
                     print(f"    [place_yaw] next={next_key} 0 (r,yaw) feasible "
-                          f"— using r={R_PLACE_DEFAULT}, yaw=0°")
+                          f"— using x={R_PLACE_DEFAULT:.2f}, yaw=0°")
             else:
                 print(f"    [place_yaw] next grasp wrist_se3.npy missing: "
                       f"{next_path}")
         else:
             print(f"    [place_yaw] no next grasp in cov order")
 
-    # Move arm so obj ends at (R_PLACE, 0, obj_z) with chosen yaw, holding z.
+    # Move arm so obj ends at the selected board-relative XY and the original
+    # grasp object Z.  Do not replace this Z by the measured table height.
     c, s = np.cos(chosen_yaw), np.sin(chosen_yaw)
     Rz = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
     T_obj_target = np.eye(4)
     T_obj_target[:3, :3] = Rz @ R_obj_now
-    T_obj_target[:3, 3] = [R_PLACE, 0.0, obj_z]
+    T_obj_target[:3, 3] = [R_PLACE, _reposition_y, obj_z]
     T_wrist_target = T_obj_target @ np.linalg.inv(T_obj_in_wrist)
     # Force goal wrist z = current wrist z exactly so cuRobo's held-z check
     # passes. Mathematically z is preserved under world-z rotation already,
@@ -1517,7 +1706,7 @@ def run_single_trial(
         # open fingers mid-motion → drop obj).
         hand_repose = np.tile(s_hand, (len(traj_repose), 1))
         executor._move_joints(arm_repose, hand_repose)
-        print(f"    [reposition] obj → (r={R_PLACE}, y=0, "
+        print(f"    [reposition] obj → (x={R_PLACE:.3f}, y={_reposition_y:.3f}, "
               f"yaw={np.degrees(chosen_yaw):.0f}°)")
     else:
         print(f"    [reposition] plan_pose_constrained failed — placing here")
@@ -1528,11 +1717,23 @@ def run_single_trial(
     # current wrist would put the object below the tabletop. Build the explicit
     # table-height wrist from the selected object pose instead.
     _place_kw = {}
-    if args.arm == "franka" and reposition_mode:
+    # A successful post-grasp reposition is the actual placement transfer for
+    # both ordinary coverage trials and explicit Charuco reposition trials.
+    # Make Franka release at that selected target too (as the legacy executor
+    # did from its current carry pose), rather than returning to the original
+    # grasp pose solely because its place primitive needs an explicit wrist.
+    if args.arm == "franka" and (reposition_mode or traj_repose is not None):
         T_obj_place_low = T_obj_target.copy()
         T_obj_place_low[2, 3] = T_obj_grasp[2, 3]
         _place_kw["grasp_wrist"] = (
             T_obj_place_low @ np.linalg.inv(T_obj_in_wrist))
+        if traj_repose is not None:
+            # ``traj_repose`` has just moved the held object to this same
+            # +10cm place-high pose.  FrankaExecutor.place() verifies both
+            # this target and the live wrist before reusing it; otherwise it
+            # retains its normal collision-checked pre-place correction.
+            _place_kw["preplace_traj"] = traj_repose
+            _place_kw["preplace_wrist_target"] = T_wrist_target
     place_info = executor.place(result, planner=planner, scene_cfg=scene_cfg,
                                 debug_dump_dir=DEBUG_DUMP_DIR, **_place_kw)
     timing["execute_s"] = round(time.time() - t0, 2)
@@ -1592,29 +1793,19 @@ def run_single_trial(
             # Reposition fail (contact stop) → update stats with fail.
             if result.scene_info is not None:
                 from autodex.utils.coverage import update_grasp_stats
-                from autodex.utils.path import get_candidate_path
                 sei = result.scene_info
-                if isinstance(sei, (list, tuple)) and len(sei) == 3:
-                    gd = os.path.join(
-                        get_candidate_path(hand), args.grasp_version, obj,
-                        sei[0], sei[1], sei[2]
-                    )
+                gd = _candidate_state_grasp_dir(args, hand, obj, sei)
+                if gd is not None:
                     a, s = update_grasp_stats(gd, False)
                     print(f"    [stats] {sei} now {s}/{a} (rate={s/a if a else 0:.2f})")
                     timing["repo_stats"] = {"attempts": a, "successes": s}
         elif result.scene_info is not None:
-            from autodex.utils.path import get_candidate_path
-            sei = result.scene_info
-            if isinstance(sei, (list, tuple)) and len(sei) == 3:
-                cand_result_path = os.path.join(
-                    get_candidate_path(hand), args.grasp_version, obj,
-                    sei[0], sei[1], sei[2], "result.json",
-                )
-                write_candidate_result(cand_result_path, {
-                    "success": bool(auto_succ_lift),
-                    "dir_idx": dir_idx,
-                    "arm": args.arm,
-                    "reason": "place_early_contact"})
+            _write_candidate_outcome(
+                args, hand, obj, result.scene_info,
+                {"success": bool(auto_succ_lift),
+                 "dir_idx": dir_idx,
+                 "arm": args.arm,
+                 "reason": "place_early_contact"})
         # Grasp success criterion = charuco at LIFT (auto_succ_lift). Place
         # quality is a separate metric — early contact during descent does
         # not invalidate a successful grasp. Keep trial.success = grasp
@@ -1625,6 +1816,9 @@ def run_single_trial(
             "success": trial_success,
             "reason": ("place_early_contact" if trial_success
                        else "charuco_fail_then_place_early_contact"),
+            "scene_info": result.scene_info,
+            "candidate_result_scope": (
+                "experiment" if args.isolate_experiment else "shared_v8"),
             "auto_label_lift": auto_label_info,
             "place": place_info, "timing": timing,
         }
@@ -1662,13 +1856,9 @@ def run_single_trial(
             # Update stats for the chosen v8 grasp.
             if result.scene_info is not None:
                 from autodex.utils.coverage import update_grasp_stats
-                from autodex.utils.path import get_candidate_path as _gcp
                 sei = result.scene_info
-                if isinstance(sei, (list, tuple)) and len(sei) == 3:
-                    grasp_dir = os.path.join(
-                        _gcp(hand), args.grasp_version, obj,
-                        sei[0], sei[1], sei[2]
-                    )
+                grasp_dir = _candidate_state_grasp_dir(args, hand, obj, sei)
+                if grasp_dir is not None:
                     a, s = update_grasp_stats(grasp_dir, succ)
                     print(f"    [stats] {sei} now {s}/{a} "
                           f"(rate={s/a if a else 0:.2f})")
@@ -1733,6 +1923,8 @@ def run_single_trial(
         "success": succ,
         "scene_info": result.scene_info,
         "candidate_idx": result.timing.get("candidate_idx") if result.timing else None,
+        "candidate_result_scope": (
+            "experiment" if args.isolate_experiment else "shared_v8"),
         "tabletop_before": tb_before,
         "timing": timing,
     }
@@ -1748,15 +1940,9 @@ def run_single_trial(
     # their stats.json is updated separately above.
     if (succ is not None and result.scene_info is not None
             and not reposition_mode):
-        from autodex.utils.path import get_candidate_path
-        sei = result.scene_info
-        if isinstance(sei, (list, tuple)) and len(sei) == 3:
-            cand_result_path = os.path.join(
-                get_candidate_path(hand), args.grasp_version, obj,
-                sei[0], sei[1], sei[2], "result.json",
-            )
-            write_candidate_result(cand_result_path, {
-                "success": succ, "dir_idx": dir_idx, "arm": args.arm})
+        _write_candidate_outcome(
+            args, hand, obj, result.scene_info,
+            {"success": succ, "dir_idx": dir_idx, "arm": args.arm})
 
     status = "SUCCESS" if succ else ("ISSUE" if succ is None else "FAIL")
     print(f"    Result: {status}  saved to {img_dir}/result.json")
@@ -1769,7 +1955,7 @@ def run_single_trial(
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
-def main(pose_adjust_handler=None, reorient_handler=None):
+def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--obj", type=str, required=True)
     parser.add_argument("--grasp_version", type=str, default="v8",
@@ -1787,10 +1973,20 @@ def main(pose_adjust_handler=None, reorient_handler=None):
     parser.add_argument("--viz", action="store_true")
     parser.add_argument("--max_trials", type=int, default=0,
                         help="0=unlimited. With --ignore_coverage: cap demo run.")
+    parser.add_argument(
+        "--max_consecutive_rotates", type=int, default=2,
+        help="Maximum successful in-process rotate recoveries in a row for "
+             "one tabletop pose (default: 2). 0 disables rotate recovery and "
+             "goes directly to reorient after a planning failure.",
+    )
     parser.add_argument("--ignore_coverage", action="store_true",
                         help="Run regardless of scene coverage / past success: "
                              "no coverage filter, no skip_done, no reorient "
                              "suggestion.")
+    parser.add_argument("--isolate_experiment", action="store_true",
+                        help="Keep candidate labels in experiment/<exp_name> only. "
+                             "Coverage ordering, progress, and reorient use that "
+                             "private state; shared v8 labels remain untouched.")
     parser.add_argument("--candidate-scene-type", default=None,
                         choices=["table", "wall", "shelf", "box"],
                         help="Use only this candidate scene type while retaining normal skip-done semantics. "
@@ -1820,7 +2016,8 @@ def main(pose_adjust_handler=None, reorient_handler=None):
     parser.add_argument("--port_snap_cmd", type=int, default=6894)
     parser.add_argument("--auto", action="store_true",
                         help="Auto-label via charuco snapshot at lift-time. "
-                             "Default off — falls back to manual get_label() prompt.")
+                             "Also auto-approves pipeline rotate/reorient recovery; "
+                             "default off falls back to manual get_label() prompt.")
     parser.add_argument("--prompt", type=str, default="object on the checkerboard")
     parser.add_argument(
         "--perception_mode", choices=["iou", "ignore_sil_loss"], default="iou",
@@ -1839,12 +2036,31 @@ def main(pose_adjust_handler=None, reorient_handler=None):
                         help="Camera calib dir. Default: latest under ~/shared_data/cam_param/.")
     parser.add_argument("--stream_fps", type=int, default=10)
     parser.add_argument("--stream_warmup_s", type=float, default=2.0)
+    parser.add_argument(
+        "--charuco-preflight", choices=["prompt", "measure", "skip"],
+        default="prompt",
+        help="run_pipeline only: empty-board Charuco measurement before the "
+             "first object is placed. prompt=choose at runtime, "
+             "measure=require it, skip=use fixed default tabletop geometry.",
+    )
 
     args = parser.parse_args()
     if args.grasp_version != "v8":
         parser.error("run_auto supports only --grasp_version v8; legacy asset pools are disabled")
+    if args.max_consecutive_rotates < 0:
+        parser.error("--max_consecutive_rotates must be >= 0")
     if args.exp_name is None:
         args.exp_name = args.grasp_version
+    if args.isolate_experiment:
+        if args.success_only:
+            parser.error("--isolate_experiment cannot be combined with --success_only "
+                         "because success-only reads shared v8 candidate labels")
+        state_root = experiment_candidate_state_root(
+            args.exp_name, args.hand, args.grasp_version, args.obj)
+        print("[experiment] isolated mode: episode labels and candidate state "
+              f"-> experiment/{args.exp_name}; shared v8 state is untouched")
+        print("[experiment] private candidate state -> "
+              f"{os.path.relpath(state_root, project_dir)}")
 
     # scene_prefix: '' (table), 'wall', 'shelf', 'cluttered', plus '_success_only' suffix.
     scene_prefix = args.scene if args.scene != "table" else ""
@@ -1959,11 +2175,53 @@ def main(pose_adjust_handler=None, reorient_handler=None):
             except Exception:
                 pass
 
+    # ``run_pipeline`` installs an empty-board preflight here.  It runs after
+    # clear-view but before any object perception, so the measurement can use
+    # all Charuco corners without paying for a second FoundPose init.
+    session_tabletop_geometry = None
+    startup_cancelled = False
+    if startup_handler is not None:
+        try:
+            startup_result = startup_handler(
+                args=args, rcc=rcc, executor=executor,
+                intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
+                capture_ips=pc_ips, n_cameras=len(intrinsics_full),
+                scene_prefix=scene_prefix,
+            )
+            if isinstance(startup_result, dict) and startup_result.get("cancel"):
+                startup_cancelled = True
+            elif startup_result is not None:
+                session_tabletop_geometry = startup_result
+        except Exception as startup_exc:
+            # A startup hook must never silently leave us using stale geometry
+            # after an operator selected measurement.  It can return None only
+            # for an explicit skip; unexpected failures end this session.
+            startup_cancelled = True
+            print(f"[startup] preflight failed: {startup_exc!r}")
+
+    # ``--auto`` removes per-trial and recovery confirmations, but an operator
+    # must still be able to place the object deliberately before the very first
+    # perception.  Keep this one session-start gate; recovery retries never
+    # return here, so rotate/reorient remain fully automatic afterwards.
+    if args.auto and not startup_cancelled:
+        try:
+            cmd = input("[auto] Place the object, then press Enter to start "
+                        "the automatic session (q to quit): ").strip().lower()
+        except KeyboardInterrupt:
+            cmd = "q"
+        if cmd == "q":
+            startup_cancelled = True
+
     results: List[dict] = []
     trial = 0
     resume_after_pose_adjust = False
+    # The counter tracks only consecutive *successful physical rotations*.
+    # A normal completed grasp/place trial or a successful reorient begins a
+    # new sequence, so an object cannot oscillate indefinitely at one pose.
+    consecutive_rotate_counts: Dict[str, int] = {}
+    campaign_state_root = _candidate_state_root(args, args.hand, args.obj)
     try:
-        while True:
+        while not startup_cancelled:
             trial += 1
             print(f"\n{'#'*60}\n# Trial {trial}\n{'#'*60}")
             chime.info()
@@ -1986,7 +2244,8 @@ def main(pose_adjust_handler=None, reorient_handler=None):
 
             # Coverage snapshot BEFORE the trial — used to compute how
             # many new scenes the trial just covered.
-            if _is_coverage_pool(args.grasp_version):
+            if (_is_coverage_pool(args.grasp_version)
+                    and not args.ignore_coverage):
                 from autodex.utils.coverage import (
                     uncovered_scenes, _tabletop_stems,
                 )
@@ -1999,7 +2258,8 @@ def main(pose_adjust_handler=None, reorient_handler=None):
                       f"poses...", flush=True)
                 for _s in _stems_before:
                     _u = uncovered_scenes(args.obj, _s, hand=args.hand,
-                                          version=args.grasp_version)
+                                          version=args.grasp_version,
+                                          success_root=campaign_state_root)
                     _rem_before[_s] = (len(_u) if _u is not None else None)
 
             tr = run_single_trial(
@@ -2009,27 +2269,43 @@ def main(pose_adjust_handler=None, reorient_handler=None):
                 timestamp_monitor=timestamp_monitor,
                 pose_adjust_handler=pose_adjust_handler,
                 reorient_handler=reorient_handler,
+                tabletop_geometry=session_tabletop_geometry,
+                consecutive_rotate_counts=consecutive_rotate_counts,
             )
             if tr.get("retry_current_trial"):
+                if tr.get("reason") == "reoriented":
+                    consecutive_rotate_counts.clear()
                 print("\n    [pipeline] recovery complete — restarting normal "
                       "pipeline from perception using the existing session")
                 resume_after_pose_adjust = True
                 continue
             results.append(tr)
+            if tr.get("success"):
+                tabletop = tr.get("tabletop_before") or {}
+                filename = tabletop.get("filename") if isinstance(tabletop, dict) else None
+                if filename:
+                    stem = str(filename).replace(".npy", "")
+                    prior_rotates = consecutive_rotate_counts.pop(stem, 0)
+                    if prior_rotates:
+                        print(f"    [rotate] normal trial succeeded at tabletop "
+                              f"{stem}; reset consecutive recovery count "
+                              f"({prior_rotates} -> 0)")
             n_succ = sum(1 for r in results if r.get("success"))
             print(f"\n    Running total: {n_succ}/{len(results)} success")
 
             # After-trial coverage summary. Show per-tabletop
             # remaining uncovered count + how many scenes this trial just
             # covered (delta vs before).
-            if _is_coverage_pool(args.grasp_version) and tr.get("success"):
+            if (_is_coverage_pool(args.grasp_version)
+                    and not args.ignore_coverage and tr.get("success")):
                 from autodex.utils.coverage import uncovered_scenes
                 lines = []
                 total_now = 0
                 total_before = 0
                 for _s, _b in _rem_before.items():
                     _u = uncovered_scenes(args.obj, _s, hand=args.hand,
-                                          version=args.grasp_version)
+                                          version=args.grasp_version,
+                                          success_root=campaign_state_root)
                     _n = (len(_u) if _u is not None else None)
                     if _b is None or _n is None:
                         lines.append(f"      pose={_s}: N/A")
@@ -2046,8 +2322,14 @@ def main(pose_adjust_handler=None, reorient_handler=None):
                       f"(was {total_before}, "
                       f"-{total_before - total_now} this trial)")
 
-            if tr.get("all_done") and not args.ignore_coverage:
-                print(f"\n    All scenes done for {args.obj} — stopping loop.")
+            _write_experiment_coverage_progress(
+                args, args.hand, args.obj, get_obj_root(args.grasp_version))
+
+            if (tr.get("all_done") and
+                    (not args.ignore_coverage
+                     or tr.get("reason") == "no_candidates")):
+                print(f"\n    No further trial is available for {args.obj} — "
+                      "stopping loop.")
                 break
             if args.max_trials and len(results) >= args.max_trials:
                 print(f"\n    --max_trials {args.max_trials} reached — stopping loop.")

@@ -150,6 +150,7 @@ def load_useful_grasps(
     hand: str,
     version: str,
     top_k: int = TOP_K_DEFAULT,
+    success_root: Optional[str] = None,
 ) -> List[dict]:
     """Grasps at this tabletop that still cover something, richest first.
 
@@ -160,7 +161,7 @@ def load_useful_grasps(
     """
     entries = load_coverage_entries(
         obj_name, tabletop_pose_stem=tabletop_pose_stem,
-        hand=hand, version=version)
+        hand=hand, version=version, success_root=success_root)
     if not entries:
         return []
     out: List[dict] = []
@@ -184,11 +185,13 @@ def pick_reposition_target(
     R_obj_robot: np.ndarray,
     obj_z: float,
     x_grid: Optional[Sequence[float]] = None,
+    y: float = 0.0,
     yaw_grid: Optional[Sequence[float]] = None,
     yaw_idxs: Optional[Sequence[int]] = None,
     x_preferred: float = X_PREFERRED_DEFAULT,
     top_k: int = TOP_K_DEFAULT,
     grasps: Optional[List[dict]] = None,
+    success_root: Optional[str] = None,
 ) -> Optional[dict]:
     """Pick ``(x, yaw)`` to place the object at, maximizing NEW coverage.
 
@@ -198,7 +201,8 @@ def pick_reposition_target(
     target). ``obj_z`` holds the object's height so the place-down neither dips
     into the table nor floats.
 
-    ``planner`` needs ``ik_pose_batch(T: (N,4,4)) -> (N,) bool``. IK runs live
+    ``y`` is the board-centreline target in robot coordinates. ``planner``
+    needs ``ik_pose_batch(T: (N,4,4)) -> (N,) bool``. IK runs live
     here (one batch); the array core above is the path for a cached reach map.
 
     ``yaw_idxs`` defaults to the FULL yaw grid: this is a same-pose reposition,
@@ -218,7 +222,8 @@ def pick_reposition_target(
 
     if grasps is None:
         grasps = load_useful_grasps(obj_name, tabletop_pose_stem, hand,
-                                    version, top_k=top_k)
+                                    version, top_k=top_k,
+                                    success_root=success_root)
     if not grasps:
         return None
 
@@ -233,7 +238,7 @@ def pick_reposition_target(
         Rz = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
         T_obj = np.eye(4)
         T_obj[:3, :3] = Rz @ np.asarray(R_obj_robot, dtype=float)
-        T_obj[:3, 3] = [float(xs[xi]), 0.0, float(obj_z)]
+        T_obj[:3, 3] = [float(xs[xi]), float(y), float(obj_z)]
         for gi, g in enumerate(grasps):
             targets[ci * n_g + gi] = T_obj @ g["wrist_obj"]
 
@@ -260,6 +265,7 @@ def pick_reposition_target(
     best = ranked[0]
     return {
         "x": best["x"],
+        "y": float(y),
         "yaw_rad": best["yaw_rad"],
         "yaw_deg": best["yaw_deg"],
         "n_new_scenes": best["n_new_scenes"],

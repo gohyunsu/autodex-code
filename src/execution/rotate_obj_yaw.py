@@ -263,6 +263,11 @@ def rotate_from_live_scene(
     """
     if held_speed_scale <= 0:
         raise ValueError("held_speed_scale must be positive")
+    # The integrated pipeline must not call ``rcc.arm()`` again when planning
+    # rejects every candidate.  Keep this explicit state in the result so its
+    # recovery code can distinguish that no physical motion/camera shutdown
+    # happened from the normal motion path below.
+    camera_capture_stopped = False
     target_yaw_rad = np.deg2rad(target_yaw_deg)
     adof = getattr(executor, "arm_dof", 6)
 
@@ -375,11 +380,13 @@ def rotate_from_live_scene(
             "preflight_rejections": preflight_rejections,
             "n_candidates": int(len(wse)),
             "n_endpoint_feasible": int(endpoint_ok.sum()),
+            "camera_capture_stopped": camera_capture_stopped,
         }
 
     if rcc is not None:
         try:
             rcc.stop()
+            camera_capture_stopped = True
         except Exception as exc:
             print(f"[rotate] rcc.stop before motion failed: {exc!r}")
 
@@ -396,7 +403,8 @@ def rotate_from_live_scene(
         except Exception as recovery_exc:
             print(f"[rotate] execute recovery failed: {recovery_exc!r}")
         return {"success": False, "reason": "rotation_execute_failed",
-                "exception": repr(exc), "result": result}
+                "exception": repr(exc), "result": result,
+                "camera_capture_stopped": camera_capture_stopped}
 
     # Build the same world-z yaw target used by the standalone program.
     T_wrist_now = executor.arm.get_data()["position"] @ executor._link6_to_wrist
@@ -442,6 +450,13 @@ def rotate_from_live_scene(
         obj_place_target[2, 3] = obj_grasp[2, 3]
         place_kwargs["grasp_wrist"] = (
             obj_place_target @ np.linalg.inv(obj_in_wrist))
+        if repose_ok:
+            # The yaw-transfer endpoint is normally the same +10cm pose that
+            # place() uses before its perpendicular descent.  Let the
+            # executor verify that fact against the live wrist and skip a
+            # duplicate pre-place transfer when it is true.
+            place_kwargs["preplace_traj"] = traj_repose
+            place_kwargs["preplace_wrist_target"] = wrist_target
     place_info = executor.place(result, planner=planner, scene_cfg=scene_cfg,
                                 **place_kwargs)
     if arm != "franka":
@@ -472,6 +487,7 @@ def rotate_from_live_scene(
         "place": place_info,
         "target": {"x": target_x, "y": target_y,
                    "yaw_deg": target_yaw_deg},
+        "camera_capture_stopped": camera_capture_stopped,
     }
 
 
