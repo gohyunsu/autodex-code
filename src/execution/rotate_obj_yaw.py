@@ -184,24 +184,42 @@ def _preflight_rotation_motion(
             np.asarray(result.grasp_pose, dtype=np.float32),
         ])
 
-    stages = (
-        ("lift", wrist_lift, [1, 1, 1, 1, 1, 0]),
-        ("repose", wrist_transfer, [0, 0, 0, 0, 0, 1]),
-        ("preplace", wrist_preplace, [0, 0, 0, 0, 0, 0]),
-        ("descend_10cm", wrist_descend, [1, 1, 1, 1, 1, 0]),
-    )
     qpos = np.asarray(result.traj[-1], dtype=np.float32)
-    for name, wrist_goal, hold_vec_weight in stages:
-        traj = planner.plan_pose_constrained(
-            _full(qpos), wrist_goal, hold_vec_weight=hold_vec_weight,
-            scene_cfg=scene_cfg, include_obj_obstacle=False,
-        )
-        if traj is None:
-            return False, name
-        qpos = np.asarray(traj[-1], dtype=np.float32)
+    lift_preflight = planner.plan_lift_preflight(
+        _full(qpos), scene_cfg, lift_h=float(
+            wrist_lift[2, 3] - result.wrist_se3[2, 3]))
+    if lift_preflight is None:
+        return False, "lift"
+    qpos = np.asarray(lift_preflight.traj[-1], dtype=np.float32)
+
+    repose = planner.plan_pose_constrained(
+        _full(qpos), wrist_transfer, hold_vec_weight=[0, 0, 0, 0, 0, 1],
+        scene_cfg=scene_cfg, include_obj_obstacle=False)
+    if repose is None:
+        return False, "repose"
+    qpos = np.asarray(repose[-1], dtype=np.float32)
+
+    preplace = planner.plan_cartesian_pose(
+        _full(qpos), wrist_preplace,
+        scene_cfg=scene_cfg, include_obj_obstacle=False)
+    if preplace is None:
+        return False, "preplace"
+    qpos = np.asarray(preplace[-1], dtype=np.float32)
+
+    obj_in_wrist = np.linalg.inv(result.wrist_se3) @ obj_grasp
+    descend = planner.plan_vertical_stroke(
+        _full(qpos), wrist_preplace, wrist_descend,
+        expected_travel_m=PLACE_VERTICAL_TRAVEL_M,
+        travel_tolerance_m=1.0e-4,
+        scene_cfg=scene_cfg, include_obj_obstacle=False,
+        label="rotate preflight place descent",
+        attached_object_pose_at_start=(
+            planner.fk_wrist(_full(qpos)) @ obj_in_wrist))
+    if descend is None:
+        return False, "descend_10cm"
+    qpos = np.asarray(descend[-1], dtype=np.float32)
 
     # Preflight the planned +10cm departure against the placed object too.
-    obj_in_wrist = np.linalg.inv(result.wrist_se3) @ obj_grasp
     released = wrist_descend @ obj_in_wrist
     placed_scene = dict(scene_cfg)
     placed_scene["mesh"] = dict(scene_cfg.get("mesh", {}))
@@ -211,10 +229,12 @@ def _preflight_rotation_motion(
     post_release_high[2, 3] += PLACE_VERTICAL_TRAVEL_M
     post_start = np.concatenate([
         qpos[:arm_dof], np.asarray(result.pregrasp_pose, dtype=np.float32)])
-    post_lift = planner.plan_pose_constrained(
-        post_start, post_release_high,
-        hold_vec_weight=[1, 1, 1, 1, 1, 0],
-        scene_cfg=placed_scene, include_obj_obstacle=True)
+    post_lift = planner.plan_vertical_stroke(
+        post_start, wrist_descend, post_release_high,
+        expected_travel_m=PLACE_VERTICAL_TRAVEL_M,
+        travel_tolerance_m=1.0e-4,
+        scene_cfg=placed_scene, include_obj_obstacle=True,
+        label="rotate preflight post-release lift")
     if post_lift is None:
         return False, "post_release_lift_10cm"
     retract = planner.plan_js_to_init(
@@ -249,7 +269,6 @@ def rotate_from_live_scene(
     skip_scenes_with_success: bool = False,
     cyl_axis_local: np.ndarray | None = None,
     cyl_yaw_grid: np.ndarray | None = None,
-    held_speed_scale: float = 0.25,
     rcc=None,
 ) -> dict:
     """Rotate/reposition using a scene that has already been perceived.
@@ -261,8 +280,6 @@ def rotate_from_live_scene(
     The caller owns lifecycle/stream restart and should run perception again
     after a successful rotation before starting its next task trial.
     """
-    if held_speed_scale <= 0:
-        raise ValueError("held_speed_scale must be positive")
     # The integrated pipeline must not call ``rcc.arm()`` again when planning
     # rejects every candidate.  Keep this explicit state in the result so its
     # recovery code can distinguish that no physical motion/camera shutdown
@@ -391,11 +408,7 @@ def rotate_from_live_scene(
             print(f"[rotate] rcc.stop before motion failed: {exc!r}")
 
     try:
-        execute_kwargs = {}
-        if arm == "franka":
-            execute_kwargs["held_speed_scale"] = held_speed_scale
-        s_hand = executor.execute(result, planner=planner, scene_cfg=scene_cfg,
-                                  **execute_kwargs)
+        s_hand = executor.execute(result, planner=planner, scene_cfg=scene_cfg)
     except Exception as exc:
         print(f"[rotate] execute failed: {exc!r}")
         try:
@@ -432,11 +445,9 @@ def rotate_from_live_scene(
     repose_ok = traj_repose is not None
     if repose_ok:
         hold = np.tile(s_hand, (len(traj_repose), 1))
-        move_kwargs = {"speed": held_speed_scale} if arm == "franka" else {}
         if arm == "franka":
-            print(f"[franka] held-object speed scale: {held_speed_scale:.2f} "
-                  "(rotate repose)")
-        executor._move_joints(traj_repose[:, :adof], hold, **move_kwargs)
+            print("[franka] rotate repose uses the executor object-safety speed cap")
+        executor._move_joints(traj_repose[:, :adof], hold)
     else:
         print("[rotate] transfer plan failed after grasp — placing at current pose")
 
@@ -517,19 +528,12 @@ def main():
     p.add_argument("--init_timeout_s", type=float, default=120.0)
     p.add_argument("--stream_fps", type=int, default=10)
     p.add_argument("--stream_warmup_s", type=float, default=2.0)
-    p.add_argument("--held_speed_scale", type=float, default=0.25,
-                   help="Franka trajectory-speed scale from grasp closure through "
-                        "release (lift, yaw transfer, and descend).")
     args = p.parse_args()
     if args.grasp_version != "v8":
         p.error("rotate_obj_yaw supports only --grasp_version v8")
-    if args.held_speed_scale <= 0:
-        p.error("--held_speed_scale must be positive")
     planner_robot = _planner_robot(args.arm, args.hand)
 
     print(f"[rotate] target yaw = {args.target_yaw_deg:.1f}° around world z")
-    if args.arm == "franka":
-        print(f"[rotate] held-object speed scale = {args.held_speed_scale:.2f}x")
 
     mesh_path = MESH_BASE / args.obj / "raw_mesh" / f"{args.obj}.obj"
     assets_root = ASSETS_BASE / args.obj
@@ -634,8 +638,7 @@ def main():
         target_yaw_deg=args.target_yaw_deg,
         tabletop_pose_stem=pose_stem, candidate_order=cand_order,
         priority_map=priority_map, scene_type_filter=scene_type_filter,
-        cyl_axis_local=cyl_axis, cyl_yaw_grid=cyl_grid,
-        held_speed_scale=args.held_speed_scale, rcc=rcc,
+        cyl_axis_local=cyl_axis, cyl_yaw_grid=cyl_grid, rcc=rcc,
     )
     if not rotate_info["success"]:
         print(f"[rotate] FAILED: {rotate_info['reason']}")

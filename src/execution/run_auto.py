@@ -40,10 +40,16 @@ from paradex.calibration.utils import save_current_camparam, save_current_C2R, l
 from autodex.utils.path import (
     project_dir, get_obj_root, get_candidate_path, RESET_RELEASE_HEIGHTS_CM,
 )
-from autodex.planner import GraspPlanner
+from autodex.planner import (
+    CudaPlanningFault,
+    GraspPlanner,
+    raise_cuda_planning_fault,
+)
 from autodex.planner.obstacles import add_obstacles
 from autodex.planner.visualizer import ScenePlanVisualizer
 from autodex.executor.real import RealExecutor
+from autodex.executor.lift_policy import LiftExecutionError
+from autodex.timing import TimingRecorder
 from autodex.perception.init_orchestrator import InitOrchestrator
 from autodex.perception.snapshot_orchestrator import SnapshotOrchestrator
 
@@ -70,6 +76,54 @@ COVERAGE_VERSIONS = ("v8",)
 
 def _is_coverage_pool(version: str) -> bool:
     return version in COVERAGE_VERSIONS
+
+
+def _rotate_streak_count(state: Optional[Dict[str, object]]) -> int:
+    """Return the active run of successful rotate recoveries.
+
+    A yaw recovery can legitimately classify as a different tabletop asset on
+    the next perception pass.  This must therefore be one session-level
+    streak, rather than a counter indexed by the latest classified pose.
+    """
+    if state is None:
+        return 0
+    try:
+        return max(0, int(state.get("count", 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _record_successful_rotate(
+        state: Optional[Dict[str, object]], *, tabletop_stem: Optional[str]) -> int:
+    """Extend the active physical-rotation streak and return its new count."""
+    count = _rotate_streak_count(state) + 1
+    if state is not None:
+        if count == 1:
+            state["sequence_start_tabletop_stem"] = tabletop_stem
+        state["count"] = count
+        state["last_rotate_tabletop_stem"] = tabletop_stem
+    return count
+
+
+def _reset_rotate_streak(
+        state: Optional[Dict[str, object]], *, reason: str,
+        tabletop_stem: Optional[str]) -> Optional[dict]:
+    """End a rotation-recovery streak, returning an audit event if one existed."""
+    count = _rotate_streak_count(state)
+    if state is None or count == 0:
+        return None
+    event = {
+        "count_before": count,
+        "reason": reason,
+        "tabletop_stem": tabletop_stem,
+        "sequence_start_tabletop_stem": state.get("sequence_start_tabletop_stem"),
+        "last_rotate_tabletop_stem": state.get("last_rotate_tabletop_stem"),
+    }
+    state["count"] = 0
+    state["sequence_start_tabletop_stem"] = None
+    state["last_rotate_tabletop_stem"] = None
+    state["last_reset"] = event
+    return event
 
 
 def _reorient_target_absent_result(*, obj: str, hand: str, version: str,
@@ -562,6 +616,213 @@ def _load_calib(calib_dir: Path):
 _active_vis: Optional[ScenePlanVisualizer] = None
 
 
+def _seconds(timing: dict, key: str) -> float:
+    """Read a measured duration without letting missing failure-path data leak."""
+    try:
+        return max(0.0, float(timing.get(key, 0.0)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _build_pipeline_timing(
+        timing: dict, *, wall_total_s: float, recovery: Optional[dict] = None) -> dict:
+    """Create the v2 trial timing tree.
+
+    A ``*_total_s`` describes one elapsed, sequential interval. Its named
+    children refine that interval and must not be added back to their parent.
+    In particular, candidate lift preflight belongs to *planning*, whereas
+    ``lift_runtime_replan_s`` is an execution-time contingency only.
+    """
+    planner_detail = dict(timing.get("grasp_search_detail") or {})
+    pickup_detail = dict(timing.get("execute_grasp_lift_detail_s") or {})
+    place_detail = dict((timing.get("place") or {}).get("timing_s") or {})
+
+    preparation = {
+        "calibration_s": _seconds(timing, "preparation_calibration_s"),
+        "total_s": _seconds(timing, "preparation_s"),
+    }
+    perception = {
+        "foundpose_s": _seconds(timing, "perception_s"),
+        "reposition_detection_s": _seconds(timing, "reposition_detection_s"),
+    }
+    perception["total_s"] = round(
+        perception["foundpose_s"] + perception["reposition_detection_s"], 3)
+
+    candidate_preflight = {
+        "approach_joint_plan_s": _seconds(planner_detail, "approach_preflight_s"),
+        "held_object_lift_plan_s": _seconds(planner_detail, "lift_preflight_s"),
+        "overhead_s": _seconds(planner_detail, "candidate_preflight_overhead_s"),
+        "n_approach_attempts": planner_detail.get("n_plan_attempts", 0),
+        "n_lift_attempts": planner_detail.get("n_lift_preflight_attempts", 0),
+        "n_lift_success": planner_detail.get("n_lift_preflight_success", 0),
+        "total_s": _seconds(planner_detail, "candidate_preflight_s"),
+    }
+    planning = {
+        "scene_construction_s": _seconds(timing, "scene_construction_s"),
+        "candidate_policy_s": _seconds(timing, "candidate_selection_s"),
+        # This is the outer planner call and includes candidate preflight;
+        # ``candidate_preflight`` above is a nested breakdown, not a sibling.
+        "grasp_search_total_s": _seconds(timing, "grasp_search_s"),
+        "candidate_preflight": candidate_preflight,
+        "retry_search_s": _seconds(timing, "plan_retry_total_s"),
+        "detail": planner_detail,
+        "total_s": _seconds(timing, "planning_total_s"),
+    }
+
+    pickup_total = _seconds(timing, "execute_grasp_lift_s")
+    pickup = {
+        "init_motion_s": _seconds(pickup_detail, "init_motion_s"),
+        "approach_monitor_warmup_s": _seconds(
+            pickup_detail, "approach_monitor_warmup_s"),
+        "approach_motion_s": _seconds(pickup_detail, "approach_motion_s"),
+        "pregrasp_motion_s": _seconds(pickup_detail, "pregrasp_motion_s"),
+        "grasp_motion_s": _seconds(pickup_detail, "grasp_motion_s"),
+        "squeeze_motion_s": _seconds(pickup_detail, "squeeze_motion_s"),
+        "lift_start_check_s": _seconds(pickup_detail, "lift_start_check_s"),
+        # Normal candidate-preflight replay records zero here by design.
+        "lift_runtime_replan_s": _seconds(
+            pickup_detail, "lift_runtime_replan_s"),
+        "lift_motion_s": _seconds(pickup_detail, "lift_motion_s"),
+        "lift_plan_source": pickup_detail.get("lift_plan_source", "unknown"),
+        "state_timestamps": list(timing.get("execution_states") or []),
+        "detail": pickup_detail,
+        "total_s": pickup_total,
+    }
+    pickup["overhead_s"] = _seconds(pickup_detail, "overhead_s")
+    if not pickup["overhead_s"] and pickup_total:
+        pickup["overhead_s"] = round(max(0.0, pickup_total - sum(
+            pickup[key] for key in (
+                "init_motion_s", "approach_monitor_warmup_s",
+                "approach_motion_s", "pregrasp_motion_s", "grasp_motion_s",
+                "squeeze_motion_s", "lift_start_check_s",
+                "lift_runtime_replan_s", "lift_motion_s"))), 3)
+
+    lift_validation = {
+        "capture_s": _seconds(timing, "auto_label_lift_capture_s"),
+        "inference_s": _seconds(timing, "auto_label_lift_infer_s"),
+        "total_s": _seconds(timing, "auto_label_lift_s"),
+    }
+    transfer = {
+        "target_selection_s": _seconds(timing, "transfer_selection_s"),
+        "planning_s": _seconds(timing, "transfer_plan_s"),
+        "motion_s": _seconds(timing, "transfer_motion_s"),
+    }
+    transfer["total_s"] = round(sum(transfer.values()), 3)
+    place = {
+        "total_s": _seconds(timing, "place_total_s"),
+        "detail": place_detail,
+        "planning_s": _seconds(place_detail, "planning_s"),
+        "motion_s": _seconds(place_detail, "motion_s"),
+        "setup_s": _seconds(place_detail, "setup_s"),
+        "overhead_s": _seconds(place_detail, "overhead_s"),
+        "release_execution": place_detail.get("release_execution", "unknown"),
+    }
+    if not place["total_s"]:
+        place["total_s"] = _seconds(place_detail, "total_s")
+
+    execution_total = _seconds(timing, "execute_s")
+    execution = {
+        "pickup_and_lift": pickup,
+        "lift_validation": lift_validation,
+        "transfer": transfer,
+        "place": place,
+        "total_s": execution_total,
+    }
+    execution["overhead_s"] = round(max(0.0, execution_total - sum((
+        pickup["total_s"], lift_validation["total_s"], transfer["total_s"],
+        place["total_s"]))), 3)
+
+    post_execution = {
+        "external_release_s": _seconds(timing, "external_release_s"),
+        "capture_teardown_s": _seconds(timing, "execution_teardown_s"),
+        "final_label_s": _seconds(timing, "final_label_s"),
+        "release_and_reset_s": _seconds(timing, "release_and_reset_s"),
+    }
+    post_execution["total_s"] = round(sum(post_execution.values()), 3)
+
+    recovery = recovery or {}
+    recovery_phase = {
+        name: dict((recovery.get(name) or {}).get("timing_s") or {})
+        for name in ("rotation", "reorientation")
+        if isinstance(recovery.get(name), dict)
+    }
+    recovery_phase["total_s"] = round(sum(
+        _seconds(detail, "total_s") for detail in recovery_phase.values()
+        if isinstance(detail, dict)), 3)
+
+    artifacts = {"plan_persistence_s": _seconds(timing, "plan_persistence_s")}
+    artifacts["total_s"] = artifacts["plan_persistence_s"]
+    phases = {
+        "preparation": preparation,
+        "perception": perception,
+        "planning": planning,
+        "artifacts": artifacts,
+        "recording_setup": {
+            "camera_video_timestamp_recorder_s": _seconds(
+                timing, "execution_capture_setup_s"),
+            "total_s": _seconds(timing, "execution_capture_setup_s"),
+        },
+        "execution": execution,
+        "post_execution": post_execution,
+        "recovery": recovery_phase,
+    }
+    classified_s = sum(phase["total_s"] for phase in phases.values())
+    return {
+        "schema_version": 2,
+        "clock": "time.perf_counter",
+        "phase_rule": "parents are elapsed spans; children are breakdowns",
+        "phases": phases,
+        "wall_total_s": round(wall_total_s, 3),
+        "unattributed_s": round(max(0.0, wall_total_s - classified_s), 3),
+    }
+
+
+class _TraceScratch(dict):
+    """Temporary compatibility scratchpad that emits leaf spans immediately.
+
+    The main trial body still has many mature early-return branches.  Recording
+    a duration at the assignment site preserves their measured interval while
+    keeping that scratch data out of every persisted result.
+    """
+
+    _LEAF_SPANS = {
+        "preparation_calibration_s": ("preparation", "setup", "calibration"),
+        "perception_s": ("perception", "inference", "foundpose"),
+        "reposition_detection_s": ("perception", "decision", "reposition_detection"),
+        "scene_construction_s": ("planning", "setup", "scene_construction"),
+        "candidate_selection_s": ("planning", "decision", "candidate_selection"),
+        "grasp_search_s": ("planning", "plan", "grasp_search"),
+        "plan_retry_total_s": ("planning", "plan", "retry_search"),
+        "plan_persistence_s": ("artifacts", "io", "plan_persistence"),
+        "execution_capture_setup_s": ("execution", "setup", "recording_setup"),
+        "execute_grasp_lift_s": ("execution", "motion", "pickup_and_lift"),
+        "auto_label_lift_capture_s": ("execution", "io", "lift_label_capture"),
+        "auto_label_lift_infer_s": ("execution", "inference", "lift_label_inference"),
+        "transfer_selection_s": ("execution", "decision", "transfer_selection"),
+        "transfer_motion_s": ("execution", "motion", "transfer_motion"),
+        "place_total_s": ("execution", "motion", "place"),
+        "external_release_s": ("post_execution", "motion", "external_release"),
+        "execution_teardown_s": ("post_execution", "io", "recording_teardown"),
+        "final_label_s": ("post_execution", "inference", "final_label"),
+        "release_and_reset_s": ("post_execution", "motion", "release_and_reset"),
+    }
+
+    def __init__(self, recorder: TimingRecorder):
+        super().__init__()
+        self._recorder = recorder
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        spec = self._LEAF_SPANS.get(key)
+        if spec is None or not isinstance(value, (int, float)) or value <= 0:
+            return
+        end_s = self._recorder.now_s()
+        self._recorder.record_interval(
+            phase=spec[0], kind=spec[1], name=spec[2],
+            start_s=max(0.0, end_s - float(value)), end_s=end_s,
+            source="runner_duration")
+
+
 def run_single_trial(
     args,
     *,
@@ -575,7 +836,7 @@ def run_single_trial(
     pose_adjust_handler=None,
     reorient_handler=None,
     tabletop_geometry=None,
-    consecutive_rotate_counts: Optional[Dict[str, int]] = None,
+    rotate_recovery_state: Optional[Dict[str, object]] = None,
 ) -> dict:
     global _active_vis
     if _active_vis is not None:
@@ -595,28 +856,63 @@ def run_single_trial(
     sub = f"{scene_prefix}/{hand}" if scene_prefix else hand
     img_dir = os.path.join(project_dir, "experiment", args.exp_name, sub, obj, dir_idx)
     os.makedirs(img_dir, exist_ok=True)
-    timing: dict = {}
+    trial_started = time.perf_counter()
+    # ``timing`` remains a short-lived working scratchpad for the legacy
+    # control flow below.  Persisted results contain only ``trial_trace``.
+    trial_trace = TimingRecorder()
+    timing: dict = _TraceScratch(trial_trace)
+    if hasattr(planner, "set_timing_recorder"):
+        planner.set_timing_recorder(trial_trace)
+    if hasattr(executor, "set_timing_recorder"):
+        executor.set_timing_recorder(trial_trace)
 
     def _ts() -> str:
         return datetime.datetime.now().isoformat()
 
     def _stamp_end(result_dict):
-        """Stamp trial_end in shared timing and return the dict unchanged."""
+        """Persist one canonical trace; never expose the scratch timing dict."""
         timing["trial_end"] = _ts()
+        for recovery_name in ("rotation", "reorientation"):
+            recovery_info = result_dict.get(recovery_name)
+            if not isinstance(recovery_info, dict):
+                continue
+            recovery_timing = recovery_info.get("timing_s")
+            if not isinstance(recovery_timing, dict):
+                continue
+            duration = recovery_timing.get("total_s", 0.0)
+            if isinstance(duration, (int, float)) and duration > 0:
+                end_s = trial_trace.now_s()
+                trial_trace.record_interval(
+                    phase="recovery", kind="motion", name=recovery_name,
+                    start_s=max(0.0, end_s - float(duration)), end_s=end_s,
+                    source="recovery_adapter", detail=recovery_timing)
+        result_dict["timing"] = trial_trace.as_dict(
+            trial_total_s=time.perf_counter() - trial_started)
+        return result_dict
+
+    def _save_result(result_dict):
+        """Use one persistence boundary so every outcome contains final timing."""
+        _stamp_end(result_dict)
+        with open(os.path.join(img_dir, "result.json"), "w") as f:
+            json.dump(result_dict, f, indent=2, default=str)
         return result_dict
 
     timing["trial_start"] = _ts()
 
-    # ── 1. save calib (raw images come from init pipeline itself) ────────────
+    # ── 1. prepare ──────────────────────────────────────────────────────────
     print(f"\n{'='*60}")
     print(f"[1/6] Trial dir -> {dir_idx}")
+    t_preparation = time.perf_counter()
     save_current_C2R(img_dir)
     save_current_camparam(img_dir)
+    timing["preparation_calibration_s"] = round(
+        time.perf_counter() - t_preparation, 3)
+    timing["preparation_s"] = timing["preparation_calibration_s"]
 
     # ── 2. Distributed FoundPose init ───────────────────────────────────────
     print(f"[2/6] Init pipeline (FoundPose distributed)...")
     timing["perception_start"] = _ts()
-    t0 = time.time()
+    t0 = time.perf_counter()
     save_capture_dir = os.path.join(img_dir, "init_capture")
     pose_world, perc_timing = orch.trigger_init(
         prompt=args.prompt,
@@ -626,7 +922,7 @@ def run_single_trial(
         sil_loss_threshold=(float("inf") if args.perception_mode == "ignore_sil_loss"
                             else 0.003),
     )
-    timing["perception_s"] = round(time.time() - t0, 2)
+    timing["perception_s"] = round(time.perf_counter() - t0, 3)
     if perc_timing:
         timing["perception_detail"] = perc_timing
 
@@ -644,9 +940,7 @@ def run_single_trial(
         if cmd == "q":
             fail["all_done"] = True
             fail["reason"] = "user_quit_perception_failed"
-        with open(os.path.join(img_dir, "result.json"), "w") as f:
-            json.dump(fail, f, indent=2, default=str)
-        return _stamp_end(fail)
+        return _save_result(fail)
 
     print(f"    Perception: {timing['perception_s']}s")
     np.save(os.path.join(img_dir, "pose_world.npy"), pose_world)
@@ -656,6 +950,7 @@ def run_single_trial(
     # the obj is somewhere but NOT covering the board → enter reposition mode
     # (grasp obj, place at r=0.4, y=0 on the board).
     reposition_mode = False
+    t_reposition_detection = time.perf_counter()
     if args.auto:
         _stop_with_timeout("rcc", rcc.stop)
         repo_check_rel = os.path.join(
@@ -676,11 +971,14 @@ def run_single_trial(
                   f"{board_info.get('covered')}/{board_info.get('expected')} "
                   f"fully visible → reposition mode")
             reposition_mode = True
+    timing["reposition_detection_s"] = round(
+        time.perf_counter() - t_reposition_detection, 3)
 
     # ── 3. scene_cfg + plan ──────────────────────────────────────────────────
     print(f"[3/6] Planning (version={args.grasp_version}, scene={args.scene})...")
     timing["planning_start"] = _ts()
-    t0 = time.time()
+    t_planning = time.perf_counter()
+    t_scene_construction = time.perf_counter()
     c2r = load_c2r(img_dir)
     # Planning mesh and tabletop poses are both resolved from the v8
     # object_processing asset tree, so their pose stems cannot diverge.
@@ -703,6 +1001,9 @@ def run_single_trial(
         shelf_top=not args.no_shelf_top,
         tabletop_geometry=tabletop_geometry,
     )
+    timing["scene_construction_s"] = round(
+        time.perf_counter() - t_scene_construction, 3)
+    t_candidate_selection = time.perf_counter()
 
     def _run_reorient_handler(target_j: int) -> dict:
         """Run a pipeline-owned reorientation without replacing live state.
@@ -719,7 +1020,34 @@ def run_single_trial(
                 obj_root=obj_root, img_dir=img_dir, scene_prefix=scene_prefix,
                 tabletop_geometry=tabletop_geometry,
             )
+        except CudaPlanningFault as reorient_exc:
+            # CUDA contexts are process-scoped.  Do not turn this into an
+            # ordinary candidate miss and then start another trial whose
+            # perception will necessarily fail on the poisoned device.
+            print(f"    [pipeline] fatal CUDA planning fault: {reorient_exc!r}")
+            return {
+                "success": False,
+                "reason": "cuda_planning_fault",
+                "exception": repr(reorient_exc),
+                "fatal_cuda_planning_fault": True,
+            }
         except Exception as reorient_exc:
+            # Keep this outer boundary as a backstop for direct CUDA users in
+            # reset code. New helper code must not be able to downgrade a
+            # poisoned CUDA context into an ordinary reorient candidate miss.
+            try:
+                raise_cuda_planning_fault(
+                    "inprocess_reorient_handler", reorient_exc,
+                    context={"target_j": int(target_j)},
+                )
+            except CudaPlanningFault as cuda_fault:
+                print(f"    [pipeline] fatal CUDA planning fault: {cuda_fault!r}")
+                return {
+                    "success": False,
+                    "reason": "cuda_planning_fault",
+                    "exception": repr(cuda_fault),
+                    "fatal_cuda_planning_fault": True,
+                }
             print(f"    [pipeline] reorient exception: {reorient_exc!r}")
             return {
                 "success": False,
@@ -750,12 +1078,27 @@ def run_single_trial(
             skip = {"dir_idx": dir_idx, "scene_type": args.scene,
                     "success": None, "reason": "scene_already_done",
                     "scene_id": scene_id, "timing": timing}
-            with open(os.path.join(img_dir, "result.json"), "w") as f:
-                json.dump(skip, f, indent=2, default=str)
-            return _stamp_end(skip)
+            return _save_result(skip)
     else:
         scene_id = None
         pose_stem = None
+
+    def _mark_grasp_validation_started(stage: str) -> None:
+        """Break the rotate streak when an executed grasp reaches validation.
+
+        This is intentionally later than planning and execution start: neither
+        proves that the gripper closed and completed the lift. Conversely it
+        is intentionally independent of the label result. A successful
+        rotation followed by a real grasp-validation attempt is no longer a
+        sequence of rotations, even if that validation subsequently fails.
+        """
+        reset_event = _reset_rotate_streak(
+            rotate_recovery_state, reason=stage, tabletop_stem=pose_stem)
+        if reset_event is not None:
+            timing["rotate_recovery_reset"] = reset_event
+            print("    [rotate] grasp validation started; reset consecutive "
+                  f"recovery count ({reset_event['count_before']} -> 0)")
+
     # Symmetry-axis enumerate. Continuous-revolute → 8 angles. Discrete
     # (e.g. blue_alarm 180°) → order-N grid from pose_symmetry.json.
     from autodex.utils.symmetry import get_cyl_yaw_grid as _get_cyl_yaw_grid
@@ -847,9 +1190,7 @@ def run_single_trial(
                     scene_type=args.scene, timing=timing,
                     success_root=candidate_state_root,
                 )
-                with open(os.path.join(img_dir, "result.json"), "w") as f:
-                    json.dump(done, f, indent=2, default=str)
-                return _stamp_end(done)
+                return _save_result(done)
             j_int, stem, n_rem = target
             print(f"    target_j={j_int} (pose {stem}) has {n_rem} uncovered scenes.")
             _reorient_cmd = (f"python src/experiment/reset/reorient.py "
@@ -881,13 +1222,19 @@ def run_single_trial(
                     print("    [pipeline] reorienting in the current process...")
                     reorient_info = _run_reorient_handler(j_int)
                     done["reorientation"] = reorient_info
-                    if reorient_info.get("success"):
+                    if reorient_info.get("fatal_cuda_planning_fault"):
+                        done["reason"] = "cuda_planning_fault"
+                        done["fatal_cuda_planning_fault"] = True
+                    elif reorient_info.get("success"):
                         done["reason"] = "reoriented"
                         done["retry_current_trial"] = True
-            # else: 's' = user already ran it manually, fall through
-            with open(os.path.join(img_dir, "result.json"), "w") as f:
-                json.dump(done, f, indent=2, default=str)
-            return _stamp_end(done)
+            if _cmd == "s" and not args.auto:
+                # 's' explicitly means that the operator already completed
+                # the standalone reorientation.
+                done["reason"] = "reoriented_manual"
+                done["manual_reorient_confirmed"] = True
+                done["retry_current_trial"] = True
+            return _save_result(done)
     else:
         _eff_grasp_version = args.grasp_version
         _plan_scene_id = scene_id
@@ -903,6 +1250,9 @@ def run_single_trial(
                                or args.isolate_experiment) else True
     _skip_scenes_eff = False if (reposition_mode or args.ignore_coverage
                                  or args.isolate_experiment) else True
+    timing["candidate_selection_s"] = round(
+        time.perf_counter() - t_candidate_selection, 3)
+    t_grasp_search = time.perf_counter()
     result = planner.plan(
         scene_cfg, obj, _eff_grasp_version,
         skip_done=_skip_done_eff,
@@ -917,7 +1267,10 @@ def run_single_trial(
         candidate_order=_plan_candidate_order,
         priority_map=_plan_priority_map,
     )
-    timing["plan_s"] = round(time.time() - t0, 2)
+    timing["grasp_search_s"] = round(time.perf_counter() - t_grasp_search, 3)
+    timing["grasp_search_detail"] = dict(result.timing or {})
+    timing["planning_total_s"] = round(time.perf_counter() - t_planning, 3)
+    timing["plan_s"] = timing["planning_total_s"]
     print(f"    Plan: {timing['plan_s']}s  success={result.success}")
 
     if not result.success:
@@ -941,9 +1294,7 @@ def run_single_trial(
                         scene_type=args.scene, timing=timing,
                         success_root=candidate_state_root,
                     )
-                    with open(os.path.join(img_dir, "result.json"), "w") as f:
-                        json.dump(done, f, indent=2, default=str)
-                    return _stamp_end(done)
+                    return _save_result(done)
                 j_int, stem, n_rem = target
                 print(f"    [reorient] target_j={j_int} (pose {stem}) "
                       f"has {n_rem} uncovered scenes.")
@@ -969,12 +1320,19 @@ def run_single_trial(
                     print("    [pipeline] reorienting in the current process...")
                     reorient_info = _run_reorient_handler(j_int)
                     done["reorientation"] = reorient_info
-                    if reorient_info.get("success"):
+                    if reorient_info.get("fatal_cuda_planning_fault"):
+                        done["reason"] = "cuda_planning_fault"
+                        done["fatal_cuda_planning_fault"] = True
+                    elif reorient_info.get("success"):
                         done["reason"] = "reoriented"
                         done["retry_current_trial"] = True
-                with open(os.path.join(img_dir, "result.json"), "w") as f:
-                    json.dump(done, f, indent=2, default=str)
-                return _stamp_end(done)
+                elif _cmd == "" and not args.auto:
+                    # This no-handler prompt asks the operator to run the
+                    # reset before pressing Enter, so Enter is confirmation.
+                    done["reason"] = "reoriented_manual"
+                    done["manual_reorient_confirmed"] = True
+                    done["retry_current_trial"] = True
+                return _save_result(done)
             if args.ignore_coverage:
                 print("    No candidates available in the unrestricted pool.")
             else:
@@ -984,15 +1342,13 @@ def run_single_trial(
                     "reason": ("no_candidates" if args.ignore_coverage
                                else "all_scenes_done"),
                     "all_done": True, "timing": timing}
-            with open(os.path.join(img_dir, "result.json"), "w") as f:
-                json.dump(done, f, indent=2, default=str)
-            return _stamp_end(done)
+            return _save_result(done)
         # cuRobo IK is stochastic — random seeds occasionally find 0
         # feasible at an obj pose where the next run finds several. Before
         # declaring "reorient needed", retry the plan up to 2 more times.
         for _retry in range(1, 3):
             print(f"    Planning failed (attempt {_retry}/2 retry)...")
-            t_re = time.time()
+            t_re = time.perf_counter()
             result = planner.plan(
                 scene_cfg, obj, _eff_grasp_version,
                 skip_done=_skip_done_eff,
@@ -1007,14 +1363,34 @@ def run_single_trial(
                 candidate_order=_plan_candidate_order,
                 priority_map=_plan_priority_map,
             )
-            timing[f"plan_retry_{_retry}_s"] = round(time.time() - t_re, 2)
+            timing[f"plan_retry_{_retry}_s"] = round(
+                time.perf_counter() - t_re, 3)
             if result.success:
                 print(f"    Plan retry #{_retry} success after {timing[f'plan_retry_{_retry}_s']}s")
                 break
+        timing["plan_retry_total_s"] = round(sum(
+            _seconds(timing, f"plan_retry_{i}_s") for i in range(1, 3)), 3)
+        timing["planning_total_s"] = round(
+            _seconds(timing, "planning_total_s")
+            + timing["plan_retry_total_s"], 3)
         if result.success:
-            timing["plan_s"] = sum(v for k, v in timing.items()
-                                    if k.startswith("plan") and k.endswith("_s"))
-            # Fall through to the normal post-plan code path below.
+            timing["plan_s"] = timing["planning_total_s"]
+            # The recovery body below is only for a still-infeasible plan.
+            # It used to run even on this successful retry, which could launch
+            # a physical rotate/reorient despite already having a valid plan.
+            # The normal execution body cannot safely reuse a retry plan after
+            # the next perception snapshot, so restart from perception without
+            # moving the robot or changing the rotate streak.
+            retry = {
+                "dir_idx": dir_idx,
+                "scene_type": args.scene,
+                "success": None,
+                "reason": "planning_retry_feasible",
+                "retry_current_trial": True,
+                "tabletop_before": tb_before,
+                "timing": timing,
+            }
+            return _save_result(retry)
         else:
             if args.auto:
                 print("    Planning FAILED after retries — automatic recovery; "
@@ -1048,20 +1424,25 @@ def run_single_trial(
         # rotate around vertical. If any (r, yaw) makes ≥1 candidate
         # IK-feasible, prefer that (rotate_obj_yaw) over reorienting
         # to a different tabletop.
-        _rotate_count_key = str(pose_stem) if pose_stem is not None else "__unclassified__"
-        _rotate_count = int((consecutive_rotate_counts or {}).get(
-            _rotate_count_key, 0))
+        _rotate_count = _rotate_streak_count(rotate_recovery_state)
         _rotate_limit = int(args.max_consecutive_rotates)
         _rotate_allowed = _rotate_count < _rotate_limit
         _rotate_cap_info = {
             "tabletop_stem": pose_stem,
             "count": _rotate_count,
             "limit": _rotate_limit,
+            "sequence_start_tabletop_stem": (
+                rotate_recovery_state.get("sequence_start_tabletop_stem")
+                if rotate_recovery_state is not None else None),
+            "last_rotate_tabletop_stem": (
+                rotate_recovery_state.get("last_rotate_tabletop_stem")
+                if rotate_recovery_state is not None else None),
         }
         if (_is_coverage_pool(args.grasp_version)
                 and not args.ignore_coverage and not _rotate_allowed):
-            print(f"    [rotate] consecutive cap reached for tabletop "
-                  f"{pose_stem}: {_rotate_count}/{_rotate_limit}; "
+            print(f"    [rotate] consecutive cap reached "
+                  f"({_rotate_count}/{_rotate_limit}; current tabletop "
+                  f"{pose_stem}); "
                   "skipping rotate and proceeding to reorient.")
         if (_rotate_allowed and _is_coverage_pool(args.grasp_version)
                 and not args.ignore_coverage):
@@ -1147,6 +1528,12 @@ def run_single_trial(
                         print(f"    [auto] running: {_cmd_ros}")
                         rc = subprocess.call(_cmd_ros, shell=True)
                         fail_record["rotate_obj_yaw_rc"] = rc
+                        rotate_info = {
+                            "success": rc == 0,
+                            "reason": (None if rc == 0
+                                       else "rotate_obj_yaw_nonzero_exit"),
+                            "returncode": rc,
+                        }
                     else:
                         # ``run_pipeline.py`` supplies an in-process handler.
                         # It receives the perception result and already-live
@@ -1181,26 +1568,33 @@ def run_single_trial(
                                 "exception": repr(rotate_exc),
                             }
                             print(f"    [pipeline] rotate exception: {rotate_exc!r}")
-                        fail_record["rotation"] = rotate_info
-                        if rotate_info.get("success"):
-                            if consecutive_rotate_counts is not None:
-                                _rotate_count += 1
-                                consecutive_rotate_counts[_rotate_count_key] = _rotate_count
-                            rotate_info["consecutive_rotate_count"] = _rotate_count
-                            rotate_info["consecutive_rotate_limit"] = _rotate_limit
-                            fail_record["rotate_recovery"] = {
-                                "tabletop_stem": pose_stem,
-                                "count": _rotate_count,
-                                "limit": _rotate_limit,
-                            }
-                            print(f"    [rotate] consecutive recovery "
-                                  f"{_rotate_count}/{_rotate_limit} for tabletop "
-                                  f"{pose_stem}")
-                            fail_record["reason"] = "pose_adjusted"
-                            fail_record["retry_current_trial"] = True
-                with open(os.path.join(img_dir, "result.json"), "w") as f:
-                    json.dump(fail_record, f, indent=2, default=str)
-                return _stamp_end(fail_record)
+                    fail_record["rotation"] = rotate_info
+                    if rotate_info.get("success"):
+                        _rotate_count = _record_successful_rotate(
+                            rotate_recovery_state, tabletop_stem=pose_stem)
+                        rotate_info["consecutive_rotate_count"] = _rotate_count
+                        rotate_info["consecutive_rotate_limit"] = _rotate_limit
+                        fail_record["rotate_recovery"] = {
+                            "tabletop_stem": pose_stem,
+                            "count": _rotate_count,
+                            "limit": _rotate_limit,
+                            "sequence_start_tabletop_stem": (
+                                rotate_recovery_state.get(
+                                    "sequence_start_tabletop_stem")
+                                if rotate_recovery_state is not None else pose_stem),
+                        }
+                        print(f"    [rotate] consecutive recovery "
+                              f"{_rotate_count}/{_rotate_limit} "
+                              f"(current tabletop {pose_stem})")
+                        fail_record["reason"] = "pose_adjusted"
+                        fail_record["retry_current_trial"] = True
+                return _save_result(fail_record)
+        # Rotate is only the first recovery option.  Reorient must be
+        # considered independently: it is the required next step when the
+        # rotate streak reaches its cap, and it remains a fallback when the
+        # pose sweep has no useful IK solution or a rotate action fails.
+        if (_is_coverage_pool(args.grasp_version)
+                and not args.ignore_coverage):
             from autodex.utils.coverage import pick_reorient_target
             target = pick_reorient_target(
                 obj, pose_stem, hand=hand, version=args.grasp_version,
@@ -1235,12 +1629,19 @@ def run_single_trial(
                     print("    [pipeline] reorienting in the current process...")
                     reorient_info = _run_reorient_handler(j_int)
                     fail["reorientation"] = reorient_info
-                    if reorient_info.get("success"):
+                    if reorient_info.get("fatal_cuda_planning_fault"):
+                        fail["reason"] = "cuda_planning_fault"
+                        fail["fatal_cuda_planning_fault"] = True
+                    elif reorient_info.get("success"):
                         fail["reason"] = "reoriented"
                         fail["retry_current_trial"] = True
-                with open(os.path.join(img_dir, "result.json"), "w") as f:
-                    json.dump(fail, f, indent=2, default=str)
-                return _stamp_end(fail)
+                elif _cmd == "" and not args.auto:
+                    # As above, the no-handler prompt is an operator-confirmed
+                    # external reorientation, which ends the rotate streak.
+                    fail["reason"] = "reoriented_manual"
+                    fail["manual_reorient_confirmed"] = True
+                    fail["retry_current_trial"] = True
+                return _save_result(fail)
             # The failed tabletop still has no strictly mapped legacy reset
             # transition to any remaining uncovered tabletop.  Report the
             # missing reset data rather than labelling the object complete.
@@ -1252,26 +1653,35 @@ def run_single_trial(
             )
             if not _rotate_allowed:
                 absent["rotate_recovery"] = _rotate_cap_info
-            with open(os.path.join(img_dir, "result.json"), "w") as f:
-                json.dump(absent, f, indent=2, default=str)
-            return _stamp_end(absent)
+            return _save_result(absent)
         # No recovery route remains. Stop the cycle.
         fail = {"dir_idx": dir_idx, "scene_type": args.scene, "success": False,
                 "reason": "planning_failed_all_candidates",
                 "all_done": True, "timing": timing}
         if not _rotate_allowed:
             fail["rotate_recovery"] = _rotate_cap_info
-        with open(os.path.join(img_dir, "result.json"), "w") as f:
-            json.dump(fail, f, indent=2, default=str)
-        return _stamp_end(fail)
+        return _save_result(fail)
 
+    t_plan_persistence = time.perf_counter()
     plan_dir = os.path.join(img_dir, "plan")
     os.makedirs(plan_dir, exist_ok=True)
     np.save(os.path.join(plan_dir, "traj.npy"), result.traj)
     np.save(os.path.join(plan_dir, "wrist_se3.npy"), result.wrist_se3)
+    if getattr(result, "lift_preflight", None) is not None:
+        _lift_pf = result.lift_preflight
+        np.savez(
+            os.path.join(plan_dir, "lift_preflight.npz"),
+            traj=np.asarray(_lift_pf.traj),
+            start_full_qpos=np.asarray(_lift_pf.start_full_qpos),
+            start_wrist_se3=np.asarray(_lift_pf.start_wrist_se3),
+            target_wrist_se3=np.asarray(_lift_pf.target_wrist_se3),
+            height_m=np.asarray(_lift_pf.height_m),
+        )
     if result.timing:
         with open(os.path.join(plan_dir, "timing.json"), "w") as f:
             json.dump(result.timing, f, indent=2)
+    timing["plan_persistence_s"] = round(
+        time.perf_counter() - t_plan_persistence, 3)
     print(f"    Scene info: {result.scene_info}")
 
     # Precomputed trajectories (shared with viz so what user sees == what
@@ -1321,17 +1731,24 @@ def run_single_trial(
                     out[i] = T_wrist @ T_obj_in_wrist
                 return out
 
-            # 1. Lift traj — target wrist pose with z+0.10
-            lift_wrist = T_wrist_grasp_end.copy()
-            lift_wrist[2, 3] += 0.10
-            grasp_full = np.concatenate([
-                grasp_end_arm, np.asarray(result.grasp_pose, dtype=np.float32)
-            ])
-            lift_traj = planner.plan_pose_constrained(
-                grasp_full, lift_wrist,
-                hold_vec_weight=[1, 1, 1, 1, 1, 0],
-                scene_cfg=scene_cfg, include_obj_obstacle=False,
-            )
+            # 1. Lift trajectory — use the candidate preflight selected by
+            # planner.plan(), so the visualized path is exactly the one that
+            # passed candidate selection and will be replayed if live q agrees.
+            preflight = getattr(result, "lift_preflight", None)
+            if preflight is not None:
+                lift_traj = np.asarray(preflight.traj)
+            else:
+                # Compatibility for callers that constructed PlanResult
+                # manually. Main pipeline results always carry a preflight.
+                lift_wrist = T_wrist_grasp_end.copy()
+                lift_wrist[2, 3] += 0.10
+                grasp_full = np.concatenate([
+                    grasp_end_arm, np.asarray(result.grasp_pose, dtype=np.float32)
+                ])
+                fallback_preflight = planner.plan_lift_preflight(
+                    grasp_full, scene_cfg, lift_h=0.10)
+                lift_traj = (None if fallback_preflight is None
+                             else fallback_preflight.traj)
             if lift_traj is not None:
                 _precomputed_lift_traj = lift_traj
                 lift_obj_traj = _obj_traj_along(lift_traj)
@@ -1375,15 +1792,23 @@ def run_single_trial(
                         repo_full = np.concatenate([
                             repo_end_arm, np.asarray(result.grasp_pose, dtype=np.float32)
                         ])
-                        place_traj = planner.plan_pose_constrained(
-                            repo_full, place_wrist,
-                            hold_vec_weight=[1, 1, 1, 1, 1, 0],
+                        place_traj = planner.plan_vertical_stroke(
+                            repo_full, T_wrist_repo_end, place_wrist,
+                            expected_travel_m=0.10,
+                            travel_tolerance_m=1.0e-4,
                             scene_cfg=scene_cfg, include_obj_obstacle=False,
+                            label="visualized place descent",
+                            attached_object_pose_at_start=(
+                                T_wrist_repo_end @ T_obj_in_wrist),
                         )
                         if place_traj is not None:
                             place_obj_traj = _obj_traj_along(place_traj)
                             sv.add_traj("place", {"traj_robot": place_traj},
                                         obj_traj={"mesh_target": place_obj_traj})
+        except CudaPlanningFault:
+            # A failed CUDA kernel poisons the process; never continue from a
+            # visualization-only planning branch into physical execution.
+            raise
         except Exception as _viz_e:
             print(f"    [viz] phase precompute failed: {_viz_e!r}")
         sv.start_viewer(use_thread=True)
@@ -1394,6 +1819,7 @@ def run_single_trial(
     # ── 4. Execute (stream off, video on) ───────────────────────────────────
     print(f"[4/6] Executing on robot...")
     timing["execution_start"] = _ts()
+    t_capture_setup = time.perf_counter()
     # Pause the always-on stream so video can take its place.
     try:
         rcc.stop()
@@ -1408,9 +1834,12 @@ def run_single_trial(
     _safe_timestamp_start(timestamp_monitor, os.path.join(raw_dir, "timestamps"))
     executor.start_recording(raw_dir)
     sync_generator.start(fps=30)
+    timing["execution_capture_setup_s"] = round(
+        time.perf_counter() - t_capture_setup, 3)
 
-    t0 = time.time()
+    t0 = time.perf_counter()
     DEBUG_DUMP_DIR = "/tmp/pose_constrained_debug"
+    t_grasp_lift = time.perf_counter()
     try:
         s_hand = executor.execute(
             result, planner=planner, scene_cfg=scene_cfg,
@@ -1418,16 +1847,36 @@ def run_single_trial(
             lift_traj_override=_precomputed_lift_traj,
         )   # grasp + lift; lift uses precomputed traj if viz on
     except Exception as _exec_e:
-        # Contact monitor / SDK errors / etc. during execute would otherwise
-        # propagate up to main() and kill the whole experiment loop. Recover
-        # the robot (open hand, retract to clear-view), mark the candidate
-        # as fail (skip_done filters it next trial), log, then continue.
+        # A lift failure after squeeze is special: the object is still held.
+        # Do not open the hand or issue a lateral reset from this state.
+        # Ordinary approach/SDK failures retain the established recovery path.
+        _cuda_planning_fault = isinstance(_exec_e, CudaPlanningFault)
+        _held_lift_failure = (isinstance(_exec_e, LiftExecutionError)
+                              or _cuda_planning_fault)
         print(f"    [execute FAIL] {type(_exec_e).__name__}: {_exec_e!r}")
-        try:
-            print(f"    [recovery] reset_fallback (verified lift + retract) ...")
-            executor.reset_fallback(result, planner=planner, scene_cfg=scene_cfg)
-        except Exception as _re:
-            print(f"    [recovery] reset_fallback FAILED: {_re!r}")
+        timing["execute_s"] = round(time.perf_counter() - t0, 3)
+        timing["execute_grasp_lift_s"] = timing["execute_s"]
+        _executor_exec_timing = dict(
+            getattr(executor, "last_execute_timing", {}) or {})
+        if _executor_exec_timing:
+            _executor_exec_timing.setdefault(
+                "total_s", timing["execute_grasp_lift_s"])
+            timing["execute_grasp_lift_detail_s"] = _executor_exec_timing
+        if _cuda_planning_fault:
+            print("    [recovery] CUDA planner context is invalid; issuing no "
+                  "further planned robot motion. Manual state check required")
+            timing["fatal_cuda_planning_fault"] = True
+            timing["held_object_safety_stop"] = True
+        elif _held_lift_failure:
+            print("    [recovery] lift could not be validated from live q — "
+                  "keeping squeeze and arm position; manual recovery required")
+            timing["held_object_safety_stop"] = True
+        else:
+            try:
+                print(f"    [recovery] reset_fallback (verified lift + retract) ...")
+                executor.reset_fallback(result, planner=planner, scene_cfg=scene_cfg)
+            except Exception as _re:
+                print(f"    [recovery] reset_fallback FAILED: {_re!r}")
         _stop_with_timeout("executor.recording", executor.stop_recording)
         # timestamp_monitor FIRST: its stop() waits on event["stop"], which the
         # capture loop only sets after camera.get_timestamp() returns — and that
@@ -1451,32 +1900,57 @@ def run_single_trial(
             except Exception:
                 pass
         fail = {"dir_idx": dir_idx, "scene_type": args.scene,
-                "success": False, "reason": "execute_exception",
+                "success": False,
+                "reason": ("cuda_planning_fault" if _cuda_planning_fault
+                           else ("lift_live_replan_failed_hold"
+                                 if _held_lift_failure else "execute_exception")),
                 "exception": repr(_exec_e), "scene_info": result.scene_info,
+                "manual_recovery_required": _held_lift_failure,
+                "fatal_cuda_planning_fault": _cuda_planning_fault,
                 "candidate_result_scope": (
                     "experiment" if args.isolate_experiment else "shared_v8"),
                 "timing": timing}
         try:
-            with open(os.path.join(img_dir, "result.json"), "w") as _f:
-                json.dump(fail, _f, indent=2, default=str)
-        except Exception: pass
-        return _stamp_end(fail)
+            return _save_result(fail)
+        except Exception:
+            return _stamp_end(fail)
+
+    # Keep this separate from the later label/transfer/place work.  ``execute_s``
+    # remains the historical end-to-end field for compatibility.
+    timing["execute_grasp_lift_s"] = round(
+        time.perf_counter() - t_grasp_lift, 3)
+    _executor_exec_timing = dict(getattr(executor, "last_execute_timing", {}) or {})
+    if _executor_exec_timing:
+        timing["execute_grasp_lift_detail_s"] = _executor_exec_timing
 
     # --auto: lift-time charuco snapshot — object is up, marker on the table
     # should be uncovered. Pause video, capture image set, resume video.
     auto_succ_lift = None
     auto_label_info = {}
     if args.auto:
+        t_auto_label = time.perf_counter()
         _stop_with_timeout("rcc", rcc.stop)
         label_lift_rel = os.path.join("shared_data", "AutoDex", "experiment",
                                        args.exp_name, sub, obj, dir_idx,
                                        "label_at_lift", "raw")
         label_lift_abs = os.path.join(img_dir, "label_at_lift", "raw", "images")
         rcc.start("image", False, label_lift_rel)
+        # The image request is the first actual grasp-validation operation:
+        # execute() has completed grasp + lift and capture is now underway.
+        # Reset even if the capture is later unjudgeable or judged as a fail;
+        # this recovery sequence did reach validation.
+        _mark_grasp_validation_started("auto_lift_validation_started")
         rcc.stop()
         time.sleep(0.3)
+        timing["auto_label_lift_capture_s"] = round(
+            time.perf_counter() - t_auto_label, 3)
+        t_auto_label_infer = time.perf_counter()
         auto_succ_lift, auto_label_info = auto_label_charuco(
             label_lift_abs, required_board=CHARUCO_BOARD)
+        timing["auto_label_lift_infer_s"] = round(
+            time.perf_counter() - t_auto_label_infer, 3)
+        timing["auto_label_lift_s"] = round(
+            time.perf_counter() - t_auto_label, 3)
         if auto_label_info.get("reason"):
             print(f"    [auto-label] FAILED ({auto_label_info['reason']})")
         else:
@@ -1504,6 +1978,7 @@ def run_single_trial(
             _stop_with_timeout("sync_generator", sync_generator.stop)
             # Release (squeeze→grasp→pregrasp gradient) so reset_hybrid's
             # pregrasp→openpose slow interp starts from the right state.
+            t_release_and_reset = time.perf_counter()
             try:
                 executor.release(result)
             except Exception as re_e:
@@ -1520,6 +1995,8 @@ def run_single_trial(
                     timing["retract_error"] = repr(fe)
                     print(f"    reset_hybrid FAILED: {fe!r}")
             _rcc_start(rcc, "stream", False, fps=args.stream_fps)
+            timing["release_and_reset_s"] = round(
+                time.perf_counter() - t_release_and_reset, 3)
             # Persist fail to the candidate dir (skip_done filter on next trial).
             # Skipped when the label was unjudgeable — see above.
             if result.scene_info is not None and not _label_unjudgeable:
@@ -1535,9 +2012,7 @@ def run_single_trial(
                     "candidate_result_scope": (
                         "experiment" if args.isolate_experiment else "shared_v8"),
                     "auto_label": auto_label_info, "timing": timing}
-            with open(os.path.join(img_dir, "result.json"), "w") as f:
-                json.dump(fail, f, indent=2, default=str)
-            return _stamp_end(fail)
+            return _save_result(fail)
 
         # Resume video for place phase.
         _rcc_start(rcc, "video", True, place_rel)
@@ -1549,6 +2024,7 @@ def run_single_trial(
     # a carried-object motion, not a table-height release.
     # pick yaw that makes the NEXT cov-greedy grasp IK-reachable. Hold z so
     # obj doesn't dip / rise during reposition (plan_pose_constrained).
+    t_transfer_selection = time.perf_counter()
     from autodex.utils.conversion import cart2se3
     from autodex.utils.coverage import next_grasp_after_success
     from autodex.utils.path import get_candidate_path
@@ -1565,17 +2041,16 @@ def run_single_trial(
 
     R_PLACE_DEFAULT = _reposition_x
     R_PLACE = R_PLACE_DEFAULT   # overridden below if yaw_search picks better r
-    T_wrist_now = executor.arm.get_data()["position"] @ executor._link6_to_wrist
+    T_wrist_now = executor.get_wrist_pose()
     T_obj_grasp = cart2se3(scene_cfg["mesh"]["target"]["pose"])
     T_obj_in_wrist = np.linalg.inv(result.wrist_se3) @ T_obj_grasp
     T_obj_now = T_wrist_now @ T_obj_in_wrist
     obj_z = float(T_obj_now[2, 3])
-    # IMPORTANT: use the perception-time obj orientation, NOT the lifted one.
-    # plan_pose_constrained's lift can drift wrist orientation by a few
-    # degrees → T_obj_now picks that up → target tabletop ends up tilted /
-    # standing instead of preserved. Using T_obj_grasp's rotation as the
-    # reference means we ROTATE the obj back to the original tabletop pose
-    # (rigid grasp guarantees obj will follow whatever wrist motion).
+    # IMPORTANT: use the perception-time object orientation as the placement
+    # reference.  The Jacobian lift now verifies orientation tightly, but this
+    # still prevents live tracking error from becoming the next tabletop
+    # target.  A rigid grasp makes the object follow the requested wrist
+    # correction back to the classified tabletop orientation.
     R_obj_now = T_obj_grasp[:3, :3]
 
     chosen_yaw = 0.0
@@ -1678,25 +2153,33 @@ def run_single_trial(
     # Force goal wrist z = current wrist z exactly so cuRobo's held-z check
     # passes. Mathematically z is preserved under world-z rotation already,
     # but floating-point chain ops may drift by 1e-7 which trips the check.
-    T_wrist_now_world = (executor.arm.get_data()["position"]
-                          @ executor._link6_to_wrist)
+    T_wrist_now_world = executor.get_wrist_pose()
     T_wrist_target[2, 3] = T_wrist_now_world[2, 3]
     start_full = np.concatenate([
-        np.asarray(executor.arm.get_data()["qpos"][:adof], dtype=np.float32),
+        np.asarray(executor.get_arm_qpos()[:adof], dtype=np.float32),
         np.asarray(result.grasp_pose, dtype=np.float32),
     ])
+    timing["transfer_selection_s"] = round(
+        time.perf_counter() - t_transfer_selection, 3)
     if _precomputed_repo_traj is not None:
         print(f"    [reposition] using precomputed repo_traj "
               f"shape={_precomputed_repo_traj.shape}")
         traj_repose = _precomputed_repo_traj
+        timing["transfer_plan_s"] = 0.0
+        timing["transfer_plan_source"] = "precomputed"
     else:
+        t_transfer_plan = time.perf_counter()
         traj_repose = planner.plan_pose_constrained(
             start_full, T_wrist_target,
             hold_vec_weight=[0, 0, 0, 0, 0, 1],   # hold z only
             scene_cfg=scene_cfg,
             include_obj_obstacle=False,
             debug_dump_dir=DEBUG_DUMP_DIR,
+            timing_phase="execution",
         )
+        timing["transfer_plan_s"] = round(
+            time.perf_counter() - t_transfer_plan, 3)
+        timing["transfer_plan_source"] = "planned"
     timing["place_yaw_deg"] = round(np.degrees(chosen_yaw), 1)
     timing["place_yaw_feasible_n"] = yaw_feasible_n
     if traj_repose is not None:
@@ -1705,40 +2188,123 @@ def run_single_trial(
         # portion = grasp_pose which is less closed than s_hand and would
         # open fingers mid-motion → drop obj).
         hand_repose = np.tile(s_hand, (len(traj_repose), 1))
-        executor._move_joints(arm_repose, hand_repose)
+        t_transfer_motion = time.perf_counter()
+        executor.follow_joint_trajectory(arm_repose, hand_repose)
+        timing["transfer_motion_s"] = round(
+            time.perf_counter() - t_transfer_motion, 3)
         print(f"    [reposition] obj → (x={R_PLACE:.3f}, y={_reposition_y:.3f}, "
               f"yaw={np.degrees(chosen_yaw):.0f}°)")
     else:
+        timing["transfer_motion_s"] = 0.0
         print(f"    [reposition] plan_pose_constrained failed — placing here")
 
-    # Franka place always enters from a point 10 cm above the *table-height*
-    # release wrist, then descends vertically 10 cm. In reposition mode the
-    # arm is currently only at the carry height, so deriving release_z from the
-    # current wrist would put the object below the tabletop. Build the explicit
-    # table-height wrist from the selected object pose instead.
+    # The common placement request carries an explicit table-height wrist when
+    # a transfer target was selected.  Each arm adapter owns its contact and
+    # descent mechanics, but run_auto no longer branches on a robot class.
     _place_kw = {}
     # A successful post-grasp reposition is the actual placement transfer for
     # both ordinary coverage trials and explicit Charuco reposition trials.
-    # Make Franka release at that selected target too (as the legacy executor
-    # did from its current carry pose), rather than returning to the original
-    # grasp pose solely because its place primitive needs an explicit wrist.
-    if args.arm == "franka" and (reposition_mode or traj_repose is not None):
+    if reposition_mode or traj_repose is not None:
         T_obj_place_low = T_obj_target.copy()
         T_obj_place_low[2, 3] = T_obj_grasp[2, 3]
-        _place_kw["grasp_wrist"] = (
+        _place_kw["placement_wrist"] = (
             T_obj_place_low @ np.linalg.inv(T_obj_in_wrist))
         if traj_repose is not None:
-            # ``traj_repose`` has just moved the held object to this same
-            # +10cm place-high pose.  FrankaExecutor.place() verifies both
-            # this target and the live wrist before reusing it; otherwise it
-            # retains its normal collision-checked pre-place correction.
+            # The transfer has just moved the held object to this +10cm
+            # pre-place pose. The arm adapter validates live state before it
+            # may reuse it; otherwise it plans a correction in its own world.
             _place_kw["preplace_traj"] = traj_repose
             _place_kw["preplace_wrist_target"] = T_wrist_target
+    t_place = time.perf_counter()
     place_info = executor.place(result, planner=planner, scene_cfg=scene_cfg,
                                 debug_dump_dir=DEBUG_DUMP_DIR, **_place_kw)
-    timing["execute_s"] = round(time.time() - t0, 2)
+    timing["place_total_s"] = round(time.perf_counter() - t_place, 3)
+    timing["execute_s"] = round(time.perf_counter() - t0, 3)
     timing["execution_states"] = executor.state_timestamps
     timing["place"] = place_info
+    place_timing = dict((place_info or {}).get("timing_s") or {})
+    # Flat fields are kept for simple CSV/table extraction.  The structured
+    # taxonomy below is the canonical interpretation: its top-level buckets
+    # are mutually exclusive wall-clock categories whose sum is ``execute_s``.
+    execution_breakdown = {
+        "total_s": timing["execute_s"],
+        "grasp_lift_s": timing["execute_grasp_lift_s"],
+        # This is a contingency after the object is already grasped. The
+        # candidate preflight belongs to planner timing, not this field.
+        "grasp_lift_runtime_replan_s": float(
+            _executor_exec_timing.get("lift_runtime_replan_s",
+                                      _executor_exec_timing.get("lift_plan_s", 0.0))),
+        "auto_label_lift_s": float(timing.get("auto_label_lift_s", 0.0)),
+        "transfer_selection_s": float(timing.get("transfer_selection_s", 0.0)),
+        "transfer_plan_s": float(timing.get("transfer_plan_s", 0.0)),
+        "transfer_motion_s": float(timing.get("transfer_motion_s", 0.0)),
+        "place_planning_s": float(place_timing.get("planning_s", 0.0)),
+        "place_motion_s": float(place_timing.get("motion_s", 0.0)),
+    }
+    # v1 CSV compatibility: lift_plan means runtime replan only.
+    execution_breakdown["grasp_lift_plan_s"] = (
+        execution_breakdown["grasp_lift_runtime_replan_s"])
+    execution_breakdown["planning_s"] = round(sum(
+        execution_breakdown[key] for key in (
+            "grasp_lift_plan_s", "transfer_plan_s", "place_planning_s")), 3)
+    execution_breakdown["auto_label_s"] = round(
+        execution_breakdown["auto_label_lift_s"], 3)
+    grasp_lift_motion_s = sum(float(_executor_exec_timing.get(key, 0.0))
+                              for key in (
+                                  "init_motion_s", "approach_motion_s",
+                                  "pregrasp_motion_s", "grasp_motion_s",
+                                  "squeeze_motion_s", "lift_motion_s"))
+    planning_bucket = {
+        "lift_s": execution_breakdown["grasp_lift_plan_s"],
+        "transfer_s": execution_breakdown["transfer_plan_s"],
+        "place_s": execution_breakdown["place_planning_s"],
+    }
+    planning_bucket["total_s"] = round(sum(planning_bucket.values()), 3)
+    validation_bucket = {
+        "auto_label_lift_capture_s": float(
+            timing.get("auto_label_lift_capture_s", 0.0)),
+        "auto_label_lift_infer_s": float(
+            timing.get("auto_label_lift_infer_s", 0.0)),
+        "total_s": execution_breakdown["auto_label_lift_s"],
+    }
+    motion_bucket = {
+        # Explicit physical command spans. Do not use the old residual here:
+        # it mixed monitor warmup, state checks and Python/SDK overhead.
+        "grasp_lift_s": round(grasp_lift_motion_s, 3),
+        "transfer_s": execution_breakdown["transfer_motion_s"],
+        "place_s": execution_breakdown["place_motion_s"],
+    }
+    motion_bucket["total_s"] = round(sum(motion_bucket.values()), 3)
+    decision_bucket = {
+        "transfer_target_selection_s": execution_breakdown["transfer_selection_s"],
+        "total_s": execution_breakdown["transfer_selection_s"],
+    }
+    executor_service_bucket = {
+        "approach_monitor_warmup_s": float(
+            _executor_exec_timing.get("approach_monitor_warmup_s", 0.0)),
+        "lift_start_check_s": float(
+            _executor_exec_timing.get("lift_start_check_s", 0.0)),
+        "adapter_overhead_s": float(
+            _executor_exec_timing.get("overhead_s", 0.0)),
+    }
+    executor_service_bucket["total_s"] = round(
+        sum(executor_service_bucket.values()), 3)
+    classified_s = (planning_bucket["total_s"] + validation_bucket["total_s"]
+                    + motion_bucket["total_s"] + decision_bucket["total_s"]
+                    + executor_service_bucket["total_s"])
+    execution_breakdown["unattributed_s"] = round(
+        max(0.0, timing["execute_s"] - classified_s), 3)
+    execution_breakdown["taxonomy"] = {
+        "planning": planning_bucket,
+        "validation": validation_bucket,
+        "motion": motion_bucket,
+        "decision": decision_bucket,
+        "executor_service": executor_service_bucket,
+        # Camera/recorder boundaries and small Python/SDK overhead not covered
+        # by the explicit spans above. This makes the categories exhaustive.
+        "overhead_s": execution_breakdown["unattributed_s"],
+    }
+    timing["execution_breakdown_s"] = execution_breakdown
 
     # Release the obj BEFORE stopping cameras so the hand-open moment is
     # captured in the place video. Only release on normal full-descent
@@ -1751,19 +2317,26 @@ def run_single_trial(
     if not _released_in_video and not (place_info.get("stopped_on_contact")
             and (_target_d_pre - _descended_pre) > 0.005):
         print(f"[6/6] Releasing (in-video)...")
+        t_external_release = time.perf_counter()
         executor.release(result)
+        timing["external_release_s"] = round(
+            time.perf_counter() - t_external_release, 3)
         _released_in_video = True
 
     # STOP order: rcc (cameras) first WHILE sync_generator still pulsing
     # — cameras need pulses to flush buffers during stop. Then timestamp
     # and sync last.
+    t_execution_teardown = time.perf_counter()
     _stop_with_timeout("rcc", rcc.stop)
     _safe_timestamp_stop(timestamp_monitor)
     _stop_with_timeout("sync_generator", sync_generator.stop)
+    timing["execution_teardown_s"] = round(
+        time.perf_counter() - t_execution_teardown, 3)
 
-    # Place hit contact mid-descent → object didn't reach the table. Stay at
-    # current (mid-descent) height, keep grasp, go straight to reset chain.
-    # No release (object is still in hand and will be carried up by reset).
+    # Place hit contact mid-descent → release at that supported pose, rise
+    # vertically from the exact live wrist, then reset.  The reset adapters
+    # reconstruct the placed-object pose and preflight both +Z clearance and
+    # the following retract before moving the arm.
     # Treat as failure only when contact stopped descent BEFORE the target
     # depth — that means the obj hit something mid-descent (table itself at
     # full depth is the EXPECTED stop, not a failure). Threshold 5mm guards
@@ -1775,20 +2348,31 @@ def run_single_trial(
     if _early_contact:
         print(f"    [place] EARLY contact stop "
               f"({_descended*1000:.1f}mm of "
-              f"{_target_d*1000:.1f}mm) — recovering (no release)")
+              f"{_target_d*1000:.1f}mm) — releasing here, then +Z clearance "
+              "and reset")
         _stop_with_timeout("executor.recording", executor.stop_recording)
+        t_release_and_reset = time.perf_counter()
+        recovery_error = None
         try:
+            t_release = time.perf_counter()
+            executor.release(result)
+            timing["external_release_s"] = round(
+                time.perf_counter() - t_release, 3)
             fb_log = executor.reset(result, planner, scene_cfg)
             timing["retract"] = fb_log
-        except Exception as re_e2:
-            print(f"    reset FAILED ({re_e2!r}), trying reset_hybrid")
-            try:
-                fb_log = executor.reset_hybrid(result, planner, scene_cfg)
-                timing["retract"] = fb_log
-            except Exception as fe:
-                timing["retract_error"] = repr(fe)
-                print(f"    reset_hybrid FAILED: {fe!r}")
-        _rcc_start(rcc, "stream", False, fps=args.stream_fps)
+        except Exception as recovery_exc:
+            # The object is already released.  Do not bypass the required +Z
+            # clearance with reset_hybrid/reset_fallback; leave the open hand
+            # in place for manual recovery if either preflight fails.
+            recovery_error = repr(recovery_exc)
+            timing["retract_error"] = recovery_error
+            timing["post_release_safety_stop"] = True
+            print(f"    early-contact release/clearance/reset FAILED: "
+                  f"{recovery_exc!r}")
+        timing["release_and_reset_s"] = round(
+            time.perf_counter() - t_release_and_reset, 3)
+        if recovery_error is None:
+            _rcc_start(rcc, "stream", False, fps=args.stream_fps)
         if reposition_mode:
             # Reposition fail (contact stop) → update stats with fail.
             if result.scene_info is not None:
@@ -1820,14 +2404,16 @@ def run_single_trial(
             "candidate_result_scope": (
                 "experiment" if args.isolate_experiment else "shared_v8"),
             "auto_label_lift": auto_label_info,
-            "place": place_info, "timing": timing,
+            "place": place_info,
+            "early_contact_recovery_error": recovery_error,
+            "manual_recovery_required": recovery_error is not None,
+            "timing": timing,
         }
-        with open(os.path.join(img_dir, "result.json"), "w") as f:
-            json.dump(record, f, indent=2, default=str)
-        return _stamp_end(record)
+        return _save_result(record)
 
     # ── 5. Label ─────────────────────────────────────────────────────────────
     timing["label_start"] = _ts()
+    t_final_label = time.perf_counter()
     print(f"[5/6] Label the result")
     if args.auto:
         if reposition_mode:
@@ -1877,6 +2463,10 @@ def run_single_trial(
         rcc.start("image", False, label_rel)
         rcc.stop()
         try:
+            # Manual mode has no lift-time Charuco check. ``get_label`` is its
+            # first explicit validation operation, so it is the equivalent
+            # streak boundary.
+            _mark_grasp_validation_started("manual_label_started")
             succ, note = get_label()
         except KeyboardInterrupt:
             print("\n[interrupted] Releasing and cleaning up...")
@@ -1884,16 +2474,22 @@ def run_single_trial(
             executor.stop_recording()
             raise
 
+    timing["final_label_s"] = round(time.perf_counter() - t_final_label, 3)
+
     # ── 6. Release & save ────────────────────────────────────────────────────
     if not _released_in_video:
         print(f"[6/6] Releasing...")
+        t_external_release = time.perf_counter()
         executor.release(result)
+        timing["external_release_s"] = round(
+            time.perf_counter() - t_external_release, 3)
     else:
         print(f"[6/6] Release already done in-video — skipping")
 
     # reset_hybrid now does the slow pregrasp→openpose interp internally,
     # then keeps hand at openpose during sequential [1,2,0] + cuRobo wrist.
     #     replan around placed object, back to XARM_INIT.
+    t_release_and_reset = time.perf_counter()
     try:
         fb_log = executor.reset(result, planner, scene_cfg)
         timing["retract"] = fb_log
@@ -1910,6 +2506,8 @@ def run_single_trial(
                 executor.reset_fallback(result, planner=planner, scene_cfg=scene_cfg)
             except Exception as ff_e:
                 print(f"    reset_fallback FAILED: {ff_e!r}")
+    timing["release_and_reset_s"] = round(
+        time.perf_counter() - t_release_and_reset, 3)
 
     executor.stop_recording()
 
@@ -1930,8 +2528,7 @@ def run_single_trial(
     }
     if note is not None:
         trial_result["note"] = note
-    with open(os.path.join(img_dir, "result.json"), "w") as f:
-        json.dump(trial_result, f, indent=2, default=str)
+    _save_result(trial_result)
 
     # Persist result back to the candidate dir for ALL scenes (table, wall,
     # shelf, etc.) — both success AND fail. This is what
@@ -1975,8 +2572,9 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
                         help="0=unlimited. With --ignore_coverage: cap demo run.")
     parser.add_argument(
         "--max_consecutive_rotates", type=int, default=2,
-        help="Maximum successful in-process rotate recoveries in a row for "
-             "one tabletop pose (default: 2). 0 disables rotate recovery and "
+        help="Maximum successful physical rotate recoveries in a row for "
+             "one recovery streak before grasp validation starts (default: 2). "
+             "0 disables rotate recovery and "
              "goes directly to reorient after a planning failure.",
     )
     parser.add_argument("--ignore_coverage", action="store_true",
@@ -2215,10 +2813,11 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
     results: List[dict] = []
     trial = 0
     resume_after_pose_adjust = False
-    # The counter tracks only consecutive *successful physical rotations*.
-    # A normal completed grasp/place trial or a successful reorient begins a
-    # new sequence, so an object cannot oscillate indefinitely at one pose.
-    consecutive_rotate_counts: Dict[str, int] = {}
+    # One streak spans repeated successful physical rotations until grasp
+    # validation starts. It is deliberately not keyed by the classified
+    # tabletop stem: a yaw rotation can change that classification while still
+    # being part of the same uninterrupted recovery sequence.
+    rotate_recovery_state: Dict[str, object] = {"count": 0}
     campaign_state_root = _candidate_state_root(args, args.hand, args.obj)
     try:
         while not startup_cancelled:
@@ -2270,28 +2869,37 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
                 pose_adjust_handler=pose_adjust_handler,
                 reorient_handler=reorient_handler,
                 tabletop_geometry=session_tabletop_geometry,
-                consecutive_rotate_counts=consecutive_rotate_counts,
+                rotate_recovery_state=rotate_recovery_state,
             )
             if tr.get("retry_current_trial"):
-                if tr.get("reason") == "reoriented":
-                    consecutive_rotate_counts.clear()
-                print("\n    [pipeline] recovery complete — restarting normal "
-                      "pipeline from perception using the existing session")
+                if tr.get("reason") in ("reoriented", "reoriented_manual"):
+                    reset_event = _reset_rotate_streak(
+                        rotate_recovery_state, reason="reorient_completed",
+                        tabletop_stem=tr.get("reorient_target_stem"))
+                    if reset_event is not None:
+                        print("    [rotate] reorient completed; reset consecutive "
+                              f"recovery count ({reset_event['count_before']} -> 0)")
+                if tr.get("reason") == "planning_retry_feasible":
+                    print("\n    [planner] retry found a feasible plan — restarting "
+                          "from fresh perception without recovery motion")
+                else:
+                    print("\n    [pipeline] recovery complete — restarting normal "
+                          "pipeline from perception using the existing session")
                 resume_after_pose_adjust = True
                 continue
             results.append(tr)
-            if tr.get("success"):
-                tabletop = tr.get("tabletop_before") or {}
-                filename = tabletop.get("filename") if isinstance(tabletop, dict) else None
-                if filename:
-                    stem = str(filename).replace(".npy", "")
-                    prior_rotates = consecutive_rotate_counts.pop(stem, 0)
-                    if prior_rotates:
-                        print(f"    [rotate] normal trial succeeded at tabletop "
-                              f"{stem}; reset consecutive recovery count "
-                              f"({prior_rotates} -> 0)")
             n_succ = sum(1 for r in results if r.get("success"))
             print(f"\n    Running total: {n_succ}/{len(results)} success")
+
+            if tr.get("fatal_cuda_planning_fault"):
+                print("\n    CUDA planning fault: stopping this process after "
+                      "hardware cleanup; restart before another trial.")
+                break
+
+            if tr.get("manual_recovery_required"):
+                print("\n    Lift preflight failed after grasp; the object remains "
+                      "held. Stopping the automatic loop for manual recovery.")
+                break
 
             # After-trial coverage summary. Show per-tabletop
             # remaining uncovered count + how many scenes this trial just
@@ -2355,15 +2963,19 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
             executor.shutdown()
         except Exception:
             pass
-        try:
-            orch.close()
-        except Exception:
-            pass
+        # TimestampMonitor owns a Spinnaker camera reference independent of
+        # FoundPose's orchestrator.  Release it before orch.close() clears the
+        # camera system; reversing this order produces Spinnaker -1004 after
+        # an otherwise handled planning failure.
         for fn in (timestamp_monitor.end, sync_generator.end, rcc.stop, rcc.end):
             try:
                 fn()
             except Exception:
                 pass
+        try:
+            orch.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

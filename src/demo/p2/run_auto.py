@@ -215,11 +215,13 @@ def _print_trial_summary(*, trial_index: int, run_dir: Path, object_name: str,
                          human: dict[str, Any]) -> None:
     """Print only the completed P2 take's decision, label, and core timing."""
     timing = result.get("timing") if isinstance(result.get("timing"), dict) else {}
-    perception = timing.get("perception") if isinstance(timing.get("perception"), dict) else {}
-    planning = timing.get("planning") if isinstance(timing.get("planning"), dict) else {}
-    execution = timing.get("execution") if isinstance(timing.get("execution"), dict) else {}
-    task = execution.get("task") if isinstance(execution.get("task"), dict) else {}
-    reset = execution.get("reset") if isinstance(execution.get("reset"), dict) else {}
+    summary = timing.get("summary") if isinstance(timing.get("summary"), dict) else {}
+    phases = summary.get("phases") if isinstance(summary.get("phases"), dict) else {}
+    perception = phases.get("perception") if isinstance(phases.get("perception"), dict) else {}
+    planning = phases.get("planning") if isinstance(phases.get("planning"), dict) else {}
+    execution = phases.get("execution") if isinstance(phases.get("execution"), dict) else {}
+    post_execution = (phases.get("post_execution")
+                      if isinstance(phases.get("post_execution"), dict) else {})
     semantic = result.get("semantic") if isinstance(result.get("semantic"), dict) else {}
     predicted = semantic.get("prediction")
     route = (f"{predicted} -> {semantic.get('basket')} / "
@@ -229,8 +231,7 @@ def _print_trial_summary(*, trial_index: int, run_dir: Path, object_name: str,
         result.get("reason", "not_run"))
     gpc = "unscored" if not human.get("scored", True) else (
         f"G={human.get('G')} P={human.get('P')} C={human.get('C')}")
-    reset_text = (_format_seconds(reset.get("total_s"))
-                  if reset.get("performed") else "not performed")
+    reset_text = _format_seconds(post_execution.get("inclusive_s"))
 
     print(f"\n{_TRIAL_SEPARATOR}")
     print(f"[P2 TRIAL {trial_index:02d} COMPLETE] {object_name} / "
@@ -239,11 +240,11 @@ def _print_trial_summary(*, trial_index: int, run_dir: Path, object_name: str,
     print(f"  route    : {route}")
     print(f"  operator : {human['name']} ({gpc})")
     print("  timing   : "
-          f"perception={_format_seconds(perception.get('total_s'))}, "
-          f"planning={_format_seconds(planning.get('total_s'))}, "
-          f"task={_format_seconds(task.get('total_s'))}, "
+          f"perception={_format_seconds(perception.get('inclusive_s'))}, "
+          f"planning={_format_seconds(planning.get('inclusive_s'))}, "
+          f"task={_format_seconds(execution.get('inclusive_s'))}, "
           f"reset={reset_text}, "
-          f"execution={_format_seconds(execution.get('total_s'))}")
+          f"execution={_format_seconds(timing.get('trial_total_s'))}")
     print(f"  saved    : {run_dir / 'result.json'}")
     print(f"{_TRIAL_SEPARATOR}\n")
 

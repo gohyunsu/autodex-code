@@ -22,6 +22,12 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from autodex.planner import PlanResult
+from autodex.executor.lift_policy import LiftExecutionError, check_lift_start
+from autodex.executor.timing import (
+    finish_pickup_timing, finish_place_timing, new_pickup_timing,
+    new_place_timing,
+)
+from autodex.timing import TimingRecorder
 from autodex.utils.robot_config import (
     XARM_INIT, XARM_INSPIRE_INIT,
     ALLEGRO_INIT, ALLEGRO_LINK6_TO_WRIST,
@@ -102,6 +108,7 @@ KT = np.array([0.067, 0.067, 0.0573, 0.0573, 0.056, 0.056])
 GEAR = np.full(6, 100.0)
 # Per-joint baseline noise (Nm) — from mcc DEADBAND_J.
 DEADBAND_J = np.array([3.0, 3.0, 3.0, 1.0, 2.0, 0.5])
+POST_RELEASE_CLEARANCE_M = 0.10
 
 
 class ContactDetected(RuntimeError):
@@ -261,6 +268,13 @@ class RealExecutor:
         self._last_hand_qpos = np.asarray(self._hand_init, dtype=np.float64).copy()
         self._last_hand_action = self._convert(self._last_hand_qpos)
         self.state_timestamps = []
+        self.last_execute_timing = {}
+        self.last_place_timing = {}
+        self._timing_recorder: Optional[TimingRecorder] = None
+        self._holding_object = False
+        # Public execution contract consumed by run_auto.  Keep private
+        # low-level motion details inside this adapter.
+        self.arm_dof = 6
 
         from paradex.io.robot_controller import get_arm, get_hand
         self.arm = get_arm(arm_name)
@@ -283,7 +297,41 @@ class RealExecutor:
         self.rot_vel_limit = 0.01
         self.hand_vel_limit = 0.03
 
+    def set_timing_recorder(self, recorder: Optional[TimingRecorder]) -> None:
+        """Attach the trial recorder without coupling this adapter to a runner."""
+        self._timing_recorder = recorder
+
     # ── low-level motion primitives ──────────────────────────────────────
+
+    def get_arm_qpos(self) -> np.ndarray:
+        """Read the physical arm configuration in planner joint order."""
+        return np.asarray(self.arm.get_data()["qpos"][:self.arm_dof],
+                          dtype=np.float64)
+
+    def get_hand_qpos(self) -> tuple[np.ndarray, str]:
+        """Return the planner-space hand state used for collision semantics.
+
+        The deployed hand APIs do not expose a calibrated planner-qpos encoder
+        for every hand, so this has explicit ``commanded_nominal`` provenance.
+        """
+        return (np.asarray(self._last_hand_qpos, dtype=np.float64).copy(),
+                "commanded_nominal")
+
+    def get_wrist_pose(self) -> np.ndarray:
+        """Read the physical wrist pose in the planner frame."""
+        link6 = np.asarray(self.arm.get_data()["position"], dtype=np.float64)
+        wrist = link6 @ self._link6_to_wrist
+        if wrist.shape != (4, 4) or not np.isfinite(wrist).all():
+            raise RuntimeError("xarm returned an invalid wrist pose")
+        return wrist
+
+    def follow_joint_trajectory(self, traj: np.ndarray,
+                                hand_traj: Optional[np.ndarray] = None) -> None:
+        """Execute an already planned full-DOF path through this arm adapter."""
+        q = np.asarray(traj, dtype=np.float64)
+        if q.ndim != 2 or q.shape[1] < self.arm_dof:
+            raise ValueError("joint trajectory has incompatible xarm shape")
+        self._move_joints(q[:, :self.arm_dof], hand_traj)
 
     def _safe_joint_step(self, current, target, vel_limit=None):
         delta = target - current
@@ -569,11 +617,15 @@ class RealExecutor:
             print("Planning failed — nothing to execute.")
             return None
 
+        execute_started = time.perf_counter()
         self.state_timestamps = []
+        self.last_execute_timing = new_pickup_timing()
+        pickup_trace_id = (self._timing_recorder.begin(
+            phase="execution", kind="motion", name="pickup_and_lift")
+            if self._timing_recorder is not None else None)
         traj = plan_result.traj
         pg_hand = self._convert(plan_result.pregrasp_pose)
         g_hand = self._convert(plan_result.grasp_pose)
-        wrist_ee = plan_result.wrist_se3 @ np.linalg.inv(self._link6_to_wrist)
 
         sl = self.squeeze_level
 
@@ -582,6 +634,7 @@ class RealExecutor:
         # would discard the local replanning benefit.
         self._log_state("current_start" if start_from_current else "init")
         if not start_from_current:
+            t_init = time.perf_counter()
             order = [1, 2, 5, 0, 3, 4]
             if self.arm.get_data()["qpos"][1] < self._xarm_init[1]:
                 order = [2, 1, 5, 0, 3, 4]
@@ -594,93 +647,158 @@ class RealExecutor:
                     f"— arm not at XARM_INIT, refusing to approach. "
                     f"final_qpos={self.arm.get_data()['qpos'].round(3)}"
                 )
+            self.last_execute_timing["init_motion_s"] = round(
+                time.perf_counter() - t_init, 3)
         # Threshold raised 50→70 Nm because inertia spikes (joint 2
         # shoulder ~50-60Nm during free-space motion) were aborting valid
         # approaches.
         monitor = self._make_monitor(thresh_nm=70.0, sustained_ticks=50)
         print("[executor] warming up approach contact monitor (1s static)...")
+        t_warmup = time.perf_counter()
         monitor.warmup(seconds=1.0)
+        self.last_execute_timing["approach_monitor_warmup_s"] = round(
+            time.perf_counter() - t_warmup, 3)
         print(f"[executor] approach baseline tau = {monitor._baseline.round(2)}  "
               f"(thresh=70Nm, sustained=0.5s)")
 
         # 2. Approach trajectory (contact-monitored).
         self._log_state("approach")
         hand_traj = np.array([self._convert(traj[i, 6:]) for i in range(len(traj))])
+        t_approach = time.perf_counter()
         self._move_joints(traj[:, :6], hand_traj, monitor=monitor)
+        self.last_execute_timing["approach_motion_s"] = round(
+            time.perf_counter() - t_approach, 3)
 
         # 3. Pregrasp
         self._log_state("pregrasp")
+        t_pregrasp = time.perf_counter()
         self._move_hand(pg_hand)
+        self.last_execute_timing["pregrasp_motion_s"] = round(
+            time.perf_counter() - t_pregrasp, 3)
         self._last_hand_qpos = np.asarray(plan_result.pregrasp_pose, dtype=np.float64)
         self._last_hand_action = np.asarray(pg_hand, dtype=np.float64)
 
         # 4. Grasp — interpolated ramp pregrasp → grasp for slower close.
         self._log_state("grasp")
+        t_grasp = time.perf_counter()
         n_grasp_steps = 50
         for i in range(1, n_grasp_steps + 1):
             t = i / n_grasp_steps
             self._move_hand(pg_hand * (1 - t) + g_hand * t)
             time.sleep(0.01)
+        self.last_execute_timing["grasp_motion_s"] = round(
+            time.perf_counter() - t_grasp, 3)
 
         # 5. Squeeze (2× slower than before: sleep 0.01 → 0.02)
         self._log_state("squeeze")
+        t_squeeze = time.perf_counter()
         s_hand = g_hand
         for i in range(sl * 5):
             s_hand = g_hand * (1 + i / 5) - pg_hand * (i / 5)
             self._move_hand(s_hand)
             time.sleep(0.02)
+        self.last_execute_timing["squeeze_motion_s"] = round(
+            time.perf_counter() - t_squeeze, 3)
         self._last_hand_qpos = np.asarray(plan_result.grasp_pose, dtype=np.float64)
         self._last_hand_action = np.asarray(s_hand, dtype=np.float64)
+        self._holding_object = True
 
         if skip_lift:
             self._log_state("squeeze_done")
+            finish_pickup_timing(self.last_execute_timing, execute_started)
+            if pickup_trace_id is not None:
+                self._timing_recorder.end(pickup_trace_id, outcome="success", lift="skipped")
             return s_hand
 
         # 6. Lift — no contact monitor: arm is now carrying the object so the
         #    empty-arm baseline is invalid for tau_dev. place() does its own
         #    baseline at the lifted pose.
         self._log_state("lift")
-        # Straight +z lift. plan_pose_constrained needs WRIST target;
-        # _move_cartesian needs LINK6 target. Build both.
-        link6_now = self.arm.get_data()["position"].copy()
-        link6_lift_pose = link6_now.copy()
-        link6_lift_pose[2, 3] += lift_height
-        wrist_lift_pose = (link6_now @ self._link6_to_wrist)
-        wrist_lift_pose[2, 3] += lift_height
-        if lift_traj_override is not None:
-            # Use precomputed trajectory (e.g. the one viz showed). Ensures
-            # what the user sees in viz == what the robot actually executes.
-            print(f"[execute] using precomputed lift_traj "
-                  f"shape={lift_traj_override.shape}")
-            arm_lift = lift_traj_override[:, :6]
-            hand_lift = np.tile(s_hand, (len(lift_traj_override), 1))
-            self._move_joints(arm_lift, hand_lift)
-        elif planner is not None:
-            start_full = np.concatenate([
-                np.asarray(self.arm.get_data()["qpos"][:6], dtype=np.float32),
-                np.asarray(plan_result.grasp_pose, dtype=np.float32),
-            ])
-            traj_lift = planner.plan_pose_constrained(
-                start_full, wrist_lift_pose,
-                hold_vec_weight=[1, 1, 1, 1, 1, 0],
-                scene_cfg=scene_cfg,
-                include_obj_obstacle=False,
-                debug_dump_dir=debug_dump_dir,
-            )
-            if traj_lift is not None:
-                arm_lift = traj_lift[:, :6]
-                # Hold hand at the squeeze pose during lift (planner traj's
-                # hand portion = grasp_pose which is LESS closed than s_hand
-                # and would open fingers mid-lift → drop obj).
-                hand_lift = np.tile(s_hand, (len(traj_lift), 1))
-                self._move_joints(arm_lift, hand_lift)
+        # Replay only when the arm and the planner-space hand state still
+        # match the collision model used for the candidate preflight.
+        preflight = getattr(plan_result, "lift_preflight", None)
+        traj_lift = None
+        if preflight is not None:
+            t_lift_check = time.perf_counter()
+            live_hand_qpos, hand_state_source = self.get_hand_qpos()
+            start_check = check_lift_start(
+                self.get_arm_qpos(), preflight.start_full_qpos,
+                arm_dof=self.arm_dof, live_hand_qpos=live_hand_qpos)
+            self.last_execute_timing.update({
+                "lift_start_max_abs_rad": round(start_check.max_abs_rad, 4),
+                "lift_start_l2_rad": round(start_check.l2_rad, 4),
+                "lift_start_hand_checked": start_check.hand_checked,
+                "lift_start_hand_accepted": start_check.hand_accepted,
+                "lift_start_hand_max_abs": round(start_check.hand_max_abs, 4),
+                "lift_start_hand_l2": round(start_check.hand_l2, 4),
+                "lift_start_hand_source": hand_state_source,
+            })
+            self.last_execute_timing["lift_start_check_s"] = round(
+                time.perf_counter() - t_lift_check, 3)
+            if start_check.accepted:
+                # An override is only a visualisation/legacy representation of
+                # this same preflight.  The state gate always comes first.
+                traj_lift = np.asarray(
+                    lift_traj_override if lift_traj_override is not None
+                    else preflight.traj)
+                self.last_execute_timing["lift_plan_source"] = (
+                    "precomputed" if lift_traj_override is not None
+                    else "candidate_preflight")
             else:
-                print("[execute] constrained lift failed, falling back to cartesian")
-                self._move_cartesian(link6_lift_pose, vel_scale=1/1.5)
-        else:
-            self._move_cartesian(link6_lift_pose, vel_scale=1/1.5)
+                self.last_execute_timing["lift_plan_source"] = (
+                    "live_replan_both_mismatch" if not start_check.hand_accepted
+                    and not (start_check.max_abs_rad <= 0.12 and start_check.l2_rad <= 0.20)
+                    else ("live_replan_hand_mismatch" if not start_check.hand_accepted
+                          else "live_replan_arm_mismatch"))
+
+        if traj_lift is None and preflight is None and lift_traj_override is not None:
+            # Compatibility for standalone scripts which supply a trajectory
+            # but construct PlanResult themselves.  The main pipeline always
+            # has a LiftPreflight and therefore takes the guarded branch above.
+            traj_lift = np.asarray(lift_traj_override)
+            self.last_execute_timing["lift_plan_source"] = "legacy_override"
+
+        if traj_lift is None:
+            if planner is None or scene_cfg is None:
+                raise LiftExecutionError(
+                    "no validated lift trajectory and no planner/scene for a "
+                    "live replan; holding the object")
+            live_hand_qpos, hand_state_source = self.get_hand_qpos()
+            self.last_execute_timing.setdefault("lift_start_hand_source", hand_state_source)
+            start_full = np.concatenate([
+                self.get_arm_qpos().astype(np.float32),
+                np.asarray(live_hand_qpos, dtype=np.float32),
+            ])
+            t_lift_plan = time.perf_counter()
+            try:
+                live_preflight = planner.plan_lift_preflight(
+                    start_full, scene_cfg, lift_h=lift_height,
+                    timing_parent_id=pickup_trace_id, timing_phase="execution")
+            except Exception as exc:
+                raise LiftExecutionError(
+                    f"live lift replan raised {exc!r}; holding the object") from exc
+            self.last_execute_timing["lift_runtime_replan_s"] = round(
+                time.perf_counter() - t_lift_plan, 3)
+            if live_preflight is None:
+                raise LiftExecutionError(
+                    "live lift replan failed; refusing Cartesian or lateral "
+                    "fallback while the object is held")
+            traj_lift = live_preflight.traj
+
+        # Hold the squeeze throughout: planner hand columns represent the
+        # nominal grasp qpos and could partially open the fingers in flight.
+        hand_lift = np.tile(s_hand, (len(traj_lift), 1))
+        t_lift_motion = time.perf_counter()
+        self.follow_joint_trajectory(traj_lift, hand_lift)
+        self.last_execute_timing["lift_motion_s"] = round(
+            time.perf_counter() - t_lift_motion, 3)
 
         self._log_state("lift_done")
+        finish_pickup_timing(self.last_execute_timing, execute_started)
+        if pickup_trace_id is not None:
+            self._timing_recorder.end(
+                pickup_trace_id, outcome="success",
+                lift_plan_source=self.last_execute_timing.get("lift_plan_source"))
         return s_hand
 
     def execute_lift(self, lift_traj, hold_hand):
@@ -700,19 +818,21 @@ class RealExecutor:
                        from ``execute(skip_lift=True)``) held constant throughout.
         """
         self._log_state("lift")
-        arm_traj = np.asarray(lift_traj)[:, :6]
+        self._holding_object = True
+        arm_traj = np.asarray(lift_traj)[:, :self.arm_dof]
         hand_traj = np.tile(np.asarray(hold_hand, dtype=float), (len(arm_traj), 1))
-        self._move_joints(arm_traj, hand_traj)        # no monitor: arm carries the object
+        self.follow_joint_trajectory(arm_traj, hand_traj)  # no monitor: object held
         self._log_state("lift_done")
 
     def _place_planned(self, plan_result: PlanResult, planner, scene_cfg,
                        target_descend: float, mcc_model_path: str,
-                       debug_dump_dir: str = None) -> "Optional[dict]":
-        """Descend by replaying a cuRobo straight-line trajectory. Mirror of lift.
+                       debug_dump_dir: str = None,
+                       timing_s: Optional[dict] = None) -> "Optional[dict]":
+        """Descend by replaying a Jacobian-continuation trajectory. Mirror of lift.
 
-        ``lift`` plans ``wrist z + h`` with ``plan_pose_constrained`` and
-        replays it in joint space; the descent is the same motion with the sign
-        flipped. Doing it this way instead of streaming Cartesian setpoints
+        ``lift`` follows a local differential-IK branch to ``wrist z + h``;
+        the descent uses the same implementation with the sign flipped. Doing
+        it this way instead of streaming Cartesian setpoints
         means the straight line is *checked before the arm moves* (a plan that
         cannot be made returns None here) rather than being left to the
         controller's internal IK, which is free to bend it.
@@ -721,11 +841,13 @@ class RealExecutor:
         between waypoints and raises ``ContactDetected``, so the arm freezes
         where it touched instead of pushing through.
 
-        Returns the same dict ``place()`` does, or None if no trajectory could
-        be planned (caller falls back to the Cartesian admittance descent).
+        Returns the same dict ``place()`` does, or ``None`` if no trajectory
+        could be planned.  The production caller then keeps holding the object;
+        only standalone diagnostics may choose a different recovery policy.
         """
         link6_now = self.arm.get_data()["position"].copy()
-        wrist_place_pose = link6_now @ self._link6_to_wrist
+        wrist_start_pose = link6_now @ self._link6_to_wrist
+        wrist_place_pose = wrist_start_pose.copy()
         wrist_place_pose[2, 3] -= target_descend
         start_z = float(link6_now[2, 3])
 
@@ -733,26 +855,42 @@ class RealExecutor:
             np.asarray(self.arm.get_data()["qpos"][:6], dtype=np.float32),
             np.asarray(plan_result.grasp_pose, dtype=np.float32),
         ])
-        traj = planner.plan_pose_constrained(
-            start_full, wrist_place_pose,
-            hold_vec_weight=[1, 1, 1, 1, 1, 0],     # same as lift: hold pose, free z
+        t_plan = time.perf_counter()
+        from autodex.utils.conversion import cart2se3
+
+        object_at_grasp = cart2se3(scene_cfg["mesh"]["target"]["pose"])
+        object_in_wrist = np.linalg.inv(plan_result.wrist_se3) @ object_at_grasp
+        object_at_descend_start = wrist_start_pose @ object_in_wrist
+        traj = planner.plan_vertical_stroke(
+            start_full, wrist_start_pose, wrist_place_pose,
+            expected_travel_m=float(target_descend),
+            travel_tolerance_m=1.0e-4,
             scene_cfg=scene_cfg,
             include_obj_obstacle=False,
+            attached_object_pose_at_start=object_at_descend_start,
+            label="xarm place descent",
             debug_dump_dir=debug_dump_dir,
+            timing_phase="execution",
         )
+        if timing_s is not None:
+            timing_s["descend_plan_s"] = round(time.perf_counter() - t_plan, 3)
         if traj is None:
-            print("[place] constrained descent plan failed — "
-                  "falling back to cartesian admittance")
+            print("[place] Jacobian descent preflight failed")
             return None
-        print(f"[place] planned straight descent, {len(traj)} waypoints")
+        print(f"[place] planned Jacobian straight descent, {len(traj)} samples")
 
         mon = ContactMonitor(self.arm.arm, mcc_model_path,
                              watch_joints=(1, 2), thresh_nm=10.0)
+        t_warmup = time.perf_counter()
         mon.warmup(seconds=1.0)
+        if timing_s is not None:
+            timing_s["contact_monitor_warmup_s"] = round(
+                time.perf_counter() - t_warmup, 3)
 
         arm_traj = traj[:, :6]
 
         contact = False
+        t_motion = time.perf_counter()
         try:
             # No hand trajectory: the squeeze pose set during execute() stays
             # commanded (the hand controller re-sends its last action at 100 Hz),
@@ -765,12 +903,16 @@ class RealExecutor:
             print(f"[place] CONTACT — {exc}")
 
         final_z = float(self.arm.get_data()["position"][2, 3])
+        if timing_s is not None:
+            timing_s["descend_motion_s"] = round(
+                time.perf_counter() - t_motion, 3)
         descended = start_z - final_z
         print(f"[place] descended {descended*1000:.1f}mm of target "
               f"{target_descend*1000:.0f}mm  (contact={contact})")
         return {"descended": float(descended),
                 "stopped_on_contact": bool(contact),
                 "target": float(target_descend),
+                "released": False,
                 "mode": "planned"}
 
     def place(self, plan_result: PlanResult, lift_height: float = 0.10,
@@ -779,20 +921,40 @@ class RealExecutor:
               descend_time_s: float = 4.0,
               total_time_s: float = 6.4,
               planner=None, scene_cfg=None, debug_dump_dir: str = None,
-              log_path: str = None) -> dict:
+              log_path: str = None,
+              placement_wrist: Optional[np.ndarray] = None,
+              preplace_traj: Optional[np.ndarray] = None,
+              preplace_wrist_target: Optional[np.ndarray] = None) -> dict:
         """Descend with mcc_minimal admittance control. Target z = lift_pose -
         (lift_height + overshoot) — i.e. with overshoot=0, the arm targets the
         original grasp z (where the object came from). Overshoot can be set >0
         to bias the motion downward past the original z if contact_stop is
         unreliable, but with the tau-model contact check this is usually 0.
 
+        ``placement_wrist`` / ``preplace_*`` are accepted as the shared
+        runner contract. xArm's contact controller descends from its measured
+        carry pose, so it does not replay a transfer trajectory here; it uses
+        the values for explicit interface compatibility while the FR3 adapter
+        can validate/reuse its planned pre-place segment.
+
         paradex's XArmController control_loop stays alive (so its recording
         keeps running); mcc only computes q_ref and writes to xarm_ctrl.action,
         which paradex sends. On contact (tau_ext > threshold) we freeze and break."""
         from pathlib import Path
 
+        del placement_wrist, preplace_traj, preplace_wrist_target
+        place_started = time.perf_counter()
+        place_timing = new_place_timing()
+        # xArm's release is intentionally done by the runner while recording
+        # remains active. Its duration is therefore a runner span, not a
+        # hidden adapter-side zero.
+        place_timing["release_execution"] = "external_runner"
+        self.last_place_timing = place_timing
+
         if not plan_result.success:
-            return {"descended": 0.0, "stopped_on_contact": False, "target": 0.0}
+            return {"descended": 0.0, "stopped_on_contact": False,
+                    "target": 0.0, "released": False, "mode": "skipped",
+                    "timing_s": finish_place_timing(place_timing, place_started)}
 
         if mcc_model_path is None:
             mcc_model_path = str(Path.home() / "shared_data" / "AutoDex"
@@ -801,16 +963,21 @@ class RealExecutor:
         self._log_state("place")
         target_descend = lift_height + overshoot
 
-        # Preferred path: plan the straight descent with cuRobo and replay it in
-        # joint space — the mirror of lift. Only if that cannot be planned do we
-        # fall through to streaming Cartesian setpoints below, the same way lift
-        # falls back to _move_cartesian.
+        # The main pipeline is strict: a failed Jacobian vertical continuation is
+        # not silently replaced by a Cartesian servo whose internal IK may
+        # swing laterally.  The legacy no-planner path remains only for direct
+        # hardware diagnostics outside the pipeline.
         if planner is not None:
             planned = self._place_planned(
                 plan_result, planner, scene_cfg, target_descend,
-                mcc_model_path, debug_dump_dir=debug_dump_dir)
+                mcc_model_path, debug_dump_dir=debug_dump_dir,
+                timing_s=place_timing)
             if planned is not None:
+                planned["timing_s"] = finish_place_timing(
+                    place_timing, place_started)
                 return planned
+            raise RuntimeError(
+                "Jacobian place descent preflight failed; object remains held")
 
         start_pose = self.arm.get_data()["position"].copy()   # 4x4 homo, link6 in world
         current_pos = start_pose.copy()
@@ -824,6 +991,7 @@ class RealExecutor:
         xarm_handle = xarm_ctrl.arm   # raw XArmAPI
 
         # mcc-needed handle setup (one-shot, harmless to paradex).
+        t_control_setup = time.perf_counter()
         xarm_handle.set_report_tau_or_i(1)
         xarm_handle.set_collision_sensitivity(0)
 
@@ -834,6 +1002,8 @@ class RealExecutor:
 
         print(f"[place] loading mcc model: {mcc_model_path}")
         model = load_model(mcc_model_path)
+        place_timing["control_setup_s"] = round(
+            time.perf_counter() - t_control_setup, 3)
 
         # Contact-stop loop: use the learned tau model only to estimate tau_ext;
         # on contact (tau_ext > threshold), freeze q_des at current pose (paradex
@@ -875,6 +1045,7 @@ class RealExecutor:
         tau_filt = np.zeros(6)
         qdot_smooth = np.zeros(6)
         q_last, t_last = None, None
+        t_warmup = time.perf_counter()
         t_warm0 = time.time()
         while time.time() - t_warm0 < WARMUP_SEC:
             q, tau_motor = _read()
@@ -896,6 +1067,8 @@ class RealExecutor:
             tau_filt = FILTER_ALPHA * tau_ext + (1 - FILTER_ALPHA) * tau_filt
             _push_pose(start_pose)
             time.sleep(DT)
+        place_timing["contact_monitor_warmup_s"] = round(
+            time.perf_counter() - t_warmup, 3)
         # Pose-dependent baseline (MLP residual + any reading offset). Subtract
         # this from later tau_filt so the contact check only sees DEVIATIONS.
         tau_baseline = tau_filt.copy()
@@ -908,6 +1081,7 @@ class RealExecutor:
         contact_t = None
         sustained = 0
         last_print_t = -1.0
+        t_descent_motion = time.perf_counter()
         t0 = time.time()
         next_t = t0
         while time.time() - t0 < total_time_s:
@@ -1016,9 +1190,13 @@ class RealExecutor:
         # whole time, so no re-init needed. Just leave its action at last q_ref.
 
         self._log_state("place_done")
+        place_timing["descend_motion_s"] = round(
+            time.perf_counter() - t_descent_motion, 3)
         return {"descended": float(descended), "stopped_on_contact": bool(contact),
                 "contact_t_s": float(contact_t) if contact_t is not None else None,
-                "target": float(target_descend)}
+                "target": float(target_descend), "released": False,
+                "mode": "cartesian_admittance",
+                "timing_s": finish_place_timing(place_timing, place_started)}
 
     def release(self, plan_result: PlanResult, slow_factor: float = 1.0):
         """Release object while leaving the arm at its current raised pose.
@@ -1033,6 +1211,7 @@ class RealExecutor:
         self._release_auto(pg_hand, g_hand, slow_factor=slow_factor)
         self._last_hand_qpos = np.asarray(plan_result.pregrasp_pose, dtype=np.float64)
         self._last_hand_action = np.asarray(pg_hand, dtype=np.float64)
+        self._holding_object = False
 
     def _release_auto(self, pg_hand, g_hand, slow_factor: float = 1.0):
         """Reverse squeeze -> grasp -> pregrasp, then STOP.
@@ -1055,16 +1234,13 @@ class RealExecutor:
 
     def reset(self, plan_result: PlanResult,
               planner, scene_cfg: dict) -> dict:
-        """Automated reset AFTER release. Required: planner + scene_cfg.
-          0. Snapshot placed object pose from CURRENT wrist (rigid-grasp).
-             place() may stop early on contact, so the actual resting pose
-             can differ from the planned grasp pose.
-          1. Re-plan retract with the placed object as obstacle. Start hand
-             config = pregrasp (real hand state after release). Goal = init
-             state. Planner gradually opens fingers along a collision-free
-             path away from the object. Raises if planning fails.
-          2. Execute traj (arm + planner-generated hand portion).
-          3. Final joint-0 unwind to land exactly on XARM_INIT."""
+        """Leave a released object via +Z clearance, then reset.
+
+        The placed-object pose is reconstructed at the actual release wrist,
+        which also covers a place descent stopped early by contact.  The hand
+        opens first; then a +Z Jacobian clearance and the following joint-space
+        retract are both planned before either arm segment moves.
+        """
         t_start = time.time()
         log = {"start": datetime.datetime.now().isoformat(), "steps": {}}
         if not plan_result.success:
@@ -1103,40 +1279,81 @@ class RealExecutor:
                               if plan_result.pregrasp_pose is not None
                               else self._hand_init)
 
-        # 2. Re-plan retract — hand at openpose (clearer from obj).
-        self._log_state("arm_retract")
-        t1 = time.time()
+        # 2. Preflight +Z clearance and the following reset with the object at
+        #    its actual release pose.  Planning both before motion prevents a
+        #    fallback lateral sweep through the newly placed object.
+        self._log_state("reset_preflight")
         new_scene = dict(scene_cfg)
         new_scene["mesh"] = dict(scene_cfg.get("mesh", {}))
         new_scene["mesh"]["target"] = dict(scene_cfg["mesh"]["target"])
         new_scene["mesh"]["target"]["pose"] = se32cart(released_obj_pose).tolist()
-        cur_qpos = self.arm.get_data()["qpos"]
+        cur_qpos = np.asarray(
+            self.arm.get_data()["qpos"][:self.arm_dof], dtype=np.float32)
+        start_full = np.concatenate([
+            cur_qpos,
+            np.asarray(hold_hand_raw, dtype=np.float32),
+        ])
+        wrist_start = self.get_wrist_pose()
+        wrist_clear = wrist_start.copy()
+        wrist_clear[2, 3] += POST_RELEASE_CLEARANCE_M
+        t_vertical_plan = time.perf_counter()
+        vertical_traj = planner.plan_vertical_stroke(
+            start_full, wrist_start, wrist_clear,
+            expected_travel_m=POST_RELEASE_CLEARANCE_M,
+            travel_tolerance_m=1.0e-4,
+            scene_cfg=new_scene,
+            include_obj_obstacle=True,
+            label="xarm post-release reset clearance",
+            timing_phase="post_execution",
+        )
+        log["steps"]["vertical_plan_s"] = round(
+            time.perf_counter() - t_vertical_plan, 3)
+        if vertical_traj is None:
+            log["retract_mode"] = "vertical_clearance_failed"
+            raise RuntimeError(
+                "reset(): +Z clearance from the release pose failed; "
+                "leaving the open hand and arm in place"
+            )
+
         clear_view_arm = self._xarm_init.copy()
         clear_view_arm[0] -= np.deg2rad(40.0)
-        t_plan0 = time.time()
+        t_plan0 = time.perf_counter()
         retract_traj = planner.plan_js_to_init(
-            new_scene, cur_qpos,
+            new_scene, vertical_traj[-1, :self.arm_dof],
             start_hand_qpos=hold_hand_raw,
             goal_arm_qpos=clear_view_arm[:6],
         )
-        log["steps"]["replan_s"] = round(time.time() - t_plan0, 2)
+        log["steps"]["retract_plan_s"] = round(
+            time.perf_counter() - t_plan0, 3)
         if retract_traj is None:
             log["retract_mode"] = "replan_failed"
             raise RuntimeError(
-                "reset(): plan_js_to_init returned None — retract not safe. "
-                "Inspect placed object pose / scene_cfg."
+                "reset(): post-clearance plan_js_to_init failed; arm remains "
+                "at the release pose because both segments preflight before motion"
             )
-        log["retract_mode"] = "replanned"
+        log["retract_mode"] = "jacobian_clearance_then_replanned"
 
-        # 2. Execute: arm + planner-generated hand portion. No contact monitor
-        #    here — retract trajectory is high-acceleration and tau_model's
-        #    qdot extrapolation outside training distribution gives false
-        #    positives that cut the traj short mid-flight.
+        # 3. Execute the vertical clearance first with the open hand fixed.
+        self._log_state("post_release_clearance")
+        t_vertical_motion = time.perf_counter()
+        vertical_hand = np.tile(
+            self._convert(np.asarray(hold_hand_raw, dtype=np.float64)),
+            (len(vertical_traj), 1),
+        )
+        self.follow_joint_trajectory(vertical_traj, vertical_hand)
+        log["steps"]["vertical_motion_s"] = round(
+            time.perf_counter() - t_vertical_motion, 3)
+
+        # Then execute the planner-generated retract. No contact monitor here:
+        # its dynamics lie outside the tau model's training distribution.
+        self._log_state("arm_retract")
+        t1 = time.perf_counter()
         arm_traj = retract_traj[:, :6]
         hand_traj = np.array([self._convert(retract_traj[i, 6:])
                               for i in range(len(retract_traj))])
         self._move_joints(arm_traj, hand_traj)
-        log["steps"]["arm_retract_s"] = round(time.time() - t1, 2)
+        log["steps"]["arm_retract_s"] = round(
+            time.perf_counter() - t1, 3)
 
         # 3. Verify final pose — RAISE if arm didn't actually reach
         #    clear_view (stall, partial traj, etc.) so the caller doesn't
@@ -1265,11 +1482,15 @@ class RealExecutor:
                   f"final={final_qpos.round(3)}  target={clear_view[:6].round(3)}")
         return log
 
-    def reset_fallback(self, plan_result: PlanResult) -> dict:
+    def reset_fallback(self, plan_result: PlanResult, planner=None,
+                       scene_cfg: Optional[dict] = None) -> dict:
         """Reset path for failed grasps (approach contact or charuco fail).
         Open hand to hand_init, then sequentially move arm to clear_view
         (joint 0 -60° from XARM_INIT) via [1, 2, 5, 0, 3, 4] (mirror if
         joint 1 below init). No planner involvement."""
+        # Kept for the common executor contract; this legacy fallback is a
+        # hardware-local sequential motion and does not use planner/scene.
+        del planner, scene_cfg
         t_start = time.time()
         log = {"start": datetime.datetime.now().isoformat(), "steps": {}}
         if not plan_result.success:

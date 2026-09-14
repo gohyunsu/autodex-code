@@ -79,7 +79,11 @@ from autodex.utils.robot_config import (
     CHARUCO_BOARD_CENTER_X_OFFSETS_M,
 )
 from autodex.utils.tabletop_geometry import table_surface_z
-from autodex.planner import GraspPlanner
+from autodex.planner import (
+    CudaPlanningFault,
+    GraspPlanner,
+    raise_cuda_planning_fault,
+)
 from autodex.planner.planner import (
     PlanResult, _to_curobo_world, _to_curobo_pose,
 )
@@ -263,6 +267,8 @@ def _yaw_search_and_print_cmd(planner, scene_cfg, seeds, args, prev_n_ok=0):
             try:
                 _r = _ik_check_seeds(planner, _rot_scene, _rot_seeds)
                 _n = int(_r["ik_success"].sum())
+            except CudaPlanningFault:
+                raise
             except Exception:
                 _n = 0
             if _n > _found_n_ok:
@@ -547,6 +553,40 @@ def _load_reset_seeds(hand: str, obj: str, h_cm: int, i_int: int, j_int: int,
     }
 
 
+def _solve_reset_ik_batch(
+    planner: GraspPlanner,
+    goal,
+    *,
+    operation: str,
+    retract_config=None,
+):
+    """Run reset's direct batch IK under the planner CUDA-fault policy.
+
+    cuRobo kernels are asynchronous. Synchronizing at this boundary makes a
+    device fault attributable to this exact seed/lift solve, rather than to a
+    later candidate or to FoundPose in the next trial. A CUDA fault poisons
+    the process, so it is promoted to ``CudaPlanningFault``; ordinary solver
+    failures retain their existing caller-specific handling.
+    """
+    try:
+        result = planner._ik_solver.solve_batch(
+            goal, retract_config=retract_config)
+        torch.cuda.synchronize(device=planner._tensor_args.device)
+        return result
+    except Exception as exc:
+        batch_size = int(goal.position.shape[0])
+        raise_cuda_planning_fault(
+            operation,
+            exc,
+            context={
+                "batch_size": batch_size,
+                "has_retract_config": retract_config is not None,
+                "hand": planner._hand,
+            },
+        )
+        raise
+
+
 def _ik_check_seeds(planner: GraspPlanner, scene_cfg: dict, seeds: dict) -> dict:
     """Run IK + backward + collision filter on pre-loaded reset seeds. Mirrors
     ``GraspPlanner.solve_ik``'s post-load logic (planner.py:376-466) but
@@ -605,7 +645,11 @@ def _ik_check_seeds(planner: GraspPlanner, scene_cfg: dict, seeds: dict) -> dict
                 planner._init_state, dtype=torch.float32,
                 device=planner._tensor_args.device,
             ).unsqueeze(0).repeat(B_padded, 1)
-            result = planner._ik_solver.solve_batch(goal, retract_config=retract)
+            result = _solve_reset_ik_batch(
+                planner, goal,
+                operation="reorient_grasp_seed_ik",
+                retract_config=retract,
+            )
             succ = result.success.cpu().numpy()[:B].reshape(-1)
             q_sol = result.solution.cpu().numpy()[:B]
             if q_sol.ndim == 3:
@@ -632,10 +676,15 @@ def _ik_check_seeds(planner: GraspPlanner, scene_cfg: dict, seeds: dict) -> dict
                     empty_world = {"mesh": {}, "cuboid": {}}
                     saved_world_cfg = world_cfg_no_target
                     planner._ik_solver.update_world(_WC.from_dict(empty_world))
-                    result2 = planner._ik_solver.solve_batch(
-                        goal, retract_config=retract)
+                    result2 = _solve_reset_ik_batch(
+                        planner, goal,
+                        operation="reorient_grasp_seed_ik_no_world_diagnostic",
+                        retract_config=retract,
+                    )
                     diag_succ_noworld = result2.success.cpu().numpy()[:B].reshape(-1)
                     planner._ik_solver.update_world(_WC.from_dict(saved_world_cfg))
+                except CudaPlanningFault:
+                    raise
                 except Exception as _de:
                     print(f"      [diag noworld] failed: {_de!r}")
 
@@ -681,7 +730,10 @@ def _ik_check_seeds(planner: GraspPlanner, scene_cfg: dict, seeds: dict) -> dict
                     [chunk_poses, np.tile(chunk_poses[:1], (pad, 1, 1))], axis=0,
                 )
             goal = _to_curobo_pose(chunk_poses, planner._tensor_args.device)
-            lift_res = planner._ik_solver.solve_batch(goal)
+            lift_res = _solve_reset_ik_batch(
+                planner, goal,
+                operation="reorient_lift_seed_ik",
+            )
             lift_succ = lift_res.success.cpu().numpy()[:B]
             for i, idx in enumerate(chunk):
                 if not lift_succ[i]:
@@ -713,59 +765,6 @@ def _ik_check_seeds(planner: GraspPlanner, scene_cfg: dict, seeds: dict) -> dict
     }
 
 
-def _franka_fk_xyz(planner: GraspPlanner, arm_traj: np.ndarray) -> np.ndarray:
-    """Planner-frame wrist FK for a batched FR3 arm trajectory."""
-    arm = np.asarray(arm_traj, dtype=np.float32)
-    n_arm = int(planner._n_arm)
-    q = np.tile(np.asarray(planner._init_state, dtype=np.float32),
-                (len(arm), 1))
-    q[:, :n_arm] = arm[:, :n_arm]
-    kin = planner._motion_gen.kinematics.get_state(torch.tensor(
-        q, dtype=torch.float32, device=planner._tensor_args.device))
-    return np.asarray(kin.ee_position.detach().cpu().numpy(), dtype=np.float64)
-
-
-def _plan_franka_verified_vertical_stroke(
-    planner: GraspPlanner,
-    start_full: np.ndarray,
-    wrist_start: np.ndarray,
-    wrist_end: np.ndarray,
-    scene_cfg: dict,
-    include_obj_obstacle: bool,
-    label: str,
-) -> np.ndarray:
-    """Preflight one geometric 10cm vertical stroke before a real grasp.
-
-    This mirrors FrankaExecutor's runtime primitive: solve the full stroke
-    once, inspect all returned FK waypoints, and reject it before closing the
-    real gripper if it bows away from the required vertical path.
-    """
-    start = np.asarray(wrist_start, dtype=np.float64)
-    end = np.asarray(wrist_end, dtype=np.float64)
-    delta = end[:3, 3] - start[:3, 3]
-    if abs(abs(delta[2]) - PLACE_VERTICAL_TRAVEL_M) > VERTICAL_STROKE_Z_TOL_M:
-        raise RuntimeError(
-                f"{label}: expected a 10cm vertical stroke, got "
-                f"delta={delta.round(5).tolist()}")
-    direction = 1 if delta[2] > 0 else -1
-    traj = planner.plan_pose_constrained(
-        np.asarray(start_full, dtype=np.float32), end,
-        hold_vec_weight=[0, 0, 0, 0, 0, 0],
-        scene_cfg=scene_cfg, include_obj_obstacle=include_obj_obstacle)
-    if traj is None:
-        raise RuntimeError(f"{label}: 10cm vertical-stroke preflight failed")
-    traj = np.asarray(traj)
-    xyz = _franka_fk_xyz(planner, traj[:, :planner._n_arm])
-    dz = float(direction * (xyz[-1, 2] - xyz[0, 2]))
-    dz_steps = direction * np.diff(xyz[:, 2])
-    if (dz < PLACE_VERTICAL_TRAVEL_M - VERTICAL_STROKE_Z_TOL_M
-            or (len(dz_steps) and np.min(dz_steps) < -VERTICAL_STROKE_Z_TOL_M)):
-        raise RuntimeError(
-            f"{label}: invalid vertical-stroke z motion "
-            f"(signed_dz={dz * 1000:.1f}mm)")
-    return traj
-
-
 def _preflight_franka_place_chain(
     planner: GraspPlanner,
     scene_cfg: dict,
@@ -774,28 +773,47 @@ def _preflight_franka_place_chain(
     wrist_release: np.ndarray,
     obj_in_wrist: np.ndarray,
     release_hand: np.ndarray,
+    debug_dump_dir: str | None = None,
 ) -> dict:
     """Require place/down/release-up/retract feasibility before grasping."""
     wrist_release = np.asarray(wrist_release, dtype=np.float64)
     wrist_preplace = wrist_release.copy()
     wrist_preplace[2, 3] += PLACE_VERTICAL_TRAVEL_M
-    held_scene = {"mesh": {}, "cuboid": dict(scene_cfg["cuboid"])}
+    # Remove only the object carried by the hand.  Static mesh obstacles, if
+    # present in a future scene source, remain active just like cuboid
+    # wall/shelf/clutter obstacles.
+    held_scene = {
+        "mesh": {
+            name: dict(info)
+            for name, info in scene_cfg.get("mesh", {}).items()
+            if name != "target"
+        },
+        "cuboid": dict(scene_cfg.get("cuboid", {})),
+    }
     start_full = np.concatenate([
         np.asarray(reorient_traj[-1, :planner._n_arm], dtype=np.float32),
         np.asarray(result.grasp_pose, dtype=np.float32),
     ])
-    preplace = planner.plan_pose_constrained(
-        start_full, wrist_preplace, hold_vec_weight=[0, 0, 0, 0, 0, 0],
-        scene_cfg=held_scene, include_obj_obstacle=False)
+    preplace = planner.plan_cartesian_pose(
+        start_full, wrist_preplace,
+        scene_cfg=held_scene, include_obj_obstacle=False,
+        debug_dump_dir=debug_dump_dir)
     if preplace is None:
         raise RuntimeError("preplace_10cm failed")
     descend_start = np.concatenate([
         np.asarray(preplace[-1, :planner._n_arm], dtype=np.float32),
         np.asarray(result.grasp_pose, dtype=np.float32),
     ])
-    descend = _plan_franka_verified_vertical_stroke(
-        planner, descend_start, wrist_preplace, wrist_release, held_scene,
-        include_obj_obstacle=False, label="preflight place descent")
+    descend = planner.plan_vertical_stroke(
+        descend_start, wrist_preplace, wrist_release,
+        expected_travel_m=PLACE_VERTICAL_TRAVEL_M,
+        travel_tolerance_m=VERTICAL_STROKE_Z_TOL_M,
+        scene_cfg=scene_cfg, include_obj_obstacle=False,
+        label="preflight place descent", debug_dump_dir=debug_dump_dir,
+        attached_object_pose_at_start=(
+            planner.fk_wrist(descend_start) @ obj_in_wrist))
+    if descend is None:
+        raise RuntimeError("preflight place descent: 10cm vertical-stroke preflight failed")
 
     T_obj_released = wrist_release @ obj_in_wrist
     placed_scene = dict(scene_cfg)
@@ -806,9 +824,14 @@ def _preflight_franka_place_chain(
         np.asarray(descend[-1, :planner._n_arm], dtype=np.float32),
         np.asarray(release_hand, dtype=np.float32),
     ])
-    post_lift = _plan_franka_verified_vertical_stroke(
-        planner, lift_start, wrist_release, wrist_preplace, placed_scene,
-        include_obj_obstacle=True, label="preflight post-release lift")
+    post_lift = planner.plan_vertical_stroke(
+        lift_start, wrist_release, wrist_preplace,
+        expected_travel_m=PLACE_VERTICAL_TRAVEL_M,
+        travel_tolerance_m=VERTICAL_STROKE_Z_TOL_M,
+        scene_cfg=placed_scene, include_obj_obstacle=True,
+        label="preflight post-release lift", debug_dump_dir=debug_dump_dir)
+    if post_lift is None:
+        raise RuntimeError("preflight post-release lift: 10cm vertical-stroke preflight failed")
     clear_view = np.asarray(planner._init_state[:planner._n_arm], dtype=np.float32).copy()
     clear_view[0] -= np.deg2rad(40.0)
     retract = planner.plan_js_to_init(
@@ -836,6 +859,7 @@ def _plan_reorient_full_chain(
     planner_robot: str,
     release_height_m: float,
     tabletop_geometry: dict | None = None,
+    debug_dump_dir: str | None = None,
 ) -> dict:
     """Plan every held-object stage for one reset transition.
 
@@ -1046,7 +1070,12 @@ def _plan_reorient_full_chain(
                         planner, scene_cfg, result, reorient_traj,
                         np.asarray(descent_info["T_wrist_target"],
                                    dtype=np.float64),
-                        obj_in_wrist, release_hand)
+                        obj_in_wrist, release_hand,
+                        debug_dump_dir=debug_dump_dir)
+                except CudaPlanningFault:
+                    # A CUDA fault poisons every later planner/perception call
+                    # in this process.  It is not a candidate rejection.
+                    raise
                 except Exception as exc:
                     counts["n_place_fail"] += 1
                     print("    [reorient preflight] reject candidate "
@@ -1098,8 +1127,8 @@ def reorient_from_live_scene(
     grasp_version: str,
     lift_label_rel: str,
     lift_label_abs: str,
-    held_speed_scale: float = 0.25,
     tabletop_geometry: dict | None = None,
+    debug_dump_dir: str | None = None,
 ) -> dict:
     """Execute a reset transition with the already-live run_auto resources.
 
@@ -1110,8 +1139,6 @@ def reorient_from_live_scene(
     once after a successful placement, which both avoids duplicate FoundPose
     work and validates the new tabletop before collection resumes.
     """
-    if held_speed_scale <= 0:
-        raise ValueError("held_speed_scale must be positive")
     # Returned to run_pipeline so recovery knows whether the shared camera
     # acquisition was actually stopped.  A planning-only rejection leaves the
     # original stream alive and must never be followed by another ``rcc.arm``.
@@ -1186,6 +1213,7 @@ def reorient_from_live_scene(
             planner_robot=planner_robot,
             release_height_m=candidate_h_cm / 100.0,
             tabletop_geometry=tabletop_geometry,
+            debug_dump_dir=debug_dump_dir,
         )
         if candidate_plan["success"]:
             h_cm = candidate_h_cm
@@ -1209,8 +1237,6 @@ def reorient_from_live_scene(
 
     result = plan["result"]
     arm_dof = getattr(executor, "arm_dof", planner._n_arm)
-    move_kwargs = {"speed": held_speed_scale} if arm == "franka" else {}
-    lift_kwargs = {"held_speed_scale": held_speed_scale} if arm == "franka" else {}
     try:
         rcc.stop()
         camera_capture_stopped = True
@@ -1223,7 +1249,7 @@ def reorient_from_live_scene(
               "full approach/lift/reorient/place/release/exit preflight passed")
         squeeze_hand = executor.execute(
             result, planner=planner, scene_cfg=scene_cfg, skip_lift=True)
-        executor.execute_lift(plan["lift_traj"], squeeze_hand, **lift_kwargs)
+        executor.execute_lift(plan["lift_traj"], squeeze_hand)
 
         # Retain the standalone policy's critical lift verification but use a
         # one-shot image capture from run_auto's existing controller instead
@@ -1251,13 +1277,12 @@ def reorient_from_live_scene(
             }
 
         if arm == "franka":
-            print(f"[franka] held-object speed scale: {held_speed_scale:.2f} "
-                  "(reorient transfer); free-hand moves use the "
-                  "hand-link→object-mesh 50cm→20cm profile")
+            print("[franka] reorient transfer uses the executor object-safety "
+                  "speed cap; free-hand moves use the hand-link→object-mesh "
+                  "30cm→15cm profile")
         reorient_hand = np.tile(squeeze_hand[None], (len(plan["reorient_traj"]), 1))
         _executor_log(executor, "reorient")
-        executor._move_joints(
-            plan["reorient_traj"][:, :arm_dof], reorient_hand, **move_kwargs)
+        executor._move_joints(plan["reorient_traj"][:, :arm_dof], reorient_hand)
         if arm == "franka":
             # Do not replay the legacy arbitrary descent trajectory on FR3.
             # The common place primitive preflights: collision-free move to

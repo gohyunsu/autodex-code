@@ -40,7 +40,15 @@ from autodex.utils.robot_config import CHARUCO_BOARD_11_CENTER_XY
 from src.experiment.reset.reorient import reorient_from_live_scene
 
 
-DEFAULT_HELD_SPEED_SCALE = 0.25
+def _add_timing(info: dict | None, **values: float) -> dict | None:
+    """Attach elapsed times to a recovery result without changing its contract."""
+    if info is None:
+        return None
+    result = dict(info)
+    timing = dict(result.get("timing_s") or {})
+    timing.update({key: round(float(value), 3) for key, value in values.items()})
+    result["timing_s"] = timing
+    return result
 
 
 def _rotation_recovery_priority(context: dict) -> dict:
@@ -135,10 +143,12 @@ def _charuco_preflight(**context):
     )
     image_dir = preflight_dir / "images"
     c2r = np.asarray(load_current_C2R(), dtype=np.float64)
+    active_preflight_s = 0.0
 
     while True:
         snap = None
         try:
+            t_attempt = time.perf_counter()
             snap = SnapshotOrchestrator(
                 pc_list=args.pc_list, capture_ips=context["capture_ips"],
                 port_snap=args.port_snap, port_cmd=args.port_snap_cmd,
@@ -147,6 +157,7 @@ def _charuco_preflight(**context):
                 n_expected=context["n_cameras"], timeout_s=5.0,
                 save_dir_local=str(image_dir), decode=True,
             )
+            snapshot_s = time.perf_counter() - t_attempt
             images = {
                 serial: item["image"] for serial, item in payloads.items()
                 if item.get("image") is not None
@@ -157,12 +168,25 @@ def _charuco_preflight(**context):
                 raise RuntimeError(
                     "empty-board preflight requires one decodable snapshot from "
                     f"every active camera ({len(images)}/{context['n_cameras']} received)")
+            t_measurement = time.perf_counter()
             geometry = measure_tabletop_from_images(
                 images, context["intrinsics_full"], context["extrinsics_full"], c2r)
+            measurement_s = time.perf_counter() - t_measurement
+            attempt_s = time.perf_counter() - t_attempt
             geometry["snapshot_timing"] = snap_timing
+            # Keep this in the session geometry: run_auto copies that geometry
+            # into each trial result, while the saved measurement remains a
+            # standalone audit record for this preflight.
+            geometry["timing_s"] = {
+                "snapshot_s": round(snapshot_s, 3),
+                "measurement_s": round(measurement_s, 3),
+                "attempt_s": round(attempt_s, 3),
+                "active_total_s": round(active_preflight_s + attempt_s, 3),
+            }
             geometry["measurement_dir"] = str(preflight_dir)
             np.save(preflight_dir / "C2R.npy", c2r)
             saved = save_tabletop_measurement(geometry, preflight_dir)
+            active_preflight_s += attempt_s
             m = geometry["metrics"]
             c = geometry["center_robot_m"]
             print(f"[charuco-preflight] board=11 corners="
@@ -189,6 +213,11 @@ def _charuco_preflight(**context):
                 return {"cancel": True}
             return geometry
         except Exception as exc:
+            # The failed attempt has no geometry to persist, but include it in
+            # the accepted retry's active total so the operator can see the
+            # real sensing/measurement cost (excluding prompt wait time).
+            if 't_attempt' in locals():
+                active_preflight_s += time.perf_counter() - t_attempt
             print(f"[charuco-preflight] rejected: {exc}")
             if args.auto:
                 print("[charuco-preflight] --auto: cannot request a manual "
@@ -291,6 +320,11 @@ def _rotate_in_process(**context) -> dict:
     args = context["args"]
     rcc = context["rcc"]
     info = None
+    t_total = time.perf_counter()
+    t_priority = time.perf_counter()
+    priority_s = 0.0
+    recovery_s = 0.0
+    stream_restore_s = 0.0
     try:
         # Do NOT inherit normal collection's coverage whitelist or completed-
         # scene filters.  They answer "what is left to collect?", whereas a
@@ -298,6 +332,8 @@ def _rotate_in_process(**context) -> dict:
         # latter must revisit every current-tabletop grasp, with the same
         # success-first ranking used by standalone rotate_obj_yaw.py.
         recovery_priority = _rotation_recovery_priority(context)
+        priority_s = time.perf_counter() - t_priority
+        t_recovery = time.perf_counter()
         info = rotate_from_live_scene(
             obj=context["obj"], hand=context["hand"], arm=args.arm,
             grasp_version=context["grasp_version"],
@@ -316,12 +352,13 @@ def _rotate_in_process(**context) -> dict:
             skip_scenes_with_success=False,
             cyl_axis_local=context["cyl_axis_local"],
             cyl_yaw_grid=context["cyl_yaw_grid"],
-            held_speed_scale=DEFAULT_HELD_SPEED_SCALE,
             rcc=rcc,
         )
+        recovery_s = time.perf_counter() - t_recovery
     finally:
         # A planning-only rejection leaves capture live; an executed recovery
         # stops it.  The helper selects sink-only vs arm+stream accordingly.
+        t_stream_restore = time.perf_counter()
         if info is not None:
             info = _restart_stream_or_mark_failure(rcc, args, info, "rotation")
         else:
@@ -330,6 +367,14 @@ def _rotate_in_process(**context) -> dict:
             # operator-driven retry.
             _restart_stream_or_mark_failure(
                 rcc, args, {"success": False}, "rotation")
+        stream_restore_s = time.perf_counter() - t_stream_restore
+        info = _add_timing(
+            info,
+            candidate_priority_s=priority_s,
+            recovery_s=recovery_s,
+            stream_restore_s=stream_restore_s,
+            total_s=time.perf_counter() - t_total,
+        )
     return info
 
 
@@ -343,6 +388,7 @@ def _reorient_in_process(**context) -> dict:
     """
     args = context["args"]
     rcc = context["rcc"]
+    t_total = time.perf_counter()
     sub = (f"{context['scene_prefix']}/{context['hand']}"
            if context["scene_prefix"] else context["hand"])
     lift_rel = os.path.join(
@@ -355,32 +401,46 @@ def _reorient_in_process(**context) -> dict:
     # Reset candidates are table transitions.  Do not inherit wall/shelf/
     # clutter obstacles from the failed collection scene; that would make this
     # recovery differ from the retained standalone reorient policy.
+    t_scene_build = time.perf_counter()
     table_scene = pose_world_to_scene_cfg(
         context["pose_world"], context["c2r"], context["obj"],
         context["obj_root"], tabletop_geometry=context.get("tabletop_geometry"),
     )
     table_scene = add_obstacles(
         table_scene, "table", tabletop_geometry=context.get("tabletop_geometry"))
+    scene_build_s = time.perf_counter() - t_scene_build
 
     info = None
+    recovery_s = 0.0
     try:
+        t_recovery = time.perf_counter()
         info = reorient_from_live_scene(
             obj=context["obj"], hand=context["hand"], arm=args.arm,
             target_j=context["target_j"], planner=context["planner"],
             executor=context["executor"], rcc=rcc, scene_cfg=table_scene,
             obj_root=context["obj_root"], grasp_version=args.grasp_version,
             lift_label_rel=lift_rel,
-            lift_label_abs=lift_abs, held_speed_scale=DEFAULT_HELD_SPEED_SCALE,
+            lift_label_abs=lift_abs,
             tabletop_geometry=context.get("tabletop_geometry"),
+            debug_dump_dir=os.path.join(context["img_dir"], "planning_debug"),
         )
+        recovery_s = time.perf_counter() - t_recovery
     finally:
         # As above, reorient can return before it has stopped capture while
         # evaluating reset candidates, so recovery must be state-aware.
+        t_stream_restore = time.perf_counter()
         if info is not None:
             info = _restart_stream_or_mark_failure(rcc, args, info, "reorient")
         else:
             _restart_stream_or_mark_failure(
                 rcc, args, {"success": False}, "reorient")
+        info = _add_timing(
+            info,
+            scene_build_s=scene_build_s,
+            recovery_s=recovery_s,
+            stream_restore_s=time.perf_counter() - t_stream_restore,
+            total_s=time.perf_counter() - t_total,
+        )
     return info
 
 

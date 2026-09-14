@@ -123,6 +123,40 @@ class SilhouetteOptimizer:
         except Exception as exc:
             logging.warning(f"Silhouette warmup failed: {exc}")
 
+    def render_silhouette_mask(
+        self,
+        pose_world: np.ndarray,
+        K: np.ndarray,
+        extrinsic: np.ndarray,
+        image_hw: tuple[int, int],
+        antialias: bool = True,
+    ) -> np.ndarray:
+        """Render this object's world pose into one undistorted camera view.
+
+        This is a diagnostic-only view of the exact mesh renderer used by IoU
+        selection and silhouette refinement.  It is intentionally separate
+        from :meth:`optimize`: callers can save or inspect an overlay without
+        modifying the perception result or optimizer state.
+        """
+        H, W = (int(image_hw[0]), int(image_hw[1]))
+        if H <= 0 or W <= 0:
+            raise ValueError(f"image_hw must be positive, got {image_hw}")
+        with torch.no_grad():
+            pose_cam = (np.asarray(extrinsic, dtype=np.float64).reshape(4, 4)
+                        @ np.asarray(pose_world, dtype=np.float64).reshape(4, 4))
+            pose_cam_t = torch.as_tensor(
+                pose_cam, device=self.device, dtype=torch.float32).reshape(1, 4, 4)
+            alpha = self._render_silhouette(
+                K=np.asarray(K, dtype=np.float64).reshape(3, 3),
+                H=H,
+                W=W,
+                ob_in_cams=pose_cam_t,
+                glctx=self.glctx,
+                mesh_tensors=self.mesh_tensors,
+                antialias=antialias,
+            )
+        return alpha[0, :, :, 0].detach().cpu().numpy() > 0.5
+
     def optimize(
         self,
         initial_pose_world: np.ndarray,

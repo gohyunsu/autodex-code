@@ -22,7 +22,7 @@ import threading
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -343,10 +343,15 @@ class InitOrchestrator:
         capture_dir: Optional[str] = None,
         save_capture_dir: Optional[str] = None,
         run_info_extra: Optional[Dict[str, Any]] = None,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
         """Trigger one capture across all capture PCs and return raw payloads.
 
         Returns (masks, poses, timing). Each masks/poses key is a serial.
+
+        ``progress_callback`` is observational only.  It receives the current
+        elapsed time and mask/pose counts whenever the normal console progress
+        line updates; it never changes dispatch, waiting, or selection.
         """
         if request_id is None:
             request_id = int(time.time() * 1000) & 0x7fffffff
@@ -394,6 +399,17 @@ class InitOrchestrator:
                     or len(poses_now) != last_n_pose):
                 elapsed = now - t_dispatch
                 _progress(elapsed, len(masks_now), len(poses_now), n_expected)
+                if progress_callback is not None:
+                    try:
+                        progress_callback({
+                            "stage": "collect",
+                            "elapsed_s": elapsed,
+                            "n_masks_recv": len(masks_now),
+                            "n_poses_recv": len(poses_now),
+                            "n_expected": n_expected,
+                        })
+                    except Exception:
+                        logger.exception("[orch] progress callback failed")
                 last_print = now
                 last_n_mask = len(masks_now); last_n_pose = len(poses_now)
             if len(masks_now) >= n_expected and len(poses_now) >= n_expected:
@@ -424,6 +440,18 @@ class InitOrchestrator:
             "n_masks_recv": len(masks),
             "n_poses_recv": len(poses),
         }
+        if progress_callback is not None:
+            try:
+                progress_callback({
+                    "stage": "collect",
+                    "state": "done",
+                    "elapsed_s": timing["dispatch_to_collected_s"],
+                    "n_masks_recv": len(masks),
+                    "n_poses_recv": len(poses),
+                    "n_expected": n_expected,
+                })
+            except Exception:
+                logger.exception("[orch] progress callback failed")
         return masks, poses, timing
 
     def refine_from_payloads(
@@ -437,6 +465,7 @@ class InitOrchestrator:
         save_capture_dir: Optional[str] = None,
         sil_debug: bool = False,
         selection_mode: str = "iou",
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Tuple[Optional[np.ndarray], Dict[str, Any]]:
         """Select/refine already-collected payloads, restricted to a subset.
 
@@ -465,6 +494,18 @@ class InitOrchestrator:
             if s in subset and m.get("mask") is not None and m["mask"].any()
         }
         if not candidates or (selection_mode == "iou" and not masks_bool):
+            if progress_callback is not None:
+                try:
+                    progress_callback({
+                        "stage": "iou",
+                        "state": "skipped",
+                        "reason": "no_candidates_or_masks",
+                        "n_candidates": len(candidates),
+                        "n_masks": len(masks_bool),
+                    })
+                    progress_callback({"stage": "silhouette", "state": "skipped"})
+                except Exception:
+                    logger.exception("[orch] progress callback failed")
             return None, {"reason": "no_candidates_or_masks",
                           "n_candidates": len(candidates),
                           "n_masks": len(masks_bool),
@@ -489,6 +530,11 @@ class InitOrchestrator:
         if self._sil is None:
             raise RuntimeError("IoU selection requires init_object(load_silhouette=True)")
 
+        if progress_callback is not None:
+            try:
+                progress_callback({"stage": "iou", "state": "running"})
+            except Exception:
+                logger.exception("[orch] progress callback failed")
         t_iou0 = time.perf_counter()
         intr_subset = {s: self.intrinsics_undist[s] for s in masks_bool}
         extr_subset = {s: self.extrinsics[s] for s in masks_bool}
@@ -500,9 +546,34 @@ class InitOrchestrator:
         )
         t_iou = time.perf_counter() - t_iou0
         if best_pose is None:
+            if progress_callback is not None:
+                try:
+                    progress_callback({"stage": "iou", "state": "error",
+                                       "elapsed_s": t_iou,
+                                       "reason": "iou_select_failed"})
+                    progress_callback({"stage": "silhouette", "state": "skipped"})
+                except Exception:
+                    logger.exception("[orch] progress callback failed")
             return None, {"reason": "iou_select_failed", "per_cand": per_cand}
+        if progress_callback is not None:
+            try:
+                progress_callback({
+                    "stage": "iou",
+                    "state": "done",
+                    "elapsed_s": t_iou,
+                    "best_serial": best_serial,
+                    "best_iou": float(best_iou) if best_iou is not None else None,
+                })
+            except Exception:
+                logger.exception("[orch] progress callback failed")
 
         if sil_iters <= 0:
+            if progress_callback is not None:
+                try:
+                    progress_callback({"stage": "silhouette", "state": "skipped",
+                                       "reason": "sil_iters_zero"})
+                except Exception:
+                    logger.exception("[orch] progress callback failed")
             return np.asarray(best_pose, dtype=np.float64), {
                 "selection_mode": "iou",
                 "sil_skipped": True,
@@ -512,6 +583,11 @@ class InitOrchestrator:
                 "pre_sil_pose": np.asarray(best_pose, dtype=np.float64).tolist(),
             }
 
+        if progress_callback is not None:
+            try:
+                progress_callback({"stage": "silhouette", "state": "running"})
+            except Exception:
+                logger.exception("[orch] progress callback failed")
         t_sil0 = time.perf_counter()
         views = [
             {"mask": (m.astype(np.uint8) * 255),
@@ -532,6 +608,12 @@ class InitOrchestrator:
             debug_every=10, debug_max_views=4,
         )
         t_sil = time.perf_counter() - t_sil0
+        if progress_callback is not None:
+            try:
+                progress_callback({"stage": "silhouette", "state": "done",
+                                   "elapsed_s": t_sil, "sil_loss": float(sil_loss)})
+            except Exception:
+                logger.exception("[orch] progress callback failed")
         timing = {
             "iou_select_s": t_iou, "sil_refine_s": t_sil,
             "n_candidates": len(candidates), "n_masks": len(masks_bool),

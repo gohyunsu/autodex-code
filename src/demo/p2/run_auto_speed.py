@@ -79,7 +79,6 @@ FRANKA_EXECUTOR_RECORD_FIELDS = (
     "vel_smooth",
     "traj_dt",
     "traj_speed",
-    "held_speed_scale",
     "max_lead",
     "land_tol",
     "follow_timeout_s",

@@ -350,8 +350,8 @@ def build_ik_path(planner, q: np.ndarray, wrist: np.ndarray, lift_h: float,
           f"(npz {wrist[0][:3, 3].round(4)} + offset {offset.round(4)})")
 
     approach, m = plan_with_margin(
-        lambda sc: planner.plan_pose_constrained(
-            start_full, w0, hold_vec_weight=[0, 0, 0, 0, 0, 0],
+        lambda sc: planner.plan_cartesian_pose(
+            start_full, w0,
             scene_cfg=sc, include_obj_obstacle=False),
         margins)
     if approach is None:

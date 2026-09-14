@@ -11,8 +11,9 @@ swapped for the FR3:
     collision-free path and moves continuously (a downsampled point-to-point
     would swing off-path and ram). Free-space single-config moves (home /
     clear-view) use a plain blocking ``move()`` (safe, no obstacles).
-  * Lift = joint-space ``planner.plan_pose_constrained`` (NOT cartesian — the
-    xarm lesson; FR3 cartesian servo times out at limits/singularities).
+  * Pure vertical lift/descent = planner-owned 5 mm damped-Jacobian
+    continuation, converted to a dense C2 joint trajectory and streamed in
+    joint space (FR3 Cartesian servo is not used).
   * Reset = ``planner.plan_js_to_init`` retract to clear-view, avoiding the
     placed object (mirrors real.py ``reset``).
   * Place = FR3 NATIVE cartesian impedance + direct ``wrench`` contact (FR3 has
@@ -32,6 +33,12 @@ from typing import Optional
 import numpy as np
 
 from autodex.planner import PlanResult
+from autodex.executor.lift_policy import LiftExecutionError, check_lift_start
+from autodex.executor.timing import (
+    finish_pickup_timing, finish_place_timing, new_pickup_timing,
+    new_place_timing,
+)
+from autodex.timing import TimingRecorder
 from autodex.utils.robot_config import FR3_INIT, INSPIRE_INIT, FR3_INSPIRE_LINK_TO_WRIST
 from autodex.utils.conversion import cart2se3, se32cart
 from autodex.executor.real import _convert_inspire   # rad -> 0-1000 controller units
@@ -43,10 +50,12 @@ CLEAR_VIEW_J0_DEG = -40.0   # real.py: clear_view_arm[0] -= deg2rad(40)
 # reference points, all in the robot base frame.  Do not use a wrist or object
 # centroid proxy here: it is visibly wrong for elongated objects and for an
 # open hand whose fingertips lead the wrist.
-APPROACH_SLOWDOWN_FAR_M = 0.50
-APPROACH_SLOWDOWN_NEAR_M = 0.20
-APPROACH_SLOWDOWN_MIN_SCALE = 0.25
-DEFAULT_HELD_SPEED_SCALE = 0.25
+APPROACH_SLOWDOWN_FAR_M = 0.3
+APPROACH_SLOWDOWN_NEAR_M = 0.15
+# One object-safety speed applies to both cases that need it: a free hand
+# close to an object, and every motion while an object is held.  Keeping two
+# equal constants made it possible for recovery and normal execution to drift.
+OBJECT_SAFETY_SPEED_SCALE = 0.4
 # A placement always passes through a point exactly 10 cm above its release
 # pose: approach that point first, descend vertically 10 cm, release, then
 # lift vertically 10 cm before any lateral retreat.  These are planned joint
@@ -59,10 +68,6 @@ POST_RELEASE_LIFT_HEIGHT_M = PLACE_VERTICAL_TRAVEL_M
 # collision-checked pre-place correction.
 PREPLACE_REUSE_POS_TOL_M = 0.005
 PREPLACE_REUSE_ROT_TOL_RAD = np.deg2rad(3.0)
-# FK validation bound for the planned 10cm vertical strokes.  The start/end
-# wrists are constructed at identical x/y; intermediate joint-space motion is
-# left to cuRobo's collision-checked plan rather than rejected by a separate
-# Cartesian lateral-deviation threshold.
 VERTICAL_STROKE_Z_TOL_M = 0.005
 
 
@@ -79,8 +84,7 @@ class FrankaExecutor:
                  vel_smooth: float = 0.6, traj_dt: float = 0.01,
                  traj_speed: float = 1, max_lead: float = 0.12,
                  land_tol: float = 0.02, follow_timeout_s: float = 90.0,
-                 follow_log_every_s: float = 2.0, accel_max: float = 4.0,
-                 held_speed_scale: float = DEFAULT_HELD_SPEED_SCALE):
+                 follow_log_every_s: float = 2.0, accel_max: float = 4.0):
         assert hand_name in ("inspire", "inspire_left"), \
             f"franka executor supports inspire hands only, got {hand_name}"
         self.dt = dt
@@ -99,12 +103,9 @@ class FrankaExecutor:
         self.follow_timeout_s = follow_timeout_s # hard wall-clock cap on one _follow
         self.follow_log_every_s = follow_log_every_s   # progress print period
         self.accel_max = accel_max               # slew limit on the command (rad/s^2)
-        if not np.isfinite(held_speed_scale) or held_speed_scale <= 0:
-            raise ValueError("held_speed_scale must be a positive finite value")
         # Absolute cap for every arm motion from squeeze through release.  It
         # is deliberately enforced in _follow rather than relying on each
         # caller to remember a speed keyword.
-        self.held_speed_scale = float(held_speed_scale)
         self._holding_object = False
         # Bound by the runners once their shared GraspPlanner is available.
         # It supplies endpoint FK for generic joint trajectories (reset,
@@ -162,6 +163,12 @@ class FrankaExecutor:
         self._link6_to_wrist = np.asarray(FR3_INSPIRE_LINK_TO_WRIST, dtype=np.float64)
         self._convert = _convert_inspire
         self.state_timestamps = []
+        # Per-call breakdowns are consumed by run_auto's episode timing.  Keep
+        # these separate from state_timestamps: a state span can include both
+        # cuRobo planning and physical motion.
+        self.last_execute_timing = {}
+        self.last_place_timing = {}
+        self._timing_recorder: Optional[TimingRecorder] = None
         # run_auto drives both arms through the same trial code; it reads this
         # to slice arm vs hand columns instead of hard-coding the xarm's 6.
         self.arm_dof = 7
@@ -215,6 +222,10 @@ class FrankaExecutor:
                 "then clear any Desk fault before retrying.")
 
     # ── low-level ────────────────────────────────────────────────────────────
+
+    def set_timing_recorder(self, recorder: Optional[TimingRecorder]) -> None:
+        """Attach the current trial's shared timing trace."""
+        self._timing_recorder = recorder
 
     def _log(self, state: str):
         self.state_timestamps.append(
@@ -468,6 +479,31 @@ class FrankaExecutor:
             print(f"[franka] live wrist pose unavailable: {exc!r}")
             return None
 
+    def get_arm_qpos(self) -> np.ndarray:
+        """Read the physical arm configuration in planner joint order."""
+        return np.asarray(self.arm.get_data()["qpos"][:self.arm_dof],
+                          dtype=np.float64)
+
+    def get_hand_qpos(self) -> tuple[np.ndarray, str]:
+        """Return planner-space hand state with truthful measurement provenance."""
+        return (np.asarray(self._last_hand_qpos, dtype=np.float64).copy(),
+                "commanded_nominal")
+
+    def get_wrist_pose(self) -> np.ndarray:
+        """Read the physical wrist pose in the planner frame."""
+        wrist = self._live_wrist_pose()
+        if wrist is None:
+            raise RuntimeError("FR3 returned an invalid wrist pose")
+        return wrist
+
+    def follow_joint_trajectory(self, traj: np.ndarray,
+                                hand_traj: Optional[np.ndarray] = None) -> None:
+        """Execute an already planned full-DOF path through this arm adapter."""
+        q = np.asarray(traj, dtype=np.float64)
+        if q.ndim != 2 or q.shape[1] < self.arm_dof:
+            raise ValueError("joint trajectory has incompatible FR3 shape")
+        self._follow(q[:, :self.arm_dof], hand_traj)
+
     @staticmethod
     def _pose_error(actual: np.ndarray, target: np.ndarray) -> tuple[float, float]:
         """Return translational metres and rotational radians between poses."""
@@ -480,81 +516,30 @@ class FrankaExecutor:
         cos_theta = np.clip((np.trace(r_delta) - 1.0) * 0.5, -1.0, 1.0)
         return pos, float(np.arccos(cos_theta))
 
-    def _validate_vertical_stroke(self, arm_traj: np.ndarray,
-                                  direction: int, label: str) -> None:
-        """Require a planned 10cm stroke to be geometrically vertical.
-
-        The start/end poses are constructed at identical x/y. Sample planner
-        FK over the returned path to verify its net commanded signed z travel;
-        collision clearance and the intermediate joint-space route are
-        provided by cuRobo's planned trajectory.
-        """
-        if direction not in (-1, 1):
-            raise ValueError("vertical stroke direction must be -1 or +1")
-        planner = self._speed_profile_planner
-        motion_gen = getattr(planner, "_motion_gen", None)
-        if planner is None or motion_gen is None:
-            raise RuntimeError(
-                f"{label}: planner FK unavailable; refusing unverified "
-                "vertical placement stroke")
-        arm = np.asarray(arm_traj, dtype=np.float32)
-        if arm.ndim != 2 or len(arm) < 2 or arm.shape[1] < self.arm_dof:
-            raise RuntimeError(f"{label}: invalid arm trajectory for vertical check")
-        try:
-            n_arm = int(getattr(planner, "_n_arm", self.arm_dof))
-            q = np.tile(np.asarray(planner._init_state, dtype=np.float32),
-                        (len(arm), 1))
-            q[:, :n_arm] = arm[:, :n_arm]
-            import torch
-            kin = motion_gen.kinematics.get_state(torch.tensor(
-                q, dtype=torch.float32, device=planner._tensor_args.device))
-            xyz = np.asarray(kin.ee_position.detach().cpu().numpy(),
-                             dtype=np.float64)
-        except Exception as exc:
-            raise RuntimeError(
-                f"{label}: planner FK failed; refusing unverified vertical "
-                f"placement stroke ({exc!r})") from exc
-        if xyz.shape != (len(arm), 3) or not np.isfinite(xyz).all():
-            raise RuntimeError(f"{label}: invalid planner FK samples")
-        signed_travel = float(direction * (xyz[-1, 2] - xyz[0, 2]))
-        if signed_travel < PLACE_VERTICAL_TRAVEL_M - VERTICAL_STROKE_Z_TOL_M:
-            raise RuntimeError(
-                f"{label}: insufficient vertical-stroke z travel "
-                f"(signed_dz={signed_travel * 1000:.1f}mm); "
-                "object remains held")
-
-    def _plan_verified_vertical_stroke(
+    def _plan_vertical_stroke(
             self, planner, start_full: np.ndarray,
             wrist_start: np.ndarray, wrist_end: np.ndarray,
             scene_cfg: dict, include_obj_obstacle: bool, label: str,
-            debug_dump_dir: Optional[str] = None) -> np.ndarray:
-        """Plan and validate one 10cm vertical placement stroke.
+            debug_dump_dir: Optional[str] = None,
+            timing_parent_id: Optional[str] = None,
+            attached_object_pose_at_start: Optional[np.ndarray] = None) -> np.ndarray:
+        """Plan one Jacobian-continuation 10cm world-Z placement stroke.
 
-        The whole stroke is solved once and then played at the held-object
-        0.25x cap. FK confirms the planned endpoint completes the required
-        10cm signed travel; cuRobo remains responsible for collision-free
-        intermediate joint-space motion.
+        The planner owns the arm-neutral continuation and validation policy.
+        This executor only supplies Franka's 10cm policy constants and, while
+        carrying, the rigid payload pose at the beginning of the stroke.
         """
-        start = np.asarray(wrist_start, dtype=np.float64)
-        end = np.asarray(wrist_end, dtype=np.float64)
-        if start.shape != (4, 4) or end.shape != (4, 4):
-            raise ValueError(f"{label}: wrist poses must be 4x4")
-        delta = end[:3, 3] - start[:3, 3]
-        if abs(abs(delta[2]) - PLACE_VERTICAL_TRAVEL_M) > VERTICAL_STROKE_Z_TOL_M:
-            raise RuntimeError(
-                f"{label}: expected a 10cm vertical stroke, got "
-                f"delta={delta.round(5).tolist()}")
-        direction = 1 if delta[2] > 0 else -1
-        traj = planner.plan_pose_constrained(
-            np.asarray(start_full, dtype=np.float32), end,
-            hold_vec_weight=[0, 0, 0, 0, 0, 0],
+        traj = planner.plan_vertical_stroke(
+            np.asarray(start_full, dtype=np.float32), wrist_start, wrist_end,
+            expected_travel_m=PLACE_VERTICAL_TRAVEL_M,
+            travel_tolerance_m=VERTICAL_STROKE_Z_TOL_M,
             scene_cfg=scene_cfg, include_obj_obstacle=include_obj_obstacle,
-            debug_dump_dir=debug_dump_dir)
+            label=label, debug_dump_dir=debug_dump_dir,
+            timing_parent_id=timing_parent_id, timing_phase="execution",
+            attached_object_pose_at_start=attached_object_pose_at_start)
         if traj is None:
             raise RuntimeError(f"{label}: 10cm vertical-stroke preflight failed")
-        traj = np.asarray(traj)
-        self._validate_vertical_stroke(traj[:, :7], direction, label)
-        return traj
+        return np.asarray(traj)
 
     def _record_release_wrist_reference(self) -> None:
         """Remember the wrist location beside the object just released.
@@ -658,8 +643,8 @@ class FrankaExecutor:
     def _approach_speed_scale(hand_mesh_distance_m: float) -> float:
         """Return the free-hand scale from nearest hand-link/mesh distance.
 
-        The profile is 1.0 at/above 50 cm, decreases linearly to 0.25 over
-        20--50 cm, and remains 0.25 inside 20 cm.  It scales trajectory time
+        The profile is 1.0 at/above 30 cm, decreases linearly to 0.4 over
+        15--30 cm, and remains 0.4 inside 15 cm.  It scales trajectory time
         playback and feedforward velocity together; joint and acceleration
         caps still apply afterwards.
         """
@@ -667,11 +652,11 @@ class FrankaExecutor:
         if not np.isfinite(distance) or distance >= APPROACH_SLOWDOWN_FAR_M:
             return 1.0
         if distance <= APPROACH_SLOWDOWN_NEAR_M:
-            return APPROACH_SLOWDOWN_MIN_SCALE
+            return OBJECT_SAFETY_SPEED_SCALE
         progress = ((distance - APPROACH_SLOWDOWN_NEAR_M)
                     / (APPROACH_SLOWDOWN_FAR_M - APPROACH_SLOWDOWN_NEAR_M))
-        return (APPROACH_SLOWDOWN_MIN_SCALE
-                + (1.0 - APPROACH_SLOWDOWN_MIN_SCALE) * progress)
+        return (OBJECT_SAFETY_SPEED_SCALE
+                + (1.0 - OBJECT_SAFETY_SPEED_SCALE) * progress)
 
     def _follow(self, arm_traj: np.ndarray, hand_traj: Optional[np.ndarray] = None,
                 speed: Optional[float] = None, abort_on_contact: bool = False,
@@ -691,10 +676,10 @@ class FrankaExecutor:
         a mesh query is unavailable.  Normally, every control tick computes
         the minimum distance from the transformed target mesh to the palm and
         every configured finger-link origin using live arm FK.  The profile is
-        1.0x at 50 cm, 0.25x at 20 cm, and linear between them.  This covers
+        1.0x at 30 cm, 0.4x at 15 cm, and linear between them.  This covers
         grasp approach and retreat from the object just released.  While an
         object is held, the independent held-object safety cap takes
-        precedence: no arm motion may exceed 0.25x.
+        precedence: no arm motion may exceed the shared object-safety cap.
 
         Reference tracking, NOT waypoint chasing. The old loop gated the target
         on arrival (advance only once the arm is within ``follow_tol``), which
@@ -757,13 +742,13 @@ class FrankaExecutor:
         idx = 0.0                                       # float reference index into traj
         k_arm = 0                                       # index the ARM has actually reached
         # A held-object motion is capped independently of endpoint distance.
-        # For a free hand, the 50--20 cm profile may reduce the final motion to
-        # one quarter of its requested base speed.  Size the progress guard for
+        # For a free hand, the 30--15 cm profile may reduce the final motion to
+        # the shared object-safety scale. Size the progress guard for
         # the slowest valid rate in either case.
-        held_cap = self.held_speed_scale if self._holding_object else None
+        held_cap = OBJECT_SAFETY_SPEED_SCALE if self._holding_object else None
         min_effective_speed = (
             min(speed, held_cap) if held_cap is not None else
-            speed * (APPROACH_SLOWDOWN_MIN_SCALE if slow_targets else 1.0)
+            speed * (OBJECT_SAFETY_SPEED_SCALE if slow_targets else 1.0)
         )
         base_d_idx = speed * self.ctrl_dt / self.traj_dt
         max_ticks = int(20 * n / max(
@@ -834,7 +819,7 @@ class FrankaExecutor:
                         profile_scale = self._approach_speed_scale(wrist_distance_m)
                 # The object-held policy is an absolute cap, not a second
                 # multiplier.  Thus every carry/lift/reorient/descent is at
-                # most 0.25x, while the distance rule controls every free-hand
+                # most the shared object-safety scale, while the distance rule controls every free-hand
                 # approach/retract/clear-view move exactly as specified.
                 effective_speed = (min(speed, held_cap)
                                    if held_cap is not None
@@ -1006,15 +991,15 @@ class FrankaExecutor:
                 lift_height: float = 0.10, skip_lift: bool = False,
                 debug_dump_dir: Optional[str] = None,
                 lift_traj_override: Optional[np.ndarray] = None,
-                start_from_current: bool = False,
-                held_speed_scale: float = 1.0):
+                start_from_current: bool = False):
         """init -> approach -> pregrasp -> grasp -> squeeze -> lift.
         (mirrors real.py execute). Returns the squeezed hand action or None.
 
         ``debug_dump_dir`` / ``lift_traj_override`` exist so run_auto can drive
         this executor with the same call it makes for the xarm: the override is
         the lift trajectory the viz already planned (so what the user previewed
-        is what runs), and the dump dir goes to plan_pose_constrained.
+        is what runs), and the dump dir receives the Jacobian-stroke request
+        and validation artifacts.
 
         ``start_from_current`` is for a continuous loop whose planner was
         seeded with measured joints. It skips the legacy return to ``FR3_INIT``
@@ -1022,13 +1007,16 @@ class FrankaExecutor:
         if not plan_result.success:
             print("[franka] plan failed — nothing to execute")
             return None
-        if held_speed_scale <= 0:
-            raise ValueError("held_speed_scale must be positive")
         if planner is not None:
             self.set_speed_profile_planner(planner)
         self.set_speed_profile_object(scene_cfg)
 
+        execute_started = time.perf_counter()
         self.state_timestamps = []
+        self.last_execute_timing = new_pickup_timing()
+        pickup_trace_id = (self._timing_recorder.begin(
+            phase="execution", kind="motion", name="pickup_and_lift")
+            if self._timing_recorder is not None else None)
         traj = np.asarray(plan_result.traj)                 # (T, 13) = 7 arm + 6 hand
         pg_hand = self._convert(plan_result.pregrasp_pose)
         g_hand = self._convert(plan_result.grasp_pose)
@@ -1037,34 +1025,47 @@ class FrankaExecutor:
         # trajectory from the measured state and must not silently undo that.
         self._log("current_start" if start_from_current else "init")
         if not start_from_current:
+            t_init = time.perf_counter()
             self._move_to(self._arm_init, what="execute-init")
+            self.last_execute_timing["init_motion_s"] = round(
+                time.perf_counter() - t_init, 3)
 
         # 2. Approach — stream the planned arm path; hand follows the plan's hand
         #    columns.  Slow only this final approach based on the live
         #    nearest hand-link-to-object-mesh distance.  Abort (don't grasp)
         #    if the reflex trips.
         self._log("approach")
-        print("[franka] approach speed profile: 1.00x at >=50cm, linear to "
-              "0.25x at 20cm, then 0.25x", flush=True)
+        print("[franka] approach speed profile: 1.00x at >=30cm, linear to "
+              "0.40x at 15cm, then 0.40x", flush=True)
         hand_traj = np.array([self._convert(traj[i, 7:]) for i in range(len(traj))])
+        t_approach = time.perf_counter()
         self._follow(traj[:, :7], hand_traj, abort_on_contact=True,
                      slowdown_wrist_target=plan_result.wrist_se3,
                      proximity_hand_traj=traj[:, 7:])
+        self.last_execute_timing["approach_motion_s"] = round(
+            time.perf_counter() - t_approach, 3)
 
         # 3. Pregrasp
         self._log("pregrasp")
+        t_pregrasp = time.perf_counter()
         self._move_hand(pg_hand)
+        self.last_execute_timing["pregrasp_motion_s"] = round(
+            time.perf_counter() - t_pregrasp, 3)
         self._last_hand_qpos = np.asarray(plan_result.pregrasp_pose, dtype=np.float64)
 
         # 4. Grasp — ramp pregrasp -> grasp for a controlled close.
         self._log("grasp")
+        t_grasp = time.perf_counter()
         for i in range(1, 51):
             t = i / 50.0
             self._move_hand(pg_hand * (1 - t) + g_hand * t)
             time.sleep(0.01)
+        self.last_execute_timing["grasp_motion_s"] = round(
+            time.perf_counter() - t_grasp, 3)
 
         # 5. Squeeze
         self._log("squeeze")
+        t_squeeze = time.perf_counter()
         s_hand = g_hand
         for i in range(self.squeeze_level * 5):
             # clipped here (not only inside _move_hand) because s_hand is
@@ -1073,6 +1074,8 @@ class FrankaExecutor:
             s_hand = self._clip_hand(g_hand * (1 + i / 5.0) - pg_hand * (i / 5.0))
             self._move_hand(s_hand)
             time.sleep(0.02)
+        self.last_execute_timing["squeeze_motion_s"] = round(
+            time.perf_counter() - t_squeeze, 3)
         # squeeze overshoots grasp; grasp_pose is the closest planner-representable
         # config, so that is what reset should plan the retract from.
         self._last_hand_qpos = np.asarray(plan_result.grasp_pose, dtype=np.float64)
@@ -1080,53 +1083,105 @@ class FrankaExecutor:
 
         if skip_lift:
             self._log("squeeze_done")
+            finish_pickup_timing(self.last_execute_timing, execute_started)
+            if pickup_trace_id is not None:
+                self._timing_recorder.end(pickup_trace_id, outcome="success", lift="skipped")
             return s_hand
 
-        # 6. Lift — JOINT-SPACE via plan_pose_constrained (NOT cartesian). Wrist
-        #    target = current wrist + z. Hold hand at squeeze during lift.
+        # 6. Lift — replay a candidate preflight only if the measured arm and
+        #    hand state still match the model used for collision planning.
+        #    Both arms deliberately refuse Cartesian/lateral fallback here.
         self._log("lift")
-        if planner is not None:
-            # Target = the PLANNED grasp wrist (base_link) pose + z. Use the known
-            # collision-free grasp pose directly — NOT O_T_EE @ link6_to_wrist,
-            # which double-applies the hand offset and drops the target into the
-            # table.
-            wrist_lift = np.asarray(plan_result.wrist_se3, dtype=np.float64).copy()
-            wrist_lift[2, 3] += lift_height
+        preflight = getattr(plan_result, "lift_preflight", None)
+        traj_lift = None
+        if preflight is not None:
+            t_lift_check = time.perf_counter()
+            live_hand_qpos, hand_state_source = self.get_hand_qpos()
+            start_check = check_lift_start(
+                self.get_arm_qpos(), preflight.start_full_qpos,
+                arm_dof=self.arm_dof, live_hand_qpos=live_hand_qpos)
+            self.last_execute_timing.update({
+                "lift_start_max_abs_rad": round(start_check.max_abs_rad, 4),
+                "lift_start_l2_rad": round(start_check.l2_rad, 4),
+                "lift_start_hand_checked": start_check.hand_checked,
+                "lift_start_hand_accepted": start_check.hand_accepted,
+                "lift_start_hand_max_abs": round(start_check.hand_max_abs, 4),
+                "lift_start_hand_l2": round(start_check.hand_l2, 4),
+                "lift_start_hand_source": hand_state_source,
+            })
+            self.last_execute_timing["lift_start_check_s"] = round(
+                time.perf_counter() - t_lift_check, 3)
+            if start_check.accepted:
+                traj_lift = np.asarray(
+                    lift_traj_override if lift_traj_override is not None
+                    else preflight.traj)
+                self.last_execute_timing["lift_plan_source"] = (
+                    "precomputed" if lift_traj_override is not None
+                    else "candidate_preflight")
+            else:
+                self.last_execute_timing["lift_plan_source"] = (
+                    "live_replan_both_mismatch" if not start_check.hand_accepted
+                    and not (start_check.max_abs_rad <= 0.12 and start_check.l2_rad <= 0.20)
+                    else ("live_replan_hand_mismatch" if not start_check.hand_accepted
+                          else "live_replan_arm_mismatch"))
+
+        if traj_lift is None and preflight is None and lift_traj_override is not None:
+            # Compatibility for standalone scripts which build PlanResult by
+            # hand.  The normal pipeline always supplies LiftPreflight.
+            traj_lift = np.asarray(lift_traj_override)
+            self.last_execute_timing["lift_plan_source"] = "legacy_override"
+
+        if traj_lift is None:
+            if planner is None or scene_cfg is None:
+                raise LiftExecutionError(
+                    "no validated lift trajectory and no planner/scene for a "
+                    "live replan; holding the object")
+            live_hand_qpos, hand_state_source = self.get_hand_qpos()
+            self.last_execute_timing.setdefault("lift_start_hand_source", hand_state_source)
             start_full = np.concatenate([
-                np.asarray(self.arm.get_data()["qpos"][:7], dtype=np.float32),
-                np.asarray(plan_result.grasp_pose, dtype=np.float32)])
-            if lift_traj_override is not None:
-                print(f"[franka] using precomputed lift traj "
-                      f"{np.shape(lift_traj_override)}", flush=True)
-                traj_lift = np.asarray(lift_traj_override)
-            else:
-                print("[franka] planning constrained lift ...", flush=True)
-                traj_lift = planner.plan_pose_constrained(
-                    start_full, wrist_lift, hold_vec_weight=[1, 1, 1, 1, 1, 0],
-                    scene_cfg=scene_cfg, include_obj_obstacle=False,
-                    debug_dump_dir=debug_dump_dir)
-            if traj_lift is not None:
-                hold = np.tile(s_hand, (len(traj_lift), 1))
-                print(f"[franka] held-object speed scale: {held_speed_scale:.2f} "
-                      "(lift)", flush=True)
-                self._follow(traj_lift[:, :7], hold, speed=held_speed_scale)
-            else:
-                print("[franka] constrained lift failed — holding (no cartesian fallback)")
-        else:
-            print("[franka] no planner given — skipping lift")
+                self.get_arm_qpos().astype(np.float32),
+                np.asarray(live_hand_qpos, dtype=np.float32)])
+            print("[franka] lift preflight start drifted; replanning from live q ...",
+                  flush=True)
+            t_lift_plan = time.perf_counter()
+            try:
+                live_preflight = planner.plan_lift_preflight(
+                    start_full, scene_cfg, lift_h=lift_height,
+                    timing_parent_id=pickup_trace_id, timing_phase="execution")
+            except Exception as exc:
+                raise LiftExecutionError(
+                    f"live lift replan raised {exc!r}; holding the object") from exc
+            self.last_execute_timing["lift_runtime_replan_s"] = round(
+                time.perf_counter() - t_lift_plan, 3)
+            if live_preflight is None:
+                raise LiftExecutionError(
+                    "live lift replan failed; refusing Cartesian or lateral "
+                    "fallback while the object is held")
+            traj_lift = live_preflight.traj
+
+        hold = np.tile(s_hand, (len(traj_lift), 1))
+        print(f"[franka] held-object speed scale: {OBJECT_SAFETY_SPEED_SCALE:.2f} "
+              "(lift)", flush=True)
+        t_lift_motion = time.perf_counter()
+        self.follow_joint_trajectory(traj_lift, hold)
+        self.last_execute_timing["lift_motion_s"] = round(
+            time.perf_counter() - t_lift_motion, 3)
         self._log("lift_done")
+        finish_pickup_timing(self.last_execute_timing, execute_started)
+        if pickup_trace_id is not None:
+            self._timing_recorder.end(
+                pickup_trace_id, outcome="success",
+                lift_plan_source=self.last_execute_timing.get("lift_plan_source"))
         return s_hand
 
-    def execute_lift(self, lift_traj, hold_hand, held_speed_scale: float = 1.0):
+    def execute_lift(self, lift_traj, hold_hand):
         """Joint-space lift: follow a pre-planned qpos trajectory (mirrors real.py)."""
-        if held_speed_scale <= 0:
-            raise ValueError("held_speed_scale must be positive")
         self._log("lift")
         # This public helper is only valid after a grasp closure.  Mark it
         # explicitly so standalone recovery callers receive the same cap.
         self._holding_object = True
         hold = np.tile(np.asarray(hold_hand, dtype=float), (len(lift_traj), 1))
-        self._follow(np.asarray(lift_traj)[:, :7], hold, speed=held_speed_scale)
+        self.follow_joint_trajectory(np.asarray(lift_traj), hold)
         self._log("lift_done")
 
     def _release_ramp(self, pg_hand, g_hand, slow_factor: float = 1.0,
@@ -1166,7 +1221,7 @@ class FrankaExecutor:
               debug_dump_dir: Optional[str] = None,
               use_current_wrist: bool = False,
               z_force_thresh: float = 12.0,
-              held_speed_scale: float = 1.0,
+              placement_wrist: Optional[np.ndarray] = None,
               preplace_traj: Optional[np.ndarray] = None,
               preplace_wrist_target: Optional[np.ndarray] = None) -> dict:
         """Place through a mandatory 10 cm vertical down/up clearance.
@@ -1188,8 +1243,10 @@ class FrankaExecutor:
 
         We do NOT compute a target from ``O_T_EE @ link6_to_wrist`` (that
         double-applied the hand offset and drove the goal into the table).
-        All arm movement is joint-space (``plan_pose_constrained`` + velocity
-        follow); FR3 Cartesian commands are intentionally not used.
+        All arm movement is joint-space (general transfers use
+        ``plan_pose_constrained``/``plan_cartesian_pose``; pure vertical
+        clearance uses ``plan_vertical_stroke``); FR3 Cartesian commands are
+        intentionally not used.
 
         ``plan_result`` is first so run_auto's ``executor.place(result, ...)``
         call works unchanged for both arms; the explicit ``grasp_wrist`` /
@@ -1201,10 +1258,27 @@ class FrankaExecutor:
         Returns a place_info dict (``descended`` / ``target`` /
         ``stopped_on_contact``) in the same shape as real.py's place, which
         run_auto reads for its early-contact check."""
+        # ``placement_wrist`` is the arm-neutral runner contract.  Keep the
+        # older ``grasp_wrist`` keyword for standalone scripts.
+        if placement_wrist is not None:
+            if grasp_wrist is not None and not np.allclose(
+                    placement_wrist, grasp_wrist, atol=1e-6):
+                raise ValueError("place received conflicting placement wrists")
+            grasp_wrist = placement_wrist
         self._log("place")
+        place_started = time.perf_counter()
+        place_timing = new_place_timing()
+        self.last_place_timing = place_timing
+        place_trace_id = (self._timing_recorder.begin(
+            phase="execution", kind="motion", name="place")
+            if self._timing_recorder is not None else None)
+
+        def _finalize_place_timing() -> dict:
+            result = finish_place_timing(place_timing, place_started)
+            if place_trace_id is not None:
+                self._timing_recorder.end(place_trace_id, outcome="success")
+            return result
         self._pending_post_release_retract = None
-        if held_speed_scale <= 0:
-            raise ValueError("held_speed_scale must be positive")
         if planner is not None:
             self.set_speed_profile_planner(planner)
         if plan_result is not None:
@@ -1293,20 +1367,31 @@ class FrankaExecutor:
         else:
             print(f"[franka] planning pre-place point (+{PLACE_VERTICAL_TRAVEL_M * 100:.0f}cm) ...",
                   flush=True)
-            preplace_traj = planner.plan_pose_constrained(
-                start_full, wrist_high, hold_vec_weight=[0, 0, 0, 0, 0, 0],
+            t_preplace_plan = time.perf_counter()
+            preplace_traj = planner.plan_cartesian_pose(
+                start_full, wrist_high,
                 scene_cfg=scene_cfg, include_obj_obstacle=False,
-                debug_dump_dir=debug_dump_dir)
+                debug_dump_dir=debug_dump_dir, timing_parent_id=place_trace_id,
+                timing_phase="execution")
+            place_timing["preplace_plan_s"] = round(
+                time.perf_counter() - t_preplace_plan, 3)
             if preplace_traj is None:
                 raise RuntimeError(
                     "pre-place (+10cm) preflight failed; object remains held")
         descend_start = np.concatenate([preplace_traj[-1, :7], hand])
+        T_obj_grasp = cart2se3(scene_cfg["mesh"]["target"]["pose"])
+        T_obj_in_wrist = np.linalg.inv(plan_result.wrist_se3) @ T_obj_grasp
+        object_at_descend_start = planner.fk_wrist(descend_start) @ T_obj_in_wrist
         print(f"[franka] planning perpendicular place descent (-{PLACE_VERTICAL_TRAVEL_M * 100:.0f}cm) ...",
               flush=True)
-        descend_traj = self._plan_verified_vertical_stroke(
+        t_descend_plan = time.perf_counter()
+        descend_traj = self._plan_vertical_stroke(
             planner, descend_start, wrist_high, wrist_low, scene_cfg,
             include_obj_obstacle=False, label="place descent",
-            debug_dump_dir=debug_dump_dir)
+            debug_dump_dir=debug_dump_dir, timing_parent_id=place_trace_id,
+            attached_object_pose_at_start=object_at_descend_start)
+        place_timing["descend_plan_s"] = round(
+            time.perf_counter() - t_descend_plan, 3)
 
         # Before releasing, also prove that the open hand can rise straight
         # back by 10cm and subsequently retract around the object at its new
@@ -1316,8 +1401,6 @@ class FrankaExecutor:
             raise RuntimeError(
                 "place requires plan_result and scene_cfg to preflight the "
                 "post-release 10cm lift")
-        T_obj_grasp = cart2se3(scene_cfg["mesh"]["target"]["pose"])
-        T_obj_in_wrist = np.linalg.inv(plan_result.wrist_se3) @ T_obj_grasp
         released = wrist_low @ T_obj_in_wrist
         placed_scene = dict(scene_cfg)
         placed_scene["mesh"] = dict(scene_cfg.get("mesh", {}))
@@ -1335,30 +1418,42 @@ class FrankaExecutor:
         ])
         print(f"[franka] planning post-release perpendicular lift (+{PLACE_VERTICAL_TRAVEL_M * 100:.0f}cm) ...",
               flush=True)
-        post_lift_traj = self._plan_verified_vertical_stroke(
+        t_post_lift_plan = time.perf_counter()
+        post_lift_traj = self._plan_vertical_stroke(
             planner, post_start, wrist_low, wrist_high, placed_scene,
             include_obj_obstacle=True, label="post-release place lift",
-            debug_dump_dir=debug_dump_dir)
+            debug_dump_dir=debug_dump_dir, timing_parent_id=place_trace_id)
+        place_timing["post_release_lift_plan_s"] = round(
+            time.perf_counter() - t_post_lift_plan, 3)
         print("[franka] planning retract after post-release lift ...", flush=True)
+        t_retract_plan = time.perf_counter()
         retract_traj = planner.plan_js_to_init(
             placed_scene, post_lift_traj[-1, :7],
             start_hand_qpos=post_release_hand,
             goal_arm_qpos=self.retract_goal[:7])
+        place_timing["retract_plan_s"] = round(
+            time.perf_counter() - t_retract_plan, 3)
         if retract_traj is None:
             raise RuntimeError(
                 "post-release retract preflight failed; object remains held")
 
         if not preplace_reused:
-            print(f"[franka] pre-place held-object cap: {self.held_speed_scale:.2f}x",
+            print(f"[franka] pre-place held-object cap: {OBJECT_SAFETY_SPEED_SCALE:.2f}x",
                   flush=True)
+            t_preplace_motion = time.perf_counter()
             self._follow(preplace_traj[:, :7], speed=1.0)
+            place_timing["preplace_motion_s"] = round(
+                time.perf_counter() - t_preplace_motion, 3)
         z_start = float((self.arm.get_data()["position"]
                          @ self._link6_to_wrist)[2, 3])
         print(f"[franka] perpendicular place descent: -{PLACE_VERTICAL_TRAVEL_M * 100:.0f}cm "
-              f"(held cap {self.held_speed_scale:.2f}x)", flush=True)
+              f"(held cap {OBJECT_SAFETY_SPEED_SCALE:.2f}x)", flush=True)
+        t_descend_motion = time.perf_counter()
         self._follow(descend_traj[:, :7], speed=1.0,
                      stop_wrench_z=z_force_thresh,
                      slowdown_wrist_target=wrist_low)
+        place_timing["descend_motion_s"] = round(
+            time.perf_counter() - t_descend_motion, 3)
         contact = bool(self._last_stop_on_contact)
         z_end = float((self.arm.get_data()["position"]
                        @ self._link6_to_wrist)[2, 3])
@@ -1373,23 +1468,30 @@ class FrankaExecutor:
                     "target": PLACE_VERTICAL_TRAVEL_M,
                     "stopped_on_contact": True,
                     "released": False,
+                    "timing_s": _finalize_place_timing(),
                     "mode": "early_contact"}
+        t_release = time.perf_counter()
         _release()                                            # squeeze -> grasp -> pregrasp
+        place_timing["release_s"] = round(time.perf_counter() - t_release, 3)
         release_refs = ([] if self._last_release_wrist_reference is None
                         else [self._last_release_wrist_reference])
         print(f"[franka] post-release perpendicular lift: +{PLACE_VERTICAL_TRAVEL_M * 100:.0f}cm",
               flush=True)
         post_hand = np.tile(self._convert(post_release_hand),
                             (len(post_lift_traj), 1))
+        t_post_lift_motion = time.perf_counter()
         self._follow(post_lift_traj[:, :7], post_hand,
                      slowdown_wrist_references=release_refs,
                      proximity_hand_traj=np.tile(
                          post_release_hand, (len(post_lift_traj), 1)))
+        place_timing["post_release_lift_motion_s"] = round(
+            time.perf_counter() - t_post_lift_motion, 3)
         self._pending_post_release_retract = {
             "retract_traj": np.asarray(retract_traj),
             "post_release_lift_n_waypoints": int(len(post_lift_traj)),
         }
         self._log("place_done")
+        _finalize_place_timing()
         return {"descended": descended,
                 "target": PLACE_VERTICAL_TRAVEL_M,
                 "stopped_on_contact": contact,
@@ -1401,6 +1503,7 @@ class FrankaExecutor:
                 "descent_n_waypoints": int(len(descend_traj)),
                 "post_release_lift_n_waypoints": int(len(post_lift_traj)),
                 "retract_n_waypoints": int(len(retract_traj)),
+                "timing_s": place_timing,
                 "mode": "current_wrist" if use_current_wrist else "grasp_wrist"}
 
     def release(self, plan_result: Optional[PlanResult] = None,
@@ -1515,7 +1618,7 @@ class FrankaExecutor:
         wrist_lift[2, 3] += POST_RELEASE_LIFT_HEIGHT_M
         print(f"[franka] planning post-release vertical lift "
               f"(+{POST_RELEASE_LIFT_HEIGHT_M * 100:.0f}cm) ...", flush=True)
-        lift_traj = self._plan_verified_vertical_stroke(
+        lift_traj = self._plan_vertical_stroke(
             planner, start_full, wrist_start, wrist_lift, new_scene,
             include_obj_obstacle=True, label="post-release reset lift")
 
@@ -1632,16 +1735,6 @@ class FrankaExecutor:
         old unplanned clear-view motion.
         """
         self._log("reset_fallback")
-        if self._holding_object:
-            # A failed placement preflight/contact happens before release. The
-            # old fallback opened the hand unconditionally here, turning a
-            # rejected 10cm vertical path into a drop from the carry height.
-            # Keep the object clamped and require an operator or a dedicated
-            # held-object recovery plan; never convert a planning failure into
-            # an unverified release.
-            raise RuntimeError(
-                "reset_fallback: object is still held; refusing to release or "
-                "drop it after an unverified placement/recovery path")
         try:
             self.release(plan_result)
         except Exception as e:

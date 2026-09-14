@@ -1,8 +1,10 @@
 import os
 import time as _perf
+import copy
 import numpy as np
 from dataclasses import dataclass
-from typing import Optional
+from collections import OrderedDict
+from typing import Any, Optional
 from scipy.spatial.transform import Rotation
 
 import torch
@@ -48,9 +50,102 @@ from autodex.utils.robot_config import (
     ALLEGRO_LINK6_TO_WRIST, INSPIRE_LINK6_TO_WRIST, INSPIRE_LEFT_LINK6_TO_WRIST,
     FR3_INSPIRE_LINK_TO_WRIST,
 )
+from .jacobian_stroke import (
+    JacobianStrokeOptions,
+    JacobianStrokeResult,
+    plan_jacobian_vertical_stroke,
+)
 
 
 # ── Result ────────────────────────────────────────────────────────────────────
+
+@dataclass
+class LiftPreflight:
+    """A lift that was validated from the selected approach endpoint.
+
+    The planner owns this data rather than either robot executor: the arm
+    model, collision world, expected approach-end joint state, and lift goal
+    all belong to the planning domain.  Executors only decide whether the
+    measured state is close enough to replay it or needs a live replan.
+    """
+    traj: np.ndarray                  # (T, dof), start -> z-raised wrist
+    start_full_qpos: np.ndarray       # expected post-grasp planner qpos
+    start_wrist_se3: np.ndarray       # FK at start_full_qpos
+    target_wrist_se3: np.ndarray      # start wrist translated +z
+    height_m: float
+    constrained_plan: Optional["ConstrainedPlanResult"] = None
+    # Populated by the differential-IK backend. ``traj`` is the exact dense
+    # C2 trajectory in this result, retained above for executor compatibility.
+    vertical_stroke: Optional[JacobianStrokeResult] = None
+    time_s: Optional[np.ndarray] = None
+
+
+@dataclass
+class ConstrainedPlanResult:
+    """Result of one Cartesian MotionGen query with its exact policy record.
+
+    A falsey trajectory is never silently replaced by an endpoint-IK route.
+    Consumers can therefore distinguish a strict path-constraint rejection
+    from an execution-time replay rejection without inspecting log strings.
+    """
+
+    trajectory: Optional[np.ndarray]
+    success: bool
+    constraint_mode: str
+    held_mask: tuple[float, float, float, float, float, float]
+    failure_stage: Optional[str]
+    timing: dict[str, Any]
+    solver_reported: dict[str, Any]
+    hand_lock: dict[str, Any]
+
+
+class CudaPlanningFault(RuntimeError):
+    """A CUDA failure which invalidates the current planner process.
+
+    cuRobo executes asynchronously.  A device failure may therefore first be
+    observed by an unrelated tensor operation.  Treating that failure as an
+    ordinary infeasible plan is unsafe: every later CUDA user in this process
+    (including perception) will see the same poisoned context.
+    """
+
+    def __init__(self, operation: str, cause: BaseException,
+                 context: Optional[dict[str, Any]] = None):
+        self.operation = str(operation)
+        self.cause = cause
+        self.context = dict(context or {})
+        super().__init__(
+            f"CUDA planning fault during {self.operation}: {cause}"
+        )
+
+
+def _is_cuda_fault(exc: BaseException) -> bool:
+    """Return whether *exc* denotes a non-recoverable CUDA context failure."""
+    if isinstance(exc, CudaPlanningFault):
+        return True
+    message = str(exc).lower()
+    return any(token in message for token in (
+        "cuda error", "cuda kernel", "cuda driver", "device-side assert",
+        "illegal instruction", "illegal memory access",
+    ))
+
+
+def raise_cuda_planning_fault(
+    operation: str,
+    exc: BaseException,
+    context: Optional[dict[str, Any]] = None,
+) -> None:
+    """Re-raise a raw CUDA exception as :class:`CudaPlanningFault`.
+
+    Reset/reorientation code intentionally uses cuRobo's batch IK solver
+    directly. Those calls must still have the same process-stop policy as
+    native MotionGen planning. Non-CUDA exceptions are left for their local
+    caller to handle as ordinary candidate failures.
+    """
+    if _is_cuda_fault(exc):
+        if isinstance(exc, CudaPlanningFault):
+            raise exc
+        raise CudaPlanningFault(operation, exc, context=context) from exc
+
 
 @dataclass
 class PlanResult:
@@ -63,6 +158,7 @@ class PlanResult:
     timing: Optional[dict] = None     # per-stage timing breakdown
     openpose_pose: Optional[np.ndarray] = None  # (16,) hand joints; None if
                                                 # caller didn't request openpose
+    lift_preflight: Optional[LiftPreflight] = None
 
 
 # ── cuRobo format conversion (private) ───────────────────────────────────────
@@ -131,13 +227,31 @@ def _to_curobo_world(scene_cfg: dict) -> dict:
     return cfg
 
 
-def _js_break_timing(js_break: dict, t_plan: float, js_status: dict) -> dict:
+def _without_target_mesh(world_cfg: dict) -> dict:
+    """Return ``world_cfg`` with only the grasped target removed.
+
+    The old held-object path cleared *all* meshes.  That accidentally removed
+    static mesh obstacles together with ``target`` in multi-mesh scenes.  A
+    grasped object should move with the wrist, but every other scene mesh must
+    remain a collision obstacle for approach, lift, and transfer planning.
+    """
+    out = dict(world_cfg)
+    out["mesh"] = {
+        name: info for name, info in world_cfg.get("mesh", {}).items()
+        if name != "target"
+    }
+    return out
+
+
+def _js_break_timing(js_break: dict, approach_plan_s: float,
+                     js_status: dict) -> dict:
     """Flatten the accumulated plan_single_js stage times into timing keys.
 
     ``js_*_s`` are cuRobo's own solver clocks summed over every candidate
     attempted in this plan() call; ``js_overhead_s`` is the remainder of the
-    measured wall clock (tensor setup, CUDA sync, start-state checks, the
-    first-call joint-space trajopt compile).
+    *approach-plan* wall clock (tensor setup, CUDA sync, start-state checks,
+    the first-call joint-space trajopt compile). It deliberately excludes the
+    separately measured held-object lift preflights.
     """
     solve = js_break["solve_s"]
     out = {
@@ -145,7 +259,7 @@ def _js_break_timing(js_break: dict, t_plan: float, js_status: dict) -> dict:
         "js_trajopt_s": round(js_break["trajopt_s"], 3),
         "js_finetune_s": round(js_break["finetune_s"], 3),
         "js_solve_s": round(solve, 3),
-        "js_overhead_s": round(max(t_plan - solve, 0.0), 3),
+        "js_overhead_s": round(max(approach_plan_s - solve, 0.0), 3),
         "js_curobo_attempts": int(js_break["curobo_attempts"]),
     }
     if js_status:
@@ -255,6 +369,28 @@ class GraspPlanner:
         # _init_motion_gen / _init_ik_solver / warmup. Paid once per process
         # and amortised over every later plan() on the same world structure.
         self.setup_timing: dict = {}
+        # Optional trial recorder.  This is deliberately dependency-injected:
+        # the planner stays usable by offline demos and tests without a runner.
+        self._timing_recorder = None
+        # A Cartesian goal does not constrain finger joints.  Keep a small LRU
+        # of kinematic models whose hand joints are true cuRobo ``lock_joints``
+        # so collision checks match the squeeze that will be executed.
+        self._locked_motion_gens: OrderedDict[tuple[float, ...], tuple] = OrderedDict()
+        self._locked_motion_gen_capacity = 4
+        # Collision planning uses the simplified target mesh.  Cache only its
+        # immutable object-frame vertices so repeated candidate lift
+        # preflights do not parse the same mesh from disk.
+        self._vertical_payload_vertex_cache: dict[str, np.ndarray] = {}
+        self._last_vertical_stroke_result: Optional[JacobianStrokeResult] = None
+        # The native PoseCostMetric / dynamically locked-hand route remains
+        # available for isolated CUDA debugging, but it is not safe as the
+        # production default until it passes hardware-stack validation.
+        self._native_pose_constraints_enabled = (
+            os.environ.get("AUTODEX_ENABLE_NATIVE_POSE_CONSTRAINTS") == "1")
+
+    def set_timing_recorder(self, recorder) -> None:
+        """Attach the current trial's robot-neutral timing recorder."""
+        self._timing_recorder = recorder
 
     def set_verbose_planning(self, enabled: bool = True) -> None:
         """Enable detailed per-failure cuRobo diagnostics when needed."""
@@ -367,6 +503,156 @@ class GraspPlanner:
             pose = Pose(position=pos, quaternion=quat)
             self._motion_gen.world_coll_checker.update_obstacle_pose(name, pose)
 
+    def _set_motion_world(self, world_cfg: dict) -> None:
+        """Make ``world_cfg`` the active MotionGen world.
+
+        ``plan()`` switches temporarily to a held-object world while it
+        preflights a candidate lift.  Keeping this transition in one helper is
+        important: the next candidate's approach must restore the target mesh
+        before calling ``plan_single_js``.
+        """
+        if self._motion_gen is None:
+            self._init_motion_gen(world_cfg)
+        elif self._world_structure_changed(world_cfg):
+            self._update_world(world_cfg)
+        else:
+            self._update_target_pose_only(world_cfg)
+        self._cached_world = world_cfg
+
+    def _locked_motion_gen_for_hand(
+            self, hand_qpos: np.ndarray) -> tuple[MotionGen, MotionGenPlanConfig, bool]:
+        """Return a MotionGen whose hand links are fixed at ``hand_qpos``.
+
+        cuRobo changes the controlled joint set when ``lock_joints`` is used,
+        so a normal full-DOF MotionGen cannot be mutated into this form.  The
+        cache key is the exact float32 command; values are never rounded into
+        an incorrectly collision-checked hand shape.
+        """
+        if self._motion_gen is None or self._cached_world is None:
+            raise RuntimeError("hand lock requires an initialized MotionGen world")
+        hand = np.asarray(hand_qpos, dtype=np.float32).reshape(-1)
+        expected = len(self._init_state) - self._n_arm
+        if hand.shape != (expected,) or not np.isfinite(hand).all():
+            raise ValueError(f"hand lock expected {expected} finite joints")
+        key = tuple(float(value) for value in hand)
+        cached = self._locked_motion_gens.get(key)
+        if cached is not None:
+            motion_gen, plan_cfg = cached
+            motion_gen.clear_world_cache()
+            motion_gen.update_world(WorldConfig.from_dict(self._cached_world))
+            self._locked_motion_gens.move_to_end(key)
+            return motion_gen, plan_cfg, True
+
+        joint_names = list(self._motion_gen.kinematics.joint_names)
+        hand_names = joint_names[self._n_arm:]
+        if len(hand_names) != expected:
+            raise RuntimeError(
+                "cannot derive hand lock joint names from full MotionGen "
+                f"({len(hand_names)} != {expected})")
+        robot_cfg = copy.deepcopy(self._robot_cfg)
+        robot_cfg.setdefault("kinematics", {})["lock_joints"] = {
+            name: float(value) for name, value in zip(hand_names, hand)
+        }
+        config = MotionGenConfig.load_from_robot_config(
+            robot_cfg,
+            WorldConfig.from_dict(self._cached_world),
+            self._tensor_args,
+            num_trajopt_seeds=self._num_trajopt_seeds,
+            num_graph_seeds=1,
+            num_ik_seeds=32,
+            # A lock-joint model has a different active DOF from the normal
+            # planner and is created lazily from a live squeeze command.
+            # Keep it out of CUDA graph capture/replay: a graph is shape- and
+            # buffer-address-specific, whereas the collision world is updated
+            # for every held-object plan.  This does *not* disable cuRobo's
+            # geometric graph search in the plan config.
+            use_cuda_graph=False,
+            interpolation_dt=0.01,
+            interpolation_type=self._interpolation_type,
+            collision_cache={"obb": self.N_CUBOIDS, "mesh": self.N_MESHES},
+            ik_opt_iters=200,
+            grad_trajopt_iters=200,
+            trajopt_tsteps=64,
+            collision_activation_distance=self._collision_act_dist,
+            store_debug_in_result=True,
+        )
+        motion_gen = MotionGen(config)
+        motion_gen.warmup(enable_graph=True, warmup_js_trajopt=False)
+        plan_cfg = self._plan_cfg.clone()
+        self._locked_motion_gens[key] = (motion_gen, plan_cfg)
+        while len(self._locked_motion_gens) > self._locked_motion_gen_capacity:
+            self._locked_motion_gens.popitem(last=False)
+        return motion_gen, plan_cfg, False
+
+    def _set_ik_world(self, world_cfg: dict) -> None:
+        """Initialise/update the endpoint IK world without changing semantics."""
+        if self._ik_solver is None:
+            self._init_ik_solver(world_cfg)
+        else:
+            self._ik_solver.update_world(WorldConfig.from_dict(world_cfg))
+
+    def fk_wrist(self, full_qpos: np.ndarray) -> np.ndarray:
+        """Return the planner wrist pose for a full robot joint state.
+
+        This is the frame consumed by ``plan_pose_constrained``.  Computing
+        the lift start from the *actual selected trajectory endpoint* avoids
+        assuming that a numerical IK target and its refined joint trajectory
+        have bit-identical forward kinematics.
+        """
+        if self._motion_gen is None:
+            raise RuntimeError("fk_wrist requires an initialized MotionGen world")
+        q = np.asarray(full_qpos, dtype=np.float32).reshape(-1)
+        if q.shape != self._init_state.shape:
+            raise ValueError(
+                f"fk_wrist expected qpos shape {self._init_state.shape}, got {q.shape}")
+        state = self._motion_gen.kinematics.get_state(torch.tensor(
+            q, dtype=torch.float32, device=self._tensor_args.device).unsqueeze(0))
+        pos = state.ee_position[0].detach().cpu().numpy()
+        quat_wxyz = state.ee_quaternion[0].detach().cpu().numpy()
+        wrist = np.eye(4, dtype=np.float64)
+        wrist[:3, :3] = Rotation.from_quat([
+            quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0],
+        ]).as_matrix()
+        wrist[:3, 3] = pos
+        return wrist
+
+    def _vertical_payload_from_scene(
+            self, scene_cfg: dict,
+            object_pose_at_start: np.ndarray) -> tuple[np.ndarray, float]:
+        """Load target vertices and support-plane z for an attached stroke."""
+        target = scene_cfg.get("mesh", {}).get("target")
+        if not isinstance(target, dict) or not target.get("file_path"):
+            raise ValueError(
+                "attached vertical stroke requires scene_cfg.mesh.target.file_path")
+        table = scene_cfg.get("cuboid", {}).get("table")
+        if not isinstance(table, dict):
+            raise ValueError(
+                "attached vertical stroke requires scene_cfg.cuboid.table")
+        dims = np.asarray(table.get("dims"), dtype=np.float64).reshape(-1)
+        pose = np.asarray(table.get("pose"), dtype=np.float64).reshape(-1)
+        if (dims.shape != (3,) or pose.shape != (7,)
+                or not np.isfinite(dims).all() or not np.isfinite(pose).all()):
+            raise ValueError("table dims/pose must be finite vectors of length 3/7")
+        object_pose = np.asarray(object_pose_at_start, dtype=np.float64)
+        if object_pose.shape != (4, 4) or not np.isfinite(object_pose).all():
+            raise ValueError("attached object pose must be a finite 4x4 matrix")
+
+        mesh_path = str(target["file_path"])
+        vertices = self._vertical_payload_vertex_cache.get(mesh_path)
+        if vertices is None:
+            import trimesh
+
+            mesh = trimesh.load(mesh_path, force="mesh", process=False)
+            if isinstance(mesh, trimesh.Scene):
+                mesh = trimesh.util.concatenate(tuple(mesh.geometry.values()))
+            vertices = np.asarray(mesh.vertices, dtype=np.float64)
+            if vertices.ndim != 2 or vertices.shape[1] != 3 or len(vertices) == 0:
+                raise ValueError(f"target planning mesh has no vertices: {mesh_path}")
+            vertices = np.ascontiguousarray(vertices)
+            self._vertical_payload_vertex_cache[mesh_path] = vertices
+        table_surface_z = float(pose[2] + dims[2] / 2.0)
+        return vertices, table_surface_z
+
     def warmup(self, scene_cfg: dict, *, warmup_js_trajopt: bool = True) -> dict:
         """Materialise planner CUDA state before the first measured plan.
 
@@ -406,8 +692,7 @@ class GraspPlanner:
             self._motion_gen.warmup(enable_graph=False, warmup_js_trajopt=True)
         t_js = _time.perf_counter()
 
-        world_cfg_no_target = dict(world_cfg)
-        world_cfg_no_target["mesh"] = {}
+        world_cfg_no_target = _without_target_mesh(world_cfg)
         ik_created = self._ik_solver is None
         if ik_created:
             self._init_ik_solver(world_cfg_no_target)
@@ -620,7 +905,7 @@ class GraspPlanner:
             torch.manual_seed(seed)
             np.random.seed(seed)
 
-        t0 = _time.time()
+        t0 = _time.perf_counter()
         obj_pose = cart2se3(scene_cfg["mesh"]["target"]["pose"])
         wrist_se3, pregrasp, grasp, scene_info = load_candidate(
             obj_name, obj_pose, grasp_version, hand=hand, scene_id=scene_id,
@@ -631,12 +916,11 @@ class GraspPlanner:
         wrist_se3, pregrasp, grasp, _, scene_info = _expand_candidates_cyl(
             wrist_se3, pregrasp, grasp, None, scene_info,
             obj_pose, cyl_axis_local, cyl_yaw_grid)
-        t_load = _time.time() - t0
+        t_load = _time.perf_counter() - t0
 
         t0 = _time.time()
         # IK solver uses table-only world (no target mesh — arm shouldn't collide with table)
-        world_cfg_no_target = _to_curobo_world(scene_cfg)
-        world_cfg_no_target["mesh"] = {}
+        world_cfg_no_target = _without_target_mesh(_to_curobo_world(scene_cfg))
         if self._ik_solver is None:
             self._init_ik_solver(world_cfg_no_target)
         else:
@@ -845,8 +1129,7 @@ class GraspPlanner:
         self._cached_world = world_cfg
 
         # IK solver world: table only (no held mesh — it's "attached" to robot).
-        world_cfg_no_target = dict(world_cfg)
-        world_cfg_no_target["mesh"] = {}
+        world_cfg_no_target = _without_target_mesh(world_cfg)
         if self._ik_solver is None:
             self._init_ik_solver(world_cfg_no_target)
         else:
@@ -1025,8 +1308,7 @@ class GraspPlanner:
             self._update_target_pose_only(world_cfg)
         self._cached_world = world_cfg
 
-        world_cfg_no_target = dict(world_cfg)
-        world_cfg_no_target["mesh"] = {}
+        world_cfg_no_target = _without_target_mesh(world_cfg)
         if self._ik_solver is None:
             self._init_ik_solver(world_cfg_no_target)
         else:
@@ -1192,193 +1474,655 @@ class GraspPlanner:
         scene_cfg: Optional[dict] = None,
         include_obj_obstacle: bool = False,
         debug_dump_dir: Optional[str] = None,
-    ) -> Optional[np.ndarray]:
-        """Plan ``start_full_qpos -> target_wrist_pose`` with a cuRobo
-        ``PoseCostMetric`` constraining selected pose components.
+        constraint_mode: str = "native_strict",
+        return_result: bool = False,
+        timing_parent_id: Optional[str] = None,
+        timing_phase: str = "planning",
+        lock_hand: bool = True,
+    ) -> Optional[np.ndarray] | ConstrainedPlanResult:
+        """Plan a Cartesian endpoint, using the stable legacy route by default.
 
-        Args:
-            start_full_qpos: (22,) current joint state — arm (6) + hand.
-            target_wrist_pose: (4, 4) wrist (cuRobo ``ee_link = base_link``)
-                pose in robot frame. NOTE: cuRobo's FK / IK are both wrist-
-                anchored, so callers MUST convert link6 → wrist upstream
-                (``link6 @ link6_to_wrist``) before passing here. Mixing
-                link6 and wrist frames in this function silently introduces
-                an offset of ``link6_to_wrist`` translation (~3.5cm for
-                inspire_left).
-            hold_vec_weight: 6-vec ``[rx, ry, rz, x, y, z]`` — 1 = hold to
-                the trajectory's initial value, 0 = free. E.g. ``[1,1,1,1,1,0]``
-                for a pure +z lift, ``[0,0,0,0,0,1]`` to translate xy while
-                holding z.
-            scene_cfg: optional; if given, rebuilds world. If None, uses
-                cached world from the previous call.
-            include_obj_obstacle: if False, drops the target mesh from the
-                world (e.g. obj is held in hand and shouldn't self-collide).
-
-        Returns interpolated traj ``(T, dof)`` or ``None`` on failure.
+        Native pose metrics and dynamic ``lock_joints`` are an explicit
+        ``AUTODEX_ENABLE_NATIVE_POSE_CONSTRAINTS=1`` experiment.  The default
+        is the prior endpoint-IK plus joint-space interpolation policy, which
+        keeps the commanded hand joints at their start values.
         """
-        # Optional snapshot dump for offline reproduction.
-        if debug_dump_dir is not None:
-            import time as _time, json as _json
-            os.makedirs(debug_dump_dir, exist_ok=True)
-            stem = str(int(_time.time() * 1000))
-            np.savez(
-                os.path.join(debug_dump_dir, f"{stem}.npz"),
-                start_full_qpos=np.asarray(start_full_qpos),
-                target_wrist_pose=np.asarray(target_wrist_pose),
-                hold_vec_weight=np.asarray(hold_vec_weight),
-                include_obj_obstacle=np.asarray(include_obj_obstacle),
+        mask = np.asarray(hold_vec_weight, dtype=np.float32).reshape(-1)
+        if not self._native_pose_constraints_enabled:
+            return self._plan_endpoint_approximation(
+                start_full_qpos, target_wrist_pose, mask,
+                scene_cfg=scene_cfg, include_obj_obstacle=include_obj_obstacle,
+                debug_dump_dir=debug_dump_dir, return_result=return_result,
+                timing_parent_id=timing_parent_id, timing_phase=timing_phase,
             )
+        if mask.shape == (6,) and np.all(mask == 0.0):
+            raise ValueError(
+                "plan_pose_constrained requires at least one held axis; "
+                "use plan_cartesian_pose for an unconstrained transfer")
+        return self._plan_native_cartesian(
+            start_full_qpos, target_wrist_pose, hold_vec_weight,
+            scene_cfg=scene_cfg, include_obj_obstacle=include_obj_obstacle,
+            debug_dump_dir=debug_dump_dir, constraint_mode=constraint_mode,
+            return_result=return_result, timing_parent_id=timing_parent_id,
+            timing_phase=timing_phase, lock_hand=lock_hand,
+        )
+
+    def plan_cartesian_pose(
+        self,
+        start_full_qpos: np.ndarray,
+        target_wrist_pose: np.ndarray,
+        scene_cfg: Optional[dict] = None,
+        include_obj_obstacle: bool = False,
+        debug_dump_dir: Optional[str] = None,
+        return_result: bool = False,
+        timing_parent_id: Optional[str] = None,
+        timing_phase: str = "planning",
+        lock_hand: bool = True,
+    ) -> Optional[np.ndarray] | ConstrainedPlanResult:
+        """Plan an exact Cartesian endpoint without a path pose metric."""
+        if not self._native_pose_constraints_enabled:
+            return self._plan_endpoint_approximation(
+                start_full_qpos, target_wrist_pose, np.zeros(6, dtype=np.float32),
+                scene_cfg=scene_cfg, include_obj_obstacle=include_obj_obstacle,
+                debug_dump_dir=debug_dump_dir, return_result=return_result,
+                timing_parent_id=timing_parent_id, timing_phase=timing_phase,
+            )
+        return self._plan_native_cartesian(
+            start_full_qpos, target_wrist_pose, None,
+            scene_cfg=scene_cfg, include_obj_obstacle=include_obj_obstacle,
+            debug_dump_dir=debug_dump_dir, constraint_mode="native_cartesian",
+            return_result=return_result, timing_parent_id=timing_parent_id,
+            timing_phase=timing_phase, lock_hand=lock_hand,
+        )
+
+    def plan_vertical_stroke(
+        self,
+        start_full_qpos: np.ndarray,
+        wrist_start: np.ndarray,
+        wrist_end: np.ndarray,
+        *,
+        expected_travel_m: float,
+        travel_tolerance_m: float,
+        scene_cfg: Optional[dict] = None,
+        include_obj_obstacle: bool = False,
+        label: str = "vertical stroke",
+        debug_dump_dir: Optional[str] = None,
+        timing_parent_id: Optional[str] = None,
+        timing_phase: str = "planning",
+        lock_hand: bool = True,
+        attached_object_pose_at_start: Optional[np.ndarray] = None,
+        options: Optional[JacobianStrokeOptions] = None,
+        return_result: bool = False,
+    ) -> Optional[np.ndarray] | JacobianStrokeResult:
+        """Plan one continuous, execution-ready world-Z stroke.
+
+        The public request is first checked to be a pure ``+Z`` or ``-Z``
+        translation.  The actual path then follows the local IK branch from
+        ``start_full_qpos`` using 5 mm damped-Jacobian continuation.  Hand
+        joints remain fixed, every inter-node joint chord is collision checked,
+        and the dense C2 output is checked again for collision, lateral drift,
+        orientation drift, monotonic Z, endpoint error, and joint limits.
+
+        If ``attached_object_pose_at_start`` is supplied, the target planning
+        mesh is treated as a rigid wrist payload and its lowest vertex is kept
+        above the table support plane.  The target itself must consequently be
+        absent from the robot collision world (``include_obj_obstacle=False``).
+
+        Ordinary infeasibility returns ``None`` (or a failed result when
+        ``return_result=True``).  CUDA faults are raised as
+        :class:`CudaPlanningFault`; no endpoint or Cartesian fallback is used.
+        """
+        del lock_hand  # Hand fixation is intrinsic to the Jacobian state update.
+        start = np.asarray(wrist_start, dtype=np.float64)
+        end = np.asarray(wrist_end, dtype=np.float64)
+        if (start.shape != (4, 4) or end.shape != (4, 4)
+                or not np.isfinite(start).all() or not np.isfinite(end).all()):
+            raise ValueError(f"{label}: wrist poses must be finite 4x4 matrices")
+        expected = float(expected_travel_m)
+        tolerance = float(travel_tolerance_m)
+        if expected <= 0.0 or tolerance < 0.0:
+            raise ValueError(f"{label}: travel distance/tolerance must be non-negative")
+        delta = end[:3, 3] - start[:3, 3]
+        if (np.max(np.abs(delta[:2])) > tolerance
+                or abs(abs(float(delta[2])) - expected) > tolerance):
+            raise RuntimeError(
+                f"{label}: expected a ±{expected:.3f}m vertical stroke, got "
+                f"delta={delta.round(5).tolist()}")
+        rotation_delta = Rotation.from_matrix(
+            end[:3, :3] @ start[:3, :3].T).magnitude()
+        if rotation_delta > 1.0e-6:
+            raise RuntimeError(
+                f"{label}: vertical stroke must preserve wrist rotation; "
+                f"rotation delta={float(rotation_delta):.6f}rad")
+
+        recorder = self._timing_recorder
+        span_id = None
+        if recorder is not None:
+            span_id = recorder.begin(
+                phase=timing_phase, kind="plan", name="jacobian_vertical_stroke",
+                parent_id=timing_parent_id, label=label,
+                requested_direction=("+Z" if delta[2] > 0.0 else "-Z"),
+                requested_travel_m=expected,
+                attached_object=attached_object_pose_at_start is not None)
+        begun = _perf.perf_counter()
+        result: Optional[JacobianStrokeResult] = None
+        try:
             if scene_cfg is not None:
-                with open(os.path.join(debug_dump_dir, f"{stem}_scene.json"), "w") as _f:
-                    _json.dump(scene_cfg, _f, indent=2, default=str)
-            print(f"    [plan_pose_constrained] snapshot → "
-                  f"{debug_dump_dir}/{stem}.npz")
+                world_cfg = _to_curobo_world(scene_cfg)
+                if not include_obj_obstacle:
+                    world_cfg = _without_target_mesh(world_cfg)
+                self._set_motion_world(world_cfg)
+            elif self._motion_gen is None:
+                raise RuntimeError(
+                    "vertical stroke requires scene_cfg on its first call")
+            elif not include_obj_obstacle:
+                self._set_motion_world(_without_target_mesh(self._cached_world))
 
-        if scene_cfg is not None:
-            world_cfg = _to_curobo_world(scene_cfg)
-            if not include_obj_obstacle:
-                world_cfg = dict(world_cfg)
-                world_cfg["mesh"] = {}
-            if self._motion_gen is None:
-                self._init_motion_gen(world_cfg)
-            elif self._world_structure_changed(world_cfg):
-                self._update_world(world_cfg)
-            else:
-                self._update_target_pose_only(world_cfg)
-            self._cached_world = world_cfg
-            # Also (re)init / update ik_solver with the same no-obj world.
-            if self._ik_solver is None:
-                self._init_ik_solver(world_cfg)
-            else:
-                self._ik_solver.update_world(WorldConfig.from_dict(world_cfg))
-        elif self._motion_gen is None:
-            raise RuntimeError(
-                "plan_pose_constrained: motion_gen not initialized; "
-                "pass scene_cfg on first call."
+            payload_vertices = None
+            support_surface_z = None
+            if attached_object_pose_at_start is not None:
+                if include_obj_obstacle:
+                    raise ValueError(
+                        "an attached target cannot simultaneously remain a world obstacle")
+                if scene_cfg is None:
+                    raise ValueError(
+                        "attached vertical stroke requires scene_cfg for mesh/support data")
+                payload_vertices, support_surface_z = self._vertical_payload_from_scene(
+                    scene_cfg, attached_object_pose_at_start)
+
+            result = plan_jacobian_vertical_stroke(
+                self, np.asarray(start_full_qpos, dtype=np.float32), end,
+                options=options,
+                attached_object_vertices=payload_vertices,
+                attached_object_pose_at_start=attached_object_pose_at_start,
+                support_surface_z_m=support_surface_z,
+                expected_travel_m=expected,
             )
-        else:
-            # No scene_cfg given but motion_gen already initialized.
-            # Cached world still has the target mesh as obstacle, which is
-            # wrong when the obj is held in hand (start state collides with
-            # obj). Rebuild a no-obj world from cached.
-            cached_no_obj = dict(self._cached_world)
-            cached_no_obj["mesh"] = {} if not include_obj_obstacle else self._cached_world.get("mesh", {})
-            if cached_no_obj != self._cached_world:
-                self._update_world(cached_no_obj)
-                self._cached_world = cached_no_obj
+            self._last_vertical_stroke_result = result
+            if debug_dump_dir is not None:
+                import json as _json
+                import time as _time
 
-        from scipy.spatial.transform import Rotation as _R
-        device = self._tensor_args.device
-
-        start = JointState.from_position(
-            torch.tensor(start_full_qpos, dtype=torch.float32,
-                         device=device).unsqueeze(0)
-        )
-
-        # Compute cuRobo's own FK for the start state so we can project
-        # held components of the goal pose onto the start values exactly.
-        kin_state = self._motion_gen.kinematics.get_state(start.position)
-        start_pos = kin_state.ee_position[0].detach().cpu().numpy()        # (3,)
-        start_quat_wxyz = kin_state.ee_quaternion[0].detach().cpu().numpy() # (4,) wxyz
-
-        goal_pos = np.array(target_wrist_pose[:3, 3], dtype=np.float32).copy()
-        goal_R = np.array(target_wrist_pose[:3, :3], dtype=np.float32).copy()
-
-        # Project HELD position axes onto start FK.
-        for i, comp in enumerate([3, 4, 5]):   # x, y, z
-            if hold_vec_weight[comp]:
-                goal_pos[i] = float(start_pos[i])
-        # Project HELD orientation. Full-hold only (all three rotation axes).
-        if hold_vec_weight[0] and hold_vec_weight[1] and hold_vec_weight[2]:
-            goal_R = _R.from_quat(
-                [start_quat_wxyz[1], start_quat_wxyz[2],
-                 start_quat_wxyz[3], start_quat_wxyz[0]]
-            ).as_matrix().astype(np.float32)
-
-        quat_xyzw = _R.from_matrix(goal_R).as_quat()
-        quat_wxyz = np.array(
-            [quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]],
-            dtype=np.float32,
-        )
-        goal_pose = Pose(
-            position=torch.tensor(goal_pos,
-                                   dtype=torch.float32, device=device).unsqueeze(0),
-            quaternion=torch.tensor(quat_wxyz,
-                                     dtype=torch.float32, device=device).unsqueeze(0),
-        )
-
-        # cuRobo PoseCostMetric API consistently IK_FAIL'd for our cases
-        # (start joint 4 wrap, etc). Skipped. Approximate the hold via:
-        #  - goal pose held axes projected onto start FK (above),
-        #  - IK biased with start_qpos as both seed_config and retract,
-        #  - MAX_IK_DELTA reject for far-branch IK solutions,
-        #  - plan_single_js joint interp between near-equal qpos.
-        if self._ik_solver is None:
-            raise RuntimeError(
-                "plan_pose_constrained: ik_solver not initialized; "
-                "call plan() or solve_ik() once first."
+                os.makedirs(debug_dump_dir, exist_ok=True)
+                stem = f"vertical_{int(_time.time() * 1000)}"
+                np.savez_compressed(
+                    os.path.join(debug_dump_dir, f"{stem}.npz"),
+                    start_full_qpos=np.asarray(start_full_qpos, dtype=np.float32),
+                    wrist_start=start, wrist_end=end,
+                    expected_travel_m=np.asarray(expected, dtype=np.float64),
+                    include_obj_obstacle=np.asarray(include_obj_obstacle),
+                    attached_object_pose_at_start=(
+                        np.empty((0, 4), dtype=np.float64)
+                        if attached_object_pose_at_start is None
+                        else np.asarray(attached_object_pose_at_start, dtype=np.float64)),
+                    constraint_mode=np.asarray("jacobian_vertical_stroke"),
+                    trajectory=(np.empty((0, len(self._init_state)), dtype=np.float32)
+                                if result.trajectory is None else result.trajectory),
+                    time_s=(np.empty(0, dtype=np.float64)
+                            if result.time_s is None else result.time_s),
+                    geometric_qpos=(np.empty((0, len(self._init_state)), dtype=np.float32)
+                                    if result.geometric_qpos is None
+                                    else result.geometric_qpos),
+                )
+                if scene_cfg is not None:
+                    with open(os.path.join(
+                            debug_dump_dir, f"{stem}_scene.json"), "w") as stream:
+                        _json.dump(scene_cfg, stream, indent=2, default=str)
+                with open(os.path.join(
+                        debug_dump_dir, f"{stem}_result.json"), "w") as stream:
+                    _json.dump({
+                        "success": result.success,
+                        "direction": result.direction,
+                        "distance_m": result.distance_m,
+                        "failure_code": result.failure_code,
+                        "failure_detail": result.failure_detail,
+                        "timing": result.timing,
+                        "validation": result.validation,
+                        "step_records": result.step_records,
+                    }, stream, indent=2, default=str)
+        except Exception as exc:
+            raise_cuda_planning_fault(
+                "jacobian_vertical_stroke", exc,
+                context={"label": label, "delta": delta.tolist()},
             )
-        start_arm = np.asarray(start_full_qpos[:self._n_arm], dtype=np.float32)
-        start_full = np.asarray(start_full_qpos, dtype=np.float32)
-        # retract / seed use full-DOF (arm+hand) to match cuRobo IK's
-        # internal joint dimension.
-        retract_tensor = torch.tensor(
-            start_full, dtype=torch.float32, device=device
-        ).unsqueeze(0).repeat(self.BATCH_SIZE, 1)
-        # seed_config wants (batch, n_seeds_extra, dof). Match batch size.
-        seed_tensor = torch.tensor(
-            start_full, dtype=torch.float32, device=device
-        ).unsqueeze(0).unsqueeze(0).repeat(self.BATCH_SIZE, 1, 1)
-        #     → (BATCH_SIZE, 1, full_dof)
-        ik_pos = goal_pose.position.repeat(self.BATCH_SIZE, 1)
-        ik_quat = goal_pose.quaternion.repeat(self.BATCH_SIZE, 1)
-        ik_goal = Pose(position=ik_pos, quaternion=ik_quat)
-        ik_result = self._ik_solver.solve_batch(
-            ik_goal, retract_config=retract_tensor, seed_config=seed_tensor
+            raise
+        finally:
+            if recorder is not None and span_id is not None:
+                recorder.end(
+                    span_id,
+                    outcome=("success" if result is not None and result.success
+                             else "failure"),
+                    failure_code=(None if result is None else result.failure_code),
+                    solver="damped_jacobian_continuation",
+                    wall_s=round(_perf.perf_counter() - begun, 6),
+                    timing=(None if result is None else result.timing),
+                    validation=(None if result is None else result.validation),
+                )
+        assert result is not None
+        return result if return_result else result.trajectory
+
+    def _plan_endpoint_approximation(
+        self,
+        start_full_qpos: np.ndarray,
+        target_wrist_pose: np.ndarray,
+        hold_vec_weight: np.ndarray,
+        *,
+        scene_cfg: Optional[dict],
+        include_obj_obstacle: bool,
+        debug_dump_dir: Optional[str],
+        return_result: bool,
+        timing_parent_id: Optional[str],
+        timing_phase: str,
+    ) -> Optional[np.ndarray] | ConstrainedPlanResult:
+        """Previous production implementation of Cartesian pose planning.
+
+        This endpoint approximation projects held goal axes onto start FK,
+        finds a nearby endpoint IK solution, and then calls
+        :meth:`_refine_fingers`.  It intentionally does not install a native
+        PoseCostMetric or construct a lock-joint MotionGen instance.
+        """
+        recorder = self._timing_recorder
+        span_id = None
+        if recorder is not None:
+            span_id = recorder.begin(
+                phase=timing_phase, kind="plan", name="endpoint_approximation",
+                parent_id=timing_parent_id,
+                constraint_mode="endpoint_approximation")
+        started = _perf.perf_counter()
+        start_full = np.asarray(start_full_qpos, dtype=np.float32).reshape(-1)
+        target = np.asarray(target_wrist_pose, dtype=np.float32)
+        mask = np.asarray(hold_vec_weight, dtype=np.float32).reshape(-1)
+        trajectory: Optional[np.ndarray] = None
+        success = False
+        failure_stage: Optional[str] = None
+        solver_reported: dict[str, Any] = {}
+        try:
+            if (start_full.shape != self._init_state.shape
+                    or not np.isfinite(start_full).all()):
+                raise ValueError("start_full_qpos must be finite and match planner DOF")
+            if target.shape != (4, 4) or not np.isfinite(target).all():
+                raise ValueError("target_wrist_pose must be a finite 4x4 matrix")
+            if (mask.shape != (6,) or not np.isfinite(mask).all()
+                    or not np.all((mask == 0.0) | (mask == 1.0))):
+                raise ValueError("hold_vec_weight must be a float 0/1 vector of length 6")
+
+            if debug_dump_dir is not None:
+                import json as _json
+                import time as _time
+                os.makedirs(debug_dump_dir, exist_ok=True)
+                stem = str(int(_time.time() * 1000))
+                np.savez(
+                    os.path.join(debug_dump_dir, f"{stem}.npz"),
+                    start_full_qpos=start_full, target_wrist_pose=target,
+                    hold_vec_weight=mask,
+                    include_obj_obstacle=include_obj_obstacle,
+                    constraint_mode=np.asarray("endpoint_approximation"),
+                )
+                if scene_cfg is not None:
+                    with open(os.path.join(debug_dump_dir, f"{stem}_scene.json"), "w") as stream:
+                        _json.dump(scene_cfg, stream, indent=2, default=str)
+
+            if scene_cfg is not None:
+                world_cfg = _to_curobo_world(scene_cfg)
+                if not include_obj_obstacle:
+                    world_cfg = _without_target_mesh(world_cfg)
+                self._set_motion_world(world_cfg)
+                self._set_ik_world(world_cfg)
+            elif self._motion_gen is None or self._ik_solver is None:
+                raise RuntimeError(
+                    "endpoint approximation requires scene_cfg on its first call")
+            elif not include_obj_obstacle:
+                world_cfg = _without_target_mesh(self._cached_world)
+                self._set_motion_world(world_cfg)
+                self._set_ik_world(world_cfg)
+
+            device = self._tensor_args.device
+            start_state = JointState.from_position(torch.tensor(
+                start_full, dtype=torch.float32, device=device).unsqueeze(0))
+            kin_state = self._motion_gen.kinematics.get_state(start_state.position)
+            start_pos = kin_state.ee_position[0].detach().cpu().numpy()
+            start_quat = kin_state.ee_quaternion[0].detach().cpu().numpy()
+            goal_pos = target[:3, 3].copy()
+            goal_rot = target[:3, :3].copy()
+            for axis, mask_index in enumerate((3, 4, 5)):
+                if mask[mask_index]:
+                    goal_pos[axis] = start_pos[axis]
+            if np.all(mask[:3] == 1.0):
+                goal_rot = Rotation.from_quat(
+                    [start_quat[1], start_quat[2], start_quat[3], start_quat[0]],
+                ).as_matrix().astype(np.float32)
+            quat_xyzw = Rotation.from_matrix(goal_rot).as_quat()
+            goal = Pose(
+                position=torch.tensor(goal_pos, dtype=torch.float32,
+                                      device=device).unsqueeze(0).repeat(self.BATCH_SIZE, 1),
+                quaternion=torch.tensor(
+                    [quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]],
+                    dtype=torch.float32, device=device).unsqueeze(0).repeat(self.BATCH_SIZE, 1),
+            )
+            retract = torch.tensor(start_full, dtype=torch.float32, device=device).unsqueeze(0)
+            retract = retract.repeat(self.BATCH_SIZE, 1)
+            seed = torch.tensor(start_full, dtype=torch.float32, device=device)
+            seed = seed.unsqueeze(0).unsqueeze(0).repeat(self.BATCH_SIZE, 1, 1)
+            result = self._ik_solver.solve_batch(
+                goal, retract_config=retract, seed_config=seed)
+            success_mask = result.success.detach().cpu().numpy().reshape(-1)
+            if not bool(success_mask.any()):
+                failure_stage = "endpoint_ik"
+                solver_reported["status"] = "IK_FAIL"
+            else:
+                q_sol = result.solution.detach().cpu().numpy()
+                if q_sol.ndim == 3:
+                    q_sol = q_sol[:, 0, :]
+                start_arm = start_full[:self._n_arm]
+                candidates = []
+                for index, is_success in enumerate(success_mask):
+                    if not is_success:
+                        continue
+                    candidate = q_sol[index, :self._n_arm].copy()
+                    self._snap_arm(candidate, start_arm)
+                    candidates.append(candidate)
+                if not candidates:
+                    failure_stage = "endpoint_ik"
+                    solver_reported["status"] = "IK_FAIL"
+                else:
+                    target_arm = min(candidates, key=lambda arm: float(np.linalg.norm(arm - start_arm)))
+                    target_full = np.concatenate([target_arm.astype(np.float32), start_full[self._n_arm:]])
+                    ok, trajectory = self._refine_fingers(start_full, target_full)
+                    success = bool(ok)
+                    if not success:
+                        trajectory = None
+                        failure_stage = "joint_space_path"
+                        solver_reported["status"] = "JOINT_SPACE_FAIL"
+        except Exception as exc:
+            failure_stage = failure_stage or "endpoint_approximation"
+            solver_reported["exception"] = repr(exc)
+            raise_cuda_planning_fault(
+                failure_stage, exc,
+                context={"held_mask": tuple(float(value) for value in mask)},
+            )
+        finally:
+            elapsed = _perf.perf_counter() - started
+
+        outcome = ConstrainedPlanResult(
+            trajectory=trajectory, success=success,
+            constraint_mode="endpoint_approximation",
+            held_mask=tuple(float(value) for value in mask),
+            failure_stage=failure_stage,
+            timing={"total_s": round(elapsed, 6)},
+            solver_reported=solver_reported,
+            hand_lock={"mode": "legacy_endpoint_hold"},
         )
-        succ_arr = ik_result.success.cpu().numpy().reshape(-1)
-        if not bool(succ_arr.any()):
+        if recorder is not None and span_id is not None:
+            recorder.end(
+                span_id, outcome=("success" if success else "failure"),
+                failure_stage=failure_stage, held_mask=outcome.held_mask,
+                timing=outcome.timing, solver_reported=solver_reported,
+                hand_lock=outcome.hand_lock,
+            )
+        return outcome if return_result else outcome.trajectory
+
+    def _plan_native_cartesian(
+        self,
+        start_full_qpos: np.ndarray,
+        target_wrist_pose: np.ndarray,
+        hold_vec_weight,
+        scene_cfg: Optional[dict] = None,
+        include_obj_obstacle: bool = False,
+        debug_dump_dir: Optional[str] = None,
+        constraint_mode: str = "native_strict",
+        return_result: bool = False,
+        timing_parent_id: Optional[str] = None,
+        timing_phase: str = "planning",
+        lock_hand: bool = True,
+    ) -> Optional[np.ndarray] | ConstrainedPlanResult:
+        """Shared native Cartesian implementation for constrained/free paths.
+
+        ``hold_vec_weight`` is ``None`` for an unconstrained Cartesian path;
+        otherwise it is a binary ``[rx, ry, rz, x, y, z]`` hold mask.  There
+        is intentionally no endpoint-IK fallback.
+        """
+        recorder = self._timing_recorder
+        span_id = None
+        if recorder is not None:
+            span_id = recorder.begin(
+                phase=timing_phase, kind="plan",
+                name=("native_pose_constraint" if hold_vec_weight is not None
+                      else "native_cartesian_pose"),
+                parent_id=timing_parent_id, constraint_mode=constraint_mode)
+        started = _perf.perf_counter()
+        timing = {key: 0.0 for key in (
+            "request_validation_s", "world_update_s", "goal_projection_s",
+            "hand_lock_prepare_s", "metric_install_s", "first_attempt_s", "retry_seed_reset_s",
+            "retry_attempt_s", "metric_cleanup_s", "result_decode_s",
+        )}
+        mode = str(constraint_mode)
+        mask_tuple = (0.0,) * 6
+        failure_stage: Optional[str] = None
+        solver_reported: dict[str, Any] = {}
+        trajectory: Optional[np.ndarray] = None
+        success = False
+        hand_lock: dict[str, Any] = {"mode": "disabled"}
+        planning_motion_gen: Optional[MotionGen] = None
+        metric: Optional[PoseCostMetric] = None
+        cuda_fault: Optional[CudaPlanningFault] = None
+        try:
+            t = _perf.perf_counter()
+            start_full = np.asarray(start_full_qpos, dtype=np.float32).reshape(-1)
+            target = np.asarray(target_wrist_pose, dtype=np.float32)
+            is_constrained = hold_vec_weight is not None
+            if is_constrained:
+                mask = np.asarray(hold_vec_weight, dtype=np.float32).reshape(-1)
+                if mode != "native_strict":
+                    raise ValueError("constrained planning requires constraint_mode='native_strict'")
+                if (mask.shape != (6,) or not np.isfinite(mask).all()
+                        or not np.all((mask == 0.0) | (mask == 1.0))):
+                    raise ValueError("hold_vec_weight must be a float 0/1 vector of length 6")
+                if not np.any(mask):
+                    raise ValueError(
+                        "native pose constraint requires at least one held axis; "
+                        "use plan_cartesian_pose")
+                if np.any(mask[:3]) and not np.all(mask[:3] == 1.0):
+                    raise ValueError(
+                        "partial orientation masks are unsupported; hold all rotation axes or none")
+            else:
+                if mode != "native_cartesian":
+                    raise ValueError("unconstrained planning requires constraint_mode='native_cartesian'")
+                mask = np.zeros(6, dtype=np.float32)
+            if start_full.shape != self._init_state.shape or not np.isfinite(start_full).all():
+                raise ValueError("start_full_qpos must be finite and match planner DOF")
+            if target.shape != (4, 4) or not np.isfinite(target).all():
+                raise ValueError("target_wrist_pose must be a finite 4x4 matrix")
+            mask_tuple = tuple(float(value) for value in mask)
+            timing["request_validation_s"] = _perf.perf_counter() - t
+
+            if debug_dump_dir is not None:
+                import time as _time
+                import json as _json
+                os.makedirs(debug_dump_dir, exist_ok=True)
+                stem = str(int(_time.time() * 1000))
+                np.savez(os.path.join(debug_dump_dir, f"{stem}.npz"),
+                         start_full_qpos=start_full, target_wrist_pose=target,
+                         hold_vec_weight=mask, include_obj_obstacle=include_obj_obstacle,
+                         constraint_mode=np.asarray(mode))
+                if scene_cfg is not None:
+                    with open(os.path.join(debug_dump_dir, f"{stem}_scene.json"), "w") as stream:
+                        _json.dump(scene_cfg, stream, indent=2, default=str)
+
+            t = _perf.perf_counter()
+            if scene_cfg is not None:
+                world_cfg = _to_curobo_world(scene_cfg)
+                if not include_obj_obstacle:
+                    world_cfg = _without_target_mesh(world_cfg)
+                self._set_motion_world(world_cfg)
+            elif self._motion_gen is None:
+                raise RuntimeError(
+                    "plan_pose_constrained requires scene_cfg on its first call")
+            elif not include_obj_obstacle:
+                self._set_motion_world(_without_target_mesh(self._cached_world))
+            timing["world_update_s"] = _perf.perf_counter() - t
+
+            t = _perf.perf_counter()
+            device = self._tensor_args.device
+            start_state = JointState.from_position(
+                torch.tensor(start_full, dtype=torch.float32, device=device).unsqueeze(0))
+            goal_pos = target[:3, 3].copy()
+            goal_rot = target[:3, :3].copy()
+            if is_constrained:
+                kin_state = self._motion_gen.kinematics.get_state(start_state.position)
+                start_pos = kin_state.ee_position[0].detach().cpu().numpy()
+                start_quat = kin_state.ee_quaternion[0].detach().cpu().numpy()
+                for axis, mask_index in enumerate((3, 4, 5)):
+                    if mask[mask_index]:
+                        goal_pos[axis] = start_pos[axis]
+                if np.all(mask[:3] == 1.0):
+                    goal_rot = Rotation.from_quat(
+                        [start_quat[1], start_quat[2], start_quat[3], start_quat[0]]
+                    ).as_matrix().astype(np.float32)
+            quat_xyzw = Rotation.from_matrix(goal_rot).as_quat()
+            goal_pose = Pose(
+                position=torch.tensor(goal_pos, dtype=torch.float32,
+                                      device=device).unsqueeze(0),
+                quaternion=torch.tensor(
+                    [quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]],
+                    dtype=torch.float32, device=device).unsqueeze(0),
+            )
+            timing["goal_projection_s"] = _perf.perf_counter() - t
+
+            t = _perf.perf_counter()
+            planning_motion_gen = self._motion_gen
+            planning_cfg = self._plan_cfg
+            planning_start = start_state
+            if lock_hand and len(start_full) > self._n_arm:
+                locked_gen, locked_cfg, cache_hit = self._locked_motion_gen_for_hand(
+                    start_full[self._n_arm:])
+                planning_motion_gen = locked_gen
+                planning_cfg = locked_cfg
+                planning_start = JointState.from_position(torch.tensor(
+                    start_full[:self._n_arm], dtype=torch.float32,
+                    device=device).unsqueeze(0))
+                hand_lock = {
+                    "mode": "lock_joints", "cache": "hit" if cache_hit else "miss",
+                    "joint_count": int(len(start_full) - self._n_arm),
+                    "source": "start_full_qpos",
+                    "cuda_graph": "disabled",
+                }
+            timing["hand_lock_prepare_s"] = _perf.perf_counter() - t
+
+            t = _perf.perf_counter()
+            plan_cfg = planning_cfg.clone()
+            plan_cfg.use_start_state_as_retract = True
+            if is_constrained:
+                metric = PoseCostMetric(
+                    hold_partial_pose=True,
+                    hold_vec_weight=self._tensor_args.to_device(mask.tolist()),
+                    # Held position axes were projected in the base frame above.
+                    project_to_goal_frame=False,
+                )
+                plan_cfg.pose_cost_metric = metric
+            timing["metric_install_s"] = _perf.perf_counter() - t
+
+            t = _perf.perf_counter()
+            torch.manual_seed(0)
+            result = planning_motion_gen.plan_single(
+                start_state=planning_start, goal_pose=goal_pose, plan_config=plan_cfg)
+            timing["first_attempt_s"] = _perf.perf_counter() - t
+            if not bool(result.success.item()):
+                t = _perf.perf_counter()
+                torch.manual_seed(0)
+                timing["retry_seed_reset_s"] = _perf.perf_counter() - t
+                retry_cfg = plan_cfg.clone()
+                retry_cfg.max_attempts = 1
+                retry_cfg.enable_graph_attempt = None
+                t = _perf.perf_counter()
+                result = planning_motion_gen.plan_single(
+                    start_state=planning_start, goal_pose=goal_pose, plan_config=retry_cfg)
+                timing["retry_attempt_s"] = _perf.perf_counter() - t
+                if not bool(result.success.item()):
+                    failure_stage = "motiongen_retry"
+            if bool(result.success.item()):
+                t = _perf.perf_counter()
+                trajectory = result.get_interpolated_plan().position.detach().cpu().numpy()
+                if hand_lock["mode"] == "lock_joints":
+                    if trajectory.shape[1] != self._n_arm:
+                        raise RuntimeError(
+                            "locked MotionGen returned unexpected active joint dimension")
+                    trajectory = np.concatenate([
+                        trajectory,
+                        np.tile(start_full[self._n_arm:], (len(trajectory), 1)),
+                    ], axis=1)
+                timing["result_decode_s"] = _perf.perf_counter() - t
+                success = True
+            solver_reported = {
+                "graph_s": float(result.graph_time or 0.0),
+                "trajopt_s": float(result.trajopt_time or 0.0),
+                "finetune_s": float(result.finetune_time or 0.0),
+                "solve_s": float(result.solve_time or 0.0),
+                "attempt_count": (1 if not result.valid_query else
+                                  int(getattr(result, "attempts", 0) or 0) + 1),
+                "status": None if result.status is None else str(result.status),
+                "valid_query": bool(result.valid_query),
+            }
+        except ValueError:
+            failure_stage = failure_stage or "invalid_request"
+        except Exception as exc:
+            failure_stage = failure_stage or "motiongen_first_attempt"
+            solver_reported["exception"] = repr(exc)
+            if _is_cuda_fault(exc):
+                cuda_fault = CudaPlanningFault(
+                    failure_stage, exc,
+                    context={
+                        "constraint_mode": mode,
+                        "held_mask": mask_tuple,
+                        "include_obj_obstacle": bool(include_obj_obstacle),
+                        "hand_lock": dict(hand_lock),
+                    },
+                )
             if self._verbose_planning:
-                print("    [plan_pose_constrained] IK to goal FAILED")
-            return None
-        q_sol = ik_result.solution.cpu().numpy()
-        if q_sol.ndim == 3:
-            q_sol = q_sol[:, 0, :]
-        # cuRobo IK can return many local minima; even with seed=start it
-        # sometimes picks a far branch (joint 4/6 wrap), making the
-        # subsequent plan_single_js trajectory swing wide through air.
-        # Pick the successful solution that's *closest* to start in joint
-        # space — that's the one whose trajopt path will be shortest.
-        candidates = []
-        for k in range(len(succ_arr)):
-            if not succ_arr[k]:
-                continue
-            cand = q_sol[k, :self._n_arm].copy()
-            self._snap_arm(cand, start_arm)
-            candidates.append(cand)
-        if not candidates:
-            if self._verbose_planning:
-                print("    [plan_pose_constrained] IK to goal FAILED")
-            return None
-        deltas = [float(np.linalg.norm(c - start_arm)) for c in candidates]
-        best = int(np.argmin(deltas))
-        target_arm = candidates[best]
-        delta = deltas[best]
-        if self._verbose_planning:
-            print(f"    [plan_pose_constrained] IK delta {delta:.2f} rad "
-                  f"(best of {len(candidates)} feasible)")
-        target_full = np.concatenate([
-            target_arm.astype(np.float32),
-            np.asarray(start_full_qpos[self._n_arm:], dtype=np.float32),
-        ])
-        ok, traj = self._refine_fingers(
-            np.asarray(start_full_qpos, dtype=np.float32), target_full
+                print(f"    [{mode}] native exception: {exc!r}")
+        finally:
+            # MotionGen resets on a normal return.  After a CUDA fault, the
+            # device context cannot be repaired in-process; do not hide the
+            # root error behind another CUDA call during cleanup.
+            if planning_motion_gen is not None and metric is not None:
+                t = _perf.perf_counter()
+                if cuda_fault is None:
+                    try:
+                        planning_motion_gen.update_pose_cost_metric(PoseCostMetric.reset_metric())
+                    except Exception as cleanup_exc:
+                        success = False
+                        trajectory = None
+                        failure_stage = failure_stage or "metric_cleanup"
+                        solver_reported["cleanup_exception"] = repr(cleanup_exc)
+                        if _is_cuda_fault(cleanup_exc):
+                            cuda_fault = CudaPlanningFault(
+                                failure_stage, cleanup_exc,
+                                context={
+                                    "constraint_mode": mode,
+                                    "held_mask": mask_tuple,
+                                    "include_obj_obstacle": bool(include_obj_obstacle),
+                                    "hand_lock": dict(hand_lock),
+                                },
+                            )
+                else:
+                    solver_reported["metric_cleanup"] = "skipped_after_cuda_fault"
+                timing["metric_cleanup_s"] = _perf.perf_counter() - t
+            timing["total_s"] = _perf.perf_counter() - started
+
+        outcome = ConstrainedPlanResult(
+            trajectory=trajectory, success=success, constraint_mode=mode,
+            held_mask=mask_tuple, failure_stage=failure_stage, timing={
+                key: round(float(value), 6) for key, value in timing.items()},
+            solver_reported=solver_reported,
+            hand_lock=hand_lock,
         )
-        if not ok:
-            if self._verbose_planning:
-                print("    [plan_pose_constrained] plan_single_js FAILED")
-            return None
-        return traj
+        if recorder is not None and span_id is not None:
+            recorder.end(span_id, outcome=("success" if success else "failure"),
+                         failure_stage=failure_stage, held_mask=mask_tuple,
+                         timing=outcome.timing, solver_reported=solver_reported,
+                         hand_lock=outcome.hand_lock)
+        if cuda_fault is not None:
+            raise cuda_fault
+        return outcome if return_result else outcome.trajectory
 
     def ik_pose_batch(self, target_link6_poses: np.ndarray) -> np.ndarray:
         """Batched IK reachability check for ``N`` arbitrary link6 poses.
@@ -1588,47 +2332,70 @@ class GraspPlanner:
             traj = traj[: int(result.path_buffer_last_tstep[0])]
         return True, traj, float(result.solve_time)
 
+    def plan_lift_preflight(self, start_full_qpos: np.ndarray, scene_cfg: dict,
+                             lift_h: float = 0.10,
+                             timing_parent_id: Optional[str] = None,
+                             timing_phase: str = "planning") -> Optional[LiftPreflight]:
+        """Preflight one held-object lift from an exact expected joint state.
+
+        ``start_full_qpos`` must be the selected approach trajectory's final
+        arm state with the grasp hand configuration substituted in.  This is
+        intentionally more stringent than a batch endpoint IK screen: it
+        validates the same joint-space lift trajectory that the executor can
+        replay after closing the hand.
+        """
+        start_full = np.asarray(start_full_qpos, dtype=np.float32).reshape(-1)
+        if start_full.shape != self._init_state.shape:
+            raise ValueError(
+                "plan_lift_preflight start state must match planner DOF: "
+                f"expected {self._init_state.shape}, got {start_full.shape}")
+        start_wrist = self.fk_wrist(start_full)
+        target_wrist = start_wrist.copy()
+        target_wrist[2, 3] += float(lift_h)
+        target_cfg = scene_cfg.get("mesh", {}).get("target")
+        if not isinstance(target_cfg, dict) or "pose" not in target_cfg:
+            raise ValueError("lift preflight requires the target object pose")
+        object_pose = cart2se3(np.asarray(target_cfg["pose"], dtype=np.float64))
+        stroke = self.plan_vertical_stroke(
+            start_full, start_wrist, target_wrist,
+            expected_travel_m=float(lift_h),
+            travel_tolerance_m=1.0e-5,
+            scene_cfg=scene_cfg, include_obj_obstacle=False,
+            label="grasp lift preflight",
+            timing_parent_id=timing_parent_id,
+            timing_phase=timing_phase,
+            attached_object_pose_at_start=object_pose,
+            return_result=True,
+        )
+        if not stroke.success or stroke.trajectory is None:
+            return None
+        return LiftPreflight(
+            traj=np.asarray(stroke.trajectory, dtype=np.float32),
+            start_full_qpos=start_full.copy(),
+            start_wrist_se3=start_wrist,
+            target_wrist_se3=target_wrist,
+            height_m=float(lift_h),
+            constrained_plan=None,
+            vertical_stroke=stroke,
+            time_s=(None if stroke.time_s is None
+                    else np.asarray(stroke.time_s, dtype=np.float64)),
+        )
+
     def plan_lift(self, grasp_qpos: np.ndarray, grasp_wrist_world: np.ndarray,
                   scene_lift: dict, lift_h: float = 0.10):
-        """Plan the grasp->lift segment as a JOINT trajectory for joint-space
-        execution (``executor.execute_lift``), replacing the cartesian-servo lift
-        whose kinematic errors are UNRECOVERABLE on xarm (force a full restart).
+        """Compatibility wrapper for the older ``(ok, traj)`` lift API.
 
-        Lift goal = the grasp wrist raised by ``lift_h`` in world +z, SAME
-        orientation, fingers HELD at ``grasp_qpos``'s hand block. A pure +z lift moves the
-        held object straight up (away from the table), so failures here are
-        kinematic (the lifted wrist unreachable for this off-grid arm config —
-        joint limit / singularity) or scene-collision (shelf/wall above), NOT
-        table collision. The held object must already be STRIPPED from
-        ``scene_lift`` (it moves with the hand, not the world).
-
-        Returns ``(ok, traj)``; ``ok=False`` (lifted pose IK-unreachable or trajopt
-        fail) means the caller SKIPS the lift at PLAN time — no robot crash.
+        New code should call :meth:`plan_lift_preflight`; it derives the
+        actual start wrist from FK and retains the expected start state for
+        executor-side live-state validation.  ``grasp_wrist_world`` is kept in
+        this signature for callers outside the main pipeline, but the FK value
+        is authoritative when the two differ numerically.
         """
-        world_cfg = _to_curobo_world(scene_lift)
-        if self._motion_gen is None:
-            self._init_motion_gen(world_cfg)
-        elif self._world_structure_changed(world_cfg):
-            self._update_world(world_cfg)
-        else:
-            self._update_target_pose_only(world_cfg)
-        self._cached_world = world_cfg
-
-        dev = self._tensor_args.device
-        lift_w = np.asarray(grasp_wrist_world, dtype=np.float64).copy()
-        lift_w[2, 3] += lift_h
-        gq = torch.tensor(grasp_qpos, dtype=torch.float32, device=dev)
-        r = self._ik_solver.solve_batch(
-            _to_curobo_pose(lift_w[None], dev), retract_config=gq.unsqueeze(0))
-        if not bool(r.success.view(-1)[0]):
-            return False, None                       # lifted wrist unreachable (joint limit)
-        q_lift = np.asarray(grasp_qpos, dtype=np.float32).copy()
-        arm_q = r.solution.cpu().numpy().reshape(-1)[:self._n_arm]
-        self._snap_arm(arm_q, grasp_qpos)          # ±2π wrap toward the grasp config
-        q_lift[:self._n_arm] = arm_q
-        ok, traj = self._refine_fingers(
-            np.asarray(grasp_qpos, dtype=np.float32), q_lift)
-        return (ok, traj if ok else None)
+        del grasp_wrist_world
+        preflight = self.plan_lift_preflight(
+            np.asarray(grasp_qpos, dtype=np.float32), scene_lift, lift_h)
+        return (preflight is not None,
+                None if preflight is None else preflight.traj)
 
     def _export_collision_debug(self, goal_joint: np.ndarray):
         """Export hand collision spheres + world meshes at goal state for
@@ -1967,8 +2734,7 @@ class GraspPlanner:
         ik_failed = np.zeros(len(wrist_se3), dtype=bool)
         valid_idx = np.where(~filtered)[0]
         if len(valid_idx) > 0:
-            world_no_target = dict(world_cfg)
-            world_no_target["mesh"] = {}
+            world_no_target = _without_target_mesh(world_cfg)
             if self._ik_solver is None:
                 self._init_ik_solver(world_no_target)
             else:
@@ -2146,7 +2912,7 @@ class GraspPlanner:
             np.random.seed(seed)
 
         # 1. Load candidates
-        t0 = _time.time()
+        t0 = _time.perf_counter()
         obj_pose = cart2se3(scene_cfg["mesh"]["target"]["pose"])
         if candidate_override is None:
             wrist_se3, pregrasp, grasp, scene_info = load_candidate(
@@ -2204,43 +2970,36 @@ class GraspPlanner:
             (op if op is not None else pg)
             for op, pg in zip(openpose_list, pregrasp)
         ])
-        t_load = _time.time() - t0
+        t_load = _time.perf_counter() - t0
 
         if len(wrist_se3) == 0:
             print(f"[planner] No candidates available (all done or no success)")
             return PlanResult(
                 success=False, traj=None, wrist_se3=None,
                 pregrasp_pose=None, grasp_pose=None, scene_info=[],
-                timing={"load_candidates_s": round(t_load, 3), "n_total": 0},
+                timing={"schema_version": 2, "clock": "time.perf_counter",
+                        "load_candidates_s": round(t_load, 3), "n_total": 0,
+                        "candidate_preflight_s": 0.0,
+                        "approach_preflight_s": 0.0,
+                        "lift_preflight_s": 0.0},
             )
 
         # 2. World setup (motion_gen for trajectory, ik_solver for IK)
-        t0 = _time.time()
+        t0 = _time.perf_counter()
         world_cfg = _to_curobo_world(scene_cfg)
-        if self._motion_gen is None:
-            self._init_motion_gen(world_cfg)
-        elif self._world_structure_changed(world_cfg):
-            self._update_world(world_cfg)
-        else:
-            # Only target mesh pose changed — in-place pose update keeps roadmap.
-            self._update_target_pose_only(world_cfg)
-        self._cached_world = world_cfg
-        world_cfg_no_target = dict(world_cfg)
-        world_cfg_no_target["mesh"] = {}
-        if self._ik_solver is None:
-            self._init_ik_solver(world_cfg_no_target)
-        else:
-            self._ik_solver.update_world(WorldConfig.from_dict(world_cfg_no_target))
-        t_world = _time.time() - t0
+        self._set_motion_world(world_cfg)
+        world_cfg_no_target = _without_target_mesh(world_cfg)
+        self._set_ik_world(world_cfg_no_target)
+        t_world = _time.perf_counter() - t0
 
         # 3. Filter: backward + hand-table collision
-        t0 = _time.time()
+        t0 = _time.perf_counter()
         backward = np.zeros(len(wrist_se3), dtype=bool) if "inspire" in self._hand else (wrist_se3[:, :3, :3] @ self._link6_y_in_wrist)[:, 2] < 0.3
         collision, world_collision, self_collision = self._check_collision(
             world_cfg_no_target, wrist_se3, pregrasp, return_components=True
         )
         valid = np.where(~(backward | collision))[0]
-        t_filter = _time.time() - t0
+        t_filter = _time.perf_counter() - t0
 
         N = len(wrist_se3)
         print(f"[planner] total={N}  backward={backward.sum()}  collision={collision.sum()} "
@@ -2254,6 +3013,8 @@ class GraspPlanner:
             )
 
         base_timing = {
+            "schema_version": 2,
+            "clock": "time.perf_counter",
             "load_candidates_s": round(t_load, 3),
             "candidate_source": ("explicit" if candidate_override is not None
                                  else "catalogue"),
@@ -2268,10 +3029,14 @@ class GraspPlanner:
         }
 
         if len(valid) == 0:
-            return _fail_result({**base_timing, "ik_s": 0.0, "plan_single_js_s": 0.0})
+            return _fail_result({**base_timing, "ik_s": 0.0,
+                                 "candidate_preflight_s": 0.0,
+                                 "approach_preflight_s": 0.0,
+                                 "lift_preflight_s": 0.0,
+                                 "plan_single_js_s": 0.0})
 
         # 4. IK solve on valid candidates
-        t0 = _time.time()
+        t0 = _time.perf_counter()
         ik_success = np.zeros(N, dtype=bool)
         ik_qpos = np.full((N, len(self._init_state)), np.nan)
         for chunk_start in range(0, len(valid), self.BATCH_SIZE):
@@ -2297,55 +3062,33 @@ class GraspPlanner:
                 if succ[i]:
                     arm_q = q_sol[i, :self._n_arm].copy()
                     self._snap_arm(arm_q, self._init_state)
-                    # Reject IK whose any arm joint sits outside ±π — those
-                    # extreme configs are on a far IK branch where the
-                    # constrained lift (PoseCostMetric hold xy+rotation) has
-                    # no near-start solution. plan_pose_constrained reliably
-                    # hits IK_FAIL for them, dropping us to cartesian.
+                    # Reject IK whose any arm joint sits outside ±π.  These
+                    # are far wrap branches; the selected candidate should
+                    # start from the locally reachable arm configuration.
                     if np.any(np.abs(arm_q) > np.pi):
                         continue
                     ik_success[idx] = True
                     ik_qpos[idx, :self._n_arm] = arm_q
                     ik_qpos[idx, self._n_arm:] = approach_fingers[idx]
-        t_ik = _time.time() - t0
-
-        # Lift IK check: verify the wrist can rise a bit (avoids candidates
-        # already at joint limit). Only checks small +z — exact lift height
-        # is handled by executor; we just need monotonic-up to be possible.
-        LIFT_HEIGHT = 0.03
-        ik_valid_pre = np.where(ik_success)[0]
-        if len(ik_valid_pre) > 0:
-            lift_poses = wrist_se3[ik_valid_pre].copy()
-            lift_poses[:, 2, 3] += LIFT_HEIGHT
-            for chunk_start in range(0, len(ik_valid_pre), self.BATCH_SIZE):
-                chunk = ik_valid_pre[chunk_start : chunk_start + self.BATCH_SIZE]
-                chunk_poses = lift_poses[chunk_start : chunk_start + len(chunk)]
-                B = len(chunk_poses)
-                if B < self.BATCH_SIZE:
-                    pad = self.BATCH_SIZE - B
-                    chunk_poses = np.concatenate(
-                        [chunk_poses, np.tile(chunk_poses[:1], (pad, 1, 1))], axis=0)
-                goal = _to_curobo_pose(chunk_poses, self._tensor_args.device)
-                result = self._ik_solver.solve_batch(goal)
-                lift_succ = result.success.cpu().numpy()[:B]
-                for i, idx in enumerate(chunk):
-                    if not lift_succ[i]:
-                        ik_success[idx] = False
-            n_lift_fail = len(ik_valid_pre) - int(ik_success.sum())
-            if n_lift_fail > 0:
-                print(f"[planner] Lift IK check: {n_lift_fail} candidates failed (z+{LIFT_HEIGHT}m unreachable)")
+        t_ik = _time.perf_counter() - t0
 
         ik_valid = np.where(ik_success)[0]
         n_ik_success = len(ik_valid)
-        print(f"[planner] IK: {n_ik_success}/{len(valid)} success (after lift check)")
+        print(f"[planner] IK: {n_ik_success}/{len(valid)} success")
         base_timing["ik_s"] = round(t_ik, 3)
         base_timing["n_ik_success"] = n_ik_success
         base_timing["n_valid"] = int(len(valid))
 
         if n_ik_success == 0:
-            return _fail_result({**base_timing, "plan_single_js_s": 0.0})
+            return _fail_result({**base_timing,
+                                 "candidate_preflight_s": 0.0,
+                                 "approach_preflight_s": 0.0,
+                                 "lift_preflight_s": 0.0,
+                                 "plan_single_js_s": 0.0})
 
-        # 5. plan_single_js for each IK-reachable candidate until success.
+        # 5. Candidate preflight: approach plan -> exact grasp-end state ->
+        #    held-object lift plan.  A candidate is selectable only when both
+        #    trajectories pass in the matching collision worlds.
         # Ordering priority:
         #   priority_map > candidate_order > random shuffle.
         # priority_map: dict[(type, sid, gid) → score]. Sort ik_valid desc
@@ -2357,15 +3100,26 @@ class GraspPlanner:
             ik_valid = np.array(sorted(ik_valid, key=_score), dtype=ik_valid.dtype)
         elif candidate_order is None:
             np.random.shuffle(ik_valid)
-        t0 = _time.time()
+        t0 = _time.perf_counter()
         n_attempts = 0
+        n_lift_attempts = 0
+        n_lift_success = 0
+        approach_preflight_s = 0.0
+        lift_preflight_s = 0.0
         # Per-stage cuRobo breakdown accumulated over every attempted candidate.
         js_break = {"graph_s": 0.0, "trajopt_s": 0.0, "finetune_s": 0.0,
                     "solve_s": 0.0, "curobo_attempts": 0}
         js_status = {}
+        jacobian_lift_failures: dict[str, int] = {}
         for idx in ik_valid:
-            t1 = _time.time()
+            # The prior failed candidate may have switched MotionGen to the
+            # held-object world.  Restore the target mesh before validating
+            # the next free-hand approach.
+            self._set_motion_world(world_cfg)
+            t1 = _time.perf_counter()
             ok, traj = self._refine_fingers(self._init_state, ik_qpos[idx])
+            approach_elapsed = _time.perf_counter() - t1
+            approach_preflight_s += approach_elapsed
             n_attempts += 1
             st = self._last_js_stats
             for k in ("graph_s", "trajopt_s", "finetune_s", "solve_s"):
@@ -2375,24 +3129,86 @@ class GraspPlanner:
                 key = "INVALID_QUERY" if not st.get("valid_query", True) else str(st.get("status"))
                 js_status[key] = js_status.get(key, 0) + 1
             print(f"[planner] plan_single_js #{n_attempts} (idx={idx}): "
-                  f"{'ok' if ok else 'fail'} ({_time.time() - t1:.2f}s "
+                  f"{'ok' if ok else 'fail'} ({approach_elapsed:.2f}s "
                   f"graph={st.get('graph_s', 0):.2f} traj={st.get('trajopt_s', 0):.2f} "
                   f"ft={st.get('finetune_s', 0):.2f})")
             if ok:
-                t_plan = _time.time() - t0
-                print(f"[planner] Selected candidate #{idx}/{N}")
+                # The approach trajectory uses open/pregrasp fingers at its
+                # endpoint.  Arm q stays unchanged while the hand closes, so
+                # substitute grasp fingers for the planner-side lift state.
+                lift_start = np.asarray(traj[-1], dtype=np.float32).copy()
+                lift_start[self._n_arm:] = np.asarray(grasp[idx], dtype=np.float32)
+                n_lift_attempts += 1
+                t_lift = _time.perf_counter()
+                lift_preflight = self.plan_lift_preflight(
+                    lift_start, scene_cfg, lift_h=0.10)
+                lift_elapsed = _time.perf_counter() - t_lift
+                lift_preflight_s += lift_elapsed
+                if lift_preflight is None:
+                    last_stroke = self._last_vertical_stroke_result
+                    failure_code = (
+                        "jacobian_unknown_failure"
+                        if last_stroke is None or last_stroke.failure_code is None
+                        else str(last_stroke.failure_code))
+                    jacobian_lift_failures[failure_code] = (
+                        jacobian_lift_failures.get(failure_code, 0) + 1)
+                    print(f"[planner] lift preflight #{n_lift_attempts} "
+                          f"(idx={idx}): fail ({lift_elapsed:.2f}s, "
+                          f"{failure_code})")
+                    continue
+                n_lift_success += 1
+                candidate_preflight_s = _time.perf_counter() - t0
+                print(f"[planner] lift preflight #{n_lift_attempts} "
+                      f"(idx={idx}): ok ({lift_elapsed:.2f}s)")
+                print(f"[planner] Selected candidate #{idx}/{N} "
+                      "(approach + lift preflight)")
                 return PlanResult(
                     success=True, traj=traj, wrist_se3=wrist_se3[idx],
                     pregrasp_pose=pregrasp[idx], grasp_pose=grasp[idx],
                     scene_info=scene_info[idx],
-                    timing={**base_timing, "plan_single_js_s": round(t_plan, 3),
+                    timing={**base_timing,
+                            # Candidate acceptance is the conjunction of this
+                            # approach and this held-object lift. Keep each
+                            # wall-clock span disjoint so consumers do not
+                            # mistake lift feasibility work for approach time.
+                            "candidate_preflight_s": round(candidate_preflight_s, 3),
+                            "approach_preflight_s": round(approach_preflight_s, 3),
+                            "lift_preflight_s": round(lift_preflight_s, 3),
+                            "candidate_preflight_overhead_s": round(max(
+                                candidate_preflight_s - approach_preflight_s
+                                - lift_preflight_s, 0.0), 3),
+                            # Legacy name retained for existing CSV readers;
+                            # it now has its literal meaning: approach-only
+                            # joint-space planning.
+                            "plan_single_js_s": round(approach_preflight_s, 3),
                             "n_plan_attempts": n_attempts,
-                            **_js_break_timing(js_break, t_plan, js_status),
+                            "n_lift_preflight_attempts": n_lift_attempts,
+                            "n_lift_preflight_success": n_lift_success,
+                            "lift_strategy": "jacobian_vertical_stroke_v1",
+                            "jacobian_lift_failures": jacobian_lift_failures,
+                            "selected_lift_validation": (
+                                lift_preflight.vertical_stroke.validation
+                                if lift_preflight.vertical_stroke is not None else None),
+                            **_js_break_timing(js_break, approach_preflight_s,
+                                               js_status),
                             "candidate_idx": int(idx)},
                     openpose_pose=openpose_list[idx],
+                    lift_preflight=lift_preflight,
                 )
 
-        t_plan = _time.time() - t0
-        return _fail_result({**base_timing, "plan_single_js_s": round(t_plan, 3),
+        candidate_preflight_s = _time.perf_counter() - t0
+        return _fail_result({**base_timing,
+                             "candidate_preflight_s": round(candidate_preflight_s, 3),
+                             "approach_preflight_s": round(approach_preflight_s, 3),
+                             "lift_preflight_s": round(lift_preflight_s, 3),
+                             "candidate_preflight_overhead_s": round(max(
+                                 candidate_preflight_s - approach_preflight_s
+                                 - lift_preflight_s, 0.0), 3),
+                             "plan_single_js_s": round(approach_preflight_s, 3),
                              "n_plan_attempts": n_attempts,
-                             **_js_break_timing(js_break, t_plan, js_status)})
+                             "n_lift_preflight_attempts": n_lift_attempts,
+                             "n_lift_preflight_success": n_lift_success,
+                             "lift_strategy": "jacobian_vertical_stroke_v1",
+                             "jacobian_lift_failures": jacobian_lift_failures,
+                             **_js_break_timing(js_break, approach_preflight_s,
+                                                js_status)})
