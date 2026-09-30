@@ -74,7 +74,6 @@ soap_dispenser
 soaptray
 spam_can
 spicemill
-sponge_simple_hyunsu
 spray_bottle
 standing_frame
 tea_case

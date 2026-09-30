@@ -5,4 +5,9 @@ from .path import (
     candidate_path, code_path, shared_dir,
     load_candidate, load_openpose_for_candidates, get_object_mesh,
 )
-from .scene import get_scene_image_dict_template
+
+
+def get_scene_image_dict_template(*args, **kwargs):
+    """Load ParaDex-backed scene helpers only when camera rendering is used."""
+    from .scene import get_scene_image_dict_template as _get_scene_image_dict_template
+    return _get_scene_image_dict_template(*args, **kwargs)

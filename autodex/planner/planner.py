@@ -9,7 +9,11 @@ from scipy.spatial.transform import Rotation
 
 import torch
 
-os.environ['TORCH_CUDA_ARCH_LIST'] = '8.6'
+# Keep the robot PC's historical Ampere default, but allow a worker launcher
+# to select the native architecture on heterogeneous capture-PC GPUs before
+# importing this module.  Unconditionally overwriting the variable here makes
+# locally compiled cuRobo/Torch extensions unusable on non-8.6 devices.
+os.environ.setdefault('TORCH_CUDA_ARCH_LIST', '8.6')
 
 
 def _snap_joint6(q: float, cur: float,
@@ -2665,7 +2669,8 @@ class GraspPlanner:
                         skip_scenes_with_success: bool = False,
                         tabletop_pose_stem: Optional[str] = None,
                         candidate_order: Optional[list] = None,
-                        return_scene_info: bool = False):
+                        return_scene_info: bool = False,
+                        excluded_candidates: Optional[set] = None):
         """
         Return all grasp candidates with collision filter applied (no motion planning).
 
@@ -2687,6 +2692,9 @@ class GraspPlanner:
         as the final return value. This lets a caller pre-filter exact
         candidates and pass that same subset to :meth:`plan` without relying
         on an ambiguous scene-level whitelist.
+
+        ``excluded_candidates`` omits exact catalogue keys before collision
+        and IK work, matching :meth:`plan`'s same-session exclusion path.
         """
         obj_pose = cart2se3(scene_cfg["mesh"]["target"]["pose"])
         wrist_se3, pregrasp, grasp, scene_info = load_candidate(
@@ -2695,7 +2703,8 @@ class GraspPlanner:
             scene_id=scene_id, scene_type_filter=scene_type_filter,
             skip_scenes_with_success=skip_scenes_with_success,
             tabletop_pose_stem=tabletop_pose_stem,
-            candidate_order=candidate_order)
+            candidate_order=candidate_order,
+            excluded_candidates=excluded_candidates)
         # Apply cyl expansion so the viewer sees the same candidate pool the
         # planner actually IKs against (otherwise "valid=N" mismatches).
         wrist_se3, pregrasp, grasp, _, scene_info = _expand_candidates_cyl(
@@ -2885,7 +2894,8 @@ class GraspPlanner:
              tabletop_pose_stem: Optional[str] = None,
              candidate_order: Optional[list] = None,
              priority_map: Optional[dict] = None,
-             candidate_override: Optional[tuple] = None) -> PlanResult:
+             candidate_override: Optional[tuple] = None,
+             excluded_candidates: Optional[set] = None) -> PlanResult:
         """If ``openpose_pose_stem`` is given (e.g. ``"002"``), loads
         ``openpose_{stem}.npy`` per candidate and uses it as the approach-end
         finger config (instead of pregrasp). Candidates without that openpose
@@ -2904,8 +2914,44 @@ class GraspPlanner:
         candidate directory; once supplied, they go through the exact same
         world setup, collision filtering, IK/lift checks and joint-space
         finger-refined planning as disk-loaded AutoDex candidates.
+
+        ``excluded_candidates`` removes exact catalogue keys for this call.
+        The automatic runner uses it for an in-memory same-session no-repeat
+        policy; it does not alter persisted candidate outcomes.
         """
         import time as _time
+
+        pipeline_recorder = (
+            self._timing_recorder
+            if self._timing_recorder is not None
+            and hasattr(self._timing_recorder, "event")
+            and hasattr(self._timing_recorder, "write_artifact_json")
+            else None
+        )
+        plan_trace_id = (pipeline_recorder.begin(
+            phase="planning", kind="plan", name="planner_candidate_evaluation",
+            object=obj_name, grasp_version=grasp_version,
+            candidate_source=("explicit" if candidate_override is not None
+                              else "catalogue"))
+            if pipeline_recorder is not None else None)
+        candidate_trace: list[dict[str, Any]] = []
+
+        def _finish_candidate_trace(outcome: str, **summary: Any) -> None:
+            if pipeline_recorder is None or plan_trace_id is None:
+                return
+            attempt_name = getattr(pipeline_recorder, "attempt_id", None) or "session"
+            artifact = pipeline_recorder.write_artifact_json(
+                f"artifacts/planner/{attempt_name}_{plan_trace_id}.json",
+                {
+                    "schema_version": 1,
+                    "object": obj_name,
+                    "grasp_version": grasp_version,
+                    "candidates": candidate_trace,
+                    "summary": summary,
+                },
+            )
+            pipeline_recorder.end(
+                plan_trace_id, outcome=outcome, artifact=artifact, **summary)
 
         if seed is not None:
             torch.manual_seed(seed)
@@ -2922,7 +2968,8 @@ class GraspPlanner:
                 scene_type_filter=scene_type_filter,
                 skip_scenes_with_success=skip_scenes_with_success,
                 tabletop_pose_stem=tabletop_pose_stem,
-                candidate_order=candidate_order)
+                candidate_order=candidate_order,
+                excluded_candidates=excluded_candidates)
             if openpose_pose_stem is not None:
                 from autodex.utils.path import load_openpose_for_candidates
                 openpose_list = load_openpose_for_candidates(
@@ -2972,8 +3019,32 @@ class GraspPlanner:
         ])
         t_load = _time.perf_counter() - t0
 
+        occurrence: dict[tuple[str, ...], int] = {}
+        candidate_rank = (
+            {tuple(str(value) for value in item): rank
+             for rank, item in enumerate(candidate_order)}
+            if candidate_order is not None else {}
+        )
+        for idx, info in enumerate(scene_info):
+            key = tuple(str(value) for value in info)
+            variant = occurrence.get(key, 0)
+            occurrence[key] = variant + 1
+            base = "/".join(key) if key else "unknown"
+            candidate_trace.append({
+                "candidate_id": f"{base}@variant{variant:02d}",
+                "candidate_index": idx,
+                "scene_info": list(key),
+                "variant_index": variant,
+                "status": "loaded",
+                "policy_rank": candidate_rank.get(key),
+                "priority_score": (
+                    priority_map.get(key) if priority_map is not None else None),
+            })
+
         if len(wrist_se3) == 0:
             print(f"[planner] No candidates available (all done or no success)")
+            _finish_candidate_trace("failure", reason="no_candidates",
+                                    n_total=0)
             return PlanResult(
                 success=False, traj=None, wrist_se3=None,
                 pregrasp_pose=None, grasp_pose=None, scene_info=[],
@@ -3002,6 +3073,19 @@ class GraspPlanner:
         t_filter = _time.perf_counter() - t0
 
         N = len(wrist_se3)
+        for idx in range(N):
+            entry = candidate_trace[idx]
+            entry["backward"] = bool(backward[idx])
+            entry["world_collision"] = bool(world_collision[idx])
+            entry["self_collision"] = bool(self_collision[idx])
+            if backward[idx]:
+                entry["status"] = "backward"
+            elif world_collision[idx]:
+                entry["status"] = "world_collision"
+            elif self_collision[idx]:
+                entry["status"] = "self_collision"
+            else:
+                entry["status"] = "filter_passed"
         print(f"[planner] total={N}  backward={backward.sum()}  collision={collision.sum()} "
               f"(world={world_collision.sum()} self={self_collision.sum()})  valid={len(valid)}")
 
@@ -3029,6 +3113,11 @@ class GraspPlanner:
         }
 
         if len(valid) == 0:
+            _finish_candidate_trace(
+                "failure", reason="all_candidates_filtered", n_total=N,
+                n_backward=int(backward.sum()),
+                n_world_collision=int(world_collision.sum()),
+                n_self_collision=int(self_collision.sum()))
             return _fail_result({**base_timing, "ik_s": 0.0,
                                  "candidate_preflight_s": 0.0,
                                  "approach_preflight_s": 0.0,
@@ -3073,6 +3162,9 @@ class GraspPlanner:
         t_ik = _time.perf_counter() - t0
 
         ik_valid = np.where(ik_success)[0]
+        for idx in valid:
+            candidate_trace[int(idx)]["status"] = (
+                "ik_passed" if ik_success[idx] else "ik_failed")
         n_ik_success = len(ik_valid)
         print(f"[planner] IK: {n_ik_success}/{len(valid)} success")
         base_timing["ik_s"] = round(t_ik, 3)
@@ -3080,6 +3172,9 @@ class GraspPlanner:
         base_timing["n_valid"] = int(len(valid))
 
         if n_ik_success == 0:
+            _finish_candidate_trace(
+                "failure", reason="all_candidates_ik_failed", n_total=N,
+                n_valid=int(len(valid)), n_ik_success=0)
             return _fail_result({**base_timing,
                                  "candidate_preflight_s": 0.0,
                                  "approach_preflight_s": 0.0,
@@ -3112,6 +3207,8 @@ class GraspPlanner:
         js_status = {}
         jacobian_lift_failures: dict[str, int] = {}
         for idx in ik_valid:
+            trace_entry = candidate_trace[int(idx)]
+            trace_entry["attempt_order"] = n_attempts
             # The prior failed candidate may have switched MotionGen to the
             # held-object world.  Restore the target mesh before validating
             # the next free-hand approach.
@@ -3121,6 +3218,7 @@ class GraspPlanner:
             approach_elapsed = _time.perf_counter() - t1
             approach_preflight_s += approach_elapsed
             n_attempts += 1
+            trace_entry["approach_duration_s"] = round(approach_elapsed, 6)
             st = self._last_js_stats
             for k in ("graph_s", "trajopt_s", "finetune_s", "solve_s"):
                 js_break[k] += st.get(k, 0.0)
@@ -3128,6 +3226,8 @@ class GraspPlanner:
             if not ok:
                 key = "INVALID_QUERY" if not st.get("valid_query", True) else str(st.get("status"))
                 js_status[key] = js_status.get(key, 0) + 1
+                trace_entry["status"] = "approach_failed"
+                trace_entry["failure_code"] = key
             print(f"[planner] plan_single_js #{n_attempts} (idx={idx}): "
                   f"{'ok' if ok else 'fail'} ({approach_elapsed:.2f}s "
                   f"graph={st.get('graph_s', 0):.2f} traj={st.get('trajopt_s', 0):.2f} "
@@ -3152,16 +3252,27 @@ class GraspPlanner:
                         else str(last_stroke.failure_code))
                     jacobian_lift_failures[failure_code] = (
                         jacobian_lift_failures.get(failure_code, 0) + 1)
+                    trace_entry["status"] = "lift_preflight_failed"
+                    trace_entry["lift_duration_s"] = round(lift_elapsed, 6)
+                    trace_entry["failure_code"] = failure_code
                     print(f"[planner] lift preflight #{n_lift_attempts} "
                           f"(idx={idx}): fail ({lift_elapsed:.2f}s, "
                           f"{failure_code})")
                     continue
                 n_lift_success += 1
+                trace_entry["status"] = "selected"
+                trace_entry["lift_duration_s"] = round(lift_elapsed, 6)
                 candidate_preflight_s = _time.perf_counter() - t0
                 print(f"[planner] lift preflight #{n_lift_attempts} "
                       f"(idx={idx}): ok ({lift_elapsed:.2f}s)")
                 print(f"[planner] Selected candidate #{idx}/{N} "
                       "(approach + lift preflight)")
+                _finish_candidate_trace(
+                    "success", selected_candidate_id=trace_entry["candidate_id"],
+                    selected_candidate_index=int(idx), n_total=N,
+                    n_valid=int(len(valid)), n_ik_success=n_ik_success,
+                    n_approach_attempts=n_attempts,
+                    n_lift_attempts=n_lift_attempts)
                 return PlanResult(
                     success=True, traj=traj, wrist_se3=wrist_se3[idx],
                     pregrasp_pose=pregrasp[idx], grasp_pose=grasp[idx],
@@ -3197,6 +3308,12 @@ class GraspPlanner:
                 )
 
         candidate_preflight_s = _time.perf_counter() - t0
+        _finish_candidate_trace(
+            "failure", reason="candidate_preflight_exhausted", n_total=N,
+            n_valid=int(len(valid)), n_ik_success=n_ik_success,
+            n_approach_attempts=n_attempts,
+            n_lift_attempts=n_lift_attempts,
+            lift_failure_counts=jacobian_lift_failures)
         return _fail_result({**base_timing,
                              "candidate_preflight_s": round(candidate_preflight_s, 3),
                              "approach_preflight_s": round(approach_preflight_s, 3),

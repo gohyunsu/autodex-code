@@ -67,7 +67,7 @@ from paradex.io.camera_system.remote_camera_controller import remote_camera_cont
 from paradex.io.camera_system.signal_generator import UTGE900
 from paradex.io.camera_system.timestamp_monitor import TimestampMonitor
 from paradex.utils.system import network_info, get_pc_ip, get_camera_list
-from paradex.calibration.utils import save_current_camparam, save_current_C2R, load_c2r
+from paradex.calibration.utils import save_current_camparam, load_c2r
 
 from autodex.utils.path import (
     project_dir, get_obj_root, get_reset_candidate_root,
@@ -88,6 +88,7 @@ from autodex.planner.planner import (
     PlanResult, _to_curobo_world, _to_curobo_pose,
 )
 from autodex.planner.obstacles import TABLE_CUBOID, add_obstacles
+from src.execution.handeye import save_arm_C2R
 from autodex.planner.visualizer import ScenePlanVisualizer
 from autodex.executor.real import RealExecutor
 from src.execution.franka_executor import (
@@ -1129,6 +1130,7 @@ def reorient_from_live_scene(
     lift_label_abs: str,
     tabletop_geometry: dict | None = None,
     debug_dump_dir: str | None = None,
+    pipeline_trace=None,
 ) -> dict:
     """Execute a reset transition with the already-live run_auto resources.
 
@@ -1152,6 +1154,12 @@ def reorient_from_live_scene(
 
     pose_robot_before = cart2se3(scene_cfg["mesh"]["target"]["pose"])
     tabletop_before = classify_tabletop_pose(pose_robot_before, obj, obj_root)
+    if pipeline_trace is not None:
+        pipeline_trace.event(
+            "recovery.reorient.tabletop_before",
+            phase="recovery", kind="decision",
+            outcome=("success" if tabletop_before is not None else "failure"),
+            tabletop=tabletop_before, target_tabletop=target_j)
     if tabletop_before is None:
         return {"success": False, "reason": "reorient_tabletop_unclassified",
                 "camera_capture_stopped": camera_capture_stopped}
@@ -1197,6 +1205,11 @@ def reorient_from_live_scene(
     plan = None
     h_cm = None
     for candidate_h_cm in available_h_cm:
+        height_span = (pipeline_trace.begin(
+            phase="recovery", kind="plan", name="reorient_height_preflight",
+            height_cm=candidate_h_cm, current_tabletop=i_int,
+            target_tabletop=target_j)
+            if pipeline_trace is not None else None)
         seeds = _load_reset_seeds(
             hand, obj, candidate_h_cm, i_int, target_j, pose_robot_before,
             obj_root=obj_root, version=grasp_version)
@@ -1205,6 +1218,9 @@ def reorient_from_live_scene(
                 "h_cm": candidate_h_cm,
                 "reason": "reorient_seeds_missing",
             })
+            if height_span is not None:
+                pipeline_trace.end(height_span, outcome="failure",
+                                   reason="reorient_seeds_missing")
             continue
         candidate_plan = _plan_reorient_full_chain(
             planner=planner, scene_cfg=scene_cfg, obj=obj,
@@ -1218,14 +1234,34 @@ def reorient_from_live_scene(
         if candidate_plan["success"]:
             h_cm = candidate_h_cm
             plan = candidate_plan
+            if height_span is not None:
+                pipeline_trace.end(
+                    height_span, outcome="success",
+                    counts=candidate_plan.get("counts"),
+                    scene_info=candidate_plan["result"].scene_info)
             break
         height_attempts.append({
             "h_cm": candidate_h_cm,
             "reason": candidate_plan.get("reason", "reorient_plan_failed"),
             "counts": candidate_plan.get("counts"),
         })
+        if height_span is not None:
+            pipeline_trace.end(
+                height_span, outcome="failure",
+                reason=candidate_plan.get("reason", "reorient_plan_failed"),
+                counts=candidate_plan.get("counts"))
 
     if plan is None or h_cm is None:
+        if pipeline_trace is not None:
+            artifact = pipeline_trace.write_artifact_json(
+                f"artifacts/recovery/{getattr(pipeline_trace, 'attempt_id', None) or 'session'}"
+                "_reorient_heights.json",
+                {"current_tabletop": i_int, "target_tabletop": target_j,
+                 "height_attempts": height_attempts})
+            pipeline_trace.event(
+                "recovery.reorient.no_feasible_height",
+                phase="recovery", kind="decision", outcome="failure",
+                artifact=artifact)
         return {
             "success": False,
             "reason": "no_reset_height_with_full_chain",
@@ -1247,6 +1283,11 @@ def reorient_from_live_scene(
         print(f"[reorient] selected v8 cell {i_int}_{target_j} via legacy "
               f"cell {legacy_i}_{legacy_j}, h={h_cm}cm; "
               "full approach/lift/reorient/place/release/exit preflight passed")
+        execution_span = (pipeline_trace.begin(
+            phase="recovery", kind="motion", name="reorient_physical_chain",
+            current_tabletop=i_int, target_tabletop=target_j,
+            height_cm=h_cm, scene_info=result.scene_info)
+            if pipeline_trace is not None else None)
         squeeze_hand = executor.execute(
             result, planner=planner, scene_cfg=scene_cfg, skip_lift=True)
         executor.execute_lift(plan["lift_traj"], squeeze_hand)
@@ -1265,6 +1306,11 @@ def reorient_from_live_scene(
             except Exception as reset_exc:
                 charuco_info = dict(charuco_info or {})
                 charuco_info["reset_fallback_exception"] = repr(reset_exc)
+            if execution_span is not None:
+                pipeline_trace.end(
+                    execution_span, outcome="failure",
+                    reason="reorient_lift_charuco_failed",
+                    charuco=charuco_info)
             return {
                 "success": False,
                 "reason": "reorient_lift_charuco_failed",
@@ -1309,7 +1355,12 @@ def reorient_from_live_scene(
         if plan["openpose_target"] is not None:
             result.openpose_pose = plan["openpose_target"]
         reset_info = executor.reset_hybrid(result, planner, scene_cfg)
+        if execution_span is not None:
+            pipeline_trace.end(execution_span, outcome="success")
     except Exception as exc:
+        if 'execution_span' in locals() and execution_span is not None:
+            pipeline_trace.end(execution_span, outcome="failure",
+                               exception=repr(exc))
         print(f"[reorient] execution/vertical-placement failed: {exc!r}")
         try:
             executor.reset_fallback(result, planner=planner, scene_cfg=scene_cfg)
@@ -1330,6 +1381,12 @@ def reorient_from_live_scene(
             "camera_capture_stopped": camera_capture_stopped,
         }
 
+    if pipeline_trace is not None:
+        pipeline_trace.event(
+            "recovery.reorient.result", phase="recovery", kind="result",
+            outcome="success", current_tabletop=i_int,
+            target_tabletop=target_j, height_cm=h_cm,
+            scene_info=result.scene_info, plan_counts=plan["counts"])
     return {
         "success": True,
         "i_int": i_int,
@@ -1634,7 +1691,7 @@ def main():
             trial_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             cdir = obj_root / trial_ts
             (cdir / "plan").mkdir(parents=True, exist_ok=True)
-            save_current_C2R(str(cdir))
+            save_arm_C2R(cdir, args.arm)
             save_current_camparam(str(cdir))
 
             rec: dict = {

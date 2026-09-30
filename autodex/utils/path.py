@@ -208,7 +208,8 @@ def load_candidate(obj_name, obj_pose, version, shuffle=True, skip_done=True,
                     skip_scenes_with_success=False,
                     tabletop_pose_stem=None,
                     candidate_order=None,
-                    candidates_root=None):
+                    candidates_root=None,
+                    excluded_candidates=None):
     """Load all grasp candidates under ``{candidates}/{hand}/{version}/{obj}``.
 
     If NAS stores the object pool as ``{obj}.tar.gz``, ``{obj}.tgz`` or
@@ -227,11 +228,20 @@ def load_candidate(obj_name, obj_pose, version, shuffle=True, skip_done=True,
     If ``scene_type_filter`` is given, only grasps under that scene_type subdir
     are kept (e.g. ``"wall"`` for v7 wall scenes). Use ``""`` to keep only flat
     layout candidates. ``None`` keeps everything.
+
+    ``excluded_candidates`` is an optional collection of exact
+    ``(scene_type, scene_id, grasp_id)`` keys to omit. It is independent of
+    persisted ``result.json`` state, allowing process-local no-repeat policy
+    without making failures permanent.
     """
     wrist_se3_list = []
     pregrasp_pose_list = []
     grasp_pose_list = []
     scene_info = []
+    excluded = {
+        tuple(str(part) for part in key)
+        for key in (excluded_candidates or ())
+    }
 
     root = candidates_root or get_candidate_path(hand)
     candidate_obj_path = resolve_candidate_object_path(root, version, obj_name)
@@ -303,6 +313,8 @@ def load_candidate(obj_name, obj_pose, version, shuffle=True, skip_done=True,
             # Unexpected depth — skip.
             continue
 
+        if (scene_type, scene_id_dir, grasp_idx) in excluded:
+            continue
         if scene_id is not None and scene_id_dir != scene_id:
             continue
         if scene_type_filter is not None and scene_type != scene_type_filter:

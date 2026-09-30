@@ -20,6 +20,13 @@ from scipy.interpolate import CubicSpline
 from scipy.spatial.transform import Rotation
 
 
+# Arm-specific payload retiming.  xArm already applies its held-object speed
+# policy in the executor, so do not silently reduce the vertical trajectory to
+# 40% a second time.  FR3 retains the established conservative payload scale.
+XARM_VERTICAL_PAYLOAD_SPEED_SCALE = 1.0
+FRANKA_VERTICAL_PAYLOAD_SPEED_SCALE = 0.40
+
+
 @dataclass(frozen=True)
 class JacobianStrokeOptions:
     """Numerical, geometric, and execution limits for one vertical stroke."""
@@ -39,7 +46,9 @@ class JacobianStrokeOptions:
     support_clearance_tolerance_m: float = 0.001
     monotonic_tolerance_m: float = 2.0e-4
     sample_dt_s: float = 0.01
-    held_object_speed_scale: float = 0.40
+    # No hidden robot-specific reduction in the generic options object.
+    # ``_default_options_for_arm`` supplies Franka's explicit 0.4 policy.
+    held_object_speed_scale: float = 1.0
     max_retime_iterations: int = 12
 
 
@@ -63,6 +72,17 @@ class JacobianStrokeResult:
 
 def options_as_dict(options: JacobianStrokeOptions) -> dict[str, Any]:
     return asdict(options)
+
+
+def _default_options_for_arm(n_arm: int) -> JacobianStrokeOptions:
+    """Return vertical-stroke timing policy without cross-arm coupling."""
+    if int(n_arm) == 6:  # XArm6
+        return JacobianStrokeOptions(
+            held_object_speed_scale=XARM_VERTICAL_PAYLOAD_SPEED_SCALE)
+    if int(n_arm) == 7:  # FR3
+        return JacobianStrokeOptions(
+            held_object_speed_scale=FRANKA_VERTICAL_PAYLOAD_SPEED_SCALE)
+    return JacobianStrokeOptions()
 
 
 def _pose_error(target: np.ndarray, current: np.ndarray) -> np.ndarray:
@@ -384,10 +404,10 @@ def plan_jacobian_vertical_stroke(
     checked separately here.
     """
     started = perf_counter()
-    options = options or JacobianStrokeOptions()
     start = np.asarray(start_full_qpos, dtype=np.float64).reshape(-1)
     target = np.asarray(target_wrist_pose, dtype=np.float64)
     n_arm = int(planner._n_arm)
+    options = options or _default_options_for_arm(n_arm)
     if (start.shape != np.asarray(planner._init_state).shape
             or not np.isfinite(start).all()):
         raise ValueError("vertical stroke start q must be finite and match planner DOF")
@@ -395,8 +415,11 @@ def plan_jacobian_vertical_stroke(
         raise ValueError("vertical stroke target must be a finite 4x4 pose")
     if (options.step_m <= 0.0 or options.finite_difference_rad <= 0.0
             or options.max_iterations <= 0 or options.max_segment_joint_delta_rad <= 0.0
-            or options.sample_dt_s <= 0.0):
-        raise ValueError("vertical stroke numerical and sampling options must be positive")
+            or options.sample_dt_s <= 0.0
+            or not 0.0 < options.held_object_speed_scale <= 1.0):
+        raise ValueError(
+            "vertical stroke numerical/sampling options must be positive and "
+            "held_object_speed_scale must be in (0, 1]")
     hand = start[n_arm:].copy()
     payload_enabled = attached_object_pose_at_start is not None
     if payload_enabled != (attached_object_vertices is not None):

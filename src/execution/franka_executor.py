@@ -28,7 +28,7 @@ Execution sequence (identical to real.py):
 import datetime
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 
@@ -38,12 +38,11 @@ from autodex.executor.timing import (
     finish_pickup_timing, finish_place_timing, new_pickup_timing,
     new_place_timing,
 )
-from autodex.timing import TimingRecorder
-from autodex.utils.robot_config import FR3_INIT, INSPIRE_INIT, FR3_INSPIRE_LINK_TO_WRIST
+from autodex.utils.robot_config import (
+    FR3_INIT, FR3_CLEAR_VIEW, INSPIRE_INIT, FR3_INSPIRE_LINK_TO_WRIST,
+)
 from autodex.utils.conversion import cart2se3, se32cart
 from autodex.executor.real import _convert_inspire   # rad -> 0-1000 controller units
-
-CLEAR_VIEW_J0_DEG = -40.0   # real.py: clear_view_arm[0] -= deg2rad(40)
 
 # The final part of every free-hand move is deliberately slowed.  The metric is
 # the closest distance from the object *mesh surface* to one of the hand-link
@@ -139,8 +138,7 @@ class FrankaExecutor:
         # beside a newly placed object.
         self._pending_post_release_retract = None
         self._arm_init = np.asarray(FR3_INIT, dtype=np.float64)          # 7-DOF home
-        self._clear_view = self._arm_init.copy()
-        self._clear_view[0] += np.deg2rad(CLEAR_VIEW_J0_DEG)
+        self._clear_view = np.asarray(FR3_CLEAR_VIEW, dtype=np.float64).copy()
         # When true, the post-release return keeps the wrist attitude while it
         # travels back over the setup and only reorients once it is above the
         # home position.  The plain joint-space retract is collision-free but
@@ -163,12 +161,11 @@ class FrankaExecutor:
         self._link6_to_wrist = np.asarray(FR3_INSPIRE_LINK_TO_WRIST, dtype=np.float64)
         self._convert = _convert_inspire
         self.state_timestamps = []
-        # Per-call breakdowns are consumed by run_auto's episode timing.  Keep
-        # these separate from state_timestamps: a state span can include both
-        # cuRobo planning and physical motion.
+        # Per-call breakdowns remain runtime diagnostics. Persisted durations
+        # come from the shared pipeline event spans.
         self.last_execute_timing = {}
         self.last_place_timing = {}
-        self._timing_recorder: Optional[TimingRecorder] = None
+        self._timing_recorder: Optional[Any] = None
         # run_auto drives both arms through the same trial code; it reads this
         # to slice arm vs hand columns instead of hard-coding the xarm's 6.
         self.arm_dof = 7
@@ -223,13 +220,24 @@ class FrankaExecutor:
 
     # ── low-level ────────────────────────────────────────────────────────────
 
-    def set_timing_recorder(self, recorder: Optional[TimingRecorder]) -> None:
-        """Attach the current trial's shared timing trace."""
+    def set_timing_recorder(self, recorder: Optional[Any]) -> None:
+        """Attach the current pipeline event trace."""
         self._timing_recorder = recorder
 
     def _log(self, state: str):
-        self.state_timestamps.append(
-            {"state": state, "time": datetime.datetime.now().isoformat()})
+        item = {"state": state, "time": datetime.datetime.now().isoformat()}
+        if self._timing_recorder is not None and hasattr(
+                self._timing_recorder, "event"):
+            event = self._timing_recorder.event(
+                "robot.state", phase="execution", kind="state",
+                state=state, arm="franka", hand=self.hand_name)
+            item.update({
+                "pipeline_event_seq": event["seq"],
+                "pipeline_time_s": event["pipeline_time_s"],
+                "monotonic_ns": event["monotonic_ns"],
+                "utc_ns": event["utc_ns"],
+            })
+        self.state_timestamps.append(item)
         # printed too: without it a stage that blocks (a planner call, a blocking
         # move) is indistinguishable from a hang
         print(f"[franka] >>> {state}", flush=True)

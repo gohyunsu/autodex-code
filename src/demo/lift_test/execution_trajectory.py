@@ -23,7 +23,7 @@ class ExecutionProfile:
     arm: str
     max_joint_velocity_rad_s: float
     max_joint_acceleration_rad_s2: float
-    held_object_speed_scale: float = 0.4
+    held_object_speed_scale: float = 1.0
     sample_dt_s: float = 0.01
     squeeze_duration_s: float = 0.50
     max_retime_iterations: int = 12
@@ -36,10 +36,9 @@ def profile_for_arm(arm: str, *, sample_dt_s: float = 0.01,
                     squeeze_duration_s: float = 0.50) -> ExecutionProfile:
     """Return the conservative common trajectory contract for one adapter.
 
-    Franka's values match its streaming follower caps.  XArm's values are
-    intentionally lower than the low-level servo's per-tick limit; this gives
-    the same carried-object 0.4x policy a meaningful, conservative reference
-    speed before the hardware adapter performs its own final limiting.
+    Franka retains its conservative carried-object 0.4x policy.  XArm uses its
+    full retiming limits here because its hardware adapter already applies the
+    requested held-object playback policy.
     """
     if sample_dt_s <= 0.0 or squeeze_duration_s <= 0.0:
         raise ValueError("execution sample dt and squeeze duration must be positive")
@@ -47,11 +46,13 @@ def profile_for_arm(arm: str, *, sample_dt_s: float = 0.01,
         return ExecutionProfile(
             arm=arm, max_joint_velocity_rad_s=1.2,
             max_joint_acceleration_rad_s2=4.0,
+            held_object_speed_scale=0.40,
             sample_dt_s=sample_dt_s, squeeze_duration_s=squeeze_duration_s)
     if arm == "xarm":
         return ExecutionProfile(
             arm=arm, max_joint_velocity_rad_s=0.50,
             max_joint_acceleration_rad_s2=1.50,
+            held_object_speed_scale=1.0,
             sample_dt_s=sample_dt_s, squeeze_duration_s=squeeze_duration_s)
     raise ValueError(f"unsupported execution arm profile: {arm!r}")
 

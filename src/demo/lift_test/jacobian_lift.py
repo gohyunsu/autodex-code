@@ -14,7 +14,9 @@ from typing import Any, Callable
 import numpy as np
 
 from autodex.planner.jacobian_stroke import (
+    FRANKA_VERTICAL_PAYLOAD_SPEED_SCALE,
     JacobianStrokeOptions,
+    XARM_VERTICAL_PAYLOAD_SPEED_SCALE,
     numerical_wrist_jacobian,
     plan_jacobian_vertical_stroke,
 )
@@ -36,7 +38,7 @@ class LiftOptions:
     table_clearance_tolerance_m: float = 0.001
 
 
-def _stroke_options(options: LiftOptions) -> JacobianStrokeOptions:
+def _stroke_options(options: LiftOptions, n_arm: int) -> JacobianStrokeOptions:
     return JacobianStrokeOptions(
         step_m=options.step_m,
         finite_difference_rad=options.finite_difference_rad,
@@ -49,6 +51,9 @@ def _stroke_options(options: LiftOptions) -> JacobianStrokeOptions:
         max_waypoint_delta_rad=options.max_waypoint_delta_rad,
         max_segment_joint_delta_rad=options.max_segment_joint_delta_rad,
         support_clearance_tolerance_m=options.table_clearance_tolerance_m,
+        held_object_speed_scale=(
+            XARM_VERTICAL_PAYLOAD_SPEED_SCALE if int(n_arm) == 6
+            else FRANKA_VERTICAL_PAYLOAD_SPEED_SCALE),
     )
 
 
@@ -76,7 +81,7 @@ def continue_vertical_lift(
     target[2, 3] += float(options.height_m)
     result = plan_jacobian_vertical_stroke(
         planner, start, target,
-        options=_stroke_options(options),
+        options=_stroke_options(options, n_arm),
         attached_object_vertices=np.asarray(mesh_vertices, dtype=np.float64),
         attached_object_pose_at_start=np.asarray(
             object_pose_at_grasp, dtype=np.float64),

@@ -25,6 +25,12 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# Capture the process clock before importing NumPy, CUDA/planner modules, or
+# hardware adapters. PipelineTrace is constructed later, but its time origin
+# therefore includes Python import and CUDA module initialization as requested.
+_PROCESS_BOOT_MONOTONIC_NS = time.perf_counter_ns()
+_PROCESS_BOOT_WALL_NS = time.time_ns()
+
 import numpy as np
 
 # ``python src/execution/run_pipeline.py`` puts only this directory on
@@ -36,19 +42,9 @@ from src.execution import run_auto
 from src.execution.rotate_obj_yaw import rotate_from_live_scene
 from src.execution.scene_cfg import pose_world_to_scene_cfg
 from autodex.planner.obstacles import add_obstacles
+from autodex.pipeline_trace import PipelineTrace
 from autodex.utils.robot_config import CHARUCO_BOARD_11_CENTER_XY
 from src.experiment.reset.reorient import reorient_from_live_scene
-
-
-def _add_timing(info: dict | None, **values: float) -> dict | None:
-    """Attach elapsed times to a recovery result without changing its contract."""
-    if info is None:
-        return None
-    result = dict(info)
-    timing = dict(result.get("timing_s") or {})
-    timing.update({key: round(float(value), 3) for key, value in values.items()})
-    result["timing_s"] = timing
-    return result
 
 
 def _rotation_recovery_priority(context: dict) -> dict:
@@ -101,6 +97,7 @@ def _charuco_preflight(**context):
     stops before any object perception or robot interaction.
     """
     args = context["args"]
+    trace = context.get("pipeline_trace")
     mode = args.charuco_preflight
     if mode == "skip":
         print("[charuco-preflight] skipped — using fixed fallback tabletop geometry")
@@ -127,12 +124,12 @@ def _charuco_preflight(**context):
         if choice == "q":
             return {"cancel": True}
 
-    from paradex.calibration.utils import load_current_C2R
     from autodex.perception.snapshot_orchestrator import SnapshotOrchestrator
     from src.execution.charuco_tabletop import (
         measure_tabletop_from_images,
         save_tabletop_measurement,
     )
+    from src.execution.handeye import save_arm_C2R
 
     sub = (f"{context['scene_prefix']}/{args.hand}"
            if context["scene_prefix"] else args.hand)
@@ -142,13 +139,13 @@ def _charuco_preflight(**context):
         args.obj / f"_charuco_preflight_{stamp}"
     )
     image_dir = preflight_dir / "images"
-    c2r = np.asarray(load_current_C2R(), dtype=np.float64)
-    active_preflight_s = 0.0
-
+    c2r, _ = save_arm_C2R(preflight_dir, args.arm)
     while True:
         snap = None
         try:
-            t_attempt = time.perf_counter()
+            attempt_span = (trace.begin(
+                phase="startup", kind="check", name="charuco_preflight_attempt")
+                if trace is not None else None)
             snap = SnapshotOrchestrator(
                 pc_list=args.pc_list, capture_ips=context["capture_ips"],
                 port_snap=args.port_snap, port_cmd=args.port_snap_cmd,
@@ -157,7 +154,6 @@ def _charuco_preflight(**context):
                 n_expected=context["n_cameras"], timeout_s=5.0,
                 save_dir_local=str(image_dir), decode=True,
             )
-            snapshot_s = time.perf_counter() - t_attempt
             images = {
                 serial: item["image"] for serial, item in payloads.items()
                 if item.get("image") is not None
@@ -168,25 +164,14 @@ def _charuco_preflight(**context):
                 raise RuntimeError(
                     "empty-board preflight requires one decodable snapshot from "
                     f"every active camera ({len(images)}/{context['n_cameras']} received)")
-            t_measurement = time.perf_counter()
             geometry = measure_tabletop_from_images(
                 images, context["intrinsics_full"], context["extrinsics_full"], c2r)
-            measurement_s = time.perf_counter() - t_measurement
-            attempt_s = time.perf_counter() - t_attempt
-            geometry["snapshot_timing"] = snap_timing
             # Keep this in the session geometry: run_auto copies that geometry
             # into each trial result, while the saved measurement remains a
             # standalone audit record for this preflight.
-            geometry["timing_s"] = {
-                "snapshot_s": round(snapshot_s, 3),
-                "measurement_s": round(measurement_s, 3),
-                "attempt_s": round(attempt_s, 3),
-                "active_total_s": round(active_preflight_s + attempt_s, 3),
-            }
             geometry["measurement_dir"] = str(preflight_dir)
             np.save(preflight_dir / "C2R.npy", c2r)
             saved = save_tabletop_measurement(geometry, preflight_dir)
-            active_preflight_s += attempt_s
             m = geometry["metrics"]
             c = geometry["center_robot_m"]
             print(f"[charuco-preflight] board=11 corners="
@@ -198,6 +183,13 @@ def _charuco_preflight(**context):
             print("[charuco-preflight] level table surface for this session: "
                   f"z={geometry['table_surface_z_m']:.4f}m")
             print(f"[charuco-preflight] accepted; geometry -> {saved}")
+            if attempt_span is not None:
+                trace.end(
+                    attempt_span, outcome="success",
+                    cameras=len(images), corners=m["corners_triangulated"],
+                    table_surface_z_m=geometry["table_surface_z_m"],
+                    snapshot_diagnostics=snap_timing,
+                )
             if args.auto:
                 print("[charuco-preflight] --auto: starting trials without "
                       "operator confirmation")
@@ -216,9 +208,9 @@ def _charuco_preflight(**context):
             # The failed attempt has no geometry to persist, but include it in
             # the accepted retry's active total so the operator can see the
             # real sensing/measurement cost (excluding prompt wait time).
-            if 't_attempt' in locals():
-                active_preflight_s += time.perf_counter() - t_attempt
             print(f"[charuco-preflight] rejected: {exc}")
+            if 'attempt_span' in locals() and attempt_span is not None:
+                trace.end(attempt_span, outcome="failure", exception=repr(exc))
             if args.auto:
                 print("[charuco-preflight] --auto: cannot request a manual "
                       "retry; ending before robot motion")
@@ -319,21 +311,28 @@ def _rotate_in_process(**context) -> dict:
     """Run recovery with the standalone rotate candidate-pool semantics."""
     args = context["args"]
     rcc = context["rcc"]
+    trace = context.get("pipeline_trace")
     info = None
-    t_total = time.perf_counter()
-    t_priority = time.perf_counter()
-    priority_s = 0.0
-    recovery_s = 0.0
-    stream_restore_s = 0.0
+    recovery_span = (trace.begin(
+        phase="recovery", kind="motion", name="rotation_recovery",
+        target_x=context["target_x"], target_y=context.get(
+            "target_y", float(CHARUCO_BOARD_11_CENTER_XY[1])),
+        target_yaw_deg=context["target_yaw_deg"])
+        if trace is not None else None)
     try:
         # Do NOT inherit normal collection's coverage whitelist or completed-
         # scene filters.  They answer "what is left to collect?", whereas a
         # rotation answers "what can safely acquire this object now?".  The
         # latter must revisit every current-tabletop grasp, with the same
         # success-first ranking used by standalone rotate_obj_yaw.py.
+        priority_span = (trace.begin(
+            phase="recovery", kind="decision",
+            name="rotation_candidate_priority", parent_id=recovery_span)
+            if trace is not None else None)
         recovery_priority = _rotation_recovery_priority(context)
-        priority_s = time.perf_counter() - t_priority
-        t_recovery = time.perf_counter()
+        if priority_span is not None:
+            trace.end(priority_span, outcome="success",
+                      candidate_count=len(recovery_priority))
         info = rotate_from_live_scene(
             obj=context["obj"], hand=context["hand"], arm=args.arm,
             grasp_version=context["grasp_version"],
@@ -344,6 +343,7 @@ def _rotate_in_process(**context) -> dict:
             target_yaw_deg=context["target_yaw_deg"],
             tabletop_pose_stem=context["tabletop_pose_stem"],
             candidate_order=None,
+            excluded_candidates=context.get("excluded_candidates"),
             priority_map=recovery_priority,
             scene_type_filter=None,
             scene_id=None,
@@ -353,12 +353,14 @@ def _rotate_in_process(**context) -> dict:
             cyl_axis_local=context["cyl_axis_local"],
             cyl_yaw_grid=context["cyl_yaw_grid"],
             rcc=rcc,
+            pipeline_trace=trace,
         )
-        recovery_s = time.perf_counter() - t_recovery
     finally:
         # A planning-only rejection leaves capture live; an executed recovery
         # stops it.  The helper selects sink-only vs arm+stream accordingly.
-        t_stream_restore = time.perf_counter()
+        restore_span = (trace.begin(
+            phase="recovery", kind="setup", name="rotation_stream_restore",
+            parent_id=recovery_span) if trace is not None else None)
         if info is not None:
             info = _restart_stream_or_mark_failure(rcc, args, info, "rotation")
         else:
@@ -367,14 +369,17 @@ def _rotate_in_process(**context) -> dict:
             # operator-driven retry.
             _restart_stream_or_mark_failure(
                 rcc, args, {"success": False}, "rotation")
-        stream_restore_s = time.perf_counter() - t_stream_restore
-        info = _add_timing(
-            info,
-            candidate_priority_s=priority_s,
-            recovery_s=recovery_s,
-            stream_restore_s=stream_restore_s,
-            total_s=time.perf_counter() - t_total,
-        )
+        if restore_span is not None:
+            trace.end(restore_span, outcome=(
+                "success" if info is not None and info.get("success") is not False
+                else "failure"))
+        if recovery_span is not None:
+            trace.end(
+                recovery_span,
+                outcome=("success" if info is not None and info.get("success")
+                         else "failure"),
+                reason=(info or {}).get("reason"),
+            )
     return info
 
 
@@ -388,7 +393,11 @@ def _reorient_in_process(**context) -> dict:
     """
     args = context["args"]
     rcc = context["rcc"]
-    t_total = time.perf_counter()
+    trace = context.get("pipeline_trace")
+    recovery_span = (trace.begin(
+        phase="recovery", kind="motion", name="reorientation_recovery",
+        target_tabletop=context["target_j"])
+        if trace is not None else None)
     sub = (f"{context['scene_prefix']}/{context['hand']}"
            if context["scene_prefix"] else context["hand"])
     lift_rel = os.path.join(
@@ -401,19 +410,20 @@ def _reorient_in_process(**context) -> dict:
     # Reset candidates are table transitions.  Do not inherit wall/shelf/
     # clutter obstacles from the failed collection scene; that would make this
     # recovery differ from the retained standalone reorient policy.
-    t_scene_build = time.perf_counter()
+    scene_span = (trace.begin(
+        phase="recovery", kind="setup", name="reorientation_scene_build",
+        parent_id=recovery_span) if trace is not None else None)
     table_scene = pose_world_to_scene_cfg(
         context["pose_world"], context["c2r"], context["obj"],
         context["obj_root"], tabletop_geometry=context.get("tabletop_geometry"),
     )
     table_scene = add_obstacles(
         table_scene, "table", tabletop_geometry=context.get("tabletop_geometry"))
-    scene_build_s = time.perf_counter() - t_scene_build
+    if scene_span is not None:
+        trace.end(scene_span)
 
     info = None
-    recovery_s = 0.0
     try:
-        t_recovery = time.perf_counter()
         info = reorient_from_live_scene(
             obj=context["obj"], hand=context["hand"], arm=args.arm,
             target_j=context["target_j"], planner=context["planner"],
@@ -423,33 +433,60 @@ def _reorient_in_process(**context) -> dict:
             lift_label_abs=lift_abs,
             tabletop_geometry=context.get("tabletop_geometry"),
             debug_dump_dir=os.path.join(context["img_dir"], "planning_debug"),
+            pipeline_trace=trace,
         )
-        recovery_s = time.perf_counter() - t_recovery
     finally:
         # As above, reorient can return before it has stopped capture while
         # evaluating reset candidates, so recovery must be state-aware.
-        t_stream_restore = time.perf_counter()
+        restore_span = (trace.begin(
+            phase="recovery", kind="setup", name="reorientation_stream_restore",
+            parent_id=recovery_span) if trace is not None else None)
         if info is not None:
             info = _restart_stream_or_mark_failure(rcc, args, info, "reorient")
         else:
             _restart_stream_or_mark_failure(
                 rcc, args, {"success": False}, "reorient")
-        info = _add_timing(
-            info,
-            scene_build_s=scene_build_s,
-            recovery_s=recovery_s,
-            stream_restore_s=time.perf_counter() - t_stream_restore,
-            total_s=time.perf_counter() - t_total,
-        )
+        if restore_span is not None:
+            trace.end(restore_span, outcome=(
+                "success" if info is not None and info.get("success") is not False
+                else "failure"))
+        if recovery_span is not None:
+            trace.end(
+                recovery_span,
+                outcome=("success" if info is not None and info.get("success")
+                         else "failure"),
+                reason=(info or {}).get("reason"),
+            )
     return info
 
 
 def main() -> None:
-    run_auto.main(
-        pose_adjust_handler=_rotate_in_process,
-        reorient_handler=_reorient_in_process,
-        startup_handler=_charuco_preflight,
+    trace = PipelineTrace(
+        origin_monotonic_ns=_PROCESS_BOOT_MONOTONIC_NS,
+        origin_wall_ns=_PROCESS_BOOT_WALL_NS,
     )
+    outcome = "success"
+    try:
+        run_auto.main(
+            pose_adjust_handler=_rotate_in_process,
+            reorient_handler=_reorient_in_process,
+            startup_handler=_charuco_preflight,
+            pipeline_trace=trace,
+        )
+    except KeyboardInterrupt:
+        outcome = "aborted"
+        trace.event(
+            "pipeline.keyboard_interrupt", phase="cleanup", kind="error",
+            outcome="aborted")
+        raise
+    except BaseException as exc:
+        outcome = "failure"
+        trace.event(
+            "pipeline.unhandled_exception", phase="cleanup", kind="error",
+            outcome="failure", exception=repr(exc))
+        raise
+    finally:
+        trace.close(outcome=outcome)
 
 
 if __name__ == "__main__":

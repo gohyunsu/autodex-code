@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import dataclasses
 import json
 import logging
 import os
@@ -35,7 +36,7 @@ from paradex.io.camera_system.remote_camera_controller import remote_camera_cont
 from paradex.io.camera_system.signal_generator import UTGE900
 from paradex.io.camera_system.timestamp_monitor import TimestampMonitor
 from paradex.utils.system import network_info, get_pc_ip, get_camera_list
-from paradex.calibration.utils import save_current_camparam, save_current_C2R, load_c2r
+from paradex.calibration.utils import save_current_camparam, load_c2r
 
 from autodex.utils.path import (
     project_dir, get_obj_root, get_candidate_path, RESET_RELEASE_HEIGHTS_CM,
@@ -49,7 +50,7 @@ from autodex.planner.obstacles import add_obstacles
 from autodex.planner.visualizer import ScenePlanVisualizer
 from autodex.executor.real import RealExecutor
 from autodex.executor.lift_policy import LiftExecutionError
-from autodex.timing import TimingRecorder
+from autodex.pipeline_trace import PipelineTrace, ScopedPipelineTrace
 from autodex.perception.init_orchestrator import InitOrchestrator
 from autodex.perception.snapshot_orchestrator import SnapshotOrchestrator
 
@@ -63,6 +64,7 @@ from autodex.utils.robot_config import (
 )
 from src.demo.continuous_basket.recording import resolve_signal_generator_params
 from src.execution.scene_cfg import pose_world_to_scene_cfg
+from src.execution.handeye import save_arm_C2R
 from src.execution.label import auto_label_charuco, get_label
 
 # Board id lives in src/execution/label.py — one place to swap.
@@ -72,6 +74,48 @@ from src.execution.label import CHARUCO_BOARD  # noqa: E402
 # candidates by remaining-uncovered scenes, bounces to a reorient target when
 # the current tabletop is fully covered, and stops when nothing is left.
 COVERAGE_VERSIONS = ("v8",)
+
+
+def _pipeline_result_value(value):
+    """Build a compact episode result without a second timing authority.
+
+    ``events.jsonl`` is the only persisted clock. Runtime return objects still
+    carry local diagnostic dictionaries because the control flow consumes a
+    few counters, but no key containing ``timing`` crosses this persistence
+    boundary. Motion arrays are referenced by the normal plan artifacts and
+    represented here only by shape so recovery results cannot balloon JSON.
+    """
+    if dataclasses.is_dataclass(value):
+        result = {
+            "type": type(value).__name__,
+            "success": bool(getattr(value, "success", False)),
+            "scene_info": _pipeline_result_value(
+                getattr(value, "scene_info", None)),
+        }
+        local_timing = getattr(value, "timing", None)
+        if isinstance(local_timing, dict) and "candidate_idx" in local_timing:
+            result["selected_candidate_index"] = int(
+                local_timing["candidate_idx"])
+        return result
+    if isinstance(value, np.ndarray):
+        if value.size <= 64:
+            return value.tolist()
+        return {"array_shape": list(value.shape), "dtype": str(value.dtype)}
+    if isinstance(value, dict):
+        return {
+            str(key): _pipeline_result_value(item)
+            for key, item in value.items()
+            if "timing" not in str(key).lower()
+        }
+    if isinstance(value, (tuple, list, set)):
+        return [_pipeline_result_value(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return repr(value)
 
 
 def _is_coverage_pool(version: str) -> bool:
@@ -241,6 +285,39 @@ def _safe_timestamp_stop(tsm) -> None:
     if not getattr(tsm, "_autodex_started", False):
         return
     _stop_with_timeout("timestamp_monitor", tsm.stop)
+
+
+def _emit_external_sync_cue(sync_generator, trace: PipelineTrace, *,
+                            label: str, enabled: bool,
+                            duration_s: float, fps: int) -> None:
+    """Emit a short trigger burst for an LED visible to an external camera.
+
+    The signal generator's TTL output should be split to a small LED placed at
+    the edge of the external camera frame.  The call is opt-in because labs
+    without that LED should not receive extra trigger pulses between captures.
+    """
+    if not enabled:
+        return
+    cue_span = trace.begin(
+        phase="sync", kind="cue", name="external_video_sync_cue",
+        label=label, requested_duration_s=duration_s, fps=fps)
+    try:
+        sync_generator.start(fps=fps)
+        trace.event(
+            "sync.visual_cue", phase="sync", kind="cue",
+            parent_id=cue_span, label=label, fps=fps,
+            requested_duration_s=duration_s)
+        time.sleep(duration_s)
+        sync_generator.stop()
+    except Exception as exc:
+        try:
+            sync_generator.stop()
+        except Exception:
+            pass
+        trace.end(cue_span, outcome="failure", exception=repr(exc))
+        raise
+    else:
+        trace.end(cue_span, outcome="success")
 
 
 def _prompt_or_auto(args, prompt: str) -> str:
@@ -616,213 +693,6 @@ def _load_calib(calib_dir: Path):
 _active_vis: Optional[ScenePlanVisualizer] = None
 
 
-def _seconds(timing: dict, key: str) -> float:
-    """Read a measured duration without letting missing failure-path data leak."""
-    try:
-        return max(0.0, float(timing.get(key, 0.0)))
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _build_pipeline_timing(
-        timing: dict, *, wall_total_s: float, recovery: Optional[dict] = None) -> dict:
-    """Create the v2 trial timing tree.
-
-    A ``*_total_s`` describes one elapsed, sequential interval. Its named
-    children refine that interval and must not be added back to their parent.
-    In particular, candidate lift preflight belongs to *planning*, whereas
-    ``lift_runtime_replan_s`` is an execution-time contingency only.
-    """
-    planner_detail = dict(timing.get("grasp_search_detail") or {})
-    pickup_detail = dict(timing.get("execute_grasp_lift_detail_s") or {})
-    place_detail = dict((timing.get("place") or {}).get("timing_s") or {})
-
-    preparation = {
-        "calibration_s": _seconds(timing, "preparation_calibration_s"),
-        "total_s": _seconds(timing, "preparation_s"),
-    }
-    perception = {
-        "foundpose_s": _seconds(timing, "perception_s"),
-        "reposition_detection_s": _seconds(timing, "reposition_detection_s"),
-    }
-    perception["total_s"] = round(
-        perception["foundpose_s"] + perception["reposition_detection_s"], 3)
-
-    candidate_preflight = {
-        "approach_joint_plan_s": _seconds(planner_detail, "approach_preflight_s"),
-        "held_object_lift_plan_s": _seconds(planner_detail, "lift_preflight_s"),
-        "overhead_s": _seconds(planner_detail, "candidate_preflight_overhead_s"),
-        "n_approach_attempts": planner_detail.get("n_plan_attempts", 0),
-        "n_lift_attempts": planner_detail.get("n_lift_preflight_attempts", 0),
-        "n_lift_success": planner_detail.get("n_lift_preflight_success", 0),
-        "total_s": _seconds(planner_detail, "candidate_preflight_s"),
-    }
-    planning = {
-        "scene_construction_s": _seconds(timing, "scene_construction_s"),
-        "candidate_policy_s": _seconds(timing, "candidate_selection_s"),
-        # This is the outer planner call and includes candidate preflight;
-        # ``candidate_preflight`` above is a nested breakdown, not a sibling.
-        "grasp_search_total_s": _seconds(timing, "grasp_search_s"),
-        "candidate_preflight": candidate_preflight,
-        "retry_search_s": _seconds(timing, "plan_retry_total_s"),
-        "detail": planner_detail,
-        "total_s": _seconds(timing, "planning_total_s"),
-    }
-
-    pickup_total = _seconds(timing, "execute_grasp_lift_s")
-    pickup = {
-        "init_motion_s": _seconds(pickup_detail, "init_motion_s"),
-        "approach_monitor_warmup_s": _seconds(
-            pickup_detail, "approach_monitor_warmup_s"),
-        "approach_motion_s": _seconds(pickup_detail, "approach_motion_s"),
-        "pregrasp_motion_s": _seconds(pickup_detail, "pregrasp_motion_s"),
-        "grasp_motion_s": _seconds(pickup_detail, "grasp_motion_s"),
-        "squeeze_motion_s": _seconds(pickup_detail, "squeeze_motion_s"),
-        "lift_start_check_s": _seconds(pickup_detail, "lift_start_check_s"),
-        # Normal candidate-preflight replay records zero here by design.
-        "lift_runtime_replan_s": _seconds(
-            pickup_detail, "lift_runtime_replan_s"),
-        "lift_motion_s": _seconds(pickup_detail, "lift_motion_s"),
-        "lift_plan_source": pickup_detail.get("lift_plan_source", "unknown"),
-        "state_timestamps": list(timing.get("execution_states") or []),
-        "detail": pickup_detail,
-        "total_s": pickup_total,
-    }
-    pickup["overhead_s"] = _seconds(pickup_detail, "overhead_s")
-    if not pickup["overhead_s"] and pickup_total:
-        pickup["overhead_s"] = round(max(0.0, pickup_total - sum(
-            pickup[key] for key in (
-                "init_motion_s", "approach_monitor_warmup_s",
-                "approach_motion_s", "pregrasp_motion_s", "grasp_motion_s",
-                "squeeze_motion_s", "lift_start_check_s",
-                "lift_runtime_replan_s", "lift_motion_s"))), 3)
-
-    lift_validation = {
-        "capture_s": _seconds(timing, "auto_label_lift_capture_s"),
-        "inference_s": _seconds(timing, "auto_label_lift_infer_s"),
-        "total_s": _seconds(timing, "auto_label_lift_s"),
-    }
-    transfer = {
-        "target_selection_s": _seconds(timing, "transfer_selection_s"),
-        "planning_s": _seconds(timing, "transfer_plan_s"),
-        "motion_s": _seconds(timing, "transfer_motion_s"),
-    }
-    transfer["total_s"] = round(sum(transfer.values()), 3)
-    place = {
-        "total_s": _seconds(timing, "place_total_s"),
-        "detail": place_detail,
-        "planning_s": _seconds(place_detail, "planning_s"),
-        "motion_s": _seconds(place_detail, "motion_s"),
-        "setup_s": _seconds(place_detail, "setup_s"),
-        "overhead_s": _seconds(place_detail, "overhead_s"),
-        "release_execution": place_detail.get("release_execution", "unknown"),
-    }
-    if not place["total_s"]:
-        place["total_s"] = _seconds(place_detail, "total_s")
-
-    execution_total = _seconds(timing, "execute_s")
-    execution = {
-        "pickup_and_lift": pickup,
-        "lift_validation": lift_validation,
-        "transfer": transfer,
-        "place": place,
-        "total_s": execution_total,
-    }
-    execution["overhead_s"] = round(max(0.0, execution_total - sum((
-        pickup["total_s"], lift_validation["total_s"], transfer["total_s"],
-        place["total_s"]))), 3)
-
-    post_execution = {
-        "external_release_s": _seconds(timing, "external_release_s"),
-        "capture_teardown_s": _seconds(timing, "execution_teardown_s"),
-        "final_label_s": _seconds(timing, "final_label_s"),
-        "release_and_reset_s": _seconds(timing, "release_and_reset_s"),
-    }
-    post_execution["total_s"] = round(sum(post_execution.values()), 3)
-
-    recovery = recovery or {}
-    recovery_phase = {
-        name: dict((recovery.get(name) or {}).get("timing_s") or {})
-        for name in ("rotation", "reorientation")
-        if isinstance(recovery.get(name), dict)
-    }
-    recovery_phase["total_s"] = round(sum(
-        _seconds(detail, "total_s") for detail in recovery_phase.values()
-        if isinstance(detail, dict)), 3)
-
-    artifacts = {"plan_persistence_s": _seconds(timing, "plan_persistence_s")}
-    artifacts["total_s"] = artifacts["plan_persistence_s"]
-    phases = {
-        "preparation": preparation,
-        "perception": perception,
-        "planning": planning,
-        "artifacts": artifacts,
-        "recording_setup": {
-            "camera_video_timestamp_recorder_s": _seconds(
-                timing, "execution_capture_setup_s"),
-            "total_s": _seconds(timing, "execution_capture_setup_s"),
-        },
-        "execution": execution,
-        "post_execution": post_execution,
-        "recovery": recovery_phase,
-    }
-    classified_s = sum(phase["total_s"] for phase in phases.values())
-    return {
-        "schema_version": 2,
-        "clock": "time.perf_counter",
-        "phase_rule": "parents are elapsed spans; children are breakdowns",
-        "phases": phases,
-        "wall_total_s": round(wall_total_s, 3),
-        "unattributed_s": round(max(0.0, wall_total_s - classified_s), 3),
-    }
-
-
-class _TraceScratch(dict):
-    """Temporary compatibility scratchpad that emits leaf spans immediately.
-
-    The main trial body still has many mature early-return branches.  Recording
-    a duration at the assignment site preserves their measured interval while
-    keeping that scratch data out of every persisted result.
-    """
-
-    _LEAF_SPANS = {
-        "preparation_calibration_s": ("preparation", "setup", "calibration"),
-        "perception_s": ("perception", "inference", "foundpose"),
-        "reposition_detection_s": ("perception", "decision", "reposition_detection"),
-        "scene_construction_s": ("planning", "setup", "scene_construction"),
-        "candidate_selection_s": ("planning", "decision", "candidate_selection"),
-        "grasp_search_s": ("planning", "plan", "grasp_search"),
-        "plan_retry_total_s": ("planning", "plan", "retry_search"),
-        "plan_persistence_s": ("artifacts", "io", "plan_persistence"),
-        "execution_capture_setup_s": ("execution", "setup", "recording_setup"),
-        "execute_grasp_lift_s": ("execution", "motion", "pickup_and_lift"),
-        "auto_label_lift_capture_s": ("execution", "io", "lift_label_capture"),
-        "auto_label_lift_infer_s": ("execution", "inference", "lift_label_inference"),
-        "transfer_selection_s": ("execution", "decision", "transfer_selection"),
-        "transfer_motion_s": ("execution", "motion", "transfer_motion"),
-        "place_total_s": ("execution", "motion", "place"),
-        "external_release_s": ("post_execution", "motion", "external_release"),
-        "execution_teardown_s": ("post_execution", "io", "recording_teardown"),
-        "final_label_s": ("post_execution", "inference", "final_label"),
-        "release_and_reset_s": ("post_execution", "motion", "release_and_reset"),
-    }
-
-    def __init__(self, recorder: TimingRecorder):
-        super().__init__()
-        self._recorder = recorder
-
-    def __setitem__(self, key, value):
-        super().__setitem__(key, value)
-        spec = self._LEAF_SPANS.get(key)
-        if spec is None or not isinstance(value, (int, float)) or value <= 0:
-            return
-        end_s = self._recorder.now_s()
-        self._recorder.record_interval(
-            phase=spec[0], kind=spec[1], name=spec[2],
-            start_s=max(0.0, end_s - float(value)), end_s=end_s,
-            source="runner_duration")
-
-
 def run_single_trial(
     args,
     *,
@@ -837,6 +707,10 @@ def run_single_trial(
     reorient_handler=None,
     tabletop_geometry=None,
     rotate_recovery_state: Optional[Dict[str, object]] = None,
+    pipeline_trace: Optional[PipelineTrace] = None,
+    attempt_id: Optional[str] = None,
+    episode_id: Optional[str] = None,
+    session_attempted_candidates: Optional[set] = None,
 ) -> dict:
     global _active_vis
     if _active_vis is not None:
@@ -848,70 +722,186 @@ def run_single_trial(
 
     obj = args.obj
     hand = args.hand
+    session_excluded = {
+        tuple(str(part) for part in key)
+        for key in (session_attempted_candidates or ())
+    }
     candidate_state_root = _candidate_state_root(args, hand, obj)
     # xarm = 6, FR3 = 7. Every arm/hand column split below uses this instead of
     # a literal 6, so the same trial body drives both arms.
     adof = getattr(executor, "arm_dof", 6)
-    dir_idx = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Microseconds plus the run-level attempt id prevent recovery retries from
+    # reusing a directory when they start inside the same wall-clock second.
+    dir_idx = episode_id or datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    if episode_id is None and attempt_id:
+        dir_idx = f"{dir_idx}_{attempt_id}"
     sub = f"{scene_prefix}/{hand}" if scene_prefix else hand
     img_dir = os.path.join(project_dir, "experiment", args.exp_name, sub, obj, dir_idx)
     os.makedirs(img_dir, exist_ok=True)
-    trial_started = time.perf_counter()
-    # ``timing`` remains a short-lived working scratchpad for the legacy
-    # control flow below.  Persisted results contain only ``trial_trace``.
-    trial_trace = TimingRecorder()
-    timing: dict = _TraceScratch(trial_trace)
+    # This dict is execution-local control data only.  It is never persisted;
+    # the run-level append-only trace below is the sole timing authority.
+    timing: dict = {}
+    trial_scope: Optional[ScopedPipelineTrace] = None
+    episode_span = None
+    episode_started_s = None
+    if pipeline_trace is not None:
+        trial_scope = pipeline_trace.scoped(
+            episode_id=dir_idx, attempt_id=attempt_id)
+        episode_started_s = pipeline_trace.now_s()
+        episode_span = trial_scope.begin(
+            phase="episode", kind="lifecycle", name="episode",
+            directory=os.path.relpath(img_dir, project_dir),
+            scene_type=args.scene, object=obj, hand=hand, arm=args.arm,
+        )
     if hasattr(planner, "set_timing_recorder"):
-        planner.set_timing_recorder(trial_trace)
+        planner.set_timing_recorder(trial_scope)
     if hasattr(executor, "set_timing_recorder"):
-        executor.set_timing_recorder(trial_trace)
+        executor.set_timing_recorder(trial_scope)
+
+    execution_trigger_active = False
+
+    def _start_execution_trigger(fps: int) -> None:
+        nonlocal execution_trigger_active
+        sync_generator.start(fps=fps)
+        execution_trigger_active = True
+        if trial_scope is not None:
+            trial_scope.event(
+                "capture.trigger_started", phase="capture", kind="sync",
+                parent_id=episode_span, fps=fps,
+                purpose="internal_multicamera_execution")
+
+    def _stop_execution_trigger(reason: str) -> bool:
+        nonlocal execution_trigger_active
+        if not execution_trigger_active:
+            return True
+        stopped = _stop_with_timeout("sync_generator", sync_generator.stop)
+        execution_trigger_active = False
+        if trial_scope is not None:
+            trial_scope.event(
+                "capture.trigger_stopped", phase="capture", kind="sync",
+                parent_id=episode_span,
+                outcome=("success" if stopped else "failure"), reason=reason)
+        return stopped
 
     def _ts() -> str:
         return datetime.datetime.now().isoformat()
 
+    episode_finalized = False
+
     def _stamp_end(result_dict):
-        """Persist one canonical trace; never expose the scratch timing dict."""
+        """Link this episode to the one canonical run-level timeline."""
+        nonlocal episode_finalized
+        if episode_finalized:
+            return result_dict
         timing["trial_end"] = _ts()
-        for recovery_name in ("rotation", "reorientation"):
-            recovery_info = result_dict.get(recovery_name)
-            if not isinstance(recovery_info, dict):
-                continue
-            recovery_timing = recovery_info.get("timing_s")
-            if not isinstance(recovery_timing, dict):
-                continue
-            duration = recovery_timing.get("total_s", 0.0)
-            if isinstance(duration, (int, float)) and duration > 0:
-                end_s = trial_trace.now_s()
-                trial_trace.record_interval(
-                    phase="recovery", kind="motion", name=recovery_name,
-                    start_s=max(0.0, end_s - float(duration)), end_s=end_s,
-                    source="recovery_adapter", detail=recovery_timing)
-        result_dict["timing"] = trial_trace.as_dict(
-            trial_total_s=time.perf_counter() - trial_started)
+        result_dict.pop("timing", None)
+        if pipeline_trace is not None and trial_scope is not None:
+            success = result_dict.get("success")
+            outcome = ("success" if success is True else
+                       "failure" if success is False else "skipped")
+            if result_dict.get("retry_current_trial"):
+                outcome = ("success" if result_dict.get("reason") in (
+                    "reoriented", "reoriented_manual", "pose_adjusted",
+                    "planning_retry_feasible") else outcome)
+            recovery_action = None
+            if result_dict.get("rotation") is not None or result_dict.get(
+                    "pose_adjust") is not None:
+                recovery_action = "rotation"
+            elif result_dict.get("reorientation") is not None or result_dict.get(
+                    "reorient_target_j") is not None:
+                recovery_action = "reorientation"
+            pipeline_trace.close_episode_spans(
+                dir_idx, exclude={episode_span} if episode_span else set(),
+                reason=f"episode_finalized:{result_dict.get('reason')}",
+            )
+            trial_scope.event(
+                "episode.result", phase="episode", kind="result",
+                parent_id=episode_span, outcome=outcome,
+                success=success, reason=result_dict.get("reason"),
+                scene_info=result_dict.get("scene_info"),
+                retry_current_trial=bool(result_dict.get("retry_current_trial")),
+                recovery_action=recovery_action,
+                pose_adjust=result_dict.get("pose_adjust"),
+                reorient_target_j=result_dict.get("reorient_target_j"),
+                reorient_target_stem=result_dict.get("reorient_target_stem"),
+            )
+            if result_dict.get("scene_info") is not None:
+                trial_scope.event(
+                    "grasp.execution_result", phase="validation", kind="result",
+                    parent_id=episode_span, outcome=outcome,
+                    scene_info=result_dict.get("scene_info"),
+                    success=success, reason=result_dict.get("reason"),
+                )
+            ended = (trial_scope.end(
+                episode_span, outcome=outcome,
+                reason=result_dict.get("reason"), success=success)
+                if episode_span is not None else None)
+            result_dict["pipeline_trace"] = {
+                "schema_version": 1,
+                "run_id": pipeline_trace.run_id,
+                "episode_id": dir_idx,
+                "attempt_id": attempt_id,
+                "episode_span_id": episode_span,
+                "run_timeline": os.path.relpath(
+                    pipeline_trace.output_dir / "events.jsonl", img_dir),
+                "episode_timeline": os.path.relpath(
+                    pipeline_trace.output_dir /
+                    pipeline_trace.episode_timeline_path(dir_idx),
+                    img_dir),
+            }
+            pipeline_trace.add_episode({
+                "episode_id": dir_idx,
+                "attempt_id": attempt_id,
+                "episode_span_id": episode_span,
+                "directory": os.path.relpath(img_dir, project_dir),
+                "timeline": pipeline_trace.episode_timeline_path(
+                    dir_idx).as_posix(),
+                "start_pipeline_s": episode_started_s,
+                "end_pipeline_s": (ended or {}).get("pipeline_time_s"),
+                "duration_s": (ended or {}).get("duration_s"),
+                "outcome": outcome,
+                "success": success,
+                "reason": result_dict.get("reason"),
+                "retry_current_trial": bool(result_dict.get("retry_current_trial")),
+                "scene_info": result_dict.get("scene_info"),
+                "recovery_action": recovery_action,
+                "reorient_target_j": result_dict.get("reorient_target_j"),
+                "reorient_target_stem": result_dict.get("reorient_target_stem"),
+            })
+        episode_finalized = True
         return result_dict
 
     def _save_result(result_dict):
-        """Use one persistence boundary so every outcome contains final timing."""
+        """Persist a compact episode index linked to the global timeline."""
         _stamp_end(result_dict)
+        persisted = _pipeline_result_value(result_dict)
         with open(os.path.join(img_dir, "result.json"), "w") as f:
-            json.dump(result_dict, f, indent=2, default=str)
-        return result_dict
+            json.dump(persisted, f, indent=2)
+        return persisted
 
     timing["trial_start"] = _ts()
 
     # ── 1. prepare ──────────────────────────────────────────────────────────
     print(f"\n{'='*60}")
     print(f"[1/6] Trial dir -> {dir_idx}")
+    preparation_span = (trial_scope.begin(
+        phase="preparation", kind="setup", name="episode_preparation",
+        parent_id=episode_span) if trial_scope is not None else None)
     t_preparation = time.perf_counter()
-    save_current_C2R(img_dir)
+    save_arm_C2R(img_dir, args.arm)
     save_current_camparam(img_dir)
     timing["preparation_calibration_s"] = round(
         time.perf_counter() - t_preparation, 3)
     timing["preparation_s"] = timing["preparation_calibration_s"]
+    if preparation_span is not None:
+        trial_scope.end(preparation_span)
 
     # ── 2. Distributed FoundPose init ───────────────────────────────────────
     print(f"[2/6] Init pipeline (FoundPose distributed)...")
     timing["perception_start"] = _ts()
+    perception_span = (trial_scope.begin(
+        phase="perception", kind="inference", name="foundpose",
+        parent_id=episode_span) if trial_scope is not None else None)
     t0 = time.perf_counter()
     save_capture_dir = os.path.join(img_dir, "init_capture")
     pose_world, perc_timing = orch.trigger_init(
@@ -928,6 +918,10 @@ def run_single_trial(
 
     if pose_world is None:
         reason = (perc_timing or {}).get("reason", "perception_failed")
+        if perception_span is not None:
+            trial_scope.end(
+                perception_span, outcome="failure", reason=reason,
+                detail=perc_timing)
         print(f"    Perception FAILED ({reason})")
         chime.error()
         # Pause for human — bad pose estimate likely needs operator to
@@ -942,6 +936,10 @@ def run_single_trial(
             fail["reason"] = "user_quit_perception_failed"
         return _save_result(fail)
 
+    if perception_span is not None:
+        trial_scope.end(
+            perception_span, outcome="success", detail=perc_timing,
+            pose_world=np.asarray(pose_world).tolist())
     print(f"    Perception: {timing['perception_s']}s")
     np.save(os.path.join(img_dir, "pose_world.npy"), pose_world)
 
@@ -950,6 +948,9 @@ def run_single_trial(
     # the obj is somewhere but NOT covering the board → enter reposition mode
     # (grasp obj, place at r=0.4, y=0 on the board).
     reposition_mode = False
+    reposition_span = (trial_scope.begin(
+        phase="perception", kind="decision", name="reposition_detection",
+        parent_id=episode_span) if trial_scope is not None else None)
     t_reposition_detection = time.perf_counter()
     if args.auto:
         _stop_with_timeout("rcc", rcc.stop)
@@ -973,11 +974,17 @@ def run_single_trial(
             reposition_mode = True
     timing["reposition_detection_s"] = round(
         time.perf_counter() - t_reposition_detection, 3)
+    if reposition_span is not None:
+        trial_scope.end(reposition_span, reposition_mode=reposition_mode,
+                        charuco=timing.get("repo_charuco_before"))
 
     # ── 3. scene_cfg + plan ──────────────────────────────────────────────────
     print(f"[3/6] Planning (version={args.grasp_version}, scene={args.scene})...")
     timing["planning_start"] = _ts()
     t_planning = time.perf_counter()
+    scene_span = (trial_scope.begin(
+        phase="planning", kind="setup", name="scene_construction",
+        parent_id=episode_span) if trial_scope is not None else None)
     t_scene_construction = time.perf_counter()
     c2r = load_c2r(img_dir)
     # Planning mesh and tabletop poses are both resolved from the v8
@@ -1003,6 +1010,11 @@ def run_single_trial(
     )
     timing["scene_construction_s"] = round(
         time.perf_counter() - t_scene_construction, 3)
+    if scene_span is not None:
+        scene_artifact = trial_scope.write_artifact_json(
+            f"artifacts/scene/{attempt_id or dir_idx}.json", scene_cfg)
+        trial_scope.end(scene_span, scene_type=args.scene,
+                        artifact=scene_artifact)
     t_candidate_selection = time.perf_counter()
 
     def _run_reorient_handler(target_j: int) -> dict:
@@ -1019,6 +1031,7 @@ def run_single_trial(
                 scene_cfg=scene_cfg, pose_world=pose_world, c2r=c2r,
                 obj_root=obj_root, img_dir=img_dir, scene_prefix=scene_prefix,
                 tabletop_geometry=tabletop_geometry,
+                pipeline_trace=trial_scope,
             )
         except CudaPlanningFault as reorient_exc:
             # CUDA contexts are process-scoped.  Do not turn this into an
@@ -1060,6 +1073,13 @@ def run_single_trial(
     pose_robot = np.linalg.inv(c2r) @ pose_world
     tb_before = classify_tabletop_pose(pose_robot, obj, obj_root)
     timing["tabletop_before"] = tb_before
+    if trial_scope is not None:
+        trial_scope.event(
+            "scene.tabletop_classified", phase="perception", kind="result",
+            parent_id=episode_span,
+            outcome=("success" if tb_before is not None else "failure"),
+            classification=tb_before,
+        )
     if tb_before is not None:
         scene_id = str(tb_before["idx"])
         pose_stem = tb_before["filename"].replace(".npy", "")
@@ -1094,6 +1114,12 @@ def run_single_trial(
         """
         reset_event = _reset_rotate_streak(
             rotate_recovery_state, reason=stage, tabletop_stem=pose_stem)
+        if trial_scope is not None:
+            trial_scope.event(
+                "grasp.validation_started", phase="validation", kind="state",
+                parent_id=episode_span, scene_info=getattr(
+                    result, "scene_info", None), stage=stage,
+            )
         if reset_event is not None:
             timing["rotate_recovery_reset"] = reset_event
             print("    [rotate] grasp validation started; reset consecutive "
@@ -1160,18 +1186,61 @@ def run_single_trial(
                     f"--hand {hand} --version {args.grasp_version}\n"
                     f"  (and make sure candidates/{hand}/{args.grasp_version}/{obj}/ "
                     f"is extracted from its .tar.gz first)")
-            _useful = {k: v for k, v in _cov.items() if v > 0}
+            _n_session_excluded = sum(
+                1 for key, value in _cov.items()
+                if value > 0 and key in session_excluded)
+            _useful = {
+                key: value for key, value in _cov.items()
+                if value > 0 and key not in session_excluded
+            }
+            _n_empty = sum(1 for value in _cov.values() if value == 0)
             _plan_candidate_order = sorted(_useful, key=lambda k: -_useful[k])
             _plan_priority_map = None
+            _coverage_policy_rows = [
+                {
+                    "rank": rank,
+                    "candidate_key": [str(part) for part in key],
+                    "uncovered_scene_gain": int(_useful[key]),
+                }
+                for rank, key in enumerate(_plan_candidate_order)
+            ]
+            if trial_scope is not None:
+                policy_artifact = trial_scope.write_artifact_json(
+                    f"artifacts/coverage/{attempt_id or dir_idx}_grasp_policy.json",
+                    {
+                        "tabletop_pose": pose_stem,
+                        "selection_rule": (
+                            "descending uncovered-scene gain, then planner "
+                            "collision/IK/approach/lift feasibility"),
+                        "candidates": _coverage_policy_rows,
+                        "dropped_zero_gain": _n_empty,
+                        "excluded_attempted_this_session": (
+                            _n_session_excluded),
+                    },
+                )
+                trial_scope.event(
+                    "coverage.grasp_policy_ranked", phase="coverage",
+                    kind="decision", parent_id=episode_span,
+                    artifact=policy_artifact,
+                    tabletop_pose=pose_stem,
+                    ranked_candidate_count=len(_coverage_policy_rows),
+                    dropped_zero_gain=_n_empty,
+                    excluded_attempted_this_session=_n_session_excluded,
+                )
             # Dropped = remaining-uncovered == 0. Early on that is NOT
             # "already covered" — those are grasps whose `covers` list is
             # empty, i.e. collision-free in none of this tabletop's scenes.
             # Only once successes accumulate does the count mean progress.
-            _n_drop = len(_cov) - len(_useful)
-            _n_empty = sum(1 for k, v in _cov.items() if v == 0)
+            _drop_reasons = []
+            if _n_empty:
+                _drop_reasons.append(f"{_n_empty}: cover nothing left")
+            if _n_session_excluded:
+                _drop_reasons.append(
+                    f"{_n_session_excluded}: attempted this session")
             print(f"    [coverage] {len(_useful)}/{len(_cov)} candidates open "
                   f"uncovered scenes"
-                  + (f" (dropped {_n_drop}: cover nothing left)" if _n_drop else ""))
+                  + (f" (dropped {', '.join(_drop_reasons)})"
+                     if _drop_reasons else ""))
         # Pre-plan reorient check (skipped under --ignore_coverage).
         from autodex.utils.coverage import uncovered_scenes, pick_reorient_target
         _rem = (None if args.ignore_coverage else
@@ -1253,6 +1322,12 @@ def run_single_trial(
     timing["candidate_selection_s"] = round(
         time.perf_counter() - t_candidate_selection, 3)
     t_grasp_search = time.perf_counter()
+    grasp_search_span = (trial_scope.begin(
+        phase="planning", kind="plan", name="grasp_search",
+        parent_id=episode_span, tabletop_pose=pose_stem,
+        candidate_order_count=(len(_plan_candidate_order)
+                               if _plan_candidate_order is not None else None))
+        if trial_scope is not None else None)
     result = planner.plan(
         scene_cfg, obj, _eff_grasp_version,
         skip_done=_skip_done_eff,
@@ -1265,12 +1340,20 @@ def run_single_trial(
         cyl_yaw_grid=_cyl_grid,
         tabletop_pose_stem=_plan_tabletop_stem,
         candidate_order=_plan_candidate_order,
+        excluded_candidates=session_excluded,
         priority_map=_plan_priority_map,
     )
     timing["grasp_search_s"] = round(time.perf_counter() - t_grasp_search, 3)
     timing["grasp_search_detail"] = dict(result.timing or {})
     timing["planning_total_s"] = round(time.perf_counter() - t_planning, 3)
     timing["plan_s"] = timing["planning_total_s"]
+    if grasp_search_span is not None:
+        trial_scope.end(
+            grasp_search_span,
+            outcome=("success" if result.success else "failure"),
+            scene_info=result.scene_info,
+            diagnostics=result.timing,
+        )
     print(f"    Plan: {timing['plan_s']}s  success={result.success}")
 
     if not result.success:
@@ -1348,6 +1431,10 @@ def run_single_trial(
         # declaring "reorient needed", retry the plan up to 2 more times.
         for _retry in range(1, 3):
             print(f"    Planning failed (attempt {_retry}/2 retry)...")
+            retry_span = (trial_scope.begin(
+                phase="planning", kind="plan", name="grasp_search_retry",
+                parent_id=episode_span, retry_index=_retry)
+                if trial_scope is not None else None)
             t_re = time.perf_counter()
             result = planner.plan(
                 scene_cfg, obj, _eff_grasp_version,
@@ -1361,17 +1448,26 @@ def run_single_trial(
                 cyl_yaw_grid=_cyl_grid,
                 tabletop_pose_stem=_plan_tabletop_stem,
                 candidate_order=_plan_candidate_order,
+                excluded_candidates=session_excluded,
                 priority_map=_plan_priority_map,
             )
             timing[f"plan_retry_{_retry}_s"] = round(
                 time.perf_counter() - t_re, 3)
+            if retry_span is not None:
+                trial_scope.end(
+                    retry_span,
+                    outcome=("success" if result.success else "failure"),
+                    scene_info=result.scene_info,
+                    diagnostics=result.timing,
+                )
             if result.success:
                 print(f"    Plan retry #{_retry} success after {timing[f'plan_retry_{_retry}_s']}s")
                 break
         timing["plan_retry_total_s"] = round(sum(
-            _seconds(timing, f"plan_retry_{i}_s") for i in range(1, 3)), 3)
+            float(timing.get(f"plan_retry_{i}_s", 0.0))
+            for i in range(1, 3)), 3)
         timing["planning_total_s"] = round(
-            _seconds(timing, "planning_total_s")
+            float(timing.get("planning_total_s", 0.0))
             + timing["plan_retry_total_s"], 3)
         if result.success:
             timing["plan_s"] = timing["planning_total_s"]
@@ -1408,6 +1504,7 @@ def run_single_trial(
             scene_type_filter=_plan_scene_type_filter,
             tabletop_pose_stem=_plan_tabletop_stem,
             candidate_order=_plan_candidate_order,
+            excluded_candidates=session_excluded,
             cyl_axis_local=_cyl_axis,
             cyl_yaw_grid=_cyl_grid,
             skip_scenes_with_success=_skip_scenes_eff,
@@ -1448,6 +1545,10 @@ def run_single_trial(
                 and not args.ignore_coverage):
             _ros_yaw = None
             _ros_x = None
+            _target_x = None
+            _target_y = None
+            _pose_grid_rows = []
+            _pose_search_error = None
             try:
                 from autodex.utils.conversion import cart2se3 as _cart2se3
                 T_obj_now = _cart2se3(scene_cfg["mesh"]["target"]["pose"])
@@ -1484,6 +1585,13 @@ def run_single_trial(
                     _world_wrists = T_new[None] @ _wlocal
                     _succ = planner.ik_pose_batch(_world_wrists)
                     _n = int(_succ.sum())
+                    _pose_grid_rows.append({
+                        "x_m": _x,
+                        "y_m": _target_y,
+                        "yaw_deg": float(np.degrees(_yaw)),
+                        "ik_feasible_count": _n,
+                        "candidate_count": _cand_cap,
+                    })
                     if (_best_pick is None
                             or _n > _best_pick[0]
                             or (_n == _best_pick[0]
@@ -1497,7 +1605,31 @@ def run_single_trial(
                           f"+ rotate {_ros_yaw:.0f}° → {_best_pick[0]}/{_cand_cap} "
                           f"v8 candidates IK-feasible at CURRENT tabletop")
             except Exception as _se:
+                _pose_search_error = repr(_se)
                 print(f"    [pose_search] failed: {_se!r}")
+            if trial_scope is not None:
+                grid_artifact = trial_scope.write_artifact_json(
+                    f"artifacts/recovery/{attempt_id or dir_idx}_pose_grid.json",
+                    {
+                        "tabletop_pose": pose_stem,
+                        "grid": _pose_grid_rows,
+                        "selected": (
+                            None if _ros_yaw is None else
+                            {"x_m": _ros_x, "y_m": _target_y,
+                             "yaw_deg": _ros_yaw}),
+                        "exception": _pose_search_error,
+                    },
+                )
+                trial_scope.event(
+                    "recovery.rotation_pose_grid", phase="recovery",
+                    kind="decision",
+                    outcome=("success" if _ros_yaw is not None else "failure"),
+                    artifact=grid_artifact,
+                    selected=(
+                        None if _ros_yaw is None else
+                        {"x_m": _ros_x, "y_m": _target_y,
+                         "yaw_deg": _ros_yaw}),
+                )
             if _ros_yaw is not None:
                 # --arm MUST be forwarded: rotate_obj_yaw defaults to xarm,
                 # so without it an FR3 run launches XArmController and dies on
@@ -1551,6 +1683,7 @@ def run_single_trial(
                                 grasp_version=_eff_grasp_version,
                                 tabletop_pose_stem=_plan_tabletop_stem,
                                 candidate_order=_plan_candidate_order,
+                                excluded_candidates=session_excluded,
                                 priority_map=_plan_priority_map,
                                 scene_type_filter=_plan_scene_type_filter,
                                 scene_id=_plan_scene_id,
@@ -1560,6 +1693,7 @@ def run_single_trial(
                                 cyl_axis_local=_cyl_axis,
                                 cyl_yaw_grid=_cyl_grid,
                                 tabletop_geometry=tabletop_geometry,
+                                pipeline_trace=trial_scope,
                             )
                         except Exception as rotate_exc:
                             rotate_info = {
@@ -1569,6 +1703,18 @@ def run_single_trial(
                             }
                             print(f"    [pipeline] rotate exception: {rotate_exc!r}")
                     fail_record["rotation"] = rotate_info
+                    rotate_scene_info = rotate_info.get("scene_info")
+                    if rotate_scene_info is None:
+                        rotate_scene_info = getattr(
+                            rotate_info.get("result"), "scene_info", None)
+                    if (session_attempted_candidates is not None
+                            and isinstance(rotate_scene_info, (list, tuple))
+                            and len(rotate_scene_info) == 3):
+                        rotate_key = tuple(
+                            str(part) for part in rotate_scene_info)
+                        session_attempted_candidates.add(rotate_key)
+                        print("    [session] rotation candidate attempted; "
+                              f"excluding from later trials: {rotate_key}")
                     if rotate_info.get("success"):
                         _rotate_count = _record_successful_rotate(
                             rotate_recovery_state, tabletop_stem=pose_stem)
@@ -1662,11 +1808,30 @@ def run_single_trial(
             fail["rotate_recovery"] = _rotate_cap_info
         return _save_result(fail)
 
+    if trial_scope is not None:
+        trial_scope.event(
+            "grasp.selected", phase="planning", kind="decision",
+            parent_id=episode_span, scene_info=result.scene_info,
+            candidate_index=(result.timing or {}).get("candidate_idx"),
+            lift_preflight="passed",
+        )
     t_plan_persistence = time.perf_counter()
     plan_dir = os.path.join(img_dir, "plan")
     os.makedirs(plan_dir, exist_ok=True)
     np.save(os.path.join(plan_dir, "traj.npy"), result.traj)
     np.save(os.path.join(plan_dir, "wrist_se3.npy"), result.wrist_se3)
+    # Keep the exact post-symmetry hand configuration used by the robot.  The
+    # source candidate alone is insufficient for reconstructing a run because
+    # cylindrical symmetry expansion can change the selected wrist transform.
+    np.save(os.path.join(plan_dir, "grasp_pose.npy"), result.grasp_pose)
+    np.save(os.path.join(plan_dir, "pregrasp_pose.npy"), result.pregrasp_pose)
+    from autodex.utils.conversion import cart2se3 as _plan_cart2se3
+    _selected_obj_world = _plan_cart2se3(
+        scene_cfg["mesh"]["target"]["pose"])
+    np.save(
+        os.path.join(plan_dir, "wrist_obj_local.npy"),
+        np.linalg.inv(_selected_obj_world) @ result.wrist_se3,
+    )
     if getattr(result, "lift_preflight", None) is not None:
         _lift_pf = result.lift_preflight
         np.savez(
@@ -1677,9 +1842,8 @@ def run_single_trial(
             target_wrist_se3=np.asarray(_lift_pf.target_wrist_se3),
             height_m=np.asarray(_lift_pf.height_m),
         )
-    if result.timing:
-        with open(os.path.join(plan_dir, "timing.json"), "w") as f:
-            json.dump(result.timing, f, indent=2)
+    # Planner timing and candidate decisions live only in the run-level
+    # timeline.  Do not create a second episode-local timing file.
     timing["plan_persistence_s"] = round(
         time.perf_counter() - t_plan_persistence, 3)
     print(f"    Scene info: {result.scene_info}")
@@ -1817,6 +1981,14 @@ def run_single_trial(
         print("    [viz] --auto: visualizer disabled")
 
     # ── 4. Execute (stream off, video on) ───────────────────────────────────
+    if (session_attempted_candidates is not None
+            and isinstance(result.scene_info, (list, tuple))
+            and len(result.scene_info) == 3):
+        selected_key = tuple(str(part) for part in result.scene_info)
+        session_attempted_candidates.add(selected_key)
+        timing["session_candidate_key"] = list(selected_key)
+        print("    [session] candidate marked attempted; excluding from later "
+              f"trials: {selected_key}")
     print(f"[4/6] Executing on robot...")
     timing["execution_start"] = _ts()
     t_capture_setup = time.perf_counter()
@@ -1833,7 +2005,7 @@ def run_single_trial(
     _rcc_start(rcc, "video", True, exec_rel)
     _safe_timestamp_start(timestamp_monitor, os.path.join(raw_dir, "timestamps"))
     executor.start_recording(raw_dir)
-    sync_generator.start(fps=30)
+    _start_execution_trigger(fps=30)
     timing["execution_capture_setup_s"] = round(
         time.perf_counter() - t_capture_setup, 3)
 
@@ -1884,12 +2056,13 @@ def run_single_trial(
         # arrives, so stop() waits forever. (Every other call site in this file
         # already stops it in this order.)
         _safe_timestamp_stop(timestamp_monitor)
-        _stop_with_timeout("sync_generator", sync_generator.stop)
+        _stop_execution_trigger("execute_exception")
         # NOTE: rcc.stop() pauses the current capture (record / stream).
         # Do NOT call rcc.end() here — that tears down the remote camera
         # controller, which the next trial still needs.
         _stop_with_timeout("rcc", rcc.stop)
-        # Persist per-candidate fail so we don't pick the same one again.
+        # Persist the outcome for audit/resume. The process-local attempted set
+        # above, not this failure record, prevents reuse in this session.
         if result.scene_info is not None:
             try:
                 _write_candidate_outcome(
@@ -1951,6 +2124,21 @@ def run_single_trial(
             time.perf_counter() - t_auto_label_infer, 3)
         timing["auto_label_lift_s"] = round(
             time.perf_counter() - t_auto_label, 3)
+        if trial_scope is not None:
+            _validation_outcome = (
+                "success" if auto_succ_lift is True else
+                "failure" if auto_succ_lift is False else "unjudgeable"
+            )
+            trial_scope.event(
+                "grasp.validation_result", phase="validation", kind="result",
+                parent_id=episode_span, outcome=_validation_outcome,
+                scene_info=result.scene_info, success=auto_succ_lift,
+                classification=_validation_outcome,
+                reason=auto_label_info.get("reason"),
+                covered=auto_label_info.get("covered"),
+                expected=auto_label_info.get("expected"),
+                source="auto_label_charuco",
+            )
         if auto_label_info.get("reason"):
             print(f"    [auto-label] FAILED ({auto_label_info['reason']})")
         else:
@@ -1959,12 +2147,13 @@ def run_single_trial(
                   f"{auto_label_info.get('expected')}")
 
         # Charuco fail → don't place, recover via reset_hybrid (self-collision
-        # + placed-obj collision aware). Record fail to candidate dir so this
-        # grasp is skip_done-filtered on the next trial.
+        # + placed-obj collision aware). This session already excludes the
+        # physically attempted grasp; the result file records the outcome.
         # None = the label could not be JUDGED (no images captured), which is
         # not the robot failing. Recording it as a candidate failure would
-        # blacklist a grasp that may well have worked, so the trial is voided
-        # instead: recover the arm, write nothing to the candidate dir.
+        # permanently label a grasp that may well have worked, so the trial is
+        # voided instead: recover the arm, write nothing to the candidate dir.
+        # It still stays excluded for the remainder of this live session.
         _label_unjudgeable = auto_succ_lift is None
         if not auto_succ_lift:
             if _label_unjudgeable:
@@ -1975,7 +2164,7 @@ def run_single_trial(
                 print("    [auto-label] charuco FAIL — recovering (reset_hybrid)")
             _stop_with_timeout("executor.recording", executor.stop_recording)
             _safe_timestamp_stop(timestamp_monitor)
-            _stop_with_timeout("sync_generator", sync_generator.stop)
+            _stop_execution_trigger("lift_label_failed")
             # Release (squeeze→grasp→pregrasp gradient) so reset_hybrid's
             # pregrasp→openpose slow interp starts from the right state.
             t_release_and_reset = time.perf_counter()
@@ -1997,8 +2186,8 @@ def run_single_trial(
             _rcc_start(rcc, "stream", False, fps=args.stream_fps)
             timing["release_and_reset_s"] = round(
                 time.perf_counter() - t_release_and_reset, 3)
-            # Persist fail to the candidate dir (skip_done filter on next trial).
-            # Skipped when the label was unjudgeable — see above.
+            # Persist a judged failure; skip this write when the label was
+            # unjudgeable. Same-session exclusion is independent of this file.
             if result.scene_info is not None and not _label_unjudgeable:
                 _write_candidate_outcome(
                     args, hand, obj, result.scene_info,
@@ -2329,7 +2518,7 @@ def run_single_trial(
     t_execution_teardown = time.perf_counter()
     _stop_with_timeout("rcc", rcc.stop)
     _safe_timestamp_stop(timestamp_monitor)
-    _stop_with_timeout("sync_generator", sync_generator.stop)
+    _stop_execution_trigger("execution_complete")
     timing["execution_teardown_s"] = round(
         time.perf_counter() - t_execution_teardown, 3)
 
@@ -2468,6 +2657,18 @@ def run_single_trial(
             # streak boundary.
             _mark_grasp_validation_started("manual_label_started")
             succ, note = get_label()
+            if trial_scope is not None:
+                trial_scope.event(
+                    "grasp.validation_result", phase="validation", kind="result",
+                    parent_id=episode_span,
+                    outcome=("success" if succ is True else
+                             "failure" if succ is False else "unjudgeable"),
+                    scene_info=result.scene_info, success=succ,
+                    classification=("success" if succ is True else
+                                    "failure" if succ is False else
+                                    "unjudgeable"),
+                    reason=note, source="manual_label",
+                )
         except KeyboardInterrupt:
             print("\n[interrupted] Releasing and cleaning up...")
             executor.release(result)
@@ -2531,10 +2732,10 @@ def run_single_trial(
     _save_result(trial_result)
 
     # Persist result back to the candidate dir for ALL scenes (table, wall,
-    # shelf, etc.) — both success AND fail. This is what
-    # skip_done / skip_scenes_with_success read on the next trial to avoid
-    # re-attempting the same candidate. Reposition trials don't write here;
-    # their stats.json is updated separately above.
+    # shelf, etc.) — both success AND fail. Success records drive coverage and
+    # completed-scene filtering; failures remain available after a fresh
+    # process. The in-memory set prevents reuse during this session.
+    # Reposition trials don't write here; their stats.json is updated above.
     if (succ is not None and result.scene_info is not None
             and not reposition_mode):
         _write_candidate_outcome(
@@ -2552,7 +2753,11 @@ def run_single_trial(
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
-def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
+def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
+         pipeline_trace: Optional[PipelineTrace] = None):
+    owns_pipeline_trace = pipeline_trace is None
+    if pipeline_trace is None:
+        pipeline_trace = PipelineTrace()
     parser = argparse.ArgumentParser()
     parser.add_argument("--obj", type=str, required=True)
     parser.add_argument("--grasp_version", type=str, default="v8",
@@ -2635,6 +2840,19 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
     parser.add_argument("--stream_fps", type=int, default=10)
     parser.add_argument("--stream_warmup_s", type=float, default=2.0)
     parser.add_argument(
+        "--external-sync-cue", action="store_true",
+        help="Emit start/end TTL bursts for an LED visible in the separately "
+             "recorded external-camera video.",
+    )
+    parser.add_argument(
+        "--external-sync-cue-duration-s", type=float, default=1.2,
+        help="Duration of each external-video LED burst (default: 1.2 s).",
+    )
+    parser.add_argument(
+        "--external-sync-cue-fps", type=int, default=5,
+        help="TTL pulse rate for the external-video LED cue (default: 5 Hz).",
+    )
+    parser.add_argument(
         "--charuco-preflight", choices=["prompt", "measure", "skip"],
         default="prompt",
         help="run_pipeline only: empty-board Charuco measurement before the "
@@ -2647,6 +2865,10 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
         parser.error("run_auto supports only --grasp_version v8; legacy asset pools are disabled")
     if args.max_consecutive_rotates < 0:
         parser.error("--max_consecutive_rotates must be >= 0")
+    if args.external_sync_cue_duration_s <= 0:
+        parser.error("--external-sync-cue-duration-s must be > 0")
+    if args.external_sync_cue_fps <= 0:
+        parser.error("--external-sync-cue-fps must be > 0")
     if args.exp_name is None:
         args.exp_name = args.grasp_version
     if args.isolate_experiment:
@@ -2664,6 +2886,21 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
     scene_prefix = args.scene if args.scene != "table" else ""
     if args.success_only:
         scene_prefix = f"{scene_prefix}_success_only" if scene_prefix else "success_only"
+
+    sub = f"{scene_prefix}/{args.hand}" if scene_prefix else args.hand
+    trace_dir = (
+        Path(project_dir) / "experiment" / args.exp_name / sub / args.obj /
+        "_pipeline_runs" / pipeline_trace.run_id
+    )
+    pipeline_trace.bind(
+        trace_dir,
+        command="run_pipeline" if pose_adjust_handler is not None else "run_auto",
+        arguments=vars(args),
+        object=args.obj, hand=args.hand, arm=args.arm,
+        scene=args.scene, experiment=args.exp_name,
+    )
+    startup_span = pipeline_trace.begin(
+        phase="startup", kind="setup", name="session_initialization")
 
     # Mesh / FoundPose assets sanity check.
     # v8 candidates are expressed against object_processing. FoundPose must
@@ -2756,11 +2993,15 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
         # can evaluate the shared live object-proximity speed profile.
         executor.set_speed_profile_planner(planner)
         # Park OUT of the cameras' view before the first perception so the arm
-        # never occludes the object (the xarm's INIT pose is already clear).
+        # never occludes the object.
         print("[executor] homing to clear-view...")
         executor.home(clear_view=True)
     else:
         executor = RealExecutor(hand_name=args.hand)
+        # Match the Franka startup contract: establish a known, calibrated
+        # arm/hand pose before the empty-board preflight and first perception.
+        print("[executor] homing to clear-view...")
+        executor.home(clear_view=True)
 
     def _cleanup():
         print("\n[cleanup] Stopping hardware...")
@@ -2785,6 +3026,7 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
                 intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
                 capture_ips=pc_ips, n_cameras=len(intrinsics_full),
                 scene_prefix=scene_prefix,
+                pipeline_trace=pipeline_trace.scoped(parent_id=startup_span),
             )
             if isinstance(startup_result, dict) and startup_result.get("cancel"):
                 startup_cancelled = True
@@ -2802,13 +3044,40 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
     # perception.  Keep this one session-start gate; recovery retries never
     # return here, so rotate/reorient remain fully automatic afterwards.
     if args.auto and not startup_cancelled:
+        operator_span = pipeline_trace.begin(
+            phase="operator", kind="wait", name="initial_object_placement",
+            parent_id=startup_span)
         try:
             cmd = input("[auto] Place the object, then press Enter to start "
                         "the automatic session (q to quit): ").strip().lower()
         except KeyboardInterrupt:
             cmd = "q"
+        pipeline_trace.end(
+            operator_span,
+            outcome=("aborted" if cmd == "q" else "success"),
+            response=("quit" if cmd == "q" else "continue"),
+        )
         if cmd == "q":
             startup_cancelled = True
+
+    if not startup_cancelled:
+        try:
+            _emit_external_sync_cue(
+                sync_generator, pipeline_trace, label="pipeline_start",
+                enabled=args.external_sync_cue,
+                duration_s=args.external_sync_cue_duration_s,
+                fps=args.external_sync_cue_fps,
+            )
+        except Exception as cue_exc:
+            # A missing LED/cable must not make the robot session unusable;
+            # UTC/monotonic clock anchors remain available for manual sync.
+            print(f"[sync] external start cue failed: {cue_exc!r}")
+
+    pipeline_trace.end(
+        startup_span,
+        outcome=("aborted" if startup_cancelled else "success"),
+        startup_cancelled=startup_cancelled,
+    )
 
     results: List[dict] = []
     trial = 0
@@ -2818,10 +3087,17 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
     # tabletop stem: a yaw rotation can change that classification while still
     # being part of the same uninterrupted recovery sequence.
     rotate_recovery_state: Dict[str, object] = {"count": 0}
+    # Once a candidate reaches real execution, keep it out of later trials in
+    # this process. Persisted failures remain retryable after a fresh session.
+    session_attempted_candidates: set[tuple[str, str, str]] = set()
     campaign_state_root = _candidate_state_root(args, args.hand, args.obj)
     try:
         while not startup_cancelled:
             trial += 1
+            attempt_id = f"attempt_{trial:04d}"
+            episode_id = (
+                f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+                f"_{attempt_id}")
             print(f"\n{'#'*60}\n# Trial {trial}\n{'#'*60}")
             chime.info()
             if not args.auto and not resume_after_pose_adjust:
@@ -2851,6 +3127,7 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
                 _stems_before = _tabletop_stems(
                     args.obj, get_obj_root(args.grasp_version))
                 _rem_before = {}
+                _sets_before = {}
                 # First call walks the whole candidate tree on the NFS mount;
                 # say so, or the trial looks hung before [1/6] prints.
                 print(f"[coverage] snapshot over {len(_stems_before)} tabletop "
@@ -2860,6 +3137,22 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
                                           version=args.grasp_version,
                                           success_root=campaign_state_root)
                     _rem_before[_s] = (len(_u) if _u is not None else None)
+                    _sets_before[_s] = (sorted(int(v) for v in _u)
+                                        if _u is not None else None)
+                coverage_ref = pipeline_trace.write_artifact_json(
+                    f"artifacts/coverage/{attempt_id}_before.json",
+                    {"attempt_id": attempt_id, "object": args.obj,
+                     "uncovered_scene_ids_by_tabletop": _sets_before},
+                )
+                pipeline_trace.scoped(
+                    episode_id=episode_id,
+                    attempt_id=attempt_id,
+                ).event(
+                    "coverage.snapshot_before", phase="coverage",
+                    kind="decision",
+                    attributes={"artifact": coverage_ref,
+                                "remaining_by_tabletop": _rem_before},
+                )
 
             tr = run_single_trial(
                 args, scene_prefix=scene_prefix,
@@ -2870,6 +3163,10 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
                 reorient_handler=reorient_handler,
                 tabletop_geometry=session_tabletop_geometry,
                 rotate_recovery_state=rotate_recovery_state,
+                pipeline_trace=pipeline_trace,
+                attempt_id=attempt_id,
+                episode_id=episode_id,
+                session_attempted_candidates=session_attempted_candidates,
             )
             if tr.get("retry_current_trial"):
                 if tr.get("reason") in ("reoriented", "reoriented_manual"):
@@ -2910,11 +3207,14 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
                 lines = []
                 total_now = 0
                 total_before = 0
+                _sets_after = {}
                 for _s, _b in _rem_before.items():
                     _u = uncovered_scenes(args.obj, _s, hand=args.hand,
                                           version=args.grasp_version,
                                           success_root=campaign_state_root)
                     _n = (len(_u) if _u is not None else None)
+                    _sets_after[_s] = (sorted(int(v) for v in _u)
+                                       if _u is not None else None)
                     if _b is None or _n is None:
                         lines.append(f"      pose={_s}: N/A")
                         continue
@@ -2929,6 +3229,25 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
                 print(f"      TOTAL remaining: {total_now} "
                       f"(was {total_before}, "
                       f"-{total_before - total_now} this trial)")
+                coverage_ref = pipeline_trace.write_artifact_json(
+                    f"artifacts/coverage/{attempt_id}_after.json",
+                    {"attempt_id": attempt_id, "object": args.obj,
+                     "uncovered_scene_ids_by_tabletop": _sets_after,
+                     "remaining_before": _rem_before,
+                     "remaining_after": {
+                         key: (len(value) if value is not None else None)
+                         for key, value in _sets_after.items()},
+                    },
+                )
+                pipeline_trace.scoped(
+                    episode_id=tr.get("dir_idx"),
+                    attempt_id=attempt_id,
+                ).event(
+                    "coverage.snapshot_after", phase="coverage",
+                    kind="result",
+                    attributes={"artifact": coverage_ref,
+                                "newly_covered_total": total_before - total_now},
+                )
 
             _write_experiment_coverage_progress(
                 args, args.hand, args.obj, get_obj_root(args.grasp_version))
@@ -2943,6 +3262,18 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
                 print(f"\n    --max_trials {args.max_trials} reached — stopping loop.")
                 break
     finally:
+        cleanup_span = pipeline_trace.begin(
+            phase="cleanup", kind="setup", name="hardware_cleanup")
+        if not startup_cancelled:
+            try:
+                _emit_external_sync_cue(
+                    sync_generator, pipeline_trace, label="pipeline_end",
+                    enabled=args.external_sync_cue,
+                    duration_s=args.external_sync_cue_duration_s,
+                    fps=args.external_sync_cue_fps,
+                )
+            except Exception as cue_exc:
+                print(f"[sync] external end cue failed: {cue_exc!r}")
         # Summary + cleanup.
         print(f"\n{'='*60}\nSUMMARY: {args.obj} x {len(results)} trials")
         n_succ = sum(1 for r in results if r.get("success"))
@@ -2957,7 +3288,7 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
                                     args.obj, "summary.json")
         os.makedirs(os.path.dirname(summary_path), exist_ok=True)
         with open(summary_path, "w") as f:
-            json.dump(results, f, indent=2, default=str)
+            json.dump(_pipeline_result_value(results), f, indent=2)
 
         try:
             executor.shutdown()
@@ -2976,6 +3307,9 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None):
             orch.close()
         except Exception:
             pass
+        pipeline_trace.end(cleanup_span, outcome="success")
+        if owns_pipeline_trace:
+            pipeline_trace.close(outcome="success")
 
 
 if __name__ == "__main__":

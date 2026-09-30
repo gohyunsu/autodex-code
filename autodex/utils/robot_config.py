@@ -7,6 +7,16 @@ XARM_INIT = np.array([
 
 XARM_INSPIRE_INIT = XARM_INIT.copy()
 
+# Perception parking poses.  Both physical arms use the same convention:
+# rotate only the base joint 40 degrees away from the tabletop workspace while
+# preserving the calibrated approach-ready init configuration.  Executors
+# return to INIT immediately before executing a planned grasp.
+CLEAR_VIEW_J0_OFFSET_RAD = np.deg2rad(-40.0)
+XARM_CLEAR_VIEW = XARM_INIT.copy()
+XARM_CLEAR_VIEW[0] += CLEAR_VIEW_J0_OFFSET_RAD
+XARM_INSPIRE_CLEAR_VIEW = XARM_INSPIRE_INIT.copy()
+XARM_INSPIRE_CLEAR_VIEW[0] += CLEAR_VIEW_J0_OFFSET_RAD
+
 # ── Allegro ──────────────────────────────────────────────────────────────────
 ALLEGRO_INIT = np.array([
     0.0, 1.5707, 0.0, 0.0,
@@ -70,6 +80,8 @@ try:
 except Exception:
     FR3_INIT = np.array([-0.00315, 0.02135, 0.00298, -2.32733,
                          -0.00027, 3.95842, 0.78357])
+FR3_CLEAR_VIEW = FR3_INIT.copy()
+FR3_CLEAR_VIEW[0] += CLEAR_VIEW_J0_OFFSET_RAD
 # NOTE: inspire hand is mounted 180° reversed on the flange; that is modeled by
 # the URDF flange_to_hand yaw (rotated +pi). The home qpos itself is left as the
 # calibrated home — at this config the (remounted) hand is already 180°-rotated

@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 from paradex.io.robot_controller import get_arm, get_hand  # noqa: F401
 from paradex.io.camera_system.remote_camera_controller import remote_camera_controller
 from paradex.utils.system import network_info, get_pc_ip, get_camera_list
-from paradex.calibration.utils import save_current_C2R, save_current_camparam, load_c2r
+from paradex.calibration.utils import save_current_camparam, load_c2r
 
 from autodex.utils.path import project_dir
 from autodex.utils.conversion import cart2se3, se32cart
@@ -46,6 +46,7 @@ from autodex.utils.path import get_obj_root
 from autodex.perception.init_orchestrator import InitOrchestrator
 
 from src.execution.scene_cfg import pose_world_to_scene_cfg
+from src.execution.handeye import save_arm_C2R
 from src.experiment.reset.tabletop_pose import classify_tabletop_pose
 from src.execution.franka_executor import PLACE_VERTICAL_TRAVEL_M
 
@@ -261,6 +262,7 @@ def rotate_from_live_scene(
     target_y: float = CHARUCO_BOARD_CENTER_Y,
     tabletop_pose_stem: str | None = None,
     candidate_order: list | None = None,
+    excluded_candidates: set | None = None,
     priority_map: dict | None = None,
     scene_type_filter: str | None = None,
     scene_id: str | None = None,
@@ -270,6 +272,7 @@ def rotate_from_live_scene(
     cyl_axis_local: np.ndarray | None = None,
     cyl_yaw_grid: np.ndarray | None = None,
     rcc=None,
+    pipeline_trace=None,
 ) -> dict:
     """Rotate/reposition using a scene that has already been perceived.
 
@@ -299,6 +302,7 @@ def rotate_from_live_scene(
         skip_scenes_with_success=skip_scenes_with_success,
         tabletop_pose_stem=tabletop_pose_stem,
         candidate_order=candidate_order,
+        excluded_candidates=excluded_candidates,
         run_ik=True, return_scene_info=True,
     )
     base_ok = ~(filt | ikf)
@@ -327,6 +331,40 @@ def rotate_from_live_scene(
           f"preplace(+10cm)={int(endpoint_stage_ok[2].sum())}  "
           f"descend(-10cm)={int(endpoint_stage_ok[3].sum())}  "
           f"all-endpoints={int(endpoint_ok.sum())}")
+
+    if pipeline_trace is not None:
+        rows = []
+        occurrence = {}
+        for idx, info in enumerate(scene_infos):
+            key = tuple(str(value) for value in info)
+            variant = occurrence.get(key, 0)
+            occurrence[key] = variant + 1
+            rows.append({
+                "candidate_id": f"{'/'.join(key)}@variant{variant:02d}",
+                "candidate_index": idx,
+                "scene_info": list(key),
+                "base_filter_passed": bool(base_ok[idx]),
+                "lift_endpoint_ik": bool(endpoint_stage_ok[0, idx]),
+                "transfer_endpoint_ik": bool(endpoint_stage_ok[1, idx]),
+                "preplace_endpoint_ik": bool(endpoint_stage_ok[2, idx]),
+                "release_endpoint_ik": bool(endpoint_stage_ok[3, idx]),
+                "all_endpoints_feasible": bool(endpoint_ok[idx]),
+            })
+        artifact = pipeline_trace.write_artifact_json(
+            f"artifacts/recovery/{getattr(pipeline_trace, 'attempt_id', None) or 'session'}"
+            "_rotation_candidates.json",
+            {"target": {"x": target_x, "y": target_y,
+                        "yaw_deg": target_yaw_deg},
+             "candidates": rows},
+        )
+        pipeline_trace.event(
+            "recovery.rotation.endpoint_preflight",
+            phase="recovery", kind="decision",
+            outcome=("success" if endpoint_ok.any() else "failure"),
+            artifact=artifact, n_candidates=len(wse),
+            n_base_feasible=int(base_ok.sum()),
+            n_endpoint_feasible=int(endpoint_ok.sum()),
+        )
 
     candidate_indices = [int(i) for i in np.flatnonzero(endpoint_ok)]
     if priority_map is not None:
@@ -391,6 +429,11 @@ def rotate_from_live_scene(
         del remaining[selected_local_idx]
 
     if result is None:
+        if pipeline_trace is not None:
+            pipeline_trace.event(
+                "recovery.rotation.plan_rejected",
+                phase="recovery", kind="decision", outcome="failure",
+                preflight_rejections=preflight_rejections)
         return {
             "success": False,
             "reason": "rotation_preflight_failed",
@@ -408,8 +451,17 @@ def rotate_from_live_scene(
             print(f"[rotate] rcc.stop before motion failed: {exc!r}")
 
     try:
+        motion_span = (pipeline_trace.begin(
+            phase="recovery", kind="motion", name="rotation_pick_and_lift")
+            if pipeline_trace is not None else None)
         s_hand = executor.execute(result, planner=planner, scene_cfg=scene_cfg)
+        if motion_span is not None:
+            pipeline_trace.end(motion_span, outcome="success",
+                               scene_info=result.scene_info)
     except Exception as exc:
+        if 'motion_span' in locals() and motion_span is not None:
+            pipeline_trace.end(motion_span, outcome="failure",
+                               exception=repr(exc))
         print(f"[rotate] execute failed: {exc!r}")
         try:
             executor.reset_fallback(result, planner=planner, scene_cfg=scene_cfg)
@@ -451,23 +503,18 @@ def rotate_from_live_scene(
     else:
         print("[rotate] transfer plan failed after grasp — placing at current pose")
 
-    place_kwargs = {}
-    if arm == "franka":
-        # Place at the original tabletop height, not ``current_z - 10cm``:
-        # the carry/rotate height is independent of the mandatory 10 cm
-        # perpendicular placement stroke. FrankaExecutor.place() first moves
-        # to this wrist +10cm, then descends vertically by exactly 10cm.
-        obj_place_target = obj_target.copy()
-        obj_place_target[2, 3] = obj_grasp[2, 3]
-        place_kwargs["grasp_wrist"] = (
-            obj_place_target @ np.linalg.inv(obj_in_wrist))
-        if repose_ok:
-            # The yaw-transfer endpoint is normally the same +10cm pose that
-            # place() uses before its perpendicular descent.  Let the
-            # executor verify that fact against the live wrist and skip a
-            # duplicate pre-place transfer when it is true.
-            place_kwargs["preplace_traj"] = traj_repose
-            place_kwargs["preplace_wrist_target"] = wrist_target
+    # Place at the original tabletop height, not ``current_z - 10cm``: the
+    # carry/rotate height is independent of the mandatory 10 cm perpendicular
+    # placement stroke. Both arm adapters now consume this shared contract,
+    # validate the live endpoint, and reuse the yaw transfer or correct it.
+    obj_place_target = obj_target.copy()
+    obj_place_target[2, 3] = obj_grasp[2, 3]
+    place_kwargs = {
+        "placement_wrist": obj_place_target @ np.linalg.inv(obj_in_wrist),
+    }
+    if repose_ok:
+        place_kwargs["preplace_traj"] = traj_repose
+        place_kwargs["preplace_wrist_target"] = wrist_target
     place_info = executor.place(result, planner=planner, scene_cfg=scene_cfg,
                                 **place_kwargs)
     if arm != "franka":
@@ -490,6 +537,13 @@ def rotate_from_live_scene(
     placed = (place_info.get("mode") != "plan_failed"
               and descend_target - descended <= 0.005)
     success = bool(repose_ok and placed)
+    if pipeline_trace is not None:
+        pipeline_trace.event(
+            "recovery.rotation.result", phase="recovery", kind="result",
+            outcome=("success" if success else "failure"),
+            scene_info=result.scene_info, repose_ok=repose_ok, placed=placed,
+            target={"x": target_x, "y": target_y,
+                    "yaw_deg": target_yaw_deg})
     return {
         "success": success,
         "reason": None if success else "rotation_repose_or_place_failed",
@@ -585,7 +639,7 @@ def main():
     dir_idx = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(project_dir) / "experiment" / "rotate_obj_yaw" / args.obj / dir_idx
     out_dir.mkdir(parents=True, exist_ok=True)
-    save_current_C2R(str(out_dir))
+    save_arm_C2R(out_dir, args.arm)
     save_current_camparam(str(out_dir))
 
     # 1. Perception

@@ -59,3 +59,5 @@ rebuttal/cache/*
 rebuttal/scenes/*
 
 data/*
+# lift reachability run output accidentally written to repo root
+/inspire/

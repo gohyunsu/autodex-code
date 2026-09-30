@@ -1,0 +1,20 @@
+# Minimal, pinned user-space dependencies for offline AutoDex planning.
+# PyTorch is installed separately from the CUDA 12.8 wheel index by
+# setup_capture_planner_worker.sh.
+numpy==1.26.4
+numpy-quaternion==2024.0.13
+transforms3d==0.4.2
+scipy==1.15.3
+trimesh==4.10.1
+networkx==3.4.2
+PyYAML==6.0.3
+warp-lang==1.10.1
+yourdfpy==0.0.58
+scikit-image==0.25.2
+importlib-resources==6.5.2
+pybind11==3.0.1
+setuptools-scm==9.2.2
+ninja==1.13.0
+tqdm==4.67.1
+matplotlib==3.10.8
+viser==1.0.16

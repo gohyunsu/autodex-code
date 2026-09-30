@@ -31,7 +31,14 @@ import trimesh
 
 from autodex.utils.conversion import cart2se3
 from autodex.utils.path import obj_path, urdf_path
-from autodex.utils.path import repo_dir, get_scene_dir
+from autodex.utils.path import (
+    get_candidate_path,
+    get_obj_root,
+    get_scene_dir,
+    project_dir,
+    repo_dir,
+    resolve_candidate_object_path,
+)
 from paradex.visualization.robot import RobotModule
 
 
@@ -60,6 +67,8 @@ SELECTED_DIR = None
 ORDER_ROOT = None
 CURRENT_HAND = "allegro"
 OBJ_ROOT = None  # set in main() — overrides default obj_path
+CANDIDATE_ROOT = None
+CANDIDATE_VERSION = None
 
 
 def get_all_objects() -> list:
@@ -128,10 +137,10 @@ def load_selected_grasps(obj_name: str, top_n: int) -> list:
 def list_all_grasps(version: str, obj_name: str, scene_type_filter: str = None) -> list:
     """Walk candidates directory to find all grasps.
     Returns list of (scene_type, scene_id, grasp_name) tuples."""
-    candidate_root = os.path.join(repo_dir, "candidates", CURRENT_HAND)
-    root = os.path.join(candidate_root, version, obj_name)
-    if not os.path.exists(root):
-        print(f"Error: candidates path not found: {root}")
+    candidate_root = get_candidate_path(CURRENT_HAND)
+    root = resolve_candidate_object_path(candidate_root, version, obj_name)
+    if root is None:
+        print(f"Error: candidates path not found: {candidate_root}/{version}/{obj_name}")
         sys.exit(1)
 
     grasps = []
@@ -214,19 +223,36 @@ def load_object_mesh(obj_name: str) -> tuple:
 def find_grasp_path(obj_name: str, scene_type: str,
                     scene_id: str, grasp_name: str) -> str:
     """Find grasp data path from selected_100/."""
-    path = os.path.join(SELECTED_DIR, obj_name, scene_type, scene_id, grasp_name)
+    object_root = resolve_candidate_object_path(
+        CANDIDATE_ROOT or get_candidate_path(CURRENT_HAND),
+        CANDIDATE_VERSION or "selected_100", obj_name,
+    )
+    if object_root is None:
+        object_root = os.path.join(SELECTED_DIR, obj_name)
+    path = os.path.join(object_root, scene_type, scene_id, grasp_name)
     if os.path.exists(path):
         return path
     raise FileNotFoundError(f"Grasp not found: {path}")
 
 
 def load_robot_at_grasp(obj_name: str, scene_type: str,
-                        scene_id: str, grasp_name: str, obj_pose: np.ndarray) -> trimesh.Trimesh:
+                        scene_id: str, grasp_name: str, obj_pose: np.ndarray,
+                        *, wrist_se3_override: np.ndarray | None = None,
+                        grasp_pose_override: np.ndarray | None = None,
+                        wrist_world_override: np.ndarray | None = None,
+                        object_world_override: np.ndarray | None = None) -> trimesh.Trimesh:
     """Load robot hand mesh at the grasp pose. Returns combined trimesh in world frame."""
     grasp_path = find_grasp_path(obj_name, scene_type, scene_id, grasp_name)
 
-    wrist_se3 = np.load(os.path.join(grasp_path, "wrist_se3.npy"))
-    grasp_pose = np.load(os.path.join(grasp_path, "grasp_pose.npy"))
+    wrist_se3 = (np.asarray(wrist_se3_override) if wrist_se3_override is not None
+                 else np.load(os.path.join(grasp_path, "wrist_se3.npy")))
+    grasp_pose = (np.asarray(grasp_pose_override) if grasp_pose_override is not None
+                  else np.load(os.path.join(grasp_path, "grasp_pose.npy")))
+    if wrist_world_override is not None:
+        if object_world_override is None:
+            raise ValueError("--wrist-world-se3 requires --object-world-se3")
+        wrist_se3 = (np.linalg.inv(np.asarray(object_world_override))
+                     @ np.asarray(wrist_world_override))
 
     robot = RobotModule(HAND_URDF[CURRENT_HAND])
 
@@ -273,6 +299,62 @@ def compute_turntable_camera(center: np.ndarray, cam_dist: float,
     return eye, lookat, up
 
 
+def load_calibrated_camera_view(cam_param_dir: str, c2r_path: str,
+                                camera_serial: str) -> dict:
+    """Load one physical camera's orientation in the robot planning frame.
+
+    ``extrinsics.json`` stores Charuco-world -> OpenCV-camera transforms and
+    ``C2R.npy`` stores robot-base -> Charuco-world.  The resulting camera pose
+    is therefore ``inv(C2R) @ inv(world_to_camera)``.  OpenCV camera +z is the
+    viewing direction and -y is image-up.
+
+    Only the calibrated orientation and vertical field of view are reused by
+    the thumbnail renderer.  The camera is translated along that viewing axis
+    to fit the object and hand, keeping small square cards legible.
+    """
+    intrinsics_path = os.path.join(cam_param_dir, "intrinsics.json")
+    extrinsics_path = os.path.join(cam_param_dir, "extrinsics.json")
+    with open(intrinsics_path) as stream:
+        intrinsics = json.load(stream)
+    with open(extrinsics_path) as stream:
+        extrinsics = json.load(stream)
+    if camera_serial not in intrinsics or camera_serial not in extrinsics:
+        raise KeyError(
+            f"camera {camera_serial} is absent from {cam_param_dir}")
+
+    ext = np.asarray(extrinsics[camera_serial], dtype=np.float64)
+    if ext.size == 12:
+        world_to_camera = np.eye(4, dtype=np.float64)
+        world_to_camera[:3, :] = ext.reshape(3, 4)
+    elif ext.size == 16:
+        world_to_camera = ext.reshape(4, 4)
+    else:
+        raise ValueError(
+            f"camera {camera_serial} extrinsic must contain 12 or 16 values")
+
+    c2r = np.asarray(np.load(c2r_path), dtype=np.float64).reshape(4, 4)
+    camera_to_robot = np.linalg.inv(c2r) @ np.linalg.inv(world_to_camera)
+    forward = camera_to_robot[:3, 2]
+    forward /= np.linalg.norm(forward)
+    up = -camera_to_robot[:3, 1]
+    # Remove tiny calibration non-orthogonality before handing the vectors to
+    # Open3D's look-at camera.
+    up = up - forward * np.dot(up, forward)
+    up /= np.linalg.norm(up)
+
+    entry = intrinsics[camera_serial]
+    K = np.asarray(entry["intrinsics_undistort"], dtype=np.float64).reshape(3, 3)
+    height = float(entry["height"])
+    vertical_fov_deg = float(np.degrees(2.0 * np.arctan(height / (2.0 * K[1, 1]))))
+    return {
+        "serial": camera_serial,
+        "forward": forward,
+        "up": up,
+        "vertical_fov_deg": vertical_fov_deg,
+        "camera_to_robot": camera_to_robot,
+    }
+
+
 _renderer = None
 _renderer_size = (None, None)
 
@@ -282,13 +364,17 @@ def get_renderer(width, height):
     global _renderer, _renderer_size
     if _renderer is None or _renderer_size != (width, height):
         _renderer = o3d.visualization.rendering.OffscreenRenderer(width, height)
+        # Filament's post-processing color grading maps a nominal white scene
+        # background to light gray.  Disable it so saved render assets start
+        # with a literal RGB(255, 255, 255) background.
+        _renderer.scene.view.set_post_processing(False)
         _renderer_size = (width, height)
     return _renderer
 
 
 def render_turntable(obj_mesh_o3d, robot_mesh_o3d, center, cam_dist,
                      elevation_deg, fov_deg, n_frames, width, height_px,
-                     output_dir):
+                     output_dir, azimuth_deg=0.0, camera_view=None):
     """Render turntable frames using Open3D offscreen renderer."""
     renderer = get_renderer(width, height_px)
 
@@ -308,10 +394,18 @@ def render_turntable(obj_mesh_o3d, robot_mesh_o3d, center, cam_dist,
     renderer.scene.scene.enable_sun_light(True)
     renderer.scene.set_background([1.0, 1.0, 1.0, 1.0])
 
-    angles = np.linspace(0, 2 * np.pi, n_frames, endpoint=False)
+    angles = (np.radians(float(azimuth_deg))
+              + np.linspace(0, 2 * np.pi, n_frames, endpoint=False))
 
     for i, angle in enumerate(angles):
-        eye, lookat, up = compute_turntable_camera(center, cam_dist, elevation_deg, angle)
+        if camera_view is None:
+            eye, lookat, up = compute_turntable_camera(
+                center, cam_dist, elevation_deg, angle)
+        else:
+            forward = np.asarray(camera_view["forward"], dtype=np.float64)
+            eye = np.asarray(center, dtype=np.float64) - cam_dist * forward
+            lookat = np.asarray(center, dtype=np.float64)
+            up = np.asarray(camera_view["up"], dtype=np.float64)
         renderer.setup_camera(fov_deg, lookat, eye, up)
 
         img = renderer.render_to_image()
@@ -335,7 +429,7 @@ def frames_to_video(frame_dir: str, output_path: str, fps: int):
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"ffmpeg error: {result.stderr}")
+        raise RuntimeError(f"ffmpeg error: {result.stderr}")
 
 
 def render_single_grasp(obj_name, scene_type, scene_id, grasp_name,
@@ -345,29 +439,70 @@ def render_single_grasp(obj_name, scene_type, scene_id, grasp_name,
         if obj_mesh is None or obj_pose is None:
             obj_mesh, obj_pose = load_object_mesh(obj_name)
 
-        robot_mesh = load_robot_at_grasp(obj_name, scene_type, scene_id, grasp_name, obj_pose)
+        def _load_override(name):
+            path = getattr(args, name, None)
+            return np.load(path) if path else None
+
+        object_world_override = _load_override("object_world_se3")
+        if (object_world_override is None
+                and args.object_world_pose_json is not None):
+            object_world_override = cart2se3(
+                json.loads(args.object_world_pose_json))
+        if object_world_override is None and args.object_world_pose is not None:
+            object_world_override = cart2se3(args.object_world_pose)
+        if object_world_override is not None:
+            # Keep the object and wrist in the planning world's observed rest
+            # pose. This is required for a fixed pose-matched render; using the
+            # catalog standing pose would erase the orientation seen in-video.
+            obj_pose = np.asarray(object_world_override, dtype=np.float64)
+
+        robot_mesh = load_robot_at_grasp(
+            obj_name, scene_type, scene_id, grasp_name, obj_pose,
+            wrist_se3_override=_load_override("wrist_se3"),
+            grasp_pose_override=_load_override("grasp_pose"),
+            wrist_world_override=_load_override("wrist_world_se3"),
+            object_world_override=object_world_override,
+        )
 
         obj_mesh_world = obj_mesh.copy()
         obj_mesh_world.apply_transform(obj_pose)
 
-        obj_mesh_o3d = trimesh_to_o3d(obj_mesh_world)
+        obj_mesh_o3d = trimesh_to_o3d(
+            obj_mesh_world,
+            color=COLOR_OBJECT if args.no_object_texture else None,
+        )
         robot_mesh_o3d = trimesh_to_o3d(robot_mesh, color=COLOR_ROBOT)
+
+        camera_view = None
+        render_fov = args.fov
+        if args.camera_serial is not None:
+            if not args.cam_param_dir or not args.c2r:
+                raise ValueError(
+                    "--camera-serial requires --cam-param-dir and --c2r")
+            camera_view = load_calibrated_camera_view(
+                args.cam_param_dir, args.c2r, args.camera_serial)
+            render_fov = camera_view["vertical_fov_deg"]
 
         combined = trimesh.util.concatenate([obj_mesh_world, robot_mesh])
         aspect_ratio = args.width / args.height
         center, cam_dist, elevation_deg = compute_auto_camera(
-            combined, fov_deg=args.fov, aspect_ratio=aspect_ratio,
+            combined, fov_deg=render_fov, aspect_ratio=aspect_ratio,
             elevation_deg=args.elevation, padding=args.padding,
         )
 
         temp_dir = tempfile.mkdtemp(prefix="turntable_")
         render_turntable(
             obj_mesh_o3d, robot_mesh_o3d, center, cam_dist, elevation_deg,
-            args.fov, args.frames, args.width, args.height, temp_dir,
+            render_fov, 1 if args.still else args.frames,
+            args.width, args.height, temp_dir, args.azimuth,
+            camera_view=camera_view,
         )
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        frames_to_video(temp_dir, output_path, args.fps)
+        if args.still:
+            shutil.copy2(os.path.join(temp_dir, "frame_0000.png"), output_path)
+        else:
+            frames_to_video(temp_dir, output_path, args.fps)
         shutil.rmtree(temp_dir)
         return True
     except Exception as e:
@@ -381,7 +516,10 @@ def render_object_only(obj_name, output_path, args):
         obj_mesh, obj_pose = load_object_mesh(obj_name)
         obj_mesh_world = obj_mesh.copy()
         obj_mesh_world.apply_transform(obj_pose)
-        obj_mesh_o3d = trimesh_to_o3d(obj_mesh_world)
+        obj_mesh_o3d = trimesh_to_o3d(
+            obj_mesh_world,
+            color=COLOR_OBJECT if args.no_object_texture else None,
+        )
 
         aspect_ratio = args.width / args.height
         center, cam_dist, elevation_deg = compute_auto_camera(
@@ -399,7 +537,9 @@ def render_object_only(obj_name, output_path, args):
         renderer.scene.set_background([1.0, 1.0, 1.0, 1.0])
 
         temp_dir = tempfile.mkdtemp(prefix="turntable_obj_")
-        angles = np.linspace(0, 2 * np.pi, args.frames, endpoint=False)
+        frame_count = 1 if args.still else args.frames
+        angles = (np.radians(float(args.azimuth))
+                  + np.linspace(0, 2 * np.pi, frame_count, endpoint=False))
         for i, angle in enumerate(angles):
             eye, lookat, up = compute_turntable_camera(center, cam_dist, elevation_deg, angle)
             renderer.setup_camera(args.fov, lookat, eye, up)
@@ -407,7 +547,10 @@ def render_object_only(obj_name, output_path, args):
             o3d.io.write_image(os.path.join(temp_dir, f"frame_{i:04d}.png"), img)
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        frames_to_video(temp_dir, output_path, args.fps)
+        if args.still:
+            shutil.copy2(os.path.join(temp_dir, "frame_0000.png"), output_path)
+        else:
+            frames_to_video(temp_dir, output_path, args.fps)
         shutil.rmtree(temp_dir)
         return True
     except Exception as e:
@@ -439,6 +582,31 @@ def main():
     parser.add_argument("--elevation", type=float, default=25.0, help="Camera elevation angle in degrees (default: 25)")
     parser.add_argument("--padding", type=float, default=1.3, help="Camera padding multiplier (default: 1.3)")
     parser.add_argument("--output", type=str, default=None, help="Output video path (single grasp mode)")
+    parser.add_argument("--still", action="store_true",
+                        help="Write one fixed-pose PNG instead of a turntable video")
+    parser.add_argument("--azimuth", type=float, default=0.0,
+                        help="Fixed world-frame camera azimuth in degrees")
+    parser.add_argument("--camera-serial", type=str, default=None,
+                        help=("Use this calibrated camera's orientation and FOV; "
+                              "requires --cam-param-dir and --c2r"))
+    parser.add_argument("--cam-param-dir", type=str, default=None,
+                        help="Directory containing intrinsics.json and extrinsics.json")
+    parser.add_argument("--c2r", type=str, default=None,
+                        help="Episode C2R.npy used to express the camera in robot frame")
+    parser.add_argument("--no-object-texture", action="store_true",
+                        help="Render the object with one neutral material")
+    parser.add_argument("--wrist-se3", type=str, default=None,
+                        help="Exact object-local selected wrist transform (.npy)")
+    parser.add_argument("--wrist-world-se3", type=str, default=None,
+                        help="Exact world-frame selected wrist transform (.npy)")
+    parser.add_argument("--object-world-se3", type=str, default=None,
+                        help="World-frame object transform paired with --wrist-world-se3")
+    parser.add_argument("--object-world-pose", type=float, nargs=7, default=None,
+                        help="Object xyz+quaternion planning pose paired with --wrist-world-se3")
+    parser.add_argument("--object-world-pose-json", type=str, default=None,
+                        help="Object xyz+quaternion planning pose as one JSON array")
+    parser.add_argument("--grasp-pose", type=str, default=None,
+                        help="Exact selected hand joint pose (.npy)")
     parser.add_argument("--parallel", type=int, default=1, help="Number of parallel workers for batch-all (default: 1)")
     parser.add_argument("--object-only", action="store_true",
                         help="Render object-only turntable (no robot). Requires --obj. Output: {output-dir}/{obj}/000/turntable.mp4")
@@ -446,15 +614,18 @@ def main():
 
     # Set globals based on --hand
     global SELECTED_DIR, ORDER_ROOT, CURRENT_HAND, OBJ_ROOT
+    global CANDIDATE_ROOT, CANDIDATE_VERSION
     CURRENT_HAND = args.hand
-    OBJ_ROOT = args.obj_root
+    OBJ_ROOT = args.obj_root or get_obj_root(args.version)
     if args.output_dir is None:
         args.output_dir = os.path.join("data", args.hand)
-    candidate_root = os.path.join(repo_dir, "candidates", args.hand)
+    candidate_root = get_candidate_path(args.hand)
+    CANDIDATE_ROOT = candidate_root
+    CANDIDATE_VERSION = args.version
     selected_dir = os.path.join(candidate_root, "selected_100")
     # Fall back to candidates/{hand}/{version} when selected_100 doesn't exist
     SELECTED_DIR = selected_dir if os.path.isdir(selected_dir) else os.path.join(candidate_root, args.version)
-    ORDER_ROOT = os.path.join(repo_dir, "order", args.hand, args.version)
+    ORDER_ROOT = os.path.join(project_dir, "order", args.hand, args.version)
 
     # ---- Object-only mode ----
     if args.object_only:

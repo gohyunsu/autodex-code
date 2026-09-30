@@ -13,26 +13,79 @@ Usage:
     executor.release(plan_result)
     executor.shutdown()
 """
+from __future__ import annotations
+
 import datetime
 import os
 import sys
 import time
-from typing import Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, TYPE_CHECKING, Optional
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from autodex.planner import PlanResult
 from autodex.executor.lift_policy import LiftExecutionError, check_lift_start
 from autodex.executor.timing import (
     finish_pickup_timing, finish_place_timing, new_pickup_timing,
     new_place_timing,
 )
-from autodex.timing import TimingRecorder
+from autodex.utils.conversion import cart2se3
 from autodex.utils.robot_config import (
-    XARM_INIT, XARM_INSPIRE_INIT,
+    XARM_INIT, XARM_INSPIRE_INIT, XARM_CLEAR_VIEW, XARM_INSPIRE_CLEAR_VIEW,
     ALLEGRO_INIT, ALLEGRO_LINK6_TO_WRIST,
     INSPIRE_INIT, INSPIRE_LINK6_TO_WRIST, INSPIRE_LEFT_LINK6_TO_WRIST,
 )
+
+if TYPE_CHECKING:
+    from autodex.planner import PlanResult
+
+# xArm speed-profile experiment controls.  ``XARM_BASE_SPEED_SCALE`` is the
+# one primary knob: 1.0 reproduces the legacy trajectory rate and per-tick
+# joint-step cap.  The active profile runs free/far motion at 2x and applies a
+# 0.5 multiplier near the object or while holding it, restoring the legacy 1x
+# rate in those two safety-critical states.
+# These values are deliberately xArm-specific; Franka has independent limits
+# and profile constants in src/execution/franka_executor.py.
+XARM_BASE_SPEED_SCALE = 2.0
+XARM_NEAR_SPEED_SCALE = 0.5
+XARM_HELD_SPEED_SCALE = 0.5
+XARM_APPROACH_SLOWDOWN_FAR_M = 0.30
+XARM_APPROACH_SLOWDOWN_NEAR_M = 0.15
+XARM_LEGACY_JOINT_STEP_RAD = 0.05
+# EMA weight on the previous joint target.  This suppresses per-waypoint
+# position kinks without changing nominal trajectory-index playback speed.
+# 0 disables smoothing; values closer to 1 are smoother but add more lag.
+XARM_COMMAND_SMOOTHING = 0.80
+# Smooth changes in trajectory playback rate (for example 2x far -> 1x near)
+# independently of the joint-target EMA above.  Tracking-error thresholds are
+# L2 norms over the six arm joints: phase advancement tapers at SOFT and pauses
+# at HARD until the physical arm catches up.
+XARM_PLAYBACK_RATE_SMOOTHING = 0.85
+XARM_TRACKING_ERROR_SOFT_RAD = 0.08
+XARM_TRACKING_ERROR_HARD_RAD = 0.16
+# FK is the synchronous part of proximity evaluation.  Limit it to 20 Hz and
+# reuse the last asynchronous mesh result inside the 100 Hz servo loop.
+XARM_PROXIMITY_QUERY_PERIOD_S = 0.05
+# One-switch rollback for hardware A/B testing.  False routes every existing
+# ``_move_joints`` caller through the preserved waypoint-wait implementation.
+XARM_CONTINUOUS_PLAYBACK = True
+
+# xArm placement contact-stop controls.  The learned torque residual can
+# exceed 10 Nm during an otherwise clear planned descent, so use the intended
+# 20 Nm threshold on the watched shoulder/elbow joints.  Keep this independent
+# of the approach monitor (70 Nm) and of run_auto's 5 mm early-stop label.
+XARM_PLACE_CONTACT_THRESHOLD_NM = 20.0
+XARM_PLACE_CONTACT_SUSTAINED_TICKS = 8
+XARM_PLACE_CONTACT_STARTUP_BLANK_S = 0.5
+
+# A coverage/reposition transfer is allowed to finish with the same small
+# physical tracking residual as the FR3 adapter.  This is deliberately
+# separate from JacobianStrokeOptions.request_start_position_tolerance_m:
+# the values below compare the *physical* controller pose with the requested
+# pre-place pose, while the Jacobian option checks two planner-frame values.
+XARM_PREPLACE_REUSE_POS_TOL_M = 0.005
+XARM_PREPLACE_REUSE_ROT_TOL_RAD = np.deg2rad(3.0)
+XARM_VERTICAL_STROKE_Z_TOL_M = 0.005
 
 # Per-hand config: (init_joints, link6_to_wrist, convert_fn)
 def _convert_allegro(hand_pose: np.ndarray) -> np.ndarray:
@@ -84,18 +137,21 @@ HAND_CONFIG = {
         "link6_to_wrist": ALLEGRO_LINK6_TO_WRIST,
         "convert": _convert_allegro,
         "xarm_init": XARM_INIT,
+        "xarm_clear_view": XARM_CLEAR_VIEW,
     },
     "inspire": {
         "init": INSPIRE_INIT,
         "link6_to_wrist": INSPIRE_LINK6_TO_WRIST,
         "convert": _convert_inspire,
         "xarm_init": XARM_INSPIRE_INIT,
+        "xarm_clear_view": XARM_INSPIRE_CLEAR_VIEW,
     },
     "inspire_left": {
         "init": INSPIRE_INIT,
         "link6_to_wrist": INSPIRE_LEFT_LINK6_TO_WRIST,
         "convert": _convert_inspire,
         "xarm_init": XARM_INSPIRE_INIT,
+        "xarm_clear_view": XARM_INSPIRE_CLEAR_VIEW,
     },
 }
 
@@ -253,25 +309,65 @@ class RealExecutor:
         hand_name: str = "allegro",
         dt: float = 0.01,
         squeeze_level: int = 2,
+        base_speed_scale: float = XARM_BASE_SPEED_SCALE,
+        near_speed_scale: float = XARM_NEAR_SPEED_SCALE,
+        held_speed_scale: float = XARM_HELD_SPEED_SCALE,
+        slowdown_far_m: float = XARM_APPROACH_SLOWDOWN_FAR_M,
+        slowdown_near_m: float = XARM_APPROACH_SLOWDOWN_NEAR_M,
+        command_smoothing: float = XARM_COMMAND_SMOOTHING,
+        continuous_playback: bool = XARM_CONTINUOUS_PLAYBACK,
     ):
         if hand_name not in HAND_CONFIG:
             raise ValueError(f"Unknown hand: {hand_name}. Choose from {list(HAND_CONFIG)}")
         self.dt = dt
         self.squeeze_level = squeeze_level
         self.hand_name = hand_name
+        if not np.isfinite(base_speed_scale) or base_speed_scale <= 0.0:
+            raise ValueError("base_speed_scale must be finite and > 0")
+        if not np.isfinite(near_speed_scale) or not 0.0 < near_speed_scale <= 1.0:
+            raise ValueError("near_speed_scale must be in (0, 1]")
+        if not np.isfinite(held_speed_scale) or not 0.0 < held_speed_scale <= 1.0:
+            raise ValueError("held_speed_scale must be in (0, 1]")
+        if (not np.isfinite(slowdown_near_m)
+                or not np.isfinite(slowdown_far_m)
+                or not 0.0 <= slowdown_near_m < slowdown_far_m):
+            raise ValueError("slowdown distances require 0 <= near < far")
+        if (not np.isfinite(command_smoothing)
+                or not 0.0 <= command_smoothing < 1.0):
+            raise ValueError("command_smoothing must be in [0, 1)")
+        self.base_speed_scale = float(base_speed_scale)
+        self.near_speed_scale = float(near_speed_scale)
+        self.held_speed_scale = float(held_speed_scale)
+        self.slowdown_far_m = float(slowdown_far_m)
+        self.slowdown_near_m = float(slowdown_near_m)
+        self.command_smoothing = float(command_smoothing)
+        self.continuous_playback = bool(continuous_playback)
 
         hcfg = HAND_CONFIG[hand_name]
         self._convert = hcfg["convert"]
         self._hand_init = hcfg["init"]
         self._link6_to_wrist = hcfg["link6_to_wrist"]
         self._xarm_init = hcfg["xarm_init"]
+        self._clear_view = np.asarray(
+            hcfg["xarm_clear_view"], dtype=np.float64).copy()
         self._last_hand_qpos = np.asarray(self._hand_init, dtype=np.float64).copy()
         self._last_hand_action = self._convert(self._last_hand_qpos)
         self.state_timestamps = []
         self.last_execute_timing = {}
         self.last_place_timing = {}
-        self._timing_recorder: Optional[TimingRecorder] = None
+        self._timing_recorder: Optional[Any] = None
         self._holding_object = False
+        self._speed_profile_planner = None
+        self._speed_profile_object_query = None
+        self._speed_profile_object_signature = None
+        self._speed_profile_hand_link_indices = None
+        self._speed_profile_hand_link_names = None
+        self._speed_profile_mesh_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="xarm-mesh-proximity")
+        self._speed_profile_mesh_future = None
+        self._speed_profile_mesh_distance = None
+        self._speed_profile_next_query_time = 0.0
+        self._last_speed_profile_band = None
         # Public execution contract consumed by run_auto.  Keep private
         # low-level motion details inside this adapter.
         self.arm_dof = 6
@@ -291,15 +387,225 @@ class RealExecutor:
         except Exception as _e:
             print(f"[executor] could not disable xarm collision sensitivity: {_e!r}")
 
-        # Safety velocity limits
-        self.joint_vel_limit = 0.05
+        # Per-tick caps.  The joint cap follows the same single base-speed knob
+        # as trajectory playback.  Cartesian values retain their legacy
+        # semantics because the production pick/place path is joint planned.
+        self.joint_vel_limit = XARM_LEGACY_JOINT_STEP_RAD * self.base_speed_scale
         self.cart_vel_limit = 0.002
         self.rot_vel_limit = 0.01
         self.hand_vel_limit = 0.03
 
-    def set_timing_recorder(self, recorder: Optional[TimingRecorder]) -> None:
-        """Attach the trial recorder without coupling this adapter to a runner."""
+    def set_timing_recorder(self, recorder: Optional[Any]) -> None:
+        """Attach the current pipeline event trace."""
         self._timing_recorder = recorder
+
+    def set_speed_profile_planner(self, planner) -> None:
+        """Bind the planner whose xArm+hand FK supplies live link positions."""
+        self._speed_profile_planner = planner
+
+    def set_speed_profile_object(self, scene_cfg: Optional[dict]) -> None:
+        """Cache the target mesh in robot-base coordinates for proximity speed.
+
+        Mesh loading and transformation happen once per object pose.  The
+        control loop only submits nearest-surface queries against this cache.
+        A missing/broken mesh disables distance profiling, but the held-object
+        cap remains active independently.
+        """
+        target = (scene_cfg or {}).get("mesh", {}).get("target")
+        if not isinstance(target, dict):
+            self._clear_speed_profile_object()
+            return
+        mesh_path = target.get("file_path")
+        pose = target.get("pose")
+        try:
+            pose_arr = np.asarray(pose, dtype=np.float64).reshape(-1)
+            if (not mesh_path or pose_arr.shape != (7,)
+                    or not np.isfinite(pose_arr).all()):
+                raise ValueError("target requires a finite pose[7] and file_path")
+            signature = (str(mesh_path), pose_arr.tobytes())
+            if signature == self._speed_profile_object_signature:
+                return
+
+            import trimesh
+
+            mesh = trimesh.load(str(mesh_path), process=False)
+            if isinstance(mesh, trimesh.Scene):
+                mesh = mesh.dump(concatenate=True)
+            if not isinstance(mesh, trimesh.Trimesh) or len(mesh.faces) == 0:
+                raise ValueError("target mesh has no triangle surface")
+            mesh = mesh.copy()
+            mesh.apply_transform(cart2se3(pose_arr))
+            self._speed_profile_object_query = trimesh.proximity.ProximityQuery(mesh)
+            self._speed_profile_object_signature = signature
+            self._speed_profile_mesh_distance = None
+            self._speed_profile_next_query_time = 0.0
+            self._last_speed_profile_band = None
+            print(f"[xarm] speed proximity: {len(mesh.faces)} target triangles; "
+                  "hand-link origins -> mesh surface", flush=True)
+        except Exception as exc:
+            self._clear_speed_profile_object()
+            print(f"[xarm] object-mesh speed proximity unavailable; "
+                  f"distance slowdown disabled: {exc!r}", flush=True)
+
+    def _clear_speed_profile_object(self) -> None:
+        self._speed_profile_object_query = None
+        self._speed_profile_object_signature = None
+        self._speed_profile_mesh_distance = None
+        self._speed_profile_next_query_time = 0.0
+        self._last_speed_profile_band = None
+
+    def _speed_profile_hand_links(self, kinematics) -> tuple[list[int], list[str]]:
+        """Select only the mounted palm and finger links, excluding arm links."""
+        names = [str(name) for name in getattr(kinematics, "link_names", [])]
+        if (self._speed_profile_hand_link_names == names
+                and self._speed_profile_hand_link_indices is not None):
+            indices = self._speed_profile_hand_link_indices
+            return indices, [names[i] for i in indices]
+        indices = [
+            i for i, name in enumerate(names)
+            if (name == "base_link"
+                or name.startswith(("right_", "left_", "link_")))
+        ]
+        if not indices:
+            raise RuntimeError("planner exposes no hand/palm link positions")
+        self._speed_profile_hand_link_indices = indices
+        self._speed_profile_hand_link_names = names
+        return indices, [names[i] for i in indices]
+
+    @staticmethod
+    def _query_hand_mesh_distance(query, points: np.ndarray,
+                                  link_names: tuple[str, ...], signature):
+        _, distances, _ = query.on_surface(points)
+        distances = np.asarray(distances, dtype=np.float64).reshape(-1)
+        if distances.shape != (len(link_names),) or not np.isfinite(distances).all():
+            raise RuntimeError("mesh proximity returned invalid link distances")
+        nearest = int(np.argmin(distances))
+        return signature, float(distances[nearest]), link_names[nearest]
+
+    def _hand_mesh_distance(
+            self, arm_qpos: np.ndarray,
+            hand_qpos: Optional[np.ndarray] = None) -> Optional[tuple[float, str]]:
+        """Return the latest hand-link-to-object-surface distance in metres."""
+        query = self._speed_profile_object_query
+        planner = self._speed_profile_planner
+        motion_gen = getattr(planner, "_motion_gen", None)
+        signature = self._speed_profile_object_signature
+        if query is None or motion_gen is None or signature is None:
+            return None
+        try:
+            future = self._speed_profile_mesh_future
+            if future is not None and future.done():
+                self._speed_profile_mesh_future = None
+                result_signature, distance, link_name = future.result()
+                if result_signature == self._speed_profile_object_signature:
+                    self._speed_profile_mesh_distance = (distance, link_name)
+            if self._speed_profile_mesh_future is not None:
+                return self._speed_profile_mesh_distance
+
+            now = time.perf_counter()
+            next_query = getattr(self, "_speed_profile_next_query_time", 0.0)
+            if now < next_query:
+                return self._speed_profile_mesh_distance
+            self._speed_profile_next_query_time = (
+                now + XARM_PROXIMITY_QUERY_PERIOD_S)
+
+            n_arm = int(getattr(planner, "_n_arm", self.arm_dof))
+            state_q = np.asarray(planner._init_state, dtype=np.float32).copy()
+            arm = np.asarray(arm_qpos, dtype=np.float32).reshape(-1)
+            if state_q.ndim != 1 or len(state_q) < n_arm or len(arm) < n_arm:
+                return self._speed_profile_mesh_distance
+            state_q[:n_arm] = arm[:n_arm]
+            hand = (self._last_hand_qpos if hand_qpos is None
+                    else np.asarray(hand_qpos, dtype=np.float64).reshape(-1))
+            hand = np.asarray(hand, dtype=np.float32).reshape(-1)
+            n_hand = min(len(hand), len(state_q) - n_arm)
+            if n_hand > 0 and np.isfinite(hand[:n_hand]).all():
+                state_q[n_arm:n_arm + n_hand] = hand[:n_hand]
+
+            import torch
+
+            kin_model = motion_gen.kinematics
+            state = kin_model.get_state(torch.tensor(
+                state_q, dtype=torch.float32,
+                device=planner._tensor_args.device).unsqueeze(0))
+            indices, names = self._speed_profile_hand_links(kin_model)
+            points = np.asarray(
+                state.links_position[0, indices, :].detach().cpu().numpy(),
+                dtype=np.float64)
+            if points.shape != (len(indices), 3) or not np.isfinite(points).all():
+                return self._speed_profile_mesh_distance
+            self._speed_profile_mesh_future = self._speed_profile_mesh_executor.submit(
+                self._query_hand_mesh_distance, query, points.copy(),
+                tuple(names), signature)
+            return self._speed_profile_mesh_distance
+        except Exception as exc:
+            self._speed_profile_object_query = None
+            self._speed_profile_mesh_future = None
+            print(f"[xarm] object-mesh speed query failed; "
+                  f"distance slowdown disabled: {exc!r}", flush=True)
+            return None
+
+    def _approach_speed_scale(self, hand_mesh_distance_m: float) -> float:
+        """Map distance to 1.0 far, near_speed_scale near, linear between."""
+        distance = float(hand_mesh_distance_m)
+        if not np.isfinite(distance) or distance >= self.slowdown_far_m:
+            return 1.0
+        if distance <= self.slowdown_near_m:
+            return self.near_speed_scale
+        progress = ((distance - self.slowdown_near_m)
+                    / (self.slowdown_far_m - self.slowdown_near_m))
+        return self.near_speed_scale + (1.0 - self.near_speed_scale) * progress
+
+    def _motion_speed(self, arm_qpos: np.ndarray,
+                      hand_qpos: Optional[np.ndarray] = None
+                      ) -> tuple[float, float, str, Optional[float], Optional[str]]:
+        """Return playback rate, joint-step cap, band, distance, nearest link."""
+        distance = None
+        nearest_link = None
+        # A neutral profile cannot change the command.  Avoid synchronous GPU
+        # FK and mesh-query scheduling entirely so enabling the feature with
+        # 1/1/1 defaults adds no timing jitter to the 100 Hz servo producer.
+        if self.near_speed_scale == 1.0 and self.held_speed_scale == 1.0:
+            rate = self.base_speed_scale
+            return (rate, XARM_LEGACY_JOINT_STEP_RAD * rate,
+                    "neutral", None, None)
+        if self._holding_object:
+            safety_scale = self.held_speed_scale
+            band = "held"
+        else:
+            mesh_distance = self._hand_mesh_distance(arm_qpos, hand_qpos)
+            if mesh_distance is None:
+                # If a mesh query is configured but its first async result is
+                # pending, start conservatively instead of briefly racing at
+                # far speed next to an object.
+                if self._speed_profile_object_query is not None:
+                    safety_scale = self.near_speed_scale
+                    band = "proximity-pending"
+                else:
+                    safety_scale = 1.0
+                    band = "unprofiled"
+            else:
+                distance, nearest_link = mesh_distance
+                safety_scale = self._approach_speed_scale(distance)
+                if distance <= self.slowdown_near_m:
+                    band = "near"
+                elif distance >= self.slowdown_far_m:
+                    band = "far"
+                else:
+                    band = "transition"
+        rate = self.base_speed_scale * safety_scale
+        step_limit = XARM_LEGACY_JOINT_STEP_RAD * rate
+        return rate, step_limit, band, distance, nearest_link
+
+    def _log_speed_profile(self, rate: float, step_limit: float, band: str,
+                           distance: Optional[float], nearest_link: Optional[str]) -> None:
+        if band == self._last_speed_profile_band:
+            return
+        self._last_speed_profile_band = band
+        proximity = ("" if distance is None else
+                     f" distance={distance * 100:.1f}cm link={nearest_link}")
+        print(f"[xarm] speed band={band} rate={rate:.2f}x "
+              f"joint_step={step_limit:.3f}rad/tick{proximity}", flush=True)
 
     # ── low-level motion primitives ──────────────────────────────────────
 
@@ -325,13 +631,31 @@ class RealExecutor:
             raise RuntimeError("xarm returned an invalid wrist pose")
         return wrist
 
+    @staticmethod
+    def _pose_error(actual: np.ndarray,
+                    target: np.ndarray) -> tuple[float, float]:
+        """Return translation metres and rotation radians between two poses."""
+        actual = np.asarray(actual, dtype=np.float64)
+        target = np.asarray(target, dtype=np.float64)
+        if (actual.shape != (4, 4) or target.shape != (4, 4)
+                or not np.isfinite(actual).all()
+                or not np.isfinite(target).all()):
+            return float("inf"), float("inf")
+        position = float(np.linalg.norm(actual[:3, 3] - target[:3, 3]))
+        rotation = float(Rotation.from_matrix(
+            actual[:3, :3].T @ target[:3, :3]).magnitude())
+        return position, rotation
+
     def follow_joint_trajectory(self, traj: np.ndarray,
                                 hand_traj: Optional[np.ndarray] = None) -> None:
         """Execute an already planned full-DOF path through this arm adapter."""
         q = np.asarray(traj, dtype=np.float64)
         if q.ndim != 2 or q.shape[1] < self.arm_dof:
             raise ValueError("joint trajectory has incompatible xarm shape")
-        self._move_joints(q[:, :self.arm_dof], hand_traj)
+        proximity_hand_traj = (
+            q[:, self.arm_dof:] if q.shape[1] > self.arm_dof else None)
+        self._move_joints(q[:, :self.arm_dof], hand_traj,
+                          proximity_hand_traj=proximity_hand_traj)
 
     def _safe_joint_step(self, current, target, vel_limit=None):
         delta = target - current
@@ -342,17 +666,212 @@ class RealExecutor:
         return current + delta
 
     def _move_joints(self, arm_traj, hand_traj=None, threshold=0.02,
-                     monitor: "Optional[ContactMonitor]" = None):
-        for i in range(len(arm_traj)):
-            target_arm = arm_traj[i]
-            target_hand = hand_traj[i] if hand_traj is not None else None
+                     monitor: "Optional[ContactMonitor]" = None,
+                     proximity_hand_traj=None):
+        """Continuously stream an interpolated path on the servo clock.
+
+        Intermediate waypoints are references, not stop points.  Path phase
+        advances every control tick, slows when physical tracking error grows,
+        and pauses at a hard lag limit.  Only the final waypoint requires
+        convergence.  ``_move_joints_waypoint_wait`` retains the old behavior
+        as an explicit fallback.
+        """
+        if not getattr(self, "continuous_playback", True):
+            return self._move_joints_waypoint_wait(
+                arm_traj,
+                hand_traj,
+                threshold=threshold,
+                monitor=monitor,
+                proximity_hand_traj=proximity_hand_traj,
+            )
+        arm_path = np.atleast_2d(np.asarray(arm_traj, dtype=np.float64))
+        if arm_path.ndim != 2 or len(arm_path) == 0:
+            raise ValueError("arm_traj must be a non-empty 2D array")
+        if not np.isfinite(arm_path).all():
+            raise ValueError("arm_traj must contain only finite values")
+        if not np.isfinite(threshold) or threshold <= 0.0:
+            raise ValueError("threshold must be finite and > 0")
+        hands = (None if hand_traj is None else
+                 np.atleast_2d(np.asarray(hand_traj, dtype=np.float64)))
+        proximity_hands = (
+            None if proximity_hand_traj is None else
+            np.atleast_2d(np.asarray(proximity_hand_traj, dtype=np.float64)))
+        if hands is not None and len(hands) != len(arm_path):
+            raise ValueError("hand_traj length must match arm_traj")
+        if proximity_hands is not None and len(proximity_hands) != len(arm_path):
+            raise ValueError("proximity_hand_traj length must match arm_traj")
+
+        def _at(path, index):
+            if path is None:
+                return None
+            lo = min(int(index), len(path) - 1)
+            hi = min(lo + 1, len(path) - 1)
+            frac = index - int(index)
+            return path[lo] * (1.0 - frac) + path[hi] * frac
+
+        phase = 0.0
+        last_phase = float(len(arm_path) - 1)
+        filtered_target = np.asarray(
+            self.arm.get_data()["qpos"], dtype=np.float64).copy()
+        smoothed_rate = None
+        prev_qpos = None
+        stall_count = 0
+        recovered = False
+        next_tick = time.perf_counter()
+        # A generous bound protects against a controller that moves just enough
+        # to evade stall detection while never closing its tracking error.
+        min_configured_rate = max(
+            self.base_speed_scale
+            * min(1.0, self.near_speed_scale, self.held_speed_scale),
+            1e-3,
+        )
+        nominal_ticks = last_phase / min_configured_rate
+        max_ticks = max(1000, int(np.ceil(10.0 * nominal_ticks)) + 500)
+
+        for _ in range(max_ticks):
+            cur = np.asarray(self.arm.get_data()["qpos"], dtype=np.float64)
+            target_arm = _at(arm_path, phase)
+            target_hand = _at(hands, phase)
+            proximity_hand = _at(proximity_hands, phase)
+
+            (desired_rate, desired_step_limit, band,
+             distance, nearest_link) = self._motion_speed(cur, proximity_hand)
+            if not np.isfinite(desired_rate) or desired_rate <= 0.0:
+                raise RuntimeError(
+                    f"invalid xArm trajectory playback rate: {desired_rate}")
+            if smoothed_rate is None:
+                smoothed_rate = float(desired_rate)
+            else:
+                smoothed_rate = (
+                    XARM_PLAYBACK_RATE_SMOOTHING * smoothed_rate
+                    + (1.0 - XARM_PLAYBACK_RATE_SMOOTHING) * desired_rate)
+            step_limit = (float(desired_step_limit)
+                          * smoothed_rate / desired_rate)
+            self._log_speed_profile(
+                smoothed_rate, step_limit, band, distance, nearest_link)
+
+            filtered_target = (
+                self.command_smoothing * filtered_target
+                + (1.0 - self.command_smoothing) * target_arm)
+            command_error = float(np.linalg.norm(filtered_target - cur))
+            if (prev_qpos is not None
+                    and np.linalg.norm(cur - prev_qpos) < 1e-4
+                    and command_error > threshold):
+                stall_count += 1
+                if stall_count >= 50 and not recovered:
+                    print("[executor] continuous trajectory stalled; "
+                          "clearing error...")
+                    self.arm.clear_error()
+                    recovered = True
+                    stall_count = 0
+                elif stall_count >= 100:
+                    raise RuntimeError(
+                        "xArm continuous trajectory stalled after recovery")
+            else:
+                stall_count = 0
+            prev_qpos = cur.copy()
+
+            if target_hand is not None:
+                self.hand.move(target_hand)
+            nxt = self._safe_joint_step(
+                cur, filtered_target, vel_limit=step_limit)
+            self.arm.move(nxt, is_servo=True)
+
+            if self.dt > 0.0:
+                next_tick += self.dt
+                delay = next_tick - time.perf_counter()
+                if delay > 0.0:
+                    time.sleep(delay)
+                else:
+                    # Do not issue catch-up bursts after an FK or controller
+                    # overrun; restart the clock from the actual tick time.
+                    next_tick = time.perf_counter()
+            if monitor is not None and monitor.tick():
+                raise ContactDetected("_move_joints",
+                                      monitor.last_dev, monitor.last_ratio)
+
+            actual = np.asarray(
+                self.arm.get_data()["qpos"], dtype=np.float64)
+            at_endpoint = phase >= last_phase
+            if (at_endpoint
+                    and np.linalg.norm(actual - arm_path[-1]) < threshold):
+                return
+
+            if not at_endpoint:
+                # Compare against the smoothed command reference, not the raw
+                # future waypoint.  This measures controller lag without
+                # treating the intentional target EMA as tracking failure.
+                tracking_error = float(
+                    np.linalg.norm(actual - filtered_target))
+                if tracking_error <= XARM_TRACKING_ERROR_SOFT_RAD:
+                    lag_scale = 1.0
+                elif tracking_error >= XARM_TRACKING_ERROR_HARD_RAD:
+                    lag_scale = 0.0
+                else:
+                    lag_scale = (
+                        (XARM_TRACKING_ERROR_HARD_RAD - tracking_error)
+                        / (XARM_TRACKING_ERROR_HARD_RAD
+                           - XARM_TRACKING_ERROR_SOFT_RAD))
+                phase = min(
+                    phase + smoothed_rate * lag_scale,
+                    last_phase,
+                )
+
+        raise RuntimeError(
+            "xArm continuous trajectory exceeded its tracking timeout")
+
+    def _move_joints_waypoint_wait(
+            self, arm_traj, hand_traj=None, threshold=0.02,
+            monitor: "Optional[ContactMonitor]" = None,
+            proximity_hand_traj=None):
+        """Follow a dense path with distance/held-object speed scaling.
+
+        Preserved fallback implementation: command one path waypoint and wait
+        until the measured joints are within ``threshold`` before advancing.
+        ``base_speed_scale`` controls both the waypoint-index increment and
+        joint-step cap.
+        """
+        arm_path = np.atleast_2d(np.asarray(arm_traj, dtype=np.float64))
+        if arm_path.ndim != 2 or len(arm_path) == 0:
+            raise ValueError("arm_traj must be a non-empty 2D array")
+        hands = (None if hand_traj is None else
+                 np.atleast_2d(np.asarray(hand_traj, dtype=np.float64)))
+        proximity_hands = (
+            None if proximity_hand_traj is None else
+            np.atleast_2d(np.asarray(proximity_hand_traj, dtype=np.float64)))
+        if hands is not None and len(hands) != len(arm_path):
+            raise ValueError("hand_traj length must match arm_traj")
+        if proximity_hands is not None and len(proximity_hands) != len(arm_path):
+            raise ValueError("proximity_hand_traj length must match arm_traj")
+
+        def _at(path, index):
+            if path is None:
+                return None
+            lo = min(int(index), len(path) - 1)
+            hi = min(lo + 1, len(path) - 1)
+            frac = index - int(index)
+            return path[lo] * (1.0 - frac) + path[hi] * frac
+
+        idx = 0.0
+        last_idx = float(len(arm_path) - 1)
+        filtered_target = np.asarray(
+            self.arm.get_data()["qpos"], dtype=np.float64).copy()
+        while True:
+            target_arm = _at(arm_path, idx)
+            target_hand = _at(hands, idx)
+            proximity_hand = _at(proximity_hands, idx)
             if target_hand is not None:
                 self.hand.move(target_hand)
             stall_count = 0
             prev_qpos = None
             recovered = False
+            playback_rate = self.base_speed_scale
             for _ in range(500):
                 cur = self.arm.get_data()["qpos"]
+                (playback_rate, step_limit, band,
+                 distance, nearest_link) = self._motion_speed(cur, proximity_hand)
+                self._log_speed_profile(
+                    playback_rate, step_limit, band, distance, nearest_link)
                 if prev_qpos is not None and np.linalg.norm(cur - prev_qpos) < 1e-4:
                     stall_count += 1
                     if stall_count >= 50 and not recovered:
@@ -366,14 +885,26 @@ class RealExecutor:
                 else:
                     stall_count = 0
                 prev_qpos = cur.copy()
-                nxt = self._safe_joint_step(cur, target_arm)
+                filtered_target = (
+                    self.command_smoothing * filtered_target
+                    + (1.0 - self.command_smoothing) * target_arm)
+                nxt = self._safe_joint_step(
+                    cur, filtered_target, vel_limit=step_limit)
                 self.arm.move(nxt, is_servo=True)
                 time.sleep(self.dt)
                 if monitor is not None and monitor.tick():
-                    raise ContactDetected("_move_joints",
+                    raise ContactDetected("_move_joints_waypoint_wait",
                                           monitor.last_dev, monitor.last_ratio)
-                if np.linalg.norm(self.arm.get_data()["qpos"] - target_arm) < threshold:
+                # During playback, track the filtered reference so smoothing
+                # does not reduce trajectory-index speed.  At the final sample,
+                # keep iterating until the original endpoint is reached.
+                arrival_target = target_arm if idx >= last_idx else filtered_target
+                if (np.linalg.norm(self.arm.get_data()["qpos"] - arrival_target)
+                        < threshold):
                     break
+            if idx >= last_idx:
+                break
+            idx = min(idx + playback_rate, last_idx)
 
     def _move_hand(self, target):
         self.hand.move(target)
@@ -396,8 +927,6 @@ class RealExecutor:
 
         target_rot = Rotation.from_matrix(target_pose[:3, :3])
         pos_history = deque(maxlen=stall_window)
-        expected_progress = self.cart_vel_limit * vel_scale * stall_window
-        stall_thresh = expected_progress * stall_progress_ratio
         stalled = False
         recovered = False
         recover_count = 0
@@ -405,6 +934,14 @@ class RealExecutor:
             cur = self.arm.get_data()["position"].copy()
             cur_pos = cur[:3, 3].copy()
             pos_history.append(cur_pos)
+            arm_qpos = self.arm.get_data()["qpos"]
+            rate, step_limit, band, distance, nearest_link = \
+                self._motion_speed(arm_qpos)
+            self._log_speed_profile(
+                rate, step_limit, band, distance, nearest_link)
+            expected_progress = (
+                self.cart_vel_limit * vel_scale * rate * stall_window)
+            stall_thresh = expected_progress * stall_progress_ratio
             # Stall = full window collected and progress < expected*ratio.
             if len(pos_history) == stall_window:
                 progress = np.linalg.norm(pos_history[-1] - pos_history[0])
@@ -428,15 +965,16 @@ class RealExecutor:
             prev_pos = cur_pos
             t_delta = target_pose[:3, 3] - cur[:3, 3]
             t_dist = np.linalg.norm(t_delta)
-            vel = self.cart_vel_limit * vel_scale
+            vel = self.cart_vel_limit * vel_scale * rate
             if t_dist > vel:
                 t_delta = t_delta / t_dist * vel
             cur[:3, 3] += t_delta
             cur_rot = Rotation.from_matrix(cur[:3, :3])
             r_delta = (target_rot * cur_rot.inv()).as_rotvec()
             r_dist = np.linalg.norm(r_delta)
-            if r_dist > self.rot_vel_limit:
-                r_delta = r_delta / r_dist * self.rot_vel_limit
+            rot_limit = self.rot_vel_limit * rate
+            if r_dist > rot_limit:
+                r_delta = r_delta / r_dist * rot_limit
             if r_dist > 0.001:
                 cur[:3, :3] = (Rotation.from_rotvec(r_delta) * cur_rot).as_matrix()
             self.arm.move(cur, is_servo=True)
@@ -450,16 +988,20 @@ class RealExecutor:
                 break
 
     def _move_joint_sequential(self, target_qpos, joint_order, threshold=0.06,
-                               vel_limit: float = 0.06,
+                               vel_limit: "Optional[float]" = None,
                                first_vel_limit: "Optional[float]" = None,
                                monitor: "Optional[ContactMonitor]" = None):
-        """``first_vel_limit`` (if set) overrides vel_limit for the FIRST
-        joint in joint_order — useful for slowing only the initial motion
-        that moves the held object away from a placed scene."""
+        """Move joints in order while retaining the shared xArm speed policy.
+
+        Explicit limits are absolute safety caps.  Otherwise the configured
+        base/near/held joint-step limit is used dynamically.
+        """
         current_target = self.arm.get_data()["qpos"].copy()
+        filtered_target = np.asarray(current_target, dtype=np.float64).copy()
         for step_i, j in enumerate(joint_order):
-            vel = (first_vel_limit if (step_i == 0 and first_vel_limit is not None)
-                   else vel_limit)
+            explicit_limit = (
+                first_vel_limit if step_i == 0 and first_vel_limit is not None
+                else vel_limit)
             current_target[j] = target_qpos[j]
             stall_count = 0
             prev_qpos = None
@@ -495,7 +1037,17 @@ class RealExecutor:
                 else:
                     stall_count = 0
                 prev_qpos = cur.copy()
-                nxt = self._safe_joint_step(cur, current_target, vel_limit=vel)
+                rate, profile_limit, band, distance, nearest_link = \
+                    self._motion_speed(cur)
+                self._log_speed_profile(
+                    rate, profile_limit, band, distance, nearest_link)
+                step_limit = (profile_limit if explicit_limit is None else
+                              min(float(explicit_limit), profile_limit))
+                filtered_target = (
+                    self.command_smoothing * filtered_target
+                    + (1.0 - self.command_smoothing) * current_target)
+                nxt = self._safe_joint_step(
+                    cur, filtered_target, vel_limit=step_limit)
                 self.arm.move(nxt, is_servo=True)
                 time.sleep(self.dt)
                 if monitor is not None and monitor.tick():
@@ -540,7 +1092,19 @@ class RealExecutor:
 
     def _log_state(self, state):
         ts = datetime.datetime.now().isoformat()
-        self.state_timestamps.append({"state": state, "time": ts})
+        item = {"state": state, "time": ts}
+        if self._timing_recorder is not None and hasattr(
+                self._timing_recorder, "event"):
+            event = self._timing_recorder.event(
+                "robot.state", phase="execution", kind="state",
+                state=state, arm="xarm", hand=self.hand_name)
+            item.update({
+                "pipeline_event_seq": event["seq"],
+                "pipeline_time_s": event["pipeline_time_s"],
+                "monotonic_ns": event["monotonic_ns"],
+                "utc_ns": event["utc_ns"],
+            })
+        self.state_timestamps.append(item)
 
     def home(self, clear_view: bool = False) -> None:
         """Open the hand and move once to the calibrated xArm start pose.
@@ -555,9 +1119,8 @@ class RealExecutor:
         self._last_hand_qpos = np.asarray(self._hand_init, dtype=np.float64).copy()
         self._last_hand_action = self._convert(self._last_hand_qpos)
         time.sleep(0.5)
-        target = np.asarray(self._xarm_init, dtype=np.float64).copy()
-        if clear_view:
-            target[0] -= np.deg2rad(40.0)
+        target = (self._clear_view.copy() if clear_view
+                  else np.asarray(self._xarm_init, dtype=np.float64).copy())
         order = [1, 2, 5, 0, 3, 4]
         if self.arm.get_data()["qpos"][1] < self._xarm_init[1]:
             order = [2, 1, 5, 0, 3, 4]
@@ -616,6 +1179,15 @@ class RealExecutor:
         if not plan_result.success:
             print("Planning failed — nothing to execute.")
             return None
+        if planner is not None:
+            self.set_speed_profile_planner(planner)
+        self.set_speed_profile_object(scene_cfg)
+        self._holding_object = False
+        print(f"[xarm] speed profile: base={self.base_speed_scale:.2f}x; "
+              f">={self.slowdown_far_m * 100:.0f}cm 1.00x base, "
+              f"<={self.slowdown_near_m * 100:.0f}cm "
+              f"{self.near_speed_scale:.2f}x base, "
+              f"held {self.held_speed_scale:.2f}x base", flush=True)
 
         execute_started = time.perf_counter()
         self.state_timestamps = []
@@ -665,7 +1237,9 @@ class RealExecutor:
         self._log_state("approach")
         hand_traj = np.array([self._convert(traj[i, 6:]) for i in range(len(traj))])
         t_approach = time.perf_counter()
-        self._move_joints(traj[:, :6], hand_traj, monitor=monitor)
+        self._move_joints(
+            traj[:, :6], hand_traj, monitor=monitor,
+            proximity_hand_traj=traj[:, 6:])
         self.last_execute_timing["approach_motion_s"] = round(
             time.perf_counter() - t_approach, 3)
 
@@ -825,9 +1399,14 @@ class RealExecutor:
         self._log_state("lift_done")
 
     def _place_planned(self, plan_result: PlanResult, planner, scene_cfg,
-                       target_descend: float, mcc_model_path: str,
+                       lift_height: float, overshoot: float,
+                       mcc_model_path: str,
                        debug_dump_dir: str = None,
-                       timing_s: Optional[dict] = None) -> "Optional[dict]":
+                       timing_s: Optional[dict] = None,
+                       placement_wrist: Optional[np.ndarray] = None,
+                       preplace_traj: Optional[np.ndarray] = None,
+                       preplace_wrist_target: Optional[np.ndarray] = None,
+                       ) -> "Optional[dict]":
         """Descend by replaying a Jacobian-continuation trajectory. Mirror of lift.
 
         ``lift`` follows a local differential-IK branch to ``wrist z + h``;
@@ -845,26 +1424,169 @@ class RealExecutor:
         could be planned.  The production caller then keeps holding the object;
         only standalone diagnostics may choose a different recovery policy.
         """
-        link6_now = self.arm.get_data()["position"].copy()
-        wrist_start_pose = link6_now @ self._link6_to_wrist
-        wrist_place_pose = wrist_start_pose.copy()
-        wrist_place_pose[2, 3] -= target_descend
-        start_z = float(link6_now[2, 3])
+        target_descend = float(lift_height) + float(overshoot)
+        if target_descend <= 0.0:
+            raise ValueError("place descent distance must be positive")
 
-        start_full = np.concatenate([
-            np.asarray(self.arm.get_data()["qpos"][:6], dtype=np.float32),
-            np.asarray(plan_result.grasp_pose, dtype=np.float32),
-        ])
+        # Read pose and joints from one controller snapshot.  Previously these
+        # came from separate get_data() calls and the physical Cartesian pose
+        # was then compared directly with FK of a slightly newer/older qpos.
+        state = self.arm.get_data()
+        link6_now = np.asarray(state["position"], dtype=np.float64).copy()
+        live_arm = np.asarray(state["qpos"][:self.arm_dof],
+                              dtype=np.float32).copy()
+        if (link6_now.shape != (4, 4) or not np.isfinite(link6_now).all()
+                or live_arm.shape != (self.arm_dof,)
+                or not np.isfinite(live_arm).all()):
+            raise RuntimeError("xArm returned an invalid pre-place state")
+        live_wrist = link6_now @ self._link6_to_wrist
+        hand = np.asarray(plan_result.grasp_pose, dtype=np.float32)
+        live_start_full = np.concatenate([live_arm, hand])
+        live_fk = planner.fk_wrist(live_start_full)
+
+        model_pos_err, model_rot_err = self._pose_error(live_wrist, live_fk)
+        if timing_s is not None:
+            timing_s["preplace_model_pos_err_m"] = round(model_pos_err, 6)
+            timing_s["preplace_model_rot_err_rad"] = round(model_rot_err, 6)
+
+        chosen_preplace = None
+        preplace_reused = False
+        correction_required = False
+        explicit_placement = placement_wrist is not None
+
+        if not explicit_placement:
+            if preplace_traj is not None or preplace_wrist_target is not None:
+                raise ValueError(
+                    "preplace trajectory/target requires placement_wrist")
+            # Compatibility for standalone calls without run_auto's placement
+            # contract.  Keep the old "descend here" policy, but define both
+            # endpoints from the same planner FK instead of mixing physical
+            # Cartesian FK with URDF FK.
+            wrist_start_pose = np.asarray(live_fk, dtype=np.float64).copy()
+            wrist_place_pose = wrist_start_pose.copy()
+            wrist_place_pose[2, 3] -= target_descend
+            descend_start = live_start_full
+            preplace_source = "live_planner_fk"
+        else:
+            placement = np.asarray(placement_wrist, dtype=np.float64)
+            if placement.shape != (4, 4) or not np.isfinite(placement).all():
+                raise ValueError("placement_wrist must be a finite 4x4 pose")
+
+            # placement_wrist is the nominal release pose.  Overshoot extends
+            # below it; the ordinary lift-height segment remains exactly the
+            # runner's table-to-pre-place clearance.
+            wrist_place_pose = placement.copy()
+            wrist_place_pose[2, 3] -= float(overshoot)
+            if preplace_wrist_target is None:
+                wrist_start_pose = placement.copy()
+                wrist_start_pose[2, 3] += float(lift_height)
+                supplied_target_valid = False
+                target_pos_err = target_rot_err = float("inf")
+            else:
+                supplied_target = np.asarray(
+                    preplace_wrist_target, dtype=np.float64)
+                if (supplied_target.shape != (4, 4)
+                        or not np.isfinite(supplied_target).all()):
+                    raise ValueError(
+                        "preplace_wrist_target must be a finite 4x4 pose")
+                wrist_start_pose = placement.copy()
+                wrist_start_pose[2, 3] += float(lift_height)
+                target_pos_err, target_rot_err = self._pose_error(
+                    supplied_target, wrist_start_pose)
+                supplied_target_valid = (
+                    target_pos_err <= XARM_PREPLACE_REUSE_POS_TOL_M
+                    and target_rot_err <= XARM_PREPLACE_REUSE_ROT_TOL_RAD)
+
+            live_pos_err, live_rot_err = self._pose_error(
+                live_wrist, wrist_start_pose)
+            candidate = (None if preplace_traj is None else
+                         np.asarray(preplace_traj, dtype=np.float64))
+            candidate_valid = (
+                candidate is not None and candidate.ndim == 2
+                and len(candidate) > 0
+                and candidate.shape[1] >= self.arm_dof
+                and np.isfinite(candidate[:, :self.arm_dof]).all())
+            preplace_reused = bool(
+                candidate_valid and supplied_target_valid
+                and live_pos_err <= XARM_PREPLACE_REUSE_POS_TOL_M
+                and live_rot_err <= XARM_PREPLACE_REUSE_ROT_TOL_RAD)
+
+            if timing_s is not None:
+                timing_s.update({
+                    "preplace_target_pos_err_m": round(target_pos_err, 6),
+                    "preplace_target_rot_err_rad": round(target_rot_err, 6),
+                    "preplace_live_pos_err_m": round(live_pos_err, 6),
+                    "preplace_live_rot_err_rad": round(live_rot_err, 6),
+                    "preplace_reused": preplace_reused,
+                })
+
+            if preplace_reused:
+                chosen_preplace = candidate
+                preplace_source = "runner_reposition"
+                print(
+                    "[xarm] pre-place already reached by reposition; "
+                    f"reusing endpoint (live={live_pos_err * 1000:.1f}mm/"
+                    f"{np.degrees(live_rot_err):.1f}deg, "
+                    f"model={model_pos_err * 1000:.1f}mm/"
+                    f"{np.degrees(model_rot_err):.1f}deg)", flush=True)
+            else:
+                # Match the FR3 contract: a stale, absent, or inaccurate
+                # reposition endpoint gets a collision-checked correction to
+                # the explicit high pose instead of being fed into the strict
+                # vertical-stroke start gate.
+                print(
+                    "[xarm] pre-place endpoint needs correction "
+                    f"(target={target_pos_err * 1000:.1f}mm/"
+                    f"{np.degrees(target_rot_err):.1f}deg, "
+                    f"live={live_pos_err * 1000:.1f}mm/"
+                    f"{np.degrees(live_rot_err):.1f}deg); planning correction",
+                    flush=True)
+                t_preplace_plan = time.perf_counter()
+                chosen_preplace = planner.plan_cartesian_pose(
+                    live_start_full, wrist_start_pose,
+                    scene_cfg=scene_cfg, include_obj_obstacle=False,
+                    debug_dump_dir=debug_dump_dir,
+                    timing_phase="execution")
+                if timing_s is not None:
+                    timing_s["preplace_plan_s"] = round(
+                        time.perf_counter() - t_preplace_plan, 3)
+                if chosen_preplace is None:
+                    raise RuntimeError(
+                        "xArm pre-place correction failed; object remains held")
+                chosen_preplace = np.asarray(chosen_preplace, dtype=np.float64)
+                if (chosen_preplace.ndim != 2 or len(chosen_preplace) == 0
+                        or chosen_preplace.shape[1] < self.arm_dof
+                        or not np.isfinite(
+                            chosen_preplace[:, :self.arm_dof]).all()):
+                    raise RuntimeError(
+                        "xArm pre-place correction returned an invalid trajectory; "
+                        "object remains held")
+                preplace_source = "live_correction"
+                correction_required = True
+
+            descend_start = np.concatenate([
+                np.asarray(chosen_preplace[-1, :self.arm_dof],
+                           dtype=np.float32),
+                hand,
+            ])
+
+        if timing_s is not None:
+            timing_s["preplace_plan_source"] = preplace_source
+
         t_plan = time.perf_counter()
         from autodex.utils.conversion import cart2se3
 
         object_at_grasp = cart2se3(scene_cfg["mesh"]["target"]["pose"])
         object_in_wrist = np.linalg.inv(plan_result.wrist_se3) @ object_at_grasp
-        object_at_descend_start = wrist_start_pose @ object_in_wrist
+        # Keep the attached payload in the exact same FK frame as the descent
+        # start state.  The physical-vs-model residual has already been logged
+        # and bounded separately above.
+        object_at_descend_start = (
+            planner.fk_wrist(descend_start) @ object_in_wrist)
         traj = planner.plan_vertical_stroke(
-            start_full, wrist_start_pose, wrist_place_pose,
+            descend_start, wrist_start_pose, wrist_place_pose,
             expected_travel_m=float(target_descend),
-            travel_tolerance_m=1.0e-4,
+            travel_tolerance_m=XARM_VERTICAL_STROKE_Z_TOL_M,
             scene_cfg=scene_cfg,
             include_obj_obstacle=False,
             attached_object_pose_at_start=object_at_descend_start,
@@ -875,12 +1597,65 @@ class RealExecutor:
         if timing_s is not None:
             timing_s["descend_plan_s"] = round(time.perf_counter() - t_plan, 3)
         if traj is None:
-            print("[place] Jacobian descent preflight failed")
+            failure = getattr(planner, "_last_vertical_stroke_result", None)
+            failure_code = getattr(failure, "failure_code", None)
+            failure_detail = getattr(failure, "failure_detail", None)
+            if timing_s is not None:
+                timing_s["failure_code"] = failure_code
+                timing_s["failure_detail"] = failure_detail
+            suffix = ("" if failure_code is None else
+                      f" ({failure_code}: {failure_detail})")
+            print(f"[place] Jacobian descent preflight failed{suffix}")
             return None
         print(f"[place] planned Jacobian straight descent, {len(traj)} samples")
 
-        mon = ContactMonitor(self.arm.arm, mcc_model_path,
-                             watch_joints=(1, 2), thresh_nm=10.0)
+        # Both the correction and the descent are fully preflighted before the
+        # correction moves an already-held object.  The runner's reposition is
+        # not replayed when it passed the live-state gate.
+        if correction_required:
+            t_preplace_motion = time.perf_counter()
+            self.follow_joint_trajectory(chosen_preplace)
+            if timing_s is not None:
+                timing_s["preplace_motion_s"] = round(
+                    time.perf_counter() - t_preplace_motion, 3)
+
+        # Recheck the physical endpoint immediately before descending.  This
+        # catches a stalled correction or drift during a long preflight while
+        # retaining the object in the hand.
+        pre_descent_state = self.arm.get_data()
+        pre_descent_link6 = np.asarray(
+            pre_descent_state["position"], dtype=np.float64)
+        pre_descent_wrist = pre_descent_link6 @ self._link6_to_wrist
+        if explicit_placement:
+            final_pos_err, final_rot_err = self._pose_error(
+                pre_descent_wrist, wrist_start_pose)
+            if timing_s is not None:
+                timing_s["preplace_final_pos_err_m"] = round(
+                    final_pos_err, 6)
+                timing_s["preplace_final_rot_err_rad"] = round(
+                    final_rot_err, 6)
+            if (final_pos_err > XARM_PREPLACE_REUSE_POS_TOL_M
+                    or final_rot_err > XARM_PREPLACE_REUSE_ROT_TOL_RAD):
+                raise RuntimeError(
+                    "xArm pre-place alignment failed after planning "
+                    f"({final_pos_err * 1000:.1f}mm/"
+                    f"{np.degrees(final_rot_err):.1f}deg); object remains held")
+        start_z = float(pre_descent_link6[2, 3])
+
+        mon = ContactMonitor(
+            self.arm.arm,
+            mcc_model_path,
+            watch_joints=(1, 2),
+            thresh_nm=XARM_PLACE_CONTACT_THRESHOLD_NM,
+            sustained_ticks=XARM_PLACE_CONTACT_SUSTAINED_TICKS,
+            startup_blank_s=XARM_PLACE_CONTACT_STARTUP_BLANK_S,
+        )
+        print(
+            "[place] contact monitor: "
+            f"threshold={XARM_PLACE_CONTACT_THRESHOLD_NM:.1f}Nm, "
+            f"sustained={XARM_PLACE_CONTACT_SUSTAINED_TICKS} ticks, "
+            f"startup_blank={XARM_PLACE_CONTACT_STARTUP_BLANK_S:.1f}s"
+        )
         t_warmup = time.perf_counter()
         mon.warmup(seconds=1.0)
         if timing_s is not None:
@@ -913,7 +1688,9 @@ class RealExecutor:
                 "stopped_on_contact": bool(contact),
                 "target": float(target_descend),
                 "released": False,
-                "mode": "planned"}
+                "mode": "planned",
+                "preplace_reused": bool(preplace_reused),
+                "preplace_plan_source": preplace_source}
 
     def place(self, plan_result: PlanResult, lift_height: float = 0.10,
               overshoot: float = 0.0,
@@ -931,18 +1708,18 @@ class RealExecutor:
         to bias the motion downward past the original z if contact_stop is
         unreliable, but with the tau-model contact check this is usually 0.
 
-        ``placement_wrist`` / ``preplace_*`` are accepted as the shared
-        runner contract. xArm's contact controller descends from its measured
-        carry pose, so it does not replay a transfer trajectory here; it uses
-        the values for explicit interface compatibility while the FR3 adapter
-        can validate/reuse its planned pre-place segment.
+        ``placement_wrist`` / ``preplace_*`` are the shared runner contract.
+        Like the FR3 adapter, xArm reuses a just-executed reposition only when
+        its live wrist is within 5 mm / 3 degrees of the requested high pose;
+        otherwise it plans a correction while keeping the object held.  The
+        strict Jacobian start check then compares planner-frame quantities,
+        never physical Cartesian FK against URDF FK.
 
         paradex's XArmController control_loop stays alive (so its recording
         keeps running); mcc only computes q_ref and writes to xarm_ctrl.action,
         which paradex sends. On contact (tau_ext > threshold) we freeze and break."""
         from pathlib import Path
 
-        del placement_wrist, preplace_traj, preplace_wrist_target
         place_started = time.perf_counter()
         place_timing = new_place_timing()
         # xArm's release is intentionally done by the runner while recording
@@ -969,15 +1746,23 @@ class RealExecutor:
         # hardware diagnostics outside the pipeline.
         if planner is not None:
             planned = self._place_planned(
-                plan_result, planner, scene_cfg, target_descend,
+                plan_result, planner, scene_cfg, lift_height, overshoot,
                 mcc_model_path, debug_dump_dir=debug_dump_dir,
-                timing_s=place_timing)
+                timing_s=place_timing,
+                placement_wrist=placement_wrist,
+                preplace_traj=preplace_traj,
+                preplace_wrist_target=preplace_wrist_target)
             if planned is not None:
                 planned["timing_s"] = finish_place_timing(
                     place_timing, place_started)
                 return planned
+            failure_code = place_timing.get("failure_code")
+            failure_detail = place_timing.get("failure_detail")
+            suffix = ("" if failure_code is None else
+                      f" ({failure_code}: {failure_detail})")
             raise RuntimeError(
-                "Jacobian place descent preflight failed; object remains held")
+                "Jacobian place descent preflight failed"
+                f"{suffix}; object remains held")
 
         start_pose = self.arm.get_data()["position"].copy()   # 4x4 homo, link6 in world
         current_pos = start_pose.copy()
@@ -1012,10 +1797,10 @@ class RealExecutor:
         FILTER_ALPHA = 0.1
         QDOT_SMOOTH_ALPHA = 0.1
         WARMUP_SEC = 1.0
-        # baseline noise per joint (Nm) — from mcc DEADBAND_J. Kept for ref;
-        # current contact check uses a flat 20 Nm threshold from lift baseline.
+        # Baseline noise per joint (Nm) — from mcc DEADBAND_J. Kept for ref;
+        # the actual place threshold is shared with the planned path above.
         DEADBAND_J = np.array([3.0, 3.0, 3.0, 1.0, 2.0, 0.5])
-        CONTACT_THRESH = np.full(6, 10.0)
+        CONTACT_THRESH = np.full(6, XARM_PLACE_CONTACT_THRESHOLD_NM)
         # Same constants mcc uses to convert _joints_torque (raw current in
         # whatever units xarm reports) to Nm. tau_motor = I * KT * GEAR.
         KT = np.array([0.067, 0.067, 0.0573, 0.0573, 0.056, 0.056])
@@ -1111,8 +1896,8 @@ class RealExecutor:
             # informative for downward contact). Skip first STARTUP_BLANK_S to
             # avoid warmup->descend dynamics spike. Require SUSTAINED_TICKS
             # consecutive ticks above threshold so single-tick noise doesn't fire.
-            STARTUP_BLANK_S = 0.5
-            SUSTAINED_TICKS = 8
+            STARTUP_BLANK_S = XARM_PLACE_CONTACT_STARTUP_BLANK_S
+            SUSTAINED_TICKS = XARM_PLACE_CONTACT_SUSTAINED_TICKS
             CONTACT_JOINTS = (1, 2)   # 0-indexed: joints 2 and 3
             tau_dev = tau_filt - tau_baseline
             ratio = np.abs(tau_dev) / np.maximum(CONTACT_THRESH, 1e-6)
@@ -1246,6 +2031,8 @@ class RealExecutor:
         if not plan_result.success:
             log["skipped"] = True
             return log
+        self.set_speed_profile_planner(planner)
+        self._holding_object = False
 
         from autodex.utils.conversion import cart2se3, se32cart
 
@@ -1278,6 +2065,7 @@ class RealExecutor:
             hold_hand_raw = (np.asarray(plan_result.pregrasp_pose, dtype=np.float64)
                               if plan_result.pregrasp_pose is not None
                               else self._hand_init)
+        self._last_hand_qpos = np.asarray(hold_hand_raw, dtype=np.float64).copy()
 
         # 2. Preflight +Z clearance and the following reset with the object at
         #    its actual release pose.  Planning both before motion prevents a
@@ -1287,6 +2075,7 @@ class RealExecutor:
         new_scene["mesh"] = dict(scene_cfg.get("mesh", {}))
         new_scene["mesh"]["target"] = dict(scene_cfg["mesh"]["target"])
         new_scene["mesh"]["target"]["pose"] = se32cart(released_obj_pose).tolist()
+        self.set_speed_profile_object(new_scene)
         cur_qpos = np.asarray(
             self.arm.get_data()["qpos"][:self.arm_dof], dtype=np.float32)
         start_full = np.concatenate([
@@ -1315,8 +2104,7 @@ class RealExecutor:
                 "leaving the open hand and arm in place"
             )
 
-        clear_view_arm = self._xarm_init.copy()
-        clear_view_arm[0] -= np.deg2rad(40.0)
+        clear_view_arm = self._clear_view.copy()
         t_plan0 = time.perf_counter()
         retract_traj = planner.plan_js_to_init(
             new_scene, vertical_traj[-1, :self.arm_dof],
@@ -1351,7 +2139,9 @@ class RealExecutor:
         arm_traj = retract_traj[:, :6]
         hand_traj = np.array([self._convert(retract_traj[i, 6:])
                               for i in range(len(retract_traj))])
-        self._move_joints(arm_traj, hand_traj)
+        self._move_joints(
+            arm_traj, hand_traj,
+            proximity_hand_traj=retract_traj[:, 6:])
         log["steps"]["arm_retract_s"] = round(
             time.perf_counter() - t1, 3)
 
@@ -1391,6 +2181,8 @@ class RealExecutor:
         if not plan_result.success:
             log["skipped"] = True
             return log
+        self.set_speed_profile_planner(planner)
+        self._holding_object = False
 
         from autodex.utils.conversion import cart2se3, se32cart
 
@@ -1414,6 +2206,7 @@ class RealExecutor:
             hold_hand_raw = self._hand_init
             self._move_hand(self._convert(hold_hand_raw))
             time.sleep(0.3)
+        self._last_hand_qpos = np.asarray(hold_hand_raw, dtype=np.float64).copy()
         log["steps"]["hand_open_s"] = round(time.time() - t1, 2)
 
         # 1. Snapshot placed object pose under rigid grasp assumption.
@@ -1423,10 +2216,15 @@ class RealExecutor:
         released_obj_pose = T_wrist_now @ T_obj_in_wrist
         log["released_obj_pose_robot"] = released_obj_pose.tolist()
 
+        new_scene = dict(scene_cfg)
+        new_scene["mesh"] = dict(scene_cfg.get("mesh", {}))
+        new_scene["mesh"]["target"] = dict(scene_cfg["mesh"]["target"])
+        new_scene["mesh"]["target"]["pose"] = se32cart(released_obj_pose).tolist()
+        self.set_speed_profile_object(new_scene)
+
         # 2. Sequential on joints [1, 2, 0] only — coarse arm motion away from
         #    the just-placed object, before wrist replanning.
-        clear_view = self._xarm_init.copy()
-        clear_view[0] -= np.deg2rad(40.0)
+        clear_view = self._clear_view.copy()
         self._log_state("seq_base_shoulder")
         t1 = time.time()
         coarse_order = [1, 2, 0]
@@ -1443,10 +2241,6 @@ class RealExecutor:
         #    handled by cuRobo trajopt.
         self._log_state("plan_wrist")
         t1 = time.time()
-        new_scene = dict(scene_cfg)
-        new_scene["mesh"] = dict(scene_cfg.get("mesh", {}))
-        new_scene["mesh"]["target"] = dict(scene_cfg["mesh"]["target"])
-        new_scene["mesh"]["target"]["pose"] = se32cart(released_obj_pose).tolist()
         cur_qpos = self.arm.get_data()["qpos"]
         wrist_traj = planner.plan_js_to_init(
             new_scene, cur_qpos,
@@ -1468,7 +2262,9 @@ class RealExecutor:
         arm_traj = wrist_traj[:, :6]
         hand_traj = np.array([self._convert(wrist_traj[i, 6:])
                               for i in range(len(wrist_traj))])
-        self._move_joints(arm_traj, hand_traj)
+        self._move_joints(
+            arm_traj, hand_traj,
+            proximity_hand_traj=wrist_traj[:, 6:])
         log["steps"]["wrist_exec_s"] = round(time.time() - t1, 2)
 
         final_qpos = self.arm.get_data()["qpos"]
@@ -1486,7 +2282,7 @@ class RealExecutor:
                        scene_cfg: Optional[dict] = None) -> dict:
         """Reset path for failed grasps (approach contact or charuco fail).
         Open hand to hand_init, then sequentially move arm to clear_view
-        (joint 0 -60° from XARM_INIT) via [1, 2, 5, 0, 3, 4] (mirror if
+        (joint 0 -40° from XARM_INIT) via [1, 2, 5, 0, 3, 4] (mirror if
         joint 1 below init). No planner involvement."""
         # Kept for the common executor contract; this legacy fallback is a
         # hardware-local sequential motion and does not use planner/scene.
@@ -1506,13 +2302,12 @@ class RealExecutor:
         time.sleep(0.5)
         log["steps"]["hand_open_s"] = round(time.time() - t1, 2)
 
-        # 2. Sequential arm retract to clear-view pose (joint 0 -60° from
+        # 2. Sequential arm retract to clear-view pose (joint 0 -40° from
         #    XARM_INIT). No contact monitor — sequential motion has high
         #    per-joint acceleration that breaks the tau_model baseline.
         self._log_state("clear_view")
         t1 = time.time()
-        clear_view = self._xarm_init.copy()
-        clear_view[0] -= np.deg2rad(40.0)
+        clear_view = self._clear_view.copy()
         execute_order = [1, 2, 5, 0, 3, 4]
         if self.arm.get_data()["qpos"][1] < self._xarm_init[1]:
             execute_order = [2, 1, 5, 0, 3, 4]
@@ -1535,5 +2330,7 @@ class RealExecutor:
         return log
 
     def shutdown(self):
+        self._speed_profile_mesh_executor.shutdown(
+            wait=False, cancel_futures=True)
         self.arm.end()
         self.hand.end()

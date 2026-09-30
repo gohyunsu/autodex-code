@@ -5,7 +5,8 @@ from src.demo.lift_test import jacobian_lift as jl
 from src.demo.lift_test import run_session as lift_session
 from src.demo.lift_test.batch_validation import object_bottom_z_batch
 from src.demo.lift_test.execution_trajectory import (ExecutionProfile,
-                                                      build_execution_trajectory)
+                                                      build_execution_trajectory,
+                                                      profile_for_arm)
 from src.demo.lift_test.board import point_in_polygon, polygon_centroid, y_interval_at_x
 from src.demo.lift_test.candidate_policy import (make_candidate_policy,
                                                   order_coverage_keys)
@@ -44,6 +45,13 @@ def _patch_synthetic_batch_validation(monkeypatch):
         lambda planner, qpos: np.stack([planner.fk_wrist(q) for q in qpos]),
     )
     monkeypatch.setattr(js, "_arm_execution_limits", lambda _n_arm: (1.0, 4.0))
+
+
+def test_vertical_payload_speed_policy_is_arm_specific():
+    assert js._default_options_for_arm(6).held_object_speed_scale == 1.0
+    assert js._default_options_for_arm(7).held_object_speed_scale == 0.40
+    assert profile_for_arm("xarm").held_object_speed_scale == 1.0
+    assert profile_for_arm("franka").held_object_speed_scale == 0.40
 
 
 def test_board_proxy_centroid_and_x_slice_are_inside():

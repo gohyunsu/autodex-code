@@ -63,6 +63,29 @@ class CandidateArchiveTest(unittest.TestCase):
     def test_loads_zip_candidate_archive(self):
         self._load_from_archive(".zip")
 
+    def test_excludes_exact_candidate_key_without_persisting_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            obj = "donut"
+            object_dir = _candidate_tree(
+                tmp_path / "candidates" / "v8", obj)
+            second = object_dir / "shelf" / "2" / "candidate_b"
+            second.mkdir(parents=True)
+            np.save(second / "wrist_se3.npy", np.eye(4, dtype=np.float32))
+            np.save(second / "pregrasp_pose.npy", np.zeros(6, dtype=np.float32))
+            np.save(second / "grasp_pose.npy", np.ones(6, dtype=np.float32))
+
+            loaded = load_candidate(
+                obj, np.eye(4), "v8", hand="inspire", shuffle=False,
+                skip_done=False, candidates_root=str(tmp_path / "candidates"),
+                candidate_order=[("shelf", "2", "candidate_a"),
+                                 ("shelf", "2", "candidate_b")],
+                excluded_candidates={("shelf", "2", "candidate_a")})
+
+            self.assertEqual(len(loaded[0]), 1)
+            self.assertEqual(loaded[3], [("shelf", "2", "candidate_b")])
+            self.assertFalse(any(tmp_path.rglob("result.json")))
+
 
 if __name__ == "__main__":
     unittest.main()
