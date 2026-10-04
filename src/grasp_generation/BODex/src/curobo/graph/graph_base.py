@@ -332,7 +332,7 @@ class GraphPlanBase(GraphConfig):
     def _sample_pts(self, n_samples=None, bounded=False, unit_ball=False, seed=123):
         # sample in state space:
         if n_samples is None:
-            n_sampels = self.sample_pts
+            n_samples = self.sample_pts
         if unit_ball:
             halton_samples = self.sample_gen.get_gaussian_samples(n_samples, variance=1.0)
             halton_samples = halton_samples / torch.norm(halton_samples, dim=-1, keepdim=True)
@@ -340,10 +340,8 @@ class GraphPlanBase(GraphConfig):
                 radius_samples = self.sample_gen.get_samples(n_samples, bounded=False)
                 radius_samples = torch.clamp(radius_samples[:, 0:1], 0.0, 1.0)
                 halton_samples = radius_samples * halton_samples
-            print(halton_samples.shape, n_samples, "halton samples shape in sample pts unit ball")
         else:
             halton_samples = self.sample_gen.get_samples(n_samples, bounded=bounded)
-            print(halton_samples.shape, "halton samples shape in sample pts")
         return halton_samples, halton_samples
 
     def reset_buffer(self):

@@ -474,13 +474,20 @@ class HaltonGenerator:
             out_buffer = None
             if self._index_buffer is not None and self._index_buffer.shape[0] == num_samples:
                 out_buffer = self._index_buffer
+            randint_kwargs = {
+                "generator": self._int_gen,
+                "device": self.tensor_args.device,
+            }
+            # Recent PyTorch releases reject the otherwise optional
+            # ``out=None`` overload. Only provide ``out`` when a reusable
+            # tensor actually exists.
+            if out_buffer is not None:
+                randint_kwargs["out"] = out_buffer
             index = torch.randint(
                 0,
-                self._sample_buffer.shape[0],
-                (num_samples,),
-                generator=self._int_gen,
-                device=self.tensor_args.device,
-                out=out_buffer,
+                int(self._sample_buffer.shape[0]),
+                (int(num_samples),),
+                **randint_kwargs,
             )
             samples = self._sample_buffer[index]
             if self._index_buffer is None:
