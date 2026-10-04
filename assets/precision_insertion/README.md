@@ -21,9 +21,15 @@ matching frozen calibration path. It is a declarative profile, not an active
 ParaDex network configuration: the capture-PC IPs and physical rig must pass
 `scripts/precision_insertion/verify_zerodex_camera_profile.py` before use.
 
-The generated handle-only proxy is a BODex proposal aid. It is not a runtime
-object and cannot be used for perception, collision checking, or task success.
-Every proposed grasp must be rechecked on the complete key mesh.
+The builder creates one handle-only BODex proposal proxy per key. The visible
+proxy geometry is identical, but its gravity centre and mass come from the
+corresponding full key. Proxies are not runtime objects and cannot be used for
+perception, collision checking, or task success. Every proposed grasp must be
+rechecked independently on every complete key mesh on which it will run.
+
+`bodex_handle_proxy_objects_all.txt` is the reproducible four-proxy input list.
+The 0.3 mm proxy is also used to propose the current common grasp because that
+single wrist/finger configuration passed all four full-key simulation checks.
 
 Do not hand-edit generated OBJ/JSON/NPY files. Rebuild them with
 `scripts/precision_insertion/build_assets.py`.

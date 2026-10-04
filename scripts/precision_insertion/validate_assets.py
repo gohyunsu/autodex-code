@@ -18,6 +18,7 @@ def validate(shared_root: Path, source_dir: Path, require_runtime: bool = False)
     project = shared_root / "AutoDex"
     failures: list[str] = []
     blockers: list[str] = []
+    planned_sim_candidates: dict[str, dict[str, Path]] = {}
 
     for object_name, _gap, source_name in KEY_SPECS:
         source_mesh = read_binary_stl(source_dir / source_name)
@@ -93,14 +94,71 @@ def validate(shared_root: Path, source_dir: Path, require_runtime: bool = False)
                         plan = {}
                     if plan.get("status") == "passed":
                         franka_planned.append(plan_path)
+        simulated_dirs = {path.parent for path in simulated}
+        planned_dirs = {path.parent for path in franka_planned}
+        physical_dirs = {path.parent for path in physically_validated}
+        planned_sim_dirs = simulated_dirs & planned_dirs
+        planned_sim_candidates[object_name] = {
+            path.name: path for path in planned_sim_dirs
+        }
         if not screened:
             blockers.append(f"{object_name}: no contact-safe Inspire grasp candidate")
-        elif object_name == "precision_key_1p5mm" and not simulated:
+        elif not simulated:
             blockers.append(f"{object_name}: contact-safe grasp has not passed full-key simulation")
-        elif object_name == "precision_key_1p5mm" and not franka_planned:
-            blockers.append(f"{object_name}: simulated grasp has not passed FR3 planning")
-        elif object_name == "precision_key_1p5mm" and not physically_validated:
+        elif not planned_sim_dirs:
+            blockers.append(
+                f"{object_name}: no single simulated grasp has also passed FR3 planning"
+            )
+        elif not (planned_sim_dirs & physical_dirs):
             blockers.append(f"{object_name}: simulation-validated grasp lacks physical validation")
+
+        stage_path = project / "precision_insertion" / "stages" / f"{object_name}.json"
+        if not stage_path.is_file():
+            failures.append(f"{object_name}: stage profile is missing")
+        else:
+            stage = json.loads(stage_path.read_text())
+            if stage.get("object") != object_name:
+                failures.append(f"{object_name}: stage profile object mismatch")
+            controller = stage.get("controller", {})
+            if controller.get("implementation_status") not in {
+                "required", "implemented", "commissioned"
+            }:
+                failures.append(
+                    f"{object_name}: unknown controller implementation status"
+                )
+
+    common_ids = set.intersection(
+        *(set(candidates) for candidates in planned_sim_candidates.values())
+    ) if planned_sim_candidates else set()
+    if not common_ids:
+        blockers.append(
+            "no common Inspire grasp has passed full-key simulation and FR3 planning "
+            "for all four keys"
+        )
+    else:
+        # Equal IDs are not enough: assert that the actual wrist/finger arrays
+        # match, so a comparison cannot silently use four unrelated seed 78s.
+        for candidate_id in sorted(common_ids):
+            reference: dict[str, np.ndarray] | None = None
+            for object_name, _gap, _source_name in KEY_SPECS:
+                candidate = planned_sim_candidates[object_name][candidate_id]
+                arrays = {
+                    filename: np.load(candidate / filename)
+                    for filename in (
+                        "wrist_se3.npy", "pregrasp_pose.npy", "grasp_pose.npy"
+                    )
+                }
+                if reference is None:
+                    reference = arrays
+                    continue
+                if any(
+                    not np.array_equal(arrays[name], reference[name])
+                    for name in arrays
+                ):
+                    failures.append(
+                        f"common candidate {candidate_id}: wrist/finger arrays differ by key"
+                    )
+                    break
 
     fixture = project / "precision_insertion" / "fixtures" / FIXTURE_NAME
     if not (fixture / "socket_shared_bore_1p5.obj").is_file():

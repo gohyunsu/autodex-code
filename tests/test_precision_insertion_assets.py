@@ -93,6 +93,25 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
                 manifest["grasp_generation_proxy"]["runtime_object"],
                 "precision_key_1p5mm",
             )
+            self.assertEqual(len(manifest["grasp_generation_proxies"]), 4)
+            for object_name, _gap, _source in builder.KEY_SPECS:
+                proxy_name = builder.handle_proxy_name(object_name)
+                proxy = root / "object_processing" / proxy_name
+                self.assertTrue(
+                    (proxy / "processed_data" / "mesh" / "simplified.obj").is_file()
+                )
+                info = json.loads(
+                    (proxy / "processed_data" / "info" / "simplified.json")
+                    .read_text(encoding="utf-8")
+                )
+                self.assertEqual(info["runtime_object"], object_name)
+                stage = json.loads(
+                    (root / "AutoDex" / "precision_insertion" / "stages" /
+                     f"{object_name}.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(stage["object"], object_name)
+                self.assertEqual(stage["controller"]["implementation_status"], "required")
+                self.assertIsNone(stage["controller"]["force_torque_limits"])
             marker = (
                 root / "AutoDex/foundpose_assets/precision_key_1p5mm/"
                 "GENERATION_REQUIRED.json"

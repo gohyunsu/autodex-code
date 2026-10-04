@@ -41,6 +41,15 @@ def main() -> int:
     parser.add_argument("--output-scene", type=Path, required=True)
     parser.add_argument("--replace-backup", type=Path, required=True)
     parser.add_argument("--full-object-mesh", type=Path, required=True)
+    parser.add_argument(
+        "--candidate-id",
+        action="append",
+        dest="candidate_ids",
+        help=(
+            "promote only this passing candidate ID; repeat for multiple IDs. "
+            "By default every passing candidate is promoted"
+        ),
+    )
     args = parser.parse_args()
 
     source = args.screened_scene.expanduser().resolve()
@@ -62,6 +71,9 @@ def main() -> int:
     rejected: dict[str, str] = {}
     for candidate in sorted(path for path in source.iterdir() if path.is_dir()):
         name = candidate.name
+        if args.candidate_ids is not None and name not in args.candidate_ids:
+            rejected[name] = "not_selected"
+            continue
         screen_path = candidate / "contact_screen.json"
         collision_path = candidate / "coll_valid.npy"
         simulation_path = candidate / "sim_eval.json"
@@ -96,6 +108,7 @@ def main() -> int:
         "screened_scene": str(source),
         "output_scene": str(output),
         "backup_scene": str(backup),
+        "selected_candidate_ids": args.candidate_ids,
         "promoted": promoted,
         "rejected": rejected,
     }
@@ -109,7 +122,7 @@ def main() -> int:
                 "visual clearance of shaft and socket-facing shoulder",
                 "Franka reachability and slow collision preflight on the physical cell",
                 "repeatable grasp and lift without shaft contact",
-                "slow 1.5 mm socket insertion with abort thresholds enabled",
+                "stage-appropriate slow socket insertion with abort thresholds enabled",
             ],
             "completion_file": "physical_validation.json",
             "do_not_claim": "trusted grasp until physical_validation.json records status=passed",

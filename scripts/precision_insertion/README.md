@@ -9,30 +9,47 @@ This directory builds the assets for the staged unified-socket experiment:
 | 0.5 mm | contact-search introduction |
 | 0.3 mm | final precision condition |
 
-The current runtime target is only `precision_key_1p5mm`. The other three
-objects have complete geometry, frame, scene, and contact-policy assets, but
-do not yet have grasps or perception representations. This is intentional:
-the staged experiment must not silently treat an unvalidated transfer as a
-trusted grasp.
+All four conditions now have geometry, frames, scenes, contact policies,
+gap-specific proposal proxies, a common simulation-validated grasp, FR3 plan
+evidence, and fail-closed stage profiles. None is physically trusted, and none
+has a FoundPose representation yet. The staged experiment must not silently
+treat simulation, a controller specification, or an unvalidated transfer as
+physical success.
 
 ## Current status
 
 Generated under `~/shared_data`:
 
 - four metric key objects under `object_processing/precision_key_*`;
-- a proposal-only handle proxy under
-  `object_processing/precision_key_handle_contact_proxy`;
+- four proposal-only handle proxies under `object_processing/precision_key*proxy`;
 - the unified socket mesh, CAD-relative insertion transforms, and fixture-pose
   template under `AutoDex/precision_insertion/fixtures/unified_socket`;
+- one fail-closed experiment profile per gap under
+  `AutoDex/precision_insertion/stages`;
 - a frozen four-camera ZeroDex calibration snapshot under
   `AutoDex/precision_insertion/calibration`;
-- one 1.5 mm runtime grasp, candidate `table/0/84`, under
-  `AutoDex/candidates/inspire/v8/precision_key_1p5mm`.
+- the same runtime grasp, candidate `table/0/78`, under each of the four
+  `AutoDex/candidates/inspire/v8/precision_key_*` pools.
 
-Candidate 84 passed the declared-contact rule, full-key cuRobo collision,
-MuJoCo squeeze/gravity stability, and a hardware-free FR3 approach plus 10 cm
-vertical-lift plan. It is **not physically trusted**. The runtime pool retains
-`PHYSICAL_VALIDATION_REQUIRED.json`, and strict validation remains blocked.
+Candidate 78 was proposed with the 0.3 mm key's handle-only proxy, then passed
+the declared-contact rule, cuRobo full-key collision, and MuJoCo
+squeeze/gravity stability independently on all four full meshes. The four
+declared contacts are lateral handle contacts; none is on the shaft, bevel,
+tip, rear-edge margin, or socket-facing shoulder. The same candidate passed a
+hardware-free FR3 approach plus 10 cm vertical-lift plan for all four keys at
+the same test pose `(x=0.4 m, y=0, yaw=pi)`.
+
+It is **not physically trusted**. Every runtime pool retains
+`PHYSICAL_VALIDATION_REQUIRED.json`; no physical grasp, lift, or insertion has
+been claimed. The former 1.5 mm candidate 84 was moved, not deleted, to
+`~/shared_data/AutoDex/archive/runtime_before_common_grasp_20261005`.
+
+| gap | geometry | common grasp full-key sim | FR3 plan | physical | controller |
+|---:|---|---|---|---|---|
+| 1.5 mm | ready | seed 78 passed | passed | required | spec only; open-loop implementation required |
+| 1.0 mm | ready | seed 78 passed | passed | required | spec only; accuracy instrumentation required |
+| 0.5 mm | ready | seed 78 passed | passed | required | force/contact XY-yaw search required |
+| 0.3 mm | ready | seed 78 passed | passed | required | final search controller required |
 
 ## Why the geometry is generated this way
 
@@ -69,12 +86,13 @@ and `contact_forbidden.obj` make the partition inspectable, while
 `contact_regions.json` is the machine-readable source of truth.
 
 Direct BODex optimization on the full key repeatedly spent fingertips on the
-shaft. The handle proxy changes only the **proposal surface**: it keeps the
-full key's frame, CoM, OBB, and mass proxy, but exposes only the handle box.
+shaft. Each handle proxy changes only the **proposal surface**: it keeps its
+corresponding full key's frame, CoM, OBB, and mass proxy, but exposes only the
+handle box.
 Four digits (thumb/index/middle/ring) are optimized; the little finger is
 omitted because the stock five-finger solution repeatedly occupied the shaft.
 No proxy result enters the runtime pool directly. Each proposal is checked
-again against the full 1.5 mm key for:
+again against every full key mesh on which it will run for:
 
 1. numerical BODex quality;
 2. every declared object contact belonging to an allowed face;
@@ -83,8 +101,12 @@ again against the full 1.5 mm key for:
 5. FR3+Inspire IK, approach trajectory, and vertical lift planning;
 6. finally, supervised physical validation.
 
-Candidate 84's four declared contacts are all on lateral handle faces. None is
-on the shaft, tip, bevel, rear-edge margin, or socket-facing shoulder.
+The current common grasp is deliberately identical across gaps. This avoids
+confounding gap difficulty with a changing wrist/finger pose. A gap-specific
+proxy search was also run: its 0.5 mm random pool happened to yield no MuJoCo
+pass, while the 0.3 mm pool yielded two. Cross-validation established that
+seed 78 from the latter passes every full mesh; this is sampling behavior, not
+evidence that 0.3 mm insertion is easier than 0.5 mm insertion.
 
 ## Local setup
 
@@ -129,55 +151,99 @@ physical/runtime requirements are complete:
 python scripts/precision_insertion/validate_assets.py --require-runtime
 ```
 
-## Reproduce the 1.5 mm grasp search
+## Reproduce the four-gap common grasp search
 
 Run from the repository root after activating `autodex_bodex`:
 
 ```bash
 python src/grasp_generation/BODex/generate.py \
   -c sim_inspire/precision_insertion.yml -w 1 \
-  --obj_list_file assets/precision_insertion/bodex_handle_proxy_objects.txt \
+  --obj_list_file assets/precision_insertion/bodex_handle_proxy_objects_all.txt \
   --obj_root_dir ~/shared_data/object_processing \
   --scene_filter_file assets/precision_insertion/bodex_baseline_scene_filter.json \
-  --exp_name precision_insertion_v3_proxy --seed_num 1000 \
+  --exp_name precision_insertion_v4_per_key_proxy --seed_num 1000 \
   --grasp_threshold 0.2 --distance_threshold 0.01 \
-  -o ~/shared_data/AutoDex/bodex_raw/inspire/precision_insertion_v3_proxy
+  -o ~/shared_data/AutoDex/bodex_raw/inspire/precision_insertion_v4_per_key_proxy
 ```
 
-Curate declared contacts into a non-runtime staging pool. If the output exists,
-pass a new explicit backup path; the tool never silently replaces it.
+For a controlled common-grasp comparison, screen the most demanding 0.3 mm
+proxy proposals against each full key's contact policy. If an output already
+exists, pass a new explicit `--replace-backup` path; the tool never silently
+replaces it.
 
 ```bash
-python scripts/precision_insertion/filter_contact_safe_grasps.py \
-  --raw-scene ~/shared_data/AutoDex/bodex_raw/inspire/precision_insertion_v3_proxy/precision_key_handle_contact_proxy/table/0 \
-  --output-scene ~/shared_data/AutoDex/contact_screen_staging/inspire/precision_insertion_v3_proxy/precision_key_1p5mm/table/0 \
-  --contact-policy ~/shared_data/object_processing/precision_key_1p5mm/processed_data/info/contact_regions.json
+for object in precision_key_1p5mm precision_key_1p0mm \
+              precision_key_0p5mm precision_key_0p3mm; do
+  python scripts/precision_insertion/filter_contact_safe_grasps.py \
+    --raw-scene ~/shared_data/AutoDex/bodex_raw/inspire/precision_insertion_v4_per_key_proxy/precision_key_0p3mm_handle_contact_proxy/table/0 \
+    --output-scene ~/shared_data/AutoDex/contact_screen_staging/inspire/precision_insertion_v4_common_grasp/$object/table/0 \
+    --contact-policy ~/shared_data/object_processing/$object/processed_data/info/contact_regions.json
+done
 ```
 
-Then run the full-key collision and simulation filter against the real key, not
-the proxy:
+Run collision and simulation against each real key, never the proxy:
 
 ```bash
-python src/grasp_generation/sim_filter/run_sim_filter.py \
-  --hand inspire --version precision_insertion_v3_proxy \
-  --obj precision_key_1p5mm \
-  --bodex-root ~/shared_data/AutoDex/contact_screen_staging/inspire/precision_insertion_v3_proxy \
-  --candidate-root ~/shared_data/AutoDex/sim_filter_pass/inspire \
-  --obj_root_dir ~/shared_data/object_processing
+for object in precision_key_1p5mm precision_key_1p0mm \
+              precision_key_0p5mm precision_key_0p3mm; do
+  python src/grasp_generation/sim_filter/run_sim_filter.py \
+    --hand inspire --version precision_insertion_v4_common_grasp \
+    --obj "$object" \
+    --bodex-root ~/shared_data/AutoDex/contact_screen_staging/inspire/precision_insertion_v4_common_grasp \
+    --candidate-root ~/shared_data/AutoDex/sim_filter_pass/inspire \
+    --obj_root_dir ~/shared_data/object_processing
+done
 ```
 
-Only after those results exist should `promote_sim_validated_grasps.py` copy
-passing candidates into the v8 runtime pool. It writes simulation provenance
-and a physical-validation gate; it never writes physical success.
-
-The FR3 planner-only check used for candidate 84 is:
+Intersect the passing IDs across all four outputs before promotion. In the
+recorded seed-123 run, seed 78 is the common candidate. Promote it separately
+for each real mesh with `--candidate-id 78`. The command requires an explicit
+backup path for an existing pool, writes mesh-hash provenance and a physical
+validation gate, and never writes physical success.
 
 ```bash
-python src/execution/plan_test.py \
-  --obj precision_key_1p5mm --version v8 \
-  --hand fr3_inspire --candidate-hand inspire \
-  --pose_idx 000 --x 0.4 --yaw 0
+backup_root=~/shared_data/AutoDex/archive/runtime_before_common_grasp_manual
+for object in precision_key_1p5mm precision_key_1p0mm \
+              precision_key_0p5mm precision_key_0p3mm; do
+  python scripts/precision_insertion/promote_sim_validated_grasps.py \
+    --screened-scene ~/shared_data/AutoDex/contact_screen_staging/inspire/precision_insertion_v4_common_grasp/$object/table/0 \
+    --output-scene ~/shared_data/AutoDex/candidates/inspire/v8/$object/table/0 \
+    --replace-backup "$backup_root/$object/table/0" \
+    --full-object-mesh ~/shared_data/object_processing/$object/processed_data/mesh/simplified.obj \
+    --candidate-id 78
+done
 ```
+
+Choose a new `backup_root` for every rerun; the promoter refuses to overwrite
+an earlier backup.
+
+Then validate one shared FR3 object pose and write per-candidate evidence:
+
+```bash
+python scripts/precision_insertion/validate_franka_grasp_plans.py \
+  --candidate-id 78 --x-grid 0.4 --y-grid 0.0 \
+  --yaw-grid 3.141592653589793
+```
+
+This planner check covers pickup approach and held-object lift only. It does
+not plan or certify the socket insertion trajectory.
+
+## Stage profiles and controller assets
+
+`build_assets.py` writes one profile under
+`~/shared_data/AutoDex/precision_insertion/stages` for each gap. Each profile
+resolves the exact object, scene, candidate pool, FoundPose path, socket
+geometry, fixture pose, and camera-calibration root. Controller entries are
+fail-closed with `implementation_status: required`:
+
+- 1.5 mm requests open-loop Cartesian insertion;
+- 1.0 mm requests the same motion with accuracy measurement;
+- 0.5 and 0.3 mm request force/contact XY-yaw search.
+
+Force limits and search increments are deliberately `null`. Those are not CAD
+assets and cannot be chosen safely without Franka force-signal validation and
+physical commissioning. Filling them with guessed values would turn an asset
+preparation step into an unreviewed robot-control change.
 
 ## ZeroDex camera profile
 

@@ -14,7 +14,9 @@ and tip remain part of the collision mesh but are marked contact-forbidden.
 
 This builder deliberately does not fabricate learned FoundPose descriptors or
 robot grasps.  It writes machine-readable ``GENERATION_REQUIRED.json`` markers
-for those GPU/physical-validation stages.
+for those GPU/physical-validation stages.  It does create one handle-only
+grasp-proposal proxy per key so each optimization uses the actual full key's
+centre of mass while keeping the insertion shaft off-limits to contacts.
 """
 
 from __future__ import annotations
@@ -47,6 +49,37 @@ KEY_SPECS = (
 SOCKET_SOURCE = "socket_shared_bore_1p5.stl"
 FIXTURE_NAME = "unified_socket"
 HANDLE_PROXY_NAME = "precision_key_handle_contact_proxy"
+
+STAGE_SPECS = {
+    "precision_key_1p5mm": {
+        "purpose": "full pipeline bring-up and safe open-loop insertion",
+        "control_mode": "open_loop_cartesian",
+        "xy_yaw_search": False,
+        "promotion_prerequisites": [],
+    },
+    "precision_key_1p0mm": {
+        "purpose": "measure cumulative perception, calibration, and grasp-repeatability error",
+        "control_mode": "open_loop_accuracy_measurement",
+        "xy_yaw_search": False,
+        "promotion_prerequisites": ["precision_key_1p5mm"],
+    },
+    "precision_key_0p5mm": {
+        "purpose": "introduce force/contact-based XY and yaw search",
+        "control_mode": "force_contact_xy_yaw_search",
+        "xy_yaw_search": True,
+        "promotion_prerequisites": ["precision_key_1p5mm", "precision_key_1p0mm"],
+    },
+    "precision_key_0p3mm": {
+        "purpose": "final precision condition",
+        "control_mode": "force_contact_xy_yaw_search",
+        "xy_yaw_search": True,
+        "promotion_prerequisites": [
+            "precision_key_1p5mm",
+            "precision_key_1p0mm",
+            "precision_key_0p5mm",
+        ],
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -512,12 +545,21 @@ def _build_key(
     has_simulated_candidate = any(
         _passed_validation(path) for path in simulation_records
     )
+    planned_simulation_records = [
+        path
+        for path in simulation_records
+        if _passed_validation(path)
+        and _passed_validation(path.parent / "franka_plan_validation.json")
+    ]
     _json_dump(
         candidate_dir / "GENERATION_REQUIRED.json",
         {
             "status": (
-                "simulation_candidate_available_physical_validation_required"
-                if has_simulated_candidate else "required"
+                "simulation_and_franka_plan_candidate_available_physical_validation_required"
+                if planned_simulation_records
+                else "simulation_candidate_available_franka_plan_and_physical_validation_required"
+                if has_simulated_candidate
+                else "required"
             ),
             "expected_files_per_grasp": [
                 "wrist_se3.npy",
@@ -530,8 +572,13 @@ def _build_key(
             "simulation_validation_records": [
                 str(path) for path in simulation_records
             ],
+            "simulation_and_franka_plan_records": [
+                str(path) for path in planned_simulation_records
+            ],
             "reason": (
-                "a simulated candidate exists but remains physically unvalidated"
+                "a simulated and FR3-planned candidate exists but remains physically unvalidated"
+                if planned_simulation_records
+                else "a simulated candidate still needs FR3 planning and physical validation"
                 if has_simulated_candidate
                 else "a robot grasp must be optimized, contact-filtered, and physically validated"
             ),
@@ -552,7 +599,19 @@ def _build_key(
     }
 
 
-def _build_handle_proxy(reference_source: Path, object_root: Path, project_root: Path) -> dict:
+def handle_proxy_name(runtime_object: str) -> str:
+    """Return the proposal object name, preserving the original 1.5 mm name."""
+    if runtime_object == "precision_key_1p5mm":
+        return HANDLE_PROXY_NAME
+    return f"{runtime_object}_handle_contact_proxy"
+
+
+def _build_handle_proxy(
+    reference_source: Path,
+    runtime_object: str,
+    object_root: Path,
+    project_root: Path,
+) -> dict:
     """Build the handle-only BODex proposal proxy in the real key frame.
 
     Its geometry deliberately omits the shaft. Candidates must subsequently
@@ -564,7 +623,8 @@ def _build_handle_proxy(reference_source: Path, object_root: Path, project_root:
         [bounds[0, 0], bounds[0, 1], 0.0],
         [bounds[1, 0], bounds[1, 1], HANDLE_FRONT_Z_M],
     )
-    object_dir = object_root / HANDLE_PROXY_NAME
+    proxy_name = handle_proxy_name(runtime_object)
+    object_dir = object_root / proxy_name
     raw_dir = object_dir / "raw_mesh"
     mesh_dir = object_dir / "processed_data" / "mesh"
     info_dir = object_dir / "processed_data" / "info"
@@ -573,7 +633,7 @@ def _build_handle_proxy(reference_source: Path, object_root: Path, project_root:
         directory.mkdir(parents=True, exist_ok=True)
 
     write_mtl(raw_dir / "material.mtl", (0.20, 0.55, 0.95))
-    write_obj(raw_dir / f"{HANDLE_PROXY_NAME}.obj", proxy, material_file="material.mtl")
+    write_obj(raw_dir / f"{proxy_name}.obj", proxy, material_file="material.mtl")
     write_mtl(mesh_dir / "material.mtl", (0.20, 0.55, 0.95))
     for name in ("raw.obj", "manifold.obj", "simplified.obj", "coacd.obj"):
         write_obj(mesh_dir / name, proxy, material_file="material.mtl")
@@ -593,7 +653,7 @@ def _build_handle_proxy(reference_source: Path, object_root: Path, project_root:
             "density": 1.0,
             "mass": reference.volume,
             "generation_proxy": True,
-            "runtime_object": "precision_key_1p5mm",
+            "runtime_object": runtime_object,
         },
     )
     _json_dump(
@@ -618,9 +678,9 @@ def _build_handle_proxy(reference_source: Path, object_root: Path, project_root:
         },
     )
     urdf_path = urdf_dir / "coacd.urdf"
-    _write_urdf(urdf_path, HANDLE_PROXY_NAME, reference.volume, reference.center_mass)
+    _write_urdf(urdf_path, proxy_name, reference.volume, reference.center_mass)
 
-    scene_dir = project_root / "scene" / "inspire" / HANDLE_PROXY_NAME / "table"
+    scene_dir = project_root / "scene" / "inspire" / proxy_name / "table"
     _json_dump(
         scene_dir / "0.json",
         {
@@ -645,17 +705,94 @@ def _build_handle_proxy(reference_source: Path, object_root: Path, project_root:
                 "param": {"placement": "handle_rear_down"},
                 "precision_insertion": {
                     "generation_proxy": True,
-                    "runtime_object": "precision_key_1p5mm",
+                    "runtime_object": runtime_object,
                 },
             },
         },
     )
     return {
-        "object": HANDLE_PROXY_NAME,
-        "runtime_object": "precision_key_1p5mm",
+        "object": proxy_name,
+        "runtime_object": runtime_object,
+        "reference_source": str(reference_source),
+        "reference_source_sha256": _sha256(reference_source),
+        "reference_center_mass_m": reference.center_mass.tolist(),
+        "reference_volume_m3": reference.volume,
         "bounds_m": proxy.bounds.tolist(),
         "warning": "proposal only; recheck every candidate against the full key mesh",
     }
+
+
+def _build_stage_profiles(project_root: Path) -> list[dict]:
+    """Write declarative, fail-closed experiment assets for all four gaps.
+
+    These files describe inputs and runtime gates.  They do not claim that an
+    insertion controller, a physical calibration, or a physical grasp has
+    been completed.
+    """
+    task_root = project_root / "precision_insertion"
+    fixture_root = task_root / "fixtures" / FIXTURE_NAME
+    calibration_root = task_root / "calibration"
+    profiles: list[dict] = []
+    for object_name, gap_mm, _source_name in KEY_SPECS:
+        spec = STAGE_SPECS[object_name]
+        profile = {
+            "schema_version": 1,
+            "task": "precision_insertion",
+            "object": object_name,
+            "nominal_per_side_gap_mm": float(gap_mm),
+            "purpose": spec["purpose"],
+            "frames": {
+                "key": "object",
+                "socket": "source STL frame",
+                "robot": "fr3_link0",
+            },
+            "assets": {
+                "object_root": str(project_root.parent / "object_processing" / object_name),
+                "scene": str(project_root / "scene" / "inspire" / object_name / "table" / "0.json"),
+                "candidate_scene": str(project_root / "candidates" / "inspire" / "v8" / object_name / "table" / "0"),
+                "foundpose_representation": str(
+                    project_root / "foundpose_assets" / object_name / "object_repre" /
+                    "v1" / object_name / "1" / "repre.pth"
+                ),
+                "socket_geometry": str(fixture_root / "task_geometry.json"),
+                "fixture_pose": str(fixture_root / "fixture_pose.json"),
+                "camera_calibration_root": str(calibration_root),
+            },
+            "grasp": {
+                "proposal_proxy": handle_proxy_name(object_name),
+                "scene_type": "table",
+                "scene_id": "0",
+                "tabletop_pose_stem": "000",
+                "contact_policy": (
+                    "four lateral handle faces and rear face only; shaft, tip, "
+                    "bevel, and socket-facing shoulder forbidden"
+                ),
+                "physical_validation_required": True,
+            },
+            "controller": {
+                "mode": spec["control_mode"],
+                "implementation_status": "required",
+                "use_xy_yaw_search": spec["xy_yaw_search"],
+                "force_torque_limits": None,
+                "search_step_sizes": None,
+                "note": (
+                    "Safety and search parameters must be commissioned on the "
+                    "physical Franka; this asset intentionally supplies no invented defaults."
+                ),
+            },
+            "promotion_prerequisites": spec["promotion_prerequisites"],
+            "runtime_gates": [
+                "FoundPose representation exists for this exact full-key mesh and frame",
+                "candidate passed full-key simulation and FR3 planning",
+                "candidate passed supervised physical grasp/lift validation",
+                "fixture_pose.json contains a measured T_robot_socket",
+                "ZeroDex four-camera and hand-eye snapshot is verified on the physical rig",
+                "insertion controller and abort thresholds for this stage are commissioned",
+            ],
+        }
+        _json_dump(task_root / "stages" / f"{object_name}.json", profile)
+        profiles.append(profile)
+    return profiles
 
 
 def _build_socket(source: Path, project_root: Path) -> dict:
@@ -742,8 +879,17 @@ def build(source_dir: Path, shared_root: Path) -> dict:
         _build_key(source_dir / source_name, object_name, gap_mm, object_root, project_root)
         for object_name, gap_mm, source_name in KEY_SPECS
     ]
-    handle_proxy = _build_handle_proxy(source_dir / KEY_SPECS[0][2], object_root, project_root)
+    handle_proxies = [
+        _build_handle_proxy(
+            source_dir / source_name,
+            object_name,
+            object_root,
+            project_root,
+        )
+        for object_name, _gap_mm, source_name in KEY_SPECS
+    ]
     socket = _build_socket(source_dir / SOCKET_SOURCE, project_root)
+    stage_profiles = _build_stage_profiles(project_root)
 
     task_root = project_root / "precision_insertion"
     manifest = {
@@ -752,13 +898,20 @@ def build(source_dir: Path, shared_root: Path) -> dict:
         "units": "m",
         "shared_root": str(shared_root),
         "objects": keys,
-        "grasp_generation_proxy": handle_proxy,
+        # Singular field retained for readers created before per-key proxies.
+        "grasp_generation_proxy": handle_proxies[0],
+        "grasp_generation_proxies": handle_proxies,
         "socket": socket,
         "progression": [
-            {"gap_mm": "1.5", "purpose": "full pipeline bring-up"},
-            {"gap_mm": "1.0", "purpose": "pose accuracy validation"},
-            {"gap_mm": "0.5", "purpose": "contact search introduction"},
-            {"gap_mm": "0.3", "purpose": "final precision condition"},
+            {
+                "object": profile["object"],
+                "gap_mm": str(profile["nominal_per_side_gap_mm"]),
+                "purpose": profile["purpose"],
+                "stage_profile": str(
+                    task_root / "stages" / f"{profile['object']}.json"
+                ),
+            }
+            for profile in stage_profiles
         ],
         "baseline": {
             "object": "precision_key_1p5mm",
@@ -772,9 +925,10 @@ def build(source_dir: Path, shared_root: Path) -> dict:
         ),
         "incomplete_runtime_assets": [
             "FoundPose repre.pth for each key",
-            "contact-safe Inspire grasp candidate(s)",
+            "supervised physical validation for each simulated and FR3-planned grasp",
             "measured fixture_pose.json",
             "ZeroDex camera/hand-eye calibration snapshot selected for the physical rig",
+            "stage-appropriate insertion controller and safety parameters",
         ],
     }
     _json_dump(task_root / "asset_manifest.json", manifest)

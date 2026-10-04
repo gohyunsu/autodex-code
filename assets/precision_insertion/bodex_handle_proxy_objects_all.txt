@@ -1,0 +1,6 @@
+# Proposal-only objects. Each proxy exposes the same safe handle surface but
+# carries its corresponding full key's centre of mass and mass proxy.
+precision_key_handle_contact_proxy
+precision_key_1p0mm_handle_contact_proxy
+precision_key_0p5mm_handle_contact_proxy
+precision_key_0p3mm_handle_contact_proxy
