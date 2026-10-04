@@ -53,6 +53,12 @@ from autodex.executor.lift_policy import LiftExecutionError
 from autodex.pipeline_trace import PipelineTrace, ScopedPipelineTrace
 from autodex.perception.init_orchestrator import InitOrchestrator
 from autodex.perception.snapshot_orchestrator import SnapshotOrchestrator
+from autodex.tasks import (
+    LiftTask,
+    TaskContext,
+    TaskInterface,
+    attach_task_outcome,
+)
 
 from autodex.utils.coverage import (
     experiment_candidate_state_root,
@@ -711,6 +717,7 @@ def run_single_trial(
     attempt_id: Optional[str] = None,
     episode_id: Optional[str] = None,
     session_attempted_candidates: Optional[set] = None,
+    task: Optional[TaskInterface] = None,
 ) -> dict:
     global _active_vis
     if _active_vis is not None:
@@ -738,6 +745,7 @@ def run_single_trial(
     sub = f"{scene_prefix}/{hand}" if scene_prefix else hand
     img_dir = os.path.join(project_dir, "experiment", args.exp_name, sub, obj, dir_idx)
     os.makedirs(img_dir, exist_ok=True)
+    task = task or LiftTask()
     # This dict is execution-local control data only.  It is never persisted;
     # the run-level append-only trace below is the sole timing authority.
     timing: dict = {}
@@ -788,6 +796,33 @@ def run_single_trial(
 
     episode_finalized = False
 
+    def _with_task_outcome(
+        record: dict,
+        grasp_success: Optional[bool],
+        *,
+        grasp_evidence: Optional[dict] = None,
+    ) -> dict:
+        scene_info = record.get("scene_info")
+        context = TaskContext(
+            object_name=obj,
+            arm=args.arm,
+            hand=hand,
+            trial_dir=img_dir,
+            scene_info=(tuple(str(part) for part in scene_info)
+                        if scene_info is not None else None),
+            metadata={
+                "scene_type": args.scene,
+                "candidate_result_scope": record.get("candidate_result_scope"),
+            },
+        )
+        outcome = task.evaluate(
+            context=context,
+            grasp_success=grasp_success,
+            grasp_evidence=grasp_evidence,
+        )
+        return attach_task_outcome(
+            record, grasp_success=grasp_success, task_outcome=outcome)
+
     def _stamp_end(result_dict):
         """Link this episode to the one canonical run-level timeline."""
         nonlocal episode_finalized
@@ -797,6 +832,7 @@ def run_single_trial(
         result_dict.pop("timing", None)
         if pipeline_trace is not None and trial_scope is not None:
             success = result_dict.get("success")
+            grasp_success = result_dict.get("grasp_success", success)
             outcome = ("success" if success is True else
                        "failure" if success is False else "skipped")
             if result_dict.get("retry_current_trial"):
@@ -818,6 +854,9 @@ def run_single_trial(
                 "episode.result", phase="episode", kind="result",
                 parent_id=episode_span, outcome=outcome,
                 success=success, reason=result_dict.get("reason"),
+                grasp_success=result_dict.get("grasp_success"),
+                task_success=result_dict.get("task_success"),
+                task_name=(result_dict.get("task") or {}).get("name"),
                 scene_info=result_dict.get("scene_info"),
                 retry_current_trial=bool(result_dict.get("retry_current_trial")),
                 recovery_action=recovery_action,
@@ -826,11 +865,15 @@ def run_single_trial(
                 reorient_target_stem=result_dict.get("reorient_target_stem"),
             )
             if result_dict.get("scene_info") is not None:
+                grasp_outcome = (
+                    "success" if grasp_success is True else
+                    "failure" if grasp_success is False else "skipped"
+                )
                 trial_scope.event(
                     "grasp.execution_result", phase="validation", kind="result",
-                    parent_id=episode_span, outcome=outcome,
+                    parent_id=episode_span, outcome=grasp_outcome,
                     scene_info=result_dict.get("scene_info"),
-                    success=success, reason=result_dict.get("reason"),
+                    success=grasp_success, reason=result_dict.get("reason"),
                 )
             ended = (trial_scope.end(
                 episode_span, outcome=outcome,
@@ -861,6 +904,9 @@ def run_single_trial(
                 "duration_s": (ended or {}).get("duration_s"),
                 "outcome": outcome,
                 "success": success,
+                "grasp_success": result_dict.get("grasp_success"),
+                "task_success": result_dict.get("task_success"),
+                "task_name": (result_dict.get("task") or {}).get("name"),
                 "reason": result_dict.get("reason"),
                 "retry_current_trial": bool(result_dict.get("retry_current_trial")),
                 "scene_info": result_dict.get("scene_info"),
@@ -2083,6 +2129,11 @@ def run_single_trial(
                 "candidate_result_scope": (
                     "experiment" if args.isolate_experiment else "shared_v8"),
                 "timing": timing}
+        fail = _with_task_outcome(
+            fail,
+            False,
+            grasp_evidence={"source": "execute_exception"},
+        )
         try:
             return _save_result(fail)
         except Exception:
@@ -2201,6 +2252,14 @@ def run_single_trial(
                     "candidate_result_scope": (
                         "experiment" if args.isolate_experiment else "shared_v8"),
                     "auto_label": auto_label_info, "timing": timing}
+            fail = _with_task_outcome(
+                fail,
+                auto_succ_lift,
+                grasp_evidence={
+                    "source": "auto_label_charuco",
+                    **auto_label_info,
+                },
+            )
             return _save_result(fail)
 
         # Resume video for place phase.
@@ -2598,6 +2657,14 @@ def run_single_trial(
             "manual_recovery_required": recovery_error is not None,
             "timing": timing,
         }
+        record = _with_task_outcome(
+            record,
+            trial_success,
+            grasp_evidence={
+                "source": "auto_label_charuco",
+                **auto_label_info,
+            },
+        )
         return _save_result(record)
 
     # ── 5. Label ─────────────────────────────────────────────────────────────
@@ -2729,6 +2796,15 @@ def run_single_trial(
     }
     if note is not None:
         trial_result["note"] = note
+    trial_result = _with_task_outcome(
+        trial_result,
+        succ,
+        grasp_evidence={
+            "source": "auto_label_charuco" if args.auto else "manual_label",
+            "note": note,
+            **(auto_label_info if args.auto else {}),
+        },
+    )
     _save_result(trial_result)
 
     # Persist result back to the candidate dir for ALL scenes (table, wall,
@@ -2754,7 +2830,8 @@ def run_single_trial(
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
-         pipeline_trace: Optional[PipelineTrace] = None):
+         pipeline_trace: Optional[PipelineTrace] = None,
+         task: Optional[TaskInterface] = None):
     owns_pipeline_trace = pipeline_trace is None
     if pipeline_trace is None:
         pipeline_trace = PipelineTrace()
@@ -3167,6 +3244,7 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
                 attempt_id=attempt_id,
                 episode_id=episode_id,
                 session_attempted_candidates=session_attempted_candidates,
+                task=task,
             )
             if tr.get("retry_current_trial"):
                 if tr.get("reason") in ("reoriented", "reoriented_manual"):
@@ -3202,7 +3280,8 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
             # remaining uncovered count + how many scenes this trial just
             # covered (delta vs before).
             if (_is_coverage_pool(args.grasp_version)
-                    and not args.ignore_coverage and tr.get("success")):
+                    and not args.ignore_coverage
+                    and tr.get("grasp_success", tr.get("success"))):
                 from autodex.utils.coverage import uncovered_scenes
                 lines = []
                 total_now = 0

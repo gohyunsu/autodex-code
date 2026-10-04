@@ -43,6 +43,7 @@ from src.execution.rotate_obj_yaw import rotate_from_live_scene
 from src.execution.scene_cfg import pose_world_to_scene_cfg
 from autodex.planner.obstacles import add_obstacles
 from autodex.pipeline_trace import PipelineTrace
+from autodex.tasks import TaskInterface
 from autodex.utils.robot_config import CHARUCO_BOARD_11_CENTER_XY
 from src.experiment.reset.reorient import reorient_from_live_scene
 
@@ -460,7 +461,7 @@ def _reorient_in_process(**context) -> dict:
     return info
 
 
-def main() -> None:
+def main(task: TaskInterface | None = None) -> None:
     trace = PipelineTrace(
         origin_monotonic_ns=_PROCESS_BOOT_MONOTONIC_NS,
         origin_wall_ns=_PROCESS_BOOT_WALL_NS,
@@ -472,6 +473,7 @@ def main() -> None:
             reorient_handler=_reorient_in_process,
             startup_handler=_charuco_preflight,
             pipeline_trace=trace,
+            task=task,
         )
     except KeyboardInterrupt:
         outcome = "aborted"
