@@ -174,20 +174,19 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
                 socket_marker.read_text(encoding="utf-8"),
             )
 
-    def test_zerodex_profile_is_one_exact_pc_partition(self):
+    def test_autodex_profile_preserves_existing_hardware_camera_contract(self):
         profile = json.loads(
-            (REPO_ROOT / "assets/precision_insertion/zerodex_camera_profile.json")
+            (REPO_ROOT / "assets/precision_insertion/autodex_camera_profile.json")
             .read_text(encoding="utf-8")
         )
-        serials = profile["camera_serials"]
-        assigned = [
-            serial
-            for pc in profile["pc_list"]
-            for serial in profile["expected_pc_serials"][pc]
-        ]
-        self.assertEqual(sorted(assigned), sorted(serials))
-        self.assertEqual(len(assigned), len(set(assigned)))
-        self.assertEqual(profile["capture_sync"], "free_run")
+        self.assertEqual(
+            profile["pc_list"],
+            ["capture1", "capture2", "capture3", "capture5", "capture6"],
+        )
+        self.assertEqual(profile["capture_sync"], "hardware")
+        self.assertEqual(profile["arm"], "franka")
+        self.assertEqual(profile["hand"], "inspire")
+        self.assertNotIn("camera_serials", profile)
 
 
 if __name__ == "__main__":

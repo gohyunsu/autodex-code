@@ -32,8 +32,9 @@ Generated under `~/shared_data`:
   `object_processing`, with an identity socket-to-mesh frame contract;
 - one fail-closed experiment profile per gap under
   `AutoDex/precision_insertion/stages`;
-- a frozen four-camera ZeroDex calibration snapshot under
-  `AutoDex/precision_insertion/calibration`;
+- a canonical AutoDex camera contract under
+  `assets/precision_insertion/autodex_camera_profile.json`; the robot host
+  writes a runtime audit after matching its active cameras and calibration;
 - the same runtime grasp, candidate `table/0/78`, under each of the four
   `AutoDex/candidates/inspire/v8/precision_key_*` pools.
 
@@ -180,9 +181,10 @@ passed through, use `--allow-no-gpu` for a CPU/package audit. That mode reports
 `src.execution.run_pipeline` as skipped because cuRobo creates CUDA tensors at
 import time; it does not claim that GPU planning was tested.
 
-The robot host does not need local PySpin in ZeroDex free-run mode. Each remote
-capture PC still needs its own working Spinnaker/PySpin installation because
-the ParaDex camera daemon opens the FLIR cameras there.
+The robot host and remote capture PCs retain the normal AutoDex camera
+dependencies. The robot host needs the local timestamp-camera SDK, the UTG900
+trigger, and `network.json` entries for both; every capture PC needs working
+Spinnaker/PySpin for its FLIR cameras.
 
 The mesh renderer is isolated from the planning environment because Open3D
 pulls in a large notebook/web visualization dependency set. Install it in a
@@ -200,7 +202,6 @@ does not imply that EGL is available inside a container or restricted shell.
 ```bash
 source ~/.venvs/autodex-assets/bin/activate
 python scripts/precision_insertion/build_assets.py
-python scripts/precision_insertion/pin_zerodex_calibration.py
 python scripts/precision_insertion/validate_assets.py
 python -m unittest tests.test_precision_insertion_assets -v
 ```
@@ -378,7 +379,7 @@ a representation. When capturing the socket, the segmentation prompt should
 include the whole red fixture and keyed opening; masking only the nearly
 symmetric exterior makes yaw underconstrained.
 
-Once the representation and ZeroDex calibration are available,
+Once the representation and a matching AutoDex calibration are available,
 `run_pipeline.py` measures the socket at each process start. The default
 `--socket-preflight auto` means "measure for `precision_key_*`, skip for other
 objects". It takes three independent multi-view estimates, transforms each
@@ -402,9 +403,9 @@ After all runtime gates below pass, the 1.5 mm pickup-only bring-up command is:
 ~/miniconda3/envs/autodex_bodex/bin/python src/execution/run_pipeline.py \
   --obj precision_key_1p5mm --arm franka --hand inspire \
   --grasp_version v8 --candidate-scene-type table \
-  --pc_list capture4 capturenew \
-  --calib_dir ~/shared_data/AutoDex/precision_insertion/calibration/zerodex_4cam_20261002_141639_franka_20261002_145508/cam_param \
-  --camera-sync free_run --socket-preflight measure \
+  --pc_list capture1 capture2 capture3 capture5 capture6 \
+  --calib_dir <AUTODEX_CALIB_DIR> \
+  --socket-preflight measure \
   --socket-measurements 3 --charuco-preflight measure \
   --isolate_experiment --exp_name precision_insertion_1p5_bringup \
   --max_trials 1
@@ -414,35 +415,39 @@ This command still executes the current grasp/lift task. It measures and
 collision-registers the socket but does not insert the key: the insertion
 motion task/controller is deliberately a remaining implementation gate.
 
-## ZeroDex camera profile
+## AutoDex camera profile
 
-The pinned profile is
-`assets/precision_insertion/zerodex_camera_profile.json`. It selects serials
-`25305462`, `25322639`, `25322642`, and `26053248`, matching the complete
-four-camera calibration snapshot. Audit it before any daemon or robot command:
+Precision insertion uses the existing AutoDex acquisition path, not the
+ZeroDex cameras. The canonical contract is
+`assets/precision_insertion/autodex_camera_profile.json`:
+
+- capture PCs `capture1`, `capture2`, `capture3`, `capture5`, and `capture6`;
+- camera serials resolved from the robot PC's active
+  `paradex/system/current/pc.json`;
+- remote FLIR video armed in hardware-sync mode;
+- local UTG900 trigger and timestamp camera configured by `network.json`;
+- a `~/shared_data/cam_param/<session>` whose intrinsics and extrinsics cover
+  every active serial;
+- the newest valid hand-eye session proven to belong to Franka.
+
+Audit these read-only inputs before starting camera daemons or connecting the
+robot. Pass the exact calibration selected on the AutoDex robot PC:
 
 ```bash
-python scripts/precision_insertion/verify_zerodex_camera_profile.py
-python scripts/precision_insertion/verify_zerodex_camera_profile.py --require-runtime
+python scripts/precision_insertion/verify_autodex_camera_profile.py \
+  --calib-dir <AUTODEX_CALIB_DIR>
+
+python scripts/precision_insertion/verify_autodex_camera_profile.py \
+  --calib-dir <AUTODEX_CALIB_DIR> --require-runtime \
+  --output ~/shared_data/AutoDex/precision_insertion/autodex_camera_runtime_audit.json
 ```
 
-The current active ParaDex2 profile does not describe the ZeroDex layout, so
-the strict audit fails. A lab-confirmed ParaDex `system/current` must map the
-first three serials to `capture4`, `26053248` to `capturenew`, and supply the
-real IPs. Do not copy the stale ParaDex2 IPs or infer `capturenew`'s address.
-
-Once the audit passes, the camera arguments are:
-
-```text
---pc_list capture4 capturenew
---calib_dir ~/shared_data/AutoDex/precision_insertion/calibration/zerodex_4cam_20261002_141639_franka_20261002_145508/cam_param
---camera-sync free_run
-```
-
-AutoDex must be the sole camera-daemon owner during this baseline. Stop
-ZeroDex `run/stream_owner.py` first, then launch the ParaDex daemons with
-exactly the four profile serials. Running both owners causes a lock takeover
-and interrupts the other pipeline.
+Do not rely on lexicographic "latest" without the audit. On this development
+host, the current ParaDex mapping and newest NAS calibration disagree on two
+serials, and the deployed network snapshot lacks the nested timestamp/trigger
+entries expected by upstream AutoDex. That observation does not define the
+robot PC; it is why the robot PC must generate its own PASS audit. The runtime
+now rejects a calibration missing any active camera before hardware startup.
 
 ## Assets that cannot be fabricated
 
@@ -457,9 +462,10 @@ and interrupts the other pipeline.
   and uncertainty before 1.0/0.5/0.3 mm claims.
 - **physical grasp trust:** simulation and planner success cannot establish
   real Inspire contact, print tolerance, or cable/fixture clearance.
-- **camera/hand-eye confirmation:** the frozen files are internally complete,
-  but someone must confirm the physical serial placement and rerun or approve
-  hand-eye calibration after the rig is fixed.
+- **camera/hand-eye runtime audit:** it depends on the AutoDex robot PC's
+  active ParaDex profile, installed trigger/timestamp devices, selected camera
+  calibration, and Franka hand-eye sessions. It cannot be certified from this
+  development checkout.
 
 The ParaDex2 NAS confirms the intended FoundPose asset contract but does not
 contain a representation for any `precision_key_*` object. For example,
@@ -470,7 +476,7 @@ templates, `dinov2_vits14-reg`, PCA-256, and 2048 clusters. Its 720 MB
 `repre.pth` is mesh-specific and cannot be renamed or reused for the key.
 The recovery path is to obtain the missing MV-GoTrack checkout from a capture
 PC/backup or restore access to its private repository, then run the wrapper on
-all four meshes with the pinned ZeroDex intrinsics. The old setup script asks
+all four meshes with the selected AutoDex camera intrinsics. The old setup script asks
 for CUDA 12.8; do not run it unchanged on this RTX 3090 host with driver 535.
 
 ## Git policy

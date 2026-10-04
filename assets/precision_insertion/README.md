@@ -16,10 +16,11 @@ the 39 x 33 x 45 mm handle. The shaft, tip, bevel, and the socket-facing handle
 shoulder are forbidden because contact there obstructs insertion. Accepted
 contacts also stay at least 2 mm from handle edges.
 
-`zerodex_camera_profile.json` pins the intended four-camera subset and the
-matching frozen calibration path. It is a declarative profile, not an active
-ParaDex network configuration: the capture-PC IPs and physical rig must pass
-`scripts/precision_insertion/verify_zerodex_camera_profile.py` before use.
+`autodex_camera_profile.json` preserves the existing AutoDex acquisition
+contract: capture PCs 1/2/3/5/6, hardware-triggered FLIR video, the local
+timestamp camera, and the active ParaDex network profile. Camera serials are
+resolved from `paradex/system/current/pc.json`; an explicit `--calib_dir` must
+cover that complete active set. ZeroDex cameras are not used by this task.
 
 The shared socket STL is also built as the independent perception object
 `precision_socket_unified`. Its raw mesh keeps the source STL frame exactly,

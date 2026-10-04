@@ -768,7 +768,7 @@ def _build_stage_profiles(project_root: Path) -> list[dict]:
     """
     task_root = project_root / "precision_insertion"
     fixture_root = task_root / "fixtures" / FIXTURE_NAME
-    calibration_root = task_root / "calibration"
+    camera_audit = task_root / "autodex_camera_runtime_audit.json"
     profiles: list[dict] = []
     for object_name, gap_mm, _source_name in KEY_SPECS:
         spec = STAGE_SPECS[object_name]
@@ -810,7 +810,9 @@ def _build_stage_profiles(project_root: Path) -> list[dict]:
                 "socket_pose_measurement": str(
                     fixture_root / "pose_measurement_asset.json"
                 ),
-                "camera_calibration_root": str(calibration_root),
+                "camera_profile": "assets/precision_insertion/autodex_camera_profile.json",
+                "camera_calibration_root": str(project_root.parent / "cam_param"),
+                "camera_runtime_audit": str(camera_audit),
             },
             "grasp": {
                 "proposal_proxy": handle_proxy_name(object_name),
@@ -841,7 +843,7 @@ def _build_stage_profiles(project_root: Path) -> list[dict]:
                 "candidate passed full-key simulation and FR3 planning",
                 "candidate passed supervised physical grasp/lift validation",
                 "session startup accepted repeated socket pose estimates and froze T_robot_socket",
-                "ZeroDex four-camera and hand-eye snapshot is verified on the physical rig",
+                "active AutoDex camera, calibration, hardware-sync, and Franka hand-eye audit passes",
                 "insertion controller and abort thresholds for this stage are commissioned",
             ],
         }
@@ -1190,15 +1192,15 @@ def build(source_dir: Path, shared_root: Path) -> dict:
             "candidate_scene_id": "0",
             "socket_pose": "measured_and_frozen_at_each_run_pipeline_session_start",
         },
-        "zerodex_camera_profile": (
-            "assets/precision_insertion/zerodex_camera_profile.json"
+        "autodex_camera_profile": (
+            "assets/precision_insertion/autodex_camera_profile.json"
         ),
         "incomplete_runtime_assets": [
             "FoundPose repre.pth for each key",
             f"FoundPose repre.pth for {SOCKET_OBJECT_NAME}",
             "supervised physical validation for each simulated and FR3-planned grasp",
             "accepted per-session socket pose measurement",
-            "ZeroDex camera/hand-eye calibration snapshot selected for the physical rig",
+            "AutoDex camera/calibration/hardware-sync/Franka hand-eye runtime audit",
             "stage-appropriate insertion controller and safety parameters",
         ],
     }

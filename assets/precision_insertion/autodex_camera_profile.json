@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "name": "autodex_precision_insertion",
+  "source": "paradex/system/current",
+  "arm": "franka",
+  "hand": "inspire",
+  "pc_list": [
+    "capture1",
+    "capture2",
+    "capture3",
+    "capture5",
+    "capture6"
+  ],
+  "camera_serial_policy": "resolve every serial from the active ParaDex pc.json at runtime",
+  "capture_sync": "hardware",
+  "hardware_sync": {
+    "trigger": "network.json signal_generator.param -> UTGE900",
+    "timestamp_camera": "network.json timestamp.param -> TimestampMonitor",
+    "remote_video_sync_mode": true
+  },
+  "calibration": {
+    "root": "~/shared_data/cam_param",
+    "selection": "pass an explicit --calib_dir whose intrinsics and extrinsics cover every active camera serial",
+    "do_not_use": "a ZeroDex camera snapshot or a calibration missing any active AutoDex camera"
+  },
+  "hand_eye": {
+    "root": "ParaDex handeye_calib_path",
+    "selection": "newest valid session proven to be Franka by metadata/eef link or 7-DOF qpos",
+    "loader": "src/execution/handeye.py:load_arm_C2R"
+  },
+  "runtime_owner": "AutoDex run_pipeline",
+  "notes": [
+    "The socket and key use the same AutoDex camera set and world frame.",
+    "ZeroDex camera ownership, capture4/capturenew, and free-run capture are outside this experiment.",
+    "ZeroDex remains a read-only design reference for the future VLM outcome checker only."
+  ]
+}

@@ -22,6 +22,31 @@ The four gaps form a gated experiment, not four interchangeable test objects:
 3. **0.5 mm:** introduce force/contact-guided XY and yaw correction;
 4. **0.3 mm:** evaluate the final policy only after the previous gates pass.
 
+## Component ownership and provenance
+
+| component | role | provenance | current state |
+|---|---|---|---|
+| remote FLIR acquisition, RCC, UTG900, timestamp camera | synchronized images/video | existing AutoDex/ParaDex | retained; ZeroDex cameras removed |
+| camera intrinsics/extrinsics | world-frame multi-view geometry | existing AutoDex `cam_param` | must match every active serial; new audit is fail-closed |
+| Franka `C2R` | world-to-robot registration | existing arm-aware AutoDex hand-eye loader | retained; newest proven Franka session only |
+| empty-board ChArUco preflight | per-session table plane/height | existing AutoDex logic | retained and composed with socket startup |
+| key FoundPose | `T_world_key` before each trial | existing AutoDex distributed perception | retained; four new mesh representations still missing |
+| socket FoundPose | `T_world_socket` once per session | existing AutoDex FoundPose engine + new orchestration | new repeated measurement/medoid/freeze; representation missing |
+| BODex grasp proposal | object-relative Inspire grasp | existing AutoDex/BODex | new handle-only proposal proxy and contact policy |
+| full-key simulation/planning filter | reject unsafe proxy proposals | AutoDex cuRobo/MuJoCo + new validation scripts | candidate 78 passes simulation/FR3 planning, not physical validation |
+| grasp candidate selection/recovery | choose, rotate, or reorient key | existing AutoDex `run_pipeline.py` | retained; only stable scene 0 has a promoted key grasp |
+| socket collision world | protect mounted fixture during pick/recovery/transfer | new logic using AutoDex cuRobo scene format | implemented with frozen exact static mesh |
+| Franka+Inspire pickup/lift | acquire and retain key | existing AutoDex executor | code path retained; candidate 78 awaits physical validation |
+| held-key transfer/pre-insertion | move rigid key to socket approach | future AutoDex task logic | not implemented |
+| insertion/contact search | straight stroke, then XY/yaw correction | new task controller | not implemented or commissioned |
+| grasp/task result split | avoid blaming a good grasp for insertion failure | new task interface | implemented semantically; insertion evaluator absent |
+| VLM outcome reasoning | classify held/seated/failure state from evidence | future adaptation of ZeroDex-style reasoning | design only; read-only shadow mode, AutoDex images |
+| adaptive next-trial policy | learn from typed physical failures | future AutoDex extension | deferred until reliable outcome/failure evidence exists |
+
+Thus the camera and robot backbone remains AutoDex. "ZeroDex-style" never
+means importing its camera topology; it means borrowing the idea of structured
+VLM reasoning over recorded observations.
+
 ## Frame and transform contract
 
 `T_A_B` maps points expressed in frame B into frame A. The required transforms
@@ -52,9 +77,12 @@ placing the key several millimetres or degrees away from its nominal
 
 The intended startup order is:
 
-1. AutoDex exclusively claims the two ZeroDex capture PCs and four calibrated
-   cameras; ZeroDex's own stream owner must be stopped.
-2. Load the pinned intrinsics/extrinsics and current Franka `C2R`.
+1. Use the existing AutoDex capture PCs 1/2/3/5/6, FLIR daemons, UTG900
+   hardware trigger, and local timestamp camera. ZeroDex cameras are not part
+   of this experiment.
+2. Resolve all active serials from ParaDex `system/current`, load an explicit
+   AutoDex intrinsics/extrinsics session covering that complete set, and load
+   an arm-matched Franka `C2R`.
 3. With no loose key in the workspace, run socket FoundPose three times.
 4. Reject a missing pose, silhouette failure, invalid SE(3), or excessive
    repeatability residual. Select an observed SE(3) medoid; do not average
@@ -134,7 +162,12 @@ grasp blocks the socket, violates joint limits, or makes that goal unreachable,
 the system needs another pickup grasp or an explicit regrasp. Future ranking
 must therefore score pickup feasibility and pre-insertion reachability jointly.
 
-## ZeroDex-style VLM role
+## ZeroDex-style VLM role (reasoning only)
+
+"ZeroDex-style" refers only to adapting its VLM task-completion reasoning.
+Images are acquired and synchronized by AutoDex. There is no ZeroDex camera
+profile, free-running camera path, `capture4/capturenew` ownership, or ZeroDex
+stream owner in the precision-insertion runtime.
 
 The VLM should initially be a read-only observer running after a stopped or
 held motion. A single final image is not enough. Give it synchronized,
@@ -195,7 +228,7 @@ Implemented now:
 - machine-readable handle-only contact regions and common candidate 78;
 - MuJoCo/full-key/FR3 planning evidence and physical-validation gates;
 - separate grasp/task result semantics;
-- four-camera ZeroDex profile and calibration snapshot;
+- an AutoDex camera contract and fail-closed runtime audit tool;
 - per-session repeated socket pose measurement, freeze, evidence, and scene
   injection for normal and reorientation planning;
 - reproducible NAS handoff exporter.
@@ -203,7 +236,8 @@ Implemented now:
 Still blocking a physical insertion run:
 
 1. mesh-specific FoundPose `repre.pth` for all four keys and the socket;
-2. physical confirmation of the four camera serials/PC mapping and `C2R`;
+2. a PASS audit of the robot PC's active AutoDex cameras, matching
+   intrinsics/extrinsics, hardware sync, timestamp camera, and Franka `C2R`;
 3. physical validation of candidate 78 and measurement of `T_hand_key`
    repeatability;
 4. an attached-key transfer/pre-insertion planner and precision task motion hook;
@@ -221,7 +255,7 @@ cannot yet perform or honestly score insertion.
 ## Recommended implementation order
 
 1. Restore/generate the five FoundPose representations and pass the strict
-   ZeroDex camera-profile audit.
+   AutoDex camera/calibration/hand-eye audit on the robot PC.
 2. Run perception-only socket sessions and quantify yaw/translation stability
    with independent physical ground truth; tighten the startup thresholds from
    their 2 mm/2 degree bring-up defaults.

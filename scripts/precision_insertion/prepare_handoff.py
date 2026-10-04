@@ -261,7 +261,6 @@ def _specs(
         )
 
     zerodex_files = (
-        "config/cameras.py",
         "config/task_complete_checker/prompts.py",
         "config/task_complete_checker/result_parser.py",
         "run/components/task_complete_checker.py",
@@ -323,12 +322,13 @@ Then follow `source/autodex-code/scripts/precision_insertion/README.md` and run:
 
 ```bash
 python scripts/precision_insertion/validate_assets.py
-python scripts/precision_insertion/verify_zerodex_camera_profile.py --require-runtime
+python scripts/precision_insertion/verify_autodex_camera_profile.py \
+  --calib-dir <AUTODEX_CALIB_DIR> --require-runtime
 ```
 
 ## Directory map
 
-- `source/`: canonical inputs/scripts and selected ZeroDex reference code
+- `source/`: canonical inputs/scripts and selected ZeroDex VLM reference code
 - `fabrication/`: STL and sliced 3MF files; protocol uses 0.3/0.5/1.0/1.5 mm
 - `payload/shared_data/`: files restored into the local AutoDex data overlay
 - `reproducibility/`: raw BODex/search evidence; not needed for normal runtime
@@ -349,10 +349,11 @@ def _open_items() -> str:
 
 1. Generate mesh-specific FoundPose `repre.pth` for all four keys and
    `precision_socket_unified` after restoring MV-GoTrack.
-2. Confirm the physical ZeroDex four-camera serial/PC mapping and revalidate
-   the pinned intrinsics, extrinsics, and Franka hand-eye calibration.
-3. Generate the socket FoundPose representation. At every `run_pipeline.py`
-   session, measure the bolted fixture repeatedly and accept the generated
+2. On the robot PC, audit the active AutoDex capture1/2/3/5/6 serial mapping,
+   explicit intrinsics/extrinsics session, UTG900/timestamp configuration, and
+   Franka hand-eye calibration.
+3. At every `run_pipeline.py` session, measure the bolted fixture repeatedly
+   with its generated socket representation and accept the generated
    `fixture_pose.session.json` only when its repeatability gate passes.
 4. Supervise candidate `table/0/78` on the real FR3+Inspire before removing
    any `PHYSICAL_VALIDATION_REQUIRED.json` gate.
@@ -370,7 +371,7 @@ def _open_items() -> str:
 - a reusable physical socket pose (intentionally forbidden; pose is per-session)
 - physical grasp validation
 - force limits, contact-search step sizes, or abort thresholds
-- camera PC/IP configuration inferred from stale ParaDex2 profiles
+- a robot-PC camera PASS audit fabricated from this development host
 
 These omissions are recorded as gates so the pipeline fails closed.
 """
@@ -447,7 +448,7 @@ def build_bundle(
                 "FoundPose representations for four keys and socket",
                 "physical validation of candidate table/0/78",
                 "accepted per-session socket pose measurement",
-                "physically verified ZeroDex camera/hand-eye calibration",
+                "PASS AutoDex camera/calibration/hardware-sync/hand-eye audit",
                 "commissioned insertion controllers and safety thresholds",
             ],
         }

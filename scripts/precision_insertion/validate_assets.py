@@ -232,21 +232,24 @@ def validate(shared_root: Path, source_dir: Path, require_runtime: bool = False)
         if "fixture_pose.session.json" not in payload.get("output_pattern", ""):
             failures.append("socket session pose output pattern is missing")
 
-    snapshots = sorted((project / "precision_insertion" / "calibration").glob("zerodex_*"))
-    complete_snapshots = [
-        path
-        for path in snapshots
-        if (path / "cam_param" / "intrinsics.json").is_file()
-        and (path / "cam_param" / "extrinsics.json").is_file()
-        and (path / "C2R.npy").is_file()
-        and (path / "provenance.json").is_file()
-    ]
-    if not complete_snapshots:
-        blockers.append("no frozen ZeroDex camera + Franka hand-eye snapshot")
+    camera_profile = source_dir.parent / "autodex_camera_profile.json"
+    if not camera_profile.is_file():
+        failures.append("canonical AutoDex camera profile is missing")
     else:
-        provenance = json.loads((complete_snapshots[-1] / "provenance.json").read_text())
-        if provenance.get("status") != "verified_on_physical_rig":
-            blockers.append("frozen ZeroDex calibration exists but physical four-camera set is not confirmed")
+        profile = json.loads(camera_profile.read_text())
+        if profile.get("capture_sync") != "hardware":
+            failures.append("precision insertion must preserve AutoDex hardware sync")
+        if profile.get("pc_list") != [
+            "capture1", "capture2", "capture3", "capture5", "capture6"
+        ]:
+            failures.append("precision insertion AutoDex capture-PC set changed")
+    camera_audit = project / "precision_insertion" / "autodex_camera_runtime_audit.json"
+    if not camera_audit.is_file():
+        blockers.append("AutoDex camera/calibration/hand-eye runtime audit not recorded")
+    else:
+        audit = json.loads(camera_audit.read_text())
+        if audit.get("status") != "PASS":
+            blockers.append("recorded AutoDex camera runtime audit is not PASS")
 
     print("geometry validation:", "PASS" if not failures else "FAIL")
     for failure in failures:

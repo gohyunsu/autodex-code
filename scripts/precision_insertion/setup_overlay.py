@@ -113,7 +113,8 @@ def setup(shared_root: Path, nas_root: Path, paradex_repo: Path) -> None:
     print(f"shared overlay: {shared_root}")
     print(f"ParaDex code:    {paradex_repo}")
     print(f"ParaDex config:  {current} -> {deployed}")
-    print("NOTE: deployed pc.json does not list ZeroDex 26053248/26053260; camera integration remains gated.")
+    print("Camera contract: use the deployed AutoDex profile and verify it with "
+          "scripts/precision_insertion/verify_autodex_camera_profile.py.")
 
 
 def main() -> None:
