@@ -35,6 +35,8 @@ pip_bin="${env_prefix}/bin/pip"
   torch==2.4.1 torchvision==0.19.1
 "${pip_bin}" install -r "${repo_root}/scripts/requirements-planner-worker.txt"
 "${pip_bin}" install mujoco==3.3.7
+"${pip_bin}" install pytest==9.1.1
+"${pip_bin}" install ultralytics==8.4.15 --no-deps
 "${pip_bin}" install torch-scatter==2.1.2 \
   -f https://data.pyg.org/whl/torch-2.4.1+cu121.html
 "${pip_bin}" install \

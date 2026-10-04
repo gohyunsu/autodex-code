@@ -792,7 +792,11 @@ def _build_stage_profiles(project_root: Path) -> list[dict]:
                     "v1" / object_name / "1" / "repre.pth"
                 ),
                 "socket_geometry": str(fixture_root / "task_geometry.json"),
-                "fixture_pose": str(fixture_root / "fixture_pose.json"),
+                "socket_session_pose_pattern": (
+                    "<autodex_repo>/experiment/<exp_name>/<hand>/"
+                    f"{object_name}/_socket_preflight_<timestamp>/"
+                    "fixture_pose.session.json"
+                ),
                 "socket_pose_object": str(
                     project_root.parent / "object_processing" /
                     SOCKET_OBJECT_NAME / "raw_mesh" /
@@ -836,7 +840,7 @@ def _build_stage_profiles(project_root: Path) -> list[dict]:
                 "FoundPose representation exists for the exact socket pose mesh and frame",
                 "candidate passed full-key simulation and FR3 planning",
                 "candidate passed supervised physical grasp/lift validation",
-                "fixture_pose.json contains a measured T_robot_socket",
+                "session startup accepted repeated socket pose estimates and froze T_robot_socket",
                 "ZeroDex four-camera and hand-eye snapshot is verified on the physical rig",
                 "insertion controller and abort thresholds for this stage are commissioned",
             ],
@@ -1070,7 +1074,11 @@ def _build_socket(
             "schema_version": 1,
             "fixture": FIXTURE_NAME,
             "pose_object": pose_object,
-            "output": str(fixture_dir / "fixture_pose.json"),
+            "output_scope": "session_only",
+            "output_pattern": (
+                "experiment/<exp_name>/<hand>/<key>/"
+                "_socket_preflight_<timestamp>/fixture_pose.session.json"
+            ),
             "transform_convention": "T_A_B maps coordinates in frame B into frame A",
             "frame_equation": (
                 "T_robot_socket = T_robot_world @ T_world_pose_object "
@@ -1180,7 +1188,7 @@ def build(source_dir: Path, shared_root: Path) -> dict:
             "tabletop_pose_stem": "000",
             "candidate_scene_type": "table",
             "candidate_scene_id": "0",
-            "socket_pose": str(task_root / "fixtures" / FIXTURE_NAME / "fixture_pose.json"),
+            "socket_pose": "measured_and_frozen_at_each_run_pipeline_session_start",
         },
         "zerodex_camera_profile": (
             "assets/precision_insertion/zerodex_camera_profile.json"
@@ -1189,7 +1197,7 @@ def build(source_dir: Path, shared_root: Path) -> dict:
             "FoundPose repre.pth for each key",
             f"FoundPose repre.pth for {SOCKET_OBJECT_NAME}",
             "supervised physical validation for each simulated and FR3-planned grasp",
-            "measured fixture_pose.json",
+            "accepted per-session socket pose measurement",
             "ZeroDex camera/hand-eye calibration snapshot selected for the physical rig",
             "stage-appropriate insertion controller and safety parameters",
         ],

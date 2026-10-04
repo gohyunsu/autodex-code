@@ -224,14 +224,13 @@ def validate(shared_root: Path, source_dir: Path, require_runtime: bool = False)
         blockers.append(
             f"{SOCKET_OBJECT_NAME}: FoundPose repre.pth not generated"
         )
-    fixture_pose = fixture / "fixture_pose.json"
-    if not fixture_pose.is_file():
-        blockers.append("fixture_pose.json is not calibrated")
-    else:
-        payload = json.loads(fixture_pose.read_text())
-        transform = np.asarray(payload.get("T_robot_socket"), dtype=float)
-        if not payload.get("calibrated") or transform.shape != (4, 4):
-            failures.append("fixture_pose.json exists but is not a calibrated 4x4 transform")
+    measurement_contract = fixture / "pose_measurement_asset.json"
+    if measurement_contract.is_file():
+        payload = json.loads(measurement_contract.read_text())
+        if payload.get("output_scope") != "session_only":
+            failures.append("socket pose measurement must be session-scoped")
+        if "fixture_pose.session.json" not in payload.get("output_pattern", ""):
+            failures.append("socket session pose output pattern is missing")
 
     snapshots = sorted((project / "precision_insertion" / "calibration").glob("zerodex_*"))
     complete_snapshots = [

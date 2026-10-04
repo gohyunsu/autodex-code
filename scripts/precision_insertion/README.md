@@ -16,6 +16,10 @@ has a FoundPose representation yet. The staged experiment must not silently
 treat simulation, a controller specification, or an unvalidated transfer as
 physical success.
 
+The end-to-end intent, transform equations, controller/VLM boundaries,
+failure taxonomy, blockers, and implementation order are specified in
+`docs/precision_insertion_pipeline_design.md`.
+
 ## Current status
 
 Generated under `~/shared_data`:
@@ -146,7 +150,8 @@ bash scripts/precision_insertion/setup_bodex_env.sh
 
 The full environment is `~/miniconda3/envs/autodex_bodex` (Python 3.10,
 PyTorch 2.4.1 CUDA 12.1, cuRobo native extensions, coal, MuJoCo 3.3.7,
-OpenCV ArUco, ParaDex, and AutoDex). CUDA 12.1 is intentional: it is compatible
+OpenCV ArUco, ParaDex, AutoDex, pytest 9.1.1, and the repository-pinned
+Ultralytics 8.4.15). CUDA 12.1 is intentional: it is compatible
 with the host's RTX 3090 and NVIDIA driver 535/CUDA 12.2 maximum. Verify it:
 
 ```bash
@@ -304,7 +309,7 @@ PYOPENGL_PLATFORM=egl ~/.venvs/autodex-viz/bin/python \
 `build_assets.py` writes one profile under
 `~/shared_data/AutoDex/precision_insertion/stages` for each gap. Each profile
 resolves the exact object, scene, candidate pool, FoundPose path, socket
-geometry, fixture pose, and camera-calibration root. Controller entries are
+geometry, session-pose output pattern, and camera-calibration root. Controller entries are
 fail-closed with `implementation_status: required`:
 
 - 1.5 mm requests open-loop Cartesian insertion;
@@ -331,7 +336,7 @@ Both retain the source STL frame. The generated
 `T_socket_raw_mesh = identity`; therefore a FoundPose estimate for
 `precision_socket_unified` is `T_world_socket`, not a pose for a recentered or
 rotated derivative. `pose_measurement_asset.json` records the transform
-equation, required evidence, and the eventual `fixture_pose.json` output.
+equation, required evidence, and the session-scoped output contract.
 
 The generated `static_collision.obj` and `socket_static_exact.urdf` preserve
 the keyed bore. They are static-fixture assets only. Do not generate or use a
@@ -352,12 +357,40 @@ a representation. When capturing the socket, the segmentation prompt should
 include the whole red fixture and keyed opening; masking only the nearly
 symmetric exterior makes yaw underconstrained.
 
-Once the representation and ZeroDex calibration are available, repeated
-multi-view estimates supply `T_world_socket`. The existing AutoDex convention
-then applies the calibrated world-to-`fr3_link0` transform and writes the
-result as `T_robot_socket` in `fixture_pose.json`. Keep the raw per-view poses,
-masks, calibration snapshot, and repeatability residuals with that file; do
-not mark it calibrated from one uninspected estimate.
+Once the representation and ZeroDex calibration are available,
+`run_pipeline.py` measures the socket at each process start. The default
+`--socket-preflight auto` means "measure for `precision_key_*`, skip for other
+objects". It takes three independent multi-view estimates, transforms each
+`T_world_socket` into `T_robot_socket = inv(C2R) @ T_world_socket`, selects an
+actually observed SE(3) medoid, and rejects the session if any residual from
+that medoid exceeds 2 mm or 2 degrees. These defaults are a bring-up
+repeatability gate, **not** evidence of sub-millimetre absolute accuracy.
+
+The accepted pose is written only under that run's
+`_socket_preflight_<timestamp>/fixture_pose.session.json`. It is then frozen in
+memory and the exact concave `static_collision.obj` is inserted into every
+normal and reorientation-recovery planning scene. The pose is never reread or
+updated inside the trial loop. If the physical fixture moves, abort and start
+a new session; do not edit a session JSON or promote it into a global
+`fixture_pose.json`.
+
+After all runtime gates below pass, the 1.5 mm pickup-only bring-up command is:
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python src/execution/run_pipeline.py \
+  --obj precision_key_1p5mm --arm franka --hand inspire \
+  --grasp_version v8 --candidate-scene-type table \
+  --pc_list capture4 capturenew \
+  --calib_dir ~/shared_data/AutoDex/precision_insertion/calibration/zerodex_4cam_20261002_141639_franka_20261002_145508/cam_param \
+  --camera-sync free_run --socket-preflight measure \
+  --socket-measurements 3 --charuco-preflight measure \
+  --isolate_experiment --exp_name precision_insertion_1p5_bringup \
+  --max_trials 1
+```
+
+This command still executes the current grasp/lift task. It measures and
+collision-registers the socket but does not insert the key: the insertion
+motion task/controller is deliberately a remaining implementation gate.
 
 ## ZeroDex camera profile
 
@@ -396,9 +429,10 @@ and interrupts the other pipeline.
   That directory is absent, and the historical `gunhee1113/MV-GoTrack` GitHub
   repository is unavailable even with the authenticated lab GitHub account.
   Copying a representation from another object would violate the mesh frame.
-- **`T_robot_socket`:** this is the measured pose of the bolted fixture in
-  `fr3_link0`; CAD cannot determine it. Fill `fixture_pose.json` only after a
-  physical calibration and retain the measurement method/residual.
+- **absolute `T_robot_socket` accuracy:** CAD cannot determine the bolted
+  fixture's pose in `fr3_link0`. The new startup measurement records it per
+  session, but physical target/robot metrology must still establish its bias
+  and uncertainty before 1.0/0.5/0.3 mm claims.
 - **physical grasp trust:** simulation and planner success cannot establish
   real Inspire contact, print tolerance, or cable/fixture clearance.
 - **camera/hand-eye confirmation:** the frozen files are internally complete,
@@ -424,3 +458,22 @@ documentation. Do not commit learned weights, raw BODex pools, calibration
 recordings, candidate state, or experiment videos. Keep geometry/schema,
 environment/runtime support, and experiment assets in separate commits so a
 hardware change can be reverted without rewriting the CAD history.
+
+## NAS handoff
+
+Create a non-overwriting, checksum-addressed transport bundle after committing
+the code whose hash should be recorded:
+
+```bash
+python scripts/precision_insertion/prepare_handoff.py \
+  --output-root /mnt/paradex2/hyunsu \
+  --bundle-name autodex_precision_insertion_handoff_YYYYMMDD_<git-short-sha>
+
+cd /mnt/paradex2/hyunsu/autodex_precision_insertion_handoff_YYYYMMDD_<git-short-sha>
+sha256sum -c SHA256SUMS
+```
+
+The exporter refuses to merge with an existing bundle. `payload/shared_data`
+preserves runtime paths; `source`, `fabrication`, `reproducibility`, and
+`handoff_docs` keep canonical inputs, printable models, search evidence, and
+unresolved physical work separate.

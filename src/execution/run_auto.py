@@ -69,7 +69,10 @@ from autodex.utils.robot_config import (
     CHARUCO_BOARD_CENTER_X_OFFSETS_M,
 )
 from src.demo.continuous_basket.recording import resolve_signal_generator_params
-from src.execution.scene_cfg import pose_world_to_scene_cfg
+from src.execution.scene_cfg import (
+    add_fixed_mesh_fixtures,
+    pose_world_to_scene_cfg,
+)
 from src.execution.handeye import save_arm_C2R
 from src.execution.label import auto_label_charuco, get_label
 
@@ -742,6 +745,7 @@ def run_single_trial(
     pose_adjust_handler=None,
     reorient_handler=None,
     tabletop_geometry=None,
+    fixed_fixtures=None,
     rotate_recovery_state: Optional[Dict[str, object]] = None,
     pipeline_trace: Optional[PipelineTrace] = None,
     attempt_id: Optional[str] = None,
@@ -851,6 +855,7 @@ def run_single_trial(
             metadata={
                 "scene_type": args.scene,
                 "candidate_result_scope": record.get("candidate_result_scope"),
+                "fixed_fixtures": fixed_fixtures or {},
             },
         )
         outcome = task.evaluate(
@@ -1092,6 +1097,7 @@ def run_single_trial(
         shelf_top=not args.no_shelf_top,
         tabletop_geometry=tabletop_geometry,
     )
+    scene_cfg = add_fixed_mesh_fixtures(scene_cfg, fixed_fixtures)
     timing["scene_construction_s"] = round(
         time.perf_counter() - t_scene_construction, 3)
     if scene_span is not None:
@@ -1115,6 +1121,7 @@ def run_single_trial(
                 scene_cfg=scene_cfg, pose_world=pose_world, c2r=c2r,
                 obj_root=obj_root, img_dir=img_dir, scene_prefix=scene_prefix,
                 tabletop_geometry=tabletop_geometry,
+                fixed_fixtures=fixed_fixtures,
                 pipeline_trace=trial_scope,
             )
         except CudaPlanningFault as reorient_exc:
@@ -2986,6 +2993,37 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
              "first object is placed. prompt=choose at runtime, "
              "measure=require it, skip=use fixed default tabletop geometry.",
     )
+    parser.add_argument(
+        "--socket-preflight", choices=["auto", "prompt", "measure", "skip"],
+        default="auto",
+        help="run_pipeline only: measure and freeze the unified socket pose "
+             "before precision-key trials. auto=measure for precision_key_* "
+             "objects and skip for all other objects.",
+    )
+    parser.add_argument("--socket-object", default="precision_socket_unified")
+    parser.add_argument(
+        "--socket-prompt", default="fixed red socket fixture with keyed opening",
+        help="FoundPose segmentation prompt for the fixed socket.",
+    )
+    parser.add_argument(
+        "--socket-measurements", type=int, default=3,
+        help="Independent socket pose estimates used by the startup medoid gate.",
+    )
+    parser.add_argument("--socket-sil-iters", type=int, default=100)
+    parser.add_argument(
+        "--socket-sil-loss-max", type=float, default=0.01,
+        help="Socket silhouette-loss rejection threshold. The open cavity often "
+             "scores worse than a convex key; this is only a selection gate, "
+             "not an absolute pose-accuracy guarantee.",
+    )
+    parser.add_argument(
+        "--socket-repeat-translation-max-mm", type=float, default=2.0,
+        help="Maximum residual from the selected socket-pose medoid.",
+    )
+    parser.add_argument(
+        "--socket-repeat-rotation-max-deg", type=float, default=2.0,
+        help="Maximum angular residual from the selected socket-pose medoid.",
+    )
 
     args = parser.parse_args()
     if args.grasp_version != "v8":
@@ -2996,6 +3034,16 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
         parser.error("--external-sync-cue-duration-s must be > 0")
     if args.external_sync_cue_fps <= 0:
         parser.error("--external-sync-cue-fps must be > 0")
+    if args.socket_measurements < 2:
+        parser.error("--socket-measurements must be >= 2")
+    if args.socket_sil_iters < 0:
+        parser.error("--socket-sil-iters must be >= 0")
+    if args.socket_sil_loss_max <= 0:
+        parser.error("--socket-sil-loss-max must be > 0")
+    if args.socket_repeat_translation_max_mm <= 0:
+        parser.error("--socket-repeat-translation-max-mm must be > 0")
+    if args.socket_repeat_rotation_max_deg <= 0:
+        parser.error("--socket-repeat-rotation-max-deg must be > 0")
     if args.camera_sync == "free_run" and args.external_sync_cue:
         parser.error("--external-sync-cue requires --camera-sync hardware")
     if args.exp_name is None:
@@ -3043,6 +3091,33 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
         sys.exit(f"mesh not found: {mesh_path}")
     if not (assets_root / "object_repre/v1" / args.obj / "1/repre.pth").exists():
         sys.exit(f"repre.pth missing for {args.obj} (expected under {assets_root})")
+
+    # A precision run must discover a missing socket representation before it
+    # claims cameras, connects the robot, or performs the clear-view home.
+    # Prompted manual runs may explicitly skip later; automatic/pinned measure
+    # modes are fail-closed here.
+    socket_measure_required = (
+        startup_handler is not None
+        and (
+            args.socket_preflight == "measure"
+            or (args.socket_preflight == "auto"
+                and args.obj.startswith("precision_key_"))
+            or (args.socket_preflight == "prompt" and args.auto)
+        )
+    )
+    if socket_measure_required:
+        socket_root = mesh_root / args.socket_object
+        socket_assets = ASSETS_BASE / args.socket_object
+        socket_required = (
+            socket_root / "raw_mesh" / f"{args.socket_object}.obj",
+            socket_root / "processed_data" / "mesh" / "static_collision.obj",
+            socket_assets / "object_repre" / "v1" / args.socket_object / "1" /
+            "repre.pth",
+        )
+        socket_missing = [path for path in socket_required if not path.is_file()]
+        if socket_missing:
+            sys.exit("socket preflight assets missing before hardware startup: "
+                     + ", ".join(str(path) for path in socket_missing))
 
     # FoundPose and the planner now share the version-resolved mesh. Keep this
     # check because a caller may still point a non-v8 pool at a mismatched
@@ -3170,19 +3245,29 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
     # clear-view but before any object perception, so the measurement can use
     # all Charuco corners without paying for a second FoundPose init.
     session_tabletop_geometry = None
+    session_fixed_fixtures = None
     startup_cancelled = False
     if startup_handler is not None:
         try:
             startup_result = startup_handler(
-                args=args, rcc=rcc, executor=executor,
+                args=args, rcc=rcc, executor=executor, orch=orch,
                 intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
                 capture_ips=pc_ips, n_cameras=len(intrinsics_full),
+                pc_serials=pc_serials, image_hw=(H, W),
+                calib_dir=str(calib_dir),
+                target_mesh_path=str(mesh_path),
+                target_assets_root=str(assets_root),
                 scene_prefix=scene_prefix,
                 pipeline_trace=pipeline_trace.scoped(parent_id=startup_span),
             )
             if isinstance(startup_result, dict) and startup_result.get("cancel"):
                 startup_cancelled = True
+            elif (isinstance(startup_result, dict)
+                  and startup_result.get("schema") == "autodex_session_startup_v1"):
+                session_tabletop_geometry = startup_result.get("tabletop_geometry")
+                session_fixed_fixtures = startup_result.get("fixed_fixtures")
             elif startup_result is not None:
+                # Backward-compatible contract for existing startup hooks.
                 session_tabletop_geometry = startup_result
         except Exception as startup_exc:
             # A startup hook must never silently leave us using stale geometry
@@ -3314,6 +3399,7 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
                 pose_adjust_handler=pose_adjust_handler,
                 reorient_handler=reorient_handler,
                 tabletop_geometry=session_tabletop_geometry,
+                fixed_fixtures=session_fixed_fixtures,
                 rotate_recovery_state=rotate_recovery_state,
                 pipeline_trace=pipeline_trace,
                 attempt_id=attempt_id,

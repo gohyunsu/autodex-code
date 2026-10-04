@@ -5,6 +5,7 @@ init-pipeline-based runner (and any future entry points).
 """
 from __future__ import annotations
 
+import copy
 import glob
 import os
 from typing import Optional
@@ -15,6 +16,8 @@ import trimesh
 from autodex.utils.conversion import se32cart
 from autodex.utils.path import obj_path
 from autodex.utils.tabletop_geometry import table_cuboid, table_surface_z_at_xy
+
+from src.execution.session_fixtures import validate_se3
 
 
 # Physical tabletop top in the robot frame.  Keep the object snap and the
@@ -206,3 +209,37 @@ def pose_world_to_scene_cfg(pose_world: np.ndarray, c2r: np.ndarray, obj_name: s
             "table": table_cuboid(tabletop_geometry, thickness_m=TABLE_THICKNESS_Z),
         },
     }
+
+
+def add_fixed_mesh_fixtures(scene_cfg: dict,
+                            fixed_fixtures: Optional[dict]) -> dict:
+    """Return a scene containing session-frozen static mesh fixtures.
+
+    ``fixed_fixtures`` is a mapping from stable fixture name to a record with
+    ``pose_robot`` and ``collision_mesh``.  The target remains a separate mesh;
+    fixture names are rejected rather than silently replacing scene content.
+    A deep copy prevents one recovery branch from mutating another's scene.
+    """
+    result = copy.deepcopy(scene_cfg)
+    if not fixed_fixtures:
+        return result
+    meshes = result.setdefault("mesh", {})
+    for name, fixture in sorted(fixed_fixtures.items()):
+        if not isinstance(name, str) or not name or name == "target":
+            raise ValueError(f"invalid fixed fixture name: {name!r}")
+        if name in meshes:
+            raise ValueError(f"fixed fixture would replace scene mesh {name!r}")
+        if not isinstance(fixture, dict):
+            raise ValueError(f"fixed fixture {name!r} must be a mapping")
+        pose_robot = validate_se3(
+            fixture.get("pose_robot"), name=f"fixed fixture {name} pose_robot")
+        mesh_path = os.path.abspath(os.path.expanduser(
+            str(fixture.get("collision_mesh", ""))))
+        if not fixture.get("collision_mesh") or not os.path.isfile(mesh_path):
+            raise FileNotFoundError(
+                f"fixed fixture {name!r} collision mesh not found: {mesh_path}")
+        meshes[name] = {
+            "pose": se32cart(pose_robot).tolist(),
+            "file_path": mesh_path,
+        }
+    return result
