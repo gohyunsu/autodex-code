@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "name": "zerodex_precision_insertion_4cam",
+  "status": "pending_capture_pc_network_and_physical_rig_confirmation",
+  "source": {
+    "repository": "https://github.com/jlogkim/realtime_vlm.git",
+    "commit": "488deebc8d4d658c30d5dec8a3c4ef5b34ea3be7",
+    "whitelist_file": "config/cameras.py",
+    "pc_mapping_evidence": "tests/test_recording_session.py"
+  },
+  "camera_serials": [
+    "25305462",
+    "25322639",
+    "25322642",
+    "26053248"
+  ],
+  "excluded_zerodex_serials": [
+    "25305465",
+    "26053260"
+  ],
+  "pc_list": [
+    "capture4",
+    "capturenew"
+  ],
+  "expected_pc_serials": {
+    "capture4": [
+      "25305462",
+      "25322639",
+      "25322642"
+    ],
+    "capturenew": [
+      "26053248"
+    ]
+  },
+  "capture_sync": "free_run",
+  "calibration_snapshot_relative": "AutoDex/precision_insertion/calibration/zerodex_4cam_20261002_141639_franka_20261002_145508",
+  "calib_dir_relative": "AutoDex/precision_insertion/calibration/zerodex_4cam_20261002_141639_franka_20261002_145508/cam_param",
+  "runtime_ownership": {
+    "owner": "AutoDex run_pipeline",
+    "requirement": "Stop ZeroDex stream_owner before AutoDex claims the ParaDex camera daemons",
+    "daemon_camera_subset": "Launch capture daemons with exactly camera_serials, not the full six-camera ZeroDex whitelist"
+  },
+  "unresolved": [
+    "capture4 and capturenew IP/SSH configuration in the active ParaDex system profile",
+    "physical confirmation that the four serials are installed in the calibrated poses",
+    "physical confirmation that the pinned Franka C2R still matches the current cell"
+  ]
+}

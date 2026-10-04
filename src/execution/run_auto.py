@@ -267,6 +267,8 @@ def _safe_timestamp_start(tsm, save_path) -> bool:
 
     Returns True if the monitor was started, False if it was skipped.
     """
+    if getattr(tsm, "_autodex_free_run", False):
+        return False
     th = getattr(tsm, "capture_thread", None)
     alive = th.is_alive() if th is not None else False
     cam_ok = getattr(tsm, "camera", None) is not None
@@ -291,6 +293,34 @@ def _safe_timestamp_stop(tsm) -> None:
     if not getattr(tsm, "_autodex_started", False):
         return
     _stop_with_timeout("timestamp_monitor", tsm.stop)
+
+
+class _FreeRunSyncGenerator:
+    """No-op trigger used by the ZeroDex free-running camera profile.
+
+    It implements the cleanup surface shared with ``UTGE900`` without
+    pretending that a hardware pulse was emitted. Trial code explicitly
+    checks ``args.camera_sync`` before calling ``start``.
+    """
+
+    def stop(self) -> None:
+        return None
+
+    def end(self) -> None:
+        return None
+
+
+class _FreeRunTimestampMonitor:
+    """No-op timestamp monitor for a profile with no local sync camera."""
+
+    _autodex_started = False
+    _autodex_free_run = True
+
+    def stop(self) -> None:
+        return None
+
+    def end(self) -> None:
+        return None
 
 
 def _emit_external_sync_cue(sync_generator, trace: PipelineTrace, *,
@@ -770,6 +800,14 @@ def run_single_trial(
 
     def _start_execution_trigger(fps: int) -> None:
         nonlocal execution_trigger_active
+        if args.camera_sync == "free_run":
+            if trial_scope is not None:
+                trial_scope.event(
+                    "capture.free_run", phase="capture", kind="sync",
+                    parent_id=episode_span, fps=fps,
+                    purpose="zerodex_multicamera_execution",
+                )
+            return
         sync_generator.start(fps=fps)
         execution_trigger_active = True
         if trial_scope is not None:
@@ -2048,7 +2086,7 @@ def run_single_trial(
     exec_rel = os.path.join(raw_rel, "exec")
     place_rel = os.path.join(raw_rel, "place")
     raw_dir = os.path.join(img_dir, "raw")
-    _rcc_start(rcc, "video", True, exec_rel)
+    _rcc_start(rcc, "video", args.camera_sync == "hardware", exec_rel)
     _safe_timestamp_start(timestamp_monitor, os.path.join(raw_dir, "timestamps"))
     executor.start_recording(raw_dir)
     _start_execution_trigger(fps=30)
@@ -2265,7 +2303,7 @@ def run_single_trial(
             return _save_result(fail)
 
         # Resume video for place phase.
-        _rcc_start(rcc, "video", True, place_rel)
+        _rcc_start(rcc, "video", args.camera_sync == "hardware", place_rel)
 
     # Reposition obj on board 11 before place. The physical board centre is
     # the default target; all fallbacks use the shared symmetric +/-5 cm and
@@ -2921,6 +2959,14 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
     parser.add_argument("--stream_fps", type=int, default=10)
     parser.add_argument("--stream_warmup_s", type=float, default=2.0)
     parser.add_argument(
+        "--camera-sync",
+        choices=["hardware", "free_run"],
+        default="hardware",
+        help="hardware=arm cameras with the ParaDex UTG900 trigger and local "
+             "timestamp camera; free_run=ZeroDex-style acquisition without "
+             "either local device (default: hardware)",
+    )
+    parser.add_argument(
         "--external-sync-cue", action="store_true",
         help="Emit start/end TTL bursts for an LED visible in the separately "
              "recorded external-camera video.",
@@ -2950,6 +2996,8 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
         parser.error("--external-sync-cue-duration-s must be > 0")
     if args.external_sync_cue_fps <= 0:
         parser.error("--external-sync-cue-fps must be > 0")
+    if args.camera_sync == "free_run" and args.external_sync_cue:
+        parser.error("--external-sync-cue requires --camera-sync hardware")
     if args.exp_name is None:
         args.exp_name = args.grasp_version
     if args.isolate_experiment:
@@ -3021,6 +3069,39 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
     extrinsics_full = {s: v for s, v in extrinsics_full.items() if s in active_serials}
     print(f"  {len(intrinsics_full)} cams active across {len(args.pc_list)} PCs  ({H}x{W})")
 
+    # Resolve local synchronization resources before claiming any remote
+    # camera-daemon lock. A malformed profile must fail without disturbing an
+    # existing ZeroDex camera owner.
+    if args.camera_sync == "hardware":
+        # Linux can renumber the UTG900E away from the configured /dev/usbtmc0
+        # once other USBTMC devices have appeared, so resolve a sole visible
+        # node instead of aborting the run before any camera is armed.
+        trigger_config = network_info.get("signal_generator")
+        if isinstance(trigger_config, str):
+            trigger_config = {"param": {"addr": trigger_config}}
+        if not isinstance(trigger_config, dict) or not isinstance(
+                trigger_config.get("param"), dict):
+            parser.error("ParaDex network.json needs signal_generator.param.addr "
+                         "for --camera-sync hardware")
+        timestamp_config = network_info.get("timestamp")
+        if not isinstance(timestamp_config, dict) or not isinstance(
+                timestamp_config.get("param"), dict):
+            parser.error("ParaDex network.json needs timestamp.param for "
+                         "--camera-sync hardware; ZeroDex may use "
+                         "--camera-sync free_run")
+        trigger_params, trigger_note = resolve_signal_generator_params(
+            trigger_config["param"]
+        )
+        if trigger_note is not None:
+            print(f"[video] {trigger_note}")
+        sync_generator = UTGE900(**trigger_params)
+        timestamp_monitor = TimestampMonitor(**timestamp_config["param"])
+    else:
+        print("[video] ZeroDex free-run camera mode: no UTG900 or local "
+              "timestamp camera will be opened")
+        sync_generator = _FreeRunSyncGenerator()
+        timestamp_monitor = _FreeRunTimestampMonitor()
+
     # Hardware init.
     # stall_timeout > the arm-to-trigger gap. Cameras are armed with
     # syncMode=True and produce nothing until sync_generator.start() runs a
@@ -3030,16 +3111,6 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
                                    stall_timeout=15.0)
     _ensure_camera_lock(rcc)
     _clear_camera_errors(rcc)
-    # Linux can renumber the UTG900E away from the configured /dev/usbtmc0
-    # once other USBTMC devices have appeared, so resolve a sole visible
-    # node instead of aborting the run before any camera is armed.
-    trigger_params, trigger_note = resolve_signal_generator_params(
-        network_info["signal_generator"]["param"]
-    )
-    if trigger_note is not None:
-        print(f"[video] {trigger_note}")
-    sync_generator = UTGE900(**trigger_params)
-    timestamp_monitor = TimestampMonitor(**network_info["timestamp"]["param"])
 
     print(f"[stream] starting on {len(args.pc_list)} PCs @ {args.stream_fps} FPS...")
     _rcc_start(rcc, "stream", False, fps=args.stream_fps)
