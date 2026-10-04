@@ -48,6 +48,7 @@ KEY_SPECS = (
 )
 SOCKET_SOURCE = "socket_shared_bore_1p5.stl"
 FIXTURE_NAME = "unified_socket"
+SOCKET_OBJECT_NAME = "precision_socket_unified"
 HANDLE_PROXY_NAME = "precision_key_handle_contact_proxy"
 
 STAGE_SPECS = {
@@ -374,6 +375,42 @@ def _write_urdf(path: Path, object_name: str, mass: float, center_mass: np.ndarr
     </visual>
     <collision>
       <geometry><mesh filename=\"meshes/convex_piece_000.obj\" scale=\"1 1 1\"/></geometry>
+    </collision>
+  </link>
+</robot>
+""",
+        encoding="utf-8",
+    )
+
+
+def _write_static_fixture_urdf(
+    path: Path,
+    object_name: str,
+    mass: float,
+    center_mass: np.ndarray,
+) -> None:
+    """Write a static-fixture URDF that preserves the socket cavity.
+
+    A convex hull would close the keyed bore and is therefore invalid for
+    insertion planning.  This exact triangle-mesh collision is intended only
+    for a rigidly mounted/static fixture; it must not be substituted for a
+    convex decomposition of a moving rigid body.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"""<?xml version=\"1.0\"?>
+<robot name=\"{object_name}\">
+  <link name=\"socket\">
+    <inertial>
+      <origin xyz=\"{center_mass[0]:.9f} {center_mass[1]:.9f} {center_mass[2]:.9f}\" rpy=\"0 0 0\"/>
+      <mass value=\"{mass:.12f}\"/>
+      <inertia ixx=\"1e-6\" ixy=\"0\" ixz=\"0\" iyy=\"1e-6\" iyz=\"0\" izz=\"1e-6\"/>
+    </inertial>
+    <visual>
+      <geometry><mesh filename=\"../mesh/simplified.obj\" scale=\"1 1 1\"/></geometry>
+    </visual>
+    <collision>
+      <geometry><mesh filename=\"../mesh/simplified.obj\" scale=\"1 1 1\"/></geometry>
     </collision>
   </link>
 </robot>
@@ -756,6 +793,19 @@ def _build_stage_profiles(project_root: Path) -> list[dict]:
                 ),
                 "socket_geometry": str(fixture_root / "task_geometry.json"),
                 "fixture_pose": str(fixture_root / "fixture_pose.json"),
+                "socket_pose_object": str(
+                    project_root.parent / "object_processing" /
+                    SOCKET_OBJECT_NAME / "raw_mesh" /
+                    f"{SOCKET_OBJECT_NAME}.obj"
+                ),
+                "socket_foundpose_representation": str(
+                    project_root / "foundpose_assets" / SOCKET_OBJECT_NAME /
+                    "object_repre" / "v1" / SOCKET_OBJECT_NAME / "1" /
+                    "repre.pth"
+                ),
+                "socket_pose_measurement": str(
+                    fixture_root / "pose_measurement_asset.json"
+                ),
                 "camera_calibration_root": str(calibration_root),
             },
             "grasp": {
@@ -783,6 +833,7 @@ def _build_stage_profiles(project_root: Path) -> list[dict]:
             "promotion_prerequisites": spec["promotion_prerequisites"],
             "runtime_gates": [
                 "FoundPose representation exists for this exact full-key mesh and frame",
+                "FoundPose representation exists for the exact socket pose mesh and frame",
                 "candidate passed full-key simulation and FR3 planning",
                 "candidate passed supervised physical grasp/lift validation",
                 "fixture_pose.json contains a measured T_robot_socket",
@@ -795,7 +846,155 @@ def _build_stage_profiles(project_root: Path) -> list[dict]:
     return profiles
 
 
-def _build_socket(source: Path, project_root: Path) -> dict:
+def _build_socket_pose_object(
+    source: Path,
+    object_root: Path,
+    project_root: Path,
+) -> dict:
+    """Build the mesh/frame contract used to estimate the fixed socket pose.
+
+    The source STL frame is retained exactly.  Consequently a pose estimated
+    for ``precision_socket_unified`` is already ``T_world_socket``; after the
+    calibrated world-to-robot transform it becomes ``T_robot_socket`` without
+    an undocumented mesh-frame offset.
+
+    This is a perception/static-fixture asset, not a BODex target.  In
+    particular, no tabletop scenes, grasp candidates, or convex-hull insertion
+    collision are generated for it.
+    """
+    mesh = read_binary_stl(source)
+    validate_watertight(mesh)
+    bounds = mesh.bounds
+    center = (bounds[0] + bounds[1]) / 2.0
+    obb_transform = np.eye(4)
+    obb_transform[:3, 3] = center
+
+    object_dir = object_root / SOCKET_OBJECT_NAME
+    raw_dir = object_dir / "raw_mesh"
+    processed = object_dir / "processed_data"
+    mesh_dir = processed / "mesh"
+    info_dir = processed / "info"
+    urdf_dir = processed / "urdf"
+    for directory in (raw_dir, mesh_dir, info_dir, urdf_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    write_mtl(raw_dir / "material.mtl", (0.80, 0.03, 0.03))
+    write_obj(
+        raw_dir / f"{SOCKET_OBJECT_NAME}.obj",
+        mesh,
+        material_file="material.mtl",
+    )
+    write_mtl(mesh_dir / "material.mtl", (0.80, 0.03, 0.03))
+    for name in ("raw.obj", "manifold.obj", "simplified.obj", "static_collision.obj"):
+        write_obj(mesh_dir / name, mesh, material_file="material.mtl")
+    _write_static_fixture_urdf(
+        urdf_dir / "socket_static_exact.urdf",
+        SOCKET_OBJECT_NAME,
+        mesh.volume,
+        mesh.center_mass,
+    )
+
+    _json_dump(
+        info_dir / "simplified.json",
+        {
+            "gravity_center": mesh.center_mass.tolist(),
+            "obb": (bounds[1] - bounds[0]).tolist(),
+            "obb_transform": obb_transform.tolist(),
+            "scale": 1.0,
+            "density": 1.0,
+            "mass": mesh.volume,
+            "role": "perception_and_static_fixture",
+            "dynamic_simulation_supported": False,
+            "collision_mesh": "../mesh/static_collision.obj",
+            "collision_note": (
+                "Exact concave socket mesh; a convex hull would close the bore. "
+                "Use only as a static obstacle."
+            ),
+        },
+    )
+    _json_dump(
+        info_dir / "symmetry.json",
+        {
+            "type": "none",
+            "center": mesh.center_mass.tolist(),
+            "scale": float(np.linalg.norm(bounds[1] - bounds[0])),
+            "axes": [],
+            "rel_tol": 0.01,
+            "reason": (
+                "The outer body is close to yaw-symmetric, but the keyed bore "
+                "defines the insertion yaw. Pose estimation must retain the bore."
+            ),
+        },
+    )
+    frame_contract = {
+        "schema_version": 1,
+        "object": SOCKET_OBJECT_NAME,
+        "units": "m",
+        "frame": "socket",
+        "source_mesh_frame": "source STL frame",
+        "T_socket_raw_mesh": np.eye(4).tolist(),
+        "axis_definition": {
+            "+z": "bore bottom toward entry/out of the socket",
+            "insertion_direction_socket": [0.0, 0.0, -1.0],
+        },
+        "origin_note": (
+            "The STL origin is preserved. T_robot_socket maps this exact frame "
+            "into fr3_link0."
+        ),
+        "bounds_m": bounds.tolist(),
+        "source_sha256": _sha256(source),
+    }
+    _json_dump(info_dir / "frame_contract.json", frame_contract)
+
+    foundpose_dir = project_root / "foundpose_assets" / SOCKET_OBJECT_NAME
+    _json_dump(
+        foundpose_dir / "GENERATION_REQUIRED.json",
+        {
+            "status": "required",
+            "role": "fixed_socket_pose_measurement",
+            "mesh": str(raw_dir / f"{SOCKET_OBJECT_NAME}.obj"),
+            "mesh_sha256": _sha256(raw_dir / f"{SOCKET_OBJECT_NAME}.obj"),
+            "expected": (
+                f"object_repre/v1/{SOCKET_OBJECT_NAME}/1/repre.pth"
+            ),
+            "generator": "src/process/batch_onboard_foundpose.py",
+            "required_source": (
+                "autodex/perception/thirdparty/MV-GoTrack/scripts/"
+                "onboard_custom_mesh_for_foundpose.py"
+            ),
+            "reference_frame": "socket/source STL frame",
+            "reason": (
+                "FoundPose needs a representation rendered from this exact socket "
+                "mesh. The keyed bore carries the yaw information."
+            ),
+            "do_not_substitute": (
+                "a key representation, a convex hull, or another socket mesh"
+            ),
+        },
+    )
+
+    return {
+        "object": SOCKET_OBJECT_NAME,
+        "role": "fixed_socket_pose_measurement",
+        "object_root": str(object_dir),
+        "raw_mesh": str(raw_dir / f"{SOCKET_OBJECT_NAME}.obj"),
+        "processed_mesh": str(mesh_dir / "simplified.obj"),
+        "static_collision_mesh": str(mesh_dir / "static_collision.obj"),
+        "static_urdf": str(urdf_dir / "socket_static_exact.urdf"),
+        "frame_contract": str(info_dir / "frame_contract.json"),
+        "foundpose_representation": str(
+            foundpose_dir / "object_repre" / "v1" /
+            SOCKET_OBJECT_NAME / "1" / "repre.pth"
+        ),
+        "T_socket_raw_mesh": np.eye(4).tolist(),
+    }
+
+
+def _build_socket(
+    source: Path,
+    project_root: Path,
+    pose_object: dict,
+) -> dict:
     mesh = read_binary_stl(source)
     validate_watertight(mesh)
     fixture_dir = project_root / "precision_insertion" / "fixtures" / FIXTURE_NAME
@@ -821,6 +1020,9 @@ def _build_socket(source: Path, project_root: Path) -> dict:
         "units": "m",
         "socket_frame": "source STL frame",
         "socket_mesh": "socket_shared_bore_1p5.obj",
+        "socket_pose_object": pose_object["object"],
+        "socket_pose_mesh": pose_object["raw_mesh"],
+        "T_socket_pose_object": np.eye(4).tolist(),
         "socket_entry_plane_z_m": socket_entry_z,
         "socket_bore_bottom_z_m": 13.5 * MM_TO_M,
         "insertion_direction_socket": [0.0, 0.0, -1.0],
@@ -848,8 +1050,57 @@ def _build_socket(source: Path, project_root: Path) -> dict:
             "frame_from": "socket",
             "frame_to": "fr3_link0",
             "T_robot_socket": None,
+            "pose_object": pose_object["object"],
+            "pose_object_mesh": pose_object["raw_mesh"],
+            "pose_object_frame_contract": pose_object["frame_contract"],
+            "pose_estimator_asset": pose_object["foundpose_representation"],
+            "T_socket_pose_object": np.eye(4).tolist(),
             "required_method": "measure the rigidly mounted socket pose in the Franka base frame",
+            "measurement_note": (
+                "Estimate T_world_socket from the exact pose-object mesh, then "
+                "apply the calibrated world-to-fr3_link0 transform. Record repeated "
+                "measurements and residuals before setting calibrated=true."
+            ),
             "do_not_run_reason": "sub-millimetre insertion targets cannot use an invented fixture pose",
+        },
+    )
+    _json_dump(
+        fixture_dir / "pose_measurement_asset.json",
+        {
+            "schema_version": 1,
+            "fixture": FIXTURE_NAME,
+            "pose_object": pose_object,
+            "output": str(fixture_dir / "fixture_pose.json"),
+            "transform_convention": "T_A_B maps coordinates in frame B into frame A",
+            "frame_equation": (
+                "T_robot_socket = T_robot_world @ T_world_pose_object "
+                "@ inv(T_socket_pose_object)"
+            ),
+            "autodex_handeye_note": (
+                "The existing fixture measurement path computes T_robot_world "
+                "as inv(C2R) before applying the FoundPose pose_world matrix."
+            ),
+            "current_frame_contract": (
+                "T_socket_pose_object is identity, so the FoundPose object pose "
+                "is the socket pose in the same world frame."
+            ),
+            "segmentation_prompts": [
+                "red socket fixture",
+                "socket with keyed opening",
+            ],
+            "required_evidence": [
+                "raw image and mask for every used camera",
+                "per-view FoundPose candidate and quality",
+                "multi-view selected/refined T_world_socket",
+                "the exact camera calibration and Franka hand-eye snapshot",
+                "repeatability statistics from repeated stationary measurements",
+            ],
+            "fail_closed": [
+                "missing or mesh-mismatched FoundPose representation",
+                "keyed bore is occluded or excluded from the segmentation mask",
+                "camera/hand-eye calibration is not verified on the current rig",
+                "fixture moved after measurement",
+            ],
         },
     )
     return {
@@ -859,6 +1110,7 @@ def _build_socket(source: Path, project_root: Path) -> dict:
         "bounds_m": bounds.tolist(),
         "volume_m3": mesh.volume,
         "faces": int(len(mesh.faces)),
+        "pose_object": pose_object,
         "task_geometry": task_geometry,
     }
 
@@ -888,7 +1140,16 @@ def build(source_dir: Path, shared_root: Path) -> dict:
         )
         for object_name, _gap_mm, source_name in KEY_SPECS
     ]
-    socket = _build_socket(source_dir / SOCKET_SOURCE, project_root)
+    socket_pose_object = _build_socket_pose_object(
+        source_dir / SOCKET_SOURCE,
+        object_root,
+        project_root,
+    )
+    socket = _build_socket(
+        source_dir / SOCKET_SOURCE,
+        project_root,
+        socket_pose_object,
+    )
     stage_profiles = _build_stage_profiles(project_root)
 
     task_root = project_root / "precision_insertion"
@@ -901,6 +1162,7 @@ def build(source_dir: Path, shared_root: Path) -> dict:
         # Singular field retained for readers created before per-key proxies.
         "grasp_generation_proxy": handle_proxies[0],
         "grasp_generation_proxies": handle_proxies,
+        "socket_pose_object": socket_pose_object,
         "socket": socket,
         "progression": [
             {
@@ -925,6 +1187,7 @@ def build(source_dir: Path, shared_root: Path) -> dict:
         ),
         "incomplete_runtime_assets": [
             "FoundPose repre.pth for each key",
+            f"FoundPose repre.pth for {SOCKET_OBJECT_NAME}",
             "supervised physical validation for each simulated and FR3-planned grasp",
             "measured fixture_pose.json",
             "ZeroDex camera/hand-eye calibration snapshot selected for the physical rig",

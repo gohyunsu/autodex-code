@@ -9,7 +9,13 @@ from pathlib import Path
 
 import numpy as np
 
-from build_assets import KEY_SPECS, FIXTURE_NAME, contact_face_partition, read_binary_stl
+from build_assets import (
+    KEY_SPECS,
+    FIXTURE_NAME,
+    SOCKET_OBJECT_NAME,
+    contact_face_partition,
+    read_binary_stl,
+)
 
 
 def validate(shared_root: Path, source_dir: Path, require_runtime: bool = False) -> int:
@@ -176,6 +182,48 @@ def validate(shared_root: Path, source_dir: Path, require_runtime: bool = False)
         failures.append("socket collision mesh is missing")
     if not (fixture / "task_geometry.json").is_file():
         failures.append("socket task geometry is missing")
+    socket_object = shared_root / "object_processing" / SOCKET_OBJECT_NAME
+    socket_required = [
+        socket_object / "raw_mesh" / f"{SOCKET_OBJECT_NAME}.obj",
+        socket_object / "processed_data" / "mesh" / "simplified.obj",
+        socket_object / "processed_data" / "mesh" / "static_collision.obj",
+        socket_object / "processed_data" / "info" / "simplified.json",
+        socket_object / "processed_data" / "info" / "symmetry.json",
+        socket_object / "processed_data" / "info" / "frame_contract.json",
+        socket_object / "processed_data" / "urdf" / "socket_static_exact.urdf",
+        fixture / "pose_measurement_asset.json",
+    ]
+    failures.extend(
+        f"missing socket pose asset: {path}"
+        for path in socket_required
+        if not path.is_file()
+    )
+    frame_path = socket_object / "processed_data" / "info" / "frame_contract.json"
+    task_geometry_path = fixture / "task_geometry.json"
+    if frame_path.is_file():
+        frame = json.loads(frame_path.read_text())
+        transform = np.asarray(frame.get("T_socket_raw_mesh"), dtype=float)
+        if transform.shape != (4, 4) or not np.allclose(transform, np.eye(4)):
+            failures.append(
+                f"{SOCKET_OBJECT_NAME}: raw mesh must preserve the socket frame"
+            )
+    if task_geometry_path.is_file():
+        task_geometry = json.loads(task_geometry_path.read_text())
+        if task_geometry.get("socket_pose_object") != SOCKET_OBJECT_NAME:
+            failures.append("socket task geometry references the wrong pose object")
+        transform = np.asarray(
+            task_geometry.get("T_socket_pose_object"), dtype=float
+        )
+        if transform.shape != (4, 4) or not np.allclose(transform, np.eye(4)):
+            failures.append("socket pose object must use the task socket frame exactly")
+    socket_repre = (
+        project / "foundpose_assets" / SOCKET_OBJECT_NAME / "object_repre" /
+        "v1" / SOCKET_OBJECT_NAME / "1" / "repre.pth"
+    )
+    if not socket_repre.is_file():
+        blockers.append(
+            f"{SOCKET_OBJECT_NAME}: FoundPose repre.pth not generated"
+        )
     fixture_pose = fixture / "fixture_pose.json"
     if not fixture_pose.is_file():
         blockers.append("fixture_pose.json is not calibrated")

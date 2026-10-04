@@ -112,6 +112,51 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
                 self.assertEqual(stage["object"], object_name)
                 self.assertEqual(stage["controller"]["implementation_status"], "required")
                 self.assertIsNone(stage["controller"]["force_torque_limits"])
+                self.assertEqual(
+                    Path(stage["assets"]["socket_pose_object"]).name,
+                    f"{builder.SOCKET_OBJECT_NAME}.obj",
+                )
+            socket_object = (
+                root / "object_processing" / builder.SOCKET_OBJECT_NAME
+            )
+            self.assertTrue(
+                (socket_object / "raw_mesh" /
+                 f"{builder.SOCKET_OBJECT_NAME}.obj").is_file()
+            )
+            self.assertTrue(
+                (socket_object / "processed_data" / "mesh" /
+                 "static_collision.obj").is_file()
+            )
+            frame = json.loads(
+                (socket_object / "processed_data" / "info" /
+                 "frame_contract.json").read_text(encoding="utf-8")
+            )
+            self.assertTrue(
+                np.array_equal(
+                    np.asarray(frame["T_socket_raw_mesh"]), np.eye(4)
+                )
+            )
+            socket_urdf = (
+                socket_object / "processed_data" / "urdf" /
+                "socket_static_exact.urdf"
+            ).read_text(encoding="utf-8")
+            self.assertIn("../mesh/simplified.obj", socket_urdf)
+            self.assertNotIn("convex", socket_urdf.lower())
+            task_geometry = json.loads(
+                (root / "AutoDex" / "precision_insertion" / "fixtures" /
+                 builder.FIXTURE_NAME / "task_geometry.json")
+                .read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                task_geometry["socket_pose_object"],
+                builder.SOCKET_OBJECT_NAME,
+            )
+            self.assertTrue(
+                np.array_equal(
+                    np.asarray(task_geometry["T_socket_pose_object"]),
+                    np.eye(4),
+                )
+            )
             marker = (
                 root / "AutoDex/foundpose_assets/precision_key_1p5mm/"
                 "GENERATION_REQUIRED.json"
@@ -119,6 +164,14 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
             self.assertIn(
                 "MV-GoTrack",
                 marker.read_text(encoding="utf-8"),
+            )
+            socket_marker = (
+                root / "AutoDex" / "foundpose_assets" /
+                builder.SOCKET_OBJECT_NAME / "GENERATION_REQUIRED.json"
+            )
+            self.assertIn(
+                "keyed bore",
+                socket_marker.read_text(encoding="utf-8"),
             )
 
     def test_zerodex_profile_is_one_exact_pc_partition(self):

@@ -24,6 +24,8 @@ Generated under `~/shared_data`:
 - four proposal-only handle proxies under `object_processing/precision_key*proxy`;
 - the unified socket mesh, CAD-relative insertion transforms, and fixture-pose
   template under `AutoDex/precision_insertion/fixtures/unified_socket`;
+- the independent `precision_socket_unified` pose-estimation object under
+  `object_processing`, with an identity socket-to-mesh frame contract;
 - one fail-closed experiment profile per gap under
   `AutoDex/precision_insertion/stages`;
 - a frozen four-camera ZeroDex calibration snapshot under
@@ -314,6 +316,49 @@ assets and cannot be chosen safely without Franka force-signal validation and
 physical commissioning. Filling them with guessed values would turn an asset
 preparation step into an unreviewed robot-control change.
 
+## Socket pose-estimation asset
+
+The builder produces two deliberately separate representations of the same
+source STL:
+
+- `AutoDex/precision_insertion/fixtures/unified_socket/socket_shared_bore_1p5.obj`
+  is the task/planning fixture mesh;
+- `object_processing/precision_socket_unified/raw_mesh/precision_socket_unified.obj`
+  is the canonical FoundPose input.
+
+Both retain the source STL frame. The generated
+`processed_data/info/frame_contract.json` records
+`T_socket_raw_mesh = identity`; therefore a FoundPose estimate for
+`precision_socket_unified` is `T_world_socket`, not a pose for a recentered or
+rotated derivative. `pose_measurement_asset.json` records the transform
+equation, required evidence, and the eventual `fixture_pose.json` output.
+
+The generated `static_collision.obj` and `socket_static_exact.urdf` preserve
+the keyed bore. They are static-fixture assets only. Do not generate or use a
+single convex hull for insertion: it would fill the cavity. The pose object
+also intentionally has no BODex scene or candidate pool because the robot must
+not grasp the mounted socket.
+
+The remaining learned asset is:
+
+```text
+~/shared_data/AutoDex/foundpose_assets/precision_socket_unified/
+  object_repre/v1/precision_socket_unified/1/repre.pth
+```
+
+It must be onboarded from the exact raw mesh above after MV-GoTrack is restored.
+The builder writes `GENERATION_REQUIRED.json` instead of fabricating or copying
+a representation. When capturing the socket, the segmentation prompt should
+include the whole red fixture and keyed opening; masking only the nearly
+symmetric exterior makes yaw underconstrained.
+
+Once the representation and ZeroDex calibration are available, repeated
+multi-view estimates supply `T_world_socket`. The existing AutoDex convention
+then applies the calibrated world-to-`fr3_link0` transform and writes the
+result as `T_robot_socket` in `fixture_pose.json`. Keep the raw per-view poses,
+masks, calibration snapshot, and repeatability residuals with that file; do
+not mark it calibrated from one uninspected estimate.
+
 ## ZeroDex camera profile
 
 The pinned profile is
@@ -346,7 +391,7 @@ and interrupts the other pipeline.
 
 ## Assets that cannot be fabricated
 
-- **FoundPose `repre.pth`:** the checked-in onboarding wrapper requires
+- **FoundPose `repre.pth` for the four keys and socket pose object:** the checked-in onboarding wrapper requires
   `autodex/perception/thirdparty/MV-GoTrack/scripts/onboard_custom_mesh_for_foundpose.py`.
   That directory is absent, and the historical `gunhee1113/MV-GoTrack` GitHub
   repository is unavailable even with the authenticated lab GitHub account.

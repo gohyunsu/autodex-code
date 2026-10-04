@@ -21,6 +21,18 @@ matching frozen calibration path. It is a declarative profile, not an active
 ParaDex network configuration: the capture-PC IPs and physical rig must pass
 `scripts/precision_insertion/verify_zerodex_camera_profile.py` before use.
 
+The shared socket STL is also built as the independent perception object
+`precision_socket_unified`. Its raw mesh keeps the source STL frame exactly,
+so a pose estimated from that mesh is a socket-frame pose rather than a pose
+of an undocumented recentered model. The keyed bore must stay visible in the
+segmentation mask because it is the feature that resolves insertion yaw; the
+outer body alone is close to yaw-symmetric.
+
+The socket object's exact concave mesh is valid as a static fixture collision
+mesh. It intentionally has no convex-hull `coacd` asset: a hull would close the
+bore and make every insertion collide. It is not a BODex grasp target and has
+no tabletop scenes or grasp candidates.
+
 The builder creates one handle-only BODex proposal proxy per key. The visible
 proxy geometry is identical, but its gravity centre and mass come from the
 corresponding full key. Proxies are not runtime objects and cannot be used for
