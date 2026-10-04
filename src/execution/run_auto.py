@@ -2129,11 +2129,12 @@ def run_single_trial(
                 "candidate_result_scope": (
                     "experiment" if args.isolate_experiment else "shared_v8"),
                 "timing": timing}
-        fail = _with_task_outcome(
-            fail,
-            False,
-            grasp_evidence={"source": "execute_exception"},
-        )
+        if not reposition_mode:
+            fail = _with_task_outcome(
+                fail,
+                False,
+                grasp_evidence={"source": "execute_exception"},
+            )
         try:
             return _save_result(fail)
         except Exception:
@@ -2252,14 +2253,15 @@ def run_single_trial(
                     "candidate_result_scope": (
                         "experiment" if args.isolate_experiment else "shared_v8"),
                     "auto_label": auto_label_info, "timing": timing}
-            fail = _with_task_outcome(
-                fail,
-                auto_succ_lift,
-                grasp_evidence={
-                    "source": "auto_label_charuco",
-                    **auto_label_info,
-                },
-            )
+            if not reposition_mode:
+                fail = _with_task_outcome(
+                    fail,
+                    auto_succ_lift,
+                    grasp_evidence={
+                        "source": "auto_label_charuco",
+                        **auto_label_info,
+                    },
+                )
             return _save_result(fail)
 
         # Resume video for place phase.
@@ -2657,14 +2659,15 @@ def run_single_trial(
             "manual_recovery_required": recovery_error is not None,
             "timing": timing,
         }
-        record = _with_task_outcome(
-            record,
-            trial_success,
-            grasp_evidence={
-                "source": "auto_label_charuco",
-                **auto_label_info,
-            },
-        )
+        if not reposition_mode:
+            record = _with_task_outcome(
+                record,
+                trial_success,
+                grasp_evidence={
+                    "source": "auto_label_charuco",
+                    **auto_label_info,
+                },
+            )
         return _save_result(record)
 
     # ── 5. Label ─────────────────────────────────────────────────────────────
@@ -2796,15 +2799,16 @@ def run_single_trial(
     }
     if note is not None:
         trial_result["note"] = note
-    trial_result = _with_task_outcome(
-        trial_result,
-        succ,
-        grasp_evidence={
-            "source": "auto_label_charuco" if args.auto else "manual_label",
-            "note": note,
-            **(auto_label_info if args.auto else {}),
-        },
-    )
+    if not reposition_mode:
+        trial_result = _with_task_outcome(
+            trial_result,
+            succ,
+            grasp_evidence={
+                "source": "auto_label_charuco" if args.auto else "manual_label",
+                "note": note,
+                **(auto_label_info if args.auto else {}),
+            },
+        )
     _save_result(trial_result)
 
     # Persist result back to the candidate dir for ALL scenes (table, wall,
