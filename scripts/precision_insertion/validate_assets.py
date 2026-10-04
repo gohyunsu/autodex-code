@@ -120,11 +120,22 @@ def validate(shared_root: Path, source_dir: Path, require_runtime: bool = False)
             if stage.get("object") != object_name:
                 failures.append(f"{object_name}: stage profile object mismatch")
             controller = stage.get("controller", {})
-            if controller.get("implementation_status") not in {
+            controller_status = controller.get("implementation_status")
+            if controller_status not in {
                 "required", "implemented", "commissioned"
             }:
                 failures.append(
                     f"{object_name}: unknown controller implementation status"
+                )
+            elif controller_status == "required":
+                blockers.append(
+                    f"{object_name}: {controller.get('mode', 'insertion')} controller "
+                    "is not implemented or commissioned"
+                )
+            elif controller_status == "implemented":
+                blockers.append(
+                    f"{object_name}: {controller.get('mode', 'insertion')} controller "
+                    "is implemented but not physically commissioned"
                 )
 
     common_ids = set.intersection(
