@@ -87,6 +87,13 @@ def _json_dump(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _passed_validation(path: Path) -> bool:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("status") == "passed"
+    except (OSError, AttributeError, json.JSONDecodeError):
+        return False
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -501,10 +508,17 @@ def _build_key(
             "do_not_substitute": "a representation generated for another mesh or frame",
         },
     )
+    simulation_records = sorted(candidate_dir.rglob("simulation_validation.json"))
+    has_simulated_candidate = any(
+        _passed_validation(path) for path in simulation_records
+    )
     _json_dump(
         candidate_dir / "GENERATION_REQUIRED.json",
         {
-            "status": "required",
+            "status": (
+                "simulation_candidate_available_physical_validation_required"
+                if has_simulated_candidate else "required"
+            ),
             "expected_files_per_grasp": [
                 "wrist_se3.npy",
                 "pregrasp_pose.npy",
@@ -513,7 +527,14 @@ def _build_key(
             ],
             "optional_files_per_grasp": ["openpose_000.npy"],
             "contact_policy": str(info_dir / "contact_regions.json"),
-            "reason": "a robot grasp must be optimized, contact-filtered, and physically validated",
+            "simulation_validation_records": [
+                str(path) for path in simulation_records
+            ],
+            "reason": (
+                "a simulated candidate exists but remains physically unvalidated"
+                if has_simulated_candidate
+                else "a robot grasp must be optimized, contact-filtered, and physically validated"
+            ),
         },
     )
 
