@@ -60,7 +60,8 @@ The intended startup order is:
    repeatability residual. Select an observed SE(3) medoid; do not average
    rotation matrices componentwise.
 5. Save raw images/masks, per-sample poses, perception diagnostics, `C2R`, and
-   `fixture_pose.session.json` under the experiment run.
+   `fixture_pose.session.json` under
+   `~/shared_data/AutoDex/experiment/<exp_name>/<hand>/<key>/`.
 6. Freeze `T_robot_socket` for the process and add the exact concave socket
    mesh to every normal and recovery cuRobo scene.
 7. Measure the empty ChArUco tabletop, then ask the operator to place the key.

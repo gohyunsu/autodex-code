@@ -139,6 +139,22 @@ reachability, not merely add more BODex samples.
 
 ## Local setup
 
+On the AutoDex robot PC, keep the lab's existing main checkout untouched and
+clone the fork branch into a separate directory:
+
+```bash
+git clone --branch feat/precision-insertion --single-branch \
+  https://github.com/gohyunsu/autodex-code.git \
+  ~/autodex-precision-insertion
+cd ~/autodex-precision-insertion
+```
+
+The checkout path and runtime data path are independent: this code resolves
+objects, candidates, calibration, and experiment output below
+`~/shared_data`. Restore the NAS handoff's `payload/shared_data/` into that
+writable overlay before validating. Do not point active experiment output at a
+read-only NAS mount.
+
 The data overlay keeps the ParaDex2 NAS readable while making new precision
 assets and experiment output local and writable:
 
@@ -372,8 +388,9 @@ that medoid exceeds 2 mm or 2 degrees. These defaults are a bring-up
 repeatability gate, **not** evidence of sub-millimetre absolute accuracy.
 
 The accepted pose is written only under that run's
-`_socket_preflight_<timestamp>/fixture_pose.session.json`. It is then frozen in
-memory and the exact concave `static_collision.obj` is inserted into every
+`~/shared_data/AutoDex/experiment/<exp_name>/<hand>/<key>/`
+`_socket_preflight_<timestamp>/fixture_pose.session.json`. It is then frozen
+in memory and the exact concave `static_collision.obj` is inserted into every
 normal and reorientation-recovery planning scene. The pose is never reread or
 updated inside the trial loop. If the physical fixture moves, abort and start
 a new session; do not edit a session JSON or promote it into a global

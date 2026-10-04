@@ -793,7 +793,7 @@ def _build_stage_profiles(project_root: Path) -> list[dict]:
                 ),
                 "socket_geometry": str(fixture_root / "task_geometry.json"),
                 "socket_session_pose_pattern": (
-                    "<autodex_repo>/experiment/<exp_name>/<hand>/"
+                    "<shared_data>/AutoDex/experiment/<exp_name>/<hand>/"
                     f"{object_name}/_socket_preflight_<timestamp>/"
                     "fixture_pose.session.json"
                 ),
@@ -1076,7 +1076,7 @@ def _build_socket(
             "pose_object": pose_object,
             "output_scope": "session_only",
             "output_pattern": (
-                "experiment/<exp_name>/<hand>/<key>/"
+                "AutoDex/experiment/<exp_name>/<hand>/<key>/"
                 "_socket_preflight_<timestamp>/fixture_pose.session.json"
             ),
             "transform_convention": "T_A_B maps coordinates in frame B into frame A",
