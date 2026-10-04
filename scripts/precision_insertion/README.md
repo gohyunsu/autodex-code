@@ -159,6 +159,11 @@ with the host's RTX 3090 and NVIDIA driver 535/CUDA 12.2 maximum. Verify it:
   scripts/precision_insertion/verify_bodex_env.py
 ```
 
+In a container or restricted shell where the host GPU is intentionally not
+passed through, use `--allow-no-gpu` for a CPU/package audit. That mode reports
+`src.execution.run_pipeline` as skipped because cuRobo creates CUDA tensors at
+import time; it does not claim that GPU planning was tested.
+
 The robot host does not need local PySpin in ZeroDex free-run mode. Each remote
 capture PC still needs its own working Spinnaker/PySpin installation because
 the ParaDex camera daemon opens the FLIR cameras there.

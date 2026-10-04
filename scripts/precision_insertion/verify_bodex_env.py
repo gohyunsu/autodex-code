@@ -40,16 +40,22 @@ def main() -> int:
     for module in modules:
         importlib.import_module(module)
 
-    runtime_modules = [
-        "chime",
-        "src.execution.run_pipeline",
-    ]
-    for module in runtime_modules:
-        importlib.import_module(module)
-
     cuda_available = torch.cuda.is_available()
     if not cuda_available and not args.allow_no_gpu:
         raise RuntimeError("PyTorch cannot access CUDA; run this check on the robot/GPU host")
+
+    runtime_modules = ["chime"]
+    skipped_runtime_modules = []
+    if cuda_available:
+        runtime_modules.append("src.execution.run_pipeline")
+    else:
+        # Importing cuRobo's MotionGen constructs CUDA tensors at module scope.
+        # ``--allow-no-gpu`` is a CPU/package audit, so report this omission
+        # explicitly instead of crashing before the flag can take effect.
+        skipped_runtime_modules.append("src.execution.run_pipeline (requires CUDA)")
+    for module in runtime_modules:
+        importlib.import_module(module)
+
     gpu = None
     capability = None
     if cuda_available:
@@ -78,6 +84,7 @@ def main() -> int:
                 "pyserial": serial.__version__,
                 "extensions": modules,
                 "runtime_imports": runtime_modules,
+                "skipped_runtime_imports": skipped_runtime_modules,
                 "camera_sdk": {
                     "PySpin": bool(importlib.util.find_spec("PySpin")),
                     "required_on_robot_host_only_for_local_timestamp_monitor": True,
