@@ -108,6 +108,29 @@ pass, while the 0.3 mm pool yielded two. Cross-validation established that
 seed 78 from the latter passes every full mesh; this is sampling behavior, not
 evidence that 0.3 mm insertion is easier than 0.5 mm insertion.
 
+### Why the runtime path is currently `table/0/78`
+
+The three path components mean tabletop scene type, stable-pose scene 0, and
+BODex sample ID 78. Scene 0 is the controlled `handle_rear_down` baseline. It
+was intentionally the only runtime scene promoted for the first 1.5 mm
+bring-up, so the present pool is **not** a general tabletop grasp library.
+
+Geometry/scenes already exist for five protected stable poses: rear-down and
+four handle-side-down poses. Tip-down is excluded to avoid damaging the
+insertion shaft. Each side-down scene needs its own proposal and validation
+pool because the table makes one handle face inaccessible and changes the
+collision-free approach. A candidate transform is object-relative, but that
+does not make a scene-0 grasp safe or reachable in another resting pose.
+
+After pickup, the rigidly held key must also be transported to a canonical
+socket pre-insertion pose. This is an arm-level object reorientation problem
+when a collision-free wrist path exists with the grasp fixed. It becomes an
+in-hand reorientation or regrasp problem only when the fixed grasp blocks the
+socket, violates wrist/joint limits, or is incompatible with the desired key
+orientation. Consequently the next grasp-library expansion must score each
+stable-pose candidate jointly for pickup and socket pre-insertion
+reachability, not merely add more BODex samples.
+
 ## Local setup
 
 The data overlay keeps the ParaDex2 NAS readable while making new precision
@@ -132,6 +155,17 @@ with the host's RTX 3090 and NVIDIA driver 535/CUDA 12.2 maximum. Verify it:
 The robot host does not need local PySpin in ZeroDex free-run mode. Each remote
 capture PC still needs its own working Spinnaker/PySpin installation because
 the ParaDex camera daemon opens the FLIR cameras there.
+
+The mesh renderer is isolated from the planning environment because Open3D
+pulls in a large notebook/web visualization dependency set. Install it in a
+venv that can read, but cannot modify, `autodex_bodex` packages:
+
+```bash
+bash scripts/precision_insertion/setup_visualization_env.sh
+```
+
+The renderer needs headless EGL/OpenGL access. A successful 3D planning run
+does not imply that EGL is available inside a container or restricted shell.
 
 ## Build and validate geometry
 
@@ -228,6 +262,41 @@ python scripts/precision_insertion/validate_franka_grasp_plans.py \
 This planner check covers pickup approach and held-object lift only. It does
 not plan or certify the socket insertion trajectory.
 
+## Reproduce the hand/key image and planned lift animation
+
+First export a fresh plan with cuRobo. The exporter re-runs full-key/table
+collision checks, approach planning, and the 10 cm held-object lift, then
+asserts zero discontinuity at the approach/close/lift boundaries:
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  scripts/precision_insertion/export_planned_grasp_lift.py
+```
+
+Then render the real FR3 and Inspire visual meshes. The key is fixed in the
+world during approach and hand closure; during lift its pose is recomputed as
+a rigid attachment to the hand base link. This video still does **not** show
+reorientation or insertion, and the caption deliberately identifies it as a
+planning preview rather than physical execution.
+
+```bash
+PYOPENGL_PLATFORM=egl ~/.venvs/autodex-viz/bin/python \
+  scripts/precision_insertion/render_planned_grasp_lift.py \
+  ~/shared_data/AutoDex/precision_insertion/visualizations/common_grasp_78_planned_trajectory.npz \
+  --output ~/shared_data/AutoDex/precision_insertion/visualizations/common_grasp_78_fr3_approach_lift.mp4
+```
+
+For a close hand/key still or turntable, reuse the generic mesh renderer:
+
+```bash
+PYOPENGL_PLATFORM=egl ~/.venvs/autodex-viz/bin/python \
+  src/visualization/turntable_grasp.py \
+  --hand inspire --version v8 --obj precision_key_1p5mm \
+  --scene table/0/78 --obj-root ~/shared_data/object_processing \
+  --still --width 1280 --height 960 --no-object-texture \
+  --output ~/shared_data/AutoDex/precision_insertion/visualizations/common_grasp_78_hand_key.png
+```
+
 ## Stage profiles and controller assets
 
 `build_assets.py` writes one profile under
@@ -290,6 +359,18 @@ and interrupts the other pipeline.
 - **camera/hand-eye confirmation:** the frozen files are internally complete,
   but someone must confirm the physical serial placement and rerun or approve
   hand-eye calibration after the rig is fixed.
+
+The ParaDex2 NAS confirms the intended FoundPose asset contract but does not
+contain a representation for any `precision_key_*` object. For example,
+`/mnt/paradex2/AutoDex/foundpose_assets/pringles_untextured_backup_20260902_active/summary.json`
+records the same onboarding settings used by the local wrapper: millimetre
+render scale 1000, 57 minimum viewpoints x 14 in-plane rotations = 798
+templates, `dinov2_vits14-reg`, PCA-256, and 2048 clusters. Its 720 MB
+`repre.pth` is mesh-specific and cannot be renamed or reused for the key.
+The recovery path is to obtain the missing MV-GoTrack checkout from a capture
+PC/backup or restore access to its private repository, then run the wrapper on
+all four meshes with the pinned ZeroDex intrinsics. The old setup script asks
+for CUDA 12.8; do not run it unchanged on this RTX 3090 host with driver 535.
 
 ## Git policy
 
