@@ -500,6 +500,13 @@ if __name__ == "__main__":
                         help="Override object root dir (default: paradex from autodex.utils.path)")
     parser.add_argument("--candidate-root", type=str, default=None,
                         help="Candidate base directory. Defaults to the NAS runtime path for --hand.")
+    parser.add_argument("--bodex-root", type=str, default=None,
+                        help="Pool root containing object directories. Defaults to "
+                             "<repo>/bodex_outputs/<hand>/<version>.")
+    parser.add_argument("--coll-only", action="store_true",
+                        help="run cuRobo scene-collision screening only")
+    parser.add_argument("--sim-only", action="store_true",
+                        help="reuse cached collision results and run MuJoCo only")
     parser.add_argument("--obj_list_file", type=str, default=None,
                         help="Object list file (default: src/grasp_generation/obj_list.txt)")
     args = parser.parse_args()
@@ -513,7 +520,8 @@ if __name__ == "__main__":
         with open(obj_list_file) as f:
             obj_list = [l.strip() for l in f if l.strip() and not l.startswith("#")]
 
-    bodex_root = os.path.join(REPO_ROOT, "bodex_outputs", args.hand, args.version)
+    bodex_root = (os.path.expanduser(args.bodex_root) if args.bodex_root
+                  else os.path.join(REPO_ROOT, "bodex_outputs", args.hand, args.version))
     # Candidate results are consumed by the robot runner from the NAS. Keeping
     # them under the source checkout made a newly generated pool invisible to
     # preflight and caused an avoidable manual copy step.
@@ -552,5 +560,7 @@ if __name__ == "__main__":
             print(f"\n{obj_name}:")
             total, succ = run_sim_filter(args.hand, args.version, obj_name,
                                           bodex_root, candidate_root, viewer=args.viewer,
+                                          coll_only=args.coll_only,
+                                          sim_only=args.sim_only,
                                           obj_root_dir=args.obj_root_dir)
             print(f"  {succ}/{total} passed")

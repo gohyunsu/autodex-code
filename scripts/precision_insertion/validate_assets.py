@@ -53,8 +53,54 @@ def validate(shared_root: Path, source_dir: Path, require_runtime: bool = False)
         if not repre.is_file():
             blockers.append(f"{object_name}: FoundPose repre.pth not generated")
         candidate_root = project / "candidates" / "inspire" / "v8" / object_name
-        if not any(candidate_root.rglob("wrist_se3.npy")):
+        screened = []
+        simulated = []
+        franka_planned = []
+        physically_validated = []
+        for screen_path in candidate_root.rglob("contact_screen.json"):
+            try:
+                screen = json.loads(screen_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            if screen.get("accepted") and screen.get("reason") in {
+                "contact_and_quality_screened",
+                # Compatibility with candidates produced before the screen's
+                # provenance label was made precise.
+                "simulation_screened",
+            }:
+                screened.append(screen_path)
+                simulation_path = screen_path.parent / "simulation_validation.json"
+                if simulation_path.is_file():
+                    try:
+                        simulation = json.loads(simulation_path.read_text())
+                    except (OSError, json.JSONDecodeError):
+                        simulation = {}
+                    if simulation.get("status") == "passed":
+                        simulated.append(simulation_path)
+                physical_path = screen_path.parent / "physical_validation.json"
+                if physical_path.is_file():
+                    try:
+                        physical = json.loads(physical_path.read_text())
+                    except (OSError, json.JSONDecodeError):
+                        physical = {}
+                    if physical.get("status") == "passed":
+                        physically_validated.append(physical_path)
+                plan_path = screen_path.parent / "franka_plan_validation.json"
+                if plan_path.is_file():
+                    try:
+                        plan = json.loads(plan_path.read_text())
+                    except (OSError, json.JSONDecodeError):
+                        plan = {}
+                    if plan.get("status") == "passed":
+                        franka_planned.append(plan_path)
+        if not screened:
             blockers.append(f"{object_name}: no contact-safe Inspire grasp candidate")
+        elif object_name == "precision_key_1p5mm" and not simulated:
+            blockers.append(f"{object_name}: contact-safe grasp has not passed full-key simulation")
+        elif object_name == "precision_key_1p5mm" and not franka_planned:
+            blockers.append(f"{object_name}: simulated grasp has not passed FR3 planning")
+        elif object_name == "precision_key_1p5mm" and not physically_validated:
+            blockers.append(f"{object_name}: simulation-validated grasp lacks physical validation")
 
     fixture = project / "precision_insertion" / "fixtures" / FIXTURE_NAME
     if not (fixture / "socket_shared_bore_1p5.obj").is_file():

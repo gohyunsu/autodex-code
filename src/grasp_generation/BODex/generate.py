@@ -84,6 +84,7 @@ def save_bodex_output(output_dir: str, save_data: Dict, seed_offset: int = 0):
                 "grasp_error": save_data["grasp_error"][b, ns],
                 "dist_error": save_data["dist_error"][b, ns],
                 "success": save_data["success"][b, ns],
+                "solver_thresholds": save_data.get("solver_thresholds", {}),
             }
 
             np.save(os.path.join(output_path, str(seed_id), "wrist_se3.npy"), np.linalg.inv(obj_se3) @ wrist_se3)
@@ -119,6 +120,10 @@ if __name__ == "__main__":
     parser.add_argument("--task_gamma", type=float, default=None,
                         help="Override grasp_cfg.task_dict.gamma (robustness cone half-angle deg). "
                              "E.g. --task_gamma 30 for narrow cone around f.")
+    parser.add_argument("--grasp_threshold", type=float, default=0.001,
+                        help="Maximum grasp-error component used by BODex success (default: 0.001).")
+    parser.add_argument("--distance_threshold", type=float, default=0.01,
+                        help="Maximum mean absolute contact distance used by BODex success (default: 0.01 m).")
     parser.add_argument("--seed", type=int, default=123,
                         help="Random seed (numpy / torch / random).")
 
@@ -196,6 +201,8 @@ if __name__ == "__main__":
                 obj_obb_length=world_info_dict["obj_obb_length"],
                 use_cuda_graph=False,
                 store_debug=False,
+                grasp_threshold=args.grasp_threshold,
+                distance_threshold=args.distance_threshold,
             )
             grasp_solver = GraspSolver(grasp_config)
             world_info_dict["world_model"] = grasp_solver.world_coll_checker.world_model
@@ -223,6 +230,10 @@ if __name__ == "__main__":
         world_info_dict["grasp_error"] = result.grasp_error.detach().cpu().numpy()
         world_info_dict["dist_error"] = result.dist_error.detach().cpu().numpy()
         world_info_dict["success"] = result.success.detach().cpu().numpy()
+        world_info_dict["solver_thresholds"] = {
+            "grasp_error_max": args.grasp_threshold,
+            "contact_distance_mean_abs_m": args.distance_threshold,
+        }
 
         save_bodex_output(save_dir, world_info_dict, seed_offset=args.seed_offset)
 

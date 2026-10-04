@@ -15,7 +15,7 @@ import numpy as np
 
 from autodex.planner import GraspPlanner
 from autodex.planner.obstacles import TABLE_CUBOID
-from autodex.utils.path import obj_path
+from autodex.utils.path import get_obj_root
 from autodex.utils.conversion import se32cart, cart2se3
 
 TABLE_SURFACE_Z = TABLE_CUBOID["pose"][2] + TABLE_CUBOID["dims"][2] / 2  # 0.039
@@ -37,6 +37,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--obj", default="servingbowl_small")
     ap.add_argument("--hand", default="fr3_inspire")
+    ap.add_argument(
+        "--candidate-hand",
+        default=None,
+        help="candidate-pool hand key (default: inspire for fr3_inspire, otherwise --hand)",
+    )
     ap.add_argument("--version", default="v8")
     ap.add_argument("--pose_idx", default="003")
     ap.add_argument("--x", type=float, default=0.5)
@@ -44,12 +49,18 @@ def main():
     ap.add_argument("--viz", action="store_true")
     ap.add_argument("--port", type=int, default=8080)
     args = ap.parse_args()
+    candidate_hand = args.candidate_hand or (
+        "inspire" if args.hand == "fr3_inspire" else args.hand
+    )
 
-    tt_path = os.path.join(obj_path, args.obj, "processed_data", "info",
+    object_root = get_obj_root(args.version)
+    tt_path = os.path.join(object_root, args.obj, "processed_data", "info",
                            "tabletop", f"{args.pose_idx}.npy")
     pose_T = np.load(tt_path)
     T = place_T(pose_T, args.x, args.yaw)
-    mesh_path = os.path.join(obj_path, args.obj, "processed_data", "mesh", "simplified.obj")
+    mesh_path = os.path.join(
+        object_root, args.obj, "processed_data", "mesh", "simplified.obj"
+    )
 
     scene_cfg = {
         "mesh": {"target": {"pose": se32cart(T).tolist(), "file_path": mesh_path}},
@@ -57,9 +68,15 @@ def main():
     }
 
     print(f"[plan_test] {args.obj} hand={args.hand} version={args.version} "
-          f"pose_idx={args.pose_idx} x={args.x}")
+          f"candidate_hand={candidate_hand} pose_idx={args.pose_idx} x={args.x}")
     planner = GraspPlanner(hand=args.hand)
-    res = planner.plan(scene_cfg, args.obj, args.version, hand=args.hand)
+    res = planner.plan(
+        scene_cfg,
+        args.obj,
+        args.version,
+        hand=candidate_hand,
+        skip_done=False,
+    )
 
     print(f"[plan_test] success={res.success}")
     print(f"[plan_test] timing={res.timing}")

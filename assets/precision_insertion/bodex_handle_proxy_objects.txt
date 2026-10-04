@@ -1,0 +1,3 @@
+# Proposal-only object. Candidates are transferred by identical object frame
+# and rechecked against precision_key_1p5mm before entering the runtime pool.
+precision_key_handle_contact_proxy

@@ -46,6 +46,7 @@ KEY_SPECS = (
 )
 SOCKET_SOURCE = "socket_shared_bore_1p5.stl"
 FIXTURE_NAME = "unified_socket"
+HANDLE_PROXY_NAME = "precision_key_handle_contact_proxy"
 
 
 @dataclass(frozen=True)
@@ -218,6 +219,33 @@ def contact_face_partition(mesh: Mesh) -> tuple[list[int], list[int]]:
     return allowed, forbidden
 
 
+def _box_mesh(bounds_min: Sequence[float], bounds_max: Sequence[float]) -> Mesh:
+    """Return an outward-wound rectangular box mesh."""
+    x0, y0, z0 = (float(value) for value in bounds_min)
+    x1, y1, z1 = (float(value) for value in bounds_max)
+    vertices = np.asarray(
+        [
+            [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+            [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1],
+        ],
+        dtype=np.float64,
+    )
+    faces = np.asarray(
+        [
+            [0, 2, 1], [0, 3, 2],
+            [4, 5, 6], [4, 6, 7],
+            [0, 1, 5], [0, 5, 4],
+            [1, 2, 6], [1, 6, 5],
+            [2, 3, 7], [2, 7, 6],
+            [3, 0, 4], [3, 4, 7],
+        ],
+        dtype=np.int64,
+    )
+    mesh = Mesh(vertices, faces)
+    validate_watertight(mesh)
+    return mesh
+
+
 def _rotation_x(angle: float) -> np.ndarray:
     c, s = math.cos(angle), math.sin(angle)
     return np.asarray([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
@@ -384,6 +412,10 @@ def _build_key(
             "units": "m",
             "insertion_axis": [0.0, 0.0, 1.0],
             "handle_z_range": [0.0, HANDLE_FRONT_Z_M],
+            "handle_half_extents_xy_m": [
+                float(max(abs(bounds[0, 0]), abs(bounds[1, 0]))),
+                float(max(abs(bounds[0, 1]), abs(bounds[1, 1]))),
+            ],
             "allowed": {
                 "description": "four lateral handle faces and rear handle face only",
                 "mesh": "../mesh/contact_allowed.obj",
@@ -457,7 +489,16 @@ def _build_key(
         {
             "status": "required",
             "expected": f"object_repre/v1/{object_name}/1/repre.pth",
-            "reason": "learned DINOv2/FoundPose representation requires GPU onboarding",
+            "generator": "src/process/batch_onboard_foundpose.py",
+            "required_source": (
+                "autodex/perception/thirdparty/MV-GoTrack/scripts/"
+                "onboard_custom_mesh_for_foundpose.py"
+            ),
+            "reason": (
+                "learned DINOv2/FoundPose representation requires object-specific "
+                "GPU onboarding; the required MV-GoTrack source is not present"
+            ),
+            "do_not_substitute": "a representation generated for another mesh or frame",
         },
     )
     _json_dump(
@@ -469,8 +510,8 @@ def _build_key(
                 "pregrasp_pose.npy",
                 "grasp_pose.npy",
                 "bodex_info.npy",
-                "openpose_000.npy",
             ],
+            "optional_files_per_grasp": ["openpose_000.npy"],
             "contact_policy": str(info_dir / "contact_regions.json"),
             "reason": "a robot grasp must be optimized, contact-filtered, and physically validated",
         },
@@ -487,6 +528,112 @@ def _build_key(
         "faces": int(len(mesh.faces)),
         "allowed_contact_faces": len(allowed),
         "forbidden_contact_faces": len(forbidden),
+    }
+
+
+def _build_handle_proxy(reference_source: Path, object_root: Path, project_root: Path) -> dict:
+    """Build the handle-only BODex proposal proxy in the real key frame.
+
+    Its geometry deliberately omits the shaft. Candidates must subsequently
+    be checked against the full key; this object is never a runtime target.
+    """
+    reference = read_binary_stl(reference_source)
+    bounds = reference.bounds
+    proxy = _box_mesh(
+        [bounds[0, 0], bounds[0, 1], 0.0],
+        [bounds[1, 0], bounds[1, 1], HANDLE_FRONT_Z_M],
+    )
+    object_dir = object_root / HANDLE_PROXY_NAME
+    raw_dir = object_dir / "raw_mesh"
+    mesh_dir = object_dir / "processed_data" / "mesh"
+    info_dir = object_dir / "processed_data" / "info"
+    urdf_dir = object_dir / "processed_data" / "urdf"
+    for directory in (raw_dir, mesh_dir, info_dir / "tabletop", urdf_dir / "meshes"):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    write_mtl(raw_dir / "material.mtl", (0.20, 0.55, 0.95))
+    write_obj(raw_dir / f"{HANDLE_PROXY_NAME}.obj", proxy, material_file="material.mtl")
+    write_mtl(mesh_dir / "material.mtl", (0.20, 0.55, 0.95))
+    for name in ("raw.obj", "manifold.obj", "simplified.obj", "coacd.obj"):
+        write_obj(mesh_dir / name, proxy, material_file="material.mtl")
+    write_obj(urdf_dir / "meshes" / "convex_piece_000.obj", proxy)
+
+    obb_transform = np.eye(4)
+    obb_transform[:3, 3] = (bounds[0] + bounds[1]) / 2.0
+    _json_dump(
+        info_dir / "simplified.json",
+        {
+            # Keep the actual full-key wrench reference while sampling only
+            # the handle surface.
+            "gravity_center": reference.center_mass.tolist(),
+            "obb": (bounds[1] - bounds[0]).tolist(),
+            "obb_transform": obb_transform.tolist(),
+            "scale": 1.0,
+            "density": 1.0,
+            "mass": reference.volume,
+            "generation_proxy": True,
+            "runtime_object": "precision_key_1p5mm",
+        },
+    )
+    _json_dump(
+        info_dir / "symmetry.json",
+        {
+            "type": "none",
+            "center": reference.center_mass.tolist(),
+            "scale": float(np.linalg.norm(bounds[1] - bounds[0])),
+            "axes": [],
+            "rel_tol": 0.01,
+            "reason": "proposal-only proxy; candidate is rechecked against keyed full mesh",
+        },
+    )
+    pose = np.eye(4)
+    np.save(info_dir / "tabletop" / "000.npy", pose)
+    _json_dump(
+        info_dir / "tabletop_policy.json",
+        {
+            "poses": [{"stem": "000", "label": "handle_rear_down", "baseline": True}],
+            "baseline_pose_stem": "000",
+            "generation_proxy": True,
+        },
+    )
+    urdf_path = urdf_dir / "coacd.urdf"
+    _write_urdf(urdf_path, HANDLE_PROXY_NAME, reference.volume, reference.center_mass)
+
+    scene_dir = project_root / "scene" / "inspire" / HANDLE_PROXY_NAME / "table"
+    _json_dump(
+        scene_dir / "0.json",
+        {
+            "scene": {
+                "mesh": {
+                    "target": {
+                        "scale": [1.0, 1.0, 1.0],
+                        "pose": _pose7(pose),
+                        "file_path": str(mesh_dir / "simplified.obj"),
+                        "urdf_path": str(urdf_path),
+                    }
+                },
+                "cuboid": {
+                    "table": {
+                        "dims": [2.0, 2.0, 0.2],
+                        "pose": [0.0, 0.0, -0.1, 1.0, 0.0, 0.0, 0.0],
+                    }
+                },
+            },
+            "meta": {
+                "pose_idx": "000",
+                "param": {"placement": "handle_rear_down"},
+                "precision_insertion": {
+                    "generation_proxy": True,
+                    "runtime_object": "precision_key_1p5mm",
+                },
+            },
+        },
+    )
+    return {
+        "object": HANDLE_PROXY_NAME,
+        "runtime_object": "precision_key_1p5mm",
+        "bounds_m": proxy.bounds.tolist(),
+        "warning": "proposal only; recheck every candidate against the full key mesh",
     }
 
 
@@ -574,6 +721,7 @@ def build(source_dir: Path, shared_root: Path) -> dict:
         _build_key(source_dir / source_name, object_name, gap_mm, object_root, project_root)
         for object_name, gap_mm, source_name in KEY_SPECS
     ]
+    handle_proxy = _build_handle_proxy(source_dir / KEY_SPECS[0][2], object_root, project_root)
     socket = _build_socket(source_dir / SOCKET_SOURCE, project_root)
 
     task_root = project_root / "precision_insertion"
@@ -583,6 +731,7 @@ def build(source_dir: Path, shared_root: Path) -> dict:
         "units": "m",
         "shared_root": str(shared_root),
         "objects": keys,
+        "grasp_generation_proxy": handle_proxy,
         "socket": socket,
         "progression": [
             {"gap_mm": "1.5", "purpose": "full pipeline bring-up"},
@@ -597,6 +746,9 @@ def build(source_dir: Path, shared_root: Path) -> dict:
             "candidate_scene_id": "0",
             "socket_pose": str(task_root / "fixtures" / FIXTURE_NAME / "fixture_pose.json"),
         },
+        "zerodex_camera_profile": (
+            "assets/precision_insertion/zerodex_camera_profile.json"
+        ),
         "incomplete_runtime_assets": [
             "FoundPose repre.pth for each key",
             "contact-safe Inspire grasp candidate(s)",

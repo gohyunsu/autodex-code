@@ -1,0 +1,62 @@
+world:
+  type: paradex
+  obj_list: []
+  scene_type: ["table"]
+
+robot_file: "inspire.yml"
+robot_file_with_arm:
+base_cfg_file: "base_grasp.yml"
+particle_file: "particle_grasp_debug.yml"
+gradient_file: "gradient_grasp_fc.yml"
+
+# Raw candidates are filtered into the runtime pool by
+# scripts/precision_insertion/filter_contact_safe_grasps.py.
+exp_name: "precision_insertion_raw"
+seed_num: 1000
+
+seeder_cfg:
+  obj_sample:
+    num: 2048
+    inflate: 0.05
+    convex_hull: false
+    collision_free: true
+  ik_init_q:
+  load_path:
+  skip_transfer: false
+  t:
+  r:
+  q: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  jitter_angle: [[-180, -15, -15], [180, 15, 15]]
+  jitter_dist: [[0.0, -0.03, -0.03], [0.03, 0.03, 0.03]]
+
+# Four fingers improve axial stability while omitting the little finger that
+# the stock five-finger configuration repeatedly placed on the shaft. The
+# post-filter still rejects contacts outside the permitted faces.
+grasp_contact_strategy:
+  contact_points_name:
+    - "right_thumb_4/0"
+    - "right_index_2/2"
+    - "right_middle_2/2"
+    - "right_ring_2/2"
+  opt_progress: [0.0, 0.3, 0.95]
+  distance: [0.01, 0.01, 0.0]
+  contact_query_mode: [-1, 0, 0]
+  save_qpos: [false, true]
+  max_ge_stage: 0
+
+grasp_cfg:
+  task_dict:
+    # In tabletop pose 000, object +z is both lift and insertion direction.
+    f: [0, 0, 1]
+    p: [0, 0, 0]
+    t: [0, 0, 0]
+    gamma: 30
+  ge_param:
+    type: "qp"
+    miu_coef: [0.1, 0]
+    solver_type: "batch_reluqp"
+    k_lower: 0.2
+    pressure_constraints:
+      - [[0, 1, 2, 3], 1.0]
+    enable_density: false
+    solve_interval: 5

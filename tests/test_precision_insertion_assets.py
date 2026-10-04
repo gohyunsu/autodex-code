@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import math
 import tempfile
 import unittest
@@ -13,6 +14,12 @@ SPEC = importlib.util.spec_from_file_location("precision_asset_builder", MODULE_
 builder = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(builder)
+
+FILTER_PATH = REPO_ROOT / "scripts" / "precision_insertion" / "filter_contact_safe_grasps.py"
+FILTER_SPEC = importlib.util.spec_from_file_location("precision_contact_filter", FILTER_PATH)
+contact_filter = importlib.util.module_from_spec(FILTER_SPEC)
+assert FILTER_SPEC.loader is not None
+FILTER_SPEC.loader.exec_module(contact_filter)
 
 
 class PrecisionInsertionAssetTest(unittest.TestCase):
@@ -49,6 +56,22 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
         self.assertAlmostEqual(shoulder[2], entry, places=8)
         self.assertAlmostEqual(tip[2], 0.0180, places=8)
 
+    def test_contact_filter_accepts_only_handle_sides_and_rear_interior(self):
+        region = contact_filter._point_region
+        kwargs = {
+            "half_x": 0.0195,
+            "half_y": 0.0165,
+            "handle_top": 0.045,
+            "margin": 0.002,
+            "tolerance": 0.001,
+        }
+        self.assertEqual(region(np.array([0.0195, 0.0, 0.020]), **kwargs), "handle_x_side")
+        self.assertEqual(region(np.array([0.0, -0.0165, 0.020]), **kwargs), "handle_y_side")
+        self.assertEqual(region(np.array([0.0, 0.0, 0.0]), **kwargs), "handle_rear")
+        self.assertIsNone(region(np.array([0.0, 0.0, 0.045]), **kwargs))
+        self.assertIsNone(region(np.array([0.010, 0.0, 0.070]), **kwargs))
+        self.assertIsNone(region(np.array([0.0195, 0.0155, 0.020]), **kwargs))
+
     def test_full_build_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -61,6 +84,38 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
                 self.assertTrue(
                     (root / "AutoDex" / "scene" / "inspire" / object_name / "table" / "0.json").is_file()
                 )
+            proxy = root / "object_processing" / builder.HANDLE_PROXY_NAME
+            self.assertTrue((proxy / "processed_data" / "mesh" / "simplified.obj").is_file())
+            self.assertTrue(
+                (root / "AutoDex" / "scene" / "inspire" / builder.HANDLE_PROXY_NAME / "table" / "0.json").is_file()
+            )
+            self.assertEqual(
+                manifest["grasp_generation_proxy"]["runtime_object"],
+                "precision_key_1p5mm",
+            )
+            marker = (
+                root / "AutoDex/foundpose_assets/precision_key_1p5mm/"
+                "GENERATION_REQUIRED.json"
+            )
+            self.assertIn(
+                "MV-GoTrack",
+                marker.read_text(encoding="utf-8"),
+            )
+
+    def test_zerodex_profile_is_one_exact_pc_partition(self):
+        profile = json.loads(
+            (REPO_ROOT / "assets/precision_insertion/zerodex_camera_profile.json")
+            .read_text(encoding="utf-8")
+        )
+        serials = profile["camera_serials"]
+        assigned = [
+            serial
+            for pc in profile["pc_list"]
+            for serial in profile["expected_pc_serials"][pc]
+        ]
+        self.assertEqual(sorted(assigned), sorted(serials))
+        self.assertEqual(len(assigned), len(set(assigned)))
+        self.assertEqual(profile["capture_sync"], "free_run")
 
 
 if __name__ == "__main__":
