@@ -197,7 +197,25 @@ def _specs(
             Path("payload/shared_data/AutoDex/contact_screen_staging/inspire/"
                  "precision_insertion_tabletop_v1"),
             True,
-            "Sparse native BODex candidates used by five-pose screening and the frozen 20-grasp presentation set.",
+            "Frame-aware tabletop contact candidates and corrected task-screen evidence.",
+        ),
+        CopySpec(
+            "runtime_reproducibility",
+            shared / "AutoDex/contact_screen_staging/inspire/"
+            "precision_insertion_reset_12_handle_proxy_v3_frame_fixed",
+            Path("payload/shared_data/AutoDex/contact_screen_staging/inspire/"
+                 "precision_insertion_reset_12_handle_proxy_v3_frame_fixed"),
+            True,
+            "Two-contact AutoDex reorientation audit (37 numerical candidates, zero opposition passes).",
+        ),
+        CopySpec(
+            "runtime_reproducibility",
+            shared / "AutoDex/contact_screen_staging/inspire/"
+            "precision_insertion_reset_12_handle_proxy_v4_three_finger_frame_fixed",
+            Path("payload/shared_data/AutoDex/contact_screen_staging/inspire/"
+                 "precision_insertion_reset_12_handle_proxy_v4_three_finger_frame_fixed"),
+            True,
+            "Three-contact force-cone follow-up (one numerical candidate, zero whole-hand/opposition passes).",
         ),
     ]
 
@@ -376,12 +394,13 @@ def _open_items() -> str:
 3. At every `run_pipeline.py` session, measure the bolted fixture repeatedly
    with its generated socket representation and accept the generated
    `fixture_pose.session.json` only when its repeatability gate passes.
-4. The 20 pose-004 candidates are sampled geometric previews only. Run
-   continuous cuRobo/self-collision checks, MuJoCo grasp stability, and
-   supervised FR3+Inspire physical validation before runtime promotion.
-5. Implement and validate a fixture/push/regrasp reorientation primitive for
-   poses 000--003. The supplied exact-mesh reorientation videos are concepts,
-   not robot plans or execution authority.
+4. The corrected pose-004 audit has 9 contact-policy passes and zero complete
+   task-prefilter passes: every grasp crosses the table in the seated insertion
+   orientation. Generate insertion-conditioned BODex proposals before any
+   continuous planning, MuJoCo, or physical promotion.
+5. Generate at least one opposing-contact reorientation grasp and validate the
+   complete Franka approach/lift/reorient/descent chain. The older key-only
+   concepts are quarantined under the presentation audit folder.
 6. Implement and commission the 1.5 mm insertion controller followed by the
    1.0 mm accuracy instrumentation and 0.5/0.3 mm force/contact search.
 7. Add phase-aligned multi-view evidence and a read-only, shadow-mode VLM
@@ -469,8 +488,8 @@ def build_bundle(
             "missing_optional_sources": missing,
             "known_runtime_blockers": [
                 "FoundPose representations for four keys and socket",
-                "continuous planning, simulation, and physical validation of the 20 sampled pose-004 candidates",
-                "validated robot reorientation primitive for tabletop poses 000--003",
+                "at least one rigid grasp that clears the table at the seated insertion pose",
+                "opposing-contact robot reorientation candidate and full-chain plan",
                 "accepted per-session socket pose measurement",
                 "PASS AutoDex camera/calibration/hardware-sync/hand-eye audit",
                 "commissioned insertion controllers and safety thresholds",

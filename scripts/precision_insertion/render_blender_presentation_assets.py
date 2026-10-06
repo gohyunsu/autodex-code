@@ -30,7 +30,8 @@ def _arguments() -> argparse.Namespace:
         "mode",
         choices=[
             "family", "compatibility", "tabletop-key", "tabletop-socket",
-            "contact-policy", "reorient-concept",
+            "tabletop-key-all", "contact-policy", "contact-policy-grid",
+            "reorient-concept",
         ],
     )
     parser.add_argument("--output", type=Path, required=True)
@@ -40,6 +41,7 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--hand-pregrasp", type=Path)
     parser.add_argument("--hand-grasp", type=Path)
     parser.add_argument("--contact-points", type=Path)
+    parser.add_argument("--grid-manifest", type=Path)
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
     parser.add_argument("--fps", type=int, default=30)
@@ -125,13 +127,14 @@ def _camera(location: tuple[float, float, float], target: tuple[float, float, fl
     return obj
 
 
-def _plate(size: float = 0.24) -> bpy.types.Object:
+def _plate(size: float | tuple[float, float] = 0.24) -> bpy.types.Object:
+    dimensions = (size, size) if isinstance(size, (int, float)) else size
     bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0.0, 0.0, -0.006))
     plate = bpy.context.object
     plate.name = "tabletop"
-    plate.dimensions = (size, size, 0.012)
+    plate.dimensions = (dimensions[0], dimensions[1], 0.012)
     plate.data.materials.append(
-        _material("table", (0.004, 0.007, 0.012, 1.0), metallic=0.02, roughness=0.76)
+        _material("table", (0.34, 0.37, 0.42, 1.0), metallic=0.02, roughness=0.76)
     )
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
     return plate
@@ -139,7 +142,7 @@ def _plate(size: float = 0.24) -> bpy.types.Object:
 
 def _text(label: str, location: tuple[float, float, float], size: float,
           *, align: str = "CENTER", rotation_x_deg: float = 74.0,
-          color: tuple[float, float, float, float] = (0.92, 0.94, 0.98, 1.0),
+          color: tuple[float, float, float, float] = (0.075, 0.085, 0.105, 1.0),
           ) -> bpy.types.Object:
     curve = bpy.data.curves.new(f"text_{label}", type="FONT")
     curve.body = label
@@ -178,10 +181,23 @@ def _lighting() -> None:
 
 def _configure(args: argparse.Namespace, *, video: bool) -> None:
     scene = bpy.context.scene
-    scene.render.engine = "BLENDER_EEVEE"
-    scene.eevee.use_gtao = True
-    scene.eevee.gtao_distance = 3.0
-    scene.eevee.gtao_factor = 1.25
+    # Match the actual FR3/Inspire planning videos.  A single neutral
+    # Workbench palette makes the task geometry and planning evidence read as
+    # one visual system instead of switching to a high-contrast black stage.
+    scene.render.engine = "BLENDER_WORKBENCH"
+    scene.display.shading.light = "STUDIO"
+    scene.display.shading.studio_light = "paint.sl"
+    scene.display.shading.color_type = "MATERIAL"
+    scene.display.shading.show_shadows = True
+    scene.display.shading.show_cavity = True
+    scene.display.shading.cavity_type = "WORLD"
+    scene.display.shading.curvature_ridge_factor = 1.25
+    scene.display.shading.curvature_valley_factor = 0.75
+    scene.display.shading.show_specular_highlight = True
+    scene.display.shading.show_object_outline = False
+    scene.display.shading.background_type = "VIEWPORT"
+    scene.display.shading.background_color = (0.92, 0.94, 0.97)
+    scene.display.render_aa = "32"
     scene.render.resolution_x = args.width
     scene.render.resolution_y = args.height
     scene.render.resolution_percentage = 100
@@ -190,7 +206,7 @@ def _configure(args: argparse.Namespace, *, video: bool) -> None:
     scene.render.film_transparent = False
     scene.view_settings.view_transform = "Standard"
     scene.view_settings.look = "Medium High Contrast"
-    scene.view_settings.exposure = -0.7
+    scene.view_settings.exposure = 0.0
     if video:
         scene.render.fps = args.fps
         scene.render.ffmpeg.format = "MPEG4"
@@ -229,6 +245,7 @@ def _family(args: argparse.Namespace, paths: dict[str, Path]) -> None:
     socket = _load_mesh(paths["socket"], "socket", red)
     socket.location = (0.255, 0.0, 0.0)
     _text("socket", (0.255, -0.065, 0.0), 0.012)
+    _plate((0.64, 0.19))
     _camera((0.02, -0.92, 0.36), (0.02, 0.0, 0.035), 50.0)
     _configure(args, video=False)
     bpy.ops.render.render(write_still=True)
@@ -239,6 +256,7 @@ def _compatibility(args: argparse.Namespace, paths: dict[str, Path]) -> None:
     red = _material("socket red", (0.90, 0.03, 0.05, 1.0), metallic=0.08, roughness=0.35)
     socket = _load_mesh(paths["socket"], "socket", red)
     key = _load_mesh(paths["1.5"], "key", blue)
+    _plate(0.30)
     geometry = json.loads(paths["geometry"].read_text(encoding="utf-8"))
     pre = np.asarray(geometry["T_socket_key_preinsert"], dtype=float)
     seated = np.asarray(geometry["T_socket_key_seated"], dtype=float)
@@ -278,6 +296,89 @@ def _tabletop_socket(args: argparse.Namespace, paths: dict[str, Path]) -> None:
     _plate(0.25)
     _text("000", (-0.055, -0.060, 0.001), 0.018, rotation_x_deg=0.0)
     _camera((0.18, -0.30, 0.20), (0.0, 0.0, 0.035), 56.0)
+    _configure(args, video=False)
+    bpy.ops.render.render(write_still=True)
+
+
+def _tabletop_key_all(args: argparse.Namespace, paths: dict[str, Path]) -> None:
+    """Render all five exact tabletop poses together on one physical plate."""
+    blue = _material("key blue", (0.025, 0.25, 0.95, 1.0), metallic=0.1, roughness=0.32)
+    tabletop = (
+        SHARED / "object_processing/precision_key_1p5mm/processed_data/info/tabletop"
+    )
+    # Use enough separation for the two long side-lying poses.  Their stable
+    # origins are at the mesh centres, so a visually regular centre spacing
+    # that works for the upright poses can otherwise make 001/002 overlap.
+    positions = (
+        (-0.40, 0.065), (-0.20, 0.065), (0.0, 0.065),
+        (0.20, 0.065), (0.40, 0.065),
+    )
+    for index, (x, y) in enumerate(positions):
+        key = _load_mesh(paths["1.5"], f"key_{index:03d}", blue)
+        pose = np.asarray(np.load(tabletop / f"{index:03d}.npy"), dtype=float)
+        pose[:3, 3] += np.asarray([x, y, 0.0])
+        key.matrix_world = _matrix(pose)
+        _text(f"{index:03d}", (x, -0.055, 0.001), 0.014, rotation_x_deg=0.0)
+    _plate((0.98, 0.29))
+    _camera((0.59, -1.12, 0.61), (0.0, 0.015, 0.035), 57.0)
+    _configure(args, video=False)
+    bpy.ops.render.render(write_still=True)
+
+
+def _contact_policy_grid(args: argparse.Namespace, paths: dict[str, Path]) -> None:
+    """Render a 5x5 sample from one machine-readable BODex screen report."""
+    if args.grid_manifest is None:
+        raise ValueError("contact-policy-grid requires --grid-manifest")
+    manifest = json.loads(args.grid_manifest.read_text(encoding="utf-8"))
+    hand_material = _material(
+        "Inspire hand", (0.24, 0.29, 0.36, 1.0), metallic=0.1, roughness=0.42
+    )
+    key_material = _material(
+        "precision key", (0.025, 0.25, 0.95, 1.0), metallic=0.1, roughness=0.32
+    )
+    passed_panel = _material("pass panel", (0.68, 0.88, 0.72, 1.0), roughness=0.8)
+    failed_panel = _material("fail panel", (0.94, 0.70, 0.70, 1.0), roughness=0.8)
+    xs = (-0.44, -0.22, 0.0, 0.22, 0.44)
+    zs = (0.34, 0.17, 0.0, -0.17, -0.34)
+    for index, cell in enumerate(manifest["cells"]):
+        row, column = divmod(index, 5)
+        x, z = xs[column], zs[row]
+        # A shallow panel sits behind each actual hand/key pair.  Green/red is
+        # an annotation of the report label, never a simulated outcome.
+        bpy.ops.mesh.primitive_cube_add(size=1.0, location=(x, 0.19, z))
+        panel = bpy.context.object
+        panel.name = f"panel_{index:02d}"
+        panel.dimensions = (0.205, 0.008, 0.15)
+        panel.data.materials.append(passed_panel if cell["passed"] else failed_panel)
+        bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+        pair_translation = Matrix.Translation((x, 0.0, z + 0.005))
+        key = _load_mesh(paths["1.5"], f"key_{cell['candidate']}", key_material)
+        hand = _load_mesh(
+            Path(cell["hand_mesh"]), f"hand_{cell['candidate']}", hand_material
+        )
+        key.matrix_world = pair_translation
+        hand.matrix_world = pair_translation
+        status = "PASS" if cell["passed"] else "FAIL"
+        _text(
+            f"{cell['candidate']}  {status}",
+            (x, -0.006, z - 0.060), 0.014,
+            rotation_x_deg=90.0,
+            color=((0.02, 0.25, 0.06, 1.0) if cell["passed"]
+                   else (0.48, 0.025, 0.025, 1.0)),
+        )
+    stats = manifest["screening_evidence"]
+    _text(
+        f"{stats['raw_bodex_proposals']:,} BODex proposals   |   "
+        f"{stats['screened_candidates']} screened: "
+        f"{stats['passed']} pass / {stats['failed']} fail",
+        (0.0, -0.015, 0.455), 0.031, rotation_x_deg=90.0,
+        color=(0.72, 0.75, 0.80, 1.0),
+    )
+    camera = _camera((0.0, -2.6, 0.04), (0.0, 0.06, 0.04), 55.0)
+    camera.data.type = "ORTHO"
+    # Blender's orthographic scale is horizontal for this 16:9 camera; 1.75
+    # keeps the header plus all five rows inside the vertical field of view.
+    camera.data.ortho_scale = 1.75
     _configure(args, video=False)
     bpy.ops.render.render(write_still=True)
 
@@ -357,7 +458,7 @@ def main() -> int:
     args.output = args.output.expanduser().resolve()
     for field in (
         "pose_file", "target_pose_file", "hand_pregrasp", "hand_grasp",
-        "contact_points",
+        "contact_points", "grid_manifest",
     ):
         value = getattr(args, field)
         if value is not None:
@@ -371,7 +472,9 @@ def main() -> int:
         "compatibility": _compatibility,
         "tabletop-key": _tabletop_key,
         "tabletop-socket": _tabletop_socket,
+        "tabletop-key-all": _tabletop_key_all,
         "contact-policy": _contact_policy,
+        "contact-policy-grid": _contact_policy_grid,
         "reorient-concept": _reorient_concept,
     }[args.mode](args, paths)
     print(args.output)
