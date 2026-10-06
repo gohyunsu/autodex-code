@@ -37,6 +37,11 @@ def main() -> int:
         phases = [str(value) for value in data["phase"].tolist()]
         object_poses = np.asarray(data["object_pose"], dtype=np.float64)
         socket_pose = np.asarray(data["socket_pose"], dtype=np.float64)
+        additional_socket_poses = (
+            np.asarray(data["additional_socket_poses"], dtype=np.float64)
+            if "additional_socket_poses" in data.files else
+            np.empty((0, 4, 4), dtype=np.float64)
+        )
         seated_pose = np.asarray(data["desired_seated_key_pose"], dtype=np.float64)
         collisions = np.asarray(data["collision_counts"], dtype=np.int64)
         distances = np.asarray(
@@ -65,6 +70,12 @@ def main() -> int:
     server.scene.add_mesh_trimesh(
         "/socket", socket_mesh, position=socket_position, wxyz=socket_wxyz
     )
+    for index, pose in enumerate(additional_socket_poses):
+        position, wxyz = _pose_wxyz(pose)
+        server.scene.add_mesh_trimesh(
+            f"/additional_socket_{index}", socket_mesh,
+            position=position, wxyz=wxyz,
+        )
     goal_position, goal_wxyz = _pose_wxyz(seated_pose)
     server.scene.add_mesh_trimesh(
         "/desired_seated_key", goal_mesh,

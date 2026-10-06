@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Promote contact-safe, collision-safe, MuJoCo-stable grasps to a runtime pool.
+"""Promote declared-contact, scene-clear, MuJoCo-stable grasps to a pool.
 
 Promotion never marks a grasp physically trusted. It copies only candidates
-whose contact screen, cuRobo collision result, and MuJoCo result all pass, then
-writes explicit simulation provenance and a physical-validation template.
+whose declared-contact screen, cuRobo scene-clearance result, and MuJoCo result
+all pass, then writes explicit simulation provenance and a physical-validation
+template. This historical promotion tool does not prove that every hand link
+avoids forbidden object surfaces; insertion promotion requires the additional
+whole-hand gate in ``validate_whole_hand_contact_policy.py``.
 """
 
 from __future__ import annotations
@@ -81,7 +84,7 @@ def main() -> int:
             rejected[name] = "contact_screen"
             continue
         if not collision_path.is_file() or not bool(np.load(collision_path)):
-            rejected[name] = "full_key_collision"
+            rejected[name] = "curobo_scene_clearance"
             continue
         if not simulation_path.is_file() or not _json(simulation_path).get("success"):
             rejected[name] = "mujoco_stability"
@@ -92,12 +95,13 @@ def main() -> int:
         validation = {
             "schema_version": 1,
             "status": "passed",
-            "scope": "contact_policy_plus_curobo_full_key_collision_plus_mujoco_stability",
+            "scope": "declared_contact_policy_plus_curobo_scene_clearance_plus_mujoco_stability",
             "physical_validation": False,
             "full_object_mesh": str(full_mesh),
             "full_object_mesh_sha256": _sha256(full_mesh),
             "source_candidate": str(candidate),
             "warning": "simulation validation is not evidence of physical grasp or insertion success",
+            "missing_insertion_gate": "whole-hand forbidden-region contact audit",
         }
         _write(destination / "simulation_validation.json", validation)
         promoted.append(name)

@@ -219,7 +219,7 @@ def _specs(
                 shared / "AutoDex/candidates/inspire/v8" / name,
                 Path("payload/shared_data/AutoDex/candidates/inspire/v8") / name,
                 True,
-                "Common candidate 78 with simulation and FR3 plan provenance.",
+                "Historical candidate 78 pick/lift evidence; insertion-rejected by the new whole-hand gate.",
             )
         )
     for name in (*KEYS, SOCKET):
@@ -241,21 +241,21 @@ def _specs(
                     shared / "AutoDex/bodex_raw/inspire/precision_insertion_v4_per_key_proxy",
                     Path("reproducibility/AutoDex/bodex_raw/inspire/precision_insertion_v4_per_key_proxy"),
                     False,
-                    "Raw four-proxy BODex search used to obtain the common grasp.",
+                    "Raw four-proxy BODex search used to obtain the historical pick/lift grasp.",
                 ),
                 CopySpec(
                     "reproducibility",
                     shared / "AutoDex/contact_screen_staging/inspire/precision_insertion_v4_common_grasp",
                     Path("reproducibility/AutoDex/contact_screen_staging/inspire/precision_insertion_v4_common_grasp"),
                     False,
-                    "Contact-policy screening of common-grasp proposals.",
+                    "Declared-contact screening of historical grasp proposals.",
                 ),
                 CopySpec(
                     "reproducibility",
                     shared / "AutoDex/sim_filter_pass/inspire/precision_insertion_v4_common_grasp",
                     Path("reproducibility/AutoDex/sim_filter_pass/inspire/precision_insertion_v4_common_grasp"),
                     False,
-                    "Full-key MuJoCo/collision pass evidence before promotion.",
+                    "Historical MuJoCo/scene-clearance evidence; not a whole-hand insertion proof.",
                 ),
             ]
         )
@@ -355,11 +355,13 @@ def _open_items() -> str:
 3. At every `run_pipeline.py` session, measure the bolted fixture repeatedly
    with its generated socket representation and accept the generated
    `fixture_pose.session.json` only when its repeatability gate passes.
-4. Supervise candidate `table/0/78` on the real FR3+Inspire before removing
-   any `PHYSICAL_VALIDATION_REQUIRED.json` gate.
-5. Implement and commission the 1.5 mm open-loop insertion controller, then
+4. Do not execute candidate `table/0/78` for insertion. Re-optimize and
+   simulation-validate the rear/side insertion grasp recorded by the geometric
+   preview, including the whole-hand forbidden-region gate.
+5. Choose a staging/regrasp fixture or generate direct side-pose grasp coverage,
+   then implement and commission the 1.5 mm insertion controller followed by
    the 1.0 mm accuracy instrumentation and 0.5/0.3 mm force/contact search.
-6. Expand the grasp library for stable tabletop poses 1--4; the current
+6. Expand the grasp library for stable tabletop poses 1--4; the historical
    candidate is intentionally scene-0-only.
 7. Add phase-aligned multi-view evidence and a read-only, shadow-mode VLM
    evaluator. Do not transplant ZeroDex's current task checker as a safety or
@@ -446,7 +448,7 @@ def build_bundle(
             "missing_optional_sources": missing,
             "known_runtime_blockers": [
                 "FoundPose representations for four keys and socket",
-                "physical validation of candidate table/0/78",
+                "replacement of insertion-rejected candidate table/0/78 with a whole-hand-safe insertion grasp",
                 "accepted per-session socket pose measurement",
                 "PASS AutoDex camera/calibration/hardware-sync/hand-eye audit",
                 "commissioned insertion controllers and safety thresholds",

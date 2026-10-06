@@ -63,6 +63,7 @@ def validate(shared_root: Path, source_dir: Path, require_runtime: bool = False)
         screened = []
         simulated = []
         franka_planned = []
+        whole_hand_validated = []
         physically_validated = []
         for screen_path in candidate_root.rglob("contact_screen.json"):
             try:
@@ -100,12 +101,24 @@ def validate(shared_root: Path, source_dir: Path, require_runtime: bool = False)
                         plan = {}
                     if plan.get("status") == "passed":
                         franka_planned.append(plan_path)
+                whole_hand_path = (
+                    screen_path.parent / "whole_hand_contact_validation.json"
+                )
+                if whole_hand_path.is_file():
+                    try:
+                        whole_hand = json.loads(whole_hand_path.read_text())
+                    except (OSError, json.JSONDecodeError):
+                        whole_hand = {}
+                    if whole_hand.get("status") == "sampled_pass":
+                        whole_hand_validated.append(whole_hand_path)
         simulated_dirs = {path.parent for path in simulated}
         planned_dirs = {path.parent for path in franka_planned}
+        whole_hand_dirs = {path.parent for path in whole_hand_validated}
         physical_dirs = {path.parent for path in physically_validated}
         planned_sim_dirs = simulated_dirs & planned_dirs
+        insertion_preflight_dirs = planned_sim_dirs & whole_hand_dirs
         planned_sim_candidates[object_name] = {
-            path.name: path for path in planned_sim_dirs
+            path.name: path for path in insertion_preflight_dirs
         }
         if not screened:
             blockers.append(f"{object_name}: no contact-safe Inspire grasp candidate")
@@ -115,8 +128,14 @@ def validate(shared_root: Path, source_dir: Path, require_runtime: bool = False)
             blockers.append(
                 f"{object_name}: no single simulated grasp has also passed FR3 planning"
             )
-        elif not (planned_sim_dirs & physical_dirs):
-            blockers.append(f"{object_name}: simulation-validated grasp lacks physical validation")
+        elif not insertion_preflight_dirs:
+            blockers.append(
+                f"{object_name}: planned grasp lacks whole-hand forbidden-region validation"
+            )
+        elif not (insertion_preflight_dirs & physical_dirs):
+            blockers.append(
+                f"{object_name}: insertion-preflight grasp lacks physical validation"
+            )
 
         stage_path = project / "precision_insertion" / "stages" / f"{object_name}.json"
         if not stage_path.is_file():
@@ -149,8 +168,8 @@ def validate(shared_root: Path, source_dir: Path, require_runtime: bool = False)
     ) if planned_sim_candidates else set()
     if not common_ids:
         blockers.append(
-            "no common Inspire grasp has passed full-key simulation and FR3 planning "
-            "for all four keys"
+            "no common Inspire grasp has passed simulation, FR3 planning, and the "
+            "whole-hand forbidden-region gate for all four keys"
         )
     else:
         # Equal IDs are not enough: assert that the actual wrist/finger arrays

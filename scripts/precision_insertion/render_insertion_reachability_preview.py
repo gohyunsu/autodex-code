@@ -91,6 +91,7 @@ def _render_cpu(
     seated_ghost: trimesh.Trimesh,
     *,
     collision: bool,
+    closeup: bool,
     width: int,
     height: int,
 ) -> None:
@@ -103,7 +104,12 @@ def _render_cpu(
         (table, (0.48, 0.50, 0.53), 0.13),
         (socket, (0.64, 0.05, 0.04), 1.0),
         (seated_ghost, (0.10, 0.78, 0.24), 0.24),
-        (robot, (0.92, 0.14, 0.12) if collision else (0.82, 0.83, 0.87), 1.0),
+        (
+            robot,
+            (0.92, 0.14, 0.12) if collision else
+            (0.50, 0.53, 0.59) if closeup else (0.82, 0.83, 0.87),
+            1.0,
+        ),
         (key, (0.08, 0.35, 0.88), 1.0),
     )
     for mesh, color, alpha in collections:
@@ -120,6 +126,34 @@ def _render_cpu(
     axis.set_axis_off()
     figure.patch.set_facecolor((0.96, 0.97, 0.98))
     axis.set_facecolor((0.96, 0.97, 0.98))
+    if closeup:
+        inset = figure.add_axes([0.665, 0.085, 0.315, 0.43], projection="3d")
+        centre = np.asarray(key.centroid)
+        radius = 0.18
+        local_collections = (
+            (socket, (0.64, 0.05, 0.04), 1.0),
+            (seated_ghost, (0.10, 0.78, 0.24), 0.20),
+            (robot, (0.92, 0.14, 0.12) if collision else (0.38, 0.41, 0.48), 1.0),
+            (key, (0.08, 0.35, 0.88), 1.0),
+        )
+        for mesh, color, alpha in local_collections:
+            triangles = _triangles(mesh)
+            keep = np.linalg.norm(triangles.mean(axis=1) - centre, axis=1) < radius
+            if not np.any(keep):
+                continue
+            inset.add_collection3d(Poly3DCollection(
+                triangles[keep], facecolor=color, edgecolor="none",
+                linewidth=0.0, alpha=alpha,
+            ))
+        extent = 0.13
+        inset.set_xlim(centre[0] - extent, centre[0] + extent)
+        inset.set_ylim(centre[1] - extent, centre[1] + extent)
+        inset.set_zlim(max(0.0, centre[2] - extent), centre[2] + extent)
+        inset.set_box_aspect((1.0, 1.0, 1.0))
+        inset.view_init(elev=22.0, azim=-54.0)
+        inset.set_axis_off()
+        inset.set_facecolor((0.90, 0.92, 0.95))
+        inset.set_title("hand/key close-up", fontsize=9, color=(0.18, 0.18, 0.20))
     figure.subplots_adjust(left=0.0, right=1.0, bottom=0.0, top=1.0)
     figure.savefig(output, dpi=100, facecolor=figure.get_facecolor())
     plt.close(figure)
@@ -131,6 +165,8 @@ def _caption(
     collision: bool,
     index: int,
     count: int,
+    *,
+    preview_kind: str,
 ) -> None:
     image = cv2.imread(str(path))
     if image is None:
@@ -142,21 +178,25 @@ def _caption(
         (22, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.67, (35, 35, 35), 2,
         cv2.LINE_AA,
     )
+    is_geometric_success = preview_kind == "sampled_geometric_success"
     is_validated = phase.startswith("validated")
-    contract = (
-        "CUROBO-VALIDATED PICK/LIFT INPUT"
-        if is_validated else
-        "DIAGNOSTIC IK ONLY - NOT COLLISION-PLANNED OR ROBOT-EXECUTABLE"
-    )
+    if is_geometric_success:
+        contract = "SAMPLED GEOMETRIC IK PREVIEW - NOT CUROBO OR ROBOT EXECUTION"
+    elif is_validated:
+        contract = "CUROBO-VALIDATED PICK/LIFT INPUT"
+    else:
+        contract = "DIAGNOSTIC IK ONLY - NOT COLLISION-PLANNED OR ROBOT-EXECUTABLE"
     cv2.putText(
         image, contract, (22, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.49,
-        (15, 105, 35) if is_validated else (25, 80, 180), 1, cv2.LINE_AA,
+        (15, 105, 35) if (is_validated or is_geometric_success)
+        else (25, 80, 180), 1, cv2.LINE_AA,
     )
-    state = (
-        "INVALID FOR INSERTION: sampled Inspire surface penetrates socket"
-        if collision else
-        "No sampled hand/socket penetration at this frame"
-    )
+    if collision:
+        state = "REJECTED: sampled hand/key/environment constraint violation"
+    elif is_geometric_success:
+        state = "Sampled policy, table, key/socket and hand/socket checks pass"
+    else:
+        state = "No sampled hand/socket penetration at this frame"
     cv2.putText(
         image, state, (22, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.49,
         (25, 25, 210) if collision else (70, 70, 70), 1, cv2.LINE_AA,
@@ -186,12 +226,21 @@ def main() -> int:
         phases = [str(value) for value in data["phase"].tolist()]
         object_poses = np.asarray(data["object_pose"], dtype=np.float64)
         socket_pose = np.asarray(data["socket_pose"], dtype=np.float64)
+        additional_socket_poses = (
+            np.asarray(data["additional_socket_poses"], dtype=np.float64)
+            if "additional_socket_poses" in data.files else
+            np.empty((0, 4, 4), dtype=np.float64)
+        )
         seated_pose = np.asarray(data["desired_seated_key_pose"], dtype=np.float64)
         collisions = np.asarray(data["collision_counts"], dtype=np.int64) > 0
         joint_names = [str(value) for value in data["joint_names"].tolist()]
         object_mesh_path = Path(str(data["object_mesh_path"].item()))
         socket_mesh_path = Path(str(data["socket_mesh_path"].item()))
         robot_urdf_path = Path(str(data["robot_urdf_path"].item()))
+        preview_kind = (
+            str(data["preview_kind"].item())
+            if "preview_kind" in data.files else "collision_diagnostic"
+        )
     if not (len(qpos) == len(phases) == len(object_poses) == len(collisions)):
         raise RuntimeError("preview arrays have inconsistent lengths")
 
@@ -200,6 +249,14 @@ def main() -> int:
     key_local = trimesh.load(object_mesh_path, force="mesh", process=False)
     socket = trimesh.load(socket_mesh_path, force="mesh", process=False)
     socket.apply_transform(socket_pose)
+    if len(additional_socket_poses):
+        sockets = [socket]
+        socket_local = trimesh.load(socket_mesh_path, force="mesh", process=False)
+        for pose in additional_socket_poses:
+            extra = socket_local.copy()
+            extra.apply_transform(pose)
+            sockets.append(extra)
+        socket = trimesh.util.concatenate(sockets)
     seated_ghost = key_local.copy()
     seated_ghost.apply_transform(seated_pose)
 
@@ -217,9 +274,14 @@ def main() -> int:
             frame = frame_dir / f"frame_{index:04d}.png"
             _render_cpu(
                 frame, robot, key, socket, table, seated_ghost,
-                collision=bool(collision), width=args.width, height=args.height,
+                collision=bool(collision),
+                closeup=preview_kind == "sampled_geometric_success",
+                width=args.width, height=args.height,
             )
-            _caption(frame, phase, bool(collision), index, len(qpos))
+            _caption(
+                frame, phase, bool(collision), index, len(qpos),
+                preview_kind=preview_kind,
+            )
             if index % 20 == 0 or index + 1 == len(qpos):
                 print(f"rendered {index + 1}/{len(qpos)}", flush=True)
 

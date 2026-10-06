@@ -15,8 +15,9 @@ next trial. Lift success and insertion success are separate variables:
 
 The four gaps form a gated experiment, not four interchangeable test objects:
 
-1. **1.5 mm:** integrate the full data/control path with one stable pose and
-   candidate 78, then commission a guarded straight insertion;
+1. **1.5 mm:** integrate the full data/control path with an insertion-safe
+   handle grasp, then commission a guarded straight insertion; candidate 78 is
+   retained only as rejected pick/lift evidence;
 2. **1.0 mm:** measure the cumulative pose, hand-eye, robot, and grasp-held-pose
    error without changing the grasp;
 3. **0.5 mm:** introduce force/contact-guided XY and yaw correction;
@@ -33,10 +34,10 @@ The four gaps form a gated experiment, not four interchangeable test objects:
 | key FoundPose | `T_world_key` before each trial | existing AutoDex distributed perception | retained; four new mesh representations still missing |
 | socket FoundPose | `T_world_socket` once per session | existing AutoDex FoundPose engine + new orchestration | new repeated measurement/medoid/freeze; representation missing |
 | BODex grasp proposal | object-relative Inspire grasp | existing AutoDex/BODex | new handle-only proposal proxy and contact policy |
-| full-key simulation/planning filter | reject unsafe proxy proposals | AutoDex cuRobo/MuJoCo + new validation scripts | candidate 78 passes simulation/FR3 planning, not physical validation |
+| full-key simulation/planning filter | reject unsafe proxy proposals | AutoDex cuRobo/MuJoCo + new whole-hand/contact validation | historical candidate 78 passed pick/lift gates but fails the new insertion gate |
 | grasp candidate selection/recovery | choose, rotate, or reorient key | existing AutoDex `run_pipeline.py` | retained; only stable scene 0 has a promoted key grasp |
 | socket collision world | protect mounted fixture during pick/recovery/transfer | new logic using AutoDex cuRobo scene format | implemented with frozen exact static mesh |
-| Franka+Inspire pickup/lift | acquire and retain key | existing AutoDex executor | code path retained; candidate 78 awaits physical validation |
+| Franka+Inspire pickup/lift | acquire and retain key | existing AutoDex executor | code path retained; candidate 78 is lift-only and insertion-rejected |
 | held-key transfer/pre-insertion | move rigid key to socket approach | future AutoDex task logic | not implemented |
 | insertion/contact search | straight stroke, then XY/yaw correction | new task controller | not implemented or commissioned |
 | grasp/task result split | avoid blaming a good grasp for insertion failure | new task interface | implemented semantically; insertion evaluator absent |
@@ -148,12 +149,13 @@ evaluation.
 
 ## Grasp coverage and reorientation
 
-Candidate `table/0/78` is intentionally a controlled rear-down baseline. Five
+Candidate `table/0/78` is a controlled rear-down pick/lift baseline, not an
+insertion grasp. Five
 non-damaging stable key poses are represented, but scenes 1--4 have no runtime
 grasp candidates. Each needs its own BODex proposal because the table blocks a
 different handle face. Every candidate must pass the handle contact policy,
-full-key collision and MuJoCo validation, FR3 pickup planning, and physical
-validation.
+whole-hand forbidden-region validation, environment collision and MuJoCo
+validation, attached-key pre-insertion planning, and physical validation.
 
 Insertion is also an object-reorientation problem, but not necessarily in-hand
 reorientation. If a rigidly held candidate permits a collision-free arm path
@@ -257,8 +259,12 @@ should affect neither physical policy.
 Implemented now:
 
 - metric key/socket geometry and exact socket static collision mesh;
-- machine-readable handle-only contact regions and common candidate 78;
-- MuJoCo/full-key/FR3 planning evidence and physical-validation gates;
+- machine-readable handle-only contact regions and a whole-hand visual-mesh
+  policy auditor;
+- historical MuJoCo/FR3 pick-lift evidence for candidate 78, plus an explicit
+  insertion rejection diagnostic;
+- a sampled-clear fixture-to-fixture geometric animation using a rear/side
+  insertion grasp derived from candidate 84;
 - separate grasp/task result semantics;
 - an AutoDex camera contract and fail-closed runtime audit tool;
 - per-session repeated socket pose measurement, freeze, evidence, and scene
@@ -270,9 +276,10 @@ Still blocking a physical insertion run:
 1. mesh-specific FoundPose `repre.pth` for all four keys and the socket;
 2. a PASS audit of the robot PC's active AutoDex cameras, matching
    intrinsics/extrinsics, hardware sync, timestamp camera, and Franka `C2R`;
-3. physical validation of candidate 78 and measurement of `T_hand_key`
-   repeatability;
-4. an attached-key transfer/pre-insertion planner and precision task motion hook;
+3. re-optimize and simulation-validate an insertion grasp equivalent to the
+   rear/side geometric proposal; candidate 78 must not be used for insertion;
+4. choose and implement either a physical staging/regrasp fixture or direct
+   side-pose grasp coverage, then add an attached-key transfer planner;
 5. commissioned 1.5 mm guarded insertion limits and success sensors;
 6. 1.0 mm metrology protocol and actual printed-gap measurements;
 7. 0.5/0.3 mm contact-search controller and physical safety parameters;
@@ -291,9 +298,11 @@ cannot yet perform or honestly score insertion.
 2. Run perception-only socket sessions and quantify yaw/translation stability
    with independent physical ground truth; tighten the startup thresholds from
    their 2 mm/2 degree bring-up defaults.
-3. Physically validate candidate 78 at 1.5 mm and measure held-key pose scatter.
-4. Add an `InsertionTask` execution/evaluation hook and attached-key transfer
-   plan, initially stopping at pre-insertion.
+3. Use the whole-hand gate during BODex search and validate a rear/side
+   insertion grasp in MuJoCo and cuRobo; keep candidate 78 lift-only.
+4. Decide between the staging/regrasp baseline and direct stable-pose grasp
+   coverage, then add an `InsertionTask` attached-key plan that initially stops
+   at pre-insertion.
 5. Commission the guarded 1.5 mm straight stroke and deterministic depth/force
    result fields; keep manual task labels as ground truth.
 6. Collect the 1.0 mm error budget before designing search bounds.

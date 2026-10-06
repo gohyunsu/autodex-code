@@ -123,7 +123,9 @@ def _json_dump(path: Path, payload: object) -> None:
 
 def _passed_validation(path: Path) -> bool:
     try:
-        return json.loads(path.read_text(encoding="utf-8")).get("status") == "passed"
+        return json.loads(path.read_text(encoding="utf-8")).get("status") in {
+            "passed", "sampled_pass",
+        }
     except (OSError, AttributeError, json.JSONDecodeError):
         return False
 
@@ -588,11 +590,18 @@ def _build_key(
         if _passed_validation(path)
         and _passed_validation(path.parent / "franka_plan_validation.json")
     ]
+    insertion_preflight_records = [
+        path
+        for path in planned_simulation_records
+        if _passed_validation(path.parent / "whole_hand_contact_validation.json")
+    ]
     _json_dump(
         candidate_dir / "GENERATION_REQUIRED.json",
         {
             "status": (
-                "simulation_and_franka_plan_candidate_available_physical_validation_required"
+                "insertion_preflight_candidate_available_physical_validation_required"
+                if insertion_preflight_records
+                else "simulation_and_franka_plan_candidate_available_whole_hand_validation_required"
                 if planned_simulation_records
                 else "simulation_candidate_available_franka_plan_and_physical_validation_required"
                 if has_simulated_candidate
@@ -612,8 +621,13 @@ def _build_key(
             "simulation_and_franka_plan_records": [
                 str(path) for path in planned_simulation_records
             ],
+            "insertion_preflight_records": [
+                str(path) for path in insertion_preflight_records
+            ],
             "reason": (
-                "a simulated and FR3-planned candidate exists but remains physically unvalidated"
+                "an insertion-preflight candidate exists but remains physically unvalidated"
+                if insertion_preflight_records
+                else "a simulated and FR3-planned candidate still needs whole-hand forbidden-region validation"
                 if planned_simulation_records
                 else "a simulated candidate still needs FR3 planning and physical validation"
                 if has_simulated_candidate

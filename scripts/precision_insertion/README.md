@@ -10,11 +10,12 @@ This directory builds the assets for the staged unified-socket experiment:
 | 0.3 mm | final precision condition |
 
 All four conditions now have geometry, frames, scenes, contact policies,
-gap-specific proposal proxies, a common simulation-validated grasp, FR3 plan
-evidence, and fail-closed stage profiles. None is physically trusted, and none
-has a FoundPose representation yet. The staged experiment must not silently
-treat simulation, a controller specification, or an unvalidated transfer as
-physical success.
+gap-specific proposal proxies, an existing pick/lift candidate, FR3 plan
+evidence, and fail-closed stage profiles. The existing candidate is **not an
+insertion candidate**: a later whole-hand audit found contact-policy and socket
+clearance violations. None is physically trusted, and none has a FoundPose
+representation yet. The staged experiment must not silently treat simulation,
+a controller specification, or an unvalidated transfer as physical success.
 
 The end-to-end intent, transform equations, controller/VLM boundaries,
 failure taxonomy, blockers, and implementation order are specified in
@@ -35,16 +36,18 @@ Generated under `~/shared_data`:
 - a canonical AutoDex camera contract under
   `assets/precision_insertion/autodex_camera_profile.json`; the robot host
   writes a runtime audit after matching its active cameras and calibration;
-- the same runtime grasp, candidate `table/0/78`, under each of the four
-  `AutoDex/candidates/inspire/v8/precision_key_*` pools.
+- the same historical pick/lift grasp, candidate `table/0/78`, under each of
+  the four `AutoDex/candidates/inspire/v8/precision_key_*` pools. It is retained
+  for reproducibility but must be rejected by insertion preflight.
 
-Candidate 78 was proposed with the 0.3 mm key's handle-only proxy, then passed
-the declared-contact rule, cuRobo full-key collision, and MuJoCo
-squeeze/gravity stability independently on all four full meshes. The four
-declared contacts are lateral handle contacts; none is on the shaft, bevel,
-tip, rear-edge margin, or socket-facing shoulder. The same candidate passed a
-hardware-free FR3 approach plus 10 cm vertical-lift plan for all four keys at
-the same test pose `(x=0.4 m, y=0, yaw=pi)`.
+Candidate 78 was proposed with the 0.3 mm key's handle-only proxy. Its four
+**declared** contacts are lateral handle contacts and it passed the historical
+cuRobo scene-clearance/MuJoCo screen plus a hardware-free FR3 approach and
+10 cm vertical-lift plan. That screen did not classify every visual hand-link
+surface against the forbidden object region. The new audit proves that the
+nominal hand mesh touches forbidden key regions and collides with the socket at
+the CAD insertion pose. Do not interpret the old `simulation_validation.json`
+scope label as a whole-hand forbidden-region proof.
 
 It is **not physically trusted**. Every runtime pool retains
 `PHYSICAL_VALIDATION_REQUIRED.json`; no physical grasp, lift, or insertion has
@@ -53,10 +56,10 @@ been claimed. The former 1.5 mm candidate 84 was moved, not deleted, to
 
 | gap | geometry | common grasp full-key sim | FR3 plan | physical | controller |
 |---:|---|---|---|---|---|
-| 1.5 mm | ready | seed 78 passed | passed | required | spec only; open-loop implementation required |
-| 1.0 mm | ready | seed 78 passed | passed | required | spec only; accuracy instrumentation required |
-| 0.5 mm | ready | seed 78 passed | passed | required | force/contact XY-yaw search required |
-| 0.3 mm | ready | seed 78 passed | passed | required | final search controller required |
+| 1.5 mm | ready | seed 78 insertion rejected | pick/lift passed | required | spec only; open-loop implementation required |
+| 1.0 mm | ready | seed 78 insertion rejected | pick/lift passed | required | spec only; accuracy instrumentation required |
+| 0.5 mm | ready | seed 78 insertion rejected | pick/lift passed | required | force/contact XY-yaw search required |
+| 0.3 mm | ready | seed 78 insertion rejected | pick/lift passed | required | final search controller required |
 
 ## Why the geometry is generated this way
 
@@ -98,22 +101,21 @@ corresponding full key's frame, CoM, OBB, and mass proxy, but exposes only the
 handle box.
 Four digits (thumb/index/middle/ring) are optimized; the little finger is
 omitted because the stock five-finger solution repeatedly occupied the shaft.
-No proxy result enters the runtime pool directly. Each proposal is checked
-again against every full key mesh on which it will run for:
+No proxy result should enter an insertion runtime pool directly. Each proposal
+must be checked again against every full key mesh on which it will run for:
 
 1. numerical BODex quality;
 2. every declared object contact belonging to an allowed face;
-3. full-hand and table collision in cuRobo;
-4. squeeze contact and gravity stability in MuJoCo;
-5. FR3+Inspire IK, approach trajectory, and vertical lift planning;
-6. finally, supervised physical validation.
+3. whole-hand forbidden-region contact using the actual Inspire link meshes;
+4. environment/table clearance in cuRobo;
+5. squeeze contact and gravity stability in MuJoCo;
+6. attached-key pickup, lift, transfer, and pre-insertion planning;
+7. finally, supervised physical validation.
 
-The current common grasp is deliberately identical across gaps. This avoids
-confounding gap difficulty with a changing wrist/finger pose. A gap-specific
-proxy search was also run: its 0.5 mm random pool happened to yield no MuJoCo
-pass, while the 0.3 mm pool yielded two. Cross-validation established that
-seed 78 from the latter passes every full mesh; this is sampling behavior, not
-evidence that 0.3 mm insertion is easier than 0.5 mm insertion.
+The historical common pick/lift grasp is deliberately identical across gaps.
+This avoids confounding gap difficulty with a changing wrist/finger pose, but
+it does not make seed 78 insertion-safe. A new common insertion grasp must pass
+the complete seven-stage gate above before promotion.
 
 ### Why the runtime path is currently `table/0/78`
 
@@ -351,6 +353,56 @@ held key with the transparent green seated goal. This viewer is a diagnostic,
 not a replacement for an attached-object cuRobo transfer preflight. Current
 candidate `table/0/78` is expected to be rejected for insertion even though
 its pick and 10 cm lift plan passed.
+
+### Insertion-safe grasp and geometric success preview
+
+The declared-contact screen is insufficient because it sees only BODex's four
+object-side contact points. Audit every visual Inspire link against the actual
+key mesh:
+
+```bash
+PYTHONPATH=scripts/precision_insertion ~/.venvs/autodex-viz/bin/python \
+  scripts/precision_insertion/validate_whole_hand_contact_policy.py \
+  --candidate-dir ~/shared_data/AutoDex/bodex_raw/inspire/precision_insertion_v3_proxy/precision_key_handle_contact_proxy/table/0/84 \
+  --symmetry rear_x \
+  --output ~/shared_data/AutoDex/precision_insertion/visualizations/insertion_safe_rear_grasp_policy.json
+```
+
+`rear_x` rotates the handle grasp by 180 degrees about the centre of the
+45 mm-long handle. The transformed declared contacts remain at least 2 mm from
+an edge on the lateral faces, while the palm moves behind the rear face and
+away from the shaft/socket. This is a proposal symmetry, not a claim that the
+derived grasp has passed BODex or MuJoCo again.
+
+The current tabletop scene-0 grasps approach from the shaft side. Moving those
+grasps behind the rear face makes the hand collide with a flat tabletop for all
+five currently generated stable poses. Therefore a single fixed grasp cannot
+honestly cover both the existing flat-table pickup and insertion. The following
+preview starts with the key rear-face-up in a second staging socket, then shows
+approach, handle-only closure, extraction, an additional 10 cm lift, transfer,
+and insertion into the target socket:
+
+```bash
+PYTHONPATH=scripts/precision_insertion ~/.venvs/autodex-viz/bin/python \
+  scripts/precision_insertion/build_fixture_to_fixture_success_preview.py
+
+PYOPENGL_PLATFORM=egl ~/.venvs/autodex-viz/bin/python \
+  scripts/precision_insertion/render_insertion_reachability_preview.py \
+  ~/shared_data/AutoDex/precision_insertion/visualizations/insertion_safe_rear_grasp_success_preview.npz \
+  --output ~/shared_data/AutoDex/precision_insertion/visualizations/insertion_safe_rear_grasp_success_preview.mp4
+
+~/.venvs/autodex-viz/bin/python \
+  scripts/precision_insertion/view_insertion_reachability_preview.py \
+  ~/shared_data/AutoDex/precision_insertion/visualizations/insertion_safe_rear_grasp_success_preview.npz \
+  --port 8088
+```
+
+The resulting green-labelled animation is a **sampled geometric success**: the
+actual meshes satisfy the declared/whole-hand contact policy, sampled table and
+socket checks, waypoint IK, and the final CAD pose. It is still not a cuRobo
+continuous plan or physical success. The preceding tabletop-to-staging motion
+remains a separate regrasp problem and is intentionally absent rather than
+shown as a fake one-grasp success.
 
 For a close hand/key still or turntable, reuse the generic mesh renderer:
 
