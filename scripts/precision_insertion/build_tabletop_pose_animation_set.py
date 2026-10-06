@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Build rigid-grasp tabletop-pick-to-insertion animation trajectories.
 
-Only the three handle-contact proposal classes are rendered: 000, 002
-(representing 001/002), and 004 (representing 003/004).  Once closure is
+All five exact tabletop poses are handled independently.  Once closure is
 complete, every subsequent hand target is derived from one immutable
-``T_key_hand``.  No in-hand transition or hidden regrasp is permitted.
+``T_key_hand``.  No symmetry folding, in-hand transition, or hidden regrasp is
+permitted.
 
 The output is a sampled geometric IK preview, not a cuRobo plan or evidence of
 physical success.  The report keeps that distinction machine-readable.
@@ -91,7 +91,13 @@ class Segment:
     sample_mode: str
 
 
-DEFAULT_CANDIDATE_IDS = {0: "346", 2: "511", 4: "290"}
+DEFAULT_CANDIDATE_IDS = {
+    0: "346",
+    1: "403",
+    2: "511",
+    3: "27",
+    4: "290",
+}
 
 
 def _tabletop_grasp(
@@ -108,12 +114,7 @@ def _tabletop_grasp(
     )
     selected = candidate_dir.name
     pregrasp = np.load(candidate_dir / "pregrasp_pose.npy").reshape(-1)
-    grasp = np.load(candidate_dir / "grasp_pose.npy").reshape(-1).copy()
-    if selected == "346":
-        grasp[0] = 0.821
-        grasp[1] = 0.220
-    elif selected == "511":
-        grasp[2] = 0.80
+    grasp = np.load(candidate_dir / "grasp_pose.npy").reshape(-1)
     return Grasp(
         name=f"tabletop_pose_{pose_id:03d}",
         candidate_dir=candidate_dir,
@@ -625,7 +626,9 @@ def _build_one(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--pose-id", choices=["all", "000", "002", "004"], default="all"
+        "--pose-id",
+        choices=["all", "000", "001", "002", "003", "004"],
+        default="all",
     )
     parser.add_argument(
         "--tabletop-candidate-root",
@@ -681,7 +684,7 @@ def main() -> int:
         args.candidate_id is not None or args.candidate_dir is not None
     ) and args.pose_id == "all":
         parser.error("candidate overrides require one explicit --pose-id")
-    pose_ids = (0, 2, 4) if args.pose_id == "all" else [int(args.pose_id)]
+    pose_ids = tuple(range(5)) if args.pose_id == "all" else [int(args.pose_id)]
     selected_candidates = {
         pose_id: (
             args.candidate_id

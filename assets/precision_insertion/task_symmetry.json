@@ -10,8 +10,8 @@
     "reason": "The keyed bore fixes yaw even though the outer socket body is approximately rotationally symmetric."
   },
   "grasp_proposal_symmetry": {
-    "group": "C2_about_key_z",
-    "scope": "handle-contact proposal and coverage bookkeeping only",
+    "group": "identity",
+    "scope": "runtime proposal and coverage bookkeeping",
     "classes": [
       {
         "representative": "000",
@@ -19,22 +19,33 @@
         "label": "handle_rear_down"
       },
       {
+        "representative": "001",
+        "members": ["001"],
+        "label": "handle_x_positive_side_down"
+      },
+      {
         "representative": "002",
-        "members": ["001", "002"],
-        "label": "handle_x_side_down"
+        "members": ["002"],
+        "label": "handle_x_negative_side_down"
+      },
+      {
+        "representative": "003",
+        "members": ["003"],
+        "label": "handle_y_positive_side_down"
       },
       {
         "representative": "004",
-        "members": ["003", "004"],
-        "label": "handle_y_side_down"
+        "members": ["004"],
+        "label": "handle_y_negative_side_down"
       }
     ],
-    "validation_rule": "A proposal transferred within a class is a new candidate. Re-evaluate declared contacts, the complete hand against the exact key, table clearance, Franka reachability, held-key transfer, and exact socket clearance before execution."
+    "geometric_advisory": "The handle alone has a C2 appearance, but keyed-shaft pose, table accessibility, and insertion yaw prevent runtime class folding.",
+    "validation_rule": "Generate and validate candidates independently for every exact tabletop pose."
   },
   "runtime_contract": {
     "retain_observed_exact_pose": true,
     "retain_exact_insertion_yaw": true,
-    "representative_class_may_rank_candidates": true,
+    "representative_class_may_rank_candidates": false,
     "representative_class_may_replace_pose_for_planning": false
   }
 }

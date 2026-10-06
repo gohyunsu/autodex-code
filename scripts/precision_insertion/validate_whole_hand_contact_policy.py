@@ -211,10 +211,14 @@ def inspect_whole_hand(
 
     declared = _declared_contact_check(candidate_dir, policy, symmetry)
     contact_links = sorted(set(near_contact_links))
+    opposing_digits = (
+        any("thumb" in name for name in contact_links)
+        and any("thumb" not in name for name in contact_links)
+    )
     passed = (
         declared["passed"]
         and forbidden_total == 0
-        and len(contact_links) >= 2
+        and opposing_digits
     )
     report = {
         "schema_version": 1,
@@ -237,6 +241,7 @@ def inspect_whole_hand(
             "forbidden_penetrating_samples": forbidden_total,
             "permitted_penetrating_samples": permitted_total,
             "permitted_contact_links": contact_links,
+            "opposing_thumb_and_finger_contact": opposing_digits,
             "minimum_signed_distance_mm": minimum_signed_distance * 1000.0,
             "links": link_reports,
         },
