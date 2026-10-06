@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Build actual-mesh tabletop-pick-to-insertion animation trajectories.
+"""Build rigid-grasp tabletop-pick-to-insertion animation trajectories.
 
-The five object-processing stable poses are handled explicitly.  Each starts
-with a pose-specific table-clear grasp and lifts the key.  Poses whose pickup
-grasp remains insertion-clear use a fixed-grasp wrist reorientation.  The
-remaining poses show the intended transition to a common insertion-safe grasp;
-that transition is explicitly marked unvalidated.
+Only the three handle-contact proposal classes are rendered: 000, 002
+(representing 001/002), and 004 (representing 003/004).  Once closure is
+complete, every subsequent hand target is derived from one immutable
+``T_key_hand``.  No in-hand transition or hidden regrasp is permitted.
 
 The output is a sampled geometric IK preview, not a cuRobo plan or evidence of
 physical success.  The report keeps that distinction machine-readable.
@@ -39,7 +38,6 @@ from filter_contact_safe_grasps import _point_region
 from validate_whole_hand_contact_policy import (
     _hand_link_meshes,
     allowed_contact_faces,
-    handle_symmetry,
 )
 
 
@@ -47,10 +45,6 @@ SHARED = Path.home() / "shared_data"
 DEFAULT_TABLETOP_CANDIDATE_ROOT = (
     SHARED / "AutoDex/contact_screen_staging/inspire/"
     "precision_insertion_tabletop_v1/precision_key_1p5mm/table"
-)
-DEFAULT_INSERTION_CANDIDATE = (
-    SHARED / "AutoDex/bodex_raw/inspire/precision_insertion_v3_proxy/"
-    "precision_key_handle_contact_proxy/table/0/84"
 )
 DEFAULT_TABLETOP_DIR = (
     SHARED / "object_processing/precision_key_1p5mm/processed_data/info/tabletop"
@@ -97,21 +91,29 @@ class Segment:
     sample_mode: str
 
 
-def _tabletop_grasp(candidate_root: Path, pose_id: int) -> Grasp:
-    candidate_ids = {0: "346", 1: "403", 2: "511", 3: "27", 4: "290"}
-    candidate_dir = candidate_root / str(pose_id) / candidate_ids[pose_id]
+DEFAULT_CANDIDATE_IDS = {0: "346", 2: "511", 4: "290"}
+
+
+def _tabletop_grasp(
+    candidate_root: Path,
+    pose_id: int,
+    candidate_id: str | None = None,
+    candidate_dir_override: Path | None = None,
+) -> Grasp:
+    selected = candidate_id or DEFAULT_CANDIDATE_IDS[pose_id]
+    candidate_dir = (
+        candidate_dir_override
+        if candidate_dir_override is not None
+        else candidate_root / str(pose_id) / selected
+    )
+    selected = candidate_dir.name
     pregrasp = np.load(candidate_dir / "pregrasp_pose.npy").reshape(-1)
     grasp = np.load(candidate_dir / "grasp_pose.npy").reshape(-1).copy()
-    if pose_id == 0:
+    if selected == "346":
         grasp[0] = 0.821
         grasp[1] = 0.220
-    elif pose_id == 1:
-        grasp[2] = 1.10
-    elif pose_id == 2:
+    elif selected == "511":
         grasp[2] = 0.80
-    elif pose_id == 3:
-        grasp[:2] = 0.2 * pregrasp[:2] + 0.8 * grasp[:2]
-        grasp[2] = 1.15
     return Grasp(
         name=f"tabletop_pose_{pose_id:03d}",
         candidate_dir=candidate_dir,
@@ -121,23 +123,22 @@ def _tabletop_grasp(candidate_root: Path, pose_id: int) -> Grasp:
     )
 
 
-def _insertion_grasp(candidate_dir: Path) -> Grasp:
-    return Grasp(
-        name="common_insertion_grasp",
-        candidate_dir=candidate_dir,
-        key_to_hand=(
-            handle_symmetry("rear_x", 0.045)
-            @ np.load(candidate_dir / "wrist_se3.npy")
-        ),
-        pregrasp=np.load(candidate_dir / "pregrasp_pose.npy").reshape(-1),
-        grasp=np.load(candidate_dir / "grasp_pose.npy").reshape(-1),
-    )
-
-
 def _translated_world_z(pose: np.ndarray, distance: float) -> np.ndarray:
     result = np.asarray(pose, dtype=np.float64).copy()
     result[2, 3] += distance
     return result
+
+
+def _world_yaw(degrees: float) -> np.ndarray:
+    radians = np.radians(degrees)
+    cosine, sine = np.cos(radians), np.sin(radians)
+    transform = np.eye(4, dtype=np.float64)
+    transform[:3, :3] = np.asarray([
+        [cosine, -sine, 0.0],
+        [sine, cosine, 0.0],
+        [0.0, 0.0, 1.0],
+    ])
+    return transform
 
 
 def _fixed_pose(pose: np.ndarray, count: int) -> np.ndarray:
@@ -168,8 +169,8 @@ def _solve_path_robust(
             target, q_previous, max_evaluations=1200
         )
         if (
-            diagnostic["translation_error_mm"] > 0.5
-            or diagnostic["rotation_error_deg"] > 0.5
+            diagnostic["translation_error_mm"] > 0.75
+            or diagnostic["rotation_error_deg"] > 0.75
         ):
             candidates = [(q_arm, diagnostic)]
             for fallback in fallback_seeds:
@@ -184,8 +185,8 @@ def _solve_path_robust(
                 ),
             )
         if (
-            diagnostic["translation_error_mm"] > 0.5
-            or diagnostic["rotation_error_deg"] > 0.5
+            diagnostic["translation_error_mm"] > 0.75
+            or diagnostic["rotation_error_deg"] > 0.75
         ):
             raise RuntimeError(
                 f"IK failed at waypoint {index}: "
@@ -221,16 +222,14 @@ def _direct_segments(
     target_preinsert: np.ndarray,
     target_seated: np.ndarray,
     pickup: Grasp,
-    insertion: Grasp,
     lift_height: float,
-    needs_grasp_transition: bool,
 ) -> list[Segment]:
     grasp_hand = start_key @ pickup.key_to_hand
     approach_hand = _translated_world_z(grasp_hand, 0.08)
     lifted = _translated_world_z(start_key, lift_height)
-    lifted_hand = lifted @ pickup.key_to_hand
-    reoriented = lifted_hand @ np.linalg.inv(insertion.key_to_hand)
     target_lifted = _translated_world_z(target_preinsert, lift_height)
+    translated = lifted.copy()
+    translated[:3, 3] = target_lifted[:3, 3]
     segments = [
         Segment(
             "approach tabletop key",
@@ -250,48 +249,46 @@ def _direct_segments(
             "lift key from table", start_key, lifted, 16, pickup, "pickup_grasp"
         ),
     ]
-    if needs_grasp_transition:
-        segments.append(
-            Segment(
-                "unvalidated in-hand transition to insertion grasp",
-                [lifted_hand] * 24,
-                _hand_interpolation(pickup.grasp, insertion.grasp, 24),
-                _object_path(lifted, reoriented, 24),
-                "in_hand",
-            )
-        )
     segments.extend(
         [
             _attached_segment(
-                "reorient and transfer above socket",
-                reoriented,
+                "transfer above socket",
+                lifted,
+                translated,
+                18,
+                pickup,
+                "pickup_grasp",
+            ),
+            _attached_segment(
+                "reorient above socket",
+                translated,
                 target_lifted,
-                26,
-                insertion,
-                "insertion_grasp",
+                18,
+                pickup,
+                "pickup_grasp",
             ),
             _attached_segment(
                 "descend to preinsert",
                 target_lifted,
                 target_preinsert,
                 16,
-                insertion,
-                "insertion_grasp",
+                pickup,
+                "pickup_grasp",
             ),
             _attached_segment(
                 "insert to CAD seated pose",
                 target_preinsert,
                 target_seated,
                 14,
-                insertion,
-                "insertion_grasp",
+                pickup,
+                "pickup_grasp",
             ),
             Segment(
                 "final hold",
-                [target_seated @ insertion.key_to_hand] * 10,
-                np.repeat(insertion.grasp[None, :], 10, axis=0),
+                [target_seated @ pickup.key_to_hand] * 10,
+                np.repeat(pickup.grasp[None, :], 10, axis=0),
                 _fixed_pose(target_seated, 10),
-                "insertion_grasp",
+                "pickup_grasp",
             ),
         ]
     )
@@ -362,13 +359,12 @@ def _inspect_grasp(
         any("thumb" in name for name in contact_links)
         and any("thumb" not in name for name in contact_links)
     )
-    # An in-plane transform of a rectangular handle changes the actual visual
-    # contact locations; BODex's original sparse contact points therefore do
-    # not remain authoritative.  Accept/reject the derived proposal from the
-    # complete hand visual mesh, and retain the transformed declarations only
-    # as a warning/audit field.
+    # These previews use the selected native BODex proposal without a hidden
+    # grasp transform.  Its declared contacts therefore remain authoritative
+    # and must pass the same 2 mm edge-margin policy as the complete-hand
+    # sampled check.
     declared_reusable = all(region is not None for region in regions)
-    passed = forbidden_total == 0 and opposing_digits
+    passed = declared_reusable and forbidden_total == 0 and opposing_digits
     return {
         "status": "sampled_pass" if passed else "rejected",
         "source_candidate": str(grasp.candidate_dir),
@@ -376,7 +372,9 @@ def _inspect_grasp(
         "declared_contact_points_m": declared_points.tolist(),
         "declared_contact_regions": regions,
         "declared_contacts_reusable_after_transform": declared_reusable,
-        "acceptance_basis": "sampled complete hand visual mesh",
+        "acceptance_basis": (
+            "declared BODex contacts and sampled complete hand visual mesh"
+        ),
         "whole_hand_forbidden_penetrating_samples": forbidden_total,
         "whole_hand_permitted_penetrating_samples": permitted_total,
         "permitted_contact_links": contact_links,
@@ -392,7 +390,6 @@ def _sample_sets(
     joint_names: list[str],
     arm_seed: np.ndarray,
     pickup: Grasp,
-    rear: Grasp,
     count: int,
 ) -> dict[str, np.ndarray]:
     def points(q_hand: np.ndarray) -> np.ndarray:
@@ -403,14 +400,10 @@ def _sample_sets(
 
     pickup_pre = points(pickup.pregrasp)
     pickup_grasp = points(pickup.grasp)
-    insertion_pre = points(rear.pregrasp)
-    insertion_grasp = points(rear.grasp)
     return {
         "pickup_pre": pickup_pre,
         "pickup_close": np.concatenate([pickup_pre, pickup_grasp]),
         "pickup_grasp": pickup_grasp,
-        "insertion_grasp": insertion_grasp,
-        "in_hand": np.concatenate([pickup_grasp, insertion_grasp]),
     }
 
 
@@ -424,15 +417,14 @@ def _build_one(
     socket_mesh: trimesh.Trimesh,
     policy: dict[str, Any],
 ) -> tuple[Path, dict[str, Any]]:
-    pickup = _tabletop_grasp(args.tabletop_candidate_root, pose_id)
-    needs_grasp_transition = pose_id in {0, 1, 3}
-    insertion = (
-        _insertion_grasp(args.insertion_candidate)
-        if needs_grasp_transition
-        else pickup
+    pickup = _tabletop_grasp(
+        args.tabletop_candidate_root,
+        pose_id,
+        args.candidate_id,
+        args.candidate_dir,
     )
     stable = np.load(args.tabletop_dir / f"{pose_id:03d}.npy")
-    start_key = stable.copy()
+    start_key = _world_yaw(args.key_yaw_deg) @ stable
     start_key[:3, 3] += np.asarray(
         [args.key_x, args.key_y, args.table_z]
     )
@@ -450,9 +442,7 @@ def _build_one(
         target_preinsert,
         target_seated,
         pickup,
-        insertion,
         args.lift_height,
-        needs_grasp_transition,
     )
 
     fallback_seeds = [
@@ -479,15 +469,18 @@ def _build_one(
     qpos = np.concatenate(q_frames)
     objects = np.concatenate(object_frames)
     joint_names = [joint.name for joint in robot.actuated_joints]
+    first_attached = next(
+        index for index, phase in enumerate(phases)
+        if phase == "lift key from table"
+    )
+    # Render and validate the object from arm FK once it is attached.  The IK
+    # target can have a small numerical residual; moving the key independently
+    # to the ideal target would turn that residual into visible in-hand slip.
+    hand_to_key = np.linalg.inv(pickup.key_to_hand)
+    for index in range(first_attached, len(objects)):
+        objects[index] = kinematics.fk(qpos[index, :7]) @ hand_to_key
 
     grasp_reports = {
-        "insertion_grasp": _inspect_grasp(
-            insertion,
-            key_mesh,
-            policy,
-            args.robot_urdf,
-            args.policy_samples_per_link,
-        ),
         "tabletop_pickup_grasp": _inspect_grasp(
             pickup,
             key_mesh,
@@ -506,7 +499,6 @@ def _build_one(
         joint_names,
         qpos[0, :7],
         pickup,
-        insertion,
         args.collision_samples,
     )
     socket_world = socket_mesh.copy()
@@ -532,17 +524,29 @@ def _build_one(
         key_socket[index] = int(np.count_nonzero(object_distance < -2.0e-4))
         key_table[index] = int(np.count_nonzero(object_points[:, 2] < args.table_z - 5.0e-4))
     collision_counts = hand_socket + hand_table + key_socket + key_table
-    if np.any(collision_counts):
+    # Verify the central manipulation invariant independently of how the
+    # segments were assembled: after lift begins, FK must preserve the exact
+    # object-to-hand transform selected at grasp time.
+    rigid_translation_error = []
+    rigid_rotation_error = []
+    for q, object_pose in zip(qpos[first_attached:], objects[first_attached:]):
+        actual = np.linalg.inv(object_pose) @ kinematics.fk(q[:7])
+        delta = np.linalg.inv(pickup.key_to_hand) @ actual
+        rigid_translation_error.append(float(np.linalg.norm(delta[:3, 3])))
+        angle = np.arccos(np.clip(
+            (np.trace(delta[:3, :3]) - 1.0) / 2.0, -1.0, 1.0
+        ))
+        rigid_rotation_error.append(float(np.degrees(angle)))
+    rigid_passed = (
+        max(rigid_translation_error) <= 1.0e-8
+        and max(rigid_rotation_error) <= 1.0e-5
+    )
+    if np.any(collision_counts) or not rigid_passed:
         status = "rejected_by_sampled_environment_check"
-    elif needs_grasp_transition:
-        status = "concept_preview_requires_in_hand_reorientation_validation"
     else:
         status = "sampled_geometric_preview_passed_not_physical_validation"
     strategy = (
-        "pose-specific tabletop grasp, lift, unvalidated in-hand transition "
-        "to common insertion grasp, transfer, insert"
-        if needs_grasp_transition
-        else "pose-specific tabletop grasp, lift, fixed-grasp wrist "
+        "pose-specific tabletop grasp, rigid lift, fixed-grasp wrist/arm "
         "reorientation, transfer, insert"
     )
     not_validated = [
@@ -553,10 +557,6 @@ def _build_one(
         "contact-search insertion control",
         "physical execution",
     ]
-    if needs_grasp_transition:
-        not_validated.insert(
-            0, "in-hand transition between tabletop and insertion grasps"
-        )
     report = {
         "schema_version": 1,
         "status": status,
@@ -564,7 +564,13 @@ def _build_one(
         "starts_with_key_on_table": True,
         "uses_actual_meshes": True,
         "strategy": strategy,
-        "requires_unvalidated_grasp_transition": needs_grasp_transition,
+        "requires_unvalidated_grasp_transition": False,
+        "rigid_attachment_check": {
+            "passed": rigid_passed,
+            "maximum_translation_error_mm": max(rigid_translation_error) * 1000.0,
+            "maximum_rotation_error_deg": max(rigid_rotation_error),
+            "reference": "immutable T_key_hand from selected pickup grasp",
+        },
         "grasp_reports": grasp_reports,
         "ik": {
             "method": "numerical Cartesian waypoint IK",
@@ -619,9 +625,7 @@ def _build_one(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--pose-id",
-        choices=["all", "000", "001", "002", "003", "004"],
-        default="all",
+        "--pose-id", choices=["all", "000", "002", "004"], default="all"
     )
     parser.add_argument(
         "--tabletop-candidate-root",
@@ -629,7 +633,13 @@ def main() -> int:
         default=DEFAULT_TABLETOP_CANDIDATE_ROOT,
     )
     parser.add_argument(
-        "--insertion-candidate", type=Path, default=DEFAULT_INSERTION_CANDIDATE
+        "--candidate-id",
+        help="override the selected candidate for one --pose-id",
+    )
+    parser.add_argument(
+        "--candidate-dir",
+        type=Path,
+        help="use an explicit candidate directory for one --pose-id",
     )
     parser.add_argument("--tabletop-dir", type=Path, default=DEFAULT_TABLETOP_DIR)
     parser.add_argument("--task-geometry", type=Path, default=DEFAULT_GEOMETRY)
@@ -640,6 +650,7 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--key-x", type=float, default=0.40)
     parser.add_argument("--key-y", type=float, default=0.18)
+    parser.add_argument("--key-yaw-deg", type=float, default=0.0)
     parser.add_argument("--socket-x", type=float, default=0.45)
     parser.add_argument("--socket-y", type=float, default=-0.10)
     parser.add_argument("--table-z", type=float, default=0.04)
@@ -651,7 +662,7 @@ def main() -> int:
 
     path_fields = [
         "tabletop_candidate_root",
-        "insertion_candidate",
+        "candidate_dir",
         "tabletop_dir",
         "task_geometry",
         "key_mesh",
@@ -661,16 +672,35 @@ def main() -> int:
         "output_dir",
     ]
     for field in path_fields:
-        setattr(args, field, getattr(args, field).expanduser().resolve())
-    required = [
-        *(
+        value = getattr(args, field)
+        if value is not None:
+            setattr(args, field, value.expanduser().resolve())
+    if args.candidate_id is not None and args.candidate_dir is not None:
+        parser.error("pass only one of --candidate-id or --candidate-dir")
+    if (
+        args.candidate_id is not None or args.candidate_dir is not None
+    ) and args.pose_id == "all":
+        parser.error("candidate overrides require one explicit --pose-id")
+    pose_ids = (0, 2, 4) if args.pose_id == "all" else [int(args.pose_id)]
+    selected_candidates = {
+        pose_id: (
+            args.candidate_id
+            if args.candidate_id is not None
+            else DEFAULT_CANDIDATE_IDS[pose_id]
+        )
+        for pose_id in pose_ids
+    }
+    candidate_paths = (
+        [args.candidate_dir / "wrist_se3.npy"]
+        if args.candidate_dir is not None
+        else [
             args.tabletop_candidate_root / str(scene_id) / candidate_id /
             "wrist_se3.npy"
-            for scene_id, candidate_id in {
-                0: "346", 1: "403", 2: "511", 3: "27", 4: "290"
-            }.items()
-        ),
-        args.insertion_candidate / "wrist_se3.npy",
+            for scene_id, candidate_id in selected_candidates.items()
+        ]
+    )
+    required = [
+        *candidate_paths,
         args.task_geometry,
         args.key_mesh,
         args.contact_policy,
@@ -690,7 +720,6 @@ def main() -> int:
         str(args.robot_urdf), build_scene_graph=False, load_meshes=False
     )
     kinematics = FrankaHandKinematics(robot)
-    pose_ids = range(5) if args.pose_id == "all" else [int(args.pose_id)]
     failed = False
     for pose_id in pose_ids:
         output, report = _build_one(

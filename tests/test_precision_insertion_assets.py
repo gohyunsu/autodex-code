@@ -200,6 +200,27 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
         self.assertEqual(profile["hand"], "inspire")
         self.assertNotIn("camera_serials", profile)
 
+    def test_task_symmetry_does_not_fold_the_keyed_insertion_pose(self):
+        policy = json.loads(
+            (REPO_ROOT / "assets/precision_insertion/task_symmetry.json")
+            .read_text(encoding="utf-8")
+        )
+        self.assertEqual(policy["exact_pose_symmetry"]["group"], "identity")
+        self.assertEqual(policy["socket_pose_symmetry"]["group"], "identity")
+        proposal = policy["grasp_proposal_symmetry"]
+        self.assertEqual(proposal["group"], "C2_about_key_z")
+        self.assertEqual(
+            [item["representative"] for item in proposal["classes"]],
+            ["000", "002", "004"],
+        )
+        self.assertTrue(
+            policy["runtime_contract"]["retain_observed_exact_pose"]
+        )
+        self.assertFalse(
+            policy["runtime_contract"]
+            ["representative_class_may_replace_pose_for_planning"]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

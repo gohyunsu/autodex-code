@@ -409,17 +409,41 @@ for scene_id in 0 1 2 3 4; do
 done
 ```
 
-The current deterministic selection is `0/346`, `1/403`, `2/511`, `3/27`,
-and `4/290`. The builder rechecks the complete Inspire visual mesh against the
-allowed contact surfaces and samples key/table, hand/table, key/socket, and
-hand/socket distances at every frame:
+The full key and keyed socket have no task-pose symmetry. The handle alone has
+a C2 proposal symmetry, so presentation/proposal coverage uses representatives
+`000`, `002` (for `001/002`), and `004` (for `003/004`) while runtime
+perception and insertion retain the exact five-way pose. See
+`assets/precision_insertion/task_symmetry.json`.
+
+The current deterministic preview selection is `0/346`, `2/511`, and `4/290`.
+Before arm IK, screen a scene's candidates with the exact key/socket and full
+Inspire hand:
+
+```bash
+PYTHONPATH=scripts/precision_insertion ~/.venvs/autodex-viz/bin/python \
+  scripts/precision_insertion/screen_rigid_insertion_grasps.py \
+  --scene ~/shared_data/AutoDex/contact_screen_staging/inspire/precision_insertion_tabletop_v1/precision_key_1p5mm/table/0 \
+  --tabletop-pose ~/shared_data/object_processing/precision_key_1p5mm/processed_data/info/tabletop/000.npy
+```
+
+This sampled screen is not continuous planning or physical validation. With
+the current 5,000 scene-000 seeds, 24 candidates pass the sparse BODex contact
+and quality filter; seven also pass the sampled full-hand/key contact policy,
+but all seven collide with the socket by roughly 6.2--6.8 mm. Scene 000
+therefore has no honest rigid insertion candidate yet.
+
+The animation builder rechecks the complete Inspire visual mesh and samples
+key/table, hand/table, key/socket, and hand/socket distances at every frame.
+After closure, it derives the key pose exclusively from Franka FK and the
+immutable candidate `T_key_hand`, so numerical IK residual cannot appear as
+in-hand key motion:
 
 ```bash
 PYTHONPATH=scripts/precision_insertion ~/.venvs/autodex-viz/bin/python \
   scripts/precision_insertion/build_tabletop_pose_animation_set.py \
   --pose-id all --collision-samples 12000 --policy-samples-per-link 20000
 
-for pose_id in 000 001 002 003 004; do
+for pose_id in 000 002 004; do
   ~/.venvs/autodex-viz/bin/python \
     scripts/precision_insertion/prepare_blender_actual_mesh_animation.py \
     ~/shared_data/AutoDex/precision_insertion/visualizations/tabletop_pose_set/tabletop_${pose_id}_to_insertion_preview.npz
@@ -450,12 +474,12 @@ Both views omit captions, progress bars, goal ghosts, axes, and inset panels.
 For a quick diagnostic without Blender, the older renderer remains available
 with `--clean`; its `--robot-faces` budget is a decimated display mesh.
 
-Poses 002 and 004 keep their pickup grasp and use arm/wrist reorientation; their
-reports pass the sampled geometric checks. Poses 000, 001, and 003 require a
-transition to the common insertion-safe grasp. Their animation shows the
-desired high-clearance in-hand transition, but the report deliberately marks
-it unvalidated. None of the five is yet a continuous cuRobo plan, MuJoCo grasp
-stability result, contact-search controller execution, or physical success.
+Poses 002 and 004 keep their pickup grasp and use rigid arm/wrist
+reorientation; their reports pass the sampled geometric checks. Pose 000 is
+expected to be rejected by the socket-clearance check. There is deliberately
+no in-hand transition or hidden regrasp. None of these previews is a continuous
+cuRobo plan, MuJoCo grasp-stability result, contact-search controller
+execution, or physical success.
 
 For a close hand/key still or turntable, reuse the generic mesh renderer:
 
