@@ -718,49 +718,68 @@ def _build_handle_proxy(
             "reason": "proposal-only proxy; candidate is rechecked against keyed full mesh",
         },
     )
-    pose = np.eye(4)
-    np.save(info_dir / "tabletop" / "000.npy", pose)
+    # The proposal mesh contains only the handle, but its scenes must retain
+    # every stable pose of the *full key*.  Computing stable poses from the
+    # proxy box would erase the shaft-dependent placement and was the reason
+    # earlier BODex output only covered table/0.
+    proxy_tabletop_poses = tabletop_poses(reference)
+    for stem, _label, transform in proxy_tabletop_poses:
+        np.save(info_dir / "tabletop" / f"{stem}.npy", transform)
     _json_dump(
         info_dir / "tabletop_policy.json",
         {
-            "poses": [{"stem": "000", "label": "handle_rear_down", "baseline": True}],
+            "poses": [
+                {
+                    "stem": stem,
+                    "label": label,
+                    "baseline": stem == "000",
+                }
+                for stem, label, _transform in proxy_tabletop_poses
+            ],
             "baseline_pose_stem": "000",
             "generation_proxy": True,
+            "pose_source": runtime_object,
+            "note": (
+                "poses are computed from the full key; the handle-only proxy "
+                "is used only for BODex contact proposals"
+            ),
         },
     )
     urdf_path = urdf_dir / "coacd.urdf"
     _write_urdf(urdf_path, proxy_name, reference.volume, reference.center_mass)
 
     scene_dir = project_root / "scene" / "inspire" / proxy_name / "table"
-    _json_dump(
-        scene_dir / "0.json",
-        {
-            "scene": {
-                "mesh": {
-                    "target": {
-                        "scale": [1.0, 1.0, 1.0],
-                        "pose": _pose7(pose),
-                        "file_path": str(mesh_dir / "simplified.obj"),
-                        "urdf_path": str(urdf_path),
+    for scene_id, (stem, label, pose) in enumerate(proxy_tabletop_poses):
+        _json_dump(
+            scene_dir / f"{scene_id}.json",
+            {
+                "scene": {
+                    "mesh": {
+                        "target": {
+                            "scale": [1.0, 1.0, 1.0],
+                            "pose": _pose7(pose),
+                            "file_path": str(mesh_dir / "simplified.obj"),
+                            "urdf_path": str(urdf_path),
+                        }
+                    },
+                    "cuboid": {
+                        "table": {
+                            "dims": [2.0, 2.0, 0.2],
+                            "pose": [0.0, 0.0, -0.1, 1.0, 0.0, 0.0, 0.0],
+                        }
                     }
                 },
-                "cuboid": {
-                    "table": {
-                        "dims": [2.0, 2.0, 0.2],
-                        "pose": [0.0, 0.0, -0.1, 1.0, 0.0, 0.0, 0.0],
-                    }
+                "meta": {
+                    "pose_idx": stem,
+                    "param": {"placement": label},
+                    "precision_insertion": {
+                        "generation_proxy": True,
+                        "runtime_object": runtime_object,
+                        "pose_source": "full_key",
+                    },
                 },
             },
-            "meta": {
-                "pose_idx": "000",
-                "param": {"placement": "handle_rear_down"},
-                "precision_insertion": {
-                    "generation_proxy": True,
-                    "runtime_object": runtime_object,
-                },
-            },
-        },
-    )
+        )
     return {
         "object": proxy_name,
         "runtime_object": runtime_object,

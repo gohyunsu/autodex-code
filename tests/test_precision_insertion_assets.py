@@ -86,9 +86,16 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
                 )
             proxy = root / "object_processing" / builder.HANDLE_PROXY_NAME
             self.assertTrue((proxy / "processed_data" / "mesh" / "simplified.obj").is_file())
-            self.assertTrue(
-                (root / "AutoDex" / "scene" / "inspire" / builder.HANDLE_PROXY_NAME / "table" / "0.json").is_file()
-            )
+            for pose_id in range(5):
+                self.assertTrue(
+                    (proxy / "processed_data" / "info" / "tabletop" /
+                     f"{pose_id:03d}.npy").is_file()
+                )
+                self.assertTrue(
+                    (root / "AutoDex" / "scene" / "inspire" /
+                     builder.HANDLE_PROXY_NAME / "table" /
+                     f"{pose_id}.json").is_file()
+                )
             self.assertEqual(
                 manifest["grasp_generation_proxy"]["runtime_object"],
                 "precision_key_1p5mm",
@@ -105,6 +112,11 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
                     .read_text(encoding="utf-8")
                 )
                 self.assertEqual(info["runtime_object"], object_name)
+                for pose_id in range(5):
+                    self.assertTrue(
+                        (proxy / "processed_data" / "info" / "tabletop" /
+                         f"{pose_id:03d}.npy").is_file()
+                    )
                 stage = json.loads(
                     (root / "AutoDex" / "precision_insertion" / "stages" /
                      f"{object_name}.json").read_text(encoding="utf-8")
