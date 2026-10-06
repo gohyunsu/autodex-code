@@ -222,6 +222,18 @@ def _specs(
                 "Historical candidate 78 pick/lift evidence; insertion-rejected by the new whole-hand gate.",
             )
         )
+    specs.append(
+        CopySpec(
+            "runtime",
+            shared / "AutoDex/bodex_raw/inspire/precision_insertion_v3_proxy/"
+            "precision_key_handle_contact_proxy/table/0/84",
+            Path("payload/shared_data/AutoDex/bodex_raw/inspire/"
+                 "precision_insertion_v3_proxy/precision_key_handle_contact_proxy/"
+                 "table/0/84"),
+            True,
+            "Source finger pose and contacts for the symmetry-derived rear insertion grasp preview.",
+        )
+    )
     for name in (*KEYS, SOCKET):
         specs.append(
             CopySpec(
