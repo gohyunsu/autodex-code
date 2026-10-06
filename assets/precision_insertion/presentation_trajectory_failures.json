@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "tabletop_pose_id": "004",
+  "fixed_task_conditions": {
+    "key_xy_m": [0.4, 0.18],
+    "key_yaw_deg": 0.0,
+    "socket_xy_m": [0.45, -0.1],
+    "lift_height_m": 0.12,
+    "maximum_ik_translation_error_mm": 0.75,
+    "maximum_ik_rotation_error_deg": 0.75
+  },
+  "rejected_after_static_prefilter": [
+    {
+      "candidate": "27931",
+      "waypoint": 7,
+      "translation_error_mm": 0.943,
+      "rotation_error_deg": 1.063
+    },
+    {
+      "candidate": "31714",
+      "waypoint": 9,
+      "translation_error_mm": 1.425,
+      "rotation_error_deg": 1.568
+    },
+    {
+      "candidate": "31807",
+      "waypoint": 7,
+      "translation_error_mm": 0.950,
+      "rotation_error_deg": 1.059
+    },
+    {
+      "candidate": "32295",
+      "waypoint": 5,
+      "translation_error_mm": 1.379,
+      "rotation_error_deg": 1.569
+    },
+    {
+      "candidate": "32857",
+      "waypoint": 8,
+      "translation_error_mm": 1.225,
+      "rotation_error_deg": 1.354
+    },
+    {
+      "candidate": "37944",
+      "waypoint": 7,
+      "translation_error_mm": 1.204,
+      "rotation_error_deg": 1.365
+    }
+  ],
+  "interpretation": "Static contact and clearance are necessary but not sufficient; these candidates are not presentation successes and are excluded without changing task placement or tolerances."
+}

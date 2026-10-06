@@ -208,10 +208,10 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
         self.assertEqual(policy["exact_pose_symmetry"]["group"], "identity")
         self.assertEqual(policy["socket_pose_symmetry"]["group"], "identity")
         proposal = policy["grasp_proposal_symmetry"]
-        self.assertEqual(proposal["group"], "C2_about_key_z")
+        self.assertEqual(proposal["group"], "identity")
         self.assertEqual(
             [item["representative"] for item in proposal["classes"]],
-            ["000", "002", "004"],
+            ["000", "001", "002", "003", "004"],
         )
         self.assertTrue(
             policy["runtime_contract"]["retain_observed_exact_pose"]
@@ -220,6 +220,33 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
             policy["runtime_contract"]
             ["representative_class_may_replace_pose_for_planning"]
         )
+
+    def test_presentation_candidate_set_has_20_distinct_native_ids(self):
+        candidate_set = json.loads(
+            (REPO_ROOT / "assets/precision_insertion/"
+             "presentation_candidate_set.json").read_text(encoding="utf-8")
+        )
+        selected = candidate_set["selected_candidate_ids"]
+        reserve = candidate_set["reserve_candidate_ids"]
+        self.assertEqual(candidate_set["tabletop_pose_id"], "004")
+        self.assertEqual(len(selected), 20)
+        self.assertEqual(len(set(selected)), 20)
+        self.assertFalse(set(selected) & set(reserve))
+        self.assertGreaterEqual(
+            candidate_set["screening_evidence"]["sampled_prefilter_passed"],
+            len(selected) + len(reserve),
+        )
+        failures = json.loads(
+            (REPO_ROOT / "assets/precision_insertion/"
+             "presentation_trajectory_failures.json").read_text(
+                 encoding="utf-8"
+             )
+        )
+        rejected = {
+            item["candidate"]
+            for item in failures["rejected_after_static_prefilter"]
+        }
+        self.assertFalse(set(selected) & rejected)
 
 
 if __name__ == "__main__":
