@@ -315,6 +315,43 @@ PYOPENGL_PLATFORM=egl ~/.venvs/autodex-viz/bin/python \
   --output ~/shared_data/AutoDex/precision_insertion/visualizations/common_grasp_78_fr3_approach_lift.mp4
 ```
 
+### Lift-to-insertion reachability diagnostic
+
+Pick/lift success is insufficient for candidate promotion. Build an
+actual-mesh diagnostic that keeps candidate 78's rigid key-to-hand transform,
+moves toward the CAD pre-insertion/seated goals, and checks sampled Inspire
+surface points against the exact concave socket mesh:
+
+```bash
+PYOPENGL_PLATFORM=egl ~/.venvs/autodex-viz/bin/python \
+  scripts/precision_insertion/build_insertion_reachability_preview.py
+
+PYOPENGL_PLATFORM=egl ~/.venvs/autodex-viz/bin/python \
+  scripts/precision_insertion/render_insertion_reachability_preview.py
+```
+
+The first three phases reuse the saved cuRobo approach/close/lift result. The
+post-lift motion is numerical endpoint IK plus joint interpolation and is
+**not** collision-planned or robot-executable. A red robot in the video means
+that sampled hand points have negative signed distance inside the socket. The
+JSON beside the NPZ records the exact fixture assumption, endpoint errors, and
+colliding hand links.
+
+Inspect the same artifact interactively with actual FR3, Inspire, key, and
+socket visual meshes:
+
+```bash
+~/.venvs/autodex-viz/bin/python \
+  scripts/precision_insertion/view_insertion_reachability_preview.py \
+  --port 8088
+```
+
+Open `http://localhost:8088`, scrub the sample slider, and compare the blue
+held key with the transparent green seated goal. This viewer is a diagnostic,
+not a replacement for an attached-object cuRobo transfer preflight. Current
+candidate `table/0/78` is expected to be rejected for insertion even though
+its pick and 10 cm lift plan passed.
+
 For a close hand/key still or turntable, reuse the generic mesh renderer:
 
 ```bash

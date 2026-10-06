@@ -162,6 +162,38 @@ grasp blocks the socket, violates joint limits, or makes that goal unreachable,
 the system needs another pickup grasp or an explicit regrasp. Future ranking
 must therefore score pickup feasibility and pre-insertion reachability jointly.
 
+### Planning boundary: pre-insertion is a grasp-selection gate
+
+A precision-insertion candidate must not be promoted merely because pick and
+lift planning succeeds. Before physical execution, the candidate-level
+preflight should cover:
+
+1. collision-free approach, closure, and a clearance lift;
+2. rigid attachment of the full key at the candidate-specific `T_hand_key`;
+3. collision-free transfer with both the full key and fixed socket present;
+4. exact Franka IK and a planned trajectory to `T_robot_hand_goal` at the CAD
+   pre-insertion transform; and
+5. positive hand/key/socket clearance at pre-insertion.
+
+The insertion stroke itself is a different planning boundary. Treating the
+socket as an ordinary obstacle makes a valid insertion look like a collision,
+while disabling socket collision permits wall penetration. The final stroke
+must therefore be validated by a task-specific constrained path/contact model
+and executed by the guarded insertion controller. Offline planning may prove
+reachability and reject obvious collisions; it cannot certify physical seating
+under calibration, compliance, friction, and print error.
+
+An actual-mesh diagnostic of current candidate `table/0/78` demonstrates why
+this split is necessary. The candidate passes the existing approach and 10 cm
+lift preflight, but at `T_socket_key_preinsert` the Inspire base, index, and
+middle visual meshes penetrate the exact socket mesh by sampled signed
+distance (about 6.7 mm maximum in the diagnostic). At an illustrative socket
+pose on the table, Franka endpoint IK reaches both the pre-insertion and seated
+targets, isolating grasp/socket clearance as the rejection reason rather than
+arm reachability. Candidate 78 must therefore retain its lift evidence but
+must not be treated as insertion-compatible. The diagnostic uses numerical
+endpoint IK and is intentionally not an executable cuRobo transfer plan.
+
 ## ZeroDex-style VLM role (reasoning only)
 
 "ZeroDex-style" refers only to adapting its VLM task-completion reasoning.
