@@ -190,6 +190,15 @@ def _specs(
             True,
             "Stage profiles, socket transforms, calibration snapshot, and visual evidence.",
         ),
+        CopySpec(
+            "runtime_reproducibility",
+            shared / "AutoDex/contact_screen_staging/inspire/"
+            "precision_insertion_tabletop_v1",
+            Path("payload/shared_data/AutoDex/contact_screen_staging/inspire/"
+                 "precision_insertion_tabletop_v1"),
+            True,
+            "Sparse native BODex candidates used by five-pose screening and the frozen 20-grasp presentation set.",
+        ),
     ]
 
     for name in (*KEYS, *PROXIES, SOCKET):
@@ -367,14 +376,14 @@ def _open_items() -> str:
 3. At every `run_pipeline.py` session, measure the bolted fixture repeatedly
    with its generated socket representation and accept the generated
    `fixture_pose.session.json` only when its repeatability gate passes.
-4. Do not execute candidate `table/0/78` for insertion. Re-optimize and
-   simulation-validate the rear/side insertion grasp recorded by the geometric
-   preview, including the whole-hand forbidden-region gate.
-5. Choose a staging/regrasp fixture or generate direct side-pose grasp coverage,
-   then implement and commission the 1.5 mm insertion controller followed by
-   the 1.0 mm accuracy instrumentation and 0.5/0.3 mm force/contact search.
-6. Expand the grasp library for stable tabletop poses 1--4; the historical
-   candidate is intentionally scene-0-only.
+4. The 20 pose-004 candidates are sampled geometric previews only. Run
+   continuous cuRobo/self-collision checks, MuJoCo grasp stability, and
+   supervised FR3+Inspire physical validation before runtime promotion.
+5. Implement and validate a fixture/push/regrasp reorientation primitive for
+   poses 000--003. The supplied exact-mesh reorientation videos are concepts,
+   not robot plans or execution authority.
+6. Implement and commission the 1.5 mm insertion controller followed by the
+   1.0 mm accuracy instrumentation and 0.5/0.3 mm force/contact search.
 7. Add phase-aligned multi-view evidence and a read-only, shadow-mode VLM
    evaluator. Do not transplant ZeroDex's current task checker as a safety or
    success authority without a strict schema and an `unknown` result.
@@ -460,7 +469,8 @@ def build_bundle(
             "missing_optional_sources": missing,
             "known_runtime_blockers": [
                 "FoundPose representations for four keys and socket",
-                "replacement of insertion-rejected candidate table/0/78 with a whole-hand-safe insertion grasp",
+                "continuous planning, simulation, and physical validation of the 20 sampled pose-004 candidates",
+                "validated robot reorientation primitive for tabletop poses 000--003",
                 "accepted per-session socket pose measurement",
                 "PASS AutoDex camera/calibration/hardware-sync/hand-eye audit",
                 "commissioned insertion controllers and safety thresholds",
