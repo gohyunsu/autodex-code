@@ -72,7 +72,9 @@ contract:
 - `processed_data/mesh/simplified.obj` is the planning/simulation mesh;
 - `processed_data/urdf/coacd.urdf` references a conservative convex piece;
 - `simplified.json` records CoM, OBB, mass proxy, and scale;
-- `tabletop/*.npy` stores five controlled stable poses (tip-down is excluded);
+- `tabletop/*.npy` stores five controlled full-key stable poses (tip-down is
+  excluded); every handle-only proposal proxy copies those same poses rather
+  than recomputing poses from its box-only geometry;
 - `AutoDex/scene/inspire/<object>/table/*.json` binds those poses to BODex.
 
 The key frame is fixed across all gaps: `+z` runs from the handle rear toward
@@ -198,6 +200,9 @@ bash scripts/precision_insertion/setup_visualization_env.sh
 
 The renderer needs headless EGL/OpenGL access. A successful 3D planning run
 does not imply that EGL is available inside a container or restricted shell.
+The original-mesh presentation renderer additionally requires Blender on
+`PATH` (tested with Blender 2.93.18); it uses Blender Workbench headlessly and
+does not require the planning Conda environment.
 
 ## Build and validate geometry
 
@@ -374,35 +379,83 @@ an edge on the lateral faces, while the palm moves behind the rear face and
 away from the shaft/socket. This is a proposal symmetry, not a claim that the
 derived grasp has passed BODex or MuJoCo again.
 
-The current tabletop scene-0 grasps approach from the shaft side. Moving those
-grasps behind the rear face makes the hand collide with a flat tabletop for all
-five currently generated stable poses. Therefore a single fixed grasp cannot
-honestly cover both the existing flat-table pickup and insertion. The following
-preview starts with the key rear-face-up in a second staging socket, then shows
-approach, handle-only closure, extraction, an additional 10 cm lift, transfer,
-and insertion into the target socket:
+The old fixture-to-fixture preview is not the task setup: the key starts on the
+table, not in a staging socket. The handle proxy now exposes all five stable
+poses inherited from the full key. Generate proposals for every scene with:
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  src/grasp_generation/BODex/generate.py \
+  -c sim_inspire/precision_insertion.yml -w 1 \
+  --obj_list_file assets/precision_insertion/bodex_handle_proxy_objects.txt \
+  --obj_root_dir ~/shared_data/object_processing \
+  --scene_filter_file assets/precision_insertion/bodex_tabletop_all_scene_filter.json \
+  --exp_name precision_insertion_tabletop_v1 --seed_num 1000 \
+  --grasp_threshold 0.2 --distance_threshold 0.01 \
+  -o ~/shared_data/AutoDex/bodex_raw/inspire/precision_insertion_tabletop_v1
+```
+
+Screen each scene against the real 1.5 mm key policy. Existing output must be
+moved with an explicit `--replace-backup`; this example assumes a fresh output
+root:
+
+```bash
+for scene_id in 0 1 2 3 4; do
+  ~/miniconda3/envs/autodex_bodex/bin/python \
+    scripts/precision_insertion/filter_contact_safe_grasps.py \
+    --raw-scene ~/shared_data/AutoDex/bodex_raw/inspire/precision_insertion_tabletop_v1/precision_key_handle_contact_proxy/table/$scene_id \
+    --output-scene ~/shared_data/AutoDex/contact_screen_staging/inspire/precision_insertion_tabletop_v1/precision_key_1p5mm/table/$scene_id \
+    --contact-policy ~/shared_data/object_processing/precision_key_1p5mm/processed_data/info/contact_regions.json
+done
+```
+
+The current deterministic selection is `0/346`, `1/403`, `2/511`, `3/27`,
+and `4/290`. The builder rechecks the complete Inspire visual mesh against the
+allowed contact surfaces and samples key/table, hand/table, key/socket, and
+hand/socket distances at every frame:
 
 ```bash
 PYTHONPATH=scripts/precision_insertion ~/.venvs/autodex-viz/bin/python \
-  scripts/precision_insertion/build_fixture_to_fixture_success_preview.py
+  scripts/precision_insertion/build_tabletop_pose_animation_set.py \
+  --pose-id all --collision-samples 12000 --policy-samples-per-link 20000
 
-PYOPENGL_PLATFORM=egl ~/.venvs/autodex-viz/bin/python \
-  scripts/precision_insertion/render_insertion_reachability_preview.py \
-  ~/shared_data/AutoDex/precision_insertion/visualizations/insertion_safe_rear_grasp_success_preview.npz \
-  --output ~/shared_data/AutoDex/precision_insertion/visualizations/insertion_safe_rear_grasp_success_preview.mp4
+for pose_id in 000 001 002 003 004; do
+  ~/.venvs/autodex-viz/bin/python \
+    scripts/precision_insertion/prepare_blender_actual_mesh_animation.py \
+    ~/shared_data/AutoDex/precision_insertion/visualizations/tabletop_pose_set/tabletop_${pose_id}_to_insertion_preview.npz
 
-~/.venvs/autodex-viz/bin/python \
-  scripts/precision_insertion/view_insertion_reachability_preview.py \
-  ~/shared_data/AutoDex/precision_insertion/visualizations/insertion_safe_rear_grasp_success_preview.npz \
-  --port 8088
+  blender --background \
+    --python scripts/precision_insertion/render_blender_actual_mesh_animation.py \
+    -- \
+    ~/shared_data/AutoDex/precision_insertion/visualizations/tabletop_pose_set/tabletop_${pose_id}_to_insertion_preview_blender_bundle.npz \
+    --output ~/shared_data/AutoDex/precision_insertion/visualizations/tabletop_pose_set/tabletop_${pose_id}_to_insertion_task_view_actual_mesh.mp4 \
+    --view task --width 960 --height 540 --fps 20
+done
 ```
 
-The resulting green-labelled animation is a **sampled geometric success**: the
-actual meshes satisfy the declared/whole-hand contact policy, sampled table and
-socket checks, waypoint IK, and the final CAD pose. It is still not a cuRobo
-continuous plan or physical success. The preceding tabletop-to-staging motion
-remains a separate regrasp problem and is intentionally absent rather than
-shown as a fake one-grasp success.
+The preparation step exports all 41 original URDF visual geometries once and
+stores only their per-frame transforms in each bundle. The current FR3/Inspire
+model contains 479,710 robot visual-mesh faces; the Blender path does not apply
+the 7,000-face decimation used by the fast Matplotlib diagnostic renderer.
+It is therefore the presentation renderer, not a segmentation visualization.
+The blue key begins at the requested stable tabletop pose and the red socket
+stays at the fixed task pose.
+
+`--view task` is the default and deliberately gives the key, socket, and
+Inspire contact geometry priority over proximal Franka links. It uses a fixed
+camera that contains the full key-to-socket workspace, including the 12 cm
+lift, so relative motion remains visually comparable across poses. Use
+`--view overview` only when the full arm configuration is more important.
+Both views omit captions, progress bars, goal ghosts, axes, and inset panels.
+For a quick diagnostic without Blender, the older renderer remains available
+with `--clean`; its `--robot-faces` budget is a decimated display mesh.
+
+Poses 002 and 004 keep their pickup grasp and use arm/wrist reorientation; their
+reports pass the sampled geometric checks. Poses 000, 001, and 003 require a
+transition to the common insertion-safe grasp. Their animation shows the
+desired high-clearance in-hand transition, but the report deliberately marks
+it unvalidated. None of the five is yet a continuous cuRobo plan, MuJoCo grasp
+stability result, contact-search controller execution, or physical success.
 
 For a close hand/key still or turntable, reuse the generic mesh renderer:
 

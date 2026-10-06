@@ -82,6 +82,20 @@ def _triangles(mesh: trimesh.Trimesh) -> np.ndarray:
     return np.asarray(mesh.vertices)[np.asarray(mesh.faces)]
 
 
+def _shaded_facecolors(
+    mesh: trimesh.Trimesh,
+    color: tuple[float, float, float],
+    alpha: float,
+) -> np.ndarray:
+    """Return simple Lambert-shaded RGBA colors for an actual triangle mesh."""
+    normals = np.asarray(mesh.face_normals, dtype=np.float64)
+    light = np.asarray([0.35, -0.45, 0.82], dtype=np.float64)
+    light /= np.linalg.norm(light)
+    intensity = 0.42 + 0.58 * np.clip(normals @ light, 0.0, 1.0)
+    rgb = np.clip(intensity[:, None] * np.asarray(color)[None, :], 0.0, 1.0)
+    return np.column_stack([rgb, np.full(len(rgb), alpha)])
+
+
 def _render_cpu(
     output: Path,
     robot: trimesh.Trimesh,
@@ -92,18 +106,18 @@ def _render_cpu(
     *,
     collision: bool,
     closeup: bool,
+    show_goal: bool,
     width: int,
     height: int,
 ) -> None:
     figure = plt.figure(figsize=(width / 100.0, height / 100.0), dpi=100)
     axis = figure.add_subplot(111, projection="3d")
-    collections = (
+    collections = [
         # Matplotlib sorts each Poly3D collection as one unit, so a translucent
         # table preserves the robot view instead of incorrectly painting the
         # whole tabletop over links that are physically above it.
         (table, (0.48, 0.50, 0.53), 0.13),
         (socket, (0.64, 0.05, 0.04), 1.0),
-        (seated_ghost, (0.10, 0.78, 0.24), 0.24),
         (
             robot,
             (0.92, 0.14, 0.12) if collision else
@@ -111,10 +125,14 @@ def _render_cpu(
             1.0,
         ),
         (key, (0.08, 0.35, 0.88), 1.0),
-    )
+    ]
+    if show_goal:
+        collections.insert(2, (seated_ghost, (0.10, 0.78, 0.24), 0.24))
     for mesh, color, alpha in collections:
         poly = Poly3DCollection(
-            _triangles(mesh), facecolor=color, edgecolor="none",
+            _triangles(mesh),
+            facecolors=_shaded_facecolors(mesh, color, alpha),
+            edgecolor="none",
             linewidth=0.0, alpha=alpha,
         )
         axis.add_collection3d(poly)
@@ -130,19 +148,24 @@ def _render_cpu(
         inset = figure.add_axes([0.665, 0.085, 0.315, 0.43], projection="3d")
         centre = np.asarray(key.centroid)
         radius = 0.18
-        local_collections = (
+        local_collections = [
             (socket, (0.64, 0.05, 0.04), 1.0),
-            (seated_ghost, (0.10, 0.78, 0.24), 0.20),
             (robot, (0.92, 0.14, 0.12) if collision else (0.38, 0.41, 0.48), 1.0),
             (key, (0.08, 0.35, 0.88), 1.0),
-        )
+        ]
+        if show_goal:
+            local_collections.insert(
+                1, (seated_ghost, (0.10, 0.78, 0.24), 0.20)
+            )
         for mesh, color, alpha in local_collections:
             triangles = _triangles(mesh)
             keep = np.linalg.norm(triangles.mean(axis=1) - centre, axis=1) < radius
             if not np.any(keep):
                 continue
             inset.add_collection3d(Poly3DCollection(
-                triangles[keep], facecolor=color, edgecolor="none",
+                triangles[keep],
+                facecolors=_shaded_facecolors(mesh, color, alpha)[keep],
+                edgecolor="none",
                 linewidth=0.0, alpha=alpha,
             ))
         extent = 0.13
@@ -217,6 +240,10 @@ def main() -> int:
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--robot-faces", type=int, default=10000)
     parser.add_argument("--keep-frames", type=Path)
+    parser.add_argument(
+        "--clean", action="store_true",
+        help="render only the meshes: no text, progress bar, goal ghost, or inset",
+    )
     args = parser.parse_args()
 
     source = args.trajectory.expanduser().resolve()
@@ -275,13 +302,17 @@ def main() -> int:
             _render_cpu(
                 frame, robot, key, socket, table, seated_ghost,
                 collision=bool(collision),
-                closeup=preview_kind == "sampled_geometric_success",
+                closeup=(
+                    preview_kind == "sampled_geometric_success" and not args.clean
+                ),
+                show_goal=not args.clean,
                 width=args.width, height=args.height,
             )
-            _caption(
-                frame, phase, bool(collision), index, len(qpos),
-                preview_kind=preview_kind,
-            )
+            if not args.clean:
+                _caption(
+                    frame, phase, bool(collision), index, len(qpos),
+                    preview_kind=preview_kind,
+                )
             if index % 20 == 0 or index + 1 == len(qpos):
                 print(f"rendered {index + 1}/{len(qpos)}", flush=True)
 
