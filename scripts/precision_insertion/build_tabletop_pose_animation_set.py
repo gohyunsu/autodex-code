@@ -297,12 +297,25 @@ def _direct_segments(
 
 
 def _declared_contacts(candidate_dir: Path, key_to_hand: np.ndarray) -> list[list[float]]:
-    data = np.load(candidate_dir / "bodex_info.npy", allow_pickle=True).item()
-    raw = np.asarray(data["contact_point"])
-    contacts = np.asarray(raw, dtype=np.float64).reshape(-1, raw.shape[-1])[:, :3]
-    source = np.load(candidate_dir / "wrist_se3.npy")
-    derived = key_to_hand @ np.linalg.inv(source)
-    return _transform_points(derived, contacts).tolist()
+    contact_screen_path = candidate_dir / "contact_screen.json"
+    if contact_screen_path.is_file():
+        # BODex serializes ``contact_point`` in the scene/world frame.  The
+        # contact-screen stage is the authority that converts those samples
+        # through the scene target pose into the object's canonical frame.
+        # Re-reading the raw array here would silently make the contact gate
+        # depend on the tabletop orientation.
+        contact_screen = json.loads(contact_screen_path.read_text(encoding="utf-8"))
+        contacts = np.asarray(
+            contact_screen["object_contacts_m"], dtype=np.float64
+        ).reshape(-1, 3)
+        source = np.load(candidate_dir / "wrist_se3.npy")
+        derived = key_to_hand @ np.linalg.inv(source)
+        return _transform_points(derived, contacts).tolist()
+
+    raise FileNotFoundError(
+        f"missing object-frame contact_screen.json: {candidate_dir}; "
+        "run filter_contact_safe_grasps.py with --scene-json first"
+    )
 
 
 def _inspect_grasp(

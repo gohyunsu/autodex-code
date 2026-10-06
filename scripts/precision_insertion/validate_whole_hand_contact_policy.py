@@ -118,9 +118,21 @@ def _declared_contact_check(
     policy: dict[str, Any],
     symmetry: np.ndarray,
 ) -> dict[str, Any]:
-    data = np.load(candidate_dir / "bodex_info.npy", allow_pickle=True).item()
-    contacts = np.asarray(data["contact_point"], dtype=np.float64)
-    contacts = contacts.reshape(-1, contacts.shape[-1])[:, :3]
+    # Curated candidates carry object-frame contacts computed from the source
+    # scene pose.  Raw BODex ``contact_point`` is scene/world-frame and must not
+    # be reinterpreted as object-frame for a rotated tabletop pose.
+    contact_screen_path = candidate_dir / "contact_screen.json"
+    if contact_screen_path.is_file():
+        contact_screen = json.loads(contact_screen_path.read_text(encoding="utf-8"))
+        contacts = np.asarray(
+            contact_screen["object_contacts_m"], dtype=np.float64
+        ).reshape(-1, 3)
+        source = "contact_screen.object_contacts_m"
+    else:
+        data = np.load(candidate_dir / "bodex_info.npy", allow_pickle=True).item()
+        contacts = np.asarray(data["contact_point"], dtype=np.float64)
+        contacts = contacts.reshape(-1, contacts.shape[-1])[:, :3]
+        source = "legacy_raw_bodex_contact_point_identity_assumed"
     transformed = (
         (symmetry[:3, :3] @ contacts.T).T + symmetry[:3, 3]
     )
@@ -141,6 +153,7 @@ def _declared_contact_check(
         "transformed_object_contacts_m": transformed.tolist(),
         "regions": regions,
         "edge_margin_mm": float(policy["allowed"]["edge_margin_m"]) * 1000.0,
+        "source": source,
     }
 
 

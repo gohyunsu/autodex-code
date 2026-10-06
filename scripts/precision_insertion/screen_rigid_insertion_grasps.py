@@ -146,6 +146,7 @@ def _environment_report(
         }
 
     socket: dict[str, Any] = {}
+    insertion_table: dict[str, Any] = {}
     for phase in ("preinsert", "seated"):
         socket_to_key = np.asarray(
             geometry[f"T_socket_key_{phase}"], dtype=np.float64
@@ -159,14 +160,25 @@ def _environment_report(
                 distance < -penetration_threshold_m
             )),
         }
+        insertion_table[phase] = {
+            "minimum_z_mm": float(socket_points[:, 2].min() * 1000.0),
+            "below_table_samples": int(np.count_nonzero(
+                socket_points[:, 2] < -penetration_threshold_m
+            )),
+        }
 
     passed = (
         all(item["below_table_samples"] == 0 for item in table.values())
         and all(item["penetrating_samples"] == 0 for item in socket.values())
+        and all(
+            item["below_table_samples"] == 0
+            for item in insertion_table.values()
+        )
     )
     return {
         "passed": passed,
-        "table": table,
+        "tabletop_table": table,
+        "insertion_table": insertion_table,
         "socket": socket,
     }
 

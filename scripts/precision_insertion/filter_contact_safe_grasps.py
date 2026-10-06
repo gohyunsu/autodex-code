@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 
 REQUIRED_FILES = (
@@ -66,6 +67,7 @@ def inspect_candidate(
     *,
     max_grasp_error: float,
     max_contact_distance: float,
+    object_pose_world: np.ndarray | None = None,
 ) -> dict[str, Any]:
     missing = [name for name in REQUIRED_FILES if not (candidate_dir / name).is_file()]
     if missing:
@@ -92,7 +94,17 @@ def inspect_candidate(
     contacts = np.asarray(data.get("contact_point"), dtype=np.float64)
     if contacts.size == 0 or contacts.shape[-1] < 3:
         return {"accepted": False, "reason": "invalid_contact_points"}
-    object_contacts = contacts.reshape(-1, contacts.shape[-1])[:, :3]
+    source_contacts = contacts.reshape(-1, contacts.shape[-1])[:, :3]
+    if object_pose_world is None:
+        object_contacts = source_contacts
+        contact_frame_conversion = "identity_assumed_for_legacy_caller"
+    else:
+        world_to_object = np.linalg.inv(object_pose_world)
+        object_contacts = (
+            (world_to_object[:3, :3] @ source_contacts.T).T
+            + world_to_object[:3, 3]
+        )
+        contact_frame_conversion = "T_object_world @ p_world"
 
     handle_z = policy["handle_z_range"]
     margin = float(policy["allowed"]["edge_margin_m"])
@@ -113,8 +125,10 @@ def inspect_candidate(
         return {
             "accepted": False,
             "reason": "forbidden_or_edge_contact",
+            "source_contacts_world_m": source_contacts.tolist(),
             "object_contacts_m": object_contacts.tolist(),
             "regions": regions,
+            "contact_frame_conversion": contact_frame_conversion,
         }
 
     return {
@@ -122,6 +136,8 @@ def inspect_candidate(
         "reason": "contact_and_quality_screened",
         "object_contacts_m": object_contacts.tolist(),
         "regions": regions,
+        "source_contacts_world_m": source_contacts.tolist(),
+        "contact_frame_conversion": contact_frame_conversion,
         "quality": quality,
         "solver_thresholds": data.get("solver_thresholds", {}),
     }
@@ -147,6 +163,13 @@ def main() -> int:
     parser.add_argument("--output-scene", type=Path, required=True)
     parser.add_argument("--contact-policy", type=Path, required=True)
     parser.add_argument(
+        "--scene-json", type=Path, required=True,
+        help=(
+            "BODex scene that produced the candidates; saved contact points "
+            "are in scene/world frame and are never safe to reinterpret directly"
+        ),
+    )
+    parser.add_argument(
         "--max-grasp-error",
         type=float,
         default=0.2,
@@ -168,10 +191,13 @@ def main() -> int:
     raw_scene = args.raw_scene.expanduser().resolve()
     output_scene = args.output_scene.expanduser().resolve()
     policy_path = args.contact_policy.expanduser().resolve()
+    scene_path = args.scene_json.expanduser().resolve()
     if not raw_scene.is_dir():
         parser.error(f"raw scene does not exist: {raw_scene}")
     if not policy_path.is_file():
         parser.error(f"contact policy does not exist: {policy_path}")
+    if not scene_path.is_file():
+        parser.error(f"scene JSON does not exist: {scene_path}")
 
     if output_scene.exists():
         if args.replace_backup is None:
@@ -183,6 +209,23 @@ def main() -> int:
         output_scene.rename(backup)
 
     policy = _load_json(policy_path)
+    scene = _load_json(scene_path)
+    mesh = scene["scene"]["mesh"]
+    target = mesh.get("target")
+    if target is None:
+        if len(mesh) != 1:
+            parser.error(
+                f"cannot identify target mesh in scene: {scene_path}"
+            )
+        target = next(iter(mesh.values()))
+    pose = np.asarray(target["pose"], dtype=np.float64)
+    if pose.shape != (7,):
+        parser.error(f"target pose must be xyz+wxyz: {scene_path}")
+    object_pose_world = np.eye(4, dtype=np.float64)
+    object_pose_world[:3, 3] = pose[:3]
+    object_pose_world[:3, :3] = Rotation.from_quat(
+        [pose[4], pose[5], pose[6], pose[3]]
+    ).as_matrix()
     candidates = _candidate_dirs(raw_scene)
     output_scene.mkdir(parents=True)
 
@@ -194,6 +237,7 @@ def main() -> int:
             policy,
             max_grasp_error=args.max_grasp_error,
             max_contact_distance=args.max_contact_distance,
+            object_pose_world=object_pose_world,
         )
         if result["accepted"]:
             destination = output_scene / candidate.name
@@ -212,6 +256,8 @@ def main() -> int:
         "raw_scene": str(raw_scene),
         "output_scene": str(output_scene),
         "contact_policy": str(policy_path),
+        "scene_json": str(scene_path),
+        "bodex_contact_point_frame": "scene_world_transformed_to_object",
         "total_candidates": len(candidates),
         "accepted_count": len(accepted),
         "rejection_counts": rejection_counts,

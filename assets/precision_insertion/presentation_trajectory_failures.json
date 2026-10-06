@@ -1,6 +1,7 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "tabletop_pose_id": "004",
+  "status": "all_corrected_contact_policy_passes_rejected_by_task_geometry",
   "fixed_task_conditions": {
     "key_xy_m": [0.4, 0.18],
     "key_yaw_deg": 0.0,
@@ -9,43 +10,16 @@
     "maximum_ik_translation_error_mm": 0.75,
     "maximum_ik_rotation_error_deg": 0.75
   },
-  "rejected_after_static_prefilter": [
-    {
-      "candidate": "27931",
-      "waypoint": 7,
-      "translation_error_mm": 0.943,
-      "rotation_error_deg": 1.063
-    },
-    {
-      "candidate": "31714",
-      "waypoint": 9,
-      "translation_error_mm": 1.425,
-      "rotation_error_deg": 1.568
-    },
-    {
-      "candidate": "31807",
-      "waypoint": 7,
-      "translation_error_mm": 0.950,
-      "rotation_error_deg": 1.059
-    },
-    {
-      "candidate": "32295",
-      "waypoint": 5,
-      "translation_error_mm": 1.379,
-      "rotation_error_deg": 1.569
-    },
-    {
-      "candidate": "32857",
-      "waypoint": 8,
-      "translation_error_mm": 1.225,
-      "rotation_error_deg": 1.354
-    },
-    {
-      "candidate": "37944",
-      "waypoint": 7,
-      "translation_error_mm": 1.204,
-      "rotation_error_deg": 1.365
-    }
+  "rejected_after_contact_policy": [
+    {"candidate": "40", "seated_hand_minimum_z_mm": -13.692, "below_table_samples": 43},
+    {"candidate": "383", "seated_hand_minimum_z_mm": -9.990, "below_table_samples": 29},
+    {"candidate": "6910", "seated_hand_minimum_z_mm": -10.587, "below_table_samples": 31},
+    {"candidate": "21601", "seated_hand_minimum_z_mm": -22.762, "below_table_samples": 106},
+    {"candidate": "21771", "seated_hand_minimum_z_mm": -22.512, "below_table_samples": 104},
+    {"candidate": "26729", "seated_hand_minimum_z_mm": -25.714, "below_table_samples": 123},
+    {"candidate": "26765", "seated_hand_minimum_z_mm": -23.046, "below_table_samples": 108},
+    {"candidate": "36889", "seated_hand_minimum_z_mm": -22.587, "below_table_samples": 104},
+    {"candidate": "46925", "seated_hand_minimum_z_mm": -16.320, "below_table_samples": 60}
   ],
-  "interpretation": "Static contact and clearance are necessary but not sufficient; these candidates are not presentation successes and are excluded without changing task placement or tolerances."
+  "interpretation": "The handle-only contact policy is necessary but insufficient. These grasps rotate the palm/fingers underneath the table at insertion and cannot be used by the rigid pick-to-insert pipeline."
 }

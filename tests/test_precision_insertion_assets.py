@@ -72,6 +72,54 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
         self.assertIsNone(region(np.array([0.010, 0.0, 0.070]), **kwargs))
         self.assertIsNone(region(np.array([0.0195, 0.0155, 0.020]), **kwargs))
 
+    def test_contact_filter_converts_bodex_world_contacts_to_object_frame(self):
+        policy = {
+            "handle_z_range": [0.0, 0.045],
+            "handle_half_extents_xy_m": [0.0195, 0.0165],
+            "allowed": {
+                "edge_margin_m": 0.002,
+                "plane_tolerance_m": 0.001,
+            },
+        }
+        object_pose = np.eye(4)
+        object_pose[:3, 3] = [0.4, -0.2, 0.1]
+        canonical = np.asarray([
+            [0.0195, 0.0, 0.020],
+            [-0.0195, 0.0, 0.022],
+        ])
+        world = canonical + object_pose[:3, 3]
+        with tempfile.TemporaryDirectory() as directory:
+            candidate = Path(directory)
+            np.save(candidate / "wrist_se3.npy", np.eye(4))
+            np.save(candidate / "pregrasp_pose.npy", np.zeros(12))
+            np.save(candidate / "grasp_pose.npy", np.zeros(12))
+            np.save(candidate / "bodex_info.npy", {
+                "contact_point": world,
+                "grasp_error": np.zeros(2),
+                "dist_error": np.zeros(2),
+                "success": True,
+            })
+            corrected = contact_filter.inspect_candidate(
+                candidate,
+                policy,
+                max_grasp_error=0.2,
+                max_contact_distance=0.01,
+                object_pose_world=object_pose,
+            )
+            legacy = contact_filter.inspect_candidate(
+                candidate,
+                policy,
+                max_grasp_error=0.2,
+                max_contact_distance=0.01,
+            )
+        self.assertTrue(corrected["accepted"])
+        self.assertEqual(
+            corrected["contact_frame_conversion"],
+            "T_object_world @ p_world",
+        )
+        self.assertTrue(np.allclose(corrected["object_contacts_m"], canonical))
+        self.assertFalse(legacy["accepted"])
+
     def test_full_build_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -221,7 +269,7 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
             ["representative_class_may_replace_pose_for_planning"]
         )
 
-    def test_presentation_candidate_set_has_20_distinct_native_ids(self):
+    def test_presentation_candidate_set_fails_closed_after_frame_fix(self):
         candidate_set = json.loads(
             (REPO_ROOT / "assets/precision_insertion/"
              "presentation_candidate_set.json").read_text(encoding="utf-8")
@@ -229,13 +277,23 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
         selected = candidate_set["selected_candidate_ids"]
         reserve = candidate_set["reserve_candidate_ids"]
         self.assertEqual(candidate_set["tabletop_pose_id"], "004")
-        self.assertEqual(len(selected), 20)
-        self.assertEqual(len(set(selected)), 20)
-        self.assertFalse(set(selected) & set(reserve))
-        self.assertGreaterEqual(
-            candidate_set["screening_evidence"]["sampled_prefilter_passed"],
-            len(selected) + len(reserve),
+        self.assertEqual(selected, [])
+        self.assertEqual(reserve, [])
+        evidence = candidate_set["screening_evidence"]
+        self.assertEqual(evidence["raw_bodex_proposals"], 51000)
+        self.assertEqual(evidence["contact_and_quality_candidates"], 54)
+        self.assertEqual(
+            evidence["sampled_whole_hand_contact_policy_passed"], 9
         )
+        self.assertEqual(evidence["sampled_task_prefilter_passed"], 0)
+        self.assertEqual(evidence["sampled_full_trajectory_passed"], 0)
+        self.assertEqual(
+            evidence["contact_point_frame"],
+            "scene_world_transformed_to_object",
+        )
+        policy_passes = candidate_set["contact_policy_pass_candidate_ids"]
+        self.assertEqual(len(policy_passes), 9)
+        self.assertEqual(len(set(policy_passes)), 9)
         failures = json.loads(
             (REPO_ROOT / "assets/precision_insertion/"
              "presentation_trajectory_failures.json").read_text(
@@ -244,9 +302,9 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
         )
         rejected = {
             item["candidate"]
-            for item in failures["rejected_after_static_prefilter"]
+            for item in failures["rejected_after_contact_policy"]
         }
-        self.assertFalse(set(selected) & rejected)
+        self.assertEqual(set(policy_passes), rejected)
 
 
 if __name__ == "__main__":

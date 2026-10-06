@@ -1,44 +1,35 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "object": "precision_key_1p5mm",
   "tabletop_pose_id": "004",
-  "requested_count": 20,
-  "selection_rule": "20 distinct native candidate IDs passing the corrected sampled full-hand contact, table/socket prefilter, numerical IK, rigid-attachment, and 118-frame sampled environment preview",
-  "selected_candidate_ids": [
-    "260",
-    "290",
-    "7398",
-    "7547",
-    "16279",
-    "16781",
-    "21268",
-    "21716",
-    "22352",
-    "22396",
-    "26240",
-    "31258",
-    "31336",
-    "36188",
-    "36200",
-    "36263",
-    "37454",
-    "37649",
-    "41340",
-    "41389"
-  ],
-  "reserve_candidate_ids": [
-    "41443",
-    "42883",
-    "46277",
-    "47771"
+  "requested_count_per_success_pose": 20,
+  "selection_rule": "distinct native BODex candidates passing object-frame declared contacts, sampled whole-hand contact policy, insertion-pose table/socket clearance, rigid attachment, numerical IK, and the complete sampled task preview",
+  "selected_candidate_ids": [],
+  "reserve_candidate_ids": [],
+  "contact_policy_pass_candidate_ids": [
+    "40",
+    "383",
+    "6910",
+    "21601",
+    "21771",
+    "26729",
+    "26765",
+    "36889",
+    "46925"
   ],
   "screening_evidence": {
     "raw_bodex_proposals": 51000,
-    "sparse_contact_and_quality_candidates": 62,
-    "sampled_prefilter_passed": 30,
-    "report": "~/shared_data/AutoDex/precision_insertion/rigid_insertion_grasp_screen_table_004_51000.json"
+    "contact_and_quality_candidates": 54,
+    "sampled_whole_hand_contact_policy_passed": 9,
+    "sampled_task_prefilter_passed": 0,
+    "sampled_full_trajectory_passed": 0,
+    "report": "~/shared_data/AutoDex/precision_insertion/rigid_insertion_grasp_screen_table_004_frame_fixed_51000.json",
+    "contact_point_frame": "scene_world_transformed_to_object"
   },
+  "shortfall_reason": "All nine contact-policy passes place part of the Inspire hand below the table at the CAD seated insertion pose.",
+  "deprecated_pre_frame_fix_selection": "~/shared_data/AutoDex/precision_insertion/presentation_assets/audit/deprecated_pre_contact_frame_fix/04_planning/pose_004/grasps",
   "non_claims": [
+    "a contact-policy pass is not a task-plan pass",
     "not a continuous cuRobo collision proof",
     "not a MuJoCo grasp-stability result",
     "not a physical grasp or insertion success label"
