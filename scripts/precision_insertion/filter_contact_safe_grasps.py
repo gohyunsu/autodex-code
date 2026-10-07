@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Curate BODex grasps that obey the precision-key contact policy.
+"""Curate numerically valid BODex grasps and optionally enforce contact policy.
 
 This is a declared-contact and numerical-quality screen, not a whole-hand
 collision or physical-success label. A grasp is copied only when its BODex
 errors meet explicit thresholds and every object-side declared fingertip
 contact lies on a permitted handle face with the configured edge margin. The
 final candidate still requires full-hand, reachability, and physical checks.
+
+``--contact-policy-mode report-only`` is an explicit ablation mode.  It uses
+the same full-key BODex quality thresholds and records the regions of the
+declared contacts, but it does not reject shaft, front, or edge contacts.
+It must not be confused with collision or physical validation.
 """
 
 from __future__ import annotations
@@ -94,7 +99,12 @@ def inspect_candidate(
     max_grasp_error: float,
     max_contact_distance: float,
     object_pose_world: np.ndarray | None = None,
+    contact_policy_mode: str = "enforce",
 ) -> dict[str, Any]:
+    if contact_policy_mode not in {"enforce", "report-only"}:
+        raise ValueError(
+            "contact_policy_mode must be 'enforce' or 'report-only'"
+        )
     missing = [name for name in REQUIRED_FILES if not (candidate_dir / name).is_file()]
     if missing:
         return {"accepted": False, "reason": "missing_files", "missing": missing}
@@ -149,7 +159,8 @@ def inspect_candidate(
         )
         for point in object_contacts
     ]
-    if any(region is None for region in regions):
+    violates_policy = any(region is None for region in regions)
+    if violates_policy and contact_policy_mode == "enforce":
         return {
             "accepted": False,
             "reason": "forbidden_or_edge_contact",
@@ -161,7 +172,13 @@ def inspect_candidate(
 
     return {
         "accepted": True,
-        "reason": "contact_and_quality_screened",
+        "reason": (
+            "contact_and_quality_screened"
+            if contact_policy_mode == "enforce"
+            else "quality_screened_contact_policy_report_only"
+        ),
+        "contact_policy_mode": contact_policy_mode,
+        "declared_contacts_obey_policy": not violates_policy,
         "object_contacts_m": object_contacts.tolist(),
         "regions": regions,
         "source_contacts_world_m": source_contacts.tolist(),
@@ -208,6 +225,16 @@ def main() -> int:
         type=float,
         default=0.01,
         help="maximum mean absolute contact distance in metres (default: 0.01)",
+    )
+    parser.add_argument(
+        "--contact-policy-mode",
+        choices=("enforce", "report-only"),
+        default="enforce",
+        help=(
+            "enforce rejects declared contacts outside the permitted handle "
+            "faces; report-only records the same classification but accepts "
+            "on numerical quality alone"
+        ),
     )
     parser.add_argument(
         "--replace-backup",
@@ -266,6 +293,7 @@ def main() -> int:
             max_grasp_error=args.max_grasp_error,
             max_contact_distance=args.max_contact_distance,
             object_pose_world=object_pose_world,
+            contact_policy_mode=args.contact_policy_mode,
         )
         if result["accepted"]:
             destination = output_scene / candidate.name
@@ -280,10 +308,15 @@ def main() -> int:
 
     report = {
         "schema_version": 1,
-        "status": "contact_and_quality_screened_not_collision_or_physical_validated",
+        "status": (
+            "contact_and_quality_screened_not_collision_or_physical_validated"
+            if args.contact_policy_mode == "enforce"
+            else "quality_screened_contact_policy_not_enforced"
+        ),
         "raw_scene": str(raw_scene),
         "output_scene": str(output_scene),
         "contact_policy": str(policy_path),
+        "contact_policy_mode": args.contact_policy_mode,
         "scene_json": str(scene_path),
         "bodex_contact_point_frame": "scene_world_transformed_to_object",
         "total_candidates": len(candidates),
@@ -291,7 +324,12 @@ def main() -> int:
         "rejection_counts": rejection_counts,
         "accepted": accepted,
         "required_next_checks": [
-            "render or inspect the full Inspire hand against contact_forbidden.obj",
+            (
+                "render or inspect the full Inspire hand against the full key; "
+                "object-side contact regions are diagnostic only"
+                if args.contact_policy_mode == "report-only"
+                else "render or inspect the full Inspire hand against contact_forbidden.obj"
+            ),
             "run robot reachability and environment collision preflight",
             "physically validate grasp and lift on the 1.5 mm key",
             "physically validate insertion clearance before marking trusted",

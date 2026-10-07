@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "experiment": "unconstrained_contact_ablation_20mm_10k",
+  "purpose": "Measure whether the six-surface object-side contact policy removes grasps that can still clear the socket through the primary insertion depth.",
+  "object": "precision_key_1p5mm",
+  "tabletop_pose_id": "004",
+  "proposal_target_geometry": "full key mesh",
+  "proposal_count": 10000,
+  "proposal_batches": [
+    {
+      "seed": 2026100701,
+      "seed_offset": 0,
+      "seed_num": 5000
+    },
+    {
+      "seed": 2026100702,
+      "seed_offset": 5000,
+      "seed_num": 5000
+    }
+  ],
+  "primary_insertion_depth_m": 0.02,
+  "contact_policy": {
+    "mode": "report-only during declared-contact quality staging, disabled during coarse task screen",
+    "not_enforced": [
+      "five handle lateral faces",
+      "handle rear face",
+      "2 mm edge margin",
+      "shaft/front contact exclusion"
+    ]
+  },
+  "still_enforced": [
+    "BODex numerical grasp and contact-distance thresholds",
+    "full key target geometry during proposal generation",
+    "table clearance at pregrasp and grasp",
+    "hand/socket clearance at preinsert, entry, and 20 mm verification",
+    "insertion-table clearance"
+  ],
+  "not_claimed": [
+    "continuous cuRobo trajectory feasibility",
+    "full-key or hand dynamics in MuJoCo",
+    "grasp/lift stability",
+    "physical insertion success"
+  ],
+  "raw_scene": "~/shared_data/AutoDex/bodex_raw/inspire/precision_insertion_unconstrained_20mm_10k/precision_key_1p5mm/table/4",
+  "quality_staging_scene": "~/shared_data/AutoDex/contact_screen_staging/inspire/precision_insertion_unconstrained_20mm_10k/precision_key_1p5mm/table/4",
+  "coarse_screen_report": "~/shared_data/AutoDex/precision_insertion/experiments/unconstrained_20mm_10k/coarse_task_screen_pose_004.json"
+}

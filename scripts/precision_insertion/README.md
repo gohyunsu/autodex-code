@@ -489,6 +489,48 @@ mode rather than invalidating the five primary-task candidates. The earlier
 20 videos remain only under
 `presentation_assets/audit/deprecated_pre_contact_frame_fix/`.
 
+### Unconstrained-contact 10k ablation
+
+The handle-only six-surface rule is a task prior, not a BODex requirement. To
+test whether it is over-constraining, generate against the **full 1.5 mm key**
+and treat the old contact regions as labels rather than a rejection gate. The
+primary target remains the same 20 mm verification depth. This does not mean
+"turn off collision": table and socket clearance remain mandatory.
+
+The reproducible seeds and scope are recorded in
+`assets/precision_insertion/unconstrained_contact_ablation_20mm_10k.json`.
+After generating its two 5,000-proposal batches, stage numerical-quality
+candidates with:
+
+```bash
+python scripts/precision_insertion/filter_contact_safe_grasps.py \
+  --raw-scene ~/shared_data/AutoDex/bodex_raw/inspire/precision_insertion_unconstrained_20mm_10k/precision_key_1p5mm/table/4 \
+  --output-scene ~/shared_data/AutoDex/contact_screen_staging/inspire/precision_insertion_unconstrained_20mm_10k/precision_key_1p5mm/table/4 \
+  --contact-policy ~/shared_data/object_processing/precision_key_1p5mm/processed_data/info/contact_regions.json \
+  --scene-json ~/shared_data/AutoDex/scene/inspire/precision_key_1p5mm/table/4.json \
+  --contact-policy-mode report-only
+```
+
+Then run the inexpensive all-candidate geometry screen. `disabled` applies
+only to the key contact-region prior; the 20 mm hand/socket and table checks
+are still active:
+
+```bash
+~/.venvs/autodex-viz/bin/python \
+  scripts/precision_insertion/screen_rigid_insertion_grasps.py \
+  --scene ~/shared_data/AutoDex/contact_screen_staging/inspire/precision_insertion_unconstrained_20mm_10k/precision_key_1p5mm/table/4 \
+  --tabletop-pose ~/shared_data/object_processing/precision_key_1p5mm/processed_data/info/tabletop/004.npy \
+  --task-geometry ~/shared_data/AutoDex/precision_insertion/fixtures/unified_socket/task_geometry.json \
+  --contact-policy-mode disabled --samples-per-link 100 --quiet \
+  --output ~/shared_data/AutoDex/precision_insertion/experiments/unconstrained_20mm_10k/coarse_task_screen_pose_004.json
+```
+
+The 100-sample result is a coarse rejection screen. Re-run survivors at high
+sample density and then require attached-object cuRobo planning, MuJoCo, and
+physical trials before calling any candidate successful. A fair causal
+comparison should eventually also run a constrained 10k batch with the same
+full-key target, seeds, pose, and thresholds.
+
 Generate more proposals in bounded batches with non-overlapping
 `--seed_offset`, then rebuild both the contact screen and strict task screen.
 Never satisfy the requested count of 20 by changing a hand configuration,

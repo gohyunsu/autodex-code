@@ -4,10 +4,12 @@
 The screen keeps the candidate's native ``T_key_hand`` fixed and evaluates
 three independent gates with the exact key, socket, and Inspire visual meshes:
 
-1. declared and complete-hand key contact policy;
+1. declared and complete-hand key contact policy (enforced by default,
+   retained as a diagnostic, or explicitly disabled for a contact-policy
+   ablation);
 2. pregrasp/grasp clearance above the candidate's tabletop stable pose; and
-3. complete-hand/socket clearance from CAD pre-insertion through the 20 mm
-   verification depth used as primary task success.
+3. complete-hand/socket clearance from CAD pre-insertion through the configured
+   verification depth used as primary task success (20 mm in the active task).
 
 The fully seated pose is reported as an optional same-grasp diagnostic but is
 not a primary gate.  Full seating uses a separate release/retreat/top-down
@@ -213,6 +215,19 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--samples-per-link", type=int, default=3000)
     parser.add_argument("--penetration-threshold-mm", type=float, default=0.2)
+    parser.add_argument(
+        "--contact-policy-mode",
+        choices=("enforce", "diagnostic", "disabled"),
+        default="enforce",
+        help=(
+            "diagnostic records the legacy six-surface policy result without "
+            "using it as a pass/fail gate; disabled skips that expensive "
+            "key/hand policy check while retaining table/socket checks"
+        ),
+    )
+    parser.add_argument(
+        "--quiet", action="store_true", help="suppress one line per candidate"
+    )
     args = parser.parse_args()
 
     for field in (
@@ -240,16 +255,37 @@ def main() -> int:
 
     rows = []
     for candidate in _candidate_dirs(args.scene):
-        policy, _key_to_hand = inspect_whole_hand(
-            candidate_dir=candidate,
-            object_mesh_path=args.key_mesh,
-            policy_path=args.contact_policy,
-            robot_urdf=args.robot_urdf,
-            symmetry_mode="none",
-            samples_per_link=args.samples_per_link,
-            penetration_threshold_m=threshold,
-            seed=3100 + (int(candidate.name) if candidate.name.isdigit() else 0),
-        )
+        if args.contact_policy_mode == "disabled":
+            policy_summary = {
+                "status": "not_evaluated_contact_policy_ablation",
+                "declared_contacts_passed": None,
+                "forbidden_penetrating_samples": None,
+                "permitted_contact_links": None,
+            }
+        else:
+            policy, _key_to_hand = inspect_whole_hand(
+                candidate_dir=candidate,
+                object_mesh_path=args.key_mesh,
+                policy_path=args.contact_policy,
+                robot_urdf=args.robot_urdf,
+                symmetry_mode="none",
+                samples_per_link=args.samples_per_link,
+                penetration_threshold_m=threshold,
+                seed=(
+                    3100
+                    + (int(candidate.name) if candidate.name.isdigit() else 0)
+                ),
+            )
+            policy_summary = {
+                "status": policy["status"],
+                "declared_contacts_passed": policy["declared_contacts"]["passed"],
+                "forbidden_penetrating_samples": (
+                    policy["whole_hand"]["forbidden_penetrating_samples"]
+                ),
+                "permitted_contact_links": (
+                    policy["whole_hand"]["permitted_contact_links"]
+                ),
+            }
         environment = _environment_report(
             candidate=candidate,
             stable_pose=stable_pose,
@@ -259,30 +295,27 @@ def main() -> int:
             samples_per_link=args.samples_per_link,
             penetration_threshold_m=threshold,
         )
-        passed = policy["status"] == "sampled_pass" and environment["passed"]
+        passed = environment["passed"] and (
+            args.contact_policy_mode != "enforce"
+            or policy_summary["status"] == "sampled_pass"
+        )
         rows.append({
             "candidate": candidate.name,
             "passed": passed,
-            "contact_policy": {
-                "status": policy["status"],
-                "declared_contacts_passed": policy["declared_contacts"]["passed"],
-                "forbidden_penetrating_samples": (
-                    policy["whole_hand"]["forbidden_penetrating_samples"]
-                ),
-                "permitted_contact_links": (
-                    policy["whole_hand"]["permitted_contact_links"]
-                ),
-            },
+            "contact_policy": policy_summary,
             "environment": environment,
         })
-        print(
-            f"{candidate.name}: {'PASS' if passed else 'reject'} "
-            f"policy={policy['status']} env={environment['passed']}"
-        )
+        if not args.quiet:
+            print(
+                f"{candidate.name}: {'PASS' if passed else 'reject'} "
+                f"policy={policy_summary['status']} "
+                f"env={environment['passed']}"
+            )
 
     report = {
         "schema_version": 1,
         "status": "sampled_prefilter_not_trajectory_or_physical_validation",
+        "contact_policy_mode": args.contact_policy_mode,
         "scene": str(args.scene),
         "tabletop_pose": str(args.tabletop_pose),
         "task_geometry": str(args.task_geometry),

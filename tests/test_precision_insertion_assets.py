@@ -151,6 +151,45 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
         self.assertTrue(np.allclose(corrected["object_contacts_m"], canonical))
         self.assertFalse(legacy["accepted"])
 
+    def test_contact_filter_report_only_keeps_forbidden_contact_as_diagnostic(self):
+        policy = {
+            "handle_z_range": [0.0, 0.045],
+            "handle_half_extents_xy_m": [0.0195, 0.0165],
+            "allowed": {
+                "edge_margin_m": 0.002,
+                "plane_tolerance_m": 0.001,
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            candidate = Path(directory)
+            np.save(candidate / "wrist_se3.npy", np.eye(4))
+            np.save(candidate / "pregrasp_pose.npy", np.zeros(12))
+            np.save(candidate / "grasp_pose.npy", np.zeros(12))
+            np.save(candidate / "bodex_info.npy", {
+                # Shaft/front contact: deliberately outside the handle policy.
+                "contact_point": np.asarray([[0.0, 0.0, 0.070]]),
+                "grasp_error": np.zeros(1),
+                "dist_error": np.zeros(1),
+                "success": False,
+            })
+            enforced = contact_filter.inspect_candidate(
+                candidate,
+                policy,
+                max_grasp_error=0.2,
+                max_contact_distance=0.01,
+            )
+            diagnostic = contact_filter.inspect_candidate(
+                candidate,
+                policy,
+                max_grasp_error=0.2,
+                max_contact_distance=0.01,
+                contact_policy_mode="report-only",
+            )
+        self.assertFalse(enforced["accepted"])
+        self.assertTrue(diagnostic["accepted"])
+        self.assertFalse(diagnostic["declared_contacts_obey_policy"])
+        self.assertEqual(diagnostic["contact_policy_mode"], "report-only")
+
     def test_full_build_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
