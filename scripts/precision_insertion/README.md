@@ -581,6 +581,44 @@ The top-50-plus-control pilot produced seven MuJoCo gravity-stable grasps, but
 five declare contact above the handle front. They are evidence that the old
 gate is selective, not evidence that shaft contact is insertion-safe.
 
+Build a presentation preview only from a candidate that carries successful
+`sim_eval.json` evidence. `diagnostic` preserves the original contact-policy
+report without using it as the acceptance gate; rigid attachment and the
+sampled key/socket/hand/table checks remain mandatory:
+
+```bash
+candidate_id=104
+candidate=~/shared_data/AutoDex/sim_staging/inspire/precision_insertion_unconstrained_20mm_10k_top50/precision_key_1p5mm/table/4/$candidate_id
+output=~/shared_data/AutoDex/precision_insertion/presentation_assets/07_unconstrained_ablation/pose_004/grasp_$candidate_id
+
+PYTHONPATH=scripts/precision_insertion ~/.venvs/autodex-viz/bin/python \
+  scripts/precision_insertion/build_tabletop_pose_animation_set.py \
+  --pose-id 004 --candidate-dir "$candidate" --output-dir "$output" \
+  --terminal-phase verification --contact-policy-mode diagnostic \
+  --require-mujoco-success --collision-samples 12000 \
+  --policy-samples-per-link 3000
+```
+
+Prepare the original 479,710-face FR3/Inspire visuals, then render the clean
+16:9 key/socket view. The renderer places no text in the video:
+
+```bash
+~/.venvs/autodex-viz/bin/python \
+  scripts/precision_insertion/prepare_blender_actual_mesh_animation.py \
+  "$output/tabletop_004_to_insertion_preview.npz" \
+  --output "$output/tabletop_004_to_insertion_preview_blender_bundle.npz" \
+  --mesh-cache ~/shared_data/AutoDex/precision_insertion/presentation_assets/07_unconstrained_ablation/mesh_cache/blender_original_robot_visuals
+
+blender --background \
+  --python scripts/precision_insertion/render_blender_actual_mesh_animation.py -- \
+  "$output/tabletop_004_to_insertion_preview_blender_bundle.npz" \
+  --output "$output/grasp_${candidate_id}_pose_004_20mm_key_socket.mp4" \
+  --width 1280 --height 720 --fps 20 --view key-socket
+```
+
+The machine-readable video inventory is
+`~/shared_data/AutoDex/precision_insertion/presentation_assets/07_unconstrained_ablation/manifest.json`.
+
 Generate more proposals in bounded batches with non-overlapping
 `--seed_offset`, then rebuild both the contact screen and strict task screen.
 Never satisfy the requested count of 20 by changing a hand configuration,

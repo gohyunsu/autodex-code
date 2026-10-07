@@ -27,9 +27,13 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--fps", type=int, default=20)
     parser.add_argument(
         "--view",
-        choices=("task", "overview"),
+        choices=("task", "key-socket", "overview"),
         default="task",
-        help="task prioritizes the key/socket/hand; overview keeps the full arm",
+        help=(
+            "task shows the workspace from the socket side; key-socket uses "
+            "the opposite oblique view to reduce palm occlusion; overview "
+            "keeps the full arm"
+        ),
     )
     parser.add_argument(
         "--still-frame",
@@ -145,6 +149,10 @@ def main() -> int:
         camera.location = (0.90, -0.78, 0.62)
         camera.data.lens = 52.0
         _look_at(camera, Vector((0.425, 0.035, 0.15)))
+    elif args.view == "key-socket":
+        camera.location = (0.94, 0.58, 0.48)
+        camera.data.lens = 55.0
+        _look_at(camera, Vector((0.425, 0.02, 0.14)))
     else:
         camera.location = (1.22, -1.40, 0.94)
         camera.data.lens = 43.0

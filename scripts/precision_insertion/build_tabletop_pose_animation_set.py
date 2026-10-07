@@ -225,6 +225,7 @@ def _direct_segments(
     terminal_phase: str,
     pickup: Grasp,
     lift_height: float,
+    close_phase: str = "close on handle sides and rear",
 ) -> list[Segment]:
     grasp_hand = start_key @ pickup.key_to_hand
     approach_hand = _translated_world_z(grasp_hand, 0.08)
@@ -241,7 +242,7 @@ def _direct_segments(
             "pickup_pre",
         ),
         Segment(
-            "close on handle sides and rear",
+            close_phase,
             [grasp_hand] * 10,
             _hand_interpolation(pickup.pregrasp, pickup.grasp, 10),
             _fixed_pose(start_key, 10),
@@ -389,7 +390,7 @@ def _inspect_grasp(
     return {
         "status": "sampled_pass" if passed else "rejected",
         "source_candidate": str(grasp.candidate_dir),
-        "derived_T_key_hand": grasp.key_to_hand.tolist(),
+        "evaluated_T_key_hand": grasp.key_to_hand.tolist(),
         "declared_contact_points_m": declared_points.tolist(),
         "declared_contact_regions": regions,
         "declared_contacts_reusable_after_transform": declared_reusable,
@@ -403,7 +404,8 @@ def _inspect_grasp(
         "minimum_signed_distance_mm": minimum * 1000.0,
         "samples_per_link": samples_per_link,
         "sampling_seed": candidate_seed,
-        "derived_grasp_not_bodex_or_mujoco_validated": True,
+        "grasp_transform_modified_from_candidate": False,
+        "whole_hand_policy_check_is_sampled": True,
     }
 
 
@@ -477,6 +479,11 @@ def _build_one(
         terminal_label,
         pickup,
         args.lift_height,
+        close_phase=(
+            "close on handle sides and rear"
+            if args.contact_policy_mode == "enforce"
+            else "close on key (contact-policy ablation)"
+        ),
     )
 
     fallback_seeds = [
@@ -523,9 +530,27 @@ def _build_one(
             args.policy_samples_per_link,
         ),
     }
-    if any(item["status"] != "sampled_pass" for item in grasp_reports.values()):
+    if (
+        args.contact_policy_mode == "enforce"
+        and any(
+            item["status"] != "sampled_pass"
+            for item in grasp_reports.values()
+        )
+    ):
         raise RuntimeError(
             f"pose {pose_id:03d} has a rejected derived grasp: {grasp_reports}"
+        )
+
+    sim_evidence_path = pickup.candidate_dir / "sim_eval.json"
+    sim_evidence = (
+        json.loads(sim_evidence_path.read_text(encoding="utf-8"))
+        if sim_evidence_path.is_file() else None
+    )
+    if args.require_mujoco_success and not (
+        sim_evidence is not None and sim_evidence.get("success") is True
+    ):
+        raise RuntimeError(
+            f"candidate lacks successful MuJoCo evidence: {sim_evidence_path}"
         )
 
     samples = _sample_sets(
@@ -586,11 +611,11 @@ def _build_one(
     not_validated = [
         "cuRobo continuous collision planning",
         "robot self-collision and dynamics",
-        "BODex/MuJoCo optimization of the transformed grasps",
-        "grasp force closure and physical stability",
         "contact-search insertion control",
         "physical execution",
     ]
+    if sim_evidence is None or sim_evidence.get("success") is not True:
+        not_validated.insert(2, "MuJoCo grasp stability")
     report = {
         "schema_version": 1,
         "status": status,
@@ -605,6 +630,15 @@ def _build_one(
             else geometry["nominal_insertion_depth_m"]
         ),
         "requires_unvalidated_grasp_transition": False,
+        "contact_policy_mode": args.contact_policy_mode,
+        "contact_policy_is_acceptance_gate": (
+            args.contact_policy_mode == "enforce"
+        ),
+        "mujoco_evidence": {
+            "required": args.require_mujoco_success,
+            "path": str(sim_evidence_path),
+            "record": sim_evidence,
+        },
         "rigid_attachment_check": {
             "passed": rigid_passed,
             "maximum_translation_error_mm": max(rigid_translation_error) * 1000.0,
@@ -655,6 +689,7 @@ def _build_one(
         robot_urdf_path=np.asarray(str(args.robot_urdf)),
         preview_status=np.asarray(status),
         preview_kind=np.asarray("sampled_geometric_success"),
+        contact_policy_mode=np.asarray(args.contact_policy_mode),
         tabletop_pose_id=np.asarray(f"{pose_id:03d}"),
     )
     output.with_suffix(".json").write_text(
@@ -710,6 +745,20 @@ def main() -> int:
     )
     parser.add_argument("--collision-samples", type=int, default=12000)
     parser.add_argument("--policy-samples-per-link", type=int, default=12000)
+    parser.add_argument(
+        "--contact-policy-mode",
+        choices=("enforce", "diagnostic"),
+        default="enforce",
+        help=(
+            "diagnostic records the six-surface policy without rejecting the "
+            "candidate; environment and rigid-attachment checks remain active"
+        ),
+    )
+    parser.add_argument(
+        "--require-mujoco-success",
+        action="store_true",
+        help="require candidate_dir/sim_eval.json to contain success=true",
+    )
     args = parser.parse_args()
 
     path_fields = [
