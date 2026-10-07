@@ -318,7 +318,9 @@ endpoint is 20 mm below the socket entry plane.
 **Status labels**
 
 - Reset: composed presentation preview available; continuous planning and hardware validation remain.
-- Reorientation: AutoDex logic identified, but no honest key-specific validated candidate/video yet.
+- Reorientation: candidate 104 passes MuJoCo gravity retention and the AutoDex
+  FR3 full-chain cuRobo motion preflight for pose 004→000. The 12 cm drop and
+  post-drop pose verification remain composed/unvalidated.
 
 **Visual layout**
 
@@ -328,8 +330,9 @@ endpoint is 20 mm below the socket entry plane.
 **Use**
 
 - `05_reset/pose_004/grasp_40/full_trial_20mm_drop_reset.mp4`
+- `06_reorientation/reorientation_pose_004_to_000_stable_grasp_104.gif`
 - `02_tabletop_poses/key/all_poses.png`
-- `06_reorientation/status.json` for the status, not as a visual.
+- `06_reorientation/status.json` for the exact evidence boundary.
 
 ## Slide 14 — Short-Term Todo List
 
@@ -387,7 +390,9 @@ key and socket remain visible.
 | Expected-failure taxonomy diagram | Build as slide-native vector graphic | 11 |
 | VLM evidence-layer architecture | Build as slide-native vector graphic | 12 |
 | Success/reset composed animation | Ready; label as preview | 13 |
-| Key-specific reorientation animation | Missing; do not fabricate | Future/appendix |
+| Key-specific reorientation animation | Ready; cuRobo motion + composed drop, not physical success | 13 |
+| Optional finish geometry animation | Ready; exact meshes only, no robot/controller claim | Appendix |
+| GIF derivatives for every active MP4 | Ready; see `gif_manifest.json` | All video slides |
 | Real robot photo with camera labels | Capture after runtime audit | 14 or appendix |
 
 Root asset directory:

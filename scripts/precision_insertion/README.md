@@ -675,8 +675,8 @@ pose-local inventory after rendering:
 python scripts/precision_insertion/organize_presentation_assets.py
 ```
 
-Read `presentation_assets/manifest.json`, not filenames alone. No active
-arm+hand reorientation video is published yet. The exact AutoDex asset flow is:
+Read `presentation_assets/manifest.json`, not filenames alone. The exact
+AutoDex asset flow is:
 
 1. `src/grasp_generation/reorient/gen_all.py` builds a scene for each source
    and target stable-pose pair, including both support surfaces and pillars.
@@ -689,13 +689,44 @@ arm+hand reorientation video is published yet. The exact AutoDex asset flow is:
    approach, close, lift, reorient, descend, release, retreat, reperception,
    and target-pose verification chain.
 
-The two-contact run produced 37 numerical candidates but all contacts collapsed
-onto one handle face. A three-contact, 180-degree force-cone follow-up produced
-one allowed-face candidate and zero opposition/whole-hand passes. Therefore a
-robot video would be misleading. The machine-readable evidence is in
-`presentation_assets/06_reorientation/status.json` and the two staging
-manifests under `precision_insertion/reorient_candidates*`. Runtime recovery
-must fail closed rather than replay stale world-frame joints.
+The strict two-contact run produced 37 numerical candidates but all contacts
+collapsed onto one handle face. A three-contact, 180-degree force-cone
+follow-up produced one allowed-face candidate and zero opposition/whole-hand
+passes. That strict-policy result remains a blocker for promotion into the
+runtime candidate pool.
+
+For a separate diagnostic ablation, candidate 104 from the 10k full-key run is
+used as an object-relative pose-004 grasp seed. It already has a MuJoCo gravity
+retention pass. The following command runs the existing AutoDex FR3 runtime
+full-chain preflight without copying the seed into the runtime pool:
+
+```bash
+conda run -n autodex_bodex python \
+  scripts/precision_insertion/export_curobo_reorientation_preview.py \
+  --candidate-root \
+    ~/shared_data/AutoDex/precision_insertion/experiments/reorientation_from_stable_grasp \
+  --cells 4_0 --pickup-yaw-deg 0 --max-candidates 1 \
+  --output \
+    ~/shared_data/AutoDex/precision_insertion/presentation_assets/06_reorientation/stable_grasp_104/reorientation_pose_004_to_000.npz
+```
+
+The result validates continuous cuRobo approach, lift, high reorientation,
+preplace, 10 cm vertical place, post-release lift, and retract. The rendered
+12 cm drop is still composed rather than a MuJoCo/contact-dynamics result, and
+no post-drop tabletop classifier or robot execution has validated it. Read
+`presentation_assets/06_reorientation/status.json` for the exact split. Runtime
+recovery must still fail closed rather than replay stale world-frame joints.
+
+Every active MP4 has a 960×540, 10 fps, palette-optimized GIF derivative next
+to it. Rebuild all GIFs and the machine-readable inventory with:
+
+```bash
+python scripts/precision_insertion/render_gif_derivatives.py --force
+```
+
+`presentation_assets/gif_manifest.json` records the MP4/GIF pair, dimensions,
+frame rate, duration, and byte size. Paths containing `audit` are deliberately
+excluded.
 
 For a close hand/key still or turntable, reuse the generic mesh renderer:
 

@@ -97,6 +97,10 @@ def main() -> int:
             rendered.append({
                 "candidate": candidate,
                 "video": _relative(video, root),
+                "gif": (
+                    _relative(video.with_suffix(".gif"), root)
+                    if video.with_suffix(".gif").is_file() else None
+                ),
                 "preview_report": (
                     _relative(preview_report, root)
                     if preview_report.is_file() else None
@@ -162,8 +166,31 @@ def main() -> int:
     reorientation_status = root / "06_reorientation/status.json"
     finish_status = root / "07_optional_finish/status.json"
     existing_autodex_status = root / "08_existing_autodex_preflight/status.json"
+    gif_manifest = root / "gif_manifest.json"
+    if reorientation_status.is_file():
+        reorientation_record = _load(reorientation_status)
+        transition = reorientation_record.get("active_transition", {})
+        source_pose = str(transition.get("source_tabletop_pose", ""))
+        for row in pose_rows:
+            if row["pose_id"] == source_pose:
+                row["reorientation_asset"] = {
+                    "target_pose": transition.get("target_tabletop_pose"),
+                    "candidate": transition.get("candidate"),
+                    "video": (
+                        "06_reorientation/" + reorientation_record["active_video"]
+                        if reorientation_record.get("active_video") else None
+                    ),
+                    "gif": (
+                        "06_reorientation/" + reorientation_record["active_gif"]
+                        if reorientation_record.get("active_gif") else None
+                    ),
+                    "status": reorientation_record.get("status"),
+                }
+                (root / "04_planning" / f"pose_{source_pose}" / "manifest.json").write_text(
+                    json.dumps(row, indent=2) + "\n", encoding="utf-8"
+                )
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "task_pose_symmetry": "identity",
         "tabletop_pose_count": 5,
         "grasp_animation_request_per_success_pose": args.requested_grasps_per_success_pose,
@@ -173,9 +200,12 @@ def main() -> int:
                 "insertion-pose table/socket geometry"
             ),
             "preview": "sampled numerical IK and mesh collision preview",
+            "reorientation_preview": (
+                "continuous AutoDex runtime cuRobo motion plan with a composed, "
+                "not-dynamics-validated drop"
+            ),
             "not_yet_proven": [
-                "continuous cuRobo trajectory",
-                "MuJoCo grasp stability",
+                "continuous cuRobo insertion trajectory",
                 "hardware execution",
                 "physical insertion success",
             ],
@@ -210,6 +240,9 @@ def main() -> int:
             _relative(existing_autodex_status, root)
             if existing_autodex_status.is_file() else None
         ),
+        "gif_manifest": (
+            _relative(gif_manifest, root) if gif_manifest.is_file() else None
+        ),
         "deprecated_audit_assets": "audit/deprecated_pre_contact_frame_fix",
         "important_runtime_rule": (
             "replay object-relative T_key_hand and replan from current perception; "
@@ -232,9 +265,12 @@ kept independent (`task_pose_symmetry = identity`).
 - `03_contact_policy/`: contact-policy animation and a 5x5 actual-mesh pass/fail grid
 - `04_planning/pose_000` ... `pose_004`: pose-local screening and direct plans
 - `05_reset/`: composed 20 mm success plus extract/transfer/drop reset preview
-- `06_reorientation/status.json`: BODex/reorientation generation audit
-- `07_optional_finish/status.json`: separate top-down press requirements
+- `06_reorientation/`: active pose-004→000 cuRobo motion preview, diagnostic
+  plan, and exact evidence boundary in `status.json`
+- `07_optional_finish/`: exact 20 mm→seated geometry animation plus separate
+  top-down press requirements
 - `08_existing_autodex_preflight/status.json`: recorded approach/lift pass and scope
+- `gif_manifest.json`: every active MP4 and its 960×540 GIF derivative
 - `audit/`: preserved pre-frame-fix visual references; never use as success evidence
 
 `manifest.json` is authoritative.  A video is called a *preview* only after

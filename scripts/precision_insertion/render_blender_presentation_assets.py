@@ -31,7 +31,7 @@ def _arguments() -> argparse.Namespace:
         choices=[
             "family", "compatibility", "tabletop-key", "tabletop-socket",
             "tabletop-key-all", "contact-policy", "contact-policy-grid",
-            "reorient-concept",
+            "reorient-concept", "optional-finish",
         ],
     )
     parser.add_argument("--output", type=Path, required=True)
@@ -277,6 +277,44 @@ def _compatibility(args: argparse.Namespace, paths: dict[str, Path]) -> None:
     bpy.ops.render.render(animation=True)
 
 
+def _optional_finish(args: argparse.Namespace, paths: dict[str, Path]) -> None:
+    """Show only the exact 20 mm verification-to-seated geometry change.
+
+    No robot or force arrow is shown because the guarded press pose, force
+    limits, and controller are not commissioned.  This is a geometry preview,
+    not evidence that the optional finish primitive has been planned.
+    """
+    blue = _material(
+        "key blue", (0.025, 0.25, 0.95, 1.0), metallic=0.1, roughness=0.3
+    )
+    red = _material(
+        "socket red", (0.90, 0.03, 0.05, 1.0), metallic=0.08, roughness=0.35
+    )
+    _load_mesh(paths["socket"], "socket", red)
+    key = _load_mesh(paths["1.5"], "key", blue)
+    _plate(0.30)
+    geometry = json.loads(paths["geometry"].read_text(encoding="utf-8"))
+    verification = np.asarray(
+        geometry["T_socket_key_verification"], dtype=float
+    )
+    seated = np.asarray(geometry["T_socket_key_seated"], dtype=float)
+    for frame, pose in (
+        (1, verification), (25, verification), (75, seated),
+        (105, seated), (155, verification),
+    ):
+        key.matrix_world = _matrix(pose)
+        key.keyframe_insert(data_path="location", frame=frame)
+        key.keyframe_insert(data_path="rotation_euler", frame=frame)
+    for curve in key.animation_data.action.fcurves:
+        for point in curve.keyframe_points:
+            point.interpolation = "BEZIER"
+    bpy.context.scene.frame_start = 1
+    bpy.context.scene.frame_end = 155
+    _camera((0.18, -0.27, 0.18), (0.0, 0.0, 0.065), 58.0)
+    _configure(args, video=True)
+    bpy.ops.render.render(animation=True)
+
+
 def _tabletop_key(args: argparse.Namespace, paths: dict[str, Path]) -> None:
     if args.pose_file is None:
         raise ValueError("tabletop-key requires --pose-file")
@@ -476,6 +514,7 @@ def main() -> int:
         "contact-policy": _contact_policy,
         "contact-policy-grid": _contact_policy_grid,
         "reorient-concept": _reorient_concept,
+        "optional-finish": _optional_finish,
     }[args.mode](args, paths)
     print(args.output)
     return 0
