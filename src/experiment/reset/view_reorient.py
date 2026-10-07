@@ -113,7 +113,8 @@ def search_reorient_placement(planner, scene_lift, lift_end_qpos, T_obj_in_wrist
     if planner._ik_solver is None:
         planner._init_ik_solver(world_cfg_no_target)
     else:
-        planner._ik_solver.update_world(WorldConfig.from_dict(world_cfg_no_target))
+        planner._ik_solver.update_world(
+            [WorldConfig.from_dict(world_cfg_no_target)])
 
     # Batch IK over the grid
     device = planner._tensor_args.device

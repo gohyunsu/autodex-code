@@ -702,14 +702,16 @@ def _ik_check_seeds(planner: GraspPlanner, scene_cfg: dict, seeds: dict) -> dict
                     from curobo.geom.types import WorldConfig as _WC
                     empty_world = {"mesh": {}, "cuboid": {}}
                     saved_world_cfg = world_cfg_no_target
-                    planner._ik_solver.update_world(_WC.from_dict(empty_world))
+                    planner._ik_solver.update_world(
+                        [_WC.from_dict(empty_world)])
                     result2 = _solve_reset_ik_batch(
                         planner, goal,
                         operation="reorient_grasp_seed_ik_no_world_diagnostic",
                         retract_config=retract,
                     )
                     diag_succ_noworld = result2.success.cpu().numpy()[:B].reshape(-1)
-                    planner._ik_solver.update_world(_WC.from_dict(saved_world_cfg))
+                    planner._ik_solver.update_world(
+                        [_WC.from_dict(saved_world_cfg)])
                 except CudaPlanningFault:
                     raise
                 except Exception as _de:
