@@ -157,6 +157,13 @@ def _specs(
         ),
         CopySpec(
             "canonical_source",
+            repo / "docs/autodex_vs_precision_insertion.md",
+            Path("source/autodex-code/docs/autodex_vs_precision_insertion.md"),
+            True,
+            "Evidence-scoped comparison of the original and precision-insertion pipelines.",
+        ),
+        CopySpec(
+            "canonical_source",
             repo / "tests/test_precision_insertion_assets.py",
             Path("source/autodex-code/tests/test_precision_insertion_assets.py"),
             True,
@@ -394,10 +401,11 @@ def _open_items() -> str:
 3. At every `run_pipeline.py` session, measure the bolted fixture repeatedly
    with its generated socket representation and accept the generated
    `fixture_pose.session.json` only when its repeatability gate passes.
-4. The corrected pose-004 audit has 9 contact-policy passes and zero complete
-   task-prefilter passes: every grasp crosses the table in the seated insertion
-   orientation. Generate insertion-conditioned BODex proposals before any
-   continuous planning, MuJoCo, or physical promotion.
+4. The corrected pose-004 audit has 10 whole-hand contact-policy passes and
+   five sampled geometry passes through the 20 mm verification depth. These
+   five still need continuous cuRobo, MuJoCo, and physical validation. All ten
+   cross the table if the same grasp is held to the fully seated CAD pose, so
+   full seating requires the separate release/retreat/guarded-press mode.
 5. Generate at least one opposing-contact reorientation grasp and validate the
    complete Franka approach/lift/reorient/descent chain. The older key-only
    concepts are quarantined under the presentation audit folder.
@@ -488,7 +496,8 @@ def build_bundle(
             "missing_optional_sources": missing,
             "known_runtime_blockers": [
                 "FoundPose representations for four keys and socket",
-                "at least one rigid grasp that clears the table at the seated insertion pose",
+                "continuous cuRobo and MuJoCo promotion of a 20 mm verification candidate",
+                "commissioned release/retreat/guarded-press bundle for optional full seating",
                 "opposing-contact robot reorientation candidate and full-chain plan",
                 "accepted per-session socket pose measurement",
                 "PASS AutoDex camera/calibration/hardware-sync/hand-eye audit",
