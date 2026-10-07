@@ -213,6 +213,11 @@ def main() -> int:
     parser.add_argument("--socket-mesh", type=Path, default=DEFAULT_SOCKET)
     parser.add_argument("--robot-urdf", type=Path, default=DEFAULT_ROBOT)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--candidate-source-report",
+        type=Path,
+        help="screen only candidate IDs listed in another report's passed_candidates",
+    )
     parser.add_argument("--samples-per-link", type=int, default=3000)
     parser.add_argument("--penetration-threshold-mm", type=float, default=0.2)
     parser.add_argument(
@@ -247,6 +252,10 @@ def main() -> int:
         "task_geometry", "socket_mesh", "robot_urdf", "output",
     ):
         setattr(args, field, getattr(args, field).expanduser().resolve())
+    if args.candidate_source_report is not None:
+        args.candidate_source_report = (
+            args.candidate_source_report.expanduser().resolve()
+        )
     required_files = (
         args.key_mesh, args.contact_policy, args.tabletop_pose,
         args.task_geometry, args.socket_mesh, args.robot_urdf,
@@ -256,6 +265,13 @@ def main() -> int:
         missing.append(str(args.scene))
     if missing:
         parser.error("missing input: " + ", ".join(missing))
+    if (
+        args.candidate_source_report is not None
+        and not args.candidate_source_report.is_file()
+    ):
+        parser.error(
+            f"missing candidate source report: {args.candidate_source_report}"
+        )
     if args.samples_per_link < 100:
         parser.error("--samples-per-link must be at least 100")
     if args.candidate_shard_count < 1:
@@ -273,6 +289,24 @@ def main() -> int:
     threshold = args.penetration_threshold_mm / 1000.0
 
     all_candidates = _candidate_dirs(args.scene)
+    if args.candidate_source_report is not None:
+        source_report = json.loads(
+            args.candidate_source_report.read_text(encoding="utf-8")
+        )
+        selected_ids = {
+            str(candidate) for candidate in source_report["passed_candidates"]
+        }
+        by_id = {candidate.name: candidate for candidate in all_candidates}
+        absent = sorted(selected_ids - set(by_id))
+        if absent:
+            parser.error(
+                "candidate source report refers to missing scene IDs: "
+                + ", ".join(absent[:20])
+            )
+        all_candidates = [
+            candidate for candidate in all_candidates
+            if candidate.name in selected_ids
+        ]
     candidates = all_candidates[
         args.candidate_shard_index::args.candidate_shard_count
     ]
@@ -339,6 +373,10 @@ def main() -> int:
         "schema_version": 1,
         "status": "sampled_prefilter_not_trajectory_or_physical_validation",
         "contact_policy_mode": args.contact_policy_mode,
+        "candidate_source_report": (
+            str(args.candidate_source_report)
+            if args.candidate_source_report is not None else None
+        ),
         "scene": str(args.scene),
         "tabletop_pose": str(args.tabletop_pose),
         "task_geometry": str(args.task_geometry),

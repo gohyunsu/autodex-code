@@ -34,6 +34,7 @@ def main() -> int:
         "task_geometry",
         "socket_mesh",
         "contact_policy_mode",
+        "candidate_source_report",
         "sampling",
     )
     reference = reports[0]

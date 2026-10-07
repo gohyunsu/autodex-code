@@ -542,6 +542,11 @@ python scripts/precision_insertion/merge_rigid_insertion_grasp_screens.py \
   --output ~/shared_data/AutoDex/precision_insertion/experiments/unconstrained_20mm_10k/coarse_task_screen_pose_004.json
 ```
 
+For the high-density second pass, add the merged coarse report as
+`--candidate-source-report` and raise `--samples-per-link` to 3000. The tool
+screens exactly the earlier `passed_candidates`; it fails if any referenced ID
+is absent from the scene.
+
 Generate more proposals in bounded batches with non-overlapping
 `--seed_offset`, then rebuild both the contact screen and strict task screen.
 Never satisfy the requested count of 20 by changing a hand configuration,
