@@ -560,6 +560,27 @@ python scripts/precision_insertion/stage_screen_passed_candidates.py \
   --max-candidates 50 --include-candidate 182
 ```
 
+Run the full simulation filter (not `--sim-only` on a fresh pool, because that
+mode intentionally skips the squeeze-contact prefilter):
+
+```bash
+PYTHONPATH=. CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl \
+  ~/miniconda3/envs/autodex_bodex/bin/python \
+  src/grasp_generation/sim_filter/run_sim_filter.py \
+  --hand inspire \
+  --version precision_insertion_unconstrained_20mm_10k_top50 \
+  --obj precision_key_1p5mm \
+  --bodex-root ~/shared_data/AutoDex/sim_staging/inspire/precision_insertion_unconstrained_20mm_10k_top50 \
+  --candidate-root ~/shared_data/AutoDex/sim_filter_pass/inspire \
+  --obj_root_dir ~/shared_data/object_processing
+```
+
+The recorded 2026-10-07 funnel and its limitations are in
+`assets/precision_insertion/unconstrained_contact_ablation_20mm_10k_results.json`.
+The top-50-plus-control pilot produced seven MuJoCo gravity-stable grasps, but
+five declare contact above the handle front. They are evidence that the old
+gate is selective, not evidence that shaft contact is insertion-safe.
+
 Generate more proposals in bounded batches with non-overlapping
 `--seed_offset`, then rebuild both the contact screen and strict task screen.
 Never satisfy the requested count of 20 by changing a hand configuration,

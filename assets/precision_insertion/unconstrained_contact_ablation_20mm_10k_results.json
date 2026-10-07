@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "experiment": "unconstrained_contact_ablation_20mm_10k",
+  "recorded_at": "2026-10-07",
+  "proposal": {
+    "raw_count": 10000,
+    "native_bodex_success_count_at_0p001": 0,
+    "downstream_quality_pass_count_at_0p2_and_10mm": 1873,
+    "declared_six_surface_policy_pass_count": 4,
+    "declared_six_surface_policy_pass_ids": [
+      "66",
+      "182",
+      "289",
+      "5235"
+    ]
+  },
+  "twenty_mm_sampled_geometry": {
+    "coarse_samples_per_link": 100,
+    "coarse_input_count": 1873,
+    "coarse_pass_count": 596,
+    "high_resolution_samples_per_link": 3000,
+    "high_resolution_input_count": 596,
+    "high_resolution_pass_count": 527,
+    "high_resolution_declared_policy_pass_count": 1,
+    "high_resolution_declared_policy_pass_ids": [
+      "182"
+    ]
+  },
+  "curobo_mujoco_pilot": {
+    "selection": "top 50 high-resolution geometry passes by BODex grasp error, plus declared-policy control 182",
+    "input_count": 51,
+    "curobo_tabletop_scene_clearance_pass_count": 51,
+    "curobo_squeeze_contact_pass_count": 35,
+    "mujoco_gravity_stability_pass_count": 7,
+    "mujoco_gravity_stability_pass_ids": [
+      "35",
+      "70",
+      "79",
+      "95",
+      "99",
+      "104",
+      "5102"
+    ],
+    "declared_policy_control_182_mujoco_success": false,
+    "successes_with_declared_contact_above_handle_front_count": 5,
+    "successes_without_declared_contact_above_handle_front_ids": [
+      "104",
+      "5102"
+    ]
+  },
+  "interpretation": [
+    "The exact six-surface plus 2 mm edge-margin gate is highly selective for full-key BODex proposals.",
+    "Removing it exposes candidates that pass sampled 20 mm endpoint geometry and a grasp-stability pilot.",
+    "This does not prove that shaft/front contact is acceptable: five of seven pilot successes contact above the handle front and can obstruct continuous insertion.",
+    "Candidates 104 and 5102 motivate a softer edge/shoulder policy study, not wholesale removal of the shaft exclusion.",
+    "The pilot is quality-ranked and is not an unbiased success-rate estimate."
+  ],
+  "not_yet_validated": [
+    "continuous attached-object cuRobo approach, lift, transfer, and 20 mm insertion",
+    "socket contact dynamics and force limits",
+    "Franka reachability for the fixed socket pose",
+    "physical grasp, lift, and insertion"
+  ],
+  "evidence": {
+    "quality_report": "~/shared_data/AutoDex/contact_screen_staging/inspire/precision_insertion_unconstrained_20mm_10k/precision_key_1p5mm/table/4/contact_filter_report.json",
+    "coarse_geometry_report": "~/shared_data/AutoDex/precision_insertion/experiments/unconstrained_20mm_10k/coarse_task_screen_pose_004.json",
+    "high_resolution_geometry_report": "~/shared_data/AutoDex/precision_insertion/experiments/unconstrained_20mm_10k/highres_task_screen_pose_004.json",
+    "simulation_stage": "~/shared_data/AutoDex/sim_staging/inspire/precision_insertion_unconstrained_20mm_10k_top50/precision_key_1p5mm/table/4",
+    "simulation_pass_pool": "~/shared_data/AutoDex/sim_filter_pass/inspire/precision_insertion_unconstrained_20mm_10k_top50/precision_key_1p5mm/table/4"
+  }
+}
