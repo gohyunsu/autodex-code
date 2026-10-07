@@ -228,6 +228,18 @@ def main() -> int:
     parser.add_argument(
         "--quiet", action="store_true", help="suppress one line per candidate"
     )
+    parser.add_argument(
+        "--candidate-shard-index",
+        type=int,
+        default=0,
+        help="zero-based deterministic candidate shard (default: 0)",
+    )
+    parser.add_argument(
+        "--candidate-shard-count",
+        type=int,
+        default=1,
+        help="number of deterministic candidate shards (default: 1)",
+    )
     args = parser.parse_args()
 
     for field in (
@@ -246,6 +258,13 @@ def main() -> int:
         parser.error("missing input: " + ", ".join(missing))
     if args.samples_per_link < 100:
         parser.error("--samples-per-link must be at least 100")
+    if args.candidate_shard_count < 1:
+        parser.error("--candidate-shard-count must be at least 1")
+    if not 0 <= args.candidate_shard_index < args.candidate_shard_count:
+        parser.error(
+            "--candidate-shard-index must be in "
+            "[0, --candidate-shard-count)"
+        )
 
     stable_pose = np.load(args.tabletop_pose)
     geometry = json.loads(args.task_geometry.read_text(encoding="utf-8"))
@@ -253,8 +272,12 @@ def main() -> int:
     socket_scene = _raycast_scene(socket_mesh)
     threshold = args.penetration_threshold_mm / 1000.0
 
+    all_candidates = _candidate_dirs(args.scene)
+    candidates = all_candidates[
+        args.candidate_shard_index::args.candidate_shard_count
+    ]
     rows = []
-    for candidate in _candidate_dirs(args.scene):
+    for candidate in candidates:
         if args.contact_policy_mode == "disabled":
             policy_summary = {
                 "status": "not_evaluated_contact_policy_ablation",
@@ -324,6 +347,11 @@ def main() -> int:
             "samples_per_link": args.samples_per_link,
             "penetration_threshold_mm": args.penetration_threshold_mm,
             "zero_samples_is_not_a_continuous_collision_proof": True,
+        },
+        "candidate_shard": {
+            "index": args.candidate_shard_index,
+            "count": args.candidate_shard_count,
+            "unsharded_candidate_count": len(all_candidates),
         },
         "candidate_count": len(rows),
         "passed_candidates": [row["candidate"] for row in rows if row["passed"]],

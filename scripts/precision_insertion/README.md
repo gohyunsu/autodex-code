@@ -531,6 +531,17 @@ physical trials before calling any candidate successful. A fair causal
 comparison should eventually also run a constrained 10k batch with the same
 full-key target, seeds, pose, and thresholds.
 
+For large pools, pass `--candidate-shard-count 8` and a distinct
+`--candidate-shard-index 0` through `7` to eight invocations, with a distinct
+output path for each. Merge only a complete shard set; the merger rejects
+missing, duplicated, or configuration-mismatched shards:
+
+```bash
+python scripts/precision_insertion/merge_rigid_insertion_grasp_screens.py \
+  ~/shared_data/AutoDex/precision_insertion/experiments/unconstrained_20mm_10k/shards/screen_*.json \
+  --output ~/shared_data/AutoDex/precision_insertion/experiments/unconstrained_20mm_10k/coarse_task_screen_pose_004.json
+```
+
 Generate more proposals in bounded batches with non-overlapping
 `--seed_offset`, then rebuild both the contact screen and strict task screen.
 Never satisfy the requested count of 20 by changing a hand configuration,
