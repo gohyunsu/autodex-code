@@ -37,6 +37,7 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
         allowed, forbidden = builder.contact_face_partition(mesh)
         self.assertTrue(allowed)
         self.assertTrue(forbidden)
+        self.assertEqual(len(allowed), 15)
         triangles = mesh.vertices[mesh.faces[allowed]]
         normals = mesh.face_normals[allowed]
         self.assertLessEqual(float(triangles[:, :, 2].max()), builder.HANDLE_FRONT_Z_M + 1e-8)
@@ -44,6 +45,17 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
             rear = normal[2] < -0.95 and triangle[:, 2].max() <= 1e-8
             side = abs(normal[2]) < 0.05
             self.assertTrue(rear or side)
+
+    def test_contact_partition_includes_diagonal_handle_side(self):
+        mesh = builder.read_binary_stl(self.source_dir / "plug_gap_1p5.stl")
+        allowed, _forbidden = builder.contact_face_partition(mesh)
+        normals = mesh.face_normals[allowed]
+        diagonal = (
+            (np.abs(normals[:, 2]) < 0.05)
+            & np.isclose(np.abs(normals[:, 0]), np.sqrt(0.5), atol=1e-4)
+            & np.isclose(np.abs(normals[:, 1]), np.sqrt(0.5), atol=1e-4)
+        )
+        self.assertEqual(int(np.count_nonzero(diagonal)), 2)
 
     def test_socket_alignment_flips_key_and_seats_shoulder(self):
         socket = builder.read_binary_stl(self.source_dir / builder.SOCKET_SOURCE)
@@ -71,6 +83,25 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
         self.assertIsNone(region(np.array([0.0, 0.0, 0.045]), **kwargs))
         self.assertIsNone(region(np.array([0.010, 0.0, 0.070]), **kwargs))
         self.assertIsNone(region(np.array([0.0195, 0.0155, 0.020]), **kwargs))
+
+    def test_contact_filter_accepts_all_five_pentagonal_sides(self):
+        region = contact_filter._point_region
+        mesh = builder.read_binary_stl(self.source_dir / "plug_gap_1p5.stl")
+        polygon = np.asarray(builder.handle_cross_section_xy(mesh))
+        kwargs = {
+            "half_x": 0.0195,
+            "half_y": 0.0165,
+            "handle_top": 0.045,
+            "margin": 0.002,
+            "tolerance": 0.001,
+            "cross_section_xy": polygon,
+        }
+        for index, (start, end) in enumerate(zip(polygon, np.roll(polygon, -1, axis=0))):
+            point = np.r_[0.5 * (start + end), 0.020]
+            self.assertEqual(region(point, **kwargs), f"handle_lateral_{index}")
+        # This point is inside the old bounding rectangle but outside the
+        # chamfered pentagon and therefore cannot be a rear-face contact.
+        self.assertIsNone(region(np.array([0.018, -0.015, 0.0]), **kwargs))
 
     def test_contact_filter_converts_bodex_world_contacts_to_object_frame(self):
         policy = {
@@ -217,6 +248,21 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
                     np.eye(4),
                 )
             )
+            entry = np.asarray(task_geometry["T_socket_key_entry"])
+            verification = np.asarray(
+                task_geometry["T_socket_key_verification"]
+            )
+            seated = np.asarray(task_geometry["T_socket_key_seated"])
+            self.assertAlmostEqual(
+                entry[2, 3] - verification[2, 3], 0.020, places=8
+            )
+            self.assertAlmostEqual(
+                verification[2, 3] - seated[2, 3], 0.0205, places=8
+            )
+            self.assertEqual(
+                task_geometry["task_success_target"],
+                "T_socket_key_verification",
+            )
             marker = (
                 root / "AutoDex/foundpose_assets/precision_key_1p5mm/"
                 "GENERATION_REQUIRED.json"
@@ -269,7 +315,7 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
             ["representative_class_may_replace_pose_for_planning"]
         )
 
-    def test_presentation_candidate_set_fails_closed_after_frame_fix(self):
+    def test_presentation_candidate_set_uses_six_surface_20mm_gate(self):
         candidate_set = json.loads(
             (REPO_ROOT / "assets/precision_insertion/"
              "presentation_candidate_set.json").read_text(encoding="utf-8")
@@ -277,23 +323,23 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
         selected = candidate_set["selected_candidate_ids"]
         reserve = candidate_set["reserve_candidate_ids"]
         self.assertEqual(candidate_set["tabletop_pose_id"], "004")
-        self.assertEqual(selected, [])
+        self.assertEqual(selected, ["40", "383", "6910", "31763", "46925"])
         self.assertEqual(reserve, [])
         evidence = candidate_set["screening_evidence"]
         self.assertEqual(evidence["raw_bodex_proposals"], 51000)
-        self.assertEqual(evidence["contact_and_quality_candidates"], 54)
+        self.assertEqual(evidence["contact_and_quality_candidates"], 51)
         self.assertEqual(
-            evidence["sampled_whole_hand_contact_policy_passed"], 9
+            evidence["sampled_whole_hand_contact_policy_passed"], 10
         )
-        self.assertEqual(evidence["sampled_task_prefilter_passed"], 0)
-        self.assertEqual(evidence["sampled_full_trajectory_passed"], 0)
+        self.assertEqual(evidence["sampled_task_prefilter_passed"], 5)
+        self.assertEqual(evidence["sampled_full_trajectory_passed"], 5)
         self.assertEqual(
             evidence["contact_point_frame"],
             "scene_world_transformed_to_object",
         )
         policy_passes = candidate_set["contact_policy_pass_candidate_ids"]
-        self.assertEqual(len(policy_passes), 9)
-        self.assertEqual(len(set(policy_passes)), 9)
+        self.assertEqual(len(policy_passes), 10)
+        self.assertEqual(len(set(policy_passes)), 10)
         failures = json.loads(
             (REPO_ROOT / "assets/precision_insertion/"
              "presentation_trajectory_failures.json").read_text(
@@ -304,7 +350,11 @@ class PrecisionInsertionAssetTest(unittest.TestCase):
             item["candidate"]
             for item in failures["rejected_after_contact_policy"]
         }
-        self.assertEqual(set(policy_passes), rejected)
+        passed = {
+            item["candidate"]
+            for item in failures["passed_at_verification_depth"]
+        }
+        self.assertEqual(set(policy_passes), rejected | passed)
 
 
 if __name__ == "__main__":

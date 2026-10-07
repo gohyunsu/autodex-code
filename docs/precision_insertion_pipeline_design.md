@@ -16,36 +16,42 @@ observe exact key pose
   -> pick and lift
   -> verify retained grasp
   -> rigid transfer to the measured fixed socket
-  -> guarded insertion and verification
-  -> guarded extraction
-  -> reverse transfer to the original tabletop pose
-  -> open, retract, and verify reset
+  -> guarded insertion to the 20 mm verification depth
+  -> verify primary task success
+  -> optionally release/retreat and guarded top-down press to full seating
+  -> freshly plan a handle-only reset grasp
+  -> guarded extraction and transfer to the reset drop zone
+  -> open/drop, reobserve, and verify reset
 ```
 
 No candidate may be physically picked merely because its lift is feasible.
 The pick, attached-key transfer, pre-insertion target, insertion corridor, and
-return path must form one immutable `TaskPlanBundle` first. The insertion
+reset reachability must form one immutable `TaskPlanBundle` first. The insertion
 stroke remains guarded at runtime because free-space planning cannot certify
 contact behavior.
 
-Three outcomes are intentionally independent:
+Four outcomes are intentionally independent:
 
 - `grasp_success`: the key was acquired and retained after lift;
-- `task_success`: the key reached the seated insertion goal;
+- `task_success`: the key reached the 20 mm verification depth without an
+  abort and the multimodal evidence confirms insertion;
+- `finish_success`: optional full seating completed with the separate press
+  primitive;
 - `reset_success`: the key was safely extracted and restored for another
-  trial.
+  trial; the dropped tabletop pose need not equal the original pose.
 
 AutoDex candidate `result.json` and grasp coverage learn only from
-`grasp_success`. The insertion episode learns from all three. A rim jam must
+`grasp_success`. The insertion episode records all four. A rim jam must
 not poison an otherwise good grasp, and a successful insertion followed by a
 failed reset must stop the session without relabeling the insertion.
 
 ## Non-negotiable manipulation invariants
 
 1. **Handle-only contact.** Declared BODex contacts and the complete Inspire
-   visual/collision geometry may touch only the handle's axis-aligned lateral
-   faces or rear face. The shaft, tip/bevel, diagonal handle chamfers, and
-   socket-facing handle shoulder are forbidden.
+   visual/collision geometry may touch only all five axial lateral faces of
+   the pentagonal handle (including its diagonal/keyed face) or the rear
+   face. The shaft, shaft-tip bevels, tip, and socket-facing handle shoulder
+   are forbidden.
 2. **Two-millimetre proposal margin.** A declared contact must be at least
    2 mm from an edge of its permitted face. This margin applies to sparse
    proposal contact points; the complete-hand gate separately checks actual
@@ -83,8 +89,8 @@ failed reset must stop the session without relabeling the insertion.
 | grasp selection and coverage | choose useful physical grasp trials | AutoDex | retained, but must be conditioned on a task-plan pass before execution |
 | fixed socket in planning scenes | protect the fixture | new scene composition using AutoDex cuRobo format | implemented for normal and recovery scenes |
 | grasp/lift execution | acquire and retain key | AutoDex Franka/Inspire executor | retained |
-| task action runtime | transfer, insertion, extraction, return | new | not implemented in `run_pipeline.py` |
-| outcome semantics | separate grasp/task/reset evidence | new | grasp/task fields exist; reset field and physical insertion evaluator remain |
+| task action runtime | transfer, insertion, optional press, extraction, drop reset | new | not implemented in `run_pipeline.py` |
+| outcome semantics | separate grasp/task/finish/reset evidence | new | grasp/task fields exist; finish/reset runtime fields and physical insertion evaluator remain |
 | VLM reasoning | phase-aware visual verdict and failure explanation | ZeroDex-style idea on AutoDex images | design only; must begin read-only |
 | adaptive next trial | avoid redundant physical trials | future AutoDex extension | deferred until reliable outcome/failure evidence exists |
 
@@ -106,6 +112,8 @@ must be added before any command is described as an insertion run.
 | `T_world_socket` | socket FoundPose | measured at session startup |
 | `T_robot_socket = T_robot_world @ T_world_socket` | derived | frozen experiment session |
 | `T_socket_key_preinsert` | key/socket CAD | immutable asset |
+| `T_socket_key_entry` | key/socket CAD; tip at socket entry plane | immutable asset |
+| `T_socket_key_verification` | key/socket CAD; 20 mm insertion | immutable asset |
 | `T_socket_key_seated` | key/socket CAD | immutable asset |
 | `T_hand_key` | grasp-time FK and perceived key pose | immutable while grasp remains closed |
 
@@ -117,9 +125,12 @@ The nominal goals are:
 
 ```text
 T_robot_key_preinsert = T_robot_socket @ T_socket_key_preinsert
+T_robot_key_entry     = T_robot_socket @ T_socket_key_entry
+T_robot_key_verify    = T_robot_socket @ T_socket_key_verification
 T_robot_key_seated    = T_robot_socket @ T_socket_key_seated
 
 T_robot_hand_preinsert = T_robot_key_preinsert @ inv(T_hand_key)
+T_robot_hand_verify    = T_robot_key_verify @ inv(T_hand_key)
 T_robot_hand_seated    = T_robot_key_seated    @ inv(T_hand_key)
 ```
 
@@ -137,14 +148,12 @@ There are two different symmetry questions, and conflating them is unsafe.
 - The complete key has **identity-only task symmetry**. Its keyed shaft fixes
   insertion yaw. The socket likewise has identity-only pose symmetry because
   the keyed bore matters even if its outer body looks nearly symmetric.
-- The rectangular handle admits a **C2 grasp-proposal symmetry** about key Z.
-  It can group tabletop proposal/coverage classes as `000`, `{001,002}` with
-  representative `002`, and `{003,004}` with representative `004`.
+- The complete key and its pentagonal handle use **identity-only proposal
+  symmetry** in the current policy. No tabletop pose is folded into another.
 
-The runtime still retains all five observed exact tabletop poses. A candidate
-transferred from one member of a proposal class to another is a new candidate
-and must pass full-key contact, table, arm, transfer, and socket validation.
-The representative is allowed to rank or generate candidates; it is not
+The runtime retains all five observed exact tabletop poses. A candidate
+transferred from one pose to another is a new candidate and must pass full-key
+contact, table, arm, transfer, and socket validation. No representative is
 allowed to replace `T_world_key` or fold insertion yaw. This contract is
 machine-readable in `assets/precision_insertion/task_symmetry.json`.
 
@@ -200,15 +209,20 @@ For every ranked candidate compatible with the observed exact pose:
    socket or table.
 4. Solve and plan to the exact CAD pre-insertion hand goal.
 5. Validate complete hand/socket clearance and shaft/bore corridor geometry.
-6. Validate the constrained insertion stroke for nominal geometry. This is a
-   geometric gate only, not a promise of physical seating.
-7. Validate axial extraction to pre-insertion and the reverse transfer to the
-   observed original tabletop key pose.
-8. Save the result as one immutable `TaskPlanBundle` containing candidate and
+6. Validate the constrained insertion stroke through the true entry pose to
+   the 20 mm verification pose. This is a geometric gate only, not a promise
+   of physical success.
+7. If finish mode is requested, separately validate release, retreat, press
+   approach, and the guarded 20.5 mm remaining press. Do not require the
+   original insertion grasp to remain closed at seating.
+8. Validate a fresh handle-only reset grasp, axial extraction, and transfer
+   above a reset drop zone. Do not require restoration of the original exact
+   tabletop pose.
+9. Save the result as one immutable `TaskPlanBundle` containing candidate and
    asset hashes, transforms, joint paths, collision-scene hash, and validation
    reports.
 
-Only a candidate passing all eight may be executed. If the best pick grasp
+Only a candidate passing all nine may be executed. If the best pick grasp
 cannot reach the socket, select another grasp; do not insert an unvalidated
 in-hand transition. A deliberate regrasp would be a separate future task with
 its own fixture, perception, planning, and success criteria.
@@ -237,13 +251,15 @@ OBSERVE_KEY
        failure/unknown -> SAFE_PICK_RECOVERY -> END
   -> EXECUTE_RIGID_TRANSFER
   -> HOLD_AT_PREINSERT_AND_CAPTURE
-  -> INSERT_GUARDED
-  -> VERIFY_INSERTION
+  -> INSERT_GUARDED_TO_20MM
+  -> VERIFY_PRIMARY_INSERTION
        success/failure/unknown
+  -> optional RELEASE_RETREAT_AND_GUARDED_PRESS_TO_SEATED
+  -> PLAN_AND_EXECUTE_RESET_REGRASP
   -> EXTRACT_GUARDED_TO_PREINSERT
-  -> EXECUTE_REVERSE_TRANSFER
-  -> PLACE_AT_ORIGINAL_EXACT_TABLETOP_POSE
-  -> OPEN_AND_RETRACT
+  -> TRANSFER_ABOVE_RESET_DROP_ZONE
+  -> OPEN_AND_DROP
+  -> REOBSERVE_TABLETOP_POSE
   -> VERIFY_RESET
   -> UPDATE_RESULTS_AND_COVERAGE
 ```
@@ -260,7 +276,7 @@ recover_or_reset(context, task_execution) -> ResetOutcome
 ```
 
 `LiftTask` remains the default and follows the current code path unchanged.
-`PrecisionInsertionTask` owns transfer, insertion, extraction, and return, so
+`PrecisionInsertionTask` owns transfer, insertion, press, extraction, and reset, so
 `run_auto.py` does not accumulate object-specific controller logic.
 
 ### Guarded insertion and extraction
@@ -278,25 +294,27 @@ The task-specific contact model divides socket space into:
 - forbidden lateral or yaw motion after force exceeds the safe preload;
 - seated depth interval, which must agree with force and visual evidence.
 
-On a jam or partial insertion, hold the grasp, retract along the last verified
-axial path, and only then use the reverse free-space plan. Never open the hand
-inside or above the socket as a generic recovery.
+On a jam or unverified partial insertion, hold the grasp, retract along the
+last verified axial path, and only then use a collision-planned recovery.
+Release inside the socket is allowed only after verified task success as an
+explicit finish/reset transition; never use it as a generic jam recovery.
 
 ## Successful reset and pose reorientation are different operations
 
 ### Reset after every attempted insertion
 
-Reset restores the exact initial tabletop pose of that episode:
+Reset restores a repeatable trial condition, not the exact initial key pose:
 
 ```text
-seated/contact pose -> guarded axial extraction -> preinsert
-  -> reverse transfer -> original observed tabletop pose
-  -> open -> vertical retract -> verify key support and pose
+verified insertion pose -> observe -> handle-only regrasp
+  -> guarded axial extraction -> preinsert
+  -> newly planned transfer above reset drop zone
+  -> open/drop -> reobserve exact tabletop pose
 ```
 
-The reverse transfer may reuse the validated path only after the key has
-returned to the nominal pre-insertion attachment state. If contact search
-changed XY/yaw, first unwind or re-establish that state under force control.
+The reset planner may reuse collision-valid waypoints, but its goal is not an
+exact inverse replay and not an exact-pose placement. If contact search changed
+XY/yaw, first unwind or re-establish a safe extraction state under force control.
 `reset_success=false` makes `session_continuable=false` even when
 `task_success=true`.
 
@@ -327,6 +345,7 @@ The episode record should contain:
 {
   "grasp_success": true,
   "task_success": false,
+  "finish_success": null,
   "reset_success": true,
   "session_continuable": true,
   "episode_status": "task_failure_reset_ok",
@@ -360,7 +379,8 @@ setup. Begin with a read-only shadow observer at motion holds:
 |---|---|---|
 | after lift | retained key, miss, or slip? | hand state, motion completion, optional held-key pose |
 | pre-insertion hold | gross key/socket alignment or occlusion? | CAD target residual, calibrated projections |
-| insertion abort/final hold | seated, partial, rim jam, or unknown? | depth, F/T trace, controller state |
+| insertion abort/final hold | 20 mm reached, depth shortfall, rim jam, or unknown? | depth, F/T trace, controller state |
+| optional finish hold | seated, partial, press jam, or unknown? | remaining travel, F/T trace, controller state |
 | after reset | key supported on table in intended pose? | FoundPose, table plane, hand-open state |
 | after reorientation | did a new exact stable pose result? | fresh FoundPose and tabletop classifier |
 
@@ -415,37 +435,38 @@ Adaptive selection should use typed outcomes and grasp/task context, not a
 single failure bit. It is scientifically premature until outcome labels and
 the full-task feasibility gate are reliable.
 
-## Verified status and blockers (2026-10-06)
+## Verified status and blockers (2026-10-07)
 
 Verified in this workspace:
 
 - four metric runtime keys (1.5/1.0/0.5/0.3 mm), handle proxies, exact unified
-  socket pose/collision object, CAD preinsert/seated transforms, stage files,
+  socket pose/collision object, CAD preinsert/entry/20 mm/seated transforms, stage files,
   and NAS handoff tooling exist;
-- contact policy encodes side/rear-only contact and the 2 mm proposal margin;
+- contact policy encodes all five pentagonal lateral handle faces plus the rear
+  face and the exact 2 mm proposal margin;
 - AutoDex camera contract, ChArUco startup, socket measurement/medoid/freeze,
   and socket injection into normal/recovery scenes exist;
 - lift and task result semantics are separated;
-- all five tabletop scenes now have BODex generation assets, while proposal
-  symmetry exposes three presentation/proposal classes;
-- scene `002` candidate `511` and scene `004` candidate `290` pass the current
-  sampled exact-mesh geometric preview while preserving rigid attachment; this
-  is not cuRobo/MuJoCo or physical certification;
-- scene `000` has 5,000 BODex seeds and 24 declared-contact/quality survivors.
-  Seven survive the sampled complete-hand contact gate, but every one fails
-  the socket gate with about 6.2--6.8 mm sampled penetration. There is
-  currently no honest rigid insertion candidate for representative `000`.
+- all five tabletop scenes have BODex generation assets and remain independent;
+- pose `004` has 51,000 raw proposals, 51 declared-contact/quality survivors,
+  10 sampled whole-hand policy passes, and five sampled 20 mm preview passes:
+  `40`, `383`, `6910`, `31763`, and `46925`;
+- all ten policy passes fail the same-grasp fully seated table-clearance
+  diagnostic, motivating the separate release/retreat/press finish mode;
+- no pose `000`--`003` candidate has been re-promoted under the corrected
+  six-surface policy and 20 mm task contract.
 
 Blocking physical execution:
 
 1. FoundPose `repre.pth` is absent for all four keys and the socket.
 2. The robot PC still needs a passing audit of active AutoDex serials,
    intrinsics/extrinsics, hardware sync, timestamp camera, and Franka `C2R`.
-3. Scene `000` needs a new insertion-clear side/rear grasp family or a
-   deliberately designed regrasp fixture; the current candidates cannot be
+3. Scenes `000`--`003` need new insertion-clear grasp families or a
+   deliberately designed regrasp fixture; their current candidates cannot be
    used.
-4. Candidates `511` and `290` still need continuous cuRobo attached-object
-   planning, MuJoCo validation, reset planning, and physical validation.
+4. The five pose-004 sampled previews still need continuous cuRobo
+   attached-object planning, MuJoCo reruns, reset planning, and physical
+   validation.
 5. `PhysicalTaskRuntime`, `TaskPlanBundle`, insertion/extraction controller,
    reset outcome, and task-aware candidate hook are not implemented.
 6. Force/torque, velocity, depth, search, and abort limits remain uncommissioned
@@ -464,8 +485,8 @@ pipeline**.
    AutoDex camera/calibration audit.
 2. Add `TaskPlanBundle` and a task-aware candidate acceptance hook; stop at a
    visualized pre-insertion hold with no contact.
-3. Continuously validate candidates `511`/`290`, generate an honest scene-000
-   grasp, and add reverse-path/reset validation.
+3. Continuously validate the five pose-004 preview candidates, generate honest
+   candidates for poses 000--003, and add freshly planned drop-reset validation.
 4. Add `PhysicalTaskRuntime` after lift verification while retaining
    `LiftTask` as a byte-for-byte behavioral default.
 5. Commission guarded 1.5 mm insertion and extraction with manual ground-truth

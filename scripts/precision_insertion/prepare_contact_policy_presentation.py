@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +16,8 @@ from validate_whole_hand_contact_policy import _hand_link_meshes
 SHARED = Path.home() / "shared_data"
 DEFAULT_CANDIDATE = (
     SHARED / "AutoDex/contact_screen_staging/inspire/"
-    "precision_insertion_tabletop_v1/precision_key_1p5mm/table/4/290"
+    "precision_insertion_tabletop_v1/precision_key_1p5mm/table/"
+    "4_six_surface_policy_51000/40"
 )
 DEFAULT_ROBOT = (
     SHARED / "AutoDex/content/assets/robot/fr3_inspire_description/"
@@ -54,9 +56,14 @@ def main() -> int:
     output.mkdir(parents=True, exist_ok=True)
     _export_hand(candidate, robot, "pregrasp_pose.npy", output / "hand_pregrasp_key_frame.ply")
     _export_hand(candidate, robot, "grasp_pose.npy", output / "hand_grasp_key_frame.ply")
-    data = np.load(candidate / "bodex_info.npy", allow_pickle=True).item()
-    raw = np.asarray(data["contact_point"], dtype=np.float64)
-    contacts = raw.reshape(-1, raw.shape[-1])[:, :3]
+    screen_path = candidate / "contact_screen.json"
+    if not screen_path.is_file():
+        raise FileNotFoundError(
+            f"object-frame contact evidence is required: {screen_path}"
+        )
+    screen = json.loads(screen_path.read_text(encoding="utf-8"))
+    contacts = np.asarray(screen["object_contacts_m"], dtype=np.float64)
+    contacts = contacts.reshape(-1, 3)
     np.save(output / "declared_contacts_key_frame.npy", contacts)
     print(output)
     return 0

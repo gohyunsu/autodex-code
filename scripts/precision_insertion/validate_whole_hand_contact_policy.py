@@ -66,9 +66,11 @@ def allowed_contact_faces(mesh: trimesh.Trimesh, handle_top_m: float) -> np.ndar
     """Classify faces whose surfaces may touch any part of the hand.
 
     The 2 mm edge margin applies to BODex's *declared contact locations*.
-    For the whole-hand gate, an axis-aligned side/rear triangle remains an
-    allowed surface all the way to an edge shared by another allowed surface.
-    Diagonal chamfers and the front shoulder remain forbidden.
+    For the whole-hand gate, every one of the five axial side triangles and
+    every rear triangle remains an allowed surface all the way to an edge
+    shared by another allowed surface.  The diagonal face is a real side of
+    the pentagonal handle, not a shaft-tip bevel.  The front shoulder remains
+    forbidden.
     """
     triangles = np.asarray(mesh.vertices)[np.asarray(mesh.faces)]
     normals = np.asarray(mesh.face_normals)
@@ -77,7 +79,6 @@ def allowed_contact_faces(mesh: trimesh.Trimesh, handle_top_m: float) -> np.ndar
     side = (
         (maximum_z <= handle_top_m + 1.0e-8)
         & (np.abs(normals[:, 2]) < 0.05)
-        & (np.maximum(np.abs(normals[:, 0]), np.abs(normals[:, 1])) > 0.95)
     )
     return rear | side
 
@@ -137,6 +138,7 @@ def _declared_contact_check(
         (symmetry[:3, :3] @ contacts.T).T + symmetry[:3, 3]
     )
     half_x, half_y = policy["handle_half_extents_xy_m"]
+    cross_section = policy.get("handle_cross_section_xy_m")
     regions = [
         _point_region(
             point,
@@ -145,6 +147,7 @@ def _declared_contact_check(
             handle_top=float(policy["handle_z_range"][1]),
             margin=float(policy["allowed"]["edge_margin_m"]),
             tolerance=float(policy["allowed"]["plane_tolerance_m"]),
+            cross_section_xy=cross_section,
         )
         for point in transformed
     ]

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "task": "precision_key_insertion",
+  "primary_success": {
+    "target": "T_socket_key_verification",
+    "insertion_depth_m": 0.02,
+    "requires": [
+      "commanded guarded stroke reached the depth target",
+      "no force/torque or joint-safety abort",
+      "key remains aligned and retained by the socket",
+      "phase-aware visual verdict is success or sensor-confirmed when visual evidence is unjudgeable"
+    ],
+    "vlm_is_sole_authority": false
+  },
+  "completion_modes": {
+    "verification_only": {
+      "stop_at_depth_m": 0.02
+    },
+    "finish_press": {
+      "after_primary_success": true,
+      "release_original_grasp": true,
+      "retreat_before_press": true,
+      "primitive": "separately_preflighted_guarded_top_down_press",
+      "target": "T_socket_key_seated",
+      "remaining_nominal_travel_m": 0.0205,
+      "same_grasp_full_seating_is_not_assumed": true
+    }
+  },
+  "reset": {
+    "sequence": [
+      "visually confirm the inserted key",
+      "plan and execute a fresh handle-only reset grasp",
+      "guarded axial extraction",
+      "collision-planned transfer above the reset drop zone",
+      "open the hand and drop the key",
+      "reobserve and classify the resulting tabletop pose"
+    ],
+    "restore_original_exact_pose": false,
+    "reverse_forward_trajectory": false,
+    "drop_pose_is_controlled": false,
+    "failure_policy": "stop_session_and_request_operator"
+  },
+  "outcomes": [
+    "grasp_success",
+    "task_success",
+    "finish_success",
+    "reset_success"
+  ]
+}

@@ -35,8 +35,11 @@ def _latest_report(task_root: Path, pose: str) -> Path:
     # A frame-fixed report is authoritative even when an older, larger report
     # contains more candidates.  BODex contact points are scene/world-frame;
     # choosing by candidate count alone previously resurrected stale labels.
+    six_surface = [
+        path for path in matches if "six_surface_20mm" in path.stem
+    ]
     frame_fixed = [path for path in matches if "frame_fixed" in path.stem]
-    pool = frame_fixed or matches
+    pool = six_surface or frame_fixed or matches
     return max(pool, key=lambda path: path.stat().st_mtime)
 
 
@@ -62,7 +65,9 @@ def main() -> int:
         report_path = _latest_report(task_root, pose)
         report = _load(report_path)
         contact_frame_verified = (
-            "frame_fixed" in report_path.stem or pose == "000"
+            "frame_fixed" in report_path.stem
+            or "six_surface_20mm" in report_path.stem
+            or pose == "000"
         )
         snapshot = planning / "grasp_screen" / "candidate_screen.json"
         shutil.copy2(report_path, snapshot)
@@ -81,9 +86,21 @@ def main() -> int:
         rendered: list[dict[str, str]] = []
         for video in sorted((planning / "grasps").glob("grasp_*/plan.mp4")):
             candidate = video.parent.name.removeprefix("grasp_")
+            source_preview = (
+                task_root / "visualizations/verification_20mm" /
+                f"pose_{pose}" / f"candidate_{candidate}" /
+                f"tabletop_{pose}_to_insertion_preview.json"
+            )
+            preview_report = video.parent / "plan.preview.json"
+            if source_preview.is_file():
+                shutil.copy2(source_preview, preview_report)
             rendered.append({
                 "candidate": candidate,
                 "video": _relative(video, root),
+                "preview_report": (
+                    _relative(preview_report, root)
+                    if preview_report.is_file() else None
+                ),
             })
         pose_image = root / "02_tabletop_poses/key" / f"pose_{pose}" / "pose.png"
         direct = bool(rendered)
@@ -108,7 +125,9 @@ def main() -> int:
                 - len(rendered),
             ),
             "runtime_policy": (
-                "reperceive key pose and replay a validated object-relative grasp"
+                "reperceive and replan this sampled object-relative candidate; "
+                "do not execute until MuJoCo, continuous cuRobo, and physical "
+                "validation pass"
                 if direct
                 else (
                     "no replayable candidate; fail closed until a validated "
@@ -123,11 +142,26 @@ def main() -> int:
         pose_rows.append(row)
 
     reset_videos = sorted((root / "05_reset").glob("pose_*/grasp_*/*.mp4"))
+    for video in reset_videos:
+        pose = video.parents[1].name.removeprefix("pose_")
+        candidate = video.parent.name.removeprefix("grasp_")
+        source_report = (
+            task_root / "visualizations/verification_20mm" /
+            f"pose_{pose}" / f"candidate_{candidate}" /
+            "full_trial_drop_reset.json"
+        )
+        if source_report.is_file():
+            shutil.copy2(
+                source_report,
+                video.with_suffix(".preview.json"),
+            )
     combined_poses = root / "02_tabletop_poses/key/all_poses.png"
     policy_grid = root / "03_contact_policy/grasp_policy_grid_5x5.png"
     policy_grid_manifest = root / "03_contact_policy/grid/manifest.json"
     reset_status = root / "05_reset/status.json"
     reorientation_status = root / "06_reorientation/status.json"
+    finish_status = root / "07_optional_finish/status.json"
+    existing_autodex_status = root / "08_existing_autodex_preflight/status.json"
     manifest = {
         "schema_version": 1,
         "task_pose_symmetry": "identity",
@@ -145,6 +179,10 @@ def main() -> int:
                 "hardware execution",
                 "physical insertion success",
             ],
+        },
+        "task_success_target": {
+            "insertion_depth_m": 0.020,
+            "full_seating_is_optional_separate_press_mode": True,
         },
         "poses": pose_rows,
         "combined_tabletop_pose_image": (
@@ -164,6 +202,13 @@ def main() -> int:
         "reorientation_status": (
             _relative(reorientation_status, root)
             if reorientation_status.is_file() else None
+        ),
+        "optional_finish_status": (
+            _relative(finish_status, root) if finish_status.is_file() else None
+        ),
+        "existing_autodex_preflight_status": (
+            _relative(existing_autodex_status, root)
+            if existing_autodex_status.is_file() else None
         ),
         "deprecated_audit_assets": "audit/deprecated_pre_contact_frame_fix",
         "important_runtime_rule": (
@@ -186,8 +231,10 @@ kept independent (`task_pose_symmetry = identity`).
 - `02_tabletop_poses/`: five separate key poses, one combined view, and the fixed socket pose
 - `03_contact_policy/`: contact-policy animation and a 5x5 actual-mesh pass/fail grid
 - `04_planning/pose_000` ... `pose_004`: pose-local screening and direct plans
-- `05_reset/status.json`: reset is fail-closed until a corrected forward plan passes
+- `05_reset/`: composed 20 mm success plus extract/transfer/drop reset preview
 - `06_reorientation/status.json`: BODex/reorientation generation audit
+- `07_optional_finish/status.json`: separate top-down press requirements
+- `08_existing_autodex_preflight/status.json`: recorded approach/lift pass and scope
 - `audit/`: preserved pre-frame-fix visual references; never use as success evidence
 
 `manifest.json` is authoritative.  A video is called a *preview* only after

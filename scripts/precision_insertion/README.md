@@ -82,17 +82,21 @@ the insertion tip, the rear plane is `z=0`, the socket-facing shoulder is
 `z=45 mm`, and the tip is `z=85.5 mm`. The socket source frame has its entry
 at `z=58.5 mm`. Therefore the seated transform is `Rx(pi)` with translation
 `z=103.5 mm`: the shoulder lands at the entry plane and the tip lands at
-`z=18 mm`. These are CAD-relative transforms only; they do not determine the
+`z=18 mm`. The true tip-at-entry transform is `z=144.0 mm`; pre-insertion is
+30 mm above that at `z=174.0 mm`. Primary task success is 20 mm below entry at
+`z=124.0 mm`, leaving a nominal 20.5 mm for the optional separate finish
+press. These are CAD-relative transforms only; they do not determine the
 physical socket pose in the Franka base frame.
 
 ## Contact rule and grasp proposal
 
 The hand may contact only:
 
-- the four lateral faces of the 39 x 33 x 45 mm handle; or
+- all five axial lateral faces of the pentagonal handle, including its
+  diagonal/keyed face; or
 - the handle rear face.
 
-Every contact must remain 2 mm away from an edge. The shaft, bevel, tip, and
+Every contact must remain 2 mm away from an edge. The shaft, shaft-tip bevels, tip, and
 the entire socket-facing handle shoulder are forbidden. `contact_allowed.obj`
 and `contact_forbidden.obj` make the partition inspectable, while
 `contact_regions.json` is the machine-readable source of truth.
@@ -453,12 +457,13 @@ in-hand key motion:
 
 ```bash
 candidate_id=REPLACE_WITH_A_CURRENT_SCREEN_PASS
-candidate=~/shared_data/AutoDex/contact_screen_staging/inspire/precision_insertion_tabletop_v1/precision_key_1p5mm/table/4_frame_fixed_51000/$candidate_id
+candidate=~/shared_data/AutoDex/contact_screen_staging/inspire/precision_insertion_tabletop_v1/precision_key_1p5mm/table/4_six_surface_policy_51000/$candidate_id
 output=~/shared_data/AutoDex/precision_insertion/presentation_assets/04_planning/pose_004/grasps/grasp_${candidate_id}
 
 PYTHONPATH=scripts/precision_insertion ~/.venvs/autodex-viz/bin/python \
   scripts/precision_insertion/build_tabletop_pose_animation_set.py \
   --pose-id 004 --candidate-dir "$candidate" --output-dir "$output" \
+  --terminal-phase verification \
   --collision-samples 12000 --policy-samples-per-link 12000
 ```
 
@@ -466,19 +471,22 @@ Render only when the resulting JSON status is
 `sampled_geometric_preview_passed_not_physical_validation`.
 
 The honest direct-insertion set is data-dependent, not a requested quota. The
-corrected pose-004 audit is currently:
+corrected six-surface, pose-004, 20 mm audit is currently:
 
 - 51,000 raw BODex proposals;
-- 54 candidates pass the numerical quality plus object-frame declared-contact
+- 51 candidates pass the numerical quality plus exact-pentagon declared-contact
   screen;
-- 9 pass the sampled whole-Inspire contact policy;
-- 0 pass the full insertion-table environment gate.
+- 10 pass the sampled whole-Inspire contact policy;
+- 5 pass the 20 mm insertion-table environment gate and complete sampled
+  numerical-IK preview.
 
-The nine contact-policy passes are `40`, `383`, `6910`, `21601`, `21771`,
-`26729`, `26765`, `36889`, and `46925`. Every one places part of the hand below
-the table when the rigid grasp is rotated to the insertion pose. They are valid
-green examples in the contact-policy grid, but none is an insertion-success
-candidate. The earlier 20 videos are preserved only under
+The ten contact-policy passes are `40`, `383`, `6910`, `21601`, `21771`,
+`26729`, `26765`, `31763`, `36889`, and `46925`. Candidates `40`, `383`,
+`6910`, `31763`, and `46925` pass the sampled 20 mm preview. All ten place part
+of the hand below the table if the *same grasp* is held to the fully seated CAD
+pose. Full seating therefore uses a separate release/retreat/top-down press
+mode rather than invalidating the five primary-task candidates. The earlier
+20 videos remain only under
 `presentation_assets/audit/deprecated_pre_contact_frame_fix/`.
 
 Generate more proposals in bounded batches with non-overlapping
@@ -503,28 +511,31 @@ Both views omit captions, progress bars, goal ghosts, axes, and inset panels.
 For a quick diagnostic without Blender, the older renderer remains available
 with `--clean`; its `--robot-faces` budget is a decimated display mesh.
 
-With the corrected contact-frame and insertion-table gates, there is currently
-no direct-success tabletop pose. There is deliberately no in-hand transition
-or hidden regrasp. A future preview would still not be a continuous cuRobo
-plan, MuJoCo grasp-stability result, contact-search controller execution, or
-physical success.
+With the corrected contact-frame and insertion-table gates, pose 004 has five
+sampled preview passes at 20 mm. There is deliberately no in-hand transition
+or hidden regrasp. These previews are still not continuous cuRobo plans,
+MuJoCo grasp-stability results, controller executions, or physical successes.
 
-Build the successful-trial reset by reversing an accepted preview.  This keeps
-the fingers closed through extraction and return, opens only after the key is
-back on the table, and then retreats:
+Build the successful-trial reset in drop mode. It releases and observes the
+20 mm insertion, regrasp/extracts the key, returns above a reset region, and
+opens to drop it. It does not restore the exact original pose:
 
 ```bash
 ~/.venvs/autodex-viz/bin/python \
   scripts/precision_insertion/build_success_reset_preview.py \
   "$output/tabletop_004_to_insertion_preview.npz" \
-  --full-trial --output "$output/full_trial_with_reset_preview.npz"
+  --full-trial --reset-mode drop \
+  --output "$output/full_trial_drop_reset_preview.npz"
 ```
 
-`--full-trial` composes pick, rigid transfer, insertion, release, confirmation,
-reapproach, regrasp, extraction, tabletop return, release, and retreat. The
-open-hand release/regrasp segments are marked `-1` in collision arrays until a
-continuous planner validates them. No active reset video is published while
-the corrected forward-plan count is zero.
+`--full-trial` composes pick, rigid transfer, 20 mm insertion, release,
+confirmation, reapproach, regrasp, extraction, reset-zone transfer, release,
+and drop. Open-hand, regrasp, and drop segments are marked `-1` in collision
+arrays until continuous planning/dynamics validate them. The active reset
+video is therefore explicitly a composed presentation preview.
+
+The detailed current-vs-proposed pipeline comparison, including cuRobo and
+MuJoCo scope, is in `docs/autodex_vs_precision_insertion.md`.
 
 The full presentation set lives under
 `~/shared_data/AutoDex/precision_insertion/presentation_assets`. Rebuild its

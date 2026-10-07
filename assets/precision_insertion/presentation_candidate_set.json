@@ -1,10 +1,16 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "object": "precision_key_1p5mm",
   "tabletop_pose_id": "004",
   "requested_count_per_success_pose": 20,
   "selection_rule": "distinct native BODex candidates passing object-frame declared contacts, sampled whole-hand contact policy, insertion-pose table/socket clearance, rigid attachment, numerical IK, and the complete sampled task preview",
-  "selected_candidate_ids": [],
+  "selected_candidate_ids": [
+    "40",
+    "383",
+    "6910",
+    "31763",
+    "46925"
+  ],
   "reserve_candidate_ids": [],
   "contact_policy_pass_candidate_ids": [
     "40",
@@ -14,22 +20,26 @@
     "21771",
     "26729",
     "26765",
+    "31763",
     "36889",
     "46925"
   ],
   "screening_evidence": {
     "raw_bodex_proposals": 51000,
-    "contact_and_quality_candidates": 54,
-    "sampled_whole_hand_contact_policy_passed": 9,
-    "sampled_task_prefilter_passed": 0,
-    "sampled_full_trajectory_passed": 0,
-    "report": "~/shared_data/AutoDex/precision_insertion/rigid_insertion_grasp_screen_table_004_frame_fixed_51000.json",
-    "contact_point_frame": "scene_world_transformed_to_object"
+    "contact_and_quality_candidates": 51,
+    "sampled_whole_hand_contact_policy_passed": 10,
+    "sampled_task_prefilter_passed": 5,
+    "sampled_full_trajectory_passed": 5,
+    "report": "~/shared_data/AutoDex/precision_insertion/rigid_insertion_grasp_screen_table_004_six_surface_20mm.json",
+    "contact_point_frame": "scene_world_transformed_to_object",
+    "contact_policy": "five pentagonal-handle lateral faces plus rear face",
+    "terminal_phase": "20 mm verification insertion depth"
   },
-  "shortfall_reason": "All nine contact-policy passes place part of the Inspire hand below the table at the CAD seated insertion pose.",
+  "shortfall_reason": "Five of the requested twenty candidates pass the sampled 20 mm geometric preview. All ten contact-policy passes collide with the table if the same grasp is held to the fully seated CAD pose, so full seating requires the separate release/retreat/press mode.",
   "deprecated_pre_frame_fix_selection": "~/shared_data/AutoDex/precision_insertion/presentation_assets/audit/deprecated_pre_contact_frame_fix/04_planning/pose_004/grasps",
   "non_claims": [
     "a contact-policy pass is not a task-plan pass",
+    "a sampled full preview is not a cuRobo continuous plan",
     "not a continuous cuRobo collision proof",
     "not a MuJoCo grasp-stability result",
     "not a physical grasp or insertion success label"

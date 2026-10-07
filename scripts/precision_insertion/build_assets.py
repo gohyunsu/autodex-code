@@ -8,9 +8,10 @@ The source STL files are in millimetres and use this object frame::
     z=45 mm: handle/shaft shoulder (socket-facing handle face)
     z=85.5 mm: key tip
 
-The generated AutoDex meshes are in metres.  Only the four lateral faces of
-the handle and its rear face are contact-allowed.  The shaft, shoulder, bevel,
-and tip remain part of the collision mesh but are marked contact-forbidden.
+The generated AutoDex meshes are in metres.  All five lateral faces of the
+pentagonal handle (including its diagonal/keyed face) and its rear face are
+contact-allowed.  The shaft, shoulder, bevel, and tip remain part of the
+collision mesh but are marked contact-forbidden.
 
 This builder deliberately does not fabricate learned FoundPose descriptors or
 robot grasps.  It writes machine-readable ``GENERATION_REQUIRED.json`` markers
@@ -39,6 +40,7 @@ HANDLE_FRONT_Z_M = 45.0 * MM_TO_M
 CONTACT_EDGE_MARGIN_M = 2.0 * MM_TO_M
 CONTACT_PLANE_TOLERANCE_M = 1.0 * MM_TO_M
 DEFAULT_PREINSERT_CLEARANCE_M = 30.0 * MM_TO_M
+DEFAULT_VERIFICATION_INSERTION_DEPTH_M = 20.0 * MM_TO_M
 
 KEY_SPECS = (
     ("precision_key_1p5mm", "1.5", "plug_gap_1p5.stl"),
@@ -251,7 +253,6 @@ def contact_face_partition(mesh: Mesh) -> tuple[list[int], list[int]]:
         on_handle_side = (
             max_z <= HANDLE_FRONT_Z_M + 1e-8
             and abs(normal[2]) < 0.05
-            and max(abs(normal[0]), abs(normal[1])) > 0.95
         )
         if on_rear or on_handle_side:
             allowed.append(index)
@@ -260,6 +261,39 @@ def contact_face_partition(mesh: Mesh) -> tuple[list[int], list[int]]:
     if not allowed or not forbidden:
         raise ValueError("contact partition unexpectedly produced an empty face set")
     return allowed, forbidden
+
+
+def handle_cross_section_xy(mesh: Mesh) -> list[list[float]]:
+    """Return the rear-face convex boundary in counter-clockwise order.
+
+    The source STL triangulates the rear cap and therefore contains an
+    interior rear-plane vertex.  A monotone-chain hull removes that
+    triangulation detail and exposes the five physical lateral faces used by
+    the contact policy.
+    """
+    rear = np.unique(
+        np.round(mesh.vertices[np.abs(mesh.vertices[:, 2]) <= 1e-8, :2], 12),
+        axis=0,
+    )
+    points = sorted((float(x), float(y)) for x, y in rear)
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower: list[tuple[float, float]] = []
+    for point in points:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], point) <= 1e-14:
+            lower.pop()
+        lower.append(point)
+    upper: list[tuple[float, float]] = []
+    for point in reversed(points):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], point) <= 1e-14:
+            upper.pop()
+        upper.append(point)
+    hull = lower[:-1] + upper[:-1]
+    if len(hull) != 5:
+        raise ValueError(f"expected pentagonal key handle, found {len(hull)} sides")
+    return [[x, y] for x, y in hull]
 
 
 def _box_mesh(bounds_min: Sequence[float], bounds_max: Sequence[float]) -> Mesh:
@@ -486,7 +520,7 @@ def _build_key(
     _json_dump(
         info_dir / "contact_regions.json",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "frame": "object",
             "units": "m",
             "insertion_axis": [0.0, 0.0, 1.0],
@@ -495,15 +529,25 @@ def _build_key(
                 float(max(abs(bounds[0, 0]), abs(bounds[1, 0]))),
                 float(max(abs(bounds[0, 1]), abs(bounds[1, 1]))),
             ],
+            "handle_cross_section_xy_m": handle_cross_section_xy(mesh),
             "allowed": {
-                "description": "four lateral handle faces and rear handle face only",
+                "description": (
+                    "all five pentagonal-handle lateral faces, including the "
+                    "diagonal/keyed face, plus the rear handle face"
+                ),
+                "surface_groups": {
+                    "lateral_face_count": 5,
+                    "rear_face_count": 1,
+                },
                 "mesh": "../mesh/contact_allowed.obj",
                 "face_count": len(allowed),
                 "edge_margin_m": CONTACT_EDGE_MARGIN_M,
                 "plane_tolerance_m": CONTACT_PLANE_TOLERANCE_M,
             },
             "forbidden": {
-                "description": "shaft, tip, bevel, and socket-facing handle shoulder",
+                "description": (
+                    "shaft, tip, shaft-tip bevels, and socket-facing handle shoulder"
+                ),
                 "mesh": "../mesh/contact_forbidden.obj",
                 "face_count": len(forbidden),
                 "z_rule": f"all shaft/transition geometry at z >= {HANDLE_FRONT_Z_M:.6f} m is forbidden",
@@ -1051,11 +1095,16 @@ def _build_socket(
     seated = np.eye(4)
     seated[:3, :3] = _rotation_x(math.pi)
     seated[2, 3] = socket_entry_z + HANDLE_FRONT_Z_M
-    preinsert = seated.copy()
+    insertion_depth = key_tip_z - HANDLE_FRONT_Z_M
+    entry = seated.copy()
+    entry[2, 3] += insertion_depth
+    verification = entry.copy()
+    verification[2, 3] -= DEFAULT_VERIFICATION_INSERTION_DEPTH_M
+    preinsert = entry.copy()
     preinsert[2, 3] += DEFAULT_PREINSERT_CLEARANCE_M
 
     task_geometry = {
-        "schema_version": 1,
+        "schema_version": 2,
         "units": "m",
         "socket_frame": "source STL frame",
         "socket_mesh": "socket_shared_bore_1p5.obj",
@@ -1072,9 +1121,22 @@ def _build_socket(
             "tip_z_m": key_tip_z,
         },
         "T_socket_key_seated": seated.tolist(),
+        "T_socket_key_entry": entry.tolist(),
+        "T_socket_key_verification": verification.tolist(),
         "T_socket_key_preinsert": preinsert.tolist(),
-        "nominal_insertion_depth_m": key_tip_z - HANDLE_FRONT_Z_M,
+        "nominal_insertion_depth_m": insertion_depth,
+        "verification_insertion_depth_m": DEFAULT_VERIFICATION_INSERTION_DEPTH_M,
+        "remaining_press_depth_m": (
+            insertion_depth - DEFAULT_VERIFICATION_INSERTION_DEPTH_M
+        ),
         "preinsert_clearance_m": DEFAULT_PREINSERT_CLEARANCE_M,
+        "task_success_target": "T_socket_key_verification",
+        "optional_finish_target": "T_socket_key_seated",
+        "optional_finish_contract": (
+            "release the insertion grasp, retreat, and use a separately "
+            "preflighted guarded top-down press primitive; the rigid grasp is "
+            "not required or assumed to remain collision-free to seating"
+        ),
         "alignment_note": (
             "Rx(pi) is required: after flipping the printed plug for insertion, "
             "its chamfered profile matches the socket's mirrored bore profile."

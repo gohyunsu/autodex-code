@@ -41,9 +41,35 @@ def _point_region(
     handle_top: float,
     margin: float,
     tolerance: float,
+    cross_section_xy: np.ndarray | list[list[float]] | None = None,
 ) -> str | None:
     """Return the permitted face name for an object-frame point, or None."""
     x, y, z = (float(value) for value in point)
+
+    if cross_section_xy is not None:
+        polygon = np.asarray(cross_section_xy, dtype=np.float64).reshape(-1, 2)
+        xy = np.asarray([x, y], dtype=np.float64)
+        edges = np.roll(polygon, -1, axis=0) - polygon
+        lengths = np.linalg.norm(edges, axis=1)
+        if len(polygon) != 5 or np.any(lengths <= 1e-12):
+            raise ValueError("handle_cross_section_xy_m must be a valid pentagon")
+        tangents = edges / lengths[:, None]
+        # Polygon is CCW. Rotating an edge clockwise gives its outward normal.
+        outward = np.stack([tangents[:, 1], -tangents[:, 0]], axis=1)
+        signed_outward = np.sum((xy - polygon) * outward, axis=1)
+
+        if abs(z) <= tolerance and np.all(signed_outward <= -margin):
+            return "handle_rear"
+        if not margin <= z <= handle_top - margin:
+            return None
+        along = np.sum((xy - polygon) * tangents, axis=1)
+        for index in range(len(polygon)):
+            if (
+                abs(signed_outward[index]) <= tolerance
+                and margin <= along[index] <= lengths[index] - margin
+            ):
+                return f"handle_lateral_{index}"
+        return None
 
     if (
         abs(z) <= tolerance
@@ -110,6 +136,7 @@ def inspect_candidate(
     margin = float(policy["allowed"]["edge_margin_m"])
     tolerance = float(policy["allowed"]["plane_tolerance_m"])
     half_extents = policy["handle_half_extents_xy_m"]
+    cross_section = policy.get("handle_cross_section_xy_m")
     regions = [
         _point_region(
             point,
@@ -118,6 +145,7 @@ def inspect_candidate(
             handle_top=float(handle_z[1]),
             margin=margin,
             tolerance=tolerance,
+            cross_section_xy=cross_section,
         )
         for point in object_contacts
     ]

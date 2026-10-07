@@ -11,10 +11,11 @@ AutoDex assets are metres.
 | `precision_key_0p5mm` | 0.5 mm | `plug_gap_0p5.stl` |
 | `precision_key_0p3mm` | 0.3 mm | `plug_gap_0p3.stl` |
 
-Contact policy: the hand may touch only the four lateral faces and rear face of
-the 39 x 33 x 45 mm handle. The shaft, tip, bevel, and the socket-facing handle
-shoulder are forbidden because contact there obstructs insertion. Accepted
-contacts also stay at least 2 mm from handle edges.
+Contact policy: the hand may touch all five axial lateral faces of the
+pentagonal handle (including the diagonal/keyed face) and its rear face. The
+shaft, shaft-tip bevels, tip, and socket-facing handle shoulder are forbidden
+because contact there obstructs insertion. Accepted declared contacts also
+stay at least 2 mm from the exact face boundary.
 
 `autodex_camera_profile.json` preserves the existing AutoDex acquisition
 contract: capture PCs 1/2/3/5/6, hardware-triggered FLIR video, the local

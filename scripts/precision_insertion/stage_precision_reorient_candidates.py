@@ -20,6 +20,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from validate_whole_hand_contact_policy import inspect_whole_hand
 
 
@@ -47,27 +49,46 @@ DEFAULT_ROBOT = (
 )
 
 
-def _declared_face_opposition(declared: dict[str, Any]) -> dict[str, Any]:
-    """Require contacts on both signs of one handle side axis.
+def _declared_face_opposition(
+    declared: dict[str, Any],
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    """Require contacts on sufficiently opposing pentagonal handle faces.
 
     Merely touching two permitted faces is not enough for a pinch.  This gate
     rejects the common BODex failure in which thumb and fingers are all placed
     on the same side of the handle.  Rear-face contacts are allowed by the
     insertion policy, but do not by themselves establish opposition.
     """
-    points = declared.get("transformed_object_contacts_m", [])
     regions = declared.get("regions", [])
-    x_values = [float(point[0]) for point, region in zip(points, regions)
-                if region == "handle_x_side"]
-    y_values = [float(point[1]) for point, region in zip(points, regions)
-                if region == "handle_y_side"]
-    x_opposed = bool(x_values and min(x_values) < 0.0 < max(x_values))
-    y_opposed = bool(y_values and min(y_values) < 0.0 < max(y_values))
+    polygon = np.asarray(
+        policy["handle_cross_section_xy_m"], dtype=np.float64
+    ).reshape(-1, 2)
+    edges = np.roll(polygon, -1, axis=0) - polygon
+    tangents = edges / np.linalg.norm(edges, axis=1)[:, None]
+    normals = np.stack([tangents[:, 1], -tangents[:, 0]], axis=1)
+    lateral_indices = sorted({
+        int(region.removeprefix("handle_lateral_"))
+        for region in regions
+        if isinstance(region, str) and region.startswith("handle_lateral_")
+    })
+    pairs = []
+    for offset, first in enumerate(lateral_indices):
+        for second in lateral_indices[offset + 1:]:
+            dot = float(np.dot(normals[first], normals[second]))
+            if dot <= -0.5:
+                pairs.append({
+                    "faces": [first, second],
+                    "outward_normal_dot": dot,
+                })
     return {
-        "passed": x_opposed or y_opposed,
-        "x_side_signs_opposed": x_opposed,
-        "y_side_signs_opposed": y_opposed,
-        "criterion": "contacts occur on both signs of x-side or y-side",
+        "passed": bool(pairs),
+        "lateral_face_indices": lateral_indices,
+        "opposing_pairs": pairs,
+        "criterion": (
+            "at least two contacted pentagonal lateral faces have outward "
+            "normal dot product <= -0.5; rear contacts alone do not oppose"
+        ),
     }
 
 
@@ -105,6 +126,7 @@ def main() -> int:
         parser.error("missing input: " + ", ".join(missing))
     if args.samples_per_link < 100:
         parser.error("--samples-per-link must be at least 100")
+    policy_data = json.loads(policy.read_text(encoding="utf-8"))
     if output_root.exists():
         if args.replace_backup is None:
             parser.error(
@@ -144,7 +166,9 @@ def main() -> int:
                 samples_per_link=args.samples_per_link,
                 penetration_threshold_m=args.penetration_threshold_mm / 1000.0,
             )
-            opposition = _declared_face_opposition(report["declared_contacts"])
+            opposition = _declared_face_opposition(
+                report["declared_contacts"], policy_data
+            )
             staged_pass = (
                 report["status"] == "sampled_pass" and opposition["passed"]
             )

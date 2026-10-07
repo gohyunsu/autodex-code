@@ -221,7 +221,8 @@ def _attached_segment(
 def _direct_segments(
     start_key: np.ndarray,
     target_preinsert: np.ndarray,
-    target_seated: np.ndarray,
+    target_terminal: np.ndarray,
+    terminal_phase: str,
     pickup: Grasp,
     lift_height: float,
 ) -> list[Segment]:
@@ -277,18 +278,18 @@ def _direct_segments(
                 "pickup_grasp",
             ),
             _attached_segment(
-                "insert to CAD seated pose",
+                terminal_phase,
                 target_preinsert,
-                target_seated,
+                target_terminal,
                 14,
                 pickup,
                 "pickup_grasp",
             ),
             Segment(
                 "final hold",
-                [target_seated @ pickup.key_to_hand] * 10,
+                [target_terminal @ pickup.key_to_hand] * 10,
                 np.repeat(pickup.grasp[None, :], 10, axis=0),
-                _fixed_pose(target_seated, 10),
+                _fixed_pose(target_terminal, 10),
                 "pickup_grasp",
             ),
         ]
@@ -333,6 +334,7 @@ def _inspect_grasp(
         _declared_contacts(grasp.candidate_dir, grasp.key_to_hand)
     )
     half_x, half_y = policy["handle_half_extents_xy_m"]
+    cross_section = policy.get("handle_cross_section_xy_m")
     regions = [
         _point_region(
             point,
@@ -341,6 +343,7 @@ def _inspect_grasp(
             handle_top=float(policy["handle_z_range"][1]),
             margin=float(policy["allowed"]["edge_margin_m"]),
             tolerance=float(policy["allowed"]["plane_tolerance_m"]),
+            cross_section_xy=cross_section,
         )
         for point in declared_points
     ]
@@ -349,9 +352,13 @@ def _inspect_grasp(
     contact_links: list[str] = []
     minimum = float("inf")
     links = _hand_link_meshes(robot_urdf, grasp.grasp)
+    candidate_seed = 3100 + (
+        int(grasp.candidate_dir.name)
+        if grasp.candidate_dir.name.isdigit() else 0
+    )
     for index, (name, mesh) in enumerate(sorted(links.items())):
         points, _ = trimesh.sample.sample_surface(
-            mesh, samples_per_link, seed=503 + index
+            mesh, samples_per_link, seed=candidate_seed + index
         )
         object_points = _transform_points(grasp.key_to_hand, points)
         query = o3d.core.Tensor(object_points.astype(np.float32))
@@ -395,6 +402,7 @@ def _inspect_grasp(
         "opposing_thumb_and_finger_contact": opposing_digits,
         "minimum_signed_distance_mm": minimum * 1000.0,
         "samples_per_link": samples_per_link,
+        "sampling_seed": candidate_seed,
         "derived_grasp_not_bodex_or_mujoco_validated": True,
     }
 
@@ -451,10 +459,22 @@ def _build_one(
     target_seated = socket_pose @ np.asarray(
         geometry["T_socket_key_seated"], dtype=np.float64
     )
+    terminal_name = (
+        "verification" if args.terminal_phase == "verification" else "seated"
+    )
+    target_terminal = socket_pose @ np.asarray(
+        geometry[f"T_socket_key_{terminal_name}"], dtype=np.float64
+    )
+    terminal_label = (
+        "insert 20 mm to verification depth"
+        if terminal_name == "verification"
+        else "insert to CAD seated pose"
+    )
     segments = _direct_segments(
         start_key,
         target_preinsert,
-        target_seated,
+        target_terminal,
+        terminal_label,
         pickup,
         args.lift_height,
     )
@@ -578,6 +598,12 @@ def _build_one(
         "starts_with_key_on_table": True,
         "uses_actual_meshes": True,
         "strategy": strategy,
+        "terminal_phase": terminal_name,
+        "task_success_depth_m": (
+            geometry["verification_insertion_depth_m"]
+            if terminal_name == "verification"
+            else geometry["nominal_insertion_depth_m"]
+        ),
         "requires_unvalidated_grasp_transition": False,
         "rigid_attachment_check": {
             "passed": rigid_passed,
@@ -616,6 +642,7 @@ def _build_one(
         object_pose=objects,
         socket_pose=socket_pose,
         desired_preinsert_key_pose=target_preinsert,
+        desired_terminal_key_pose=target_terminal,
         desired_seated_key_pose=target_seated,
         collision_counts=collision_counts,
         hand_socket_collision_counts=hand_socket,
@@ -672,6 +699,15 @@ def main() -> int:
     parser.add_argument("--table-z", type=float, default=0.04)
     parser.add_argument("--socket-yaw-deg", type=float, default=0.0)
     parser.add_argument("--lift-height", type=float, default=0.12)
+    parser.add_argument(
+        "--terminal-phase",
+        choices=["verification", "seated"],
+        default="verification",
+        help=(
+            "verification stops after the primary 20 mm insertion; seated is "
+            "a diagnostic only and does not model the separate press primitive"
+        ),
+    )
     parser.add_argument("--collision-samples", type=int, default=12000)
     parser.add_argument("--policy-samples-per-link", type=int, default=12000)
     args = parser.parse_args()

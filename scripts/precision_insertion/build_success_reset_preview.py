@@ -2,9 +2,11 @@
 """Build reset-only or complete trial-and-reset presentation trajectories.
 
 The input must be a pick-to-insertion geometric preview produced by
-``build_tabletop_pose_animation_set.py``.  Reversal preserves every sampled
-robot configuration and collision result: the closed hand extracts the key,
-returns it to its original tabletop pose, opens, and only then retreats.
+``build_tabletop_pose_animation_set.py``.  The default reset extracts the key,
+transfers it to the safe high pose above its original tabletop region, opens,
+and lets the key drop.  It deliberately does not place the key back along the
+exact inverse pickup trajectory.  ``--reset-mode reverse-place`` retains the
+old diagnostic for comparison only.
 With ``--full-trial`` the output shows the complete requested presentation
 sequence: pick, rigid transfer, insertion, release, retreat and observation
 hold, re-approach, re-grasp, extraction, return, release, and final retreat.
@@ -22,8 +24,9 @@ import numpy as np
 
 
 PHASES = {
-    "final hold": "hold seated key",
+    "final hold": "hold inserted key",
     "insert to CAD seated pose": "extract from socket",
+    "insert 20 mm to verification depth": "extract from verification depth",
     "descend to preinsert": "rise above socket",
     "reorient above socket": "undo insertion orientation",
     "transfer above socket": "return above tabletop pose",
@@ -41,7 +44,21 @@ def main() -> int:
         "--full-trial", action="store_true",
         help="prepend the successful trial and add release/confirmation before reset",
     )
+    parser.add_argument(
+        "--reset-mode",
+        choices=("drop", "reverse-place"),
+        default="drop",
+        help=(
+            "drop releases above the original tabletop region; reverse-place "
+            "is the legacy exact inverse diagnostic"
+        ),
+    )
     args = parser.parse_args()
+    if not args.full_trial and args.reset_mode == "drop":
+        parser.error(
+            "drop reset composition requires --full-trial; use "
+            "--reset-mode reverse-place only for the legacy reset-only diagnostic"
+        )
     source = args.trajectory.expanduser().resolve()
     output = (
         args.output.expanduser().resolve()
@@ -73,14 +90,18 @@ def main() -> int:
     if args.full_trial:
         qpos = original["qpos"]
         phases = np.asarray(source_phases)
-        seated = original["object_pose"][-1]
+        inserted = original["object_pose"][-1]
         open_hand = qpos[0, 7:]
         closed_hand = qpos[-1, 7:]
         # Reverse only insertion+descent to obtain a known arm retreat from the
         # socket.  The key remains seated and the hand is open.  These frames
         # are visually faithful but require a future continuous collision plan.
         near_mask = np.isin(
-            phases, ["descend to preinsert", "insert to CAD seated pose"]
+            phases, [
+                "descend to preinsert",
+                "insert to CAD seated pose",
+                "insert 20 mm to verification depth",
+            ]
         )
         near_indices = np.flatnonzero(near_mask)
         retreat_indices = near_indices[::-1]
@@ -95,37 +116,80 @@ def main() -> int:
         reclose_q = release_q[::-1].copy()
         observation_q = np.repeat(retreat_q[-1:], 24, axis=0)
 
-        # Do not replay the ten-frame final hold when beginning the reverse;
-        # reclose already establishes the seated closed-hand state.
+        # Do not replay the ten-frame final hold when beginning reset; reclose
+        # already establishes the inserted closed-hand state.
         final_hold_start = int(np.flatnonzero(phases == "final hold")[0])
-        reverse_indices = np.arange(final_hold_start - 1, -1, -1)
+        if args.reset_mode == "drop":
+            # Stop at the top of the original pickup lift.  This is a safe
+            # high reset region, not an exact-placement goal.  The transfer
+            # samples are reused only as a presentation placeholder until a
+            # fresh cuRobo reset plan is generated online.
+            lift_indices = np.flatnonzero(phases == "lift key from table")
+            reset_stop = int(lift_indices[-1])
+        else:
+            reset_stop = 0
+        reverse_indices = np.arange(
+            final_hold_start - 1, reset_stop - 1, -1
+        )
         reverse_q = qpos[reverse_indices].copy()
         reverse_objects = original["object_pose"][reverse_indices].copy()
         reverse_phases = np.asarray([
             PHASES[source_phases[index]] for index in reverse_indices
         ])
+        if args.reset_mode == "drop":
+            reverse_phases[-1] = "carry above reset drop zone"
+
+        reset_extra_q: list[np.ndarray] = []
+        reset_extra_objects: list[np.ndarray] = []
+        reset_extra_phases: list[np.ndarray] = []
+        if args.reset_mode == "drop":
+            drop_open_q = np.repeat(reverse_q[-1:, :], 12, axis=0)
+            drop_alpha = np.linspace(0.0, 1.0, len(drop_open_q))[:, None]
+            drop_open_q[:, 7:] = (
+                (1.0 - drop_alpha) * closed_hand + drop_alpha * open_hand
+            )
+            drop_start = reverse_objects[-1]
+            drop_target = original["object_pose"][0]
+            falling_objects = np.repeat(drop_start[None], 18, axis=0)
+            fall_alpha = np.linspace(0.0, 1.0, 18)
+            falling_objects[:, :3, 3] = (
+                (1.0 - fall_alpha[:, None]) * drop_start[:3, 3]
+                + fall_alpha[:, None] * drop_target[:3, 3]
+            )
+            falling_q = np.repeat(drop_open_q[-1:, :], 18, axis=0)
+            reset_extra_q = [drop_open_q, falling_q]
+            reset_extra_objects = [
+                np.repeat(drop_start[None], len(drop_open_q), axis=0),
+                falling_objects,
+            ]
+            reset_extra_phases = [
+                np.repeat("release above reset drop zone", len(drop_open_q)),
+                np.repeat("drop key into reset zone", len(falling_q)),
+            ]
 
         q_segments = [
             qpos, release_q, retreat_q, observation_q,
-            approach_q, reclose_q, reverse_q,
+            approach_q, reclose_q, reverse_q, *reset_extra_q,
         ]
         object_segments = [
             original["object_pose"],
-            np.repeat(seated[None], len(release_q), axis=0),
-            np.repeat(seated[None], len(retreat_q), axis=0),
-            np.repeat(seated[None], len(observation_q), axis=0),
-            np.repeat(seated[None], len(approach_q), axis=0),
-            np.repeat(seated[None], len(reclose_q), axis=0),
+            np.repeat(inserted[None], len(release_q), axis=0),
+            np.repeat(inserted[None], len(retreat_q), axis=0),
+            np.repeat(inserted[None], len(observation_q), axis=0),
+            np.repeat(inserted[None], len(approach_q), axis=0),
+            np.repeat(inserted[None], len(reclose_q), axis=0),
             reverse_objects,
+            *reset_extra_objects,
         ]
         phase_segments = [
             phases,
             np.repeat("release after insertion", len(release_q)),
             np.repeat("retreat after release", len(retreat_q)),
             np.repeat("confirm insertion success", len(observation_q)),
-            np.repeat("approach seated key for reset", len(approach_q)),
-            np.repeat("regrasp seated key", len(reclose_q)),
+            np.repeat("approach inserted key for reset", len(approach_q)),
+            np.repeat("regrasp inserted key", len(reclose_q)),
             reverse_phases,
+            *reset_extra_phases,
         ]
         arrays["qpos"] = np.concatenate(q_segments)
         arrays["object_pose"] = np.concatenate(object_segments)
@@ -137,11 +201,16 @@ def main() -> int:
             known_forward = original[name]
             unknown_values = [
                 np.full(len(segment), -1, dtype=known_forward.dtype)
-                for segment in q_segments[1:-1]
+                for segment in q_segments[1:6]
             ]
-            arrays[name] = np.concatenate([
-                known_forward, *unknown_values, known_forward[reverse_indices]
-            ])
+            reset_unknown = [
+                np.full(len(segment), -1, dtype=known_forward.dtype)
+                for segment in reset_extra_q
+            ]
+            arrays[name] = np.concatenate(
+                [known_forward, *unknown_values,
+                 known_forward[reverse_indices], *reset_unknown]
+            )
         arrays["preview_status"] = np.asarray(
             "composed_full_trial_contains_unvalidated_release_regrasp_stages"
         )
@@ -160,7 +229,7 @@ def main() -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(output, **arrays)
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": str(arrays["preview_status"].item()),
         "kind": (
             "full_success_trial_then_reset_preview"
@@ -169,11 +238,18 @@ def main() -> int:
         "source_trajectory": str(source),
         "output_trajectory": str(output),
         "frame_count": int(len(arrays["qpos"])),
+        "reset_mode": args.reset_mode,
         "sequence_phases": list(dict.fromkeys(arrays["phase"].tolist())),
         "invariants": {
-            "reset_grasp_closed_until_tabletop_support": True,
+            "reset_grasp_closed_until_release_or_tabletop_support": True,
             "opens_before_each_unloaded_retreat": True,
-            "exact_reverse_robot_samples_for_reset": True,
+            "exact_reverse_robot_samples_for_reset": (
+                args.reset_mode == "reverse-place"
+            ),
+            "reset_objective_is_exact_original_pose": (
+                args.reset_mode == "reverse-place"
+            ),
+            "drop_release_above_reset_region": args.reset_mode == "drop",
             "key_fixed_in_socket_during_release_confirmation": bool(args.full_trial),
             "sampled_collision_count_max_for_known_frames": int(
                 arrays["collision_counts"][arrays["collision_counts"] >= 0].max()
@@ -189,6 +265,10 @@ def main() -> int:
                 if args.full_trial else []
             ),
             "force-controlled extraction",
+            *(
+                ["drop dynamics and resulting tabletop pose"]
+                if args.reset_mode == "drop" else []
+            ),
             "physical execution",
         ],
     }

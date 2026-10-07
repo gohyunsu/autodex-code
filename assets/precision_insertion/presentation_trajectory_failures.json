@@ -1,7 +1,7 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "tabletop_pose_id": "004",
-  "status": "all_corrected_contact_policy_passes_rejected_by_task_geometry",
+  "status": "five_sampled_previews_pass_at_20mm_verification_depth",
   "fixed_task_conditions": {
     "key_xy_m": [0.4, 0.18],
     "key_yaw_deg": 0.0,
@@ -10,16 +10,21 @@
     "maximum_ik_translation_error_mm": 0.75,
     "maximum_ik_rotation_error_deg": 0.75
   },
-  "rejected_after_contact_policy": [
-    {"candidate": "40", "seated_hand_minimum_z_mm": -13.692, "below_table_samples": 43},
-    {"candidate": "383", "seated_hand_minimum_z_mm": -9.990, "below_table_samples": 29},
-    {"candidate": "6910", "seated_hand_minimum_z_mm": -10.587, "below_table_samples": 31},
-    {"candidate": "21601", "seated_hand_minimum_z_mm": -22.762, "below_table_samples": 106},
-    {"candidate": "21771", "seated_hand_minimum_z_mm": -22.512, "below_table_samples": 104},
-    {"candidate": "26729", "seated_hand_minimum_z_mm": -25.714, "below_table_samples": 123},
-    {"candidate": "26765", "seated_hand_minimum_z_mm": -23.046, "below_table_samples": 108},
-    {"candidate": "36889", "seated_hand_minimum_z_mm": -22.587, "below_table_samples": 104},
-    {"candidate": "46925", "seated_hand_minimum_z_mm": -16.320, "below_table_samples": 60}
+  "verification_depth_m": 0.02,
+  "passed_at_verification_depth": [
+    {"candidate": "40", "verification_hand_minimum_z_mm": 6.523, "seated_hand_minimum_z_mm": -13.977},
+    {"candidate": "383", "verification_hand_minimum_z_mm": 10.240, "seated_hand_minimum_z_mm": -10.260},
+    {"candidate": "6910", "verification_hand_minimum_z_mm": 9.631, "seated_hand_minimum_z_mm": -10.869},
+    {"candidate": "31763", "verification_hand_minimum_z_mm": 12.856, "seated_hand_minimum_z_mm": -7.644},
+    {"candidate": "46925", "verification_hand_minimum_z_mm": 3.874, "seated_hand_minimum_z_mm": -16.626}
   ],
-  "interpretation": "The handle-only contact policy is necessary but insufficient. These grasps rotate the palm/fingers underneath the table at insertion and cannot be used by the rigid pick-to-insert pipeline."
+  "rejected_after_contact_policy": [
+    {"candidate": "21601", "verification_hand_minimum_z_mm": -2.614, "below_table_samples": 12},
+    {"candidate": "21771", "verification_hand_minimum_z_mm": -2.361, "below_table_samples": 9},
+    {"candidate": "26729", "verification_hand_minimum_z_mm": -5.588, "below_table_samples": 43},
+    {"candidate": "26765", "verification_hand_minimum_z_mm": -2.901, "below_table_samples": 12},
+    {"candidate": "36889", "verification_hand_minimum_z_mm": -2.433, "below_table_samples": 10}
+  ],
+  "fully_seated_same_grasp_diagnostic": "All ten contact-policy passes place part of the Inspire hand below the table at the CAD seated pose. This does not invalidate the five 20 mm insertion candidates; it invalidates same-grasp full seating.",
+  "interpretation": "The handle-only contact policy is necessary but insufficient. Five grasps remain geometrically plausible to the 20 mm success depth. They still require MuJoCo validation, continuous cuRobo planning, and physical validation."
 }

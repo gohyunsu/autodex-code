@@ -6,7 +6,13 @@ three independent gates with the exact key, socket, and Inspire visual meshes:
 
 1. declared and complete-hand key contact policy;
 2. pregrasp/grasp clearance above the candidate's tabletop stable pose; and
-3. complete-hand/socket clearance at CAD pre-insertion and seated poses.
+3. complete-hand/socket clearance from CAD pre-insertion through the 20 mm
+   verification depth used as primary task success.
+
+The fully seated pose is reported as an optional same-grasp diagnostic but is
+not a primary gate.  Full seating uses a separate release/retreat/top-down
+press primitive because requiring the original grasp to remain closed at the
+table plane rejects otherwise useful insertion grasps.
 
 Passing this sampled screen is necessary but not sufficient.  It is not a
 continuous collision proof, arm IK/trajectory plan, MuJoCo validation, or a
@@ -147,7 +153,7 @@ def _environment_report(
 
     socket: dict[str, Any] = {}
     insertion_table: dict[str, Any] = {}
-    for phase in ("preinsert", "seated"):
+    for phase in ("preinsert", "entry", "verification", "seated"):
         socket_to_key = np.asarray(
             geometry[f"T_socket_key_{phase}"], dtype=np.float64
         )
@@ -167,19 +173,31 @@ def _environment_report(
             )),
         }
 
+    primary_phases = ("preinsert", "entry", "verification")
     passed = (
         all(item["below_table_samples"] == 0 for item in table.values())
-        and all(item["penetrating_samples"] == 0 for item in socket.values())
+        and all(socket[phase]["penetrating_samples"] == 0 for phase in primary_phases)
         and all(
-            item["below_table_samples"] == 0
-            for item in insertion_table.values()
+            insertion_table[phase]["below_table_samples"] == 0
+            for phase in primary_phases
         )
     )
     return {
         "passed": passed,
+        "primary_terminal_phase": "verification",
+        "verification_insertion_depth_m": geometry[
+            "verification_insertion_depth_m"
+        ],
         "tabletop_table": table,
         "insertion_table": insertion_table,
         "socket": socket,
+        "optional_same_grasp_seated_diagnostic": {
+            "passed": (
+                socket["seated"]["penetrating_samples"] == 0
+                and insertion_table["seated"]["below_table_samples"] == 0
+            ),
+            "not_required_for_primary_task_success": True,
+        },
     }
 
 
