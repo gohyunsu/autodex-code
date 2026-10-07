@@ -61,16 +61,36 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _copy(source: Path, destination: Path) -> None:
+    """Copy file contents without replaying local metadata on the NAS.
+
+    ``shutil.copy2`` and ``copytree`` issue a chmod/copystat RPC for every
+    copied path.  ParaDex2 can spend minutes blocked in those calls, while the
+    handoff contract only depends on byte content recorded in ``SHA256SUMS``.
+    Build the tree explicitly and use ``copyfile`` so export remains portable
+    across NFS permission and timestamp policies.
+    """
+
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if source.is_dir():
-        shutil.copytree(
-            source,
-            destination,
-            copy_function=shutil.copy2,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"),
+    if not source.is_dir():
+        shutil.copyfile(source, destination)
+        return
+
+    if destination.exists():
+        raise FileExistsError(f"refusing to merge copied tree: {destination}")
+    destination.mkdir()
+    for root, dirnames, filenames in os.walk(source):
+        dirnames[:] = sorted(name for name in dirnames if name != "__pycache__")
+        filenames = sorted(
+            name
+            for name in filenames
+            if not name.endswith(".pyc") and name != ".DS_Store"
         )
-    else:
-        shutil.copy2(source, destination)
+        source_dir = Path(root)
+        relative = source_dir.relative_to(source)
+        destination_dir = destination / relative
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        for filename in filenames:
+            shutil.copyfile(source_dir / filename, destination_dir / filename)
 
 
 def _files(root: Path) -> Iterable[Path]:
