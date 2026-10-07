@@ -740,6 +740,36 @@ PYOPENGL_PLATFORM=egl ~/.venvs/autodex-viz/bin/python \
   --output ~/shared_data/AutoDex/precision_insertion/visualizations/common_grasp_78_hand_key.png
 ```
 
+### VLM checkpoint storyboards with actual assets
+
+Do not use generative images as robot-geometry evidence. Build the four VLM
+checkpoint illustrations from the recorded candidate-40 trajectory, the
+combined FR3/Inspire URDF visuals, and the exact key/socket meshes:
+
+```bash
+conda run -n autodex_bodex python \
+  scripts/precision_insertion/build_vlm_checkpoint_states.py
+
+conda run -n autodex_bodex python \
+  scripts/precision_insertion/render_vlm_checkpoint_storyboards.py
+```
+
+The output is under
+`~/shared_data/AutoDex/precision_insertion/presentation_assets/08_vlm_checkpoints/`:
+
+- `checkpoint_01_lift.png`: retained, miss, and slip;
+- `checkpoint_02_preinsert.png`: aligned, grossly misaligned, and occluded;
+- `checkpoint_03_insertion.png`: 20 mm verification, partial insertion, and
+  staged rim jam;
+- `checkpoint_04_finish.png`: seated and staged post-press jam states.
+
+The renderer uses all 41 original FR3/Inspire visual geometries and writes no
+text into the 1920x1080 storyboards. Read `actual_asset_states.manifest.json`
+and `render_manifest.json` before presenting them. Recorded panels preserve
+saved kinematics; miss/slip, IK misalignment/jam, and finish panels are
+explicit explanatory counterfactuals. They are not cuRobo, collision,
+dynamics, controller, or physical-validation evidence.
+
 ## Stage profiles and controller assets
 
 `build_assets.py` writes one profile under
