@@ -721,12 +721,13 @@ Every active MP4 has a 960×540, 10 fps, palette-optimized GIF derivative next
 to it. Rebuild all GIFs and the machine-readable inventory with:
 
 ```bash
-python scripts/precision_insertion/render_gif_derivatives.py --force
+python scripts/precision_insertion/render_gif_derivatives.py \
+  --force --include-audit
 ```
 
 `presentation_assets/gif_manifest.json` records the MP4/GIF pair, dimensions,
-frame rate, duration, and byte size. Paths containing `audit` are deliberately
-excluded.
+frame rate, duration, byte size, and whether it belongs to deprecated audit
+evidence. Omit `--include-audit` when only active slide assets are needed.
 
 For a close hand/key still or turntable, reuse the generic mesh renderer:
 

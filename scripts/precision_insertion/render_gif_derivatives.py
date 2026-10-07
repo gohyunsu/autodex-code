@@ -45,6 +45,11 @@ def main() -> int:
     parser.add_argument("--width", type=int, default=960)
     parser.add_argument("--colors", type=int, default=128)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--include-audit",
+        action="store_true",
+        help="also convert deprecated/audit MP4 files; they remain non-active evidence",
+    )
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
@@ -54,7 +59,7 @@ def main() -> int:
 
     videos = sorted(
         path for path in root.rglob("*.mp4")
-        if "audit" not in path.relative_to(root).parts
+        if args.include_audit or "audit" not in path.relative_to(root).parts
     )
     records: list[dict[str, Any]] = []
     for index, source in enumerate(videos, start=1):
@@ -87,15 +92,21 @@ def main() -> int:
             "derivative": gif_probe,
             "source_size_bytes": source.stat().st_size,
             "gif_size_bytes": output.stat().st_size,
+            "deprecated_audit": "audit" in source.relative_to(root).parts,
         }
         records.append(record)
         print(f"[{index}/{len(videos)}] {action}: {record['gif']}")
 
     manifest = {
         "schema_version": 1,
-        "status": "all_active_mp4_assets_have_gif_derivatives",
+        "status": (
+            "all_mp4_assets_including_deprecated_audit_have_gif_derivatives"
+            if args.include_audit
+            else "all_active_mp4_assets_have_gif_derivatives"
+        ),
         "root": str(root),
-        "excludes": ["any path component named audit"],
+        "includes_deprecated_audit": args.include_audit,
+        "excludes": ([] if args.include_audit else ["any path component named audit"]),
         "settings": {
             "fps": args.fps,
             "maximum_width_px": args.width,

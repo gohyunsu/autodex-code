@@ -115,10 +115,27 @@ def main() -> int:
     for record in evidence:
         if record["path"] not in {"manifest.json", "gif_manifest.json"}:
             lines.append(f"- `{root / record['path']}`")
-    lines.extend(["", "## Animation pairs", ""])
-    for record in gif_manifest["assets"]:
+    active_animations = [
+        record for record in gif_manifest["assets"]
+        if not record.get("deprecated_audit", False)
+    ]
+    audit_animations = [
+        record for record in gif_manifest["assets"]
+        if record.get("deprecated_audit", False)
+    ]
+    lines.extend(["", "## Active animation pairs", ""])
+    for record in active_animations:
         lines.append(f"- `{root / record['source_mp4']}`")
         lines.append(f"  - GIF: `{root / record['gif']}`")
+    if audit_animations:
+        lines.extend([
+            "", "## Deprecated/audit animation derivatives", "",
+            "These GIFs exist for format completeness only. They are not active "
+            "success evidence.", "",
+        ])
+        for record in audit_animations:
+            lines.append(f"- `{root / record['source_mp4']}`")
+            lines.append(f"  - GIF: `{root / record['gif']}`")
     lines.extend(["", "## Still images", ""])
     for record in stills:
         lines.append(f"- `{root / record['path']}`")
