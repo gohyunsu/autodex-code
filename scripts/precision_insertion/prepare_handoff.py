@@ -24,6 +24,7 @@ import json
 import os
 import shutil
 import subprocess
+import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -91,6 +92,25 @@ def _copy(source: Path, destination: Path) -> None:
         destination_dir.mkdir(parents=True, exist_ok=True)
         for filename in filenames:
             shutil.copyfile(source_dir / filename, destination_dir / filename)
+
+
+def _archive_tree(source: Path, destination: Path) -> None:
+    """Store non-runtime evidence as one TAR to avoid per-entry NAS RPCs."""
+
+    if not source.is_dir():
+        raise NotADirectoryError(source)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    def filter_member(member: tarfile.TarInfo) -> tarfile.TarInfo | None:
+        parts = Path(member.name).parts
+        if "__pycache__" in parts or member.name.endswith(".pyc"):
+            return None
+        if parts and parts[-1] == ".DS_Store":
+            return None
+        return member
+
+    with tarfile.open(destination, mode="w") as archive:
+        archive.add(source, arcname=source.name, filter=filter_member)
 
 
 def _files(root: Path) -> Iterable[Path]:
@@ -305,21 +325,21 @@ def _specs(
                 CopySpec(
                     "reproducibility",
                     shared / "AutoDex/bodex_raw/inspire/precision_insertion_v4_per_key_proxy",
-                    Path("reproducibility/AutoDex/bodex_raw/inspire/precision_insertion_v4_per_key_proxy"),
+                    Path("reproducibility/precision_insertion_v4_per_key_proxy.tar"),
                     False,
                     "Raw four-proxy BODex search used to obtain the historical pick/lift grasp.",
                 ),
                 CopySpec(
                     "reproducibility",
                     shared / "AutoDex/contact_screen_staging/inspire/precision_insertion_v4_common_grasp",
-                    Path("reproducibility/AutoDex/contact_screen_staging/inspire/precision_insertion_v4_common_grasp"),
+                    Path("reproducibility/precision_insertion_v4_common_grasp.tar"),
                     False,
                     "Declared-contact screening of historical grasp proposals.",
                 ),
                 CopySpec(
                     "reproducibility",
                     shared / "AutoDex/sim_filter_pass/inspire/precision_insertion_v4_common_grasp",
-                    Path("reproducibility/AutoDex/sim_filter_pass/inspire/precision_insertion_v4_common_grasp"),
+                    Path("reproducibility/precision_insertion_v4_common_grasp_sim_filter_pass.tar"),
                     False,
                     "Historical MuJoCo/scene-clearance evidence; not a whole-hand insertion proof.",
                 ),
@@ -397,7 +417,7 @@ python scripts/precision_insertion/verify_autodex_camera_profile.py \
 - `source/`: canonical inputs/scripts and selected ZeroDex VLM reference code
 - `fabrication/`: STL and sliced 3MF files; protocol uses 0.3/0.5/1.0/1.5 mm
 - `payload/shared_data/`: files restored into the local AutoDex data overlay
-- `reproducibility/`: raw BODex/search evidence; not needed for normal runtime
+- `reproducibility/`: raw BODex/search evidence as TAR archives; not needed for normal runtime
 - `handoff_docs/OPEN_ITEMS.md`: work that cannot be represented as a file yet
 - `MANIFEST.json`: source, purpose, required/optional status, sizes
 - `SHA256SUMS`: byte-level integrity for every other file
@@ -487,7 +507,10 @@ def build_bundle(
                 if spec.required:
                     raise FileNotFoundError(f"required handoff source missing: {source}")
                 continue
-            _copy(source, partial / spec.destination)
+            if spec.category == "reproducibility" and source.is_dir():
+                _archive_tree(source, partial / spec.destination)
+            else:
+                _copy(source, partial / spec.destination)
             copied = partial / spec.destination
             record["bytes"] = sum(path.stat().st_size for path in _files(copied)) if copied.is_dir() else copied.stat().st_size
             record["files"] = len(list(_files(copied))) if copied.is_dir() else 1
