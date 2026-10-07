@@ -547,6 +547,19 @@ For the high-density second pass, add the merged coarse report as
 screens exactly the earlier `passed_candidates`; it fails if any referenced ID
 is absent from the scene.
 
+To run downstream cuRobo/MuJoCo on a bounded pilot without mutating the full
+quality-stage pool, copy ranked high-density passes into a separate version.
+`--include-candidate` is useful for retaining a scientifically relevant
+control outside the top-N cutoff:
+
+```bash
+python scripts/precision_insertion/stage_screen_passed_candidates.py \
+  --source-scene ~/shared_data/AutoDex/contact_screen_staging/inspire/precision_insertion_unconstrained_20mm_10k/precision_key_1p5mm/table/4 \
+  --screen-report ~/shared_data/AutoDex/precision_insertion/experiments/unconstrained_20mm_10k/highres_task_screen_pose_004.json \
+  --output-scene ~/shared_data/AutoDex/sim_staging/inspire/precision_insertion_unconstrained_20mm_10k_top50/precision_key_1p5mm/table/4 \
+  --max-candidates 50 --include-candidate 182
+```
+
 Generate more proposals in bounded batches with non-overlapping
 `--seed_offset`, then rebuild both the contact screen and strict task screen.
 Never satisfy the requested count of 20 by changing a hand configuration,
