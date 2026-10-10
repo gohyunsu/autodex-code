@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from audit_cylinder_reorient_pilot import audit  # noqa: E402
 from promote_v8_reset_candidates import promote  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
+from precision_insertion.reorient_assets import audit_v8_reorient_assets  # noqa: E402
 from precision_insertion.reset_candidates import load_v8_reset_seeds  # noqa: E402
 from stage_cylinder_reorient_proposals import KEY, PAIRS, PROXY, stage  # noqa: E402
 
@@ -165,6 +166,10 @@ def test_promotes_only_stock_mujoco_pass_and_loads_direct_v8_cell(tmp_path):
     assert promoted["promoted_count"] == 1
     assert promoted["robot_ready"] is False
     mode = select_mode("cylinder", 20)
+    asset_audit = audit_v8_reorient_assets(shared_root=tmp_path, mode=mode)
+    assert asset_audit["schema"].endswith("v3")
+    assert asset_audit["directed_pairs"][0][
+        "stable_reset_seed_counts_by_height_cm"]["12"] == 1
     T_robot_key = np.eye(4)
     T_robot_key[:3, 3] = [0.5, 0.1, 0.2]
     seeds = load_v8_reset_seeds(

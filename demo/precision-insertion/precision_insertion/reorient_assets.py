@@ -201,6 +201,10 @@ def prepare_v8_reorient_scenes(
 
 def audit_v8_reorient_assets(*, shared_root: Path, mode: TaskMode) -> dict:
     """Separate BODex scene availability from truly staged reset grasps."""
+    # Import here to avoid a module cycle: the direct-v8 loader reuses this
+    # module's scene contract, while this audit reuses its seed validator.
+    from .reset_candidates import _candidate_arrays
+
     root, object_dir = _paths(shared_root, mode)
     ids = _tabletop_ids(object_dir)
     rows = []
@@ -211,6 +215,8 @@ def audit_v8_reorient_assets(*, shared_root: Path, mode: TaskMode) -> dict:
             scenes = []
             missing_sim_scenes = []
             candidate_counts = {}
+            reported_counts = {}
+            rejected_ids = {}
             for h_cm in RESET_RELEASE_HEIGHTS_CM:
                 scene = _scene_path(object_dir, h_cm, i, j)
                 sim_scene = _sim_filter_scene_path(root, mode, h_cm, i, j)
@@ -232,31 +238,43 @@ def audit_v8_reorient_assets(*, shared_root: Path, mode: TaskMode) -> dict:
                         f"reset_{h_cm}" / mode.key_object /
                         f"reorient_{h_cm}" / f"{i}_{j}")
                 candidates = []
+                reported = []
+                rejected = []
                 if cell.is_dir():
                     for seed in cell.iterdir():
-                        if not seed.is_dir():
+                        if not seed.is_dir() or not seed.name.isdigit():
                             continue
-                        required = ("wrist_se3.npy", "pregrasp_pose.npy",
-                                    "grasp_pose.npy", "sim_eval.json")
-                        if not all((seed / name).is_file() for name in required):
+                        result_file = seed / "sim_eval.json"
+                        if not result_file.is_file():
                             continue
                         try:
-                            stable = json.loads((seed / "sim_eval.json").read_text(
+                            stable = json.loads(result_file.read_text(
                                 encoding="utf-8")).get("success") is True
-                            validate_se3(np.load(seed / "wrist_se3.npy",
-                                                 allow_pickle=False),
-                                         name="reset candidate T_key_hand")
-                        except (ValueError, TypeError, json.JSONDecodeError):
+                        except (ValueError, TypeError, OSError):
                             continue
-                        if stable:
-                            candidates.append(seed.name)
+                        if not stable:
+                            continue
+                        reported.append(seed.name)
+                        try:
+                            _candidate_arrays(
+                                seed, mode=mode, cell=f"{i}_{j}",
+                                h_cm=h_cm, scenes=(scene, sim_scene))
+                        except (FileNotFoundError, ValueError, TypeError,
+                                KeyError, OSError, EOFError):
+                            rejected.append(seed.name)
+                            continue
+                        candidates.append(seed.name)
                 candidate_counts[str(h_cm)] = len(candidates)
+                reported_counts[str(h_cm)] = len(reported)
+                rejected_ids[str(h_cm)] = sorted(rejected, key=int)
             rows.append({
                 "from_v8_pose": i, "to_v8_pose": j,
                 "scene_heights_cm": scenes,
                 "bodex_scene_missing_sim_filter_mirror_heights_cm":
                     missing_sim_scenes,
                 "stable_reset_seed_counts_by_height_cm": candidate_counts,
+                "reported_mujoco_pass_counts_by_height_cm": reported_counts,
+                "reported_passes_rejected_by_loader_by_height_cm": rejected_ids,
                 "has_any_stable_seed": any(candidate_counts.values()),
             })
     legacy = (root / "AutoDex" / "object" / "paradex" /
@@ -276,7 +294,7 @@ def audit_v8_reorient_assets(*, shared_root: Path, mode: TaskMode) -> dict:
             staging.append({"manifest": str(manifest),
                             "status": "unreadable_staging_manifest"})
     return {
-        "schema": "precision_insertion_v8_reorient_asset_audit_v2",
+        "schema": "precision_insertion_v8_reorient_asset_audit_v3",
         "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
                  "key_object": mode.key_object},
         "v8_pose_stems": list(ids), "directed_pairs": rows,

@@ -375,11 +375,13 @@ sim-filter path `AutoDex/scene/inspire/<key>/reorient_<h>/<i>_<j>.json`.
 The [cylinder v2 scene manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_scene_manifest_v8_v2_20261010.json)
 records eight directed-height pairs and the hashes of both copies. The square
 key already has 20 h=12 cm scene pairs.
-[The square v2 audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/reorient_square_1p5_audit_v2_20261010.json)
-and [cylinder v2 audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_asset_audit_v8_v2_20261010.json)
+[The square v3 audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/reorient_square_1p5_audit_v3_20261010.json)
+and [cylinder v3 audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_asset_audit_v8_v3_20261010.json)
 find **zero runtime-stable reset seeds** for either family. Earlier square
 whole-hand staging manifests also report zero sampled passes; they must not
-be counted as runtime reset assets.
+be counted as runtime reset assets. The v3 audit reports a raw
+`sim_eval.json` success separately from a provenance-bound seed the demo
+loader will accept; only the latter enters its stable-seed count.
 
 For the cylinder's 12 cm release scene, direct full-key BODex generation
 failed in Coal convex-hull construction (`Too many neighbors`), so it did

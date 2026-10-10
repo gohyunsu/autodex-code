@@ -100,7 +100,11 @@ def test_rejects_corrupt_existing_scene_and_counts_only_sim_pass(tmp_path):
     (cell / "sim_eval.json").write_text('{"success": true}')
     audit = audit_v8_reorient_assets(shared_root=tmp_path, mode=MODE)
     assert audit["directed_pairs"][0][
-        "stable_reset_seed_counts_by_height_cm"]["12"] == 1
+        "reported_mujoco_pass_counts_by_height_cm"]["12"] == 1
+    assert audit["directed_pairs"][0][
+        "stable_reset_seed_counts_by_height_cm"]["12"] == 0
+    assert audit["directed_pairs"][0][
+        "reported_passes_rejected_by_loader_by_height_cm"]["12"] == ["5"]
     sim_file = (tmp_path / "AutoDex/scene/inspire" / MODE.key_object /
                 "reorient_12/0_1.json")
     sim_scene = json.loads(sim_file.read_text())
