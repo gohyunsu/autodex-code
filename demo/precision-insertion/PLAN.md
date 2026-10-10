@@ -290,9 +290,9 @@ Store each milestone independently as `true`, `false`, or `null` (unjudgeable):
 
 | Field | Meaning and decisive evidence |
 | --- | --- |
-| `grasp_success` | Key is held through lift; image sequence plus key/wrist pose and hand state. |
+| `grasp_success` | Multi-view VLM judges held/miss/slip after lift, checked against key–wrist motion and hand state; occlusion or disagreement remains `null`. |
 | `preinsert_reached` | Held key reaches the specified pose above the socket; measured pose residual, grip state, and trajectory completion. |
-| `insertion_success` | Observed key/socket penetration reaches at least 20 mm within alignment and force limits, with no abort; corroborated by images when visible. |
+| `insertion_success` | Fused task verdict: multi-view VLM classifies normal/partial/jammed/unknown insertion using before/after frames and CAD overlays; independently supported key-relative-to-socket depth reaches at least 20 mm with acceptable alignment and no safety abort. Contradictory or occluded evidence is `null`, not a VLM-only success. |
 | `release_success` | Optional: after 20 mm verification, the hand opens without dislodging the supported key; observed independently. |
 | `retreat_success` | Optional: the empty hand exits along the socket axis and reaches a collision-free clear pose. |
 | `reset_success` | A safe verified return or controlled recovery makes the next trial possible. |
@@ -335,8 +335,25 @@ summary follows this contract (all stage values start at `null`):
 `preinsert_reached=true` does not imply `insertion_success=true`.
 `grasp_success=false` leaves later stages `null` rather than falsely
 declaring that insertion was attempted and failed. `insertion_success=true`
-requires prior grasp and transfer success, measured depth, and no safety
-abort. A VLM response alone cannot set any stage to `true`.
+requires prior grasp and transfer success, observed depth, a compatible VLM
+assessment, and no safety abort. A VLM response alone cannot set any stage to
+`true`; sensor agreement alone cannot silently substitute for the planned
+VLM task assessment either. Store `vlm_insertion_assessment` separately from
+the fused `insertion_success`, including raw per-view answers, visibility,
+confidence/abstention, and time-aligned sensor evidence.
+
+Here “depth” is **key penetration relative to the measured socket rim**, not
+the commanded or observed wrist descent. Estimate it from the calibrated
+key–wrist relation and robot FK, cross-checking visible key/rim landmarks or
+exposed-key length whenever possible; if the key slips or the cross-check is
+unobservable, report `null`. “Alignment” means the key and socket centerlines,
+axis tilt, and square-key yaw are within gap-specific, commissioned error
+limits; a round key has no meaningful axial yaw. Force/torque is primarily a
+**safety veto and jam diagnostic**, not positive evidence of success: a low
+force does not prove insertion, and the existing `FrankaExecutor` only has a
+single-axis place-contact stop, not a commissioned insertion F/T controller.
+Do not set numerical acceptance thresholds until camera/hand-eye, grip-slip,
+and F/T repeatability have been measured on the real rig.
 
 ## ZeroDex-style visual adjustment
 
@@ -391,6 +408,19 @@ latency, and validation accuracy decide which backend is used. Start in
 shadow mode with no robot command, and quantify direction-choice accuracy
 on labeled failure images before enabling bounded retries.
 
+At the final 20 mm checkpoint, VLM assessment is a **primary semantic
+component**, not merely a screenshot decoration: present preinsert, contact,
+and final/abort frames from informative views with projected CAD rim/key
+outlines and the measured depth/F/T summary. Require structured output such
+as `normal_20mm`, `partial`, `rim_jam`, `slip`, or `unobservable`, each with
+view-specific evidence. A deterministic resolver compares this with depth,
+alignment uncertainty, contact abort, and grasp state. A VLM success opposed
+by insufficient measured depth is not success; a numerical 20 mm wrist stroke
+with VLM-visible jam or possible slip is also not success. Conflicts are
+flagged for review rather than automatically retried. Collect independent
+human/physical labels on the first trials so VLM accuracy can be evaluated
+without using its own verdict as ground truth.
+
 ## Reset and repose policy
 
 `repose` means restoring a usable key position while preserving its tabletop
@@ -428,6 +458,7 @@ demo/precision-insertion/
   precision_insertion/
     config.py                     # explicit paths, modes, limits
     assets.py                     # v8/object_processing and evidence checks
+    endpoint.py                   # grasp-only exact 20 mm hand/socket screen
     camera.py                     # unchanged AutoDex camera API adapter
     calibration.py                # ChArUco/socket measurement and freeze
     symmetry.py                   # local square/cylinder pose handling
@@ -436,6 +467,7 @@ demo/precision-insertion/
     planner.py                    # full-chain preflight and XY replanning
     execution.py                  # Franka/Inspire and guarded stroke adapter
     xy_voting.py                  # read-only multi-view XY ID consensus
+    outcome.py                    # VLM-led tri-state insertion result fusion
     observer.py                   # multi-view VLM and sensor evidence
     recovery.py                   # retreat, repose, reorient, stop
     records.py                    # tri-state results and immutable provenance

@@ -42,6 +42,17 @@ The first independent helpers are in `precision_insertion/`:
   decisions, stale/asynchronous frames, a possible slip, and step/total
   budget violations; it never averages candidate positions. A `propose`
   result is not motion authorization or evidence of insertion success.
+- `endpoint.py` evaluates one fixed-grasp candidate using the full metric CAD
+  key, exact socket collision mesh, and every Inspire visual link at the
+  centered 20 mm insertion pose. It uses Coal triangle-mesh collision and
+  minimum surface distance, excludes the Franka arm and all trajectories,
+  and records source hashes. This is grasp-level **endpoint** evidence only;
+  simulated grasp stability is still a separate v8/MuJoCo gate.
+- `outcome.py` defines a VLM-led, sensor-vetoed tri-state task label. A
+  multi-view `normal_20mm` assessment is required for `true`, together with
+  independently cross-checked **key** depth, commissioned alignment limits,
+  held-grasp evidence, and no safety abort. Conflicting or occluded evidence
+  is `null`; normal force or a commanded wrist stroke is not success proof.
 
 The XY voting module is a pure offline contract, not a VLM API integration.
 Its caller must first validate the candidate offsets against the exact
@@ -67,6 +78,25 @@ not establish live calibration, online path safety, or guarded contact. For
 cylindrical assets, use `--mode cylinder --gap-mm 20` (gap is the radial gap
 value used by that asset family). This command does not contact cameras or
 the robot and does not write files.
+
+Screen one grasp at the nominal 20 mm endpoint (read-only by default):
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/run_pipeline.py screen-endpoint \
+  --shared-root /home/hyunsu/shared_data --mode square --gap-mm 1.5 \
+  --candidate-dir /home/hyunsu/shared_data/AutoDex/candidates/inspire/v8/precision_key_1p5mm/table/0/78 \
+  --min-hand-clearance-mm 0.2
+```
+
+The clearance above is an **example argument, not an approved physical
+threshold**; choose it from measured asset, calibration, and grasp errors.
+Exit `0` means the CAD endpoint passed; exit `2` means it failed. Add
+`--output /path/to/new_report.json` to write a new report exclusively (an
+existing path is not overwritten). The current v8 candidate `table/0/78`
+fails: its key fits the square socket nominally with about 1.5 mm CAD gap,
+but three Inspire visual links intersect the socket. This screen does not
+validate the path to that endpoint, contact dynamics, or hardware readiness.
 
 Run the current offline tests from the repository root:
 

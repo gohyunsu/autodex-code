@@ -62,6 +62,10 @@ def test_complete_file_set_still_cannot_claim_robot_ready(tmp_path):
           "mesh" / "simplified.obj")
     _file(tmp_path / "object_processing" / socket / "processed_data" /
           "mesh" / "static_collision.obj")
+    _file(tmp_path / "AutoDex" / "precision_insertion" / "fixtures" /
+          "unified_socket" / "task_geometry.json", "{}")
+    _file(tmp_path / "AutoDex" / "content" / "assets" / "robot" /
+          "fr3_inspire_description" / "fr3_inspire.urdf")
     _file(tmp_path / "object_processing" / key / "processed_data" /
           "info" / "tabletop" / "000.npy")
     _file(tmp_path / "AutoDex" / "scene" / "inspire" / key /

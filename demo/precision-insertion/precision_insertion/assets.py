@@ -43,6 +43,18 @@ class AssetPaths:
                 "mesh" / "static_collision.obj")
 
     @property
+    def task_geometry(self) -> Path:
+        fixture = ("unified_socket" if self.mode.family == "square"
+                   else self.mode.socket_object)
+        return (self.shared_root / "AutoDex" / "precision_insertion" /
+                "fixtures" / fixture / "task_geometry.json")
+
+    @property
+    def robot_urdf(self) -> Path:
+        return (self.shared_root / "AutoDex" / "content" / "assets" /
+                "robot" / "fr3_inspire_description" / "fr3_inspire.urdf")
+
+    @property
     def candidate_dir(self) -> Path:
         return (self.shared_root / "AutoDex" / "candidates" / "inspire" /
                 "v8" / self.mode.key_object)
@@ -83,6 +95,8 @@ def audit_assets(shared_root: Path, mode: TaskMode) -> dict:
         "key_planning_mesh": paths.key_planning_mesh,
         "socket_raw_mesh": paths.raw_mesh(socket),
         "socket_exact_collision_mesh": paths.socket_collision_mesh,
+        "task_geometry": paths.task_geometry,
+        "franka_inspire_urdf": paths.robot_urdf,
         "key_foundpose_repre": paths.foundpose_repre(key),
         "socket_foundpose_repre": paths.foundpose_repre(socket),
     }
