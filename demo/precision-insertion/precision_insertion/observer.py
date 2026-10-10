@@ -287,6 +287,8 @@ def _require_temporal_camera_pairs(
 
 
 def _parse_object(answer: str) -> dict:
+    if not isinstance(answer, str):
+        raise ValueError("VLM answer must be text")
     source = answer.strip()
     # Small local VLMs often wrap otherwise valid JSON in one Markdown fence.
     # Accept only a complete JSON fence, never extra prose or a JSON fragment.

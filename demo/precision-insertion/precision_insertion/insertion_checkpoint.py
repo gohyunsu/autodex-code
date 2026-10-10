@@ -20,7 +20,7 @@ from PIL import Image
 from .frame_provenance import bounded_capture_skew_s, image_sha256
 from .guarded_trace import verify_guarded_contact_trace
 from .key_perception import verify_key_capture_artifacts
-from .observer import ImageVLM, LabeledFrame, observe_insertion_visual
+from .observer import ImageVLM, LabeledFrame, _parse_object, observe_insertion_visual
 from .outcome import InsertionEvidence, judge_insertion
 from .raw_camera_capture import (
     RawCameraCapture, verify_raw_camera_capture, write_raw_camera_capture,
@@ -33,6 +33,58 @@ FinalInsertionCapture = RawCameraCapture
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _bound_external_metric_claim(
+    *, name: str, path: Path, metric: dict, started: float, completed: float,
+) -> None:
+    """Check a producer claim against its raw-file references and summary.
+
+    This is internal consistency, not authentication or commissioning of the
+    physical sensor. A file hash alone cannot establish a depth measurement.
+    """
+    expected_fields = {
+        "key_depth": ("key_depth_interval_m", "key_depth_source"),
+        "alignment": ("alignment_within_limits",),
+        "grasp_state": ("grasp_held",),
+    }
+    claim = json.loads(path.read_text(encoding="utf-8"))
+    fields = expected_fields[name]
+    if (not isinstance(claim, dict) or
+            claim.get("schema") !=
+            "precision_insertion_external_metric_claim_v1" or
+            claim.get("source_name") != name or
+            any(claim.get(field) != metric[field] for field in (
+                "attempt_id", "candidate_id",
+                "session_calibration_sha256")) or
+            not isinstance(claim.get("producer_id"), str) or
+            not claim["producer_id"].strip() or
+            not isinstance(claim.get("source_method"), str) or
+            not claim["source_method"].strip() or
+            not isinstance(claim.get("measurement"), dict) or
+            set(claim["measurement"]) != set(fields) or
+            any(claim["measurement"][field] != metric["measurement"][field]
+                for field in fields)):
+        raise ValueError(f"guarded {name} claim differs from metric summary")
+    stamp = claim.get("recorded_at_s")
+    if (type(stamp) not in (float, int) or not math.isfinite(stamp) or
+            not started <= stamp <= completed):
+        raise ValueError(f"guarded {name} claim is outside the stroke")
+    raw_evidence = claim.get("raw_evidence")
+    if not isinstance(raw_evidence, list) or not raw_evidence:
+        raise ValueError(f"guarded {name} has no raw producer evidence")
+    seen = set()
+    for row in raw_evidence:
+        if (not isinstance(row, dict) or set(row) != {"path", "sha256"}
+                or not isinstance(row["path"], str)):
+            raise ValueError(f"guarded {name} raw reference is malformed")
+        source = Path(row["path"]).expanduser()
+        resolved = source.resolve()
+        if (not source.is_absolute() or not resolved.is_file() or
+                resolved == path or resolved in seen or
+                row["sha256"] != _sha(resolved)):
+            raise ValueError(f"guarded {name} raw evidence changed or repeats")
+        seen.add(resolved)
 
 
 def write_preinsert_raw_capture(
@@ -98,6 +150,10 @@ def _metric_record(
         if (not source_path.is_absolute() or not source_path.is_file() or
                 _sha(source_path) != source["sha256"]):
             raise ValueError(f"guarded metric source changed: {name}")
+        if name != "force_trace":
+            _bound_external_metric_claim(
+                name=name, path=source_path, metric=metric,
+                started=started, completed=completed)
     trace = verify_guarded_contact_trace(
         Path(source_records["force_trace"]["path"]))
     if (trace["attempt_id"] != attempt_id or
@@ -109,6 +165,27 @@ def _metric_record(
             metric["measurement"]["safety_abort"] is not trace["safety_abort"]):
         raise ValueError("guarded metric conflicts with replayed contact trace")
     return metric, started, completed
+
+
+def _admitted_measurement(metric: dict) -> tuple[dict, dict]:
+    """Never promote an unchecked external depth claim to a task label.
+
+    Hashes and matching summary files prove consistency, not a physically
+    commissioned key-depth estimate. No supported producer can currently
+    replay and certify one, so even a numerical interval remains diagnostic.
+    """
+    raw = metric["measurement"]
+    admitted = dict(raw)
+    admitted["key_depth_interval_m"] = None
+    admitted["key_depth_source"] = None
+    return admitted, {
+        "schema": "precision_insertion_key_depth_admissibility_v1",
+        "status": "not_admitted",
+        "reason": "external_depth_claim_has_no_commissioned_replay_verifier",
+        "raw_key_depth_interval_m": raw["key_depth_interval_m"],
+        "raw_key_depth_source": raw["key_depth_source"],
+        "scope": "source_consistency_only_not_physical_depth_certification",
+    }
 
 
 def _phase_rows(root: Path, report: dict, cameras: list[str], phase: str) -> tuple[list[LabeledFrame], list[dict]]:
@@ -225,7 +302,7 @@ def assess_insertion_checkpoint(
                  minimum_visual_views)
     visual_class = (visual.parsed["visual_class"] if supported else
                     "unobservable")
-    sensor = metric["measurement"]
+    sensor, depth_admissibility = _admitted_measurement(metric)
     evidence = InsertionEvidence(
         visual_class, tuple(sensor["key_depth_interval_m"])
         if sensor["key_depth_interval_m"] is not None else None,
@@ -248,6 +325,7 @@ def assess_insertion_checkpoint(
         "final_manifest_sha256": _sha(after_root / "manifest.json"),
         "metric_record_path": str(metric_path),
         "metric_record_sha256": _sha(metric_path),
+        "key_depth_admissibility": depth_admissibility,
         "frames": inputs, "visual": visual.to_record(),
         "minimum_visual_views": minimum_visual_views,
         "max_phase_skew_s": max_phase_skew_s,
@@ -377,10 +455,11 @@ def verify_insertion_checkpoint(report_path: Path) -> dict:
     parsed = visual.get("parsed", {})
     if visual.get("parse_error") is None:
         try:
-            if json.loads(visual["raw_answer"]) != parsed:
-                raise ValueError("insertion VLM parsed answer changed")
-        except json.JSONDecodeError as exc:
+            raw_parsed = _parse_object(visual["raw_answer"])
+        except (TypeError, ValueError) as exc:
             raise ValueError("insertion VLM raw answer is invalid") from exc
+        if raw_parsed != parsed:
+            raise ValueError("insertion VLM parsed answer changed")
     if (not isinstance(parsed, dict) or
             parsed.get("visual_class") not in {
                 "normal_appearance", "partial", "rim_jam", "slip",
@@ -399,7 +478,9 @@ def verify_insertion_checkpoint(report_path: Path) -> dict:
     vlm_class = parsed.get("visual_class") if supported else "unobservable"
     if vlm_class != report["effective_vlm_class"]:
         raise ValueError("insertion effective visual class changed")
-    sensor = metric["measurement"]
+    sensor, depth_admissibility = _admitted_measurement(metric)
+    if report.get("key_depth_admissibility") != depth_admissibility:
+        raise ValueError("insertion key-depth admissibility changed")
     evidence = InsertionEvidence(
         vlm_class, tuple(sensor["key_depth_interval_m"])
         if sensor["key_depth_interval_m"] is not None else None,

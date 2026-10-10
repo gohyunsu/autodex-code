@@ -25,7 +25,7 @@ from .frame_provenance import bounded_capture_skew_s, image_sha256
 from .geometry import validate_se3
 from .key_perception import KeyPoseObservation, verify_key_capture_artifacts
 from .live_robot_state import LiveRobotState
-from .observer import ImageVLM, LabeledFrame, VLMObservation, observe_lift
+from .observer import ImageVLM, LabeledFrame, VLMObservation, _parse_object, observe_lift
 from .raw_camera_capture import verify_raw_camera_capture
 from .session_bootstrap import _safe_id
 
@@ -515,10 +515,11 @@ def verify_lift_checkpoint(report_path: Path) -> dict:
         raise ValueError("saved lift VLM response is invalid")
     if visual.get("parse_error") is None:
         try:
-            if json.loads(visual.get("raw_answer", "")) != parsed:
-                raise ValueError("lift raw and parsed VLM answers differ")
-        except json.JSONDecodeError as exc:
+            raw_parsed = _parse_object(visual.get("raw_answer", ""))
+        except (TypeError, ValueError) as exc:
             raise ValueError("saved lift raw VLM answer is not JSON") from exc
+        if raw_parsed != parsed:
+            raise ValueError("lift raw and parsed VLM answers differ")
     if raw_visual:
         if (report.get("center_rise_m") is not None or
                 report.get("minimum_center_rise_m") is not None):

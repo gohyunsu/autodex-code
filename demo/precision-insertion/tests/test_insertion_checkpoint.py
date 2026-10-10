@@ -49,7 +49,7 @@ class FakeBackend:
 
     def infer(self, images, prompt):
         self.calls.append((images, prompt))
-        return json.dumps(self.answer)
+        return self.answer if isinstance(self.answer, str) else json.dumps(self.answer)
 
 
 def _setup(tmp_path, *, answer=None, metric_overrides=None,
@@ -108,10 +108,32 @@ def _setup(tmp_path, *, answer=None, metric_overrides=None,
         },
         "source_records": {},
     }
+    metric["measurement"].update(metric_overrides or {})
+    source_fields = {
+        "key_depth": ("key_depth_interval_m", "key_depth_source"),
+        "alignment": ("alignment_within_limits",),
+        "grasp_state": ("grasp_held",),
+    }
     for name in ("key_depth", "alignment", "grasp_state"):
+        raw = tmp_path / f"{name}_raw.json"
+        raw.write_text(json.dumps({"synthetic_test_measurement": name}),
+                       encoding="utf-8")
         path = tmp_path / f"{name}.json"
-        path.write_text(json.dumps({"source": name, "sample": 1}),
-                        encoding="utf-8")
+        path.write_text(json.dumps({
+            "schema": "precision_insertion_external_metric_claim_v1",
+            "source_name": name,
+            "attempt_id": metric["attempt_id"],
+            "candidate_id": metric["candidate_id"],
+            "session_calibration_sha256": session_calibration_sha256,
+            "recorded_at_s": 102.7,
+            "producer_id": "synthetic_test_producer",
+            "source_method": "synthetic_test_not_physical_sensor",
+            "measurement": {field: metric["measurement"][field]
+                            for field in source_fields[name]},
+            "raw_evidence": [{"path": str(raw),
+                              "sha256": hashlib.sha256(
+                                  raw.read_bytes()).hexdigest()}],
+        }), encoding="utf-8")
         metric["source_records"][name] = {
             "path": str(path),
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -144,7 +166,6 @@ def _setup(tmp_path, *, answer=None, metric_overrides=None,
         "path": str(trace_path),
         "sha256": hashlib.sha256(trace_path.read_bytes()).hexdigest(),
     }
-    metric["measurement"].update(metric_overrides or {})
     metric_path = tmp_path / "guarded_execution.json"
     metric_path.write_text(json.dumps(metric), encoding="utf-8")
     backend = FakeBackend(answer or {
@@ -163,19 +184,36 @@ def _setup(tmp_path, *, answer=None, metric_overrides=None,
     return args, backend
 
 
-def test_bound_multiview_insertion_success_and_tamper_rejection(tmp_path):
+def test_multiview_appearance_cannot_certify_unverified_depth(tmp_path):
     args, backend = _setup(tmp_path)
     report = assess_insertion_checkpoint(**args)
-    assert report["outcome"]["insertion_success"] is True
+    assert report["outcome"]["insertion_success"] is None
+    assert report["key_depth_admissibility"]["status"] == "not_admitted"
+    assert report["key_depth_admissibility"]["raw_key_depth_interval_m"] == [
+        0.0201, 0.021]
     assert report["visual"]["raw_answer"]
     assert len(backend.calls) == 1
     assert len(backend.calls[0][0]) == 4
     saved = write_insertion_checkpoint(report, tmp_path / "assessment")
-    assert verify_insertion_checkpoint(saved)["outcome"]["insertion_success"] is True
+    assert verify_insertion_checkpoint(saved)["outcome"]["insertion_success"] is None
     metric = args["metric_record_path"]
     metric.write_text(metric.read_text() + " ", encoding="utf-8")
     with pytest.raises(ValueError, match="metric record changed"):
         verify_insertion_checkpoint(saved)
+
+
+def test_saved_local_vlm_json_fence_replays_at_insertion_checkpoint(tmp_path):
+    answer = {"visual_class": "normal_appearance",
+              "evidence_views": list(CAMERAS),
+              "evidence": "key is visible in both views"}
+    args, _backend = _setup(
+        tmp_path, answer="```json\n" + json.dumps(answer) + "\n```")
+    result = assess_insertion_checkpoint(**args)
+    assert result["visual"]["parsed"] == answer
+    saved = write_insertion_checkpoint(result, tmp_path / "local_insertion")
+    replayed = verify_insertion_checkpoint(saved)
+    assert replayed["visual"]["parsed"] == answer
+    assert replayed["outcome"]["insertion_success"] is None
 
 
 def test_vlm_one_view_cannot_produce_positive_label(tmp_path):
@@ -189,11 +227,11 @@ def test_vlm_one_view_cannot_produce_positive_label(tmp_path):
     assert verify_insertion_checkpoint(saved)["outcome"]["insertion_success"] is None
 
 
-def test_short_depth_is_failure_and_changed_final_image_rejected(tmp_path):
+def test_unverified_short_depth_cannot_drive_failure_or_success(tmp_path):
     args, _backend = _setup(tmp_path, metric_overrides={
         "key_depth_interval_m": [0.005, 0.008]})
     report = assess_insertion_checkpoint(**args)
-    assert report["outcome"]["insertion_success"] is False
+    assert report["outcome"]["insertion_success"] is None
     saved = write_insertion_checkpoint(report, tmp_path / "assessment")
     image = args["final_bundle"] / "images" / "cam_a.png"
     image.write_bytes(b"corrupt")
@@ -217,6 +255,30 @@ def test_changed_force_trace_blocks_vlm_and_result(tmp_path):
     force = Path(metric["source_records"]["force_trace"]["path"])
     force.write_text("changed", encoding="utf-8")
     with pytest.raises(ValueError, match="source changed: force_trace"):
+        assess_insertion_checkpoint(**args)
+    assert backend.calls == []
+
+
+def test_depth_summary_cannot_disagree_with_hashed_producer_claim(tmp_path):
+    args, backend = _setup(tmp_path)
+    metric_path = args["metric_record_path"]
+    metric = json.loads(metric_path.read_text())
+    metric["measurement"]["key_depth_interval_m"] = [0.03, 0.031]
+    metric_path.write_text(json.dumps(metric), encoding="utf-8")
+    with pytest.raises(ValueError, match="key_depth claim differs"):
+        assess_insertion_checkpoint(**args)
+    assert backend.calls == []
+
+
+def test_changed_raw_metric_source_blocks_even_if_claim_hash_is_unchanged(
+        tmp_path):
+    args, backend = _setup(tmp_path)
+    metric = json.loads(args["metric_record_path"].read_text())
+    claim_path = Path(metric["source_records"]["alignment"]["path"])
+    claim = json.loads(claim_path.read_text())
+    raw_path = Path(claim["raw_evidence"][0]["path"])
+    raw_path.write_text("changed", encoding="utf-8")
+    with pytest.raises(ValueError, match="alignment raw evidence changed"):
         assess_insertion_checkpoint(**args)
     assert backend.calls == []
 
@@ -306,11 +368,11 @@ def test_raw_preinsert_images_need_no_postgrasp_foundpose(tmp_path):
     report = assess_insertion_checkpoint(**{
         **args, "preinsert_bundle": raw})
     assert report["preinsert_capture_kind"] == "raw_images"
-    assert report["outcome"]["insertion_success"] is True
+    assert report["outcome"]["insertion_success"] is None
     assert len(backend.calls[0][0]) == 4
     saved = write_insertion_checkpoint(report, tmp_path / "raw_assessment")
     assert verify_insertion_checkpoint(saved)["outcome"][
-        "insertion_success"] is True
+        "insertion_success"] is None
 
 
 @pytest.mark.parametrize("raw_preinsert", [False, True])
@@ -367,10 +429,10 @@ def test_session_runner_records_bound_insertion_label(
         metric_record_path=args["metric_record_path"], backend=backend,
         decision_timestamp_s=103.1, max_phase_skew_s=0.02,
         max_preinsert_age_s=1.0, max_final_observation_gap_s=0.5)
-    assert result["outcome"]["insertion_success"] is True
-    assert runner.active_attempt.labels["insertion_success"] is True
-    assert runner.current_decision().action == "hold_for_supervised_completion"
+    assert result["outcome"]["insertion_success"] is None
+    assert runner.active_attempt.labels["insertion_success"] is None
+    assert runner.current_decision().action == "stop_for_review"
     assessment = (runner._attempt_dir / "insertion_assessments" / "000" /
                   "report.json")
     assert verify_insertion_checkpoint(assessment)["outcome"][
-        "insertion_success"] is True
+        "insertion_success"] is None

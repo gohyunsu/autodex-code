@@ -37,7 +37,7 @@ class FakeBackend:
 
     def infer(self, images, prompt):
         self.calls.append((images, prompt))
-        return json.dumps(self.answer)
+        return self.answer if isinstance(self.answer, str) else json.dumps(self.answer)
 
 
 def _setup(tmp_path, *, rise_m=0.1):
@@ -135,6 +135,18 @@ def test_saved_two_view_vlm_and_observed_key_rise_are_bound(tmp_path):
     image.write_bytes(b"corrupt")
     with pytest.raises(ValueError, match="key evidence changed"):
         verify_lift_checkpoint(output / "report.json")
+
+
+def test_saved_local_vlm_json_fence_replays_at_lift_checkpoint(tmp_path):
+    args, _backend = _setup(tmp_path)
+    answer = {"class": "held", "evidence_views": list(CAMERAS),
+              "evidence": "key rose in both views"}
+    args["backend"] = FakeBackend(
+        "```json\n" + json.dumps(answer) + "\n```")
+    result = assess_lift_checkpoint(**args)
+    assert result.visual.parsed == answer
+    saved = write_lift_checkpoint(result, tmp_path / "local_lift")
+    assert verify_lift_checkpoint(saved / "report.json")["grasp_success"] is True
 
 
 def test_visual_key_motion_conflict_abstains_and_prior_mismatch_blocks_vlm(

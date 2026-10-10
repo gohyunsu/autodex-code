@@ -385,8 +385,12 @@ that session and catalogue. For each new key observation:
    `preinsert_image` ref; `key_socket_pose` remains a separate kinematic/pose
    evidence ref. For a pose-bound before image, `key_socket_pose` points to
    its `key_observation.json`.
-   This hashes the raw frames, prompt/response and numeric source records
-   before recording `insertion_success`. Direct `observe_insertion` now
+   This binds the raw frames, prompt/response and numeric source records
+   before recording a tri-state `insertion_success`. Until a physically
+   commissioned key-depth producer and replay verifier are installed, an
+   external depth interval is retained for audit but **not admitted** for
+   either a positive or depth-driven negative task label; visually normal
+   insertion therefore remains unknown. Direct `observe_insertion` now
    requires that same verified checkpoint; arbitrary path strings cannot
    create a session task label. A missed grasp excludes that candidate on the next *fresh*
    key observation. Planning-only rejects are skipped only when continuing
@@ -488,7 +492,15 @@ session, timing and `safety_abort`. The checkpoint target remains exactly
 20 mm. This checks internal sample/decision consistency, but **not**
 whether those samples came from calibrated sensors; the robot-side producer,
 its timing and uncertainty model still require commissioning. The other
-three source files are hashed but not yet semantically verified.
+three source files must each use schema
+`precision_insertion_external_metric_claim_v1` and identify their source,
+attempt, candidate, frozen session calibration, producer, acquisition method,
+stroke-time measurement and hashed raw evidence. The checkpoint cross-checks
+these claims against the guarded summary and referenced files. This is a
+consistency/provenance check only: a matching JSON claim and hash do **not**
+prove a calibrated physical measurement. In particular, until a commissioned
+key-depth replay verifier exists, even a non-null claimed depth is excluded
+from the outcome gate and saved as `key_depth_admissibility: not_admitted`.
 An optional [exposed-length depth diagnostic](EXPOSED_DEPTH.md) now asks
 the VLM for a visible key rear-centre/axis rather than its hidden tip and
 calculates a worst-case CAD depth interval from calibrated multi-view
@@ -1196,6 +1208,13 @@ result = observe_lift(backend, [
 ])
 print(result.to_record())  # review only; not a robot command
 ```
+
+The same `backend` object can be passed to the demo session's
+`prepare_observed_lift_label`, `prepare_observed_insertion_label`, and
+read-only pre-insertion/XY observation methods. They accept the `ImageVLM`
+interface, so choosing local versus Gemini does not alter the physical
+motion or safety gates. `run_auto.py` currently opens an evidence-only
+session; it does not run a commissioned live VLM/robot loop.
 
 To measure local/API model errors rather than relying on one illustrative
 render, use the independent-annotation dataset replay in

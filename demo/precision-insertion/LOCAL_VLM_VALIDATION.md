@@ -5,6 +5,12 @@ The independent demo can select `mode="local"` with
 `probe_vlm.py --backend local` runs lift or insertion-visual classification
 on saved image pairs only. No stock AutoDex execution files were changed.
 
+The saved lift and insertion checkpoint verifiers now replay the same strict
+JSON parser used at inference. A complete Markdown JSON fence from Qwen is
+accepted at both stages; partial JSON or extra prose is still rejected, and
+the exact raw answer remains in the evidence record. This fixes a case where
+local inference parsed successfully but checkpoint verification rejected it.
+
 ## Environment and smoke test
 
 - GPU: RTX 3090, 24 GB; CUDA visible to PyTorch 2.4.1+cu121 outside the
@@ -116,3 +122,11 @@ not correctness and why the VLM cannot alone certify 20 mm insertion. Raw
 reports on this workstation are
 `/tmp/precision-local-vlm-probe-user-20261011.json` and
 `/tmp/precision-local-vlm-insertion-probe-user-20261011.json`.
+
+An offline-cache regression after the checkpoint-parser fix again loaded the
+local model on the RTX 3090. The saved-render lift answer was complete
+Markdown-fenced JSON (`held`, ~0.98 s inference), and the insertion visual
+answer was JSON (`normal_appearance`, ~0.97 s). The raw probe reports are
+`/tmp/precision-local-vlm-lift-probe-fencefix-20261011.json` and
+`/tmp/precision-local-vlm-insertion-probe-fencefix-20261011.json`.
+These are model/format smoke checks only; neither image pair is a real trial.
