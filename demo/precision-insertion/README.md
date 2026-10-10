@@ -1867,7 +1867,8 @@ contains both candidates, audit reports, v8 key scenes, key and six cylinder
 socket object-processing assets, fixture geometries, and a handoff README.
 Its SHA-256 is
 `6b83a94026074f925c57567dd754771e01cbfda16491d2e8a10ba647894acc98`.
-The archive has **not** been copied to NAS. Scene JSONs embed this host's
+The byte-identical archive is now in the [ParaDex2 NAS handoff](/mnt/paradex2/hyunsu/autodex_precision_insertion_handoffs/cylinder_reset_v8_20261011_6b83a940.tar.gz),
+but **not** in the canonical runtime reset candidate tree. Scene JSONs embed this host's
 absolute mesh/URDF paths; a different AutoDex-host shared root requires
 scene regeneration and fresh evidence validation, not a blind path edit.
 The demo-local [reset handoff rehydration tool](RESET_HANDOFF_RELOCATION.md)

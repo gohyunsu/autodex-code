@@ -12,9 +12,15 @@ file byte-for-byte.
 The original archive on this workstation is
 `/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_handoff_bundle_20261010.tar.gz`
 (SHA-256 `6b83a94026074f925c57567dd754771e01cbfda16491d2e8a10ba647894acc98`).
-It has **not** been copied to NAS; transfer it to the AutoDex PC as a file,
-then extract it into a fresh staging directory. The extracted directory must
-contain `object_processing/` and `AutoDex/` immediately below it.
+The byte-identical copy is now available to the AutoDex PC at
+`/mnt/paradex2/hyunsu/autodex_precision_insertion_handoffs/cylinder_reset_v8_20261011_6b83a940.tar.gz`;
+the copied archive's SHA-256 was checked against the original. It is a
+**handoff**, not an installed runtime candidate. On the AutoDex PC, verify
+that SHA-256 again and extract the archive into a fresh staging directory.
+The extracted directory must contain `object_processing/` and `AutoDex/`
+immediately below it. If that host mounts ParaDex2 at another path, locate
+this exact named archive under its `/hyunsu/autodex_precision_insertion_handoffs/`
+share rather than guessing a different source.
 
 From the personal fork's `feat/precision-insertion` checkout on that PC:
 
