@@ -20,6 +20,7 @@ import numpy as np
 
 from .calibration import SessionCalibration, calibrate_session
 from .config import TaskMode
+from .frame_provenance import bounded_capture_skew_s, verify_frame_provenance
 from .perception_evidence import (
     SocketCaptureEvidence, SocketViewLimits, admit_socket_capture,
 )
@@ -38,6 +39,7 @@ class SocketCaptureInput:
     poses: Mapping[str, dict]
     frame_timestamps_s: Mapping[str, float]
     frame_timestamp_source: str
+    frame_evidence: Mapping[str, dict] | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,7 @@ class SessionBootstrap:
     board_timestamp_source: str
     socket_captures: tuple[SocketCaptureInput, ...]
     socket_admissions: tuple[SocketCaptureEvidence, ...]
+    board_frame_evidence: Mapping[str, dict] | None = None
 
 
 def _safe_id(value: str, name: str) -> str:
@@ -81,6 +84,7 @@ def bootstrap_session(
     intrinsics_full: Mapping, extrinsics_full: Mapping,
     c2r: np.ndarray, base_scene: dict, socket_collision_mesh: Path,
     max_socket_translation_mm: float, max_socket_angle_deg: float,
+    board_frame_evidence: Mapping[str, dict] | None = None,
 ) -> SessionBootstrap:
     """Admit repeated socket observations, then freeze one AutoDex world.
 
@@ -102,6 +106,18 @@ def bootstrap_session(
     for camera_id, image in board_images_bgr.items():
         _safe_id(camera_id, "board camera ID")
         _bgr_image(image, f"board image {camera_id}")
+    if board_frame_evidence is not None:
+        board_verified = verify_frame_provenance(
+            {"request_id": board_request_id, "source": "camera_acquisition",
+             "frames": board_frame_evidence},
+            request_id=board_request_id, images_bgr=board_images_bgr,
+            frame_ids={s: row.get("frame_id") for s, row in
+                       board_frame_evidence.items()})
+        if (any(board_timestamps_s[s] != row["timestamp_s"] for s, row in
+                board_verified.items()) or
+                bounded_capture_skew_s(board_verified) >
+                view_limits.maximum_capture_skew_s):
+            raise ValueError("board frame timing conflicts with verified evidence")
     if not isinstance(socket_captures, Sequence) or len(socket_captures) < 2:
         raise ValueError("at least two socket captures are required")
     admissions: list[SocketCaptureEvidence] = []
@@ -139,6 +155,25 @@ def bootstrap_session(
                 mask = mask_entry.get("mask")
                 if not isinstance(mask, np.ndarray) or mask.shape != image.shape[:2]:
                     raise ValueError("socket mask and raw image dimensions differ")
+        if capture.frame_evidence is not None:
+            frame_ids = {}
+            for camera_id in capture.images_bgr:
+                mask_fid = capture.masks.get(camera_id, {}).get("frame_id")
+                pose_fid = capture.poses.get(camera_id, {}).get("frame_id")
+                if mask_fid != pose_fid:
+                    raise ValueError("socket SAM/FoundPose frame IDs differ")
+                frame_ids[camera_id] = mask_fid
+            verified = verify_frame_provenance(
+                {"request_id": capture.request_id,
+                 "source": "camera_acquisition",
+                 "frames": capture.frame_evidence},
+                request_id=capture.request_id, images_bgr=capture.images_bgr,
+                frame_ids=frame_ids)
+            if (any(capture.frame_timestamps_s[s] != row["timestamp_s"]
+                    for s, row in verified.items()) or
+                    bounded_capture_skew_s(verified) >
+                    view_limits.maximum_capture_skew_s):
+                raise ValueError("socket frame timing conflicts with verified evidence")
         admissions.append(admit_socket_capture(
             capture_id=capture_id, masks=capture.masks, poses=capture.poses,
             frame_timestamps_s=capture.frame_timestamps_s,
@@ -163,7 +198,8 @@ def bootstrap_session(
     )
     return SessionBootstrap(
         calibration, board_request_id, board_images_bgr, board_timestamps_s,
-        board_timestamp_source, tuple(socket_captures), tuple(admissions))
+        board_timestamp_source, tuple(socket_captures), tuple(admissions),
+        board_frame_evidence)
 
 
 def _write_png(path: Path, image: np.ndarray) -> str:
@@ -214,6 +250,8 @@ def write_session_bootstrap_artifacts(
             "sam_prompt": capture.prompt,
             "admission": admission.to_record(),
             "frame_timestamps_s": dict(capture.frame_timestamps_s),
+            "frame_evidence": (dict(capture.frame_evidence)
+                               if capture.frame_evidence is not None else None),
             "mask_payload_metadata": {},
             "pose_payloads": {},
         }
@@ -244,6 +282,13 @@ def write_session_bootstrap_artifacts(
         "board_timestamp_source": bootstrap.board_timestamp_source,
         "board_request_id": bootstrap.board_request_id,
         "board_timestamps_s": dict(bootstrap.board_timestamps_s),
+        "board_frame_evidence": (dict(bootstrap.board_frame_evidence)
+                                 if bootstrap.board_frame_evidence is not None
+                                 else None),
+        "all_frames_bound_to_acquisition_evidence": (
+            bootstrap.board_frame_evidence is not None and
+            all(capture.frame_evidence is not None
+                for capture in bootstrap.socket_captures)),
         "socket_capture_ids": [capture.capture_id for capture in
                                bootstrap.socket_captures],
         "socket_request_ids": [capture.request_id for capture in
@@ -282,4 +327,52 @@ def verify_session_evidence_bundle(output_dir: Path) -> dict:
             raise ValueError(f"missing or out-of-root session evidence: {relative}")
         if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
             raise ValueError(f"session evidence changed: {relative}")
+    board_evidence = manifest.get("board_frame_evidence")
+    if board_evidence is not None:
+        board_images = {
+            serial: cv2.imread(str(root / "board" / f"{_safe_id(serial, 'camera ID')}.png"),
+                               cv2.IMREAD_COLOR)
+            for serial in board_evidence}
+        verified = verify_frame_provenance(
+            {"request_id": manifest["board_request_id"],
+             "source": "camera_acquisition", "frames": board_evidence},
+            request_id=manifest["board_request_id"], images_bgr=board_images,
+            frame_ids={serial: row.get("frame_id")
+                       for serial, row in board_evidence.items()})
+        if {serial: row["timestamp_s"] for serial, row in verified.items()} != (
+                manifest.get("board_timestamps_s")):
+            raise ValueError("saved board timing differs from frame evidence")
+    bound_sockets = True
+    for capture_id in manifest.get("socket_capture_ids", []):
+        folder = root / "socket" / _safe_id(capture_id, "capture ID")
+        payload = json.loads((folder / "payloads.json").read_text(
+            encoding="utf-8"))
+        evidence = payload.get("frame_evidence")
+        if evidence is None:
+            bound_sockets = False
+            continue
+        images = {
+            serial: cv2.imread(str(folder / "images" /
+                                  f"{_safe_id(serial, 'camera ID')}.png"),
+                               cv2.IMREAD_COLOR)
+            for serial in evidence}
+        frame_ids = {}
+        for serial in evidence:
+            mask_fid = payload["mask_payload_metadata"].get(serial, {}).get(
+                "frame_id")
+            pose_fid = payload["pose_payloads"].get(serial, {}).get("frame_id")
+            if mask_fid != pose_fid:
+                raise ValueError("saved SAM/FoundPose frame IDs differ")
+            frame_ids[serial] = mask_fid
+        verified = verify_frame_provenance(
+            {"request_id": payload["request_id"],
+             "source": "camera_acquisition", "frames": evidence},
+            request_id=payload["request_id"], images_bgr=images,
+            frame_ids=frame_ids)
+        if {serial: row["timestamp_s"] for serial, row in verified.items()} != (
+                payload.get("frame_timestamps_s")):
+            raise ValueError("saved socket timing differs from frame evidence")
+    if manifest.get("all_frames_bound_to_acquisition_evidence") != (
+            board_evidence is not None and bound_sockets):
+        raise ValueError("saved frame-binding flag conflicts with evidence")
     return manifest

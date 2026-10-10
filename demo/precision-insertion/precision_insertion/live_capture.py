@@ -1,9 +1,10 @@
 """Demo-local AutoDex camera adapters for precision session evidence.
 
-The stock snapshot and FoundPose orchestrators perform the actual capture.
-They do not expose image-acquisition timestamps. A separate, verified
-per-request metadata provider is therefore mandatory; daemon publication
-``ts`` and command-dispatch time are never substituted for frame time.
+The stock snapshot and FoundPose daemons perform actual capture, but their
+orchestrators do not expose enough same-frame provenance for precision work.
+A demo-local adapter must retain frame IDs and a camera-side provider must
+bind each frame's decoded pixels to a commissioned acquisition timestamp.
+Daemon publication ``ts`` and command-dispatch time are never substituted.
 No robot commands are sent here.
 """
 
@@ -20,6 +21,7 @@ from typing import Callable, Mapping
 import cv2
 import numpy as np
 
+from .frame_provenance import verify_frame_provenance
 from .session_bootstrap import SocketCaptureInput
 
 
@@ -34,6 +36,7 @@ class BoardSnapshotInput:
     images_bgr: dict[str, np.ndarray]
     frame_timestamps_s: dict[str, float]
     frame_timestamp_source: str
+    frame_evidence: dict[str, dict]
 
 
 def _request_id(factory: RequestIdFactory) -> int:
@@ -43,32 +46,6 @@ def _request_id(factory: RequestIdFactory) -> int:
     return value
 
 
-def _acquisition_metadata(
-    provider: AcquisitionProvider, request_id: int,
-    calibrated_camera_ids: set[str],
-) -> dict[str, float]:
-    evidence = provider(request_id)
-    if not isinstance(evidence, Mapping) or (
-            evidence.get("request_id") != request_id):
-        raise ValueError("camera acquisition metadata has wrong request ID")
-    if evidence.get("source") != "camera_acquisition":
-        raise ValueError("camera acquisition-time metadata is required")
-    camera_times = evidence.get("camera_times_s")
-    if not isinstance(camera_times, Mapping) or not camera_times:
-        raise ValueError("missing per-camera acquisition times")
-    if set(camera_times) - calibrated_camera_ids:
-        raise ValueError("acquisition times include uncalibrated camera")
-    times = {}
-    for serial, value in camera_times.items():
-        if isinstance(value, bool):
-            raise ValueError("invalid camera acquisition time")
-        timestamp = float(value)
-        if not math.isfinite(timestamp) or timestamp <= 0:
-            raise ValueError("invalid camera acquisition time")
-        times[serial] = timestamp
-    return times
-
-
 def collect_board_snapshot(
     *, snapshot_orchestrator, calibrated_camera_ids: set[str],
     acquisition_metadata_for_request: AcquisitionProvider,
@@ -76,9 +53,9 @@ def collect_board_snapshot(
 ) -> BoardSnapshotInput:
     """Get the original/distorted ChArUco frames from stock AutoDex.
 
-    The same request ID must identify these JPEGs in the independent
-    acquisition metadata side channel. This function does not infer timing
-    from the arrival of JPEGs or the daemon's publication timestamps.
+    The adapter must expose each JPEG's sensor frame ID. Camera-side evidence
+    must bind that ID, decoded pixels and exposure time to the request. The
+    stock orchestrator discards frame IDs, so it cannot yet pass this gate.
     """
     if not calibrated_camera_ids or not math.isfinite(timeout_s) or timeout_s <= 0:
         raise ValueError("commissioned cameras and positive timeout required")
@@ -96,17 +73,20 @@ def collect_board_snapshot(
     if not isinstance(payload, Mapping) or set(payload) != calibrated_camera_ids:
         raise ValueError("board snapshot has missing or uncalibrated cameras")
     images = {}
+    frame_ids = {}
     for serial, entry in payload.items():
         image = entry.get("image") if isinstance(entry, Mapping) else None
         if (not isinstance(image, np.ndarray) or image.dtype != np.uint8 or
                 image.ndim != 3 or image.shape[2] != 3):
             raise ValueError(f"board snapshot camera {serial} has no BGR frame")
         images[serial] = image
-    times = _acquisition_metadata(
-        acquisition_metadata_for_request, request_id, calibrated_camera_ids)
-    if set(times) != calibrated_camera_ids:
-        raise ValueError("board snapshot lacks an acquisition time for every frame")
-    return BoardSnapshotInput(request_id, images, times, "camera_acquisition")
+        frame_ids[serial] = entry.get("frame_id")
+    evidence = verify_frame_provenance(
+        acquisition_metadata_for_request(request_id), request_id=request_id,
+        images_bgr=images, frame_ids=frame_ids)
+    times = {serial: row["timestamp_s"] for serial, row in evidence.items()}
+    return BoardSnapshotInput(
+        request_id, images, times, "camera_acquisition", evidence)
 
 
 def _load_saved_frames(
@@ -145,8 +125,9 @@ def collect_socket_capture(
     The stock init daemon writes the frames asynchronously to an exclusive
     request directory on shared storage. This function waits for those exact
     files, rejecting missing images instead of combining a later snapshot
-    with the earlier pose. The provider's source tag is checked, but its
-    hardware provenance cannot be authenticated by this adapter alone.
+    with the earlier pose. Both SAM and FoundPose payloads must expose the
+    same sensor frame ID. Stock init_daemon discards that ID, so a demo-local
+    capture producer is needed; its hardware timing must be commissioned.
     """
     if getattr(init_orchestrator, "obj_name", None) != socket_object:
         raise ValueError("FoundPose is not initialized for the selected socket")
@@ -193,10 +174,17 @@ def collect_socket_capture(
         raise ValueError("FoundPose has no calibrated camera payloads")
     images = _load_saved_frames(
         capture_dir, payload_ids, image_write_timeout_s)
-    times = _acquisition_metadata(
-        acquisition_metadata_for_request, request_id, calibrated_camera_ids)
-    if not payload_ids <= set(times):
-        raise ValueError("socket payload camera lacks acquisition time")
+    frame_ids = {}
+    for serial in images:
+        mask_fid = masks.get(serial, {}).get("frame_id")
+        pose_fid = poses.get(serial, {}).get("frame_id")
+        if mask_fid != pose_fid:
+            raise ValueError(f"SAM/FoundPose frame ID mismatch for {serial}")
+        frame_ids[serial] = mask_fid
+    evidence = verify_frame_provenance(
+        acquisition_metadata_for_request(request_id), request_id=request_id,
+        images_bgr=images, frame_ids=frame_ids)
+    times = {serial: row["timestamp_s"] for serial, row in evidence.items()}
     return SocketCaptureInput(
         capture_id, request_id, socket_prompt, images, dict(masks),
-        dict(poses), times, "camera_acquisition")
+        dict(poses), times, "camera_acquisition", evidence)

@@ -54,7 +54,11 @@ The first independent helpers are in `precision_insertion/`:
   The supplied timestamps must denote **image acquisition**, not SAM/FoundPose
   completion or payload publication. The unchanged AutoDex snapshot/init
   orchestrators do not yet return enough per-camera frame provenance for this
-  demo's precision gate. A live camera adapter is pending; never fabricate
+  demo's precision gate. The demo-local collectors now require the exact
+  frame ID, decoded-image digest, acquisition-time method and bounded clock
+  error; unchanged AutoDex daemons fail closed. The needed capture-PC and
+  robot-PC adapter work is specified in
+  [CAMERA_FRAME_HANDOFF.md](CAMERA_FRAME_HANDOFF.md). Never fabricate
   synchronized times from one request ID or use payload `ts` as capture time.
 - `symmetry.py` reads the v8 `object_processing/<object>/processed_data/info/`
   symmetry and tabletop poses. The D∞ cylindrical key may exchange identical

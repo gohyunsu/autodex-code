@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.calibration import SessionCalibration  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.perception_evidence import SocketViewLimits  # noqa: E402
+from precision_insertion.frame_provenance import image_sha256  # noqa: E402
 from precision_insertion import session_bootstrap as sb  # noqa: E402
 
 
@@ -36,7 +37,7 @@ def _capture(capture_id: str, timestamp: float) -> sb.SocketCaptureInput:
 
 
 def _bootstrap(monkeypatch, captures=None, board_source="camera_acquisition",
-               extra_camera_ids=()):
+               extra_camera_ids=(), board_frame_evidence=None):
     received = {}
 
     def fake_calibrate_session(**kwargs):
@@ -70,7 +71,8 @@ def _bootstrap(monkeypatch, captures=None, board_source="camera_acquisition",
         extrinsics_full={serial: {} for serial in camera_ids},
         c2r=np.eye(4), base_scene={"mesh": {}, "cuboid": {}},
         socket_collision_mesh=Path("/unused/socket.obj"),
-        max_socket_translation_mm=1.0, max_socket_angle_deg=1.0)
+        max_socket_translation_mm=1.0, max_socket_angle_deg=1.0,
+        board_frame_evidence=board_frame_evidence)
     return result, received
 
 
@@ -148,3 +150,43 @@ def test_writes_non_overwriting_raw_evidence_bundle(monkeypatch, tmp_path):
     (target / "socket/socket_1/payloads.json").write_text("{}")
     with pytest.raises(ValueError, match="session evidence changed"):
         sb.verify_session_evidence_bundle(target)
+
+
+def _frame_evidence(image, timestamp, fid, error=0.001):
+    return {
+        "frame_id": fid, "image_sha256": image_sha256(image),
+        "timestamp_s": timestamp, "max_error_s": error,
+        "timestamp_method": "hardware_exposure", "clock_domain": "unix_utc",
+    }
+
+
+def test_bound_frame_evidence_is_preserved_and_skew_includes_uncertainty(
+        monkeypatch, tmp_path):
+    board = np.zeros((24, 32, 3), dtype=np.uint8)
+    board_evidence = {
+        "cam_a": _frame_evidence(board, 90.0, 7),
+        "cam_b": _frame_evidence(board, 90.005, 8),
+    }
+    captures = [_capture("socket_1", 100.0), _capture("socket_2", 101.0)]
+    for capture in captures:
+        evidence = {}
+        for i, (serial, image) in enumerate(capture.images_bgr.items()):
+            fid = int(capture.request_id) * 10 + i
+            capture.masks[serial]["frame_id"] = fid
+            capture.poses[serial]["frame_id"] = fid
+            evidence[serial] = _frame_evidence(
+                image, capture.frame_timestamps_s[serial], fid)
+        object.__setattr__(capture, "frame_evidence", evidence)
+    result, _ = _bootstrap(
+        monkeypatch, captures=captures, board_frame_evidence=board_evidence)
+    target = sb.write_session_bootstrap_artifacts(result, tmp_path / "bound")
+    manifest = sb.verify_session_evidence_bundle(target)
+    assert manifest["all_frames_bound_to_acquisition_evidence"] is True
+    assert manifest["board_frame_evidence"]["cam_a"]["frame_id"] == 7
+    payload = json.loads((target / "socket/socket_1/payloads.json").read_text())
+    assert payload["frame_evidence"]["cam_a"]["frame_id"] == 1000
+
+    board_evidence["cam_b"]["max_error_s"] = 0.02
+    with pytest.raises(ValueError, match="timing conflicts"):
+        _bootstrap(monkeypatch, captures=captures,
+                   board_frame_evidence=board_evidence)
