@@ -59,6 +59,9 @@ def _stage_fixture(root: Path, *, expected: int = 2) -> tuple[Path, Path]:
     raw_mesh = root / "object_processing" / KEY / "raw_mesh" / f"{KEY}.obj"
     raw_mesh.parent.mkdir()
     raw_mesh.write_text("o test\n")
+    key_info = (root / "object_processing" / KEY /
+                "processed_data/info/simplified.json")
+    key_info.write_text(json.dumps({"obb": [0.03, 0.03, 0.08]}))
     for cell in PAIRS:
         for seed in range(expected):
             seed_dir = raw / PROXY / "reorient_12" / cell / str(seed)
@@ -140,6 +143,13 @@ def test_promotes_only_stock_mujoco_pass_and_loads_direct_v8_cell(tmp_path):
             result["reason"] = "scene_collision"
         (seed / "sim_eval.json").write_text(json.dumps(result))
         if success:
+            qpose = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+            moved = [0.001, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+            (seed / "sim_traj.json").write_text(json.dumps({
+                "phase": ["pregrasp", "squeeze", "force_gravity"],
+                "object_pose": [qpose, moved, moved],
+                "robot_qpos": [qpose + [0.0] * 6] * 3,
+            }))
             stock_seed = stock / KEY / "reorient_12" / cell / "0"
             stock_seed.mkdir(parents=True)
             for name in ("wrist_se3.npy", "pregrasp_pose.npy",
@@ -165,31 +175,63 @@ def test_promotes_only_stock_mujoco_pass_and_loads_direct_v8_cell(tmp_path):
         output_manifest=promotion_path)
     assert promoted["promoted_count"] == 1
     assert promoted["robot_ready"] is False
+    handoff_root = tmp_path / "handoff/reset_12"
+    handoff = promote(
+        shared_root=tmp_path, stage_root=staged,
+        stock_candidate_root=stock, audit_path=report_path,
+        output_manifest=tmp_path / "handoff_promotion.json",
+        output_candidate_root=handoff_root)
+    assert handoff["installed_in_canonical_reset_tree"] is False
     mode = select_mode("cylinder", 20)
     asset_audit = audit_v8_reorient_assets(shared_root=tmp_path, mode=mode)
-    assert asset_audit["schema"].endswith("v3")
+    assert asset_audit["schema"].endswith("v4")
     assert asset_audit["directed_pairs"][0][
+        "stable_reset_seed_counts_by_height_cm"]["12"] == 1
+    handoff_audit = audit_v8_reorient_assets(
+        shared_root=tmp_path, mode=mode,
+        candidate_root=handoff_root.parent)
+    assert handoff_audit["candidate_root_is_canonical"] is False
+    assert handoff_audit["directed_pairs"][0][
         "stable_reset_seed_counts_by_height_cm"]["12"] == 1
     T_robot_key = np.eye(4)
     T_robot_key[:3, 3] = [0.5, 0.1, 0.2]
     seeds = load_v8_reset_seeds(
         shared_root=tmp_path, mode=mode, height_cm=12,
-        from_pose_stem="000", to_pose_stem="001", T_robot_key=T_robot_key)
+        from_pose_stem="000", to_pose_stem="001", T_robot_key=T_robot_key,
+        max_center_in_hand_drift_m=0.003,
+        max_symmetry_axis_tilt_deg=8.0)
     assert seeds["n_total"] == 1
     assert np.allclose(seeds["wrist_se3"][0], T_robot_key @ raw_wrist)
     assert seeds["scene_info"][0]["v8_cell"] == "0_1"
     assert seeds["robot_ready"] is False
     assert load_v8_reset_seeds(
         shared_root=tmp_path, mode=mode, height_cm=12,
-        from_pose_stem=1, to_pose_stem=0, T_robot_key=T_robot_key) is None
+        from_pose_stem=0, to_pose_stem=1, T_robot_key=T_robot_key,
+        max_center_in_hand_drift_m=0.003,
+        max_symmetry_axis_tilt_deg=8.0,
+        candidate_root=handoff_root)["n_total"] == 1
+    assert load_v8_reset_seeds(
+        shared_root=tmp_path, mode=mode, height_cm=12,
+        from_pose_stem=1, to_pose_stem=0, T_robot_key=T_robot_key,
+        max_center_in_hand_drift_m=0.003,
+        max_symmetry_axis_tilt_deg=8.0) is None
     assert load_v8_reset_seeds(
         shared_root=tmp_path, mode=mode, height_cm=12,
         from_pose_stem=0, to_pose_stem=1, T_robot_key=T_robot_key,
+        max_center_in_hand_drift_m=0.003,
+        max_symmetry_axis_tilt_deg=8.0,
         attempted_ids=("000",)) is None
+    assert load_v8_reset_seeds(
+        shared_root=tmp_path, mode=mode, height_cm=12,
+        from_pose_stem=0, to_pose_stem=1, T_robot_key=T_robot_key,
+        max_center_in_hand_drift_m=0.0005,
+        max_symmetry_axis_tilt_deg=8.0) is None
     candidate = (tmp_path / "AutoDex/candidates/inspire/reset_12" / KEY /
                  "reorient_12/0_1/0/grasp_pose.npy")
     np.save(candidate, np.zeros(6))
     with pytest.raises(ValueError, match="changed reset candidate file"):
         load_v8_reset_seeds(
             shared_root=tmp_path, mode=mode, height_cm=12,
-            from_pose_stem=0, to_pose_stem=1, T_robot_key=T_robot_key)
+            from_pose_stem=0, to_pose_stem=1, T_robot_key=T_robot_key,
+            max_center_in_hand_drift_m=0.003,
+            max_symmetry_axis_tilt_deg=8.0)

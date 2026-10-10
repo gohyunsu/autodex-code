@@ -33,6 +33,10 @@ def main(argv: list[str] | None = None) -> int:
     reorient_audit.add_argument("--shared-root", type=Path, required=True)
     reorient_audit.add_argument("--mode", choices=("square", "cylinder"), required=True)
     reorient_audit.add_argument("--gap-mm", type=float, required=True)
+    reorient_audit.add_argument(
+        "--candidate-root", type=Path,
+        help="optional local handoff root containing reset_<h>/; not canonical NAS",
+    )
     reorient_audit.add_argument("--output", type=Path,
                                 help="optional new JSON report; no overwrite")
     reorient_scenes = command.add_parser(
@@ -143,7 +147,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             mode = select_mode(args.mode, args.gap_mm)
             report = audit_v8_reorient_assets(
-                shared_root=args.shared_root, mode=mode)
+                shared_root=args.shared_root, mode=mode,
+                candidate_root=args.candidate_root)
         except (FileNotFoundError, KeyError, TypeError, ValueError) as exc:
             parser.error(str(exc))
         payload = json.dumps(report, indent=2) + "\n"

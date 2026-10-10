@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,7 @@ from autodex.utils.path import RESET_RELEASE_HEIGHTS_CM
 
 from .config import TaskMode
 from .geometry import validate_se3
+from .grasp_fidelity import trajectory_closure_audit
 from .reorient_assets import (
     _paths, _same_scene_geometry, _scene_path, _sim_filter_scene_path,
     _tabletop_ids, _validate_scene,
@@ -24,7 +26,7 @@ from .reorient_assets import (
 
 
 GRASP_FILES = ("wrist_se3.npy", "pregrasp_pose.npy", "grasp_pose.npy",
-               "bodex_info.npy", "sim_eval.json")
+               "bodex_info.npy", "sim_eval.json", "sim_traj.json")
 EVIDENCE_SCHEMA = "precision_insertion_v8_reset_candidate_evidence_v1"
 
 
@@ -74,6 +76,21 @@ def _candidate_arrays(seed: Path, *, mode: TaskMode, cell: str,
     if evidence.get("scene_sha256") != {
             "bodex": _sha256(scenes[0]), "sim_filter": _sha256(scenes[1])}:
         raise ValueError(f"reset proposal scene changed: {seed}")
+    object_dir = scenes[0].parents[2]
+    mesh = object_dir / "processed_data/mesh/simplified.obj"
+    info = object_dir / "processed_data/info/simplified.json"
+    if (evidence.get("key_mesh_sha256") != _sha256(mesh) or
+            evidence.get("key_info_sha256") != _sha256(info)):
+        raise ValueError(f"reset key geometry changed: {seed}")
+    height = float(json.loads(info.read_text(encoding="utf-8"))["obb"][2])
+    if (not math.isfinite(height) or height <= 0 or
+            evidence.get("key_height_m") != height):
+        raise ValueError(f"invalid reset key height: {seed}")
+    fidelity = trajectory_closure_audit(
+        json.loads((seed / "sim_traj.json").read_text(encoding="utf-8")),
+        key_height_m=height)
+    if fidelity != evidence.get("post_squeeze_fidelity"):
+        raise ValueError(f"reset grasp fidelity evidence changed: {seed}")
     result = json.loads((seed / "sim_eval.json").read_text(encoding="utf-8"))
     if (result.get("success") is not True or
             result.get("hand") != "inspire" or
@@ -98,13 +115,16 @@ def _candidate_arrays(seed: Path, *, mode: TaskMode, cell: str,
             openposes.append(q)
         else:
             openposes.append(None)
-    return wrist, hands[0], hands[1], openposes[0], openposes[1]
+    return wrist, hands[0], hands[1], openposes[0], openposes[1], fidelity
 
 
 def load_v8_reset_seeds(
     *, shared_root: Path, mode: TaskMode, height_cm: int,
     from_pose_stem: int | str, to_pose_stem: int | str,
-    T_robot_key: np.ndarray, attempted_ids: tuple[str, ...] = (),
+    T_robot_key: np.ndarray, max_center_in_hand_drift_m: float,
+    max_symmetry_axis_tilt_deg: float,
+    attempted_ids: tuple[str, ...] = (),
+    candidate_root: Path | None = None,
 ) -> dict | None:
     """Return stock-planner-shaped seeds for one exact v8 directed cell.
 
@@ -112,6 +132,8 @@ def load_v8_reset_seeds(
     loader transforms them to robot frame from the *freshly observed* key.
     ``None`` means this cell has no unattempted stable seed, not that repose
     is impossible. The caller still owes socket-aware full-chain preflight.
+    ``candidate_root`` is an explicit reset_<height> staging override for
+    offline handoff audits; the default is AutoDex's canonical candidate tree.
     """
     root, object_dir = _paths(shared_root, mode)
     ids = _tabletop_ids(object_dir)
@@ -121,13 +143,20 @@ def load_v8_reset_seeds(
         raise ValueError("reset transition needs two different tabletop poses")
     if type(height_cm) is not int or height_cm not in RESET_RELEASE_HEIGHTS_CM:
         raise ValueError("unsupported AutoDex reset release height")
+    drift_limit = float(max_center_in_hand_drift_m)
+    tilt_limit = float(max_symmetry_axis_tilt_deg)
+    if (not math.isfinite(drift_limit) or drift_limit <= 0 or
+            not math.isfinite(tilt_limit) or tilt_limit <= 0):
+        raise ValueError("commissioned reset pose-fidelity limits are required")
     pose = validate_se3(T_robot_key, name="fresh T_robot_key")
     if any(not str(seed).isdigit() for seed in attempted_ids):
         raise ValueError("attempted reset seed IDs must be numeric")
     attempted = {str(int(seed)) for seed in attempted_ids}
     cell = f"{i}_{j}"
-    folder = (root / "AutoDex" / "candidates" / "inspire" /
-              f"reset_{height_cm}" / mode.key_object /
+    base = (root / "AutoDex" / "candidates" / "inspire" /
+            f"reset_{height_cm}" if candidate_root is None else
+            Path(candidate_root).expanduser().resolve())
+    folder = (base / mode.key_object /
               f"reorient_{height_cm}" / cell)
     if not folder.is_dir():
         return None
@@ -140,8 +169,17 @@ def load_v8_reset_seeds(
     scenes = _valid_scene_pair(root, object_dir, mode, height_cm, i, j)
     seeds.sort(key=lambda seed: (
         -grasp_priority_score(*read_grasp_stats(str(seed))), int(seed.name)))
-    rows = [_candidate_arrays(seed, mode=mode, cell=cell,
-                              h_cm=height_cm, scenes=scenes) for seed in seeds]
+    checked = [(seed, _candidate_arrays(seed, mode=mode, cell=cell,
+                                        h_cm=height_cm, scenes=scenes))
+               for seed in seeds]
+    checked = [(seed, row) for seed, row in checked if all(
+        row[5][state]["center_in_hand_displacement_m"] <= drift_limit and
+        row[5][state]["symmetry_reduced_axis_tilt_deg"] <= tilt_limit
+        for state in ("end_squeeze", "end_gravity"))]
+    if not checked:
+        return None
+    seeds = [seed for seed, _ in checked]
+    rows = [row for _, row in checked]
     wrists = np.stack([pose @ row[0] for row in rows])
     return {
         "wrist_se3": wrists,
@@ -156,5 +194,9 @@ def load_v8_reset_seeds(
             "robot_ready": False,
         } for seed in seeds],
         "n_total": len(seeds), "v8_i": i, "v8_j": j,
+        "fidelity_limits": {
+            "max_center_in_hand_drift_m": drift_limit,
+            "max_symmetry_axis_tilt_deg": tilt_limit,
+        },
         "robot_ready": False,
     }

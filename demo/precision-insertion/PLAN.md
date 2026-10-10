@@ -606,6 +606,14 @@ was found under the expected Inspire `reset_{0,4,8,12}` roots. These are
 local-file observations, not a claim about a different AutoDex host or NAS
 mount. A startup validator must report each missing exact path before any
 camera or robot lease is taken.
+The subsequent 1,000-per-directed-cell cylinder reset pilot found two
+full-key MuJoCo gravity passes, but the canonical `reset_12` root is a
+read-only NAS symlink on this workstation. Both pass records and trajectories
+are preserved in a separate local handoff tree, **not** an installed runtime
+pool. One candidate shows about 9.9 mm hand-relative center drift and 36°
+axis tilt during squeeze; neither has a socket-aware Franka chain plan or a
+physical reset result. Any future runtime reset loader must require explicit
+post-squeeze pose-fidelity limits and fresh-pose full-chain preflight.
 
 Other required robot-mode evidence is still missing: measured ChArUco and
 socket calibration for the live session; certified fixture rigidity and

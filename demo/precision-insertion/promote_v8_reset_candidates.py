@@ -12,12 +12,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 import shutil
 
 import numpy as np
 
 from precision_insertion.config import select_mode
+from precision_insertion.grasp_fidelity import trajectory_closure_audit
 from precision_insertion.reset_candidates import (
     EVIDENCE_SCHEMA, GRASP_FILES, _sha256, _valid_scene_pair,
 )
@@ -31,6 +33,7 @@ STOCK_FILES = ("wrist_se3.npy", "pregrasp_pose.npy", "grasp_pose.npy",
 def promote(
     *, shared_root: Path, stage_root: Path, stock_candidate_root: Path,
     audit_path: Path, output_manifest: Path,
+    output_candidate_root: Path | None = None,
 ) -> dict:
     """Copy only fully validated stock passes; refuse overwrite everywhere."""
     shared = Path(shared_root).expanduser().resolve()
@@ -54,8 +57,17 @@ def promote(
         raise ValueError("reset audit and proposal stage are not bound")
     mode = select_mode("cylinder", 20)
     object_dir = shared / "object_processing" / KEY
-    destination = (shared / "AutoDex/candidates/inspire/reset_12" /
-                   KEY / "reorient_12")
+    key_mesh = object_dir / "processed_data/mesh/simplified.obj"
+    key_info = object_dir / "processed_data/info/simplified.json"
+    key_height_m = float(json.loads(key_info.read_text(encoding="utf-8"))["obb"][2])
+    if not math.isfinite(key_height_m) or key_height_m <= 0:
+        raise ValueError("invalid full-key OBB height")
+    key_mesh_sha = _sha256(key_mesh)
+    key_info_sha = _sha256(key_info)
+    canonical_base = shared / "AutoDex/candidates/inspire/reset_12"
+    base = (canonical_base if output_candidate_root is None else
+            Path(output_candidate_root).expanduser().resolve())
+    destination = base / KEY / "reorient_12"
     by_cell = {row["cell"]: row for row in audit["cells"]}
     staged_scenes = {row["cell"]: row for row in stage_manifest["scenes"]}
     if set(by_cell) != set(PAIRS) or set(staged_scenes) != set(PAIRS):
@@ -108,20 +120,28 @@ def promote(
             for name in STOCK_FILES:
                 if _sha256(raw_seed / name) != _sha256(stock_seed / name):
                     raise ValueError(f"stock/raw reset proposal mismatch: {stock_seed / name}")
+            fidelity = trajectory_closure_audit(
+                json.loads((raw_seed / "sim_traj.json").read_text(encoding="utf-8")),
+                key_height_m=key_height_m)
             selected.append((cell, seed_id, raw_seed, stock_seed, target,
-                             scene_hashes))
+                             scene_hashes, fidelity))
 
-    for cell, seed_id, raw_seed, stock_seed, target, scene_hashes in selected:
+    for cell, seed_id, raw_seed, stock_seed, target, scene_hashes, fidelity in selected:
         target.mkdir(parents=True, exist_ok=False)
         for name in STOCK_FILES:
             shutil.copy2(stock_seed / name, target / name)
         shutil.copy2(raw_seed / "sim_eval.json", target / "sim_eval.json")
+        shutil.copy2(raw_seed / "sim_traj.json", target / "sim_traj.json")
         evidence = {
             "schema": EVIDENCE_SCHEMA, "full_key_object": KEY,
             "height_cm": 12, "cell": cell, "seed_id": seed_id,
             "candidate_sha256": {name: _sha256(target / name)
                                  for name in GRASP_FILES},
             "scene_sha256": scene_hashes,
+            "key_mesh_sha256": key_mesh_sha,
+            "key_info_sha256": key_info_sha,
+            "key_height_m": key_height_m,
+            "post_squeeze_fidelity": fidelity,
             "raw_proposal": str(raw_seed), "stock_pass": str(stock_seed),
             "source_audit_sha256": hashlib.sha256(audit_bytes).hexdigest(),
             "robot_ready": False,
@@ -134,7 +154,10 @@ def promote(
         "full_key_object": KEY, "height_cm": 12,
         "source_audit": str(report_path),
         "source_audit_sha256": hashlib.sha256(audit_bytes).hexdigest(),
-        "canonical_candidate_root": str(destination),
+        "candidate_output_root": str(destination),
+        "canonical_candidate_root": str(canonical_base / KEY / "reorient_12"),
+        "installed_in_canonical_reset_tree": (
+            output_candidate_root is None and bool(selected)),
         "promoted_count": len(selected),
         "promoted_seed_ids_by_cell": {
             cell: sorted(by_cell[cell]["mujoco_stable_seed_ids"])
@@ -156,12 +179,17 @@ def main() -> int:
     parser.add_argument("--stock-candidate-root", type=Path, required=True)
     parser.add_argument("--audit", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument(
+        "--output-candidate-root", type=Path,
+        help="optional local reset_12 root for handoff when canonical NAS is read-only",
+    )
     args = parser.parse_args()
     try:
         result = promote(
             shared_root=args.shared_root, stage_root=args.stage_root,
             stock_candidate_root=args.stock_candidate_root,
-            audit_path=args.audit, output_manifest=args.manifest)
+            audit_path=args.audit, output_manifest=args.manifest,
+            output_candidate_root=args.output_candidate_root)
     except (FileExistsError, FileNotFoundError, KeyError, TypeError,
             ValueError, OSError) as exc:
         parser.exit(2, f"reset promotion rejected: {exc}\n")

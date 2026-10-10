@@ -199,13 +199,19 @@ def prepare_v8_reorient_scenes(
     return report
 
 
-def audit_v8_reorient_assets(*, shared_root: Path, mode: TaskMode) -> dict:
+def audit_v8_reorient_assets(
+    *, shared_root: Path, mode: TaskMode,
+    candidate_root: Path | None = None,
+) -> dict:
     """Separate BODex scene availability from truly staged reset grasps."""
     # Import here to avoid a module cycle: the direct-v8 loader reuses this
     # module's scene contract, while this audit reuses its seed validator.
     from .reset_candidates import _candidate_arrays
 
     root, object_dir = _paths(shared_root, mode)
+    candidate_base = (root / "AutoDex" / "candidates" / "inspire"
+                      if candidate_root is None else
+                      Path(candidate_root).expanduser().resolve())
     ids = _tabletop_ids(object_dir)
     rows = []
     for i in ids:
@@ -234,8 +240,7 @@ def audit_v8_reorient_assets(*, shared_root: Path, mode: TaskMode) -> dict:
                         scenes.append(h_cm)
                     else:
                         missing_sim_scenes.append(h_cm)
-                cell = (root / "AutoDex" / "candidates" / "inspire" /
-                        f"reset_{h_cm}" / mode.key_object /
+                cell = (candidate_base / f"reset_{h_cm}" / mode.key_object /
                         f"reorient_{h_cm}" / f"{i}_{j}")
                 candidates = []
                 reported = []
@@ -294,10 +299,12 @@ def audit_v8_reorient_assets(*, shared_root: Path, mode: TaskMode) -> dict:
             staging.append({"manifest": str(manifest),
                             "status": "unreadable_staging_manifest"})
     return {
-        "schema": "precision_insertion_v8_reorient_asset_audit_v3",
+        "schema": "precision_insertion_v8_reorient_asset_audit_v4",
         "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
                  "key_object": mode.key_object},
         "v8_pose_stems": list(ids), "directed_pairs": rows,
+        "candidate_root": str(candidate_base),
+        "candidate_root_is_canonical": candidate_root is None,
         "legacy_tabletop_tree_present": legacy.is_dir(),
         "stock_reset_runner_compatible": False,
         "stock_reset_runner_reason": (

@@ -375,11 +375,11 @@ sim-filter path `AutoDex/scene/inspire/<key>/reorient_<h>/<i>_<j>.json`.
 The [cylinder v2 scene manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_scene_manifest_v8_v2_20261010.json)
 records eight directed-height pairs and the hashes of both copies. The square
 key already has 20 h=12 cm scene pairs.
-[The square v3 audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/reorient_square_1p5_audit_v3_20261010.json)
-and [cylinder v3 audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_asset_audit_v8_v3_20261010.json)
+[The square v4 audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/reorient_square_1p5_audit_v4_20261010.json)
+and [cylinder canonical v4 audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_canonical_audit_v4_20261010.json)
 find **zero runtime-stable reset seeds** for either family. Earlier square
 whole-hand staging manifests also report zero sampled passes; they must not
-be counted as runtime reset assets. The v3 audit reports a raw
+be counted as runtime reset assets. The v4 audit reports a raw
 `sim_eval.json` success separately from a provenance-bound seed the demo
 loader will accept; only the latter enters its stable-seed count.
 
@@ -450,9 +450,44 @@ records **zero** promoted seeds. For a later nonempty pool,
 `precision_insertion.reset_candidates.load_v8_reset_seeds` reads the direct
 v8 cell, converts each object-frame wrist transform using the *fresh* key
 pose, honors the original AutoDex reset-grasp success-rate ordering, and
-rejects changed seed/scene evidence. It is only a seed loader; it does not
+rejects changed seed/scene/key-mesh evidence. It also recomputes the MuJoCo
+post-squeeze key-in-hand displacement and symmetry-reduced axis tilt from the
+saved trajectory. The caller **must** supply commissioned maximum drift and
+tilt limits; a seed outside either limit is omitted. It is only a seed loader;
+it does not
 inherit the stock reset runner's legacy pose map, and it does not establish a
 socket-aware Franka path or authorize any motor command.
+
+An expanded isolated run generated **1,000 proxy proposals per directed 12 cm
+reset cell**, 2,000 total. Native BODex `success` was 0/2,000, as with the
+tabletop run; the stock filter does not gate on that strict flag. Full-key
+filter counts were **936 scene-clear → 467 squeeze-contact → 2 MuJoCo-stable**:
+`0_1/191` and `1_0/631`. The
+[filter audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_filter_audit_1000_20261010.json)
+records the exact stage totals. Their squeeze-end hand-relative center drifts
+are approximately **1.1 mm** and **9.9 mm** respectively; the latter also
+has approximately **36°** symmetry-reduced axis tilt. A MuJoCo gravity pass
+is thus not evidence of a rigid key/hand transform. Using *illustrative,
+uncommissioned* 3 mm center-drift and 8° tilt limits, only `0_1/191` survives
+the loader; those values do not approve robot execution.
+
+`~/shared_data/AutoDex/candidates/inspire/reset_12` is a symlink to the
+read-only `/mnt/paradex2` NFS mount on this machine. The expanded passing
+seeds were therefore written to the **local, non-runtime**
+[handoff tree](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_handoff/reset_12)
+with a [promotion manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_promotion_1000_local_handoff_20261010.json).
+No candidate was installed into the canonical NAS tree. To reproduce local
+staging after a fresh full-key filter run, pass
+`--output-candidate-root /home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_handoff/NEW_reset_12`
+to `promote_v8_reset_candidates.py`, along with that run's stage, stock
+candidate root, audit, and a new promotion manifest path. Do not overlay the
+handoff onto an existing NAS candidate cell without checking IDs and hashes.
+The [handoff v4 audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_handoff_audit_v4_20261010.json)
+uses `run_pipeline.py audit-reorient --candidate-root` to count the two
+evidence-bound seeds separately from the canonical NAS audit, which still
+counts zero.
+Even after installation on a writable AutoDex host, both seeds still need
+socket-aware full-chain Franka planning and physical validation.
 
 For the cylindrical family, generate the key's BODex/MuJoCo v8 grasp pool
 **once**, then screen that same pool against **each** selected socket. A
