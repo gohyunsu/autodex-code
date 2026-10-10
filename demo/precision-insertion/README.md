@@ -1820,6 +1820,20 @@ runner's existing pose-conditioned v8 pickup/transfer/20 mm preflight.
 It does not use the socket FoundPose result as the key pose, reuse an old key
 image, mark a physical grasp successful, or send a robot command.
 
+Precision key OBJs use solid-colour MTL files. The unchanged AutoDex
+silhouette loader represents them as `TextureVisuals` despite there being no
+texture image, which makes FoundationPose's tensor builder fail. This demo
+prepares a [compatible local renderer](precision_insertion/silhouette_compat.py)
+*before* key daemon initialization: it converts only that no-image visual to
+vertex colour, while preserving the same raw OBJ vertices, faces, units and
+object frame. `init_object(load_silhouette=False)` still initializes the
+unchanged AutoDex FoundPose daemons; it leaves the demo-prepared local
+renderer in place for IoU/silhouette refinement. This has been checked on all
+five key raw meshes at the mesh-load level. A full CUDA renderer and live
+perception replay still require the AutoDex robot PC's FoundationPose stack
+and real-camera validation; this compatibility fix alone does not promote a
+pending `repre.pth` or validate a key pose.
+
 ```python
 from precision_insertion.live_key_trial import prepare_next_live_key
 

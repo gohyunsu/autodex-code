@@ -70,7 +70,7 @@ def _setup(tmp_path, monkeypatch, *, state_timestamp=100.005):
             assert kwargs["obj_name"] == mode.key_object
             assert kwargs["mesh_path"] == str(mesh)
             assert kwargs["assets_root"] == str(repre.parents[4])
-            assert kwargs["load_silhouette"] is True
+            assert kwargs["load_silhouette"] is False
             self.obj_name = mode.key_object
 
     init = Init()
@@ -106,6 +106,14 @@ def _setup(tmp_path, monkeypatch, *, state_timestamp=100.005):
                         ("write_key_capture_artifacts", write),
                         ("verify_key_capture_artifacts", verify)):
         monkeypatch.setattr(trial, name, value)
+
+    def prepare_renderer(**kwargs):
+        events.append("compatible_renderer")
+        assert kwargs["init_orchestrator"] is init
+        assert kwargs["object_name"] == mode.key_object
+        assert kwargs["raw_mesh"] == mesh
+
+    monkeypatch.setattr(trial, "prepare_key_silhouette", prepare_renderer)
 
     def state_provider(received):
         events.append("measured_state_at_exposure")
@@ -146,7 +154,7 @@ def _setup(tmp_path, monkeypatch, *, state_timestamp=100.005):
 def test_live_key_capture_state_and_preflight_order(tmp_path, monkeypatch):
     arguments, events, _repre = _setup(tmp_path, monkeypatch)
     result = trial.prepare_next_live_key(**arguments)
-    assert events == ["init_key", "capture", "admit", "save_key_evidence",
+    assert events == ["compatible_renderer", "init_key", "capture", "admit", "save_key_evidence",
                       "verify_key_evidence", "measured_state_at_exposure",
                       "preflight"]
     assert result.observation.capture_id == "key_001"
@@ -205,5 +213,17 @@ def test_invalid_commissioning_threshold_blocks_before_camera(
     arguments["axial_waypoint_step_m"] = .002
     arguments["minimum_refinement_iou"] = 1.01
     with pytest.raises(ValueError, match="key mask, silhouette"):
+        trial.prepare_next_live_key(**arguments)
+    assert events == []
+
+
+def test_silhouette_failure_blocks_camera_and_daemon_init(tmp_path, monkeypatch):
+    arguments, events, _repre = _setup(tmp_path, monkeypatch)
+
+    def fail(**_kwargs):
+        raise RuntimeError("local silhouette renderer unavailable")
+
+    monkeypatch.setattr(trial, "prepare_key_silhouette", fail)
+    with pytest.raises(RuntimeError, match="renderer unavailable"):
         trial.prepare_next_live_key(**arguments)
     assert events == []

@@ -23,6 +23,7 @@ from .live_robot_state import LiveRobotState
 from .path_audit import PathAuditLimits
 from .perception_evidence import SocketViewLimits
 from .session_runner import SessionRunner
+from .silhouette_compat import prepare_key_silhouette
 from .trial_preflight import TrialPreflight
 
 
@@ -153,11 +154,17 @@ def prepare_next_live_key(
         raise ValueError("unsupported or runner-owned planning options: " +
                          ", ".join(sorted(str(key) for key in unknown)))
 
+    # AutoDex's unmodified silhouette loader assumes TextureVisuals always
+    # has an image. Our solid-MTL precision CAD is a counterexample. Prepare
+    # an equivalent local renderer before daemon init, keeping raw CAD bytes.
+    prepare_key_silhouette(
+        init_orchestrator=init_orchestrator,
+        object_name=runner.mode.key_object, raw_mesh=mesh)
     init_orchestrator.init_object(
         obj_name=runner.mode.key_object, mesh_path=str(mesh),
         assets_root=str(paths.foundpose_assets_root(runner.mode.key_object)),
         intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
-        image_hw=image_hw, mode="live", load_silhouette=True)
+        image_hw=image_hw, mode="live", load_silhouette=False)
     capture = collect_key_capture(
         init_orchestrator=init_orchestrator,
         key_object=runner.mode.key_object, capture_id=capture_id,
