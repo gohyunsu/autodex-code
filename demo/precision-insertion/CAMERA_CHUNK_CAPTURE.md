@@ -59,9 +59,70 @@ frame/tick sequence and returns a file hash. It always reports
 Next, obtain independently timed per-camera hardware trigger or same-camera
 exposure references on a common UTC clock. Match those references to the
 *exact imaging-camera* frame IDs, measure clock conversion/offset/drift error,
-and create held-out fit/validation data for `camera_time.py`. The journal
-alone cannot supply UTC or an error bound. Only after camera-side deployment,
-frame-ID/hash transport matching, rig-specific calibration, held-out timing
-validation and a live startup replay should `AcquisitionTimeProvider` be
-connected to `start_precision_session()`. The default path must continue to
-reject missing/uncalibrated acquisition times.
+and create held-out fit/validation data. The separate
+`camera_chunk_clock.ChunkUTCClock` can then fit and replay the **closed**
+journal against those independent UTC references. One reference JSON has this
+schema (the numbers are structural examples, **not** measurements):
+
+```json
+{
+  "schema": "precision_insertion_chunk_utc_calibration_v1",
+  "calibration_id": "camA_session001",
+  "camera_serial": "CAMERA_SERIAL",
+  "chunk_journal": {
+    "path": "/abs/path/to/closed_camera_journal.jsonl",
+    "sha256": "<journal SHA-256>"
+  },
+  "source_method": "independent_per_camera_trigger_metrology",
+  "source_files": [
+    {"path": "/abs/path/to/trigger_metrology_log.csv",
+     "sha256": "<metrology log SHA-256>"}
+  ],
+  "tick_frequency_hz": 1000000000,
+  "max_clock_rate_error_ppm": 100,
+  "fit_samples": [
+    {"frame_id": 101, "exposure_utc_s": 1790000000.01,
+     "max_error_s": 0.0001},
+    {"frame_id": 103, "exposure_utc_s": 1790000000.03,
+     "max_error_s": 0.0001},
+    {"frame_id": 105, "exposure_utc_s": 1790000000.05,
+     "max_error_s": 0.0001}
+  ],
+  "validation_samples": [
+    {"frame_id": 102, "exposure_utc_s": 1790000000.02,
+     "max_error_s": 0.0001},
+    {"frame_id": 104, "exposure_utc_s": 1790000000.04,
+     "max_error_s": 0.0001},
+    {"frame_id": 106, "exposure_utc_s": 1790000000.06,
+     "max_error_s": 0.0001}
+  ],
+  "clock_offset_error_s": 0.0002,
+  "drift_error_s_per_s": 0.00001,
+  "max_total_error_s": 0.001,
+  "max_extrapolation_s": 0.05,
+  "valid_until_utc_s": 1790000001.0
+}
+```
+
+Use the camera's measured or documented tick frequency; this value cannot
+be inferred from `pc_time`. The independent references must identify the
+*same imaging-camera frame* and include a worst-case trigger-to-exposure
+latency and clock error. Fit and held-out frame IDs must be disjoint. Run:
+
+```bash
+/path/to/autodex-python \
+  demo/precision-insertion/audit_chunk_utc_calibration.py \
+  --calibration /abs/path/to/new_chunk_utc_calibration.json
+```
+
+The fitter subtracts integer ticks before floating-point regression, checks
+clock rate against the declared frequency, scores both fit and held-out
+references, and refuses frames beyond bounded extrapolation/expiry. Neither
+this fit nor the journal proves the external instrument is calibrated. It is
+an **offline replay only**: no current live camera-PC → robot-PC tick stream
+or real UTC reference dataset has been supplied. Only after camera-side
+deployment, frame-ID/hash transport matching, rig-specific physical
+calibration, held-out timing validation and a live startup replay should a
+calibrated acquisition-time provider be connected to
+`start_precision_session()`. The default path must continue to reject
+missing/uncalibrated acquisition times.

@@ -166,9 +166,12 @@ class AcquisitionTimeProvider:
     def __init__(self, registry: FrameIdentityRegistry,
                  calibrations: Mapping[str, CameraTimeCalibration]):
         if not calibrations or any(
+                not isinstance(calibration, CameraTimeCalibration) or
                 calibration.camera_serial != serial
                 for serial, calibration in calibrations.items()):
-            raise ValueError("calibration serials must match camera IDs")
+            raise ValueError(
+                "live frame-ID provider needs CameraTimeCalibration "
+                "records with matching camera IDs")
         self.registry = registry
         self.calibrations = dict(calibrations)
 

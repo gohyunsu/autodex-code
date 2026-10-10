@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import os
+import operator
 from pathlib import Path
 from queue import Queue
 import threading
@@ -74,11 +75,17 @@ class ChunkTimestampJournal:
 
     def record(self, image) -> None:
         """Record chunk metadata from the exact unreleased GetNextImage image."""
-        frame_id = image.GetFrameID()
-        chunk_ticks = image.GetChunkData().GetTimestamp()
+        raw_id = image.GetFrameID()
+        raw_ticks = image.GetChunkData().GetTimestamp()
         host_time = time.time()
-        if (type(frame_id) is not int or frame_id <= 0 or
-                type(chunk_ticks) is not int or chunk_ticks <= 0 or
+        try:
+            if isinstance(raw_id, bool) or isinstance(raw_ticks, bool):
+                raise TypeError("boolean frame/tick value")
+            frame_id = operator.index(raw_id)
+            chunk_ticks = operator.index(raw_ticks)
+        except TypeError as exc:
+            raise ValueError("same-frame chunk ID/timestamp is not integral") from exc
+        if (frame_id <= 0 or chunk_ticks <= 0 or
                 not math.isfinite(host_time)):
             raise ValueError("same-frame chunk ID/timestamp is unavailable")
         with self._lock:
@@ -169,8 +176,14 @@ class TimestampedCameraPointer:
         return image
 
 
-def verify_chunk_journal(path: Path, *, camera_serial: str) -> dict:
-    """Replay a closed journal; never convert ticks or host time to exposure."""
+def load_chunk_journal(
+    path: Path, *, camera_serial: str,
+) -> tuple[dict, dict[int, int]]:
+    """Replay a closed journal and return exact frame-ID → camera-tick rows.
+
+    Host receipt times are checked for format but never returned as exposures.
+    A live writer's partial final line is rejected; call after clean stop.
+    """
     source = Path(path).expanduser().resolve()
     with source.open("r", encoding="utf-8") as stream:
         header = json.loads(next(stream))
@@ -181,6 +194,7 @@ def verify_chunk_journal(path: Path, *, camera_serial: str) -> dict:
             raise ValueError("invalid camera chunk journal header")
         count, last_id, last_ticks = 0, 0, 0
         first_id = first_ticks = None
+        ticks_by_id = {}
         for line in stream:
             row = json.loads(line)
             if (not isinstance(row, dict) or set(row) != {
@@ -198,7 +212,8 @@ def verify_chunk_journal(path: Path, *, camera_serial: str) -> dict:
                     row["frame_id"], row["chunk_timestamp_ticks"])
             count += 1
             last_id, last_ticks = row["frame_id"], row["chunk_timestamp_ticks"]
-    return {
+            ticks_by_id[last_id] = last_ticks
+    audit = {
         "schema": "precision_insertion_camera_chunk_journal_audit_v1",
         "path": str(source),
         "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
@@ -208,3 +223,10 @@ def verify_chunk_journal(path: Path, *, camera_serial: str) -> dict:
         "exposure_utc_admissible": False,
         "scope": "same_frame_camera_ticks_not_utc_calibration",
     }
+    return audit, ticks_by_id
+
+
+def verify_chunk_journal(path: Path, *, camera_serial: str) -> dict:
+    """Replay a closed journal; never convert ticks or host time to exposure."""
+    audit, _rows = load_chunk_journal(path, camera_serial=camera_serial)
+    return audit

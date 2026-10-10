@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 
 import pytest
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -101,6 +102,16 @@ def test_journal_rejects_nonmonotonic_or_corrupt_saved_rows(tmp_path):
             "host_received_utc_s": 5.0}) + "\n")
     with pytest.raises(ValueError, match="nonmonotonic"):
         verify_chunk_journal(path, camera_serial="cam1")
+
+
+def test_numpy_integral_vendor_values_are_recorded_exactly(tmp_path):
+    path = tmp_path / "cam.jsonl"
+    journal = ChunkTimestampJournal(path, camera_serial="cam1")
+    journal.record(_Image(np.int64(3), np.uint64(10**15)))
+    journal.close()
+    audit = verify_chunk_journal(path, camera_serial="cam1")
+    assert audit["last_frame_id"] == 3
+    assert audit["last_chunk_ticks"] == 10**15
 
 
 def test_buffer_drain_after_stop_is_not_journaled(tmp_path):
