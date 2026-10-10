@@ -217,6 +217,19 @@ clearance. At pre-insertion, VLM can flag gross misalignment or slip; it must
 not turn hidden pixels into a millimetre-accurate key pose. Guarded contact
 and observed depth/force remain necessary for insertion success.
 
+`uncertainty_margin.py` now provides the **read-only sampled-distance portion**
+of that future gate. Given a passing 20 mm endpoint, passing sampled path,
+matching key/socket/CAD hashes, and externally commissioned maximum surface
+deviations for the key and hand relative to the fixed fixture, it rejects any
+nominal clearance smaller than the required baseline plus that deviation. A
+helper converts a bounded error in `T_key_hand` into a key-surface displacement
+using the *whole key's* distance from the hand frame, rather than just the key
+center. The empirical spread in `physical_grasp_calibration.py` is explicitly
+**not** an admissible future-trial bound. This audit is not wired into the
+transfer gate yet, because no independently justified future-trial bounds or
+physical calibration exist; it cannot establish swept-volume or contact
+safety from sampled nominal distances.
+
 The supervisor writes a new `session_run.json`, immutable copies of the
 frozen calibration and endpoint catalogue, numbered
 `trial_preflights/<n>/` reports with hashed key-evidence bindings, and

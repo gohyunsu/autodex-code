@@ -426,6 +426,11 @@ change the runtime gate: physical samples, held-out repeatability, a
 conservative future-trial bound, uncertain endpoint/path checks and guarded
 controller evidence are still missing. A raw visual `held` label must never
 silently promote this descriptive artifact into a live 6D key observation.
+`uncertainty_margin.py` additionally checks whether a supplied, commissioned
+*surface* deviation fits every nominal endpoint and sampled held-path
+clearance. It remains diagnostic-only until the future-trial bound has a
+verified physical source and the calibrated, occluded-key transfer branch is
+implemented. Do not pass the empirical calibration radius as that bound.
 Candidate grasp statistics update from `grasp_success`; insertion retry
 statistics update from `insertion_success` and failure cause. Unknown is not
 success and must not erase a known earlier milestone. Use a controlled failure
