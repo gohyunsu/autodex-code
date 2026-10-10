@@ -1778,6 +1778,9 @@ class SessionRunner:
             **{name: sources[name]["path"] for name in (
                 "key_depth", "alignment", "force_trace", "grasp_state")},
         }
+        handoff_ref = report.get("guarded_axial_handoff")
+        if handoff_ref is not None:
+            expected_refs["guarded_axial_handoff"] = handoff_ref["path"]
         if (self._attempt is None or
                 report["attempt_id"] != self._attempt.attempt_id or
                 report["candidate_id"] != self._attempt.candidate_id or
@@ -1807,6 +1810,16 @@ class SessionRunner:
             if preinsert_events[0]["evidence_refs"].get(
                     reference[0]) != str(reference[1]):
                 raise ValueError("insertion checkpoint used another pre-insertion image")
+            if handoff_ref is not None:
+                handoff = verify_guarded_axial_handoff(
+                    Path(handoff_ref["path"]))
+                if (preinsert_events[0]["evidence_refs"].get(
+                        "preinsert_checkpoint") !=
+                        handoff["preinsert_report_path"]):
+                    raise ValueError(
+                        "guarded handoff differs from the observed arrival event")
+        elif handoff_ref is not None:
+            raise ValueError("centered axial handoff cannot label an XY retry")
         if retry_events and (
                 report["preinsert_reached_at_s"] !=
                 retry_events[-1]["timestamp_s"]):
@@ -1849,6 +1862,10 @@ class SessionRunner:
             raise ValueError("pre-insertion capture is for another key")
         retry_events = [event for event in self._attempt.events
                         if event["stage"] == "xy_retry"]
+        metric = json.loads(Path(metric_record_path).read_text(encoding="utf-8"))
+        if retry_events and metric.get("schema") == (
+                "precision_insertion_guarded_execution_v2"):
+            raise ValueError("XY retry needs its own post-shift axial handoff")
         if retry_events:
             latest_retry = retry_events[-1]["timestamp_s"]
             before_lower = min(
@@ -1880,7 +1897,6 @@ class SessionRunner:
                   f"{self._insertion_assessment_index:03d}")
         path = write_insertion_checkpoint(report, output)
         verify_insertion_checkpoint(path)
-        metric = json.loads(Path(metric_record_path).read_text(encoding="utf-8"))
         sources = metric["source_records"]
         refs = {
             "vlm_observation": str(path),
@@ -1892,6 +1908,9 @@ class SessionRunner:
             "grasp_state": sources["grasp_state"]["path"],
             "guarded_execution": str(Path(metric_record_path).resolve()),
         }
+        if report["guarded_axial_handoff"] is not None:
+            refs["guarded_axial_handoff"] = report[
+                "guarded_axial_handoff"]["path"]
         self.observe_insertion(
             InsertionEvidence(**report["evidence"]),
             timestamp_s=decision_timestamp_s, evidence_refs=refs,

@@ -52,6 +52,27 @@ def test_trace_replays_complete_hold_and_detects_changed_decision(tmp_path):
         verify_guarded_contact_trace_record(changed)
 
 
+def test_v2_trace_replays_exact_handoff_and_archive_digests():
+    trace = replay_guarded_contact_trace(
+        attempt_id="trial", candidate_id="table/0/3", family="square",
+        session_calibration_sha256="0" * 64,
+        limits=_limits(), started_at_s=1., events=_stroke(),
+        axial_handoff_sha256="a" * 64,
+        trajectory_archive_sha256="b" * 64)
+    assert trace["schema"] == "precision_insertion_guarded_contact_trace_v2"
+    assert verify_guarded_contact_trace_record(trace) == trace
+    changed = {**trace, "path_binding": {
+        **trace["path_binding"], "trajectory_archive_sha256": "bad"}}
+    with pytest.raises(ValueError, match="cannot be replayed"):
+        verify_guarded_contact_trace_record(changed)
+    with pytest.raises(ValueError, match="both digests"):
+        replay_guarded_contact_trace(
+            attempt_id="trial", candidate_id="table/0/3", family="square",
+            session_calibration_sha256="0" * 64,
+            limits=_limits(), started_at_s=1., events=_stroke(),
+            axial_handoff_sha256="a" * 64)
+
+
 def test_trace_abort_and_missing_sample_deadline():
     events = _stroke()[:1] + [
         (replace(_sample(1.03, .004), force_socket_n=(0., 0., 20.)), 1.04)]

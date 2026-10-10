@@ -35,6 +35,19 @@ report_path = runner.prepare_guarded_axial_handoff(
 packet = verify_guarded_axial_handoff(report_path)
 ```
 
+For a centered first attempt, a separately produced guarded-stroke record can
+use `precision_insertion_guarded_execution_v2`. Its `axial_handoff` field is
+`{"path": absolute_report_path, "sha256": report_file_sha256}`. The referenced
+`force_trace` must use `precision_insertion_guarded_contact_trace_v2` and carry
+`path_binding` with that same handoff file SHA-256 and the packet's
+`trajectory_archive_sha256`. The insertion checkpoint replays both records,
+checks attempt/candidate/session and stroke timing, and requires the exact raw
+pre-insertion camera bundle cited by the observed-hold checkpoint. Its
+`execution_plan_binding` is then `observed_hold_axial_path`. Version 1 records
+remain readable as `unbound_legacy_diagnostic` and cannot claim a handoff.
+This v2 binding is for the **first centered attempt only**; a shifted XY retry
+needs a separate post-shift axial path and handoff.
+
 The saved packet can also be independently checked on the AutoDex PC:
 
 ```bash
@@ -50,6 +63,9 @@ and commissioning of all numeric limits. Even successfully following these
 joints establishes only a **nominal wrist stroke**. The task label still
 requires post-stroke raw camera/VLM evidence and independently verified
 physical **key** depth; a wrist endpoint is not 20 mm key penetration.
+Matching hashes also do not authenticate the external controller or prove
+that its samples came from the commanded path; producer commissioning and
+actual robot-state logging remain necessary.
 
 The canonical v8 candidate, object-processing and fixed socket assets remain
 under the selected `shared_root`. This module and its tests live only under

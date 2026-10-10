@@ -526,6 +526,12 @@ the exact observed post-lift 20 mm axial path and a fresh measured
 FR3/Inspire start state into one replayable packet. It does **not** command
 the arm or prove that the key penetrated the socket; a commissioned guarded
 controller and post-stroke evidence remain separate.
+A v2 guarded metric and contact trace can cite this exact packet and its
+saved trajectory digest; the insertion checkpoint then checks the matching
+observed-hold raw capture and records `observed_hold_axial_path`. Legacy v1
+metric/trace records remain read-only diagnostics without that path binding.
+Neither format authenticates the robot-side producer or admits wrist travel
+as physical key depth. See [handoff record contract](GUARDED_AXIAL_HANDOFF.md).
 The demo now also has a pure, **non-actuating**
 [`GuardedContactMonitor`](precision_insertion/guarded_contact.py) for the
 planned 20 mm stroke. With separately commissioned limits and acquisition-

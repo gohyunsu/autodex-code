@@ -28,6 +28,7 @@ from precision_insertion.insertion_checkpoint import (  # noqa: E402
     verify_preinsert_raw_capture, write_final_insertion_capture,
     write_insertion_checkpoint, write_preinsert_raw_capture,
 )
+from precision_insertion import insertion_checkpoint as checkpoint_module  # noqa: E402
 from precision_insertion.key_perception import (  # noqa: E402
     admit_held_key_capture, write_key_capture_artifacts,
 )
@@ -373,6 +374,97 @@ def test_raw_preinsert_images_need_no_postgrasp_foundpose(tmp_path):
     saved = write_insertion_checkpoint(report, tmp_path / "raw_assessment")
     assert verify_insertion_checkpoint(saved)["outcome"][
         "insertion_success"] is None
+
+
+def test_guarded_v2_record_binds_exact_observed_hold_and_axial_handoff(
+        tmp_path, monkeypatch):
+    args, backend = _setup(tmp_path)
+    args["preinsert_bundle"] = _raw_preinsert_bundle(args, tmp_path)
+    raw = args["preinsert_bundle"]
+    preinsert_report = tmp_path / "observed_hold.json"
+    preinsert_report.write_text(json.dumps({
+        "raw_bundle": str(raw),
+        "raw_manifest_sha256": hashlib.sha256(
+            (raw / "manifest.json").read_bytes()).hexdigest(),
+    }), encoding="utf-8")
+    handoff_path = tmp_path / "axial_handoff.json"
+    handoff_path.write_text("{}", encoding="utf-8")
+    handoff = {
+        "attempt_id": args["attempt_id"],
+        "candidate_id": args["candidate_id"],
+        "session_calibration_sha256": args["session_calibration_sha256"],
+        "decision_timestamp_s": 102.2,
+        "preinsert_report_path": str(preinsert_report),
+        "trajectory_archive_sha256": "a" * 64,
+        "mode": {"family": "square"},
+    }
+    monkeypatch.setattr(
+        checkpoint_module, "verify_guarded_axial_handoff",
+        lambda _path: handoff)
+    metric_path = args["metric_record_path"]
+    metric = json.loads(metric_path.read_text(encoding="utf-8"))
+    metric["schema"] = "precision_insertion_guarded_execution_v2"
+    metric["axial_handoff"] = {
+        "path": str(handoff_path),
+        "sha256": hashlib.sha256(handoff_path.read_bytes()).hexdigest(),
+    }
+    trace_ref = metric["source_records"]["force_trace"]
+    trace_path = Path(trace_ref["path"])
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    trace["schema"] = "precision_insertion_guarded_contact_trace_v2"
+    trace["path_binding"] = {
+        "axial_handoff_sha256": metric["axial_handoff"]["sha256"],
+        "trajectory_archive_sha256": handoff["trajectory_archive_sha256"],
+    }
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    trace_ref["sha256"] = hashlib.sha256(trace_path.read_bytes()).hexdigest()
+    metric_path.write_text(json.dumps(metric), encoding="utf-8")
+    report = assess_insertion_checkpoint(**args)
+    assert report["guarded_axial_handoff"] == metric["axial_handoff"]
+    assert report["execution_plan_binding"] == "observed_hold_axial_path"
+    assert report["outcome"]["insertion_success"] is None
+    saved = write_insertion_checkpoint(report, tmp_path / "v2_assessment")
+    assert verify_insertion_checkpoint(saved)["execution_plan_binding"] == (
+        "observed_hold_axial_path")
+    trace["path_binding"]["trajectory_archive_sha256"] = "b" * 64
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    trace_ref["sha256"] = hashlib.sha256(trace_path.read_bytes()).hexdigest()
+    metric_path.write_text(json.dumps(metric), encoding="utf-8")
+    with pytest.raises(ValueError, match="another axial path"):
+        assess_insertion_checkpoint(**args)
+    trace["path_binding"]["trajectory_archive_sha256"] = (
+        handoff["trajectory_archive_sha256"])
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    trace_ref["sha256"] = hashlib.sha256(trace_path.read_bytes()).hexdigest()
+    metric_path.write_text(json.dumps(metric), encoding="utf-8")
+    handoff["candidate_id"] = "table/0/wrong"
+    with pytest.raises(ValueError, match="not bound to this axial handoff"):
+        assess_insertion_checkpoint(**args)
+    assert len(backend.calls) == 1
+    handoff["candidate_id"] = args["candidate_id"]
+    preinsert_report.write_text(json.dumps({
+        "raw_bundle": str(tmp_path / "another_hold"),
+        "raw_manifest_sha256": hashlib.sha256(
+            (raw / "manifest.json").read_bytes()).hexdigest(),
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="another pre-insertion capture"):
+        assess_insertion_checkpoint(**args)
+
+
+def test_guarded_v2_record_requires_handoff_and_v1_cannot_claim_one(tmp_path):
+    args, backend = _setup(tmp_path)
+    metric_path = args["metric_record_path"]
+    metric = json.loads(metric_path.read_text(encoding="utf-8"))
+    metric["schema"] = "precision_insertion_guarded_execution_v2"
+    metric_path.write_text(json.dumps(metric), encoding="utf-8")
+    with pytest.raises(ValueError, match="needs an axial handoff"):
+        assess_insertion_checkpoint(**args)
+    metric["schema"] = "precision_insertion_guarded_execution_v1"
+    metric["axial_handoff"] = {"path": "/tmp/not-an-axial-handoff"}
+    metric_path.write_text(json.dumps(metric), encoding="utf-8")
+    with pytest.raises(ValueError, match="v1 record cannot claim"):
+        assess_insertion_checkpoint(**args)
+    assert backend.calls == []
 
 
 @pytest.mark.parametrize("raw_preinsert", [False, True])

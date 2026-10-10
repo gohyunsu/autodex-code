@@ -17,7 +17,17 @@ from .guarded_contact import (
 )
 
 
-_SCHEMA = "precision_insertion_guarded_contact_trace_v1"
+_SCHEMA_V1 = "precision_insertion_guarded_contact_trace_v1"
+_SCHEMA_V2 = "precision_insertion_guarded_contact_trace_v2"
+
+
+def _digest(value: str | None, name: str) -> str | None:
+    if value is None:
+        return None
+    if (not isinstance(value, str) or len(value) != 64 or
+            any(character not in "0123456789abcdef" for character in value)):
+        raise ValueError(f"invalid {name} digest")
+    return value
 
 
 def replay_guarded_contact_trace(
@@ -25,6 +35,8 @@ def replay_guarded_contact_trace(
     session_calibration_sha256: str, family: str,
     limits: GuardedContactLimits, started_at_s: float,
     events: list[tuple[GuardedContactSample | None, float]],
+    axial_handoff_sha256: str | None = None,
+    trajectory_archive_sha256: str | None = None,
 ) -> dict:
     """Evaluate an ordered sample stream; require a terminal hold or abort.
 
@@ -39,6 +51,10 @@ def replay_guarded_contact_trace(
                 for c in session_calibration_sha256) or
             not isinstance(events, list) or not events):
         raise ValueError("guarded trace needs IDs, session and events")
+    handoff_digest = _digest(axial_handoff_sha256, "axial handoff")
+    archive_digest = _digest(trajectory_archive_sha256, "trajectory archive")
+    if (handoff_digest is None) != (archive_digest is None):
+        raise ValueError("guarded trace path binding needs both digests")
     monitor = GuardedContactMonitor(
         family=family, limits=limits, started_at_s=started_at_s)
     rows = []
@@ -66,8 +82,8 @@ def replay_guarded_contact_trace(
     terminal = rows[-1]["decision"]
     if terminal["action"] == "continue_preplanned_stroke":
         raise ValueError("guarded trace ended without a hold or abort")
-    return {
-        "schema": _SCHEMA,
+    record = {
+        "schema": _SCHEMA_V2 if handoff_digest is not None else _SCHEMA_V1,
         "attempt_id": attempt_id,
         "candidate_id": candidate_id,
         "session_calibration_sha256": session_calibration_sha256,
@@ -82,6 +98,12 @@ def replay_guarded_contact_trace(
         "scope": "replayed_external_samples_not_sensor_or_robot_certification",
         "robot_ready": False,
     }
+    if handoff_digest is not None:
+        record["path_binding"] = {
+            "axial_handoff_sha256": handoff_digest,
+            "trajectory_archive_sha256": archive_digest,
+        }
+    return record
 
 
 def write_guarded_contact_trace(record: dict, path: Path) -> Path:
@@ -95,12 +117,20 @@ def write_guarded_contact_trace(record: dict, path: Path) -> Path:
 
 
 def verify_guarded_contact_trace_record(record: dict) -> dict:
-    if (not isinstance(record, dict) or record.get("schema") != _SCHEMA or
+    if (not isinstance(record, dict) or record.get("schema") not in {
+                _SCHEMA_V1, _SCHEMA_V2} or
             record.get("robot_ready") is not False or
             record.get("scope") !=
             "replayed_external_samples_not_sensor_or_robot_certification" or
             not isinstance(record.get("events"), list)):
         raise ValueError("invalid guarded contact trace")
+    binding = record.get("path_binding")
+    if record["schema"] == _SCHEMA_V2:
+        if (not isinstance(binding, dict) or set(binding) != {
+                "axial_handoff_sha256", "trajectory_archive_sha256"}):
+            raise ValueError("guarded v2 trace needs exact path binding")
+    elif binding is not None:
+        raise ValueError("guarded v1 trace cannot claim path binding")
     try:
         events = [
             (None if row["sample"] is None else
@@ -114,7 +144,11 @@ def verify_guarded_contact_trace_record(record: dict) -> dict:
             session_calibration_sha256=record["session_calibration_sha256"],
             family=record["family"],
             limits=GuardedContactLimits(**record["limits"]),
-            started_at_s=record["started_at_s"], events=events)
+            started_at_s=record["started_at_s"], events=events,
+            axial_handoff_sha256=(
+                binding["axial_handoff_sha256"] if binding else None),
+            trajectory_archive_sha256=(
+                binding["trajectory_archive_sha256"] if binding else None))
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("guarded contact trace cannot be replayed") from exc
     if record != expected:

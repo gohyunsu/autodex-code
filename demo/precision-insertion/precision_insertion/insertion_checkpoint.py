@@ -18,6 +18,7 @@ import cv2
 from PIL import Image
 
 from .frame_provenance import bounded_capture_skew_s, image_sha256
+from .guarded_axial_handoff import verify_guarded_axial_handoff
 from .guarded_trace import verify_guarded_contact_trace
 from .key_perception import verify_key_capture_artifacts
 from .observer import ImageVLM, LabeledFrame, _parse_object, observe_insertion_visual
@@ -114,7 +115,9 @@ def _metric_record(
 ) -> tuple[dict, float, float]:
     metric = json.loads(path.read_text(encoding="utf-8"))
     if (not isinstance(metric, dict) or
-            metric.get("schema") != "precision_insertion_guarded_execution_v1" or
+            metric.get("schema") not in {
+                "precision_insertion_guarded_execution_v1",
+                "precision_insertion_guarded_execution_v2"} or
             metric.get("attempt_id") != attempt_id or
             metric.get("candidate_id") != candidate_id or
             metric.get("session_calibration_sha256") !=
@@ -128,6 +131,26 @@ def _metric_record(
         raise ValueError("guarded execution times are missing") from exc
     if not all(map(math.isfinite, (started, completed))) or started >= completed:
         raise ValueError("guarded execution times are invalid")
+    if metric["schema"] == "precision_insertion_guarded_execution_v2":
+        reference = metric.get("axial_handoff")
+        if (not isinstance(reference, dict) or
+                set(reference) != {"path", "sha256"} or
+                not isinstance(reference["path"], str) or
+                not isinstance(reference["sha256"], str)):
+            raise ValueError("guarded v2 execution needs an axial handoff reference")
+        handoff_path = Path(reference["path"])
+        if (not handoff_path.is_absolute() or not handoff_path.is_file() or
+                _sha(handoff_path) != reference["sha256"]):
+            raise ValueError("guarded axial handoff reference changed")
+        handoff = verify_guarded_axial_handoff(handoff_path)
+        if (handoff["attempt_id"] != attempt_id or
+                handoff["candidate_id"] != candidate_id or
+                handoff["session_calibration_sha256"] !=
+                session_calibration_sha256 or
+                handoff["decision_timestamp_s"] >= started):
+            raise ValueError("guarded stroke is not bound to this axial handoff")
+    elif "axial_handoff" in metric:
+        raise ValueError("guarded v1 record cannot claim an axial handoff")
     expected_fields = {
         "key_depth_interval_m", "key_depth_source",
         "alignment_within_limits", "safety_abort", "grasp_held",
@@ -156,6 +179,19 @@ def _metric_record(
                 started=started, completed=completed)
     trace = verify_guarded_contact_trace(
         Path(source_records["force_trace"]["path"]))
+    if metric["schema"] == "precision_insertion_guarded_execution_v2":
+        if (trace["schema"] !=
+                "precision_insertion_guarded_contact_trace_v2" or
+                trace["family"] != handoff["mode"]["family"] or
+                trace.get("path_binding") != {
+                    "axial_handoff_sha256":
+                        metric["axial_handoff"]["sha256"],
+                    "trajectory_archive_sha256":
+                        handoff["trajectory_archive_sha256"],
+                }):
+            raise ValueError("guarded contact trace used another axial path")
+    elif trace["schema"] != "precision_insertion_guarded_contact_trace_v1":
+        raise ValueError("legacy guarded metric cannot use a bound v2 trace")
     if (trace["attempt_id"] != attempt_id or
             trace["candidate_id"] != candidate_id or
             trace["session_calibration_sha256"] !=
@@ -165,6 +201,24 @@ def _metric_record(
             metric["measurement"]["safety_abort"] is not trace["safety_abort"]):
         raise ValueError("guarded metric conflicts with replayed contact trace")
     return metric, started, completed
+
+
+def _handoff_capture_binding(metric: dict, before_root: Path) -> dict | None:
+    """Bind a v2 stroke to the very raw hold capture behind its path packet."""
+    if metric["schema"] == "precision_insertion_guarded_execution_v1":
+        return None
+    reference = metric["axial_handoff"]
+    if not (before_root / "manifest.json").is_file():
+        raise ValueError("bound axial handoff requires a raw hold capture")
+    handoff = verify_guarded_axial_handoff(Path(reference["path"]))
+    preinsert = json.loads(Path(handoff["preinsert_report_path"]).read_text(
+        encoding="utf-8"))
+    raw_root = Path(preinsert["raw_bundle"]).expanduser().resolve()
+    if (raw_root != before_root or
+            preinsert["raw_manifest_sha256"] !=
+            _sha(before_root / "manifest.json")):
+        raise ValueError("guarded axial handoff used another pre-insertion capture")
+    return reference
 
 
 def _admitted_measurement(metric: dict) -> tuple[dict, dict]:
@@ -261,6 +315,7 @@ def assess_insertion_checkpoint(
     metric, started, completed = _metric_record(
         metric_path, attempt_id=attempt_id, candidate_id=candidate_id,
         session_calibration_sha256=session_calibration_sha256)
+    handoff_reference = _handoff_capture_binding(metric, before_root)
     cameras = sorted(before_cameras & set(after["frame_evidence"]))
     if len(cameras) < minimum_visual_views:
         raise ValueError("insertion checkpoint lacks paired camera views")
@@ -325,6 +380,10 @@ def assess_insertion_checkpoint(
         "final_manifest_sha256": _sha(after_root / "manifest.json"),
         "metric_record_path": str(metric_path),
         "metric_record_sha256": _sha(metric_path),
+        "guarded_axial_handoff": handoff_reference,
+        "execution_plan_binding": (
+            "observed_hold_axial_path" if handoff_reference is not None
+            else "unbound_legacy_diagnostic"),
         "key_depth_admissibility": depth_admissibility,
         "frames": inputs, "visual": visual.to_record(),
         "minimum_visual_views": minimum_visual_views,
@@ -377,6 +436,12 @@ def verify_insertion_checkpoint(report_path: Path) -> dict:
         metric_path, attempt_id=report["attempt_id"],
         candidate_id=report["candidate_id"],
         session_calibration_sha256=digest)
+    handoff_reference = _handoff_capture_binding(metric, before_root)
+    if (report.get("guarded_axial_handoff") != handoff_reference or
+            report.get("execution_plan_binding") != (
+                "observed_hold_axial_path" if handoff_reference is not None
+                else "unbound_legacy_diagnostic")):
+        raise ValueError("insertion guarded path binding changed")
     if (started != report["guarded_started_at_s"] or
             completed != report["guarded_completed_at_s"]):
         raise ValueError("insertion execution time changed")
