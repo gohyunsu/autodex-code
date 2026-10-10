@@ -35,6 +35,62 @@ report_path = runner.prepare_guarded_axial_handoff(
 packet = verify_guarded_axial_handoff(report_path)
 ```
 
+## Opt-in external contact boundary
+
+`guarded_insertion_execution.py` can pass the exact saved axial joint array to
+an **independently commissioned** adapter. It defaults to no motion. Before
+calling the adapter it replays the handoff and archive hashes, checks a fresh
+stationary FR3/Inspire start against the trajectory, verifies separate
+watchdog and contact-controller review records for the adapter's exact binary,
+and requires an explicit live interlock. It rejects the unchanged stock
+`FrankaExecutor` as a guarded-contact follower.
+
+The adapter must expose `follow_guarded_insertion(axial,
+handoff_sha256=..., trajectory_archive_sha256=..., contact_limits=...,
+expected_hand_raw=..., max_duration_s=...)` and
+`stop_and_acknowledge()`. It must enforce its own robot-side dead-man,
+force/torque and hand-hold stops even if this Python process dies. Its return
+must cite a hashed `precision_insertion_guarded_execution_v2` metric record;
+the boundary replays that record and its bound contact trace before accepting
+the controller's terminal hold. A safety abort is logged, not silently
+converted into insertion success. An exception after the command request
+creates a failure marker and calls the adapter's stop method.
+
+```python
+from precision_insertion.guarded_insertion_execution import (
+    execute_bound_guarded_insertion,
+)
+
+# `safe_controller` and the two commissioning records must be supplied and
+# tested on the AutoDex robot PC. This demo ships no commissioned controller.
+execution = execute_bound_guarded_insertion(
+    runner=runner, adapter=safe_controller,
+    handoff_report_path=report_path,
+    pre_state=fresh_fr3_inspire_feedback,
+    read_post_state=read_stationary_fr3_inspire_feedback,
+    limits=commissioned_execution_limits,
+    contact_limits=commissioned_contact_limits,
+    max_handoff_age_s=commissioned_hold_age_s,
+    watchdog_commissioning_path=watchdog_review_json,
+    contact_commissioning_path=contact_review_json,
+    motion_interlock=live_operator_and_hardware_interlock,
+    enable_robot_motion=False,  # defaults to denied
+)
+```
+
+The contact review has schema
+`precision_insertion_contact_controller_commissioning_v1` and must name a
+reviewer, test time, absolute daemon binary path and SHA-256, the **exact**
+`GuardedContactLimits` values, and passing `force_limit`, `contact_abort`,
+`sample_gap_abort`, and `terminal_hold` test flags (each field ends in
+`_test_passed`). The separate watchdog review is the same record required
+for held lift/transfer. These are operator-reviewed assertions, not proof
+that a real controller has been commissioned on this workstation. For an
+actual authorized trial, a separately reviewed caller must deliberately set
+`enable_robot_motion=True`; this alone cannot bypass missing reviews, stale
+state, wrong paths or a false interlock. The boundary returns an execution
+record, never a task-success label.
+
 For a centered first attempt, a separately produced guarded-stroke record can
 use `precision_insertion_guarded_execution_v2`. Its `axial_handoff` field is
 `{"path": absolute_report_path, "sha256": report_file_sha256}`. The referenced

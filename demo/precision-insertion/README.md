@@ -531,6 +531,12 @@ the exact observed post-lift 20 mm axial path and a fresh measured
 FR3/Inspire start state into one replayable packet. It does **not** command
 the arm or prove that the key penetrated the socket; a commissioned guarded
 controller and post-stroke evidence remain separate.
+The opt-in [guarded insertion execution boundary](GUARDED_AXIAL_HANDOFF.md#opt-in-external-contact-boundary)
+now checks this packet, a fresh live start, independent watchdog/contact
+commissioning records and an explicit interlock before calling an injected
+controller. It requires a replayable v2 metric/trace and terminal robot
+feedback afterward. It defaults to **no motion**; no commissioned contact
+controller is shipped, and its return never sets insertion success.
 A v2 guarded metric and contact trace can cite this exact packet and its
 saved trajectory digest; the insertion checkpoint then checks the matching
 observed-hold raw capture and records `observed_hold_axial_path`. Legacy v1
