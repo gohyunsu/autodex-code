@@ -17,8 +17,8 @@ from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.calibration import SessionCalibration  # noqa: E402
 from precision_insertion.frame_provenance import image_sha256  # noqa: E402
 from precision_insertion.key_perception import (  # noqa: E402
-    admit_held_key_capture, admit_key_capture, verify_key_capture_artifacts,
-    write_key_capture_artifacts,
+    admit_held_key_capture, admit_key_capture, admit_postlift_key_capture,
+    verify_key_capture_artifacts, write_key_capture_artifacts,
 )
 from precision_insertion.live_capture import KeyCaptureInput  # noqa: E402
 from precision_insertion.perception_evidence import SocketViewLimits  # noqa: E402
@@ -251,6 +251,49 @@ def test_held_key_can_overlap_socket_only_with_fresh_wrist_prior_and_iou(tmp_pat
     with pytest.raises(ValueError, match="IoU is below"):
         admit_held_key_capture(**{
             **common, "minimum_held_refinement_iou": 0.9})
+
+
+def test_first_postlift_prior_is_distinct_from_observed_preinsert_prior(tmp_path):
+    mode = select_mode("square", 1.5)
+    pose = np.eye(4)
+    capture = _capture({serial: pose for serial in CAMERAS}, tmp_path)
+    common = dict(
+        capture=capture, init_orchestrator=SelectorStub(mode.key_object),
+        mode=mode, shared_root=tmp_path,
+        calibration=_session(tmp_path, mode, socket_x=0.0),
+        calibrated_camera_ids=set(CAMERAS),
+        view_limits=SocketViewLimits(50, 0.5, 10, 2, 0.02),
+        maximum_multiview_center_error_mm=2.0,
+        maximum_multiview_angle_error_deg=5.0,
+        candidate_pose_prior_world=pose,
+        measured_wrist_timestamp_s=100.002,
+        maximum_candidate_prior_center_error_mm=20.0,
+        maximum_candidate_prior_angle_error_deg=30.0,
+        maximum_prior_time_skew_s=0.01,
+        minimum_refinement_iou=0.5)
+    admitted = admit_postlift_key_capture(**common)
+    assert admitted.phase == "held_postlift"
+    assert admitted.consistency["held_pose_prior"]["source"] == (
+        "measured_wrist_plus_candidate_grasp")
+    bundle = write_key_capture_artifacts(
+        capture, admitted, tmp_path / "postlift_evidence")
+    assert verify_key_capture_artifacts(bundle)["robot_ready"] is False
+    with pytest.raises(ValueError, match="observed held relation"):
+        admit_held_key_capture(
+            capture=capture, init_orchestrator=SelectorStub(mode.key_object),
+            mode=mode, shared_root=tmp_path,
+            calibration=_session(tmp_path, mode, socket_x=0.0),
+            calibrated_camera_ids=set(CAMERAS),
+            view_limits=SocketViewLimits(50, 0.5, 10, 2, 0.02),
+            maximum_multiview_center_error_mm=2.0,
+            maximum_multiview_angle_error_deg=5.0,
+            held_pose_prior_world=pose,
+            held_pose_prior_timestamp_s=100.002,
+            held_pose_prior_source="measured_wrist_plus_candidate_grasp",
+            maximum_held_prior_center_error_mm=20.0,
+            maximum_held_prior_angle_error_deg=30.0,
+            maximum_held_prior_time_skew_s=0.01,
+            minimum_held_refinement_iou=0.5)
 
 
 def test_key_rejects_camera_recalibration_after_socket_freeze(tmp_path):

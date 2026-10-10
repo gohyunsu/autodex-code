@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
+import hashlib
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -16,11 +18,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.calibration import SessionCalibration  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.key_perception import KeyPoseObservation  # noqa: E402
+from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.outcome import InsertionEvidence  # noqa: E402
 from precision_insertion.retry_preflight import XYRetryPreflight  # noqa: E402
 from precision_insertion import session_runner  # noqa: E402
 from precision_insertion.xy_retry import XYRetryAssessment  # noqa: E402
 from precision_insertion.xy_voting import ChoiceDecision  # noqa: E402
+from autodex.utils.sync import convert_inspire_raw  # noqa: E402
 
 
 MODE = select_mode("cylinder", 20)
@@ -121,6 +125,20 @@ def _plan(runner, observation):
         max_pose_error_deg=5.0, axial_waypoint_step_m=0.002)
 
 
+def _bind_postlift(runner):
+    """Existing label tests start after post-lift planning; bind that gate."""
+    report = runner._attempt_dir / "postlift_preflight/report.json"
+    report.parent.mkdir()
+    report.write_text('{"status":"sampled_postlift_preflight_pass"}\n',
+                      encoding="utf-8")
+    runner._postlift_preflight = SimpleNamespace(
+        status="sampled_postlift_preflight_pass",
+        key_capture_timestamp_s=10.35, joint_timestamp_s=10.35)
+    runner._postlift_report_path = report
+    runner._postlift_report_sha256 = hashlib.sha256(report.read_bytes()).hexdigest()
+    return str(report)
+
+
 def test_observed_failed_grasp_is_excluded_only_after_saved_event(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)
@@ -155,6 +173,107 @@ def test_observed_failed_grasp_is_excluded_only_after_saved_event(
     assert runner.current_decision().candidate_id == "table/0/4"
     assert json.loads((tmp_path / "session/session_run.json").read_text())[
         "robot_ready"] is False
+
+
+def test_first_postlift_capture_binds_candidate_prior_and_gates_arrival(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        session_runner, "plan_admitted_key_trial",
+        lambda **kwargs: _report(runner, kwargs["key_observation"]))
+    _plan(runner, _observation("key_1", 10.0))
+    runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
+    runner.observe_stage(
+        "grasp_success", True, timestamp_s=10.3,
+        evidence_refs={"vlm_observation": "vlm/lift.json",
+                       "key_wrist_check": "pose/lift.json"})
+    arrival_refs = {"trajectory": "path/transfer.json",
+                    "key_socket_pose": "pose/hold.json",
+                    "grasp_state": "pose/grip.json",
+                    "postlift_preflight": "path/spoofed.json"}
+    with pytest.raises(ValueError, match="passing post-lift plan"):
+        runner.observe_stage("preinsert_reached", True, timestamp_s=10.7,
+                             evidence_refs=arrival_refs)
+    candidate_dir = tmp_path / "candidate"
+    candidate_dir.mkdir()
+    np.save(candidate_dir / "wrist_se3.npy", np.eye(4))
+    monkeypatch.setattr(session_runner, "select_pose_candidates",
+                        lambda *_args, **_kwargs: {
+                            "status": "candidates_available",
+                            "candidates": [{"key": list(KEY_A),
+                                            "candidate_dir": str(candidate_dir)}]})
+    planner = SimpleNamespace(fk_wrist=lambda _q: np.eye(4))
+    hand_raw = np.zeros(6)
+    q = np.zeros(13)
+    q[7:] = convert_inspire_raw(hand_raw[None, :])[0]
+    measured = LiveRobotState(
+        q, np.zeros(7), 10.5, 10.5, 12.0, 10.5,
+        hand_raw, hand_raw.copy(), 0.0, np.zeros(6))
+    feedback_limits = dict(
+        max_arm_hand_skew_s=0.05, max_hand_command_error_raw=30.0,
+        max_arm_velocity_rad_s=0.05)
+    prior = runner.postlift_candidate_pose_prior(
+        planner=planner, joint_sample=measured, **feedback_limits)
+    np.testing.assert_allclose(prior, np.eye(4))
+    held = replace(
+        _observation("held_2", 10.5), phase="held_postlift",
+        consistency={"held_pose_prior": {
+            "source": "measured_wrist_plus_candidate_grasp",
+            "timestamp_s": 10.5, "pose_world": prior.tolist()}})
+    evidence_dir = _save_evidence(runner, held)
+    wrong_prior = prior.copy()
+    wrong_prior[0, 3] = 0.01
+    wrong_held = replace(
+        held, capture_id="held_wrong", request_id=53,
+        consistency={"held_pose_prior": {
+            "source": "measured_wrist_plus_candidate_grasp",
+            "timestamp_s": 10.5, "pose_world": wrong_prior.tolist()}})
+    wrong_evidence = _save_evidence(runner, wrong_held)
+    common = dict(
+        planner=planner, joint_sample=measured, max_state_skew_s=0.05,
+        max_grasp_translation_drift_m=0.003,
+        max_grasp_rotation_drift_deg=5.0,
+        limits=object(), axial_waypoint_step_m=0.002,
+        **feedback_limits)
+    with pytest.raises(ValueError, match="differs from selected v8 grasp"):
+        runner.prepare_postlift_transfer(
+            key_observation=wrong_held, key_evidence_dir=wrong_evidence,
+            **common)
+    calls = []
+    def fake_plan(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            status="sampled_postlift_preflight_pass",
+            key_capture_timestamp_s=10.5, joint_timestamp_s=10.5)
+    def fake_write(result, output):
+        output.mkdir(parents=True, exist_ok=False)
+        (output / "report.json").write_text(
+            json.dumps({"status": result.status}) + "\n", encoding="utf-8")
+    monkeypatch.setattr(session_runner, "plan_postlift_observed_transfer",
+                        fake_plan)
+    monkeypatch.setattr(session_runner, "write_postlift_preflight", fake_write)
+    result = runner.prepare_postlift_transfer(
+        key_observation=held, key_evidence_dir=evidence_dir, **common)
+    assert result.status == "sampled_postlift_preflight_pass"
+    assert runner.current_decision().action == "transfer_execution_gate_required"
+    assert calls[0]["key_observation_id"] == "held_2"
+    assert calls[0]["joint_sample"] is measured
+    report = runner._postlift_report_path
+    assert report is not None
+    with pytest.raises(ValueError, match="passing post-lift plan"):
+        runner.observe_stage("preinsert_reached", True, timestamp_s=10.7,
+                             evidence_refs=arrival_refs)
+    arrival_refs["postlift_preflight"] = str(report)
+    report.write_text("{}\n", encoding="utf-8")
+    assert runner.current_decision().action == "stop_for_review"
+    with pytest.raises(ValueError, match="passing post-lift plan"):
+        runner.observe_stage("preinsert_reached", True, timestamp_s=10.7,
+                             evidence_refs=arrival_refs)
+    report.write_text('{"status": "sampled_postlift_preflight_pass"}\n',
+                      encoding="utf-8")
+    assert runner.observe_stage(
+        "preinsert_reached", True, timestamp_s=10.7,
+        evidence_refs=arrival_refs).labels["preinsert_reached"] is True
 
 
 def test_budgeted_preflight_continues_same_capture_but_new_capture_resets_rejects(
@@ -194,12 +313,13 @@ def test_verified_insertion_cannot_start_new_trial_until_reset_observed(
         "grasp_success", True, timestamp_s=10.3,
         evidence_refs={"vlm_observation": "vlm/lift.json",
                        "key_wrist_check": "pose/lift.json"})
+    postlift_report = _bind_postlift(runner)
     runner.observe_stage(
         "preinsert_reached", True, timestamp_s=10.4,
         evidence_refs={"trajectory": "path/transfer.json",
                        "key_socket_pose": "pose/hold.json",
                        "grasp_state": "pose/grip.json",
-                       "postlift_preflight": "path/postlift.json"})
+                       "postlift_preflight": postlift_report})
     runner.observe_insertion(
         InsertionEvidence("normal_appearance", (0.0201, 0.021),
                           "key_pose_multiview", True, False, True),
@@ -229,12 +349,13 @@ def test_retry_requires_matching_two_view_vote_and_live_replan(
         "grasp_success", True, timestamp_s=10.3,
         evidence_refs={"vlm_observation": "vlm/lift.json",
                        "key_wrist_check": "pose/lift.json"})
+    postlift_report = _bind_postlift(runner)
     runner.observe_stage(
         "preinsert_reached", True, timestamp_s=10.4,
         evidence_refs={"trajectory": "path/transfer.json",
                        "key_socket_pose": "pose/hold.json",
                        "grasp_state": "pose/grip.json",
-                       "postlift_preflight": "path/postlift.json"})
+                       "postlift_preflight": postlift_report})
     runner.observe_insertion(
         InsertionEvidence("partial", (0.005, 0.008),
                           "key_pose_multiview", True, False, True),

@@ -154,8 +154,9 @@ def _admit_key_capture_common(
             maximum_held_prior_angle_error_deg,
             maximum_held_prior_time_skew_s,
             minimum_held_refinement_iou)
-        if (held_pose_prior_source !=
-                "measured_wrist_plus_observed_held_relation" or
+        if (held_pose_prior_source not in {
+                "measured_wrist_plus_observed_held_relation",
+                "measured_wrist_plus_candidate_grasp"} or
                 any(value is None or not math.isfinite(float(value))
                     for value in held_limits) or
                 maximum_held_prior_center_error_mm <= 0 or
@@ -363,7 +364,9 @@ def _admit_key_capture_common(
              "max_angle_residual_deg": max_prior_angle,
          })},
         selection, capture.capture_dir,
-        phase="held_preinsert" if held_phase else "tabletop")
+        phase=("held_postlift" if held_pose_prior_source ==
+               "measured_wrist_plus_candidate_grasp" else
+               "held_preinsert" if held_phase else "tabletop"))
 
 
 def admit_key_capture(
@@ -418,6 +421,8 @@ def admit_held_key_capture(
     wrist feedback plus an already observed key/hand relation; this function
     verifies the declared source and timing but cannot prove its provenance.
     """
+    if held_pose_prior_source != "measured_wrist_plus_observed_held_relation":
+        raise ValueError("preinsert held-key prior needs an observed held relation")
     return _admit_key_capture_common(
         capture=capture, init_orchestrator=init_orchestrator, mode=mode,
         shared_root=shared_root, calibration=calibration,
@@ -441,6 +446,48 @@ def admit_held_key_capture(
         maximum_held_prior_time_skew_s=(
             maximum_held_prior_time_skew_s),
         minimum_held_refinement_iou=minimum_held_refinement_iou)
+
+
+def admit_postlift_key_capture(
+    *, capture: KeyCaptureInput, init_orchestrator, mode: TaskMode,
+    shared_root: Path, calibration, calibrated_camera_ids: set[str],
+    view_limits: SocketViewLimits,
+    maximum_multiview_center_error_mm: float,
+    maximum_multiview_angle_error_deg: float,
+    candidate_pose_prior_world: np.ndarray,
+    measured_wrist_timestamp_s: float,
+    maximum_candidate_prior_center_error_mm: float,
+    maximum_candidate_prior_angle_error_deg: float,
+    maximum_prior_time_skew_s: float,
+    minimum_refinement_iou: float,
+    silhouette_iterations: int = 100,
+    silhouette_loss_threshold: float = 0.003,
+) -> KeyPoseObservation:
+    """Admit the first held-key view after lift, before its relation is known.
+
+    The measured wrist plus selected BODex grasp is only a loose search prior:
+    squeeze may move the key. The runner must verify that provenance and then
+    replan from the *observed* relation. It is not a retry/preinsert capture.
+    """
+    return _admit_key_capture_common(
+        capture=capture, init_orchestrator=init_orchestrator, mode=mode,
+        shared_root=shared_root, calibration=calibration,
+        calibrated_camera_ids=calibrated_camera_ids, view_limits=view_limits,
+        maximum_multiview_center_error_mm=maximum_multiview_center_error_mm,
+        maximum_multiview_angle_error_deg=maximum_multiview_angle_error_deg,
+        maximum_socket_mask_overlap_fraction=0.0,
+        socket_projection_dilation_px=0,
+        silhouette_iterations=silhouette_iterations,
+        silhouette_loss_threshold=silhouette_loss_threshold,
+        held_pose_prior_world=candidate_pose_prior_world,
+        held_pose_prior_timestamp_s=measured_wrist_timestamp_s,
+        held_pose_prior_source="measured_wrist_plus_candidate_grasp",
+        maximum_held_prior_center_error_mm=(
+            maximum_candidate_prior_center_error_mm),
+        maximum_held_prior_angle_error_deg=(
+            maximum_candidate_prior_angle_error_deg),
+        maximum_held_prior_time_skew_s=maximum_prior_time_skew_s,
+        minimum_held_refinement_iou=minimum_refinement_iou)
 
 
 def write_key_capture_artifacts(
@@ -566,10 +613,16 @@ def verify_key_capture_artifacts(output_dir: Path) -> dict:
     report = json.loads((root / "key_observation.json").read_text(
         encoding="utf-8"))
     phase = report.get("phase", "tabletop")
-    if phase not in {"tabletop", "held_preinsert"}:
+    if phase not in {"tabletop", "held_postlift", "held_preinsert"}:
         raise ValueError("saved key observation has an unknown capture phase")
-    if phase == "held_preinsert" and (
-            report.get("consistency", {}).get("held_pose_prior") is None or
+    prior = report.get("consistency", {}).get("held_pose_prior")
+    expected_source = {
+        "held_postlift": "measured_wrist_plus_candidate_grasp",
+        "held_preinsert": "measured_wrist_plus_observed_held_relation",
+    }.get(phase)
+    if expected_source is not None and (
+            not isinstance(prior, dict) or
+            prior.get("source") != expected_source or
             report.get("consistency", {}).get("socket_exclusion") is not None):
         raise ValueError("held key evidence lacks its measured-wrist prior gate")
     if (payloads.get("capture_id") != manifest.get("capture_id") or

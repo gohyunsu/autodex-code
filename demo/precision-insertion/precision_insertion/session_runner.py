@@ -20,13 +20,19 @@ from typing import Mapping
 import numpy as np
 
 from .calibration import SessionCalibration
-from .candidates import validate_catalog_session
+from .candidates import select_pose_candidates, validate_catalog_session
 from .config import TaskMode
 from .key_perception import (
     KeyPoseObservation, verify_key_capture_artifacts,
 )
 from .geometry import validate_se3
+from .live_robot_state import LiveRobotState
+from .path_audit import PathAuditLimits
 from .pose_selection import classify_key_tabletop_pose
+from .postlift_preflight import (
+    PostLiftPreflight, plan_postlift_observed_transfer,
+    write_postlift_preflight,
+)
 from .records import AttemptRecord, begin_attempt
 from .retry_session import (
     RetrySessionLimits, RetrySessionResult,
@@ -110,6 +116,10 @@ class SessionRunner:
         self._preflight_index = 0
         self._attempt_index = 0
         self._attempt_dir: Path | None = None
+        self._postlift_preflight: PostLiftPreflight | None = None
+        self._postlift_report_path: Path | None = None
+        self._postlift_report_sha256: str | None = None
+        self._postlift_index = 0
         self._retry_assessment_index = 0
         self._write_exclusive(
             target / "frozen_session_calibration.json", calibration.record)
@@ -144,6 +154,26 @@ class SessionRunner:
 
     def current_decision(self) -> SessionDecision:
         if self._attempt is not None:
+            if (self._postlift_preflight is not None and
+                    self._postlift_preflight.status ==
+                    "sampled_postlift_preflight_pass" and
+                    self._attempt.labels["grasp_success"] is True and
+                    self._attempt.labels["preinsert_reached"] is None):
+                if (self._postlift_report_path is None or
+                        not self._postlift_report_path.is_file() or
+                        self._postlift_report_sha256 is None or
+                        hashlib.sha256(
+                            self._postlift_report_path.read_bytes()).hexdigest() !=
+                        self._postlift_report_sha256):
+                    return SessionDecision(
+                        "stop_for_review", "postlift_report_changed", None)
+                return SessionDecision(
+                    "transfer_execution_gate_required",
+                    "observed_postlift_path_planned_arrival_unobserved",
+                    self._attempt.candidate_id,
+                    ("commissioned_robot_and_force_limits",
+                     "independent_transfer_execution_evidence",
+                     "fresh_preinsert_key_and_grip_observation"))
             return decide_after_attempt(
                 self._attempt, max_xy_retries=self.max_xy_retries)
         if self._repose_preflight is not None:
@@ -288,6 +318,10 @@ class SessionRunner:
             (evidence_dir / "evidence_manifest.json").read_bytes()).hexdigest()
         self._attempt = None
         self._attempt_dir = None
+        self._postlift_preflight = None
+        self._postlift_report_path = None
+        self._postlift_report_sha256 = None
+        self._postlift_index = 0
         self._capture_id = key_observation.capture_id
         self._capture_timestamp_s = float(
             key_observation.selected_acquisition_timestamp_s)
@@ -478,6 +512,10 @@ class SessionRunner:
         self._used_attempt_ids.add(attempt_id)
         self._attempt = attempt
         self._attempt_dir = attempt_dir
+        self._postlift_preflight = None
+        self._postlift_report_path = None
+        self._postlift_report_sha256 = None
+        self._postlift_index = 0
         self._attempt_index = 0
         self._retry_assessment_index = 0
         return deepcopy(attempt)
@@ -522,6 +560,10 @@ class SessionRunner:
         self._used_attempt_ids.add(attempt_id)
         self._attempt = attempt
         self._attempt_dir = attempt_dir
+        self._postlift_preflight = None
+        self._postlift_report_path = None
+        self._postlift_report_sha256 = None
+        self._postlift_index = 0
         self._attempt_index = 0
         self._retry_assessment_index = 0
         return deepcopy(attempt)
@@ -539,6 +581,151 @@ class SessionRunner:
             self._attempted.add(tuple(updated.candidate_id.split("/")))
         return deepcopy(updated)
 
+    def postlift_candidate_pose_prior(
+        self, *, planner, joint_sample: LiveRobotState,
+        max_arm_hand_skew_s: float, max_hand_command_error_raw: float,
+        max_arm_velocity_rad_s: float,
+    ) -> np.ndarray:
+        """Provide a loose first-lift FoundPose prior from measured wrist + v8.
+
+        This is a search prior, never an achieved hand/key relation. The
+        separately admitted post-lift image must replace it before transfer.
+        """
+        if (self.current_decision().action !=
+                "postlift_observed_preflight_required" or
+                self._attempt is None or self._preflight is None or
+                self._preflight.selected_candidate_key is None):
+            raise ValueError("candidate pose prior requires observed lift success")
+        if not isinstance(joint_sample, LiveRobotState):
+            raise TypeError("post-lift prior needs measured robot feedback")
+        joint_sample.validate(
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s)
+        last_grasp_time = self._attempt.events[-1]["timestamp_s"]
+        if joint_sample.sample_timestamp_s <= last_grasp_time:
+            raise ValueError("post-lift joint sample predates observed grasp")
+        if (_digest(self.calibration.record) != self.session_sha256 or
+                _digest(self.catalog) != self.catalog_sha256):
+            raise ValueError("frozen session or endpoint catalogue changed")
+        selected = select_pose_candidates(
+            self.catalog, expected_mode=self.mode,
+            tabletop_pose_stem=self._attempt.tabletop_pose_stem)
+        matches = [row for row in selected["candidates"]
+                   if tuple(row["key"]) ==
+                   self._preflight.selected_candidate_key]
+        if selected["status"] != "candidates_available" or len(matches) != 1:
+            raise ValueError("selected v8 grasp is no longer endpoint-eligible")
+        candidate_dir = Path(matches[0]["candidate_dir"]).expanduser().resolve()
+        nominal = validate_se3(np.load(
+            candidate_dir / "wrist_se3.npy", allow_pickle=False),
+            name="selected candidate T_key_hand")
+        wrist = validate_se3(planner.fk_wrist(joint_sample.full_q),
+                             name="measured post-lift wrist FK")
+        c2r = validate_se3(self.calibration.record.get("c2r"),
+                           name="session C2R")
+        return validate_se3(c2r @ wrist @ np.linalg.inv(nominal),
+                            name="first post-lift candidate pose prior")
+
+    def prepare_postlift_transfer(
+        self, *, planner, key_observation: KeyPoseObservation,
+        key_evidence_dir: Path, joint_sample: LiveRobotState,
+        max_state_skew_s: float, max_arm_hand_skew_s: float,
+        max_hand_command_error_raw: float, max_arm_velocity_rad_s: float,
+        max_grasp_translation_drift_m: float,
+        max_grasp_rotation_drift_deg: float,
+        limits: PathAuditLimits, axial_waypoint_step_m: float,
+    ) -> PostLiftPreflight:
+        """Bind an observed post-lift key/hand relation to a fresh path plan.
+
+        Saves both rejected and passing plans. No command is sent and a pass
+        never labels pre-insertion arrival; that still needs observation.
+        """
+        if ((self._postlift_preflight is not None and
+             self._postlift_preflight.status ==
+             "sampled_postlift_preflight_pass") or
+                self.current_decision().action !=
+                "postlift_observed_preflight_required" or
+                self._attempt_dir is None or
+                self._attempt is None or self._preflight is None or
+                not isinstance(key_observation, KeyPoseObservation) or
+                not isinstance(joint_sample, LiveRobotState) or
+                key_observation.phase != "held_postlift"):
+            raise ValueError("post-lift replan needs one first held-key observation")
+        if self._postlift_preflight is not None and (
+                key_observation.selected_acquisition_timestamp_s <=
+                self._postlift_preflight.key_capture_timestamp_s or
+                key_observation.capture_id ==
+                self._postlift_preflight.key_observation_id):
+            raise ValueError("post-lift re-observation must use newer frames")
+        evidence_dir = Path(key_evidence_dir).expanduser().resolve()
+        manifest = verify_key_capture_artifacts(evidence_dir)
+        saved = json.loads((evidence_dir / "key_observation.json")
+                           .read_text(encoding="utf-8"))
+        if (saved != key_observation.to_record() or
+                manifest["capture_id"] != key_observation.capture_id or
+                manifest["request_id"] != key_observation.request_id or
+                key_observation.acquisition_interval_s[0] <=
+                self._attempt.events[-1]["timestamp_s"] or
+                key_observation.capture_id == self._capture_id):
+            raise ValueError("first held-key frames are stale or unbound")
+        key_observation.require_state_alignment(
+            state_timestamp_s=joint_sample.sample_timestamp_s,
+            maximum_skew_s=max_state_skew_s)
+        prior = key_observation.consistency.get("held_pose_prior")
+        if (not isinstance(prior, dict) or
+                prior.get("source") !=
+                "measured_wrist_plus_candidate_grasp" or
+                prior.get("timestamp_s") != joint_sample.sample_timestamp_s):
+            raise ValueError("held-key admission lacks the selected candidate prior")
+        expected_prior = self.postlift_candidate_pose_prior(
+            planner=planner, joint_sample=joint_sample,
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s)
+        if not np.allclose(validate_se3(
+                prior.get("pose_world"), name="saved post-lift prior"),
+                expected_prior, atol=1e-8, rtol=0):
+            raise ValueError("held-key admission prior differs from selected v8 grasp")
+        result = plan_postlift_observed_transfer(
+            planner=planner, trial=self._preflight, attempt=self._attempt,
+            calibration=self.calibration, catalog=self.catalog,
+            mode=self.mode, shared_root=self.shared_root,
+            key_pose_world=key_observation.pose_world,
+            key_observation_id=key_observation.capture_id,
+            key_capture_timestamp_s=(
+                key_observation.selected_acquisition_timestamp_s),
+            key_pose_source="multiview_foundpose", joint_sample=joint_sample,
+            max_state_skew_s=max_state_skew_s,
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s,
+            max_grasp_translation_drift_m=max_grasp_translation_drift_m,
+            max_grasp_rotation_drift_deg=max_grasp_rotation_drift_deg,
+            limits=limits, axial_waypoint_step_m=axial_waypoint_step_m)
+        output = (self._attempt_dir / "postlift_preflights" /
+                  f"{self._postlift_index:03d}")
+        write_postlift_preflight(result, output)
+        report = output / "report.json"
+        self._write_exclusive(output / "key_evidence_binding.json", {
+            "schema": "precision_insertion_postlift_key_binding_v1",
+            "key_capture_id": key_observation.capture_id,
+            "key_evidence_dir": str(evidence_dir),
+            "key_evidence_manifest_sha256": hashlib.sha256(
+                (evidence_dir / "evidence_manifest.json").read_bytes()).hexdigest(),
+            "key_observation_sha256": hashlib.sha256(
+                (evidence_dir / "key_observation.json").read_bytes()).hexdigest(),
+            "postlift_report_sha256": hashlib.sha256(report.read_bytes()).hexdigest(),
+            "session_calibration_sha256": self.session_sha256,
+            "catalog_sha256": self.catalog_sha256,
+            "robot_ready": False,
+        })
+        self._postlift_preflight = result
+        self._postlift_report_path = report
+        self._postlift_report_sha256 = hashlib.sha256(report.read_bytes()).hexdigest()
+        self._postlift_index += 1
+        return result
+
     def observe_stage(
         self, stage: str, status: bool | None, *, timestamp_s: float,
         evidence_refs: Mapping[str, str],
@@ -547,6 +734,24 @@ class SessionRunner:
             raise ValueError("use observe_repose_landing for the target-pose label")
         if self._attempt is not None and self._attempt.candidate_id is None:
             raise ValueError("repose and insertion attempt labels must stay separate")
+        if stage == "preinsert_reached" and status is True:
+            if (self._postlift_preflight is None or
+                    self._postlift_preflight.status !=
+                    "sampled_postlift_preflight_pass" or
+                    self._postlift_report_path is None or
+                    not isinstance(evidence_refs, Mapping) or
+                    evidence_refs.get("postlift_preflight") !=
+                    str(self._postlift_report_path) or
+                    not self._postlift_report_path.is_file() or
+                    self._postlift_report_sha256 is None or
+                    hashlib.sha256(
+                        self._postlift_report_path.read_bytes()).hexdigest() !=
+                    self._postlift_report_sha256):
+                raise ValueError("preinsert arrival needs this attempt's passing post-lift plan")
+            if float(timestamp_s) < max(
+                    self._postlift_preflight.key_capture_timestamp_s,
+                    self._postlift_preflight.joint_timestamp_s):
+                raise ValueError("preinsert observation predates post-lift replan")
         return self._record(lambda row: row.record_stage(
             stage, status, timestamp_s=timestamp_s,
             evidence_refs=evidence_refs))

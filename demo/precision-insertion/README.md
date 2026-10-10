@@ -53,12 +53,26 @@ that session and catalogue. For each new key observation:
    `begin_selected_attempt(attempt_id=..., started_at_s=...)` to create an
    unlabelled attempt record. Actual physical execution requires a separate
    commissioned adapter and the named safety gates.
-3. After each physical observation, call `observe_stage` for lift/grasp,
-   pre-insertion hold, reset or reorientation; use `observe_insertion` for
-   the 20 mm task outcome. Call `current_decision()` again before the next
-   phase. A missed grasp excludes that candidate on the next *fresh* key
-   observation. Planning-only rejects are skipped only when continuing the
-   same budget-limited camera capture; a new pose/state may make them viable.
+3. After the physical lift, record `grasp_success` from observed evidence.
+   Use `postlift_candidate_pose_prior` with measured Franka/Inspire feedback
+   to form a **loose** search prior from the selected v8 grasp. Admit a new
+   key capture with `admit_postlift_key_capture` (phase `held_postlift`) and
+   save it with `write_key_capture_artifacts`. Then call
+   `prepare_postlift_transfer` with that bundle and the *same* measured joint
+   sample. It verifies the candidate/prior/frame binding, replaces the
+   nominal grasp relation with the observed one, screens the measured hand
+   against the centered 20 mm socket endpoint, and saves a fresh held-path
+   plan. A rejected observation may be retried only with newer frames. A
+   passing report changes the supervisor's next action to
+   `transfer_execution_gate_required`; it is a plan, **not** an arrival label
+   or motion permit.
+   Following separately controlled transfer, `preinsert_reached=True`
+   requires this exact unchanged passing report plus independent trajectory,
+   key/socket pose, and grip evidence. Use `observe_insertion` for the 20 mm
+   task outcome. A missed grasp excludes that candidate on the next *fresh*
+   key observation. Planning-only rejects are skipped only when continuing
+   the same budget-limited camera capture; a new pose/state may make them
+   viable.
 4. After an observed insertion failure and an externally logged guarded
    withdrawal, call `prepare_observed_xy_retry` with a **held-preinsert** key
    capture, the exact same full-frame VLM images, measured Franka/Inspire
@@ -291,6 +305,13 @@ The first independent helpers are in `precision_insertion/`:
   same-request images, masks, poses, frame provenance and selected pose in
   an exclusive per-trial evidence bundle;
   `verify_key_capture_artifacts(new_dir)` checks it before replay/handoff.
+  `admit_postlift_key_capture()` uses the selected BODex relation and
+  measured wrist only as a bounded first-lift search prior; it checks
+  multi-view agreement and mask/silhouette IoU without the tabletop socket
+  mask veto. This distinct `held_postlift` phase cannot be substituted for
+  `held_preinsert` in the VLM retry. Set prior drift and timing limits from
+  measured hardware; a tight limit may reject genuine squeeze drift, while
+  a loose limit cannot itself establish that the hand truly holds the key.
 - `trial_preflight.plan_admitted_key_trial()` first aligns the measured robot
   state to that whole key-capture interval, then calls the existing
   `plan_fresh_key_trial()` candidate filter and pickup-to-20 mm preflight.
@@ -457,17 +478,16 @@ controller, true acquisition-timestamped camera adapter, and reset/repose
 execution remain to be implemented.
 
 After the lift is physically observed and `AttemptRecord.grasp_success` is
-`true`, the live runner must keep the `TrialPreflight` object and call
-`plan_postlift_observed_transfer(...)` with the fresh multi-view key pose,
-`LiveRobotState` feedback sample, acquisition timestamps, selected session/catalog and
-commissioned drift/path limits. Only its
-`sampled_postlift_preflight_pass` status can proceed to a separately guarded
-transfer gate. `write_postlift_preflight(result, new_output_dir)` saves the
-observed relation, endpoint report and planned paths without overwriting an
-earlier run. This in-memory API is not yet a CLI because no live acquisition
-adapter or safe robot executor has been commissioned. The old nominal
-preflight remains a candidate-selection estimate, not the motion plan to
-replay after squeeze.
+`true`, use the session runner's `postlift_candidate_pose_prior(...)`,
+`admit_postlift_key_capture(...)`, and `prepare_postlift_transfer(...)` sequence
+described above. The latter reuses `plan_postlift_observed_transfer(...)` and
+`write_postlift_preflight(...)`; it saves each rejected/passing observation
+under `attempts/<id>/postlift_preflights/<index>/` with a hash-bound key
+capture. Only `sampled_postlift_preflight_pass` can proceed to a separately
+guarded transfer gate. This in-memory API is not yet a CLI because no live
+acquisition adapter or safe robot executor has been commissioned. The old
+nominal preflight remains a candidate-selection estimate, not the motion
+plan to replay after squeeze.
 
 Do not feed the nominal `plan_insertion_after_pickup`'s separately replanned
 `lift_trajectory` straight into the
