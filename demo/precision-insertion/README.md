@@ -1125,6 +1125,14 @@ tests only. Its controller log is consumed by the later synchronized-camera
 pre-insertion checkpoint; neither the controller log nor a successful end
 joint state alone sets `preinsert_reached=True`.
 
+At the guarded insertion endpoint, the separate
+[conditional wrist-depth diagnostic](CONDITIONAL_WRIST_DEPTH.md) can compute
+the key-tip depth interval implied by measured wrist pose, the frozen socket
+CAD and a commissioned key-surface error bound. It deliberately emits no
+admissible `key_depth_source`: the physical key may have slipped despite
+nominal wrist travel, and a 20 mm nominal endpoint with nonzero uncertainty
+does not prove at least 20 mm of key penetration.
+
 Do not feed the nominal `plan_insertion_after_pickup`'s separately replanned
 `lift_trajectory` straight into the
 unchanged `FrankaExecutor.execute(lift_traj_override=...)`: its start-state
