@@ -415,22 +415,28 @@ also requires this attempt's verified checkpoint; the lower-level
 `AttemptRecord` remains useful for offline diagnostic fixtures.
 Neither path certifies the external sensor/controller producer or executes
 guarded contact; commissioning and physical validation remain missing.
-The upstream post-lift transfer path still requires new held-key FoundPose;
-hand occlusion may make this impractical. Replace that dependency only after
-commissioning a grasp-specific key–hand relation with uncertainty and a
-fail-closed endpoint/path margin. MuJoCo achieved squeeze pose is a simulation
-prior, not a measured physical grasp transform.
+The observed post-lift transfer path still requires new held-key FoundPose;
+hand occlusion may make this impractical. The separate bounded post-lift
+planning branch now accepts a grasp-specific physical calibration and a
+separately commissioned future-trial surface bound, rechecks the centered
+20 mm endpoint, and replans/audits the sampled held path. It does not claim a
+runtime key pose or command transfer. MuJoCo achieved squeeze pose is a
+simulation prior, not a measured physical grasp transform.
 The read-only `physical_grasp_calibration.py` now defines the commissioning
-sample contract and symmetry-aware empirical relation summary. It does not
-change the runtime gate: physical samples, held-out repeatability, a
-conservative future-trial bound, uncertain endpoint/path checks and guarded
-controller evidence are still missing. A raw visual `held` label must never
+sample contract and symmetry-aware empirical relation summary. The new
+`bounded_postlift.py` consumes that summary only with measured hand feedback
+and the separate surface bound; internal report/source consistency is checked
+again before the pre-insertion label. Real physical samples, held-out
+repeatability, a conservative future-trial bound and guarded controller
+evidence are still missing. A raw visual `held` label must never
 silently promote this descriptive artifact into a live 6D key observation.
 `uncertainty_margin.py` additionally checks whether a supplied, commissioned
 *surface* deviation fits every nominal endpoint and sampled held-path
-clearance. It remains diagnostic-only until the future-trial bound has a
-verified physical source and the calibrated, occluded-key transfer branch is
-implemented. Do not pass the empirical calibration radius as that bound.
+clearance. Its checks are now used by the occluded-key planning branch, but
+remain diagnostic-only until the future-trial bound has a verified physical
+source, swept-volume/controller validation and guarded contact. Do not pass
+the empirical calibration radius as that bound. The live XY retry route still
+requires an observed held-key pose after guarded withdrawal.
 Candidate grasp statistics update from `grasp_success`; insertion retry
 statistics update from `insertion_success` and failure cause. Unknown is not
 success and must not erase a known earlier milestone. Use a controlled failure

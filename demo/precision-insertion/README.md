@@ -142,8 +142,10 @@ direction. They have not been promoted into canonical runtime
 was found in that handoff. Consequently the current retry route still needs
 an observed held-key pose **to reach live retry preflight**. A separate
 nominal-key diagnostic can ask the VLM for a direction without that pose, but
-cannot authorize a retry. The occlusion-tolerant calibrated route is not
-eligible for robot execution. File presence and synthetic-template counts do
+cannot authorize a retry. The new bounded post-lift planning route can use a
+grasp-specific physical calibration **if one is independently commissioned**;
+no such record or future-trial error bound is available here, so this route
+is not eligible for robot execution. File presence and synthetic-template counts do
 not establish live perception accuracy.
 
 This directory is reserved for an independent precision-insertion demo. Its
@@ -206,8 +208,14 @@ that session and catalogue. For each new key observation:
    and call `prepare_raw_lift_label` instead. It compares the same cameras'
    before/after pixels and records held/miss/slip only when at least two
    views show the key; occlusion is unknown. This raw route supplies **no**
-   key–hand transform and cannot authorize transfer. A raw positive leads to
-   `held_relation_evidence_required`, not a transfer command. The candidate prior
+   key–hand transform and cannot authorize transfer by itself. A raw positive
+   leads to `held_relation_evidence_required`, not a transfer command. If a
+   separately measured *physical* calibration for the exact v8 grasp and a
+   commissioned future-trial surface bound are available, call
+   `prepare_bounded_postlift_transfer` with fresh stationary measured joints.
+   It re-screens the 20 mm endpoint, replans from that state, and audits sampled
+   clearance margins without claiming a newly observed 6D key pose. See
+   [BOUNDED_POSTLIFT.md](BOUNDED_POSTLIFT.md). The candidate prior
    alone never proves that the key was held. With a pose-observed success, call
    `prepare_postlift_transfer` with that bundle and the *same* measured joint
    sample. It verifies the candidate/prior/frame binding, replaces the
@@ -326,10 +334,12 @@ Only camera views present in both captures are compared, and a positive
 visual class needs at least two supporting views. Hidden/ambiguous images do
 not prove insertion. A command stroke alone is not an allowed key-depth
 source. The output remains read-only and cannot start guarded contact.
-The current *upstream* `prepare_postlift_transfer` still insists on a fresh
-held-key FoundPose relation before transfer. The raw insertion checkpoint
-does **not** remove that gate, nor the held-key FoundPose requirement in
-`prepare_observed_xy_retry`. Hand occlusion makes both feasibility risks;
+The observed `prepare_postlift_transfer` still insists on a fresh held-key
+FoundPose relation. The alternative `prepare_bounded_postlift_transfer` accepts
+only an exact-candidate physical calibration, future-trial bound and fresh
+measured robot state; it is not a motion permit. The raw insertion checkpoint
+does **not** remove the held-key FoundPose requirement in
+`prepare_observed_xy_retry`. Hand occlusion remains a retry feasibility risk;
 do not silently substitute the BODex nominal relation. MuJoCo's achieved
 squeeze relation is a better simulation prior, but hardware drift and camera
 visibility need grasp-specific calibration or another bounded relation
@@ -350,9 +360,11 @@ joints, measurement-error bounds and hashed source evidence. The read-only
 `physical_grasp_calibration.calibrate_physical_held_relation` summarizes those
 samples using a symmetry-aware measured medoid. It explicitly rejects
 MuJoCo/nominal samples and never reports `robot_ready`. Its empirical spread
-is descriptive, **not** a guaranteed future-trial error bound. It has not
-been connected to `prepare_postlift_transfer` or XY retry; both still require
-the existing independent held-key observation. No real calibration samples
+is descriptive, **not** a guaranteed future-trial error bound. The new
+`prepare_bounded_postlift_transfer` uses the verified medoid with an
+independently supplied bound for endpoint and sampled-path planning, while
+`prepare_postlift_transfer` and the live XY retry still require the existing
+independent held-key observation. No real calibration samples
 or commissioned error limits have been supplied yet.
 `verify_physical_held_relation` can later reconstruct the summary from the
 hashed source JSON files and the currently selected v8 `wrist_se3.npy`;
@@ -647,6 +659,13 @@ The first independent helpers are in `precision_insertion/`:
   and axial descent from the observed lift state. No initial BODex
   `T_key_hand` is silently replayed after physical squeeze. A saved result
   is still a planning report, not contact-control or physical success.
+- `bounded_postlift.py` is the separate hidden-key alternative. It verifies
+  the raw two-view lift checkpoint and exact-candidate physical calibration,
+  rejects an out-of-range measured Inspire pose, then reuses the same endpoint
+  screen and held-path planner with a separately commissioned future-trial
+  surface bound. Its report and the pre-insertion overlay explicitly label the
+  key pose as a calibration hypothesis, not a new observation. No physical
+  calibration or such bound is currently available on this PC.
 - `live_robot_state.py` reads a fresh Franka state and the Inspire IP
   controller's actual raw motor angles. It reuses AutoDex's
   `convert_inspire_raw` for planner order, rejects stale/asynchronous feedback
@@ -864,7 +883,9 @@ After the physical lift, use the session runner's
 `postlift_candidate_pose_prior(...)` and `admit_postlift_key_capture(...)`
 before assigning a grasp-success label. Only after a separate observed
 `AttemptRecord.grasp_success=True` may the runner call
-`prepare_postlift_transfer(...)`. The latter reuses
+`prepare_postlift_transfer(...)`, or, after a raw positive lift and independent
+physical grasp commissioning, `prepare_bounded_postlift_transfer(...)`. The
+observed route reuses
 `plan_postlift_observed_transfer(...)` and
 `write_postlift_preflight(...)`; it saves each rejected/passing observation
 under `attempts/<id>/postlift_preflights/<index>/` with a hash-bound key

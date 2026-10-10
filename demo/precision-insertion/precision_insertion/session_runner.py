@@ -20,6 +20,10 @@ from typing import Mapping
 import numpy as np
 
 from .assets import AssetPaths
+from .bounded_postlift import (
+    BoundedPostLiftPreflight, plan_bounded_postlift_transfer,
+    verify_bounded_postlift_preflight, write_bounded_postlift_preflight,
+)
 from .calibration import SessionCalibration
 from .candidates import select_pose_candidates, validate_catalog_session
 from .config import TaskMode
@@ -141,7 +145,8 @@ class SessionRunner:
         self._preflight_index = 0
         self._attempt_index = 0
         self._attempt_dir: Path | None = None
-        self._postlift_preflight: PostLiftPreflight | None = None
+        self._postlift_preflight: (
+            PostLiftPreflight | BoundedPostLiftPreflight | None) = None
         self._postlift_report_path: Path | None = None
         self._postlift_report_sha256: str | None = None
         self._postlift_index = 0
@@ -210,13 +215,33 @@ class SessionRunner:
                         self._postlift_report_sha256):
                     return SessionDecision(
                         "stop_for_review", "postlift_report_changed", None)
+                bounded = isinstance(
+                    self._postlift_preflight, BoundedPostLiftPreflight)
+                if bounded:
+                    candidate_dir = (
+                        AssetPaths(self.shared_root, self.mode).candidate_dir /
+                        Path(*self._postlift_preflight.candidate_key))
+                    try:
+                        verify_bounded_postlift_preflight(
+                            self._postlift_report_path, mode=self.mode,
+                            shared_root=self.shared_root,
+                            candidate_dir=candidate_dir)
+                    except (FileNotFoundError, KeyError, OSError, TypeError,
+                            ValueError):
+                        return SessionDecision(
+                            "stop_for_review",
+                            "bounded_postlift_evidence_changed", None)
                 return SessionDecision(
                     "transfer_execution_gate_required",
-                    "observed_postlift_path_planned_arrival_unobserved",
+                    ("bounded_postlift_path_planned_arrival_unobserved"
+                     if bounded else
+                     "observed_postlift_path_planned_arrival_unobserved"),
                     self._attempt.candidate_id,
-                    ("commissioned_robot_and_force_limits",
-                     "independent_transfer_execution_evidence",
-                     "fresh_preinsert_key_and_grip_observation"))
+                    (("commissioned_robot_and_force_limits",) +
+                     (("verified_future_trial_surface_bounds",)
+                      if bounded else ()) +
+                     ("independent_transfer_execution_evidence",
+                      "fresh_preinsert_key_and_grip_observation")))
             if (isinstance(self._lift_checkpoint, LiftCheckpoint) and
                     self._lift_checkpoint.evidence_kind == "raw_visual" and
                     self._attempt.labels["grasp_success"] is True and
@@ -1195,6 +1220,86 @@ class SessionRunner:
         self._postlift_preflight = result
         self._postlift_report_path = report
         self._postlift_report_sha256 = hashlib.sha256(report.read_bytes()).hexdigest()
+        self._postlift_index += 1
+        return result
+
+    def prepare_bounded_postlift_transfer(
+        self, *, planner, physical_calibration_path: Path,
+        joint_sample: LiveRobotState, bounds: SurfaceDeviationBounds,
+        max_state_age_s: float, max_arm_hand_skew_s: float,
+        max_hand_command_error_raw: float, max_arm_velocity_rad_s: float,
+        max_postlift_arm_drift_rad: float,
+        max_postlift_hand_drift_raw: float,
+        max_calibration_hand_excess_rad: float,
+        limits: PathAuditLimits, axial_waypoint_step_m: float,
+    ) -> BoundedPostLiftPreflight:
+        """Replan with an independently calibrated grasp when the key is hidden.
+
+        This is a sampled geometry preflight. It does not authorize transfer;
+        physical calibration authenticity, future bounds and the external
+        controller must be commissioned separately.
+        """
+        if (self.current_decision().action !=
+                "held_relation_evidence_required" or
+                self._attempt is None or self._attempt_dir is None or
+                self._preflight is None or
+                not isinstance(self._lift_checkpoint, LiftCheckpoint) or
+                self._lift_checkpoint.evidence_kind != "raw_visual" or
+                self._lift_checkpoint.grasp_success is not True or
+                self._lift_report_path is None or
+                self._lift_report_sha256 is None or
+                not self._lift_report_path.is_file() or
+                hashlib.sha256(self._lift_report_path.read_bytes()).hexdigest()
+                != self._lift_report_sha256):
+            raise ValueError("bounded post-lift plan needs this raw lift checkpoint")
+        result = plan_bounded_postlift_transfer(
+            planner=planner, trial=self._preflight, attempt=self._attempt,
+            calibration=self.calibration, catalog=self.catalog,
+            mode=self.mode, shared_root=self.shared_root,
+            raw_lift=self._lift_checkpoint,
+            raw_lift_report_path=self._lift_report_path,
+            physical_calibration_path=physical_calibration_path,
+            joint_sample=joint_sample, bounds=bounds,
+            max_state_age_s=max_state_age_s,
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s,
+            max_postlift_arm_drift_rad=max_postlift_arm_drift_rad,
+            max_postlift_hand_drift_raw=max_postlift_hand_drift_raw,
+            max_calibration_hand_excess_rad=
+            max_calibration_hand_excess_rad,
+            limits=limits, axial_waypoint_step_m=axial_waypoint_step_m)
+        output = (self._attempt_dir / "postlift_preflights" /
+                  f"{self._postlift_index:03d}")
+        write_bounded_postlift_preflight(result, output)
+        report = output / "report.json"
+        selected = select_pose_candidates(
+            self.catalog, expected_mode=self.mode,
+            tabletop_pose_stem=self._attempt.tabletop_pose_stem)
+        matches = [row for row in selected["candidates"]
+                   if tuple(row["key"]) == result.candidate_key]
+        if len(matches) != 1:
+            raise ValueError("selected bounded grasp is no longer in the catalogue")
+        verify_bounded_postlift_preflight(
+            report, mode=self.mode, shared_root=self.shared_root,
+            candidate_dir=matches[0]["candidate_dir"])
+        self._write_exclusive(output / "physical_relation_binding.json", {
+            "schema": "precision_insertion_bounded_relation_binding_v1",
+            "physical_calibration_path": str(result.relation.calibration_path),
+            "physical_calibration_sha256": (
+                result.relation.calibration_sha256),
+            "raw_lift_checkpoint_path": str(result.lift_checkpoint_path),
+            "raw_lift_checkpoint_sha256": result.lift_checkpoint_sha256,
+            "postlift_report_sha256": hashlib.sha256(
+                report.read_bytes()).hexdigest(),
+            "session_calibration_sha256": self.session_sha256,
+            "catalog_sha256": self.catalog_sha256,
+            "robot_ready": False,
+        })
+        self._postlift_preflight = result
+        self._postlift_report_path = report
+        self._postlift_report_sha256 = hashlib.sha256(
+            report.read_bytes()).hexdigest()
         self._postlift_index += 1
         return result
 

@@ -18,8 +18,12 @@ from typing import Callable
 import cv2
 import numpy as np
 
+from .assets import AssetPaths
+from .bounded_postlift import (
+    BoundedPostLiftPreflight, verify_bounded_postlift_preflight,
+)
 from .calibration import SessionCalibration, validate_session_camera_calibration
-from .config import TaskMode
+from .config import TaskMode, select_mode
 from .frame_provenance import bounded_capture_skew_s, image_sha256
 from .geometry import pose_angle_deg, validate_se3
 from .held_scene_overlay import (
@@ -176,7 +180,8 @@ class PreinsertCheckpoint:
 
 
 def assess_preinsert_checkpoint(
-    *, attempt: AttemptRecord, postlift: PostLiftPreflight,
+    *, attempt: AttemptRecord,
+    postlift: PostLiftPreflight | BoundedPostLiftPreflight,
     postlift_report_path: Path, calibration: SessionCalibration,
     shared_root: Path, mode: TaskMode, raw_bundle: Path,
     transfer_execution_path: Path, joint_sample: LiveRobotState,
@@ -205,13 +210,14 @@ def assess_preinsert_checkpoint(
             attempt.labels["grasp_success"] is not True or
             attempt.labels["preinsert_reached"] is not None or
             attempt.candidate_id is None or
-            not isinstance(postlift, PostLiftPreflight) or
+            not isinstance(postlift, (PostLiftPreflight,
+                                      BoundedPostLiftPreflight)) or
             postlift.status != "sampled_postlift_preflight_pass" or
             postlift.attempt_id != attempt.attempt_id or
             "/".join(postlift.candidate_key) != attempt.candidate_id or
             postlift.targets is None or postlift.planning is None or
             not postlift.planning.sampled_planning_pass):
-        raise ValueError("preinsert arrival needs the matching observed transfer plan")
+        raise ValueError("preinsert arrival needs the matching post-lift transfer plan")
     if not isinstance(calibration, SessionCalibration):
         raise TypeError("preinsert arrival needs a frozen socket session")
     session_hash = _canonical_digest(calibration.record)
@@ -220,21 +226,30 @@ def assess_preinsert_checkpoint(
         raise ValueError("preinsert arrival changed the frozen session")
     postlift_path = Path(postlift_report_path).expanduser().resolve()
     saved_plan = json.loads(postlift_path.read_text(encoding="utf-8"))
+    bounded = isinstance(postlift, BoundedPostLiftPreflight)
+    relation_field = ("bounded_held_relation" if bounded else
+                      "observed_held_relation")
+    if bounded:
+        candidate_dir = (AssetPaths(Path(shared_root), mode).candidate_dir /
+                         Path(*postlift.candidate_key))
+        verify_bounded_postlift_preflight(
+            postlift_path, mode=mode, shared_root=shared_root,
+            candidate_dir=candidate_dir)
     if (not isinstance(saved_plan, dict) or
-            not isinstance(saved_plan.get("observed_held_relation"), dict) or
+            not isinstance(saved_plan.get(relation_field), dict) or
             not isinstance(saved_plan.get("targets"), dict) or
             saved_plan.get("status") != postlift.status or
             saved_plan.get("attempt_id") != attempt.attempt_id or
             saved_plan.get("candidate_key") != list(postlift.candidate_key) or
             saved_plan.get("session_calibration_sha256") != session_hash or
-            saved_plan.get("observed_held_relation", {}).get("T_key_hand") !=
+            saved_plan.get(relation_field, {}).get("T_key_hand") !=
             postlift.relation.T_key_hand.tolist() or
             saved_plan.get("targets", {}).get("T_robot_hand_preinsert") !=
             postlift.targets.T_robot_hand_preinsert.tolist()):
         raise ValueError("saved post-lift plan does not match this transfer")
     if not np.allclose(postlift.targets.T_key_hand,
                        postlift.relation.T_key_hand, rtol=0, atol=1e-8):
-        raise ValueError("preinsert target changed the observed key-hand relation")
+        raise ValueError("preinsert target changed the key-hand relation")
     transfer_path = Path(transfer_execution_path).expanduser().resolve()
     transfer = _transfer_log(transfer_path, attempt)
     started = float(transfer["started_at_s"])
@@ -298,7 +313,8 @@ def assess_preinsert_checkpoint(
         full_q_measured=joint_sample.full_q,
         T_robot_socket_frozen=socket,
         T_key_hand_hypothesis=postlift.relation.T_key_hand,
-        relation_source="observed_multiview_key_plus_wrist",
+        relation_source=("verified_physical_grasp_calibration" if bounded else
+                         "observed_multiview_key_plus_wrist"),
         **prediction_kwargs)
     target = validate_se3(postlift.targets.T_robot_hand_preinsert,
                           name="planned preinsert T_robot_hand")
@@ -342,6 +358,11 @@ def assess_preinsert_checkpoint(
             "joint_feedback": joint_sample.to_record(),
             "max_hand_translation_error_m": max_hand_translation_error_m,
             "max_hand_rotation_error_deg": max_hand_rotation_error_deg,
+            **({"bounded_source_context": {
+                "shared_root": str(Path(shared_root).expanduser().resolve()),
+                "family": mode.family, "gap_mm": mode.gap_mm,
+                "candidate_dir": str(candidate_dir.resolve()),
+            }} if bounded else {}),
         })
 
 
@@ -395,6 +416,22 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
             _sha(transfer) != report["transfer_execution_sha256"] or
             _sha(raw / "manifest.json") != report["raw_manifest_sha256"]):
         raise ValueError("preinsert checkpoint source file changed")
+    postlift_record = json.loads(postlift.read_text(encoding="utf-8"))
+    if postlift_record.get("schema") == (
+            "precision_insertion_bounded_postlift_preflight_v1"):
+        context = report.get("bounded_source_context")
+        if not isinstance(context, dict):
+            raise ValueError("bounded preinsert source context is missing")
+        mode = select_mode(context["family"], context["gap_mm"])
+        root = Path(context["shared_root"]).expanduser().resolve()
+        key = postlift_record["candidate_key"]
+        candidate_dir = AssetPaths(root, mode).candidate_dir / Path(*key)
+        if (context["candidate_dir"] != str(candidate_dir.resolve()) or
+                report["candidate_id"] != "/".join(key)):
+            raise ValueError("bounded preinsert candidate context changed")
+        verify_bounded_postlift_preflight(
+            postlift, mode=mode, shared_root=root,
+            candidate_dir=candidate_dir)
     identity = type("AttemptRef", (), {
         "attempt_id": report["attempt_id"],
         "candidate_id": report["candidate_id"],
