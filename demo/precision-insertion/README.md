@@ -10,6 +10,11 @@ There is no robot-executable insertion runner in this directory yet. The
 existing scenario catalog, VLM observer, and retry policy are offline evidence
 and decision helpers, not proof of a continuous insertion plan or hardware
 readiness. Do not interpret a grasp/lift simulation pass as an insertion pass.
+Offline grasp eligibility now means v8 grasp stability **plus** a centered,
+axis-aligned 20 mm key-in-socket endpoint at which the full Inspire hand does
+not collide with the socket. It deliberately does not screen the Franka arm
+or a fixed transfer trajectory. Each observed trial still needs online
+collision-checked planning from its live pose and guarded insertion contact.
 The original AutoDex source files are kept at the `main` baseline; the
 previous feature-branch changes are preserved at
 `archive/precision-pre-isolation`. `PLAN.md` maps existing APIs to the demo
@@ -28,6 +33,23 @@ The first independent helpers are in `precision_insertion/`:
 - `world.py` adds the frozen socket mesh to a copy of the cuRobo scene. It
   checks the pose and mesh path and does not mutate the source scene. It does
   not by itself authorize key/socket contact or a robot insertion.
+- `config.py` resolves explicit square/cylinder key and socket IDs and the
+  20 mm verification target; `assets.py` performs a read-only v8 input audit.
+
+Run the read-only asset audit from the repository root, for example:
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/run_pipeline.py audit \
+  --shared-root /home/hyunsu/shared_data --mode square --gap-mm 1.5
+```
+
+The audit exits `0` only when its file inputs are present, or `2` when any
+are missing. Its `robot_ready` field is always false: file availability does
+not establish live calibration, online path safety, or guarded contact. For
+cylindrical assets, use `--mode cylinder --gap-mm 20` (gap is the radial gap
+value used by that asset family). This command does not contact cameras or
+the robot and does not write files.
 
 Run the current offline tests from the repository root:
 

@@ -97,36 +97,87 @@ IK, and tests approach trajectory plus a held-object 10 cm lift. It returns
 the **first** candidate that passes those gates. `result.json` success and
 coverage are historically grasp-oriented; they must not be reused as an
 insertion-success label. The new demo retains exact candidate IDs and every
-gate's rejection reason, then adds the full transfer/hold/20 mm preflight
-*before* choosing a physical trial. It does not inherit AutoDex's
+gate's rejection reason. It first applies an **offline grasp-level endpoint
+screen**, then plans from the fresh observed state **online** before choosing
+a physical trial. It does not inherit AutoDex's
 one-success-per-tabletop stopping rule: multiple insertion scenarios may be
 needed at one pose.
 
-## Offline scenario promotion
+## Offline grasp-level insertion eligibility
 
-For each exact `(key, socket, clearance, tabletop pose, grasp id)`, record an
-immutable scenario with asset and source hashes. A physical trial can select
-it only after these gates, in order:
+For each exact `(key, socket, clearance, tabletop pose, grasp id, canonical
+insertion orientation)`, record an immutable **candidate eligibility** result
+with asset and source hashes. This is deliberately independent of the live
+tabletop position and Franka configuration. A physical trial may consider the
+grasp only after these offline gates:
 
 1. BODex candidate and source tabletop scene are internally consistent with
    v8 `object_processing`; hand joints and object-frame wrist transform exist.
-2. Simulated squeeze contacts and gravity stability pass. Contact location is
-   a diagnostic or preference, not a substitute for whole-hand clearance.
-3. At the **20 mm inserted pose**, every hand link clears the socket; the key
-   and socket have the intended fit. The intentional key/socket interaction
-   must not be treated as a forbidden hand/socket collision.
-4. The **continuous** pick, lift, held-key transfer, pre-insertion alignment,
-   20 mm descent, and safe retreat pass the correct collision/contact models.
-   An endpoint-only screen is necessary but insufficient. Keep hand joints
-   fixed from verified grasp to deliberate release; maintain one explicit
-   `T_wrist_key`. Check its uncertainty after lift.
-5. cuRobo validates collision, IK, joint limits, and the arm motion with the
-   fixed fixture. Use swept or sufficiently sampled *whole-key and whole-hand*
-   checks during transfer. Use an exact or conservative bore/rim geometry
-   check and MuJoCo for the contact phase; a generic static collision mesh
-   alone cannot certify an insertion that intentionally contacts the socket.
-6. Simulation and physical commissioning records are separate. A simulation
-   pass never silently becomes `hardware_ready`.
+2. Reuse the v8 pregrasp collision, squeeze-contact, and MuJoCo gravity
+   stability evidence with verified provenance. Contact location may rank
+   grasps, but is not an extra hard restriction unless the task needs one.
+3. Keep the simulated grasp joints and `T_wrist_key` rigid. Place the **full
+   physical key** at the nominal centered, axis-aligned 20 mm insertion pose
+   and transform every Inspire finger/palm/hand-mount collision link with it.
+   Reject any hand/socket intersection, requiring a documented clearance
+   margin. Check the intended key/socket fit separately: its permitted contact
+   is not a forbidden hand/socket collision. Square-key yaw is explicit;
+   cylinder axial yaw is quotiented by its symmetry.
+
+The offline screen does **not** reject a grasp for Franka IK, arm collision,
+tabletop transfer, continuous insertion dynamics, or release/retreat. It is
+not a claim of physical insertion success. The nominal endpoint is a useful
+necessary condition for a grasp, not a sufficient condition for execution:
+the hand could still clip the rim earlier on descent, the arm could be
+unreachable, the key could slip, or contact could jam. Optional simulated
+full-task trajectories may be kept as supporting evidence, but they are not
+the prerequisite for *grasp-level* eligibility and cannot be replayed when
+the live start pose has changed.
+
+### Coverage and evidence are different axes
+
+The original v8 coverage map answers which **tabletop deployment scenes** a
+grasp can be used in without the original scene collision. It does not answer
+whether that grasp can insert a key into this socket. Keep that map intact;
+do not overload its Boolean or its grasp-success statistics. Add a separate
+record keyed by the exact v8 candidate ID, tabletop pose class, socket/key
+geometry and gap, and symmetry-normalized insertion orientation, for example:
+
+```json
+{
+  "candidate_id": "table/4/84",
+  "tabletop_pose": "004",
+  "socket_object": "precision_socket_unified",
+  "key_object": "precision_key_1p5mm",
+  "scope": "grasp_plus_nominal_20mm_endpoint",
+  "v8_grasp_sim_pass": true,
+  "nominal_key_socket_fit": true,
+  "hand_socket_clear_at_20mm": true,
+  "min_hand_socket_clearance_m": 0.003
+}
+```
+
+The entire JSON record is **schematic, not a result for `table/4/84`**; its
+clearance number is illustrative, not a calibrated threshold. Online path
+checks and physical outcomes belong in a separate per-attempt record, never
+in this immutable grasp eligibility catalog.
+Store the actual minimum distance, margin rule, asset hashes, transform
+convention, tested orientation, and screening software version. “Insertable
+pose” means only *nominal endpoint-compatible for this grasp* at this scope;
+it does not mean that every observed key location in that tabletop class is
+reachable or that the real task succeeded. Prefer explicit evidence fields
+and scope over a single ambiguous “validation level.”
+
+Define insertion depth from the CAD socket rim plane along the measured
+socket axis, with positive depth inward. The nominal endpoint has the key's
+insertion axis coincident with the socket axis and its insertion centerline
+at the socket centerline; square-key yaw is the CAD-compatible yaw. This is
+the **offline geometric reference**, not a claim of zero real pose error.
+For a physical `insertion_success`, record the observed depth (at least
+20 mm), lateral centerline residual, axis-angle residual, and square-key yaw
+residual with calibration-aware acceptance limits. Those limits must be
+measured/commissioned for each gap, not inferred from the VLM response or
+from a commanded wrist trajectory.
 
 The cylinder's axial yaw is symmetric; square-key yaw is task-relevant. Each
 mode keeps its own key/socket identifiers, pose classes, collision geometry,
@@ -155,11 +206,16 @@ removing the board must not move it.
 4. `PERCEIVE_KEY`: each trial captures fresh synchronized views, estimates
    `T_robot_key`, classifies its v8 tabletop pose, and checks segmentation,
    visibility, timestamp, calibration, and pose uncertainty.
-5. `SELECT_AND_PREFLIGHT`: select only scenarios matching the observed pose
-   and geometry. Revalidate against this session's key and socket poses.
-   Plan the full chain for each candidate in priority order, not just pickup.
-   Log a separate rejection reason at every gate. If the pool is empty, do
-   not infer that all possible grasps are impossible.
+5. `SELECT_AND_PREFLIGHT`: select only grasp-level endpoint-eligible
+   candidates matching the observed pose and geometry. From the *live* robot,
+   key and frozen socket poses, plan collision-checked pickup/lift and
+   free-space transfer to the pre-insertion hold. Check Franka IK, table,
+   fixture, full held-key and hand collision, including a nominal axial
+   descent to 20 mm with intended key/socket contact treated separately.
+   This online geometric preflight is mandatory before motion; it is not a
+   simulation of actual contact force or an offline candidate property. Log
+   each rejection reason and try the next eligible grasp. An empty pool does
+   not prove all possible grasps impossible.
 6. `PICK_AND_LIFT`: execute the chosen approach and grasp, then observe the
    held key. If visible, update `T_wrist_key` from key pose and wrist FK;
    compare it with the planned rigid transform. A slip or uncertain hold
@@ -169,12 +225,50 @@ removing the board must not move it.
    record whether the required transfer endpoint was reached.
 8. `GUARDED_INSERT`: descend along the measured socket axis toward a **measured**
    20 mm insertion depth with commissioned force/torque, speed, workspace,
-   and timeout limits. Stop and retreat on jam or sensor disagreement. A
-   commanded 20 mm stroke alone is not success.
+   and timeout limits. Keep the grasp closed and `T_wrist_key` fixed until
+   the 20 mm outcome is determined. Stop and retreat on jam or sensor
+   disagreement. A commanded 20 mm stroke alone is not success.
 9. `VERIFY_AND_RECOVER`: fuse depth, pose, grip, F/T, abort code, and visual
    evidence. If the key remains safely held after an alignment failure,
    replan a bounded retry for the same grasp. Otherwise try another grasp,
    reset, or stop according to the observed state.
+
+### Pickup-to-retreat motion policy
+
+The grasp stays rigid from lift through insertion verification. In order:
+
+1. Perceive the live tabletop key; select endpoint-eligible grasps for that
+   pose. Plan approach, close Inspire, lift to a clearance hold, then confirm
+   the key was actually acquired. A change in `T_wrist_key` invalidates the
+   transfer goal and requires re-estimation/replanning or abort.
+2. Compute the wrist target from the measured socket pose and fixed
+   `T_wrist_key`. Online cuRobo checks the noncontact transfer to a hold
+   **above the rim**, with the full held key and hand as moving geometry and
+   socket/table as fixed obstacles. Check nominal aligned axial motion to
+   20 mm for hand/socket and arm/environment clearance. The CAD key/socket
+   contact is intentionally allowed only within the task-defined interface.
+3. Reobserve at the hold. Reject gross key/socket center or axis error; on
+   this first experiment, correct only bounded `dx, dy` in socket coordinates
+   and replan from the live state. Do not correct an unmodeled yaw/tilt error
+   by lateral motion or enter the bore with an uncertain grasp.
+4. Perform slow, guarded **axial** insertion while still gripping. Stop at
+   measured 20 mm or the first abort. A force/torque, depth, pose, or vision
+   inconsistency is not success. On a jam, stop lateral motion while engaged;
+   withdraw along the measured socket axis to a verified clear hold before
+   any XY retry.
+5. Once insertion is judged, choose a separately validated ending. Releasing
+   at 20 mm is **optional**, not implicit: the key may not be self-supporting.
+   If support and finger-opening clearance have been verified, open the hand,
+   observe that the key stays seated, and retract the empty hand initially
+   along the **socket axis** past the rim and protruding key, then follow a
+   collision-planned free-space path. This is world-vertical only if the
+   socket axis is vertical. If release cannot be shown safe, retain the grasp
+   and withdraw the key axially; do not label release/retreat successful.
+
+Endpoint clearance alone does not validate finger-opening sweeps or the
+retreat. If the intended presentation/demo requires “insert, release, and
+leave key in socket,” add those *online* checks and separate observed labels;
+do not make them retroactive offline grasp filters.
 
 The base table/socket world stays fixed, but the target key must be removed
 from free-world obstacles and represented as an attached object after grasp.
@@ -199,6 +293,8 @@ Store each milestone independently as `true`, `false`, or `null` (unjudgeable):
 | `grasp_success` | Key is held through lift; image sequence plus key/wrist pose and hand state. |
 | `preinsert_reached` | Held key reaches the specified pose above the socket; measured pose residual, grip state, and trajectory completion. |
 | `insertion_success` | Observed key/socket penetration reaches at least 20 mm within alignment and force limits, with no abort; corroborated by images when visible. |
+| `release_success` | Optional: after 20 mm verification, the hand opens without dislodging the supported key; observed independently. |
+| `retreat_success` | Optional: the empty hand exits along the socket axis and reaches a collision-free clear pose. |
 | `reset_success` | A safe verified return or controlled recovery makes the next trial possible. |
 | `reorient_success` | A fresh tabletop estimate confirms the requested new pose after a validated transition. |
 
@@ -227,6 +323,8 @@ summary follows this contract (all stage values start at `null`):
   "grasp_success": null,
   "preinsert_reached": null,
   "insertion_success": null,
+  "release_success": null,
+  "retreat_success": null,
   "reset_success": null,
   "reorient_success": null,
   "failure_code": null,
@@ -373,11 +471,12 @@ camera or robot lease is taken.
 
 Other required robot-mode evidence is still missing: measured ChArUco and
 socket calibration for the live session; certified fixture rigidity and
-calibration uncertainty; continuous Franka/Inspire pick-to-20 mm trajectory
-with whole-hand/whole-key checks; contact-dynamics and F/T abort validation;
-physical success measurement; and commissioned extraction/reset/reorient
-policies. Presentation animations and endpoint-only geometry do not fill
-these gaps.
+calibration uncertainty; **online** Franka/Inspire path preflight from the
+live pose; guarded-contact and F/T abort validation; physical success
+measurement; and commissioned release/retreat, extraction/reset/reorient
+policies where those behaviors are enabled. These are runtime/commissioning
+gates, not offline grasp-catalog promotion criteria. Presentation animations
+and endpoint-only geometry do not fill these gaps.
 
 ## Implementation sequence and acceptance gates
 
@@ -394,12 +493,16 @@ these gaps.
 3. Generate missing FoundPose representations on the actual AutoDex camera
    host, then audit exact pose-conditioned v8 candidate pools. Re-run BODex,
    collision/squeeze/MuJoCo filtering and v8 coverage when needed, keeping
-   the generation recipe and hashes. Promote at least one scenario through
-   endpoint **and continuous** full-task simulation; record all failure
-   gates. No pass means robot insertion stays disabled.
+   the generation recipe and hashes. Screen candidate grasps against the
+   centered, aligned 20 mm whole-hand/socket endpoint and keep a separate
+   immutable eligibility catalog. No eligible grasp means no robot insertion;
+   a positive catalog result alone does not enable robot motion.
 4. Run supervised 1.5 mm square bring-up with calibrated camera/hand-eye and
-   approved force limits. Verify the three milestone labels independently,
-   then run repeated trials only after safe reset is commissioned.
+   approved force limits. First commission online full-motion geometric
+   preflight and guarded contact/abort control; then verify grasp, preinsert,
+   and insertion labels independently. Add optional release/retreat only when
+   support and clearance are verified. Run repeated trials only after safe
+   reset is commissioned.
 5. Add the projected multi-view offset-choice experiment, first as logged
    advice, then as bounded same-grasp replanning after safety review. Compare
    against geometry-only correction and no correction.
