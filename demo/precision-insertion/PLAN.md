@@ -546,35 +546,39 @@ All new or ported execution code and its tests belong below
 
 ```text
 demo/precision-insertion/
-  run_pipeline.py                 # independent CLI and state machine
+  run_pipeline.py                 # independent read-only CLI; no robot mode
   precision_insertion/
     config.py                     # explicit paths, modes, limits
     assets.py                     # v8/object_processing and evidence checks
     endpoint.py                   # grasp-only exact 20 mm hand/socket screen
     targets.py                    # frozen-socket, rigid key/hand hold and 20 mm goals
-    camera.py                     # unchanged AutoDex camera API adapter
-    calibration.py                # read-only ChArUco/socket measurement and freeze; live capture adapter pending
+    live_capture.py               # original AutoDex capture adapters; acquisition times still required
+    calibration.py                # ChArUco/socket measurement and frozen scene
     perception_evidence.py        # per-view FoundPose quality and true capture-time gate
     symmetry.py                   # local square/cylinder pose handling
     world.py                      # fixed fixture and attached-key worlds
-    candidates.py                 # v8 pose-indexed endpoint catalog and selection; live planning pending
+    candidates.py                 # v8 pose-indexed endpoint catalog and selection
+    reset_candidates.py           # direct-v8 provenance-bound reset grasp loader
+    repose_policy.py              # insertion target vs reset-seed assessment only
+    trial_preflight.py            # fresh-key candidate-by-candidate planning replay
     preflight.py                  # planning-only pickup/lift/transfer/20 mm composition
     path_audit.py                 # sampled held-key/hand scene collision checks
-    planner.py                    # future motion authorization and XY replanning
-    execution.py                  # Franka/Inspire and guarded stroke adapter
     xy_voting.py                  # read-only multi-view XY ID consensus
     xy_overlay.py                 # pixel-resolvability check and calibrated ID crops
     xy_retry.py                   # offline endpoint/overlay/VLM consensus proposal
     outcome.py                    # VLM-led tri-state insertion result fusion
     observer.py                   # read-only ZeroDex-backed VLM prompts, parsing, per-view votes
-    recovery.py                   # retreat, repose, reorient, stop
-    records.py                    # tri-state results and immutable provenance
   tests/                          # offline contracts and replay fixtures
+
+Planned below the same demo directory, but **not implemented**:
+  session_runner.py               # live camera/robot orchestration and labels
+  guarded_execution.py            # bounded Franka/Inspire contact and aborts
+  recovery.py                     # safe return/repose/reorient/extraction policy
 ```
 
-The CLI will require explicit `--shared-root`, `--mode`, `--gap-mm`,
-`--output-root`, and dry-run/robot mode. The default is **dry-run**; robot mode
-is fail-closed until commissioned. Read key/socket objects under
+The current CLI has no motor-command mode. A future robot mode must require
+explicit `--shared-root`, `--mode`, `--gap-mm`, output root and commissioned
+limits, and must remain fail-closed until validated. Read key/socket objects under
 `<shared-root>/object_processing/<object_id>` and v8 candidates under
 `<shared-root>/AutoDex/candidates/inspire/v8/<key>`. Read fixture and scenario
 metadata under `<shared-root>/AutoDex/precision_insertion`. Save demo trial

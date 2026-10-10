@@ -15,6 +15,7 @@ from audit_cylinder_reorient_pilot import audit  # noqa: E402
 from promote_v8_reset_candidates import promote  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.reorient_assets import audit_v8_reorient_assets  # noqa: E402
+from precision_insertion.repose_policy import assess_repose_options  # noqa: E402
 from precision_insertion.reset_candidates import load_v8_reset_seeds  # noqa: E402
 from stage_cylinder_reorient_proposals import KEY, PAIRS, PROXY, stage  # noqa: E402
 
@@ -126,7 +127,9 @@ def test_audit_rejects_incomplete_or_inconsistent_filter(tmp_path):
     assert not (tmp_path / "audit.json").exists()
 
 
-def test_promotes_only_stock_mujoco_pass_and_loads_direct_v8_cell(tmp_path):
+def test_promotes_only_stock_mujoco_pass_and_loads_direct_v8_cell(
+    tmp_path, monkeypatch,
+):
     raw, staged = _stage_fixture(tmp_path, expected=1)
     raw_wrist = np.eye(4)
     raw_wrist[0, 3] = 0.02
@@ -210,6 +213,21 @@ def test_promotes_only_stock_mujoco_pass_and_loads_direct_v8_cell(tmp_path):
         max_center_in_hand_drift_m=0.003,
         max_symmetry_axis_tilt_deg=8.0,
         candidate_root=handoff_root)["n_total"] == 1
+    monkeypatch.setattr(
+        "precision_insertion.repose_policy.select_pose_candidates",
+        lambda *_, **__: {"status": "candidates_available",
+                         "candidates": [{"key": ["table", "1", "7"]}]})
+    repose = assess_repose_options(
+        shared_root=tmp_path, mode=mode,
+        catalog={"shared_root": str(tmp_path)},
+        current_pose_stem="000", target_stems=("001",),
+        T_robot_key=T_robot_key,
+        max_center_in_hand_drift_m=0.003,
+        max_symmetry_axis_tilt_deg=8.0,
+        candidate_root=handoff_root.parent)
+    assert repose["status"] == (
+        "staged_reset_seed_requires_install_and_full_chain_preflight")
+    assert repose["targets"][0]["reset_seed_refs"][0]["seed_id"] == "0"
     assert load_v8_reset_seeds(
         shared_root=tmp_path, mode=mode, height_cm=12,
         from_pose_stem=1, to_pose_stem=0, T_robot_key=T_robot_key,

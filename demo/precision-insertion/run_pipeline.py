@@ -129,6 +129,14 @@ def main(argv: list[str] | None = None) -> int:
     trial.add_argument("--covered-scene", type=int, action="append", default=[])
     trial.add_argument("--max-candidate-attempts", type=int,
                        help="pilot prefix; never report pose exhaustion")
+    trial.add_argument("--max-reset-drift-mm", type=float,
+                       help="commissioned key-in-hand reset drift limit")
+    trial.add_argument("--max-reset-axis-tilt-deg", type=float,
+                       help="commissioned symmetry-reduced reset tilt limit")
+    trial.add_argument("--reset-candidate-root", type=Path,
+                       help="optional handoff parent of reset_<h> directories")
+    trial.add_argument("--attempted-reset", action="append", default=[],
+                       metavar="HEIGHT/TARGET_STEM/SEED_ID")
     trial.add_argument("--output-dir", type=Path, required=True,
                        help="new report directory; refuses to overwrite")
     args = parser.parse_args(argv)
@@ -301,6 +309,11 @@ def main(argv: list[str] | None = None) -> int:
             attempted = tuple(tuple(item.split("/")) for item in args.attempted)
             if any(len(item) != 3 or not all(item) for item in attempted):
                 raise ValueError("attempted keys must be TYPE/SID/GID")
+            attempted_reset = tuple(tuple(item.split("/"))
+                                    for item in args.attempted_reset)
+            if any(len(item) != 3 or not all(item) for item in attempted_reset):
+                raise ValueError(
+                    "attempted reset keys must be HEIGHT/TARGET_STEM/SEED_ID")
             from autodex.planner import GraspPlanner
 
             planner = GraspPlanner(hand="fr3_inspire")
@@ -319,6 +332,12 @@ def main(argv: list[str] | None = None) -> int:
                 attempted=attempted,
                 covered_scenes=tuple(args.covered_scene),
                 max_candidate_attempts=args.max_candidate_attempts,
+                max_reset_center_drift_m=(
+                    None if args.max_reset_drift_mm is None
+                    else args.max_reset_drift_mm / 1000.0),
+                max_reset_axis_tilt_deg=args.max_reset_axis_tilt_deg,
+                reset_candidate_root=args.reset_candidate_root,
+                attempted_reset=attempted_reset,
             )
             output = write_trial_preflight_artifacts(result, args.output_dir)
         except (FileNotFoundError, KeyError, TypeError, ValueError) as exc:
@@ -327,6 +346,9 @@ def main(argv: list[str] | None = None) -> int:
             "status": result.status,
             "attempted_candidates": len(result.attempted_candidates),
             "repose_target_stems": result.repose_target_stems,
+            "repose_assessment_status": (
+                None if result.repose_assessment is None else
+                result.repose_assessment["status"]),
             "report": str(output / "report.json"),
             "robot_ready": False,
         }, indent=2))

@@ -164,6 +164,58 @@ def test_no_current_pose_grasp_requests_repose_only_if_other_stem_has_one(
     assert result.repose_target_stems == ()
 
 
+def test_trial_records_reset_seed_assessment_without_authorizing_repose(
+    tmp_path, monkeypatch,
+):
+    fixture = _fixture(tmp_path, monkeypatch)
+    catalog = fixture[2]
+    catalog["candidates"] = [{**catalog["candidates"][0],
+                              "tabletop_pose_stem": "001"}]
+    seen = []
+
+    def assess(**kwargs):
+        seen.append(kwargs)
+        return {"status": "reset_seed_available_requires_full_chain_preflight",
+                "targets": [{"target_pose_stem": "001"}], "robot_ready": False}
+
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.assess_repose_options", assess)
+    result = _run(
+        tmp_path, fixture, _Planner(),
+        max_reset_center_drift_m=0.003,
+        max_reset_axis_tilt_deg=8.0,
+        reset_candidate_root=tmp_path / "handoff")
+    assert result.status == "repose_required_unplanned"
+    assert result.repose_assessment["robot_ready"] is False
+    assert result.to_record()["schema"] == "precision_insertion_trial_preflight_v2"
+    assert result.to_record()["repose_assessment"]["targets"][0][
+        "target_pose_stem"] == "001"
+    assert seen[0]["target_stems"] == ("001",)
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.assess_repose_options",
+        lambda **_: {"status": "no_executable_repose_path",
+                      "targets": [], "robot_ready": False})
+    unavailable = _run(
+        tmp_path, fixture, _Planner(),
+        max_reset_center_drift_m=0.003, max_reset_axis_tilt_deg=8.0)
+    assert unavailable.status == "repose_assets_unavailable"
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.assess_repose_options",
+        lambda **_: {
+            "status": "staged_reset_seed_requires_install_and_full_chain_preflight",
+            "targets": [], "robot_ready": False})
+    staged = _run(
+        tmp_path, fixture, _Planner(),
+        max_reset_center_drift_m=0.003, max_reset_axis_tilt_deg=8.0)
+    assert staged.status == "repose_staged_only_unplanned"
+    with pytest.raises(ValueError, match="both reset pose-fidelity limits"):
+        _run(tmp_path, fixture, _Planner(), max_reset_axis_tilt_deg=8.0)
+    with pytest.raises(ValueError, match="finite and positive"):
+        _run(tmp_path, fixture, _Planner(),
+             max_reset_center_drift_m=-0.003,
+             max_reset_axis_tilt_deg=8.0)
+
+
 def test_candidate_budget_and_stale_key_observation_are_fail_closed(
     tmp_path, monkeypatch,
 ):

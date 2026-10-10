@@ -160,6 +160,11 @@ The first independent helpers are in `precision_insertion/`:
   `load_candidate` is reused with an explicit
   root and whitelist to form a planner `candidate_override`; this does not
   extend AutoDex's lift-only planner to transfer or insertion.
+- `reset_candidates.py` reads only provenance-bound, full-key MuJoCo-stable
+  directed v8 reset seeds. `repose_policy.py` cross-checks alternative poses
+  with insertion-eligible grasps and reset seed availability at each AutoDex
+  release height. Both require explicit pose-fidelity limits. They report
+  seeds for a later socket-aware Franka preflight, never a runnable reset.
 - `outcome.py` defines a VLM-led, sensor-vetoed tri-state task label. A
   multi-view `normal_appearance` assessment is required for `true`, together with
   independently cross-checked **key** depth, commissioned alignment limits,
@@ -681,6 +686,19 @@ output contains `report.json`, `trial_scene.json`, and, if a full plan is
 found, `planned_trajectories.npz`; all are offline evidence and have
 `robot_ready: false`. A pose with no candidate may return
 `repose_required_unplanned`, not an executable reorientation trajectory.
+To add a **read-only** reset-seed assessment when that happens, supply both
+`--max-reset-drift-mm` and `--max-reset-axis-tilt-deg`. These must be
+commissioned, not copied from an illustrative example. Add
+`--reset-candidate-root /path/to/handoff_parent` only when auditing a local
+handoff rather than the canonical NAS; the parent must contain `reset_<h>/`.
+`--attempted-reset HEIGHT/TARGET_STEM/SEED_ID` excludes a previously tried
+reset seed. The report's `repose_assessment` distinguishes an insertable
+target pose from a pose with an available reset seed; it still cannot claim a
+socket-aware full-chain plan, safe release, or physical pose change. With
+this optional assessment enabled, missing reset seeds produce
+`repose_assets_unavailable`, a local-only handoff produces
+`repose_staged_only_unplanned`, and a canonical seed still produces
+`repose_required_unplanned` until the whole reset path has passed preflight.
 
 ### Socket perception evidence and current camera-timestamp blocker
 

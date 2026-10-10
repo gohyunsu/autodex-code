@@ -27,6 +27,7 @@ from .geometry import validate_se3
 from .path_audit import PathAuditLimits
 from .pose_selection import classify_key_tabletop_pose
 from .preflight import InsertionPreflight, plan_insertion_after_pickup
+from .repose_policy import assess_repose_options
 from .targets import build_rigid_insertion_targets
 from .world import build_trial_scene_from_session
 
@@ -61,10 +62,11 @@ class TrialPreflight:
     max_candidate_attempts: int | None
     session_calibration_sha256: str
     catalog_sha256: str
+    repose_assessment: dict | None = None
 
     def to_record(self) -> dict:
         return {
-            "schema": "precision_insertion_trial_preflight_v1",
+            "schema": "precision_insertion_trial_preflight_v2",
             "status": self.status,
             "pose_class": self.pose_class,
             "attempted_candidates": list(self.attempted_candidates),
@@ -72,6 +74,7 @@ class TrialPreflight:
                 None if self.selected_candidate_key is None
                 else list(self.selected_candidate_key)),
             "repose_target_stems": list(self.repose_target_stems),
+            "repose_assessment": self.repose_assessment,
             "insertion_plan": (None if self.insertion_plan is None
                                else self.insertion_plan.to_record()),
             "key_observation_id": self.key_observation_id,
@@ -152,6 +155,10 @@ def plan_fresh_key_trial(
     attempted: tuple[tuple[str, str, str], ...] = (),
     covered_scenes: tuple[int, ...] = (),
     max_candidate_attempts: int | None = None,
+    max_reset_center_drift_m: float | None = None,
+    max_reset_axis_tilt_deg: float | None = None,
+    reset_candidate_root: Path | None = None,
+    attempted_reset: tuple[tuple[int, str, str], ...] = (),
 ) -> TrialPreflight:
     """Plan one scene from an explicitly fresh pose, trying grasps in order.
 
@@ -189,6 +196,17 @@ def plan_fresh_key_trial(
         raise ValueError("live FR3/Inspire start state must be 13 finite joints")
     if max_candidate_attempts is not None and max_candidate_attempts < 1:
         raise ValueError("max_candidate_attempts must be positive")
+    if ((max_reset_center_drift_m is None) !=
+            (max_reset_axis_tilt_deg is None)):
+        raise ValueError("both reset pose-fidelity limits must be supplied")
+    if reset_candidate_root is not None and max_reset_center_drift_m is None:
+        raise ValueError("reset candidate root requires pose-fidelity limits")
+    if max_reset_center_drift_m is not None and (
+            not math.isfinite(float(max_reset_center_drift_m)) or
+            float(max_reset_center_drift_m) <= 0 or
+            not math.isfinite(float(max_reset_axis_tilt_deg)) or
+            float(max_reset_axis_tilt_deg) <= 0):
+        raise ValueError("reset pose-fidelity limits must be finite and positive")
     if (not math.isfinite(float(axial_waypoint_step_m)) or
             not 0 < float(axial_waypoint_step_m) <= 0.005):
         raise ValueError("axial waypoint step must be finite and <= 5 mm")
@@ -234,6 +252,7 @@ def plan_fresh_key_trial(
     insertion_plan = None
     status = ""
     repose = ()
+    repose_assessment = None
     if selected["status"] in {"catalog_incomplete", "catalog_stale"}:
         status = "catalog_unavailable"
     elif selected["status"] == "no_eligible_in_screened_pool":
@@ -296,6 +315,25 @@ def plan_fresh_key_trial(
                 status = ("repose_required_unplanned" if repose
                           else "planning_exhausted_current_pose")
 
+    if repose and max_reset_center_drift_m is not None:
+        repose_assessment = assess_repose_options(
+            shared_root=root, mode=mode, catalog=catalog,
+            current_pose_stem=stem, target_stems=repose,
+            T_robot_key=pose_robot,
+            max_center_in_hand_drift_m=max_reset_center_drift_m,
+            max_symmetry_axis_tilt_deg=max_reset_axis_tilt_deg,
+            attempted_insertion=attempted_keys,
+            covered_scenes=covered_ids,
+            attempted_reset=attempted_reset,
+            candidate_root=reset_candidate_root)
+        if repose_assessment["status"] == "catalog_unavailable":
+            status = "catalog_unavailable"
+        elif repose_assessment["status"] == "no_executable_repose_path":
+            status = "repose_assets_unavailable"
+        elif repose_assessment["status"] == (
+                "staged_reset_seed_requires_install_and_full_chain_preflight"):
+            status = "repose_staged_only_unplanned"
+
     return TrialPreflight(
         status=status, pose_class=pose_class,
         attempted_candidates=tuple(rows), selected_candidate_key=selected_key,
@@ -314,4 +352,5 @@ def plan_fresh_key_trial(
         max_candidate_attempts=max_candidate_attempts,
         session_calibration_sha256=_canonical_sha256(calibration.record),
         catalog_sha256=_canonical_sha256(catalog),
+        repose_assessment=repose_assessment,
     )
