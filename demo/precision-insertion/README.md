@@ -26,10 +26,21 @@ table and supplied commissioned future-trial surface bounds. A planned
 vertical detour, rotation, sparse path, changed Inspire pose, collision or
 insufficient uncertainty margin rejects the shift. It records the exact
 joint path and `insertion_replan_allowed=false`; it does **not** perform a
-motion, reobserve the key, or authorize another insertion. In particular,
-`prepare_grounded_xy_diagnostic` is **not yet wired** to this lower-level
-preflight: binding its saved frames, physical grasp relation and latest live
-state to the plan is a remaining integration gate.
+motion, reobserve the key, or authorize another insertion.
+
+`SessionRunner.prepare_grounded_lateral_hold_preflight(...)` now binds the
+saved cylinder diagnostic to this planner **for the first withdrawn hold
+only**. Pass its `GroundedXYDiagnostic`, saved
+`xy_retry_assessments/NNN/report.json`, a fresh measured Franka/Inspire
+sample, and separately commissioned joint-drift, visual tip/axis-error and
+lateral-path limits. The binder rechecks source image bytes, attempt,
+withdrawal, physical-grasp medoid, task geometry, camera/session hashes,
+confidence calculation, key-axis direction and predicted-versus-observed
+tip/axis consistency. It saves `lateral_hold_preflights/NNN/` without calling
+`record_retry` or changing the attempt state. Its first-step-only source
+contract means a second adjustment needs a **new** capture and a separately
+verified post-shift hold, not reuse of the earlier diagnostic. Physical
+execution of even the first shift is not implemented.
 
 For use by that future binding layer, the API is
 `plan_lateral_hold_shift(planner, mode, shared_root, calibration, trial_scene,
@@ -310,8 +321,10 @@ that session and catalogue. For each new key observation:
    the tip/axis, and calculates a continuous socket-frame correction with an
    at-most-1 mm increment. Missing landmarks, weak parallax, tilt, or high
    uncertainty abstain. This is still a **diagnostic**, not a pending retry:
-   the standalone lateral path audit is available, but diagnostic provenance,
-   the actual held geometry and renewed contact retry are not yet bound to it.
+   a passing, saved cylinder diagnostic can now be source-bound to the
+   first withdrawn-hold lateral cuRobo/CAD preflight with physical-medoid
+   surface bounds. This is still not an execution or renewed contact retry:
+   post-shift observation and the new 20 mm endpoint must be checked first.
    The square key additionally needs insertion yaw and therefore abstains
    with only an axial line.
 5. If the pose's candidate pool is exhausted, `current_decision()` returns

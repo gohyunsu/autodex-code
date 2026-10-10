@@ -90,9 +90,13 @@ calculate a continuous socket-frame XY correction capped to a 1 mm increment.
 It saves a metric hypothesis only; no lateral or renewed insertion plan is
 recorded. A separate `lateral_preflight.py` now plans and sampled-audits a
 socket-plane hold shift using the unchanged cuRobo planner, the full held
-key/hand meshes and explicit future surface bounds. It does not yet consume
-the saved diagnostic or physical calibration through a verified session
-binding, and never plans a renewed insertion. The existing observed-key
+key/hand meshes and explicit future surface bounds. The
+`SessionRunner.prepare_grounded_lateral_hold_preflight(...)` binder now
+rechecks the saved image/report bytes, matching failed attempt and withdrawal,
+physical medoid source, measured held state and metric XY math before
+planning the **first** shift. It does not execute that shift or plan a renewed
+insertion. A second shift needs new post-shift source evidence. The existing
+observed-key
 **live** XY retry still requires a fresh
 held-key FoundPose after withdrawal. A square key also needs observable yaw,
 so its two-collinear-landmark route abstains. Do not use a test fixture or a

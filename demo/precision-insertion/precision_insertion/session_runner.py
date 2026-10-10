@@ -62,6 +62,10 @@ from .retry_session import (
     write_retry_session_artifacts,
 )
 from .grounded_alignment import AlignmentLimits
+from .grounded_lateral import (
+    GroundedLateralPreflight, plan_grounded_lateral_from_withdrawal,
+    write_grounded_lateral_preflight,
+)
 from .repose_artifacts import write_repose_preflight_artifacts
 from .repose_preflight import validate_repose_rest_target
 from .repose_transition import (
@@ -169,6 +173,8 @@ class SessionRunner:
         self._lift_assessed_capture_ids: set[str] = set()
         self._insertion_assessment_index = 0
         self._retry_assessment_index = 0
+        self._lateral_preflight_index = 0
+        self._lateral_used_diagnostic_reports: set[Path] = set()
         self._write_exclusive(
             target / "frozen_session_calibration.json", calibration.record)
         self._write_exclusive(target / "endpoint_catalog.json", catalog)
@@ -1982,6 +1988,53 @@ class SessionRunner:
                   f"{self._retry_assessment_index:03d}")
         write_retry_session_artifacts(result, frames, output)
         self._retry_assessment_index += 1
+        return result
+
+    def prepare_grounded_lateral_hold_preflight(
+        self, *, planner, diagnostic: GroundedXYDiagnostic,
+        diagnostic_report_path: Path, joint_sample: LiveRobotState,
+        decision_timestamp_s: float, limits: RetrySessionLimits,
+        max_hold_joint_drift_rad: float,
+        max_grounded_tip_error_m: float,
+        max_grounded_axis_error_deg: float,
+        max_path_deviation_m: float,
+        max_hold_height_deviation_m: float,
+        max_hold_rotation_deg: float,
+    ) -> GroundedLateralPreflight:
+        """Save a source-bound first hold-shift plan, never a robot retry."""
+        if (self.current_decision().action !=
+                "guarded_withdrawal_then_xy_assessment" or
+                self._attempt is None or self._preflight is None or
+                self._attempt_dir is None or
+                self._postlift_report_path is None):
+            raise ValueError("lateral hold preflight needs a failed held insertion")
+        source = Path(diagnostic_report_path).expanduser().resolve()
+        assessments = (self._attempt_dir / "xy_retry_assessments").resolve()
+        if (source.parent.parent != assessments or
+                source.name != "report.json" or
+                source in self._lateral_used_diagnostic_reports or
+                diagnostic.postlift_preflight_path.resolve() !=
+                self._postlift_report_path.resolve()):
+            raise ValueError(
+                "lateral diagnostic is not from this attempt or was already used")
+        result = plan_grounded_lateral_from_withdrawal(
+            planner=planner, mode=self.mode, shared_root=self.shared_root,
+            calibration=self.calibration, catalog=self.catalog,
+            trial=self._preflight, attempt=self._attempt,
+            diagnostic=diagnostic, diagnostic_report_path=source,
+            joint_sample=joint_sample,
+            decision_timestamp_s=decision_timestamp_s, limits=limits,
+            max_hold_joint_drift_rad=max_hold_joint_drift_rad,
+            max_grounded_tip_error_m=max_grounded_tip_error_m,
+            max_grounded_axis_error_deg=max_grounded_axis_error_deg,
+            max_path_deviation_m=max_path_deviation_m,
+            max_hold_height_deviation_m=max_hold_height_deviation_m,
+            max_hold_rotation_deg=max_hold_rotation_deg)
+        output = (self._attempt_dir / "lateral_hold_preflights" /
+                  f"{self._lateral_preflight_index:03d}")
+        write_grounded_lateral_preflight(result, output)
+        self._lateral_preflight_index += 1
+        self._lateral_used_diagnostic_reports.add(source)
         return result
 
     def record_failure(

@@ -441,9 +441,11 @@ multi-view tip/axis diagnostic now accepts a verified bounded post-lift source,
 but only reports a continuous, at-most-1 mm XY hypothesis; it does not add a
 pending retry or motion preflight. A separate low-level lateral hold preflight
 now plans with stock cuRobo and audits sampled full key/Inspire CAD plus future
-surface margins at <=1 mm, without insertion motion. Its missing session
-binding must recheck saved diagnostic/camera bytes, physical held relation,
-withdrawn measured state and post-shift observation before guarded retry. The
+surface margins at <=1 mm, without insertion motion. Its new session
+binder rechecks saved diagnostic/camera bytes, the physical held medoid,
+the fresh withdrawn measured state, XY confidence math and full sampled
+collision path for the first shift. Post-shift observation, physical execution
+and a new insertion endpoint/guarded retry are still missing. The
 square-key yaw remains unobservable from an axial line alone.
 Candidate grasp statistics update from `grasp_success`; insertion retry
 statistics update from `insertion_success` and failure cause. Unknown is not

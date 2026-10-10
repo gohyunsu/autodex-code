@@ -130,6 +130,56 @@ def _plan(runner, observation):
         max_pose_error_deg=5.0, axial_waypoint_step_m=0.002)
 
 
+def test_grounded_lateral_session_only_accepts_own_saved_diagnostic(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    runner._attempt = object()
+    runner._preflight = object()
+    runner._attempt_dir = runner.output_dir / "attempts" / "attempt_1"
+    runner._attempt_dir.mkdir(parents=True)
+    postlift = runner._attempt_dir / "postlift.json"
+    postlift.write_text("{}", encoding="utf-8")
+    runner._postlift_report_path = postlift
+    monkeypatch.setattr(runner, "current_decision", lambda: SimpleNamespace(
+        action="guarded_withdrawal_then_xy_assessment"))
+    diagnostic = SimpleNamespace(postlift_preflight_path=postlift)
+    source = (runner._attempt_dir / "xy_retry_assessments" / "000" /
+              "report.json")
+    source.parent.mkdir(parents=True)
+    source.write_text("{}", encoding="utf-8")
+    calls = []
+    result = object()
+    monkeypatch.setattr(session_runner,
+                        "plan_grounded_lateral_from_withdrawal",
+                        lambda **kwargs: calls.append(kwargs) or result)
+    def save(_result, output):
+        output.mkdir(parents=True, exist_ok=False)
+        return output
+    monkeypatch.setattr(session_runner, "write_grounded_lateral_preflight",
+                        save)
+    args = dict(
+        planner=object(), diagnostic=diagnostic,
+        diagnostic_report_path=source, joint_sample=object(),
+        decision_timestamp_s=2., limits=object(),
+        max_hold_joint_drift_rad=.01,
+        max_grounded_tip_error_m=.001,
+        max_grounded_axis_error_deg=1.,
+        max_path_deviation_m=.0001,
+        max_hold_height_deviation_m=.0001,
+        max_hold_rotation_deg=1.)
+    with pytest.raises(ValueError, match="not from this attempt"):
+        runner.prepare_grounded_lateral_hold_preflight(**{
+            **args, "diagnostic_report_path": tmp_path / "outside.json"})
+    assert calls == []
+    assert runner.prepare_grounded_lateral_hold_preflight(**args) is result
+    assert len(calls) == 1
+    assert calls[0]["diagnostic_report_path"] == source.resolve()
+    assert (runner._attempt_dir / "lateral_hold_preflights/000").is_dir()
+    assert runner._lateral_preflight_index == 1
+    with pytest.raises(ValueError, match="already used"):
+        runner.prepare_grounded_lateral_hold_preflight(**args)
+
+
 def test_attempt_rejects_changed_preflight_report_and_binding(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)
