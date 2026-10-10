@@ -342,8 +342,23 @@ The first independent helpers are in `precision_insertion/`:
   Even `coarse_match` is **not** the `preinsert_reached` label: that also needs
   verified trajectory completion, measured stationary arm/hand feedback,
   bounded key–hand relation and calibrated key/socket pose residual. This
-  observer is not yet wired into `SessionRunner.observe_stage`, nor can it
-  replace the endpoint and live-path preflight gates.
+  observer cannot replace the endpoint and live-path preflight gates.
+  `preinsert_checkpoint.assess_preinsert_checkpoint` now fuses its visual
+  assessment with a matching saved post-lift plan, same-session frozen socket
+  and camera calibration, provenance-verified raw preinsert bundle, measured
+  stationary Franka/Inspire joints, target hand-pose residual and an external
+  transfer execution log. The log schema is
+  `precision_insertion_transfer_execution_v1`: matching attempt/candidate IDs,
+  `started_at_s`, `completed_at_s`, tri-state `measurement` fields
+  `trajectory_complete`, `safety_abort`, `grasp_held`, and hashed absolute
+  `source_records` for `trajectory_feedback`, `safety`, `grasp_state`.
+  Visible two-view coarse alignment plus passing measured/log gates can yield
+  a provisional `preinsert_reached=True` checkpoint; occlusion gives unknown.
+  This read-only checkpoint is **not yet persisted or wired into**
+  `SessionRunner.observe_stage`: the old reference-only positive-stage API
+  must not be treated as a commissioned hardware arrival verdict. The module
+  checks source file consistency, not that the controller/clock/sensor producer
+  is authentic or that the grasp stayed rigid after the post-lift estimate.
   Local CPU tests cover assembly and adapter validation with a fake renderer;
   actual GPU rendering and optical alignment still require the AutoDex PC,
   its nvdiffrast/ParaDex dependencies, and calibrated live frames.
