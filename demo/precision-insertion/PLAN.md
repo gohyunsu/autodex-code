@@ -551,10 +551,15 @@ would miss). This is a diagnostic primitive, not a reset planner or execution
 permission. `preflight_v8_repose_transition` now joins a fresh, synchronized
 key/start observation to an insertion-eligible target pose, a provenance-bound
 directed v8 reset seed, AutoDex's unchanged pickup planner, and the
-socket-aware held lift/transfer/descent preflight. Its strongest possible
-status is `held_reset_path_available_release_unplanned`: **opening the hand,
-post-release retreat, landing-pose verification and live post-lift grasp
-relation are still outstanding**. An explicitly commissioned release XY and
+socket-aware held lift/transfer/descent preflight. With an explicitly chosen
+retreat arm goal and release-key clearance, `plan_repose_release_exit` also
+checks the hand-opening ramp, +10 cm vertical lift and original planner's
+joint-space retract against both floating-release and tabletop-rest key
+hypotheses while retaining the socket. Its strongest possible status is
+`nominal_reset_preflight_pass_drop_unobserved`: **actual detachment, dynamic
+drop, landing-pose verification and live post-lift grasp relation remain
+outstanding**. The retract is checked by cuRobo but has no independent
+full-visual-link sampled audit yet. An explicitly commissioned release XY and
 edge margin are required; the full key footprint is checked against the
 measured ChArUco corner hull, not the broad cuRobo table cuboid. The current held descent only
 supports nonzero v8 drop heights 4/8/12 cm; the original 0 cm reset cell is
@@ -586,6 +591,7 @@ demo/precision-insertion/
     path_audit.py                 # sampled held-key/hand scene collision checks
     repose_path_audit.py          # sampled held reset-path/fixture check, no execution
     repose_preflight.py           # v8 tabletop rest target and held reset path
+    repose_release.py             # nominal opening/+Z/retract, dual key hypotheses
     repose_transition.py          # seed -> AutoDex pickup -> held reset preflight
     xy_voting.py                  # read-only multi-view XY ID consensus
     xy_overlay.py                 # pixel-resolvability check and calibrated ID crops

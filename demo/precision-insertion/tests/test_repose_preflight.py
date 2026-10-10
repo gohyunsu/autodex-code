@@ -27,6 +27,9 @@ from precision_insertion.repose_preflight import (  # noqa: E402
 from precision_insertion.repose_transition import (  # noqa: E402
     preflight_v8_repose_transition,
 )
+from precision_insertion.repose_release import (  # noqa: E402
+    build_repose_release_world, plan_repose_release_exit,
+)
 from precision_insertion.world import add_fixed_mesh_fixtures  # noqa: E402
 
 
@@ -47,6 +50,7 @@ class _Planner:
     def __init__(self):
         self.calls = []
         self.reject_transfer = False
+        self.reject_postrelease = False
         self.pickup_plan = None
 
     def set_start_state(self, q):
@@ -81,12 +85,24 @@ class _Planner:
 
     def plan_vertical_stroke(self, start, wrist_start, wrist_end, *,
                              scene_cfg, **kwargs):
-        self.calls.append(("descent", sorted(scene_cfg["mesh"])))
+        stage = ("post_release_lift" if "released_rest_key" in scene_cfg["mesh"]
+                 else "descent")
+        self.calls.append((stage, sorted(scene_cfg["mesh"])))
+        if stage == "post_release_lift" and self.reject_postrelease:
+            return SimpleNamespace(success=False, trajectory=None,
+                                   failure_code="test_rejected")
         assert np.allclose(wrist_start[:3, 3], self.fk_wrist(start)[:3, 3])
         path = np.repeat(np.asarray(start)[None], 11, axis=0)
         path[:, 2] = np.linspace(start[2], wrist_end[2, 3], 11)
         return SimpleNamespace(success=True, trajectory=path,
                                failure_code=None)
+
+    def plan_js_to_init(self, scene, start_arm_qpos, *,
+                        start_hand_qpos, goal_arm_qpos):
+        self.calls.append(("retract", sorted(scene["mesh"])))
+        start = np.concatenate([start_arm_qpos, start_hand_qpos])
+        end = np.concatenate([goal_arm_qpos, start_hand_qpos])
+        return np.linspace(start, end, 11)
 
 
 def _fixture(tmp_path, monkeypatch):
@@ -107,6 +123,9 @@ def _fixture(tmp_path, monkeypatch):
     hand.apply_translation([0.0, 0.0, 0.06])
     monkeypatch.setattr(
         "precision_insertion.repose_path_audit._hand_link_meshes",
+        lambda *_: {"hand": hand})
+    monkeypatch.setattr(
+        "precision_insertion.repose_release._hand_link_meshes",
         lambda *_: {"hand": hand})
     board = {
         "table_surface_z_m": 0.0,
@@ -141,7 +160,7 @@ def _fixture(tmp_path, monkeypatch):
     pickup_q[:, 2] = 0.003
     pickup = SimpleNamespace(
         success=True, lift_preflight=object(), traj=pickup_q,
-        wrist_se3=initial)
+        wrist_se3=initial, pregrasp_pose=np.zeros(6))
     limits = PathAuditLimits(
         max_joint_step_rad=0.02, max_wrist_step_m=0.02,
         max_wrist_rotation_deg=1.0,
@@ -246,7 +265,7 @@ def test_v8_target_builder_uses_measured_table_and_rejects_bad_asset(
             asset_support_tolerance_m=limits.goal_position_tolerance_m)
 
 
-def _transition(tmp_path, calibration, scene, limits, planner):
+def _transition(tmp_path, calibration, scene, limits, planner, **overrides):
     catalog = {
         "shared_root": str(tmp_path),
         "mode": {"family": MODE.family, "gap_mm": MODE.gap_mm,
@@ -256,7 +275,7 @@ def _transition(tmp_path, calibration, scene, limits, planner):
     }
     q = np.zeros(13)
     q[0], q[2] = -0.10, 0.003
-    return preflight_v8_repose_transition(
+    args = dict(
         planner=planner, shared_root=tmp_path, mode=MODE,
         calibration=calibration, trial_scene=scene, catalog=catalog,
         from_pose_stem="000", to_pose_stem="001", height_cm=12,
@@ -267,6 +286,8 @@ def _transition(tmp_path, calibration, scene, limits, planner):
         max_symmetry_axis_tilt_deg=8.0,
         minimum_rest_socket_clearance_m=0.01,
         minimum_board_edge_clearance_m=0.01, limits=limits)
+    args.update(overrides)
+    return preflight_v8_repose_transition(**args)
 
 
 def test_v8_reset_seed_is_screened_then_planned_in_frozen_socket_world(
@@ -317,3 +338,104 @@ def test_repose_does_not_plan_if_target_has_no_insertable_grasp(
     assert result.status == "target_without_insertable_grasp"
     assert result.to_record()["robot_ready"] is False
     assert planner.calls == []
+
+
+def test_v8_reset_seed_requires_release_exit_when_requested(
+    tmp_path, monkeypatch,
+):
+    calibration, scene, pickup, _, limits = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    planner.pickup_plan = pickup
+    monkeypatch.setattr(
+        "precision_insertion.repose_transition.select_pose_candidates",
+        lambda *_, **__: {"status": "candidates_available",
+                        "candidates": [object()]})
+    monkeypatch.setattr(
+        "precision_insertion.repose_transition.classify_key_tabletop_pose",
+        lambda **_: {"stem": "000"})
+    initial = _pose(-0.10, 0.003)
+    monkeypatch.setattr(
+        "precision_insertion.repose_transition.load_v8_reset_seeds",
+        lambda **_: {
+            "n_total": 1, "wrist_se3": initial[None],
+            "pregrasp": np.zeros((1, 6)), "grasp": np.zeros((1, 6)),
+            "openpose_start": [None],
+            "scene_info": [{"grasp_idx": "191", "source": "/verified/191",
+                            "cell": "0_1"}],
+        })
+    retreat = np.zeros(7)
+    retreat[0], retreat[2] = -0.10, 0.30
+    result = _transition(
+        tmp_path, calibration, scene, limits, planner,
+        retreat_goal_arm_q=retreat, minimum_release_key_clearance_m=0.001)
+    assert result.status == "nominal_reset_preflight_pass_drop_unobserved"
+    assert result.release_plan.status == (
+        "nominal_release_exit_path_pass_drop_unobserved")
+    assert result.to_record()["robot_ready"] is False
+    assert result.attempted_seeds[0]["release_status"] == result.release_plan.status
+
+
+def test_release_world_and_exit_preflight_keep_socket_and_two_key_poses(
+    tmp_path, monkeypatch,
+):
+    calibration, scene, pickup, rest, limits = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    held = _plan(tmp_path, calibration, scene, pickup, rest, limits, planner)
+    world, floating = build_repose_release_world(
+        trial_scene=scene, calibration=calibration,
+        T_robot_key_rest=rest, release_height_m=held.release_height_m)
+    assert sorted(world["mesh"]) == [
+        "fixture_socket", "released_rest_key", "target"]
+    assert np.isclose(floating[2, 3], rest[2, 3] + 0.10)
+    goal = held.descent_trajectory[-1, :7].copy()
+    goal[0] -= 0.05
+    result = plan_repose_release_exit(
+        planner=planner, trial_scene=scene, shared_root=tmp_path,
+        calibration=calibration, mode=MODE, held_plan=held,
+        release_hand_q=np.zeros(6), retreat_goal_arm_q=goal,
+        minimum_release_key_clearance_m=0.001, limits=limits)
+    assert result.status == "nominal_release_exit_path_pass_drop_unobserved"
+    assert result.release_geometry_audit["sampled_clear"] is True
+    assert result.to_record()["robot_ready"] is False
+    assert planner.calls[-2:] == [
+        ("post_release_lift", ["fixture_socket", "released_rest_key", "target"]),
+        ("retract", ["fixture_socket", "released_rest_key", "target"]),
+    ]
+
+
+def test_release_exit_rejects_open_hand_inside_floating_key(
+    tmp_path, monkeypatch,
+):
+    calibration, scene, pickup, rest, limits = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    held = _plan(tmp_path, calibration, scene, pickup, rest, limits, planner)
+    hand = trimesh.creation.box(extents=(0.004, 0.004, 0.004))
+    monkeypatch.setattr(
+        "precision_insertion.repose_release._hand_link_meshes",
+        lambda *_: {"hand": hand})
+    result = plan_repose_release_exit(
+        planner=planner, trial_scene=scene, shared_root=tmp_path,
+        calibration=calibration, mode=MODE, held_plan=held,
+        release_hand_q=np.zeros(6),
+        retreat_goal_arm_q=np.zeros(7),
+        minimum_release_key_clearance_m=0.001, limits=limits)
+    assert result.status == "sampled_release_exit_rejected"
+    assert any(row["obstacle"] == "key/floating_release"
+               for row in result.release_geometry_audit["failures"]
+               if row["reason"] == "release_geometry_collision_or_clearance")
+    assert not any(call[0] == "retract" for call in planner.calls)
+
+
+def test_release_exit_rejects_mutated_held_path_evidence(tmp_path, monkeypatch):
+    calibration, scene, pickup, rest, limits = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    held = _plan(tmp_path, calibration, scene, pickup, rest, limits, planner)
+    held.descent_trajectory[1, 0] += 0.01
+    with pytest.raises(ValueError, match="evidence changed"):
+        plan_repose_release_exit(
+            planner=planner, trial_scene=scene, shared_root=tmp_path,
+            calibration=calibration, mode=MODE, held_plan=held,
+            release_hand_q=np.zeros(6),
+            retreat_goal_arm_q=np.zeros(7),
+            minimum_release_key_clearance_m=0.001, limits=limits)
+    assert not any(call[0] == "post_release_lift" for call in planner.calls)

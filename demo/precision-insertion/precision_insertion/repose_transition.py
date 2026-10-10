@@ -1,7 +1,8 @@
 """Read-only v8 reset-seed → AutoDex pickup → socket-aware held-path search.
 
-This is a planner preflight, not a reset executor. It does not open the hand,
-predict the drop, clear the released key, or certify physical reorientation.
+This is a planner preflight, not a reset executor. Optional nominal opening
+and retreat planning does not command the hand, predict a dynamic drop,
+observe the landed key, or certify physical reorientation.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from .pose_selection import classify_key_tabletop_pose
 from .repose_preflight import (
     ReposeHeldPreflight, build_v8_repose_rest_pose, plan_repose_held_chain,
 )
+from .repose_release import ReposeReleasePreflight, plan_repose_release_exit
 from .reset_candidates import load_v8_reset_seeds
 from .world import build_held_scene_from_trial, validated_frozen_socket_pose
 
@@ -39,6 +41,7 @@ class ReposeTransitionPreflight:
     attempted_seeds: tuple[dict[str, Any], ...]
     pickup_plan: Any | None
     held_plan: ReposeHeldPreflight | None
+    release_plan: ReposeReleasePreflight | None
     observation_id: str
     key_capture_timestamp_s: float
     start_q_acquisition_timestamp_s: float
@@ -57,13 +60,18 @@ class ReposeTransitionPreflight:
             "attempted_seeds": list(self.attempted_seeds),
             "held_plan": (None if self.held_plan is None
                           else self.held_plan.to_record()),
+            "release_plan": (None if self.release_plan is None
+                             else self.release_plan.to_record()),
             "observation_id": self.observation_id,
             "key_capture_timestamp_s": self.key_capture_timestamp_s,
             "start_q_acquisition_timestamp_s": self.start_q_acquisition_timestamp_s,
             "max_state_skew_s": self.max_state_skew_s,
             "not_validated": [
                 "live pickup/grasp and observed post-lift key-in-hand relation",
-                "release opening, post-release retreat and landing pose",
+                "physical hand opening, key detachment and dynamic drop",
+                *(["release and retreat planning absent"]
+                   if self.release_plan is None else []),
+                "actual landing pose and tabletop reclassification",
                 "robot execution, physical reset or insertion success",
             ],
             "robot_ready": False,
@@ -86,6 +94,8 @@ def preflight_v8_repose_transition(
     attempted_reset_ids: tuple[str, ...] = (),
     reset_candidate_root: Path | None = None,
     max_seed_attempts: int | None = None,
+    retreat_goal_arm_q: np.ndarray | None = None,
+    minimum_release_key_clearance_m: float | None = None,
 ) -> ReposeTransitionPreflight:
     """Try each stable directed v8 reset seed without driving the robot.
 
@@ -114,6 +124,16 @@ def preflight_v8_repose_transition(
     if max_seed_attempts is not None and (type(max_seed_attempts) is not int or
                                           max_seed_attempts <= 0):
         raise ValueError("max_seed_attempts must be a positive integer")
+    if (retreat_goal_arm_q is None) != (
+            minimum_release_key_clearance_m is None):
+        raise ValueError("release preflight needs both retreat goal and key clearance")
+    full_release = retreat_goal_arm_q is not None
+    if full_release:
+        retreat = np.asarray(retreat_goal_arm_q, dtype=np.float64)
+        release_clearance = float(minimum_release_key_clearance_m)
+        if (retreat.shape != (7,) or not np.all(np.isfinite(retreat)) or
+                not math.isfinite(release_clearance) or release_clearance <= 0):
+            raise ValueError("invalid release retreat goal or key clearance")
     if (type(height_cm) is not int or height_cm <= 0 or
             height_cm not in (4, 8, 12)):
         raise ValueError("held release preflight supports v8 heights 4, 8, 12 cm")
@@ -137,10 +157,11 @@ def preflight_v8_repose_transition(
         raise ValueError(f"insertion target catalog unavailable: {selected['reason']}")
 
     def result(status: str, *, rest=None, seed=None, attempts=(),
-               pickup=None, held=None) -> ReposeTransitionPreflight:
+               pickup=None, held=None, release=None) -> ReposeTransitionPreflight:
         return ReposeTransitionPreflight(
             status, source, target, height_cm, rest, seed, tuple(attempts),
-            pickup, held, observation_id, stamps[0], stamps[1], stamps[2])
+            pickup, held, release, observation_id, stamps[0], stamps[1],
+            stamps[2])
 
     if selected["status"] != "candidates_available":
         return result("target_without_insertable_grasp")
@@ -205,10 +226,28 @@ def preflight_v8_repose_transition(
             limits=limits)
         attempts.append({**seed_record, "status": planned.status})
         if planned.status == "sampled_held_path_pass_release_unplanned":
+            if full_release:
+                release = plan_repose_release_exit(
+                    planner=planner, trial_scene=trial_scene,
+                    shared_root=root, calibration=calibration, mode=mode,
+                    held_plan=planned,
+                    release_hand_q=np.asarray(
+                        pickup.pregrasp_pose, dtype=np.float64),
+                    retreat_goal_arm_q=retreat,
+                    minimum_release_key_clearance_m=release_clearance,
+                    limits=limits)
+                attempts[-1]["release_status"] = release.status
+                if release.status != (
+                        "nominal_release_exit_path_pass_drop_unobserved"):
+                    continue
+                return result("nominal_reset_preflight_pass_drop_unobserved",
+                              rest=rest, seed=seed_record, attempts=attempts,
+                              pickup=pickup, held=planned, release=release)
             return result("held_reset_path_available_release_unplanned",
                           rest=rest, seed=seed_record, attempts=attempts,
                           pickup=pickup, held=planned)
     return result(
         "reset_seed_budget_exhausted" if count < seeds["n_total"]
-        else "no_held_reset_path",
+        else ("no_nominal_reset_path" if full_release
+              else "no_held_reset_path"),
         rest=rest, attempts=attempts)

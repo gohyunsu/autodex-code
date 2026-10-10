@@ -711,17 +711,24 @@ state plus acquisition timestamps, reset-grasp fidelity limits, frozen-socket
 clearance, a measured ChArUco interior-edge clearance and path-audit limits.
 The entire key footprint must lie inside the measured ChArUco corner hull;
 the broad cuRobo table cuboid alone is insufficient. The function first
-requires an eligible
-insertion grasp at the *target* pose; then it loads provenance-bound reset
+requires an eligible insertion grasp at the *target* pose; then it loads
+provenance-bound reset
 seeds, plans one AutoDex pickup per seed and checks the same held key through
 lift, transfer and straight-down descent with the socket still present. The
 returned `ReposeTransitionPreflight.to_record()` can be saved alongside the
-trial report; its best status is
-`held_reset_path_available_release_unplanned`, **not** reset success or robot
+trial report. With no release goal, its best status is
+`held_reset_path_available_release_unplanned`. Supplying both an explicit
+7-joint `retreat_goal_arm_q` and `minimum_release_key_clearance_m` additionally
+preflights opening to AutoDex's pregrasp hand pose, a +10 cm vertical exit and
+the original planner's joint-space retract. The conservative world contains
+both a key left at the release height and a key at the selected tabletop rest
+pose; the hand is screened against both after opening. Its strongest status is
+`nominal_reset_preflight_pass_drop_unobserved`, **not** reset success or robot
 authorization. It has no CLI or motor mode yet. The 0 cm original AutoDex
-release cell, safe open-hand release/retreat, measured post-lift key/hand
-relation and landing verification remain to be
-implemented. See `tests/test_repose_preflight.py` for a fully offline usage
+release cell, measured post-lift key/hand relation, dynamic drop and landing
+verification remain to be implemented. The retract uses the original cuRobo
+collision checker; unlike opening and vertical exit, it has no separate
+full-visual-mesh sample audit yet. See `tests/test_repose_preflight.py` for a fully offline usage
 contract; its fake planner does not demonstrate real Franka reachability.
 If using the library's `reset_candidate_root` override for a staged handoff,
 pass the specific `reset_12/` directory for a 12 cm run; this differs from
