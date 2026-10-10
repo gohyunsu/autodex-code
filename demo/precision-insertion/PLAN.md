@@ -400,10 +400,12 @@ observed grasp verdict may unlock the post-lift endpoint/path replan. The
 read-only VLM observer checks temporal same-camera pairs. The new
 `lift_checkpoint.py` binds two saved key captures, their source PNG hashes,
 the measured hand state and the VLM prompt/raw answer; `SessionRunner` permits
-a positive grasp label only from that verified checkpoint. This positive
-path requires an admitted post-lift FoundPose, so an obvious miss with no
-held-key observation still needs a separate raw-frame negative-evidence
-path. `insertion_checkpoint.py` now adds a read-only path that binds either an
+a positive grasp label only from a verified checkpoint. The additional raw
+`after_lift` route lets the VLM make a two-view visible-held/miss/slip label
+without a new post-grasp FoundPose. A hidden key is unobservable and a raw
+positive routes to `held_relation_evidence_required`: it does not recover
+the 6D key–hand relation or authorize transfer.
+`insertion_checkpoint.py` now adds a read-only path that binds either an
 admitted pre-insertion key capture or raw pre-insertion camera frames to a
 later raw same-camera capture, saved
 prompt/raw VLM answer and hashed external depth/alignment/force/grip sources.

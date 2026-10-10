@@ -202,7 +202,11 @@ def observe_lift(backend: ImageVLM, frames: Sequence[LabeledFrame]) -> VLMObserv
         backend, stage="post_lift", frames=frames,
         prompt_body=(
             "Track the loose key relative to its tabletop location and the "
-            "robot hand. Classify only visible evidence. Hidden is not held. "
+            "robot hand. Classify held only when distinct key pixels visibly "
+            "move with the hand in the cited camera views; closed fingers, "
+            "a hidden key, or a commanded lift are not held evidence. "
+            "Classify only visible evidence. Hidden is not held; classify it "
+            "as unobservable. "
             "Return JSON only: "
             '{"class":"held|miss|slip|unobservable","evidence_views":'
             '["camera_id"],"evidence":"..."}. '

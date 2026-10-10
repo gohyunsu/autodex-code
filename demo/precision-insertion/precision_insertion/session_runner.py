@@ -27,8 +27,8 @@ from .key_perception import (
     KeyPoseObservation, verify_key_capture_artifacts,
 )
 from .lift_checkpoint import (
-    LiftCheckpoint, assess_lift_checkpoint, verify_lift_checkpoint,
-    write_lift_checkpoint,
+    LiftCheckpoint, assess_lift_checkpoint, assess_raw_lift_checkpoint,
+    verify_lift_checkpoint, write_lift_checkpoint,
 )
 from .geometry import validate_se3
 from .insertion_checkpoint import (
@@ -38,6 +38,7 @@ from .insertion_checkpoint import (
 from .endpoint import _load_mesh
 from .live_robot_state import LiveRobotState
 from .observer import ImageVLM
+from .raw_camera_capture import verify_raw_camera_capture
 from .outcome import InsertionEvidence
 from .path_audit import PathAuditLimits
 from .pose_selection import classify_key_tabletop_pose
@@ -194,6 +195,16 @@ class SessionRunner:
                     ("commissioned_robot_and_force_limits",
                      "independent_transfer_execution_evidence",
                      "fresh_preinsert_key_and_grip_observation"))
+            if (isinstance(self._lift_checkpoint, LiftCheckpoint) and
+                    self._lift_checkpoint.evidence_kind == "raw_visual" and
+                    self._attempt.labels["grasp_success"] is True and
+                    self._attempt.labels["preinsert_reached"] is None):
+                return SessionDecision(
+                    "held_relation_evidence_required",
+                    "visible_grasp_but_key_hand_pose_unknown",
+                    self._attempt.candidate_id,
+                    ("fresh_visible_key_pose_or_commissioned_grasp_relation",
+                     "uncertainty_bounded_socket_endpoint_and_path_preflight"))
             return decide_after_attempt(
                 self._attempt, max_xy_retries=self.max_xy_retries)
         if self._repose_preflight is not None:
@@ -623,6 +634,75 @@ class SessionRunner:
             self._attempted.add(tuple(updated.candidate_id.split("/")))
         return deepcopy(updated)
 
+    def _read_lift_execution(self, path: Path) -> tuple[Path, bytes, float]:
+        if self._attempt is None:
+            raise ValueError("lift needs an active physical attempt")
+        lift_file = Path(path).expanduser().resolve()
+        lift_bytes = lift_file.read_bytes()
+        execution = json.loads(lift_bytes)
+        if not isinstance(execution, dict):
+            raise ValueError("lift execution log must be a JSON object")
+        try:
+            completed = float(execution.get("completed_at_s", float("nan")))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("lift completion time is invalid") from exc
+        if (execution.get("schema") !=
+                "precision_insertion_lift_execution_v1" or
+                execution.get("attempt_id") != self._attempt.attempt_id or
+                execution.get("candidate_id") != self._attempt.candidate_id or
+                execution.get("trajectory_complete") is not True or
+                execution.get("force_abort") is not False or
+                not math.isfinite(completed) or
+                completed <= self._attempt.started_at_s):
+            raise ValueError("lift needs a completed non-aborted execution log")
+        return lift_file, lift_bytes, completed
+
+    def _save_lift_assessment(
+        self, *, result: LiftCheckpoint, lift_file: Path,
+        lift_bytes: bytes, completed: float,
+    ) -> LiftCheckpoint:
+        if (self._attempt is None or self._attempt_dir is None or
+                result.attempt_id != self._attempt.attempt_id or
+                result.candidate_id != self._attempt.candidate_id or
+                result.lift_completed_at_s != completed):
+            raise ValueError("lift checkpoint does not match this physical attempt")
+        output = (self._attempt_dir / "lift_assessments" /
+                  f"{self._lift_assessment_index:03d}")
+        write_lift_checkpoint(result, output)
+        report_path = output / "report.json"
+        verify_lift_checkpoint(report_path)
+        self._write_exclusive(output / "execution_binding.json", {
+            "schema": "precision_insertion_lift_execution_binding_v1",
+            "lift_execution_log": str(lift_file),
+            "lift_execution_log_sha256": hashlib.sha256(
+                lift_bytes).hexdigest(),
+            "lift_checkpoint_report_sha256": hashlib.sha256(
+                report_path.read_bytes()).hexdigest(),
+            "session_calibration_sha256": self.session_sha256,
+            "catalog_sha256": self.catalog_sha256,
+            "robot_ready": False,
+        })
+        self._lift_assessment_index += 1
+        self._lift_assessed_capture_ids.add(result.after_capture_id)
+        if result.grasp_success is not None:
+            self._lift_checkpoint = result
+            self._lift_report_path = report_path
+            self._lift_report_sha256 = hashlib.sha256(
+                report_path.read_bytes()).hexdigest()
+            self._lift_execution_path = lift_file
+            self._lift_execution_sha256 = hashlib.sha256(
+                lift_bytes).hexdigest()
+            refs = {
+                "vlm_observation": str(report_path),
+                ("raw_lift_visual" if result.evidence_kind == "raw_visual"
+                 else "key_wrist_check"): str(report_path),
+                "lift_execution": str(lift_file),
+            }
+            self.observe_stage(
+                "grasp_success", result.grasp_success,
+                timestamp_s=completed, evidence_refs=refs)
+        return result
+
     def prepare_observed_lift_label(
         self, *, planner, after_observation: KeyPoseObservation,
         after_key_evidence_dir: Path, joint_sample: LiveRobotState,
@@ -644,24 +724,8 @@ class SessionRunner:
                 self._preflight is None or self._key_evidence_dir is None or
                 after_observation.capture_id in self._lift_assessed_capture_ids):
             raise ValueError("lift assessment needs a new held-key capture for this attempt")
-        lift_file = Path(lift_execution_log_path).expanduser().resolve()
-        lift_bytes = lift_file.read_bytes()
-        execution = json.loads(lift_bytes)
-        if not isinstance(execution, dict):
-            raise ValueError("lift execution log must be a JSON object")
-        try:
-            completed = float(execution.get("completed_at_s", float("nan")))
-        except (TypeError, ValueError) as exc:
-            raise ValueError("lift completion time is invalid") from exc
-        if (execution.get("schema") !=
-                "precision_insertion_lift_execution_v1" or
-                execution.get("attempt_id") != self._attempt.attempt_id or
-                execution.get("candidate_id") != self._attempt.candidate_id or
-                execution.get("trajectory_complete") is not True or
-                execution.get("force_abort") is not False or
-                not math.isfinite(completed) or
-                completed <= self._attempt.started_at_s):
-            raise ValueError("lift needs a completed non-aborted execution log")
+        lift_file, lift_bytes, completed = self._read_lift_execution(
+            lift_execution_log_path)
         prior = self.postlift_candidate_pose_prior(
             planner=planner, joint_sample=joint_sample,
             max_arm_hand_skew_s=max_arm_hand_skew_s,
@@ -690,43 +754,54 @@ class SessionRunner:
             max_hand_command_error_raw=max_hand_command_error_raw,
             max_arm_velocity_rad_s=max_arm_velocity_rad_s,
             minimum_visual_views=minimum_visual_views)
-        if (result.attempt_id != self._attempt.attempt_id or
-                result.candidate_id != self._attempt.candidate_id or
-                result.lift_completed_at_s != completed):
-            raise ValueError("lift checkpoint does not match this physical attempt")
-        output = (self._attempt_dir / "lift_assessments" /
-                  f"{self._lift_assessment_index:03d}")
-        write_lift_checkpoint(result, output)
-        report_path = output / "report.json"
-        verify_lift_checkpoint(report_path)
-        self._write_exclusive(output / "execution_binding.json", {
-            "schema": "precision_insertion_lift_execution_binding_v1",
-            "lift_execution_log": str(lift_file),
-            "lift_execution_log_sha256": hashlib.sha256(
-                lift_bytes).hexdigest(),
-            "lift_checkpoint_report_sha256": hashlib.sha256(
-                report_path.read_bytes()).hexdigest(),
-            "session_calibration_sha256": self.session_sha256,
-            "catalog_sha256": self.catalog_sha256,
-            "robot_ready": False,
-        })
-        self._lift_assessment_index += 1
-        self._lift_assessed_capture_ids.add(after_observation.capture_id)
-        if result.grasp_success is not None:
-            self._lift_checkpoint = result
-            self._lift_report_path = report_path
-            self._lift_report_sha256 = hashlib.sha256(
-                report_path.read_bytes()).hexdigest()
-            self._lift_execution_path = lift_file
-            self._lift_execution_sha256 = hashlib.sha256(
-                lift_bytes).hexdigest()
-            refs = {"vlm_observation": str(report_path),
-                    "key_wrist_check": str(report_path),
-                    "lift_execution": str(lift_file)}
-            self.observe_stage(
-                "grasp_success", result.grasp_success,
-                timestamp_s=completed, evidence_refs=refs)
-        return result
+        return self._save_lift_assessment(
+            result=result, lift_file=lift_file,
+            lift_bytes=lift_bytes, completed=completed)
+
+    def prepare_raw_lift_label(
+        self, *, after_raw_evidence_dir: Path,
+        joint_sample: LiveRobotState, backend: ImageVLM,
+        lift_execution_log_path: Path, decision_timestamp_s: float,
+        max_phase_skew_s: float, max_lift_observation_gap_s: float,
+        max_arm_hand_skew_s: float, max_hand_command_error_raw: float,
+        max_arm_velocity_rad_s: float,
+        minimum_visual_views: int = 2,
+    ) -> LiftCheckpoint:
+        """Observe visible held/miss/slip without requiring post-lift FoundPose.
+
+        A raw visual success unlocks *relation calibration review*, not a
+        nominal BODex transfer. The existing transfer planner still needs an
+        independently bounded key–hand relation.
+        """
+        if (self.current_decision().action != "await_lift_observation" or
+                self._attempt is None or self._attempt_dir is None or
+                self._preflight is None or self._key_evidence_dir is None):
+            raise ValueError("raw lift needs an active selected grasp attempt")
+        after_root = Path(after_raw_evidence_dir).expanduser().resolve()
+        after = verify_raw_camera_capture(after_root, phase="after_lift")
+        if (after["capture_id"] in self._lift_assessed_capture_ids or
+                after["capture_id"] == self._preflight.key_observation_id):
+            raise ValueError("raw lift needs a new post-attempt camera capture")
+        lift_file, lift_bytes, completed = self._read_lift_execution(
+            lift_execution_log_path)
+        result = assess_raw_lift_checkpoint(
+            mode=self.mode, attempt_id=self._attempt.attempt_id,
+            candidate_id=self._attempt.candidate_id,
+            attempt_started_at_s=self._attempt.started_at_s,
+            lift_completed_at_s=completed,
+            decision_timestamp_s=decision_timestamp_s,
+            before_capture_id=self._preflight.key_observation_id,
+            before_bundle=self._key_evidence_dir, after_bundle=after_root,
+            joint_sample=joint_sample, backend=backend,
+            max_phase_skew_s=max_phase_skew_s,
+            max_lift_observation_gap_s=max_lift_observation_gap_s,
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s,
+            minimum_visual_views=minimum_visual_views)
+        return self._save_lift_assessment(
+            result=result, lift_file=lift_file,
+            lift_bytes=lift_bytes, completed=completed)
 
     def postlift_candidate_pose_prior(
         self, *, planner, joint_sample: LiveRobotState,
@@ -747,7 +822,8 @@ class SessionRunner:
                 self._attempt.labels["preinsert_reached"] is not None or
                 self.current_decision().action not in {
                     "await_lift_observation",
-                    "postlift_observed_preflight_required"}):
+                    "postlift_observed_preflight_required",
+                    "held_relation_evidence_required"}):
             raise ValueError("candidate pose prior needs an active selected lift")
         if not isinstance(joint_sample, LiveRobotState):
             raise TypeError("post-lift prior needs measured robot feedback")
@@ -799,8 +875,9 @@ class SessionRunner:
         if ((self._postlift_preflight is not None and
              self._postlift_preflight.status ==
              "sampled_postlift_preflight_pass") or
-                self.current_decision().action !=
-                "postlift_observed_preflight_required" or
+                self.current_decision().action not in {
+                    "postlift_observed_preflight_required",
+                    "held_relation_evidence_required"} or
                 self._attempt_dir is None or
                 self._attempt is None or self._preflight is None or
                 not isinstance(key_observation, KeyPoseObservation) or
@@ -912,7 +989,11 @@ class SessionRunner:
                     not isinstance(evidence_refs, Mapping) or
                     evidence_refs.get("vlm_observation") !=
                     str(self._lift_report_path) or
-                    evidence_refs.get("key_wrist_check") !=
+                    evidence_refs.get(
+                        "raw_lift_visual" if
+                        getattr(self._lift_checkpoint, "evidence_kind", None) ==
+                        "raw_visual"
+                        else "key_wrist_check") !=
                     str(self._lift_report_path) or
                     self._lift_execution_path is None or
                     evidence_refs.get("lift_execution") !=

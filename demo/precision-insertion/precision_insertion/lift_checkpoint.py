@@ -26,6 +26,7 @@ from .geometry import validate_se3
 from .key_perception import KeyPoseObservation, verify_key_capture_artifacts
 from .live_robot_state import LiveRobotState
 from .observer import ImageVLM, LabeledFrame, VLMObservation, observe_lift
+from .raw_camera_capture import verify_raw_camera_capture
 from .session_bootstrap import _safe_id
 
 
@@ -44,15 +45,22 @@ class LiftCheckpoint:
     before_manifest_sha256: str
     after_manifest_sha256: str
     frames: tuple[dict, ...]
-    center_rise_m: float
-    minimum_center_rise_m: float
+    center_rise_m: float | None
+    minimum_center_rise_m: float | None
     minimum_visual_views: int
     joint_sample: LiveRobotState
     visual: VLMObservation
+    evidence_kind: str = "foundpose_key_rise"
+    raw_timing: dict | None = None
 
     def to_record(self) -> dict:
         return {
-            "schema": "precision_insertion_lift_checkpoint_v1",
+            "schema": (
+                "precision_insertion_raw_lift_checkpoint_v1"
+                if self.evidence_kind == "raw_visual" else
+                "precision_insertion_lift_checkpoint_v1"),
+            "evidence_kind": self.evidence_kind,
+            "raw_timing": self.raw_timing,
             "attempt_id": self.attempt_id,
             "candidate_id": self.candidate_id,
             "grasp_success": self.grasp_success,
@@ -71,7 +79,10 @@ class LiftCheckpoint:
             "minimum_visual_views": self.minimum_visual_views,
             "joint_feedback": self.joint_sample.to_record(),
             "visual": self.visual.to_record(),
-            "scope": "saved_images_vlm_and_observed_key_rise_not_grasp_contact_proof",
+            "scope": (
+                "saved_raw_multiview_visible_key_not_6d_pose_or_contact_proof"
+                if self.evidence_kind == "raw_visual" else
+                "saved_images_vlm_and_observed_key_rise_not_grasp_contact_proof"),
             "robot_ready": False,
         }
 
@@ -246,6 +257,123 @@ def assess_lift_checkpoint(
         rise, min_center_rise_m, minimum_visual_views, joint_sample, visual)
 
 
+def _raw_lift_verdict(
+    *, visual_class: str, evidence_views: set[str],
+    parse_error: str | None, cameras: set[str], minimum_views: int,
+) -> tuple[bool | None, str]:
+    if (parse_error is not None or
+            len(evidence_views & cameras) < minimum_views):
+        return None, "raw_lift_visual_evidence_incomplete"
+    if visual_class == "held":
+        return True, "visible_key_held_in_paired_views"
+    if visual_class in {"miss", "slip"}:
+        return False, "visible_key_miss_or_slip_in_paired_views"
+    return None, "raw_lift_visual_evidence_incomplete"
+
+
+def assess_raw_lift_checkpoint(
+    *, mode: TaskMode, attempt_id: str, candidate_id: str,
+    attempt_started_at_s: float, lift_completed_at_s: float,
+    decision_timestamp_s: float, before_capture_id: str,
+    before_bundle: Path, after_bundle: Path, joint_sample: LiveRobotState,
+    backend: ImageVLM, max_phase_skew_s: float,
+    max_lift_observation_gap_s: float, max_arm_hand_skew_s: float,
+    max_hand_command_error_raw: float, max_arm_velocity_rad_s: float,
+    minimum_visual_views: int = 2,
+) -> LiftCheckpoint:
+    """Assess visible held/miss/slip without pretending to recover key 6D pose.
+
+    A positive label is a saved multi-camera *visual* grasp observation, not
+    a measured key–hand transform. It cannot by itself unlock transfer.
+    """
+    if (not isinstance(joint_sample, LiveRobotState) or
+            joint_sample.source != "robot_joint_feedback" or
+            type(minimum_visual_views) is not int or
+            minimum_visual_views < 2 or
+            not all(math.isfinite(float(x)) and float(x) > 0 for x in (
+                max_phase_skew_s, max_lift_observation_gap_s)) or
+            not all(math.isfinite(float(x)) for x in (
+                attempt_started_at_s, lift_completed_at_s,
+                decision_timestamp_s)) or
+            lift_completed_at_s <= attempt_started_at_s):
+        raise ValueError("raw lift needs measured joints and commissioned timing")
+    joint_sample.validate(
+        max_arm_hand_skew_s=max_arm_hand_skew_s,
+        max_hand_command_error_raw=max_hand_command_error_raw,
+        max_arm_velocity_rad_s=max_arm_velocity_rad_s)
+    before_root = Path(before_bundle).expanduser().resolve()
+    after_root = Path(after_bundle).expanduser().resolve()
+    before, before_hash = _saved_capture(before_root)
+    after = verify_raw_camera_capture(after_root, phase="after_lift")
+    after_hash = hashlib.sha256((after_root / "manifest.json").read_bytes()).hexdigest()
+    if (before.get("phase") != "tabletop" or
+            before.get("capture_id") != before_capture_id or
+            before.get("key_object") != mode.key_object or
+            before.get("family") != mode.family or
+            after["capture_id"] == before_capture_id):
+        raise ValueError("raw lift before/after images are not this key trial")
+    cameras = sorted(set(before["consistency"]["accepted_views"]) &
+                     set(after["frame_evidence"]))
+    if len(cameras) < minimum_visual_views:
+        raise ValueError("raw lift needs paired calibrated camera views")
+    subsets = {
+        "before_grasp": {c: before["frame_evidence"][c] for c in cameras},
+        "after_lift": {c: after["frame_evidence"][c] for c in cameras},
+    }
+    if any(bounded_capture_skew_s(rows) > max_phase_skew_s
+           for rows in subsets.values()):
+        raise ValueError("raw lift camera exposure skew exceeds limit")
+    before_upper = max(row["timestamp_s"] + row["max_error_s"]
+                       for row in subsets["before_grasp"].values())
+    after_lower = min(row["timestamp_s"] - row["max_error_s"]
+                      for row in subsets["after_lift"].values())
+    after_upper = max(row["timestamp_s"] + row["max_error_s"]
+                      for row in subsets["after_lift"].values())
+    if (before_upper >= attempt_started_at_s or
+            after_lower <= lift_completed_at_s or
+            after_lower - before_upper > max_lift_observation_gap_s or
+            decision_timestamp_s < max(after_upper,
+                                       joint_sample.sample_timestamp_s)):
+        raise ValueError("raw lift images do not bracket the physical lift")
+    frames, inputs = [], []
+    for phase, (root, source) in {
+            "before_grasp": (before_root, before),
+            "after_lift": (after_root, after)}.items():
+        for camera in cameras:
+            path = root / "images" / f"{_safe_id(camera, 'camera ID')}.png"
+            image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+            row = source["frame_evidence"][camera]
+            if image is None or image_sha256(image) != row["image_sha256"]:
+                raise ValueError("raw lift image differs from saved pixels")
+            frames.append(LabeledFrame(
+                camera, phase, row["timestamp_s"],
+                Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))))
+            inputs.append({
+                "phase": phase, "camera_id": camera, "path": str(path),
+                "file_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "frame_id": row["frame_id"],
+                "image_sha256": row["image_sha256"],
+                "timestamp_s": row["timestamp_s"],
+                "max_error_s": row["max_error_s"],
+            })
+    visual = observe_lift(backend, frames)
+    label, reason = _raw_lift_verdict(
+        visual_class=visual.parsed["class"],
+        evidence_views=set(visual.parsed["evidence_views"]),
+        parse_error=visual.parse_error, cameras=set(cameras),
+        minimum_views=minimum_visual_views)
+    return LiftCheckpoint(
+        attempt_id, candidate_id, label, reason,
+        lift_completed_at_s, decision_timestamp_s,
+        before_capture_id, after["capture_id"], before_root, after_root,
+        before_hash, after_hash, tuple(inputs), None, None,
+        minimum_visual_views, joint_sample, visual, "raw_visual", {
+            "attempt_started_at_s": attempt_started_at_s,
+            "max_phase_skew_s": max_phase_skew_s,
+            "max_lift_observation_gap_s": max_lift_observation_gap_s,
+        })
+
+
 def write_lift_checkpoint(result: LiftCheckpoint, output_dir: Path) -> Path:
     """Persist a VLM answer and immutable references to its exact PNG inputs."""
     target = Path(output_dir).expanduser().resolve()
@@ -261,8 +389,12 @@ def verify_lift_checkpoint(report_path: Path) -> dict:
     """Recheck report-to-capture/image bytes before using a lift verdict."""
     path = Path(report_path).expanduser().resolve()
     report = json.loads(path.read_text(encoding="utf-8"))
-    if (not isinstance(report, dict) or report.get("schema") !=
-            "precision_insertion_lift_checkpoint_v1" or
+    raw_visual = report.get("schema") == "precision_insertion_raw_lift_checkpoint_v1"
+    if (not isinstance(report, dict) or report.get("schema") not in {
+            "precision_insertion_lift_checkpoint_v1",
+            "precision_insertion_raw_lift_checkpoint_v1"} or
+            report.get("evidence_kind", "foundpose_key_rise") !=
+            ("raw_visual" if raw_visual else "foundpose_key_rise") or
             not isinstance(report.get("frames"), list) or
             not report["frames"] or
             report.get("visual", {}).get("stage") != "post_lift"):
@@ -277,12 +409,18 @@ def verify_lift_checkpoint(report_path: Path) -> dict:
     }
     saved = {}
     for phase, root in bundles.items():
-        record, digest = _saved_capture(root)
+        if raw_visual and phase == "after_lift":
+            record = verify_raw_camera_capture(root, phase="after_lift")
+            digest = hashlib.sha256(
+                (root / "manifest.json").read_bytes()).hexdigest()
+        else:
+            record, digest = _saved_capture(root)
         if digest != expected[phase]:
             raise ValueError("lift source capture manifest changed")
         saved[phase] = record
     if (saved["before_grasp"].get("phase") != "tabletop" or
-            saved["after_lift"].get("phase") != "held_postlift" or
+            saved["after_lift"].get("phase") !=
+            ("after_lift" if raw_visual else "held_postlift") or
             saved["before_grasp"].get("capture_id") !=
             report.get("before_capture_id") or
             saved["after_lift"].get("capture_id") !=
@@ -327,6 +465,41 @@ def verify_lift_checkpoint(report_path: Path) -> dict:
             phase_cameras["before_grasp"] != phase_cameras["after_lift"] or
             len(phase_cameras["before_grasp"]) < minimum_views):
         raise ValueError("lift VLM report lacks paired camera views")
+    if not phase_cameras["before_grasp"] <= set(
+            saved["before_grasp"]["consistency"]["accepted_views"]):
+        raise ValueError("lift VLM used an unadmitted tabletop view")
+    if raw_visual:
+        timing = report.get("raw_timing")
+        if not isinstance(timing, dict) or set(timing) != {
+                "attempt_started_at_s", "max_phase_skew_s",
+                "max_lift_observation_gap_s"}:
+            raise ValueError("raw lift lacks its acquisition timing limits")
+        started = float(timing["attempt_started_at_s"])
+        phase_skew = float(timing["max_phase_skew_s"])
+        max_gap = float(timing["max_lift_observation_gap_s"])
+        if (not all(math.isfinite(x) for x in (started, phase_skew,
+                                               max_gap)) or
+                min(phase_skew, max_gap) <= 0):
+            raise ValueError("invalid raw lift timing limits")
+        subsets = {
+            phase: {camera: saved[phase]["frame_evidence"][camera]
+                    for camera in phase_cameras[phase]}
+            for phase in bundles}
+        if any(bounded_capture_skew_s(rows) > phase_skew
+               for rows in subsets.values()):
+            raise ValueError("raw lift camera skew changed")
+        before_upper = max(row["timestamp_s"] + row["max_error_s"]
+                           for row in subsets["before_grasp"].values())
+        after_lower = min(row["timestamp_s"] - row["max_error_s"]
+                          for row in subsets["after_lift"].values())
+        after_upper = max(row["timestamp_s"] + row["max_error_s"]
+                          for row in subsets["after_lift"].values())
+        completed = float(report["lift_completed_at_s"])
+        if (not started < completed < after_lower or
+                before_upper >= started or
+                after_lower - before_upper > max_gap or
+                report["decision_timestamp_s"] < after_upper):
+            raise ValueError("raw lift frame times no longer bracket execution")
     visual = report["visual"]
     parsed = visual.get("parsed")
     if (not isinstance(parsed, dict) or
@@ -346,17 +519,28 @@ def verify_lift_checkpoint(report_path: Path) -> dict:
                 raise ValueError("lift raw and parsed VLM answers differ")
         except json.JSONDecodeError as exc:
             raise ValueError("saved lift raw VLM answer is not JSON") from exc
-    rise = float(report.get("center_rise_m", float("nan")))
-    minimum_rise = float(report.get("minimum_center_rise_m", float("nan")))
-    if (not math.isfinite(rise) or not math.isfinite(minimum_rise) or
-            minimum_rise <= 0):
-        raise ValueError("saved lift key-rise evidence is invalid")
-    label, reason = _lift_verdict(
-        visual_class=parsed["class"],
-        evidence_views=set(parsed["evidence_views"]),
-        parse_error=visual.get("parse_error"),
-        cameras=phase_cameras["before_grasp"], rise_m=rise,
-        minimum_rise_m=minimum_rise, minimum_views=minimum_views)
+    if raw_visual:
+        if (report.get("center_rise_m") is not None or
+                report.get("minimum_center_rise_m") is not None):
+            raise ValueError("raw lift must not invent key-center rise")
+        label, reason = _raw_lift_verdict(
+            visual_class=parsed["class"],
+            evidence_views=set(parsed["evidence_views"]),
+            parse_error=visual.get("parse_error"),
+            cameras=phase_cameras["before_grasp"],
+            minimum_views=minimum_views)
+    else:
+        rise = float(report.get("center_rise_m", float("nan")))
+        minimum_rise = float(report.get("minimum_center_rise_m", float("nan")))
+        if (not math.isfinite(rise) or not math.isfinite(minimum_rise) or
+                minimum_rise <= 0):
+            raise ValueError("saved lift key-rise evidence is invalid")
+        label, reason = _lift_verdict(
+            visual_class=parsed["class"],
+            evidence_views=set(parsed["evidence_views"]),
+            parse_error=visual.get("parse_error"),
+            cameras=phase_cameras["before_grasp"], rise_m=rise,
+            minimum_rise_m=minimum_rise, minimum_views=minimum_views)
     if report.get("grasp_success") is not label or report.get("reason") != reason:
         raise ValueError("saved lift label conflicts with its VLM/key evidence")
     return report

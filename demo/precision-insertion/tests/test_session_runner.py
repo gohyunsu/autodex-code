@@ -375,7 +375,9 @@ def test_lift_checkpoint_abstains_then_records_hash_bound_positive_label(
         calls.append(kwargs)
         return SimpleNamespace(
             attempt_id="attempt_1", candidate_id="table/0/3",
-            lift_completed_at_s=10.4, grasp_success=labels.pop(0))
+            lift_completed_at_s=10.4, grasp_success=labels.pop(0),
+            after_capture_id=kwargs["after_observation"].capture_id,
+            evidence_kind="foundpose_key_rise")
     def fake_write(result, output):
         output.mkdir(parents=True, exist_ok=False)
         (output / "report.json").write_text(

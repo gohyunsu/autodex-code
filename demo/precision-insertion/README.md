@@ -55,7 +55,8 @@ that session and catalogue. For each new key observation:
    commissioned adapter and the named safety gates.
 3. After the physical lift, `postlift_candidate_pose_prior` can use measured
    Franka/Inspire feedback and the selected v8 grasp to form a **loose**
-   search prior *before* the grasp-success verdict. Admit a new key capture
+   search prior *before* the grasp-success verdict. If the key remains visible,
+   admit a new key capture
    with `admit_postlift_key_capture` (phase `held_postlift`) and save it with
    `write_key_capture_artifacts`. Call `prepare_observed_lift_label` with
    that bundle, the same measured joint sample, a ZeroDex-compatible VLM
@@ -63,8 +64,14 @@ that session and catalogue. For each new key observation:
    uses the **saved** tabletop and post-lift raw frames, requires two paired
    camera views, and stores prompt/raw response plus source image hashes.
    A decisive visual/observed-key-rise result records `grasp_success`;
-   conflict or abstention leaves the label unknown. The candidate prior
-   alone never proves that the key was held. With an observed success, call
+   conflict or abstention leaves the label unknown. If the hand occludes
+   FoundPose, save a raw `after_lift` bundle with `write_raw_camera_capture`
+   and call `prepare_raw_lift_label` instead. It compares the same cameras'
+   before/after pixels and records held/miss/slip only when at least two
+   views show the key; occlusion is unknown. This raw route supplies **no**
+   key–hand transform and cannot authorize transfer. A raw positive leads to
+   `held_relation_evidence_required`, not a transfer command. The candidate prior
+   alone never proves that the key was held. With a pose-observed success, call
    `prepare_postlift_transfer` with that bundle and the *same* measured joint
    sample. It verifies the candidate/prior/frame binding, replaces the
    nominal grasp relation with the observed one, screens the measured hand
@@ -142,6 +149,10 @@ The lift adapter must provide a JSON execution log with schema
 `candidate_id`, `trajectory_complete: true`, `force_abort: false`, and
 `completed_at_s` between attempt start and the after-lift exposure.
 `prepare_observed_lift_label` hashes that log separately from the VLM report.
+`prepare_raw_lift_label` uses the same log and an `after_lift` raw capture
+manifest, but no post-lift FoundPose. A visible two-view result is a VLM
+label, not a 6D key pose or physical contact proof; first physical trials
+need human review of false positives and occlusion frequency.
 The physical lift completion is the attempt event time; the later VLM
 decision time is retained in the report. This is still an external execution
 assertion, not a robot-control interface. A clear miss with no admitted

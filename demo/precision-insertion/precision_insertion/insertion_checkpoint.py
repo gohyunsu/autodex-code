@@ -9,135 +9,50 @@ or certifies the camera/controller producers themselves.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 import hashlib
 import json
 import math
 from pathlib import Path
-from typing import Mapping
-
 import cv2
-import numpy as np
 from PIL import Image
 
-from .frame_provenance import (
-    bounded_capture_skew_s, image_sha256, verify_frame_provenance,
-)
+from .frame_provenance import bounded_capture_skew_s, image_sha256
 from .key_perception import verify_key_capture_artifacts
 from .observer import ImageVLM, LabeledFrame, observe_insertion_visual
 from .outcome import InsertionEvidence, judge_insertion
+from .raw_camera_capture import (
+    RawCameraCapture, verify_raw_camera_capture, write_raw_camera_capture,
+)
 from .session_bootstrap import _safe_id
 
 
-@dataclass(frozen=True)
-class FinalInsertionCapture:
-    """One same-request, full-frame AutoDex camera exposure."""
-
-    capture_id: str
-    request_id: int
-    images_bgr: Mapping[str, np.ndarray]
-    frame_ids: Mapping[str, int]
-    acquisition_metadata: Mapping
+FinalInsertionCapture = RawCameraCapture
 
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _write_raw_capture(
-    capture: FinalInsertionCapture, output_dir: Path, *, phase: str,
-) -> Path:
-    """Save raw pixels independently of post-grasp key pose estimation."""
-    if phase not in {"preinsert", "final_or_abort"}:
-        raise ValueError("unknown insertion raw capture phase")
-    if not isinstance(capture, FinalInsertionCapture):
-        raise TypeError("final capture must be a FinalInsertionCapture")
-    _safe_id(capture.capture_id, "final capture ID")
-    if type(capture.request_id) is not int or capture.request_id <= 0:
-        raise ValueError("final capture needs a positive request ID")
-    if len(capture.images_bgr) < 2:
-        raise ValueError("final capture needs at least two calibrated views")
-    evidence = verify_frame_provenance(
-        capture.acquisition_metadata, request_id=capture.request_id,
-        images_bgr=capture.images_bgr, frame_ids=capture.frame_ids)
-    target = Path(output_dir).expanduser().resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.mkdir(exist_ok=False)
-    image_dir = target / "images"
-    image_dir.mkdir()
-    hashes = {}
-    for camera, image in sorted(capture.images_bgr.items()):
-        path = image_dir / f"{_safe_id(camera, 'camera ID')}.png"
-        if not cv2.imwrite(str(path), image):
-            raise OSError(f"could not save final camera frame: {path}")
-        hashes[camera] = _sha(path)
-    manifest = {
-        "schema": "precision_insertion_raw_capture_v1",
-        "phase": phase,
-        "capture_id": capture.capture_id,
-        "request_id": capture.request_id,
-        "image_space": "autodex_undistorted_full_frame",
-        "frame_evidence": evidence,
-        "image_file_sha256": hashes,
-        "scope": "raw_camera_pixels_not_key_pose_or_insertion_success",
-        "robot_ready": False,
-    }
-    with (target / "manifest.json").open("x", encoding="utf-8") as stream:
-        json.dump(manifest, stream, indent=2, allow_nan=False)
-        stream.write("\n")
-    return target
-
-
 def write_preinsert_raw_capture(
     capture: FinalInsertionCapture, output_dir: Path,
 ) -> Path:
-    return _write_raw_capture(capture, output_dir, phase="preinsert")
+    return write_raw_camera_capture(capture, output_dir, phase="preinsert")
 
 
 def write_final_insertion_capture(
     capture: FinalInsertionCapture, output_dir: Path,
 ) -> Path:
-    return _write_raw_capture(capture, output_dir, phase="final_or_abort")
-
-
-def _verify_raw_capture(output_dir: Path, *, phase: str) -> dict:
-    """Reject changed PNGs, malformed timing or mismatched frame identities."""
-    root = Path(output_dir).expanduser().resolve()
-    report = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
-    if (not isinstance(report, dict) or
-            report.get("schema") != "precision_insertion_raw_capture_v1" or
-            report.get("phase") != phase or
-            report.get("image_space") != "autodex_undistorted_full_frame" or
-            len(report.get("frame_evidence", {})) < 2 or
-            set(report["frame_evidence"]) !=
-            set(report.get("image_file_sha256", {}))):
-        raise ValueError("invalid final raw capture manifest")
-    images, frame_ids = {}, {}
-    for camera in report["frame_evidence"]:
-        path = root / "images" / f"{_safe_id(camera, 'camera ID')}.png"
-        if not path.is_file() or _sha(path) != report["image_file_sha256"][camera]:
-            raise ValueError("final raw camera PNG changed")
-        image = cv2.imread(str(path), cv2.IMREAD_COLOR)
-        if image is None:
-            raise ValueError("final raw camera PNG cannot be decoded")
-        images[camera] = image
-        frame_ids[camera] = report["frame_evidence"][camera]["frame_id"]
-    expected = verify_frame_provenance(
-        {"request_id": report["request_id"],
-         "source": "camera_acquisition", "frames": report["frame_evidence"]},
-        request_id=report["request_id"], images_bgr=images,
-        frame_ids=frame_ids)
-    if expected != report["frame_evidence"]:
-        raise ValueError("final raw frame evidence changed")
-    return report
+    return write_raw_camera_capture(capture, output_dir,
+                                    phase="final_or_abort")
 
 
 def verify_preinsert_raw_capture(output_dir: Path) -> dict:
-    return _verify_raw_capture(output_dir, phase="preinsert")
+    return verify_raw_camera_capture(output_dir, phase="preinsert")
 
 
 def verify_final_insertion_capture(output_dir: Path) -> dict:
-    return _verify_raw_capture(output_dir, phase="final_or_abort")
+    return verify_raw_camera_capture(output_dir, phase="final_or_abort")
 
 
 def _metric_record(path: Path, *, attempt_id: str, candidate_id: str) -> tuple[dict, float, float]:

@@ -31,7 +31,7 @@ PREREQUISITE = {
     "retreat_success": "release_success",
 }
 TRUE_EVIDENCE = {
-    "grasp_success": frozenset({"vlm_observation", "key_wrist_check"}),
+    "grasp_success": frozenset({"vlm_observation"}),
     "preinsert_reached": frozenset({
         "trajectory", "key_socket_pose", "grasp_state",
         "postlift_preflight"}),
@@ -66,6 +66,10 @@ def _refs(value: Mapping[str, str], stage: str, status: bool | None) -> dict:
     if status is True and not TRUE_EVIDENCE[stage] <= refs.keys():
         missing = sorted(TRUE_EVIDENCE[stage] - refs.keys())
         raise ValueError(f"true {stage} missing evidence references: {missing}")
+    if (status is True and stage == "grasp_success" and
+            not ({"key_wrist_check", "raw_lift_visual"} & refs.keys())):
+        raise ValueError("true grasp missing evidence references: "
+                         "key_wrist_check or raw_lift_visual")
     return refs
 
 
