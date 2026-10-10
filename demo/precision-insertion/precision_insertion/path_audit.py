@@ -102,7 +102,10 @@ def _fixed_world_models(calibration) -> tuple[dict, dict]:
             raise FileNotFoundError(f"fixed scene mesh missing: {path}")
         pose = validate_se3(cart2se3(np.asarray(spec["pose"], dtype=float)),
                             name=f"fixed mesh {name} pose")
-        models[f"mesh/{name}"] = (_coal_mesh(_load_mesh(path)), pose)
+        mesh = _load_mesh(path)
+        if name == "fixture_socket" and not mesh.is_watertight:
+            raise ValueError("exact socket collision mesh is not watertight")
+        models[f"mesh/{name}"] = (_coal_mesh(mesh), pose)
         source_hashes[f"mesh/{name}"] = _sha256(path)
     for name, spec in sorted(scene["cuboid"].items()):
         dims = np.asarray(spec["dims"], dtype=np.float64)
@@ -216,7 +219,10 @@ def audit_held_joint_paths(
     robot_path = paths.robot_urdf
     if not key_path.is_file() or not robot_path.is_file():
         raise FileNotFoundError("full key CAD and Franka/Inspire URDF are required")
-    key_model = _coal_mesh(_load_mesh(key_path))
+    key_mesh = _load_mesh(key_path)
+    if not key_mesh.is_watertight:
+        raise ValueError("full key CAD mesh is not watertight")
+    key_model = _coal_mesh(key_mesh)
     hand_models = {
         name: _coal_mesh(mesh) for name, mesh in
         _hand_link_meshes(robot_path, hand_q).items()
