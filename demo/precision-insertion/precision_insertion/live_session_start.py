@@ -20,6 +20,7 @@ from .assets import AssetPaths
 from .calibration import SessionCalibration, load_session_calibration
 from .config import TaskMode
 from .geometry import validate_se3
+from .fixture_contract import validate_cylinder_socket_fixture
 from .live_capture import collect_board_snapshot, collect_socket_capture
 from .perception_evidence import SocketViewLimits
 from .session_bootstrap import (
@@ -97,6 +98,10 @@ def start_precision_session(
             not isinstance(base_scene.get("cuboid"), dict)):
         raise ValueError("base cuRobo scene needs mesh and cuboid dictionaries")
     paths = AssetPaths(root, mode)
+    if mode.family == "cylinder":
+        # Reject source-PC fixture paths or inconsistent CAD before the first
+        # board/socket camera request. This does not certify FoundPose.
+        validate_cylinder_socket_fixture(shared_root=root, mode=mode)
     socket_mesh = paths.raw_mesh(mode.socket_object)
     socket_repre = paths.foundpose_repre(mode.socket_object)
     socket_collision = paths.socket_collision_mesh

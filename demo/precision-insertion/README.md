@@ -1750,7 +1750,12 @@ helpers alone cannot authorize robot motion.
 those pieces into **one non-motion startup call** on the AutoDex robot PC. It
 first checks the v8 socket raw mesh, exact collision mesh and **canonical**
 socket FoundPose `repre.pth` at the explicit `shared_root`; pending
-synthetic-only PTH files are not used. With an already-streaming AutoDex
+synthetic-only PTH files are not used. Cylinder mode also checks that task
+geometry and the uncalibrated
+socket pose template reference that root's raw mesh, frame contract and
+FoundPose path, and that the fixture/object collision CAD bytes and rim frame
+agree. A source-PC absolute path now fails **before any camera capture**.
+With an already-streaming AutoDex
 camera rig and an independently commissioned `AcquisitionTimeProvider`, it
 collects the ChArUco board snapshot **before** initializing socket FoundPose,
 takes at least two unique-request socket captures while the key is absent,

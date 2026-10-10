@@ -25,6 +25,9 @@ from precision_insertion.config import (  # noqa: E402
     CYLINDER_RADIAL_GAPS_MM, select_mode,
 )
 from precision_insertion.endpoint import validate_task_geometry  # noqa: E402
+from precision_insertion.fixture_contract import (  # noqa: E402
+    validate_cylinder_socket_fixture,
+)
 
 
 _FIXTURE_FILES = (
@@ -256,14 +259,7 @@ def rehydrate(
             stream.write(data)
     for gap in CYLINDER_RADIAL_GAPS_MM:
         mode = select_mode("cylinder", gap)
-        fixture = (target / "AutoDex/precision_insertion/fixtures" /
-                   mode.socket_object)
-        geometry = json.loads((fixture / "task_geometry.json").read_text(
-            encoding="utf-8"))
-        validate_task_geometry(geometry, mode)
-        if (geometry["socket_pose_mesh"] !=
-                str(_socket_paths(target, mode.socket_object)["mesh"])):
-            raise ValueError(f"relocated socket mesh path mismatch: {mode.socket_object}")
+        validate_cylinder_socket_fixture(shared_root=target, mode=mode)
     with (work / "RELOCATION.json").open("xb") as stream:
         stream.write(_json_bytes(report))
     work.rename(report_dir)

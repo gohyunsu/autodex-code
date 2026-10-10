@@ -92,6 +92,10 @@ def _setup(tmp_path, monkeypatch, request_ids=(11, 12, 13)):
                         ("verify_session_evidence_bundle", verify),
                         ("load_session_calibration", reload)):
         monkeypatch.setattr(start, name, value)
+    # These ordering tests use tiny placeholder assets; the complete CAD
+    # contract is exercised independently by the fixture relocation tests.
+    monkeypatch.setattr(start, "validate_cylinder_socket_fixture",
+                        lambda **_kwargs: {"paths_bound_to_shared_root": True})
     identifiers = iter(request_ids)
     arguments = {
         "mode": mode, "shared_root": shared,
@@ -129,6 +133,18 @@ def test_missing_canonical_socket_repre_rejects_before_any_capture(
     arguments, events, repre = _setup(tmp_path, monkeypatch)
     repre.unlink()
     with pytest.raises(FileNotFoundError, match="FoundPose representation"):
+        start.start_precision_session(**arguments)
+    assert events == []
+
+
+def test_bad_fixture_contract_rejects_before_any_capture(tmp_path, monkeypatch):
+    arguments, events, _repre = _setup(tmp_path, monkeypatch)
+
+    def stale(**_kwargs):
+        raise ValueError("task geometry has a stale socket mesh path")
+
+    monkeypatch.setattr(start, "validate_cylinder_socket_fixture", stale)
+    with pytest.raises(ValueError, match="stale socket mesh path"):
         start.start_precision_session(**arguments)
     assert events == []
 

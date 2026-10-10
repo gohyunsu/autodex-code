@@ -15,6 +15,9 @@ from precision_insertion.config import (  # noqa: E402
     CYLINDER_RADIAL_GAPS_MM, select_mode,
 )
 from precision_insertion.endpoint import validate_task_geometry  # noqa: E402
+from precision_insertion.fixture_contract import (  # noqa: E402
+    validate_cylinder_socket_fixture,
+)
 from rehydrate_cylinder_socket_handoff import rehydrate  # noqa: E402
 
 
@@ -48,7 +51,8 @@ def _source(tmp_path: Path) -> tuple[Path, Path, Path]:
         frame_rel = obj_rel / "processed_data/info/frame_contract.json"
         collision_rel = obj_rel / "processed_data/mesh/static_collision.obj"
         _save(source / raw_rel, f"o {name}\nv 0 0 0\n")
-        _json(source / frame_rel, {"T_socket_raw_mesh": identity})
+        _json(source / frame_rel, {
+            "T_socket_raw_mesh": identity, "rim_z_m": .055})
         _save(source / collision_rel, f"o {name}_collision\nv 0 0 0\n")
         _save(source / fixture_rel / "static_collision.obj",
               (source / collision_rel).read_text())
@@ -60,6 +64,7 @@ def _source(tmp_path: Path) -> tuple[Path, Path, Path]:
             "key_object": mode.key_object,
             "socket_mesh": "static_collision.obj",
             "socket_pose_mesh": str(origin / raw_rel),
+            "socket_rim_z_m": .055,
             "T_socket_pose_object": identity,
             "T_socket_key_entry": pose(.135),
             "T_socket_key_verification": pose(.115),
@@ -118,6 +123,8 @@ def test_dry_run_then_installs_six_rebound_fixtures(tmp_path):
         assert not Path(template["pose_estimator_asset"]).exists()
         assert (received / "static_collision.obj").read_bytes() == (
             original / "static_collision.obj").read_bytes()
+        assert validate_cylinder_socket_fixture(
+            shared_root=target, mode=mode)["paths_bound_to_shared_root"] is True
         assert (target / "AutoDex/precision_insertion/cylindrical/"
                 "socket_fixture_handoff_relocation/original_templates" /
                 mode.socket_object / "task_geometry.json").read_bytes() == (
@@ -171,3 +178,31 @@ def test_unexpected_historical_path_or_geometry_is_rejected(tmp_path):
         rehydrate(source_shared_root=source, source_origin_shared_root=origin,
                   target_shared_root=target, install=True)
     assert not target.exists()
+
+
+def test_stale_template_and_collision_mismatch_fail_fixture_gate(tmp_path):
+    source, origin, target = _source(tmp_path)
+    rehydrate(source_shared_root=source, source_origin_shared_root=origin,
+              target_shared_root=target, install=True)
+    mode = select_mode("cylinder", 20)
+    template_path = _fixture(target, 20) / "fixture_pose.template.json"
+    template = json.loads(template_path.read_text())
+    template["pose_object_mesh"] = str(origin / "old_socket.obj")
+    _json(template_path, template)
+    with pytest.raises(ValueError, match="template is stale"):
+        validate_cylinder_socket_fixture(shared_root=target, mode=mode)
+    template["pose_object_mesh"] = str(
+        target / "object_processing" / mode.socket_object /
+        "raw_mesh" / f"{mode.socket_object}.obj")
+    _json(template_path, template)
+    _save(_fixture(target, 20) / "static_collision.obj", "wrong collision")
+    with pytest.raises(ValueError, match="collision meshes differ"):
+        validate_cylinder_socket_fixture(shared_root=target, mode=mode)
+    shutil.copyfile(_fixture(source, 20) / "static_collision.obj",
+                    _fixture(target, 20) / "static_collision.obj")
+    task_path = _fixture(target, 20) / "task_geometry.json"
+    task = json.loads(task_path.read_text())
+    task["socket_pose_mesh"] = str(origin / "old_socket.obj")
+    _json(task_path, task)
+    with pytest.raises(ValueError, match="stale socket mesh path"):
+        validate_cylinder_socket_fixture(shared_root=target, mode=mode)

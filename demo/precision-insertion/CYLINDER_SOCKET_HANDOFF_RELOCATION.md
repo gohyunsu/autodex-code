@@ -17,6 +17,9 @@ collision OBJ. It compares every pre-existing recipient file before writing;
 changed recipient CAD or geometry aborts the whole preflight. It preserves
 source template bytes and per-file hashes under
 `AutoDex/precision_insertion/cylindrical/socket_fixture_handoff_relocation/`.
+After installation, the same read-only fixture contract is checked for all six
+recipient sockets. Cylinder-mode live session startup repeats that check
+before requesting the first ChArUco frame.
 The final `RELOCATION.json` is a completion marker. An interrupted install
 without that file is **not** accepted as complete; inspect the staged
 `.socket_fixture_relocation.*` directory and target files before retrying.
