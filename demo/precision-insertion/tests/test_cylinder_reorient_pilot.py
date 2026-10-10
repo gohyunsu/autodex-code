@@ -12,6 +12,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from audit_cylinder_reorient_pilot import audit  # noqa: E402
+from promote_v8_reset_candidates import promote  # noqa: E402
+from precision_insertion.config import select_mode  # noqa: E402
+from precision_insertion.reset_candidates import load_v8_reset_seeds  # noqa: E402
 from stage_cylinder_reorient_proposals import KEY, PAIRS, PROXY, stage  # noqa: E402
 
 
@@ -22,13 +25,18 @@ def _stage_fixture(root: Path, *, expected: int = 2) -> tuple[Path, Path]:
         mesh = root / "object_processing" / obj / "processed_data/mesh/simplified.obj"
         mesh.parent.mkdir(parents=True)
         mesh.write_text("o test\n")
+        urdf = root / "object_processing" / obj / "processed_data/urdf/coacd.urdf"
+        urdf.parent.mkdir(parents=True)
+        urdf.write_text("<robot name='test'/>\n")
         for cell in PAIRS:
             i, j = map(int, cell.split("_"))
             scene = {
                 "meta": {"scene_type": "reorient_12", "pose_i": f"{i:03d}",
-                         "pose_j": f"{j:03d}", "h": 0.12, "version": "v8"},
+                         "pose_j": f"{j:03d}", "h": 0.12,
+                         "thickness": 0.01, "version": "v8"},
                 "scene": {
                     "mesh": {"target": {"file_path": str(mesh),
+                                        "urdf_path": str(urdf),
                                         "pose": [0, 0, 0, 1, 0, 0, 0],
                                         "scale": [1, 1, 1]}},
                     "cuboid": {"table_i": {}, "table_j": {}},
@@ -37,6 +45,19 @@ def _stage_fixture(root: Path, *, expected: int = 2) -> tuple[Path, Path]:
             path = scene_root / obj / "reorient_12" / f"{cell}.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(scene))
+            if obj == KEY:
+                bodex = (root / "object_processing" / KEY / "scene" /
+                         "reorient_12" / f"{cell}.json")
+                bodex.parent.mkdir(parents=True, exist_ok=True)
+                bodex.write_text(json.dumps(scene))
+    tabletop = (root / "object_processing" / KEY /
+                "processed_data/info/tabletop")
+    tabletop.mkdir(parents=True)
+    for pose in range(2):
+        np.save(tabletop / f"{pose:03d}.npy", np.eye(4))
+    raw_mesh = root / "object_processing" / KEY / "raw_mesh" / f"{KEY}.obj"
+    raw_mesh.parent.mkdir()
+    raw_mesh.write_text("o test\n")
     for cell in PAIRS:
         for seed in range(expected):
             seed_dir = raw / PROXY / "reorient_12" / cell / str(seed)
@@ -99,3 +120,71 @@ def test_audit_rejects_incomplete_or_inconsistent_filter(tmp_path):
     with pytest.raises(ValueError, match="inconsistent collision"):
         audit(stage_root=staged, output=tmp_path / "audit.json")
     assert not (tmp_path / "audit.json").exists()
+
+
+def test_promotes_only_stock_mujoco_pass_and_loads_direct_v8_cell(tmp_path):
+    raw, staged = _stage_fixture(tmp_path, expected=1)
+    raw_wrist = np.eye(4)
+    raw_wrist[0, 3] = 0.02
+    np.save(raw / PROXY / "reorient_12/0_1/0/wrist_se3.npy", raw_wrist)
+    stage(raw_root=raw, stage_root=staged,
+          shared_root=tmp_path, expected_per_cell=1)
+    stock = tmp_path / "stock_candidates"
+    for cell in PAIRS:
+        seed = staged / KEY / "reorient_12" / cell / "0"
+        success = cell == "0_1"
+        np.save(seed / "coll_valid.npy", success)
+        result = {"hand": "inspire", "version": "v8", "success": success}
+        if not success:
+            result["reason"] = "scene_collision"
+        (seed / "sim_eval.json").write_text(json.dumps(result))
+        if success:
+            stock_seed = stock / KEY / "reorient_12" / cell / "0"
+            stock_seed.mkdir(parents=True)
+            for name in ("wrist_se3.npy", "pregrasp_pose.npy",
+                         "grasp_pose.npy", "bodex_info.npy"):
+                (stock_seed / name).write_bytes((seed / name).read_bytes())
+    report_path = tmp_path / "audit.json"
+    audit(stage_root=staged, output=report_path)
+    promotion_path = tmp_path / "promotion.json"
+    stock_wrist = stock / KEY / "reorient_12/0_1/0/wrist_se3.npy"
+    np.save(stock_wrist, np.eye(4))
+    with pytest.raises(ValueError, match="stock/raw reset proposal mismatch"):
+        promote(shared_root=tmp_path, stage_root=staged,
+                stock_candidate_root=stock, audit_path=report_path,
+                output_manifest=promotion_path)
+    assert not promotion_path.exists()
+    assert not (tmp_path / "AutoDex/candidates/inspire/reset_12" /
+                KEY / "reorient_12/0_1/0").exists()
+    stock_wrist.write_bytes((staged / KEY /
+                             "reorient_12/0_1/0/wrist_se3.npy").read_bytes())
+    promoted = promote(
+        shared_root=tmp_path, stage_root=staged,
+        stock_candidate_root=stock, audit_path=report_path,
+        output_manifest=promotion_path)
+    assert promoted["promoted_count"] == 1
+    assert promoted["robot_ready"] is False
+    mode = select_mode("cylinder", 20)
+    T_robot_key = np.eye(4)
+    T_robot_key[:3, 3] = [0.5, 0.1, 0.2]
+    seeds = load_v8_reset_seeds(
+        shared_root=tmp_path, mode=mode, height_cm=12,
+        from_pose_stem="000", to_pose_stem="001", T_robot_key=T_robot_key)
+    assert seeds["n_total"] == 1
+    assert np.allclose(seeds["wrist_se3"][0], T_robot_key @ raw_wrist)
+    assert seeds["scene_info"][0]["v8_cell"] == "0_1"
+    assert seeds["robot_ready"] is False
+    assert load_v8_reset_seeds(
+        shared_root=tmp_path, mode=mode, height_cm=12,
+        from_pose_stem=1, to_pose_stem=0, T_robot_key=T_robot_key) is None
+    assert load_v8_reset_seeds(
+        shared_root=tmp_path, mode=mode, height_cm=12,
+        from_pose_stem=0, to_pose_stem=1, T_robot_key=T_robot_key,
+        attempted_ids=("000",)) is None
+    candidate = (tmp_path / "AutoDex/candidates/inspire/reset_12" / KEY /
+                 "reorient_12/0_1/0/grasp_pose.npy")
+    np.save(candidate, np.zeros(6))
+    with pytest.raises(ValueError, match="changed reset candidate file"):
+        load_v8_reset_seeds(
+            shared_root=tmp_path, mode=mode, height_cm=12,
+            from_pose_stem=0, to_pose_stem=1, T_robot_key=T_robot_key)

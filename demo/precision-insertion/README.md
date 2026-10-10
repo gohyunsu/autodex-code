@@ -419,9 +419,38 @@ PYTHONPATH=demo/precision-insertion \
 Use new output paths because staging and audits refuse overwrite and the
 stock filter caches each seed result. A zero-yield pilot does **not** prove
 reset grasps impossible; it shows this small proxy-proposal sample supplied
-none. More robust BODex proposals, a direct v8 reset loader, and socket-aware
+none. More robust BODex proposals and socket-aware
 Franka pickup–lift–reorient–place–retreat preflight remain required before
 automatic repose can replace `repose_required_unplanned`.
+
+The stock sim filter copies only the four grasp arrays to its passing output;
+it leaves `sim_eval.json` beside the raw proposal. Therefore that output must
+not be treated as a verified runtime reset pool by itself. After each **new**
+full-key filter run, `promote_v8_reset_candidates.py` checks the raw pass, the
+stock copy, and the staged scene hashes before writing each passing seed to
+`AutoDex/candidates/inspire/reset_12/<key>/reorient_12/<v8_i>_<v8_j>/<seed>`
+with a bound `sim_eval.json` and `source_evidence.json`. It never copies an
+unverified seed or replaces an existing canonical candidate. For this pilot:
+
+```bash
+PYTHONPATH=demo/precision-insertion \
+  ~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/promote_v8_reset_candidates.py \
+  --shared-root /home/hyunsu/shared_data \
+  --stage-root /home/hyunsu/shared_data/AutoDex/bodex_raw/inspire/precision_insertion_cylinder_reorient_fullkey_eval_pilot100_retry_20261010 \
+  --stock-candidate-root /home/hyunsu/shared_data/AutoDex/precision_insertion/cylinder_reorient_fullkey_sim_pass_pilot100_retry_20261010 \
+  --audit /home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_filter_audit_pilot100_retry_20261010.json \
+  --manifest /home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_promotion_pilot100_retry_20261010.json
+```
+
+[The promotion manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_promotion_pilot100_retry_20261010.json)
+records **zero** promoted seeds. For a later nonempty pool,
+`precision_insertion.reset_candidates.load_v8_reset_seeds` reads the direct
+v8 cell, converts each object-frame wrist transform using the *fresh* key
+pose, honors the original AutoDex reset-grasp success-rate ordering, and
+rejects changed seed/scene evidence. It is only a seed loader; it does not
+inherit the stock reset runner's legacy pose map, and it does not establish a
+socket-aware Franka path or authorize any motor command.
 
 For the cylindrical family, generate the key's BODex/MuJoCo v8 grasp pool
 **once**, then screen that same pool against **each** selected socket. A
