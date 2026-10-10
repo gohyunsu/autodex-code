@@ -10,15 +10,20 @@ calibration must already have passed the session's provenance checks.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
 from typing import Callable, Mapping
 
+import cv2
 import numpy as np
+from PIL import Image
 
 from .assets import AssetPaths
 from .config import TaskMode
 from .endpoint import _load_mesh
+from .frame_provenance import image_sha256
 from .geometry import validate_se3
+from .observer import HeldSceneView
 
 
 _RELATION_SOURCES = frozenset({
@@ -53,6 +58,29 @@ class HeldScenePrediction:
             "T_robot_socket_frozen": self.T_robot_socket.tolist(),
             "relation_source": self.relation_source,
             "scope": "rendered_hypothesis_not_observed_key_pose_or_motion_permission",
+            "robot_ready": False,
+        }
+
+
+@dataclass(frozen=True)
+class HeldSceneComparison:
+    """Paired VLM images and pixel digests; not camera producer provenance."""
+
+    views: tuple[HeldSceneView, ...]
+    pixel_digests: Mapping[str, Mapping[str, str]]
+    prediction: HeldScenePrediction
+
+    def to_record(self) -> dict:
+        return {
+            "schema": "precision_insertion_held_scene_comparison_v1",
+            "prediction": self.prediction.to_record(),
+            "views": {
+                view.camera_id: {
+                    "timestamp_s": view.timestamp_s,
+                    **self.pixel_digests[view.camera_id],
+                } for view in self.views
+            },
+            "scope": "paired_pixels_not_verified_capture_or_observed_key_pose",
             "robot_ready": False,
         }
 
@@ -216,3 +244,44 @@ def render_held_scene_overlays(
                 np.asarray(image).dtype != np.uint8 for image in rendered)):
         raise ValueError("renderer returned invalid camera overlays")
     return dict(zip(serials, rendered))
+
+
+def build_held_scene_comparison(
+    *, prediction: HeldScenePrediction,
+    frames_bgr: Mapping[str, np.ndarray],
+    frame_timestamps_s: Mapping[str, float],
+    intrinsics_undistorted: Mapping[str, np.ndarray],
+    T_camera_robot: Mapping[str, np.ndarray],
+    renderer_factory: Callable | None = None,
+) -> HeldSceneComparison:
+    """Prepare same-pixel raw/CAD pairs for the read-only preinsert observer.
+
+    These timestamps and camera matrices are caller-supplied; this adapter
+    does not verify exposure/frame IDs or session calibration. A live caller
+    must first admit the camera bundle through the demo's provenance checks.
+    """
+    if set(frame_timestamps_s) != set(frames_bgr):
+        raise ValueError("held-scene timestamps must match all camera frames")
+    timestamps = {serial: float(stamp)
+                  for serial, stamp in frame_timestamps_s.items()}
+    if not all(math.isfinite(stamp) and stamp > 0
+               for stamp in timestamps.values()):
+        raise ValueError("held-scene exposure times must be finite and positive")
+    overlays = render_held_scene_overlays(
+        prediction=prediction, frames_bgr=frames_bgr,
+        intrinsics_undistorted=intrinsics_undistorted,
+        T_camera_robot=T_camera_robot, renderer_factory=renderer_factory)
+    views = []
+    digests = {}
+    for serial in sorted(frames_bgr):
+        raw = np.asarray(frames_bgr[serial])
+        overlay = np.asarray(overlays[serial])
+        digests[serial] = {
+            "raw_image_sha256": image_sha256(raw),
+            "overlay_image_sha256": image_sha256(overlay),
+        }
+        views.append(HeldSceneView(
+            serial, timestamps[serial],
+            Image.fromarray(cv2.cvtColor(raw, cv2.COLOR_BGR2RGB)),
+            Image.fromarray(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB))))
+    return HeldSceneComparison(tuple(views), digests, prediction)

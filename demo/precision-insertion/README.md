@@ -332,6 +332,18 @@ The first independent helpers are in `precision_insertion/`:
   `v8_nominal_diagnostic` and `mujoco_achieved_diagnostic` are illustration
   sources, not calibrated transfer estimates. `verified_physical_grasp_calibration`
   is only a source label here, not a proof that uncertainty is acceptable.
+  `build_held_scene_comparison` converts same-pixel raw/overlay frames into
+  per-camera VLM pairs and records their decoded-pixel hashes. The timestamps
+  and calibration remain caller claims until checked against an admitted
+  same-session camera capture. `observer.observe_preinsert_hold_views` asks
+  each camera separately whether the *visible* key is still held and is
+  coarsely consistent with the predicted socket approach. Two synchronized
+  views must agree; conflict, occlusion or malformed output returns `unknown`.
+  Even `coarse_match` is **not** the `preinsert_reached` label: that also needs
+  verified trajectory completion, measured stationary arm/hand feedback,
+  bounded key–hand relation and calibrated key/socket pose residual. This
+  observer is not yet wired into `SessionRunner.observe_stage`, nor can it
+  replace the endpoint and live-path preflight gates.
   Local CPU tests cover assembly and adapter validation with a fake renderer;
   actual GPU rendering and optical alignment still require the AutoDex PC,
   its nvdiffrast/ParaDex dependencies, and calibrated live frames.

@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import math
+import re
 import time
 from typing import Protocol, Sequence
 
@@ -20,6 +21,9 @@ from .xy_voting import ViewVote, XYChoice, validate_choices
 
 class ImageVLM(Protocol):
     def infer(self, images: list[Image.Image], prompt: str) -> str: ...
+
+
+_CAMERA_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,21 @@ class XYView:
     timestamp_s: float
     raw: Image.Image
     overlay: Image.Image
+
+
+@dataclass(frozen=True)
+class HeldSceneView:
+    """Same-exposure raw frame and full-scene predicted-mesh overlay.
+
+    These pixels must be paired and source-bound by the caller. The overlay
+    is a hypothesis, not a measured key pose, even when generated from a
+    grasp-specific calibration.
+    """
+
+    camera_id: str
+    timestamp_s: float
+    raw: Image.Image
+    predicted_overlay: Image.Image
 
 
 @dataclass(frozen=True)
@@ -60,6 +79,23 @@ class VLMObservation:
             "backend_model": self.backend_model,
             "latency_s": self.latency_s,
             "scope": "read_only_vlm_observation_not_motion_authorization",
+        }
+
+
+@dataclass(frozen=True)
+class PreinsertVisualAssessment:
+    status: str
+    supporting_cameras: tuple[str, ...]
+    per_view: tuple[VLMObservation, ...]
+
+    def to_record(self) -> dict:
+        return {
+            "schema": "precision_insertion_preinsert_visual_v1",
+            "status": self.status,
+            "supporting_cameras": list(self.supporting_cameras),
+            "per_view": [row.to_record() for row in self.per_view],
+            "scope": "coarse_visual_check_not_metric_alignment_or_arrival_label",
+            "robot_ready": False,
         }
 
 
@@ -242,6 +278,87 @@ def observe_insertion_visual(
         }),
         fallback="unobservable",
     )
+
+
+def observe_preinsert_hold_views(
+    backend: ImageVLM, views: Sequence[HeldSceneView], *,
+    max_capture_skew_s: float, minimum_agreeing_views: int = 2,
+) -> PreinsertVisualAssessment:
+    """Compare raw and *predicted* meshes per camera, then demand consensus.
+
+    This deliberately does not estimate XY in millimetres. A coarse match is
+    only visual support: measured wrist/hand feedback, a validated key-hand
+    relation, collision-free arrival and calibrated socket-frame residuals
+    must still be checked before labelling ``preinsert_reached=True``.
+    """
+    if (type(minimum_agreeing_views) is not int or
+            minimum_agreeing_views < 2 or
+            not math.isfinite(float(max_capture_skew_s)) or
+            max_capture_skew_s <= 0 or len(views) < minimum_agreeing_views):
+        raise ValueError("preinsert check needs multiple synchronized views")
+    cameras = [view.camera_id for view in views]
+    if (any(not isinstance(camera, str) or not _CAMERA_ID.fullmatch(camera)
+            for camera in cameras) or
+            len(cameras) != len(set(cameras))):
+        raise ValueError("preinsert views need unique camera IDs with safe camera names")
+    times = [float(view.timestamp_s) for view in views]
+    if (not all(math.isfinite(value) and value > 0 for value in times) or
+            max(times) - min(times) > max_capture_skew_s):
+        raise ValueError("preinsert cameras are stale or asynchronous")
+    observations: list[VLMObservation] = []
+    for view in views:
+        if (not isinstance(view.raw, Image.Image) or
+                not isinstance(view.predicted_overlay, Image.Image) or
+                view.raw.size != view.predicted_overlay.size or
+                view.raw.mode != "RGB" or
+                view.predicted_overlay.mode != "RGB"):
+            raise ValueError("preinsert needs same-size RGB raw/overlay pairs")
+        frames = (
+            LabeledFrame(view.camera_id, "raw_preinsert", view.timestamp_s,
+                         view.raw),
+            LabeledFrame(view.camera_id, "predicted_scene", view.timestamp_s,
+                         view.predicted_overlay),
+        )
+        observations.append(_infer_closed_set(
+            backend, stage="preinsert_visual", frames=frames,
+            prompt_body=(
+                "Image 1 is the RAW camera frame. Image 2 is the same frame "
+                "with a translucent robot/key/socket CAD prediction. The CAD "
+                "key is a hypothesis, not observed evidence; synthetic "
+                "occlusions can be wrong. Inspect the RAW pixels first. "
+                "Choose coarse_match only if visible key pixels are still "
+                "carried by the hand and are grossly consistent with the "
+                "socket approach. Choose gross_misalignment if the visible "
+                "key/socket axes are plainly inconsistent, or slip_or_miss "
+                "if visible key pixels show the key is no longer held. "
+                "If the key/rim is occluded, pixels do not resolve the state, "
+                "or the overlay alone suggests success, choose unobservable. "
+                "Do not estimate millimetres, depth, or contact from images. "
+                'Return JSON only: {"class":"coarse_match|gross_misalignment|'
+                'slip_or_miss|unobservable","evidence_views":'
+                '["camera_id"],"evidence":"..."}. '
+                f"Use only camera ID {view.camera_id}."
+            ),
+            field="class", allowed=frozenset({
+                "coarse_match", "gross_misalignment", "slip_or_miss",
+                "unobservable",
+            }), fallback="unobservable",
+        ))
+    decisive: dict[str, list[str]] = {}
+    for view, observed in zip(views, observations):
+        category = observed.parsed["class"]
+        if (observed.parse_error is None and
+                category != "unobservable" and
+                observed.parsed["evidence"].strip() and
+                observed.parsed["evidence_views"] == [view.camera_id]):
+            decisive.setdefault(category, []).append(view.camera_id)
+    if (len(decisive) == 1 and
+            len(next(iter(decisive.values()))) >= minimum_agreeing_views):
+        status = next(iter(decisive))
+        support = tuple(sorted(decisive[status]))
+    else:
+        status, support = "unknown", ()
+    return PreinsertVisualAssessment(status, support, tuple(observations))
 
 
 def observe_xy_views(

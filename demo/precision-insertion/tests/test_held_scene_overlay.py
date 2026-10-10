@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -16,8 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.held_scene_overlay import (  # noqa: E402
-    build_held_scene_prediction, render_held_scene_overlays,
+    build_held_scene_comparison, build_held_scene_prediction,
+    render_held_scene_overlays,
 )
+from precision_insertion.observer import observe_preinsert_hold_views  # noqa: E402
 
 
 class _Robot:
@@ -124,3 +127,45 @@ def test_bad_relation_source_or_camera_set_fails_closed(tmp_path):
             prediction=prediction,
             frames_bgr={"cam": np.zeros((8, 8, 3), dtype=np.uint8)},
             intrinsics_undistorted={}, T_camera_robot={})
+
+
+def test_paired_mesh_comparison_feeds_per_view_preinsert_vlm(tmp_path):
+    prediction = _prediction(tmp_path)
+    frames = {camera: np.full((32, 48, 3), 20, dtype=np.uint8)
+              for camera in ("front", "side")}
+    K = np.array([[100, 0, 24], [0, 100, 16], [0, 0, 1]], dtype=float)
+
+    class FakeRenderer:
+        def __init__(self, meshes, names, labels, intrinsic, extrinsic, H, W):
+            self.serials = sorted(intrinsic)
+            self.n_links = len(meshes)
+            self.color_lut = torch.zeros((len(names) + 1, 3))
+            self.alpha_lut = torch.zeros((len(names) + 1, 1))
+
+        def render(self, poses, images):
+            return [np.full_like(image, 80) for image in images]
+
+    comparison = build_held_scene_comparison(
+        prediction=prediction, frames_bgr=frames,
+        frame_timestamps_s={"front": 10.0, "side": 10.01},
+        intrinsics_undistorted={camera: K for camera in frames},
+        T_camera_robot={camera: np.eye(4) for camera in frames},
+        renderer_factory=FakeRenderer)
+    assert len(comparison.views) == 2
+    assert comparison.views[0].raw.getpixel((0, 0)) == (20, 20, 20)
+    assert comparison.views[0].predicted_overlay.getpixel((0, 0)) == (80, 80, 80)
+    assert len(comparison.to_record()["views"]["front"]["raw_image_sha256"]) == 64
+    assert comparison.to_record()["prediction"]["robot_ready"] is False
+
+    class FakeVLM:
+        def infer(self, images, prompt):
+            camera = "front" if "Use only camera ID front" in prompt else "side"
+            return json.dumps({
+                "class": "coarse_match", "evidence_views": [camera],
+                "evidence": "visible key moves with hand",
+            })
+
+    visual = observe_preinsert_hold_views(
+        FakeVLM(), comparison.views, max_capture_skew_s=0.02)
+    assert visual.status == "coarse_match"
+    assert visual.to_record()["robot_ready"] is False
