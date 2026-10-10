@@ -39,6 +39,15 @@ default. Neither render pair is synchronized robot evidence, so this check
 establishes execution and parsing only, not label accuracy. Even at 512 tokens,
 malformed responses may occur and must remain fail-closed.
 
+An additional offline-cache RTX 3090 replay on 2026-10-11 loaded the same
+model and completed inference in 5.99 s. Its two presentation panels were
+*not* synchronized before/after frames. The model repeated a contradictory
+explanation until the 512-token limit and left its JSON unfinished; the
+checkpoint therefore recorded `parse_error` and `class=unobservable`. This
+confirms that local execution is available but a syntactically valid,
+evidence-grounded answer is not guaranteed. Do not interpret this probe as a
+grasp-success or model-accuracy measurement.
+
 ## Remaining validation before live use
 
 Collect time-synchronized, phase-paired **raw AutoDex camera images** with
