@@ -184,6 +184,7 @@ def screen_grasp_endpoint(
     *, shared_root: Path, mode: TaskMode, candidate_dir: Path,
     minimum_hand_clearance_m: float,
     xy_offset_socket_m: tuple[float, float] = (0.0, 0.0),
+    T_key_hand_override: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Screen CAD key/socket fit and Inspire links at one aligned 20 mm pose.
 
@@ -191,6 +192,8 @@ def screen_grasp_endpoint(
     function does not verify simulated grasp stability; callers must combine
     this result with independently checked v8/MuJoCo evidence. The offset is
     an absolute target in the *socket* XY frame, not a robot or camera delta.
+    A retry may substitute a separately verified post-lift ``T_key_hand``;
+    nominal Inspire squeeze joints remain modelled, not measured feedback.
     """
     if not math.isfinite(minimum_hand_clearance_m) or minimum_hand_clearance_m <= 0:
         raise ValueError("minimum_hand_clearance_m must be positive and calibrated")
@@ -220,8 +223,12 @@ def screen_grasp_endpoint(
     # to avoid binding the older system libstdc++. The CLI starts fresh.
     import coal  # noqa: F401
 
-    T_key_hand = validate_se3(np.load(files["wrist_se3"], allow_pickle=False),
-                              name="T_key_hand")
+    candidate_T_key_hand = validate_se3(
+        np.load(files["wrist_se3"], allow_pickle=False),
+        name="candidate T_key_hand")
+    T_key_hand = (candidate_T_key_hand if T_key_hand_override is None else
+                  validate_se3(T_key_hand_override,
+                               name="observed T_key_hand override"))
     hand_poses = nominal_inspire_hold_poses(
         np.load(files["pregrasp_pose"], allow_pickle=False),
         np.load(files["grasp_pose"], allow_pickle=False))
@@ -270,6 +277,10 @@ def screen_grasp_endpoint(
         "endpoint_pass": not key_fit["colliding"] and hand_pass,
         "method": "Coal triangle-mesh surface collision and minimum distance",
         "T_key_hand": T_key_hand.tolist(),
+        "T_key_hand_source": (
+            "v8_candidate" if T_key_hand_override is None
+            else "observed_postlift_override"),
+        "candidate_T_key_hand": candidate_T_key_hand.tolist(),
         "T_socket_key_verification": T_socket_key_nominal.tolist(),
         "T_socket_key_tested": T_socket_key.tolist(),
         "input_sha256": {name: _sha256(path) for name, path in files.items()},

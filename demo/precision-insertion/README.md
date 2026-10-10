@@ -70,9 +70,29 @@ The first independent helpers are in `precision_insertion/`:
   budget violations; it never averages candidate positions. The current VLM
   retry policy proposes only `hold` or one **1 mm** socket-frame axial step
   (`+X`, `-X`, `+Y`, `-Y`); diagonal and fractional-step votes are rejected.
-  These are raw hypotheses: exact key/socket/hand geometry and the live path
-  must screen them before they are offered to a VLM or robot. A `propose`
+  These are raw hypotheses: exact key/socket/hand endpoint geometry must
+  screen them before they are offered to a VLM; the selected live path must
+  be checked again before any robot movement. A `propose`
   result is not motion authorization or evidence of insertion success.
+- `xy_overlay.py` projects the already screened 1 mm candidate centers into
+  calibrated AutoDex views and produces matching raw/annotated 16:9 crops.
+  It checks candidate separation in the **original camera pixels** before
+  display enlargement. If fewer than two cameras resolve the offsets, the
+  VLM is not called. Cropping does not create missing visual information;
+  current overlays are center anchors, not rendered CAD silhouettes.
+- `xy_retry.py` combines the existing v8 pose/endpoint catalogue gate, fresh
+  20 mm geometry screens, camera projections, per-view ZeroDex-style VLM
+  choices and strict multi-view consensus. It runs only after an observed
+  insertion failure and caller-supplied evidence that guarded withdrawal
+  finished while the key remains held. It compares the multiview-key/live-
+  wrist-derived `T_key_hand` against the v8 grasp using commissioned drift
+  limits, then screens the actual observed rigid relation at each XY target;
+  a large drift stops the retry. Inspire finger configuration remains a
+  nominal controller model, not measured finger feedback.
+  It returns a **proposal requiring new live preflight**, never a Franka
+  command or a claim of insertion success. For a gap smaller than 1 mm, all
+  1 mm endpoint offsets may be geometrically impossible; that correctly
+  produces `no_safe_direction`, not an override from the VLM.
 - `endpoint.py` evaluates one fixed-grasp candidate using the full metric CAD
   key, exact socket collision mesh, and every Inspire visual link at the
   centered 20 mm insertion pose. It uses Coal triangle-mesh collision and
@@ -390,6 +410,31 @@ candidate and **zero** eligible; the cylindrical v8 pool has zero candidates
 and its catalogue is incomplete. The older `cylindrical_endpoint_diagnostics`
 images are separate raw reorientation-seed illustrations, **not** results of
 this verified renderer and not valid insertion-grasp success examples.
+
+For the isolated **1,000-proposal-per-tabletop-scene cylinder run**, use
+`render_offline_cylinder_filtered.py`. It independently verifies the complete
+2,000-seed stage, the original AutoDex scene/contact/MuJoCo counts, and every
+saved 20 mm screen against fresh exact-CAD screens before drawing any image.
+It renders all 13 accepted IDs for each of six cylindrical socket gaps
+(78 grasp–socket pairs), with oblique and side 16:9 views for both the MuJoCo
+squeeze and nominal AutoDex controller hold. The output stays separate from
+the empty live v8 grasp tree:
+
+```bash
+cd /home/hyunsu/autodex-code
+export PYTHONPATH=/home/hyunsu/autodex-code/demo/precision-insertion/compat
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/render_offline_cylinder_filtered.py \
+  --summary /home/hyunsu/shared_data/AutoDex/precision_insertion/cylinder_endpoint_screen_1000_squeeze_20261010/summary.json \
+  --shared-root /home/hyunsu/shared_data \
+  --output-root /home/hyunsu/shared_data/AutoDex/precision_insertion/visualizations/cylinder_offline_filtered_20mm_NEW_RUN
+```
+
+See each `gap_XXmm/pose_N/grasp_ID/` folder and the root `manifest.json` for
+evidence paths and images. These are **offline endpoint illustrations only**:
+there is no Franka arm pose, full path/contact validation, or robot insertion
+success. The 1 µm numerical hand clearance used in this run is not a safe
+physical margin. Do not call these runtime-ready grasp candidates.
 
 ### Replay a saved session and fresh key observation without robot motion
 

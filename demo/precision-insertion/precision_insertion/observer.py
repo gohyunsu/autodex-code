@@ -242,10 +242,11 @@ def observe_xy_views(
         order = _frame_order(frames)
         ids = ", ".join(catalog)
         prompt = (
-            "Image 1 is the RAW camera view; image 2 overlays allowed target "
-            "key poses on the same calibrated view. Overlay outlines are "
-            "predictions, not observed key poses. Choose the ID that reduces "
-            "visible key/socket centerline misalignment, or abstain if "
+            "Image 1 is the RAW camera crop; image 2 marks calibrated "
+            "candidate center anchors on the same crop. Markers are target "
+            "projections, not observed key poses or measured millimetres. "
+            "Choose the ID that reduces visible key/socket centerline "
+            "misalignment, or abstain if "
             "occluded, indistinguishable, tilted, or uncertain. Never invent "
             "coordinates or a new ID. "
             f"Allowed IDs: [{ids}]. Camera: {view.camera_id}. "

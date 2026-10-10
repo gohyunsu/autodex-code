@@ -1,0 +1,162 @@
+"""A VLM vote can propose, but cannot authorize, a one-millimetre retry."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+import sys
+
+import numpy as np
+from PIL import Image
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from autodex.utils.conversion import se32cart  # noqa: E402
+from precision_insertion.candidates import build_endpoint_catalog  # noqa: E402
+from precision_insertion.observer import LabeledFrame  # noqa: E402
+from precision_insertion.xy_retry import assess_xy_retry  # noqa: E402
+from test_candidates import _candidate_fixture, _session_record  # noqa: E402
+
+
+class FixedBackend:
+    model = "test-vlm"
+
+    def __init__(self):
+        self.calls = 0
+
+    def infer(self, _images, _prompt):
+        self.calls += 1
+        return json.dumps({
+            "visible": True, "choice_id": "x_plus_1mm",
+            "failure_class": "misaligned", "evidence": "visible lateral residual",
+        })
+
+
+def _setup(tmp_path, *, focal=4000):
+    mode, paths, candidates, catalog_screen = _candidate_fixture(tmp_path)
+    paths.task_geometry.write_text(json.dumps({
+        "T_socket_key_preinsert": np.eye(4).tolist(),
+    }), encoding="utf-8")
+    catalog = build_endpoint_catalog(
+        shared_root=tmp_path, mode=mode,
+        minimum_hand_clearance_m=0.0002, screen=catalog_screen)
+    record = _session_record(mode, paths)
+    record["c2r"] = np.eye(4).tolist()
+    world = {
+        "mesh": {"fixture_socket": {
+            "pose": se32cart(np.eye(4)).tolist(),
+            "file_path": str(paths.socket_collision_mesh.resolve()),
+        }},
+        "cuboid": {},
+    }
+    calibration = SimpleNamespace(
+        record=record, socket_pose_robot=np.eye(4), collision_scene=world)
+    K = [[focal, 0, 500], [0, focal, 400], [0, 0, 1]]
+    intrinsic = {serial: {"K_undist": K} for serial in ("a", "b")}
+    camera_pose = np.eye(4)
+    camera_pose[2, 3] = 1
+    extrinsic = {serial: camera_pose for serial in ("a", "b")}
+    frames = [LabeledFrame(
+        serial, "preinsert_hold", 100.0,
+        Image.new("RGB", (1000, 800), (100, 110, 120)))
+        for serial in ("a", "b")]
+
+    def xy_screen(**kwargs):
+        return {
+            "endpoint_pass": True,
+            "xy_offset_socket_m": list(kwargs["xy_offset_socket_m"]),
+            "verification_depth_m": mode.target_depth_m,
+            "T_key_hand": kwargs["T_key_hand_override"].tolist(),
+        }
+
+    return {
+        "shared_root": tmp_path, "mode": mode, "calibration": calibration,
+        "catalog": catalog, "candidate_key": ("table", "0", "1"),
+        "tabletop_pose_stem": "000",
+        "current_offset_socket_m": (0.0, 0.0),
+        "observed_T_key_hand": np.load(
+            candidates[0] / "wrist_se3.npy", allow_pickle=False),
+        "observed_key_hand_source": "multiview_key_pose_plus_live_wrist",
+        "max_grasp_translation_drift_m": 0.002,
+        "max_grasp_rotation_drift_deg": 5.0,
+        "failed_insertion_observed": True,
+        "guarded_withdrawal_complete": True,
+        "grasp_held": True, "hard_abort": False,
+        "frames": frames, "intrinsics_full": intrinsic,
+        "extrinsics_full": extrinsic,
+        "frame_timestamp_source": "camera_acquisition",
+        "backend": FixedBackend(), "max_total_offset_m": 0.002,
+        "minimum_anchor_separation_px": 3.0, "crop_width_px": 320,
+        "decision_timestamp_s": 100.05, "max_frame_age_s": 0.2,
+        "max_capture_skew_s": 0.02, "screen": xy_screen,
+    }
+
+
+def test_vlm_multiview_choice_is_only_a_replan_proposal(tmp_path):
+    args = _setup(tmp_path)
+    result = assess_xy_retry(**args)
+    assert result.status == "proposal_requires_live_preflight"
+    assert result.decision.status == "propose"
+    assert result.decision.offset_socket_m == pytest.approx((0.001, 0.0))
+    assert result.decision.supporting_cameras == ("a", "b")
+    assert args["backend"].calls == 2
+    assert result.to_record()["robot_ready"] is False
+    assert len(result.endpoint_screen["endpoint_clear_choice_ids"]) == 5
+
+
+def test_pixel_unresolvable_views_abstain_before_vlm(tmp_path):
+    args = _setup(tmp_path, focal=1000)
+    result = assess_xy_retry(**args)
+    assert result.status == "visual_abstain"
+    assert result.decision is None
+    assert args["backend"].calls == 0
+
+
+def test_hard_abort_stops_without_polling_vlm(tmp_path):
+    args = _setup(tmp_path)
+    args["hard_abort"] = True
+    result = assess_xy_retry(**args)
+    assert result.status == "stop"
+    assert args["backend"].calls == 0
+
+
+def test_endpoint_geometry_can_veto_all_one_mm_retry_directions(tmp_path):
+    args = _setup(tmp_path)
+
+    def tight_socket(**kwargs):
+        offset = tuple(kwargs["xy_offset_socket_m"])
+        return {
+            "endpoint_pass": offset == (0.0, 0.0),
+            "xy_offset_socket_m": list(offset),
+            "verification_depth_m": args["mode"].target_depth_m,
+        }
+
+    args["screen"] = tight_socket
+    result = assess_xy_retry(**args)
+    assert result.status == "no_safe_direction"
+    assert args["backend"].calls == 0
+    assert result.endpoint_screen["endpoint_clear_choice_ids"] == ["hold"]
+
+
+def test_retry_rejects_publish_timestamps_or_wrong_grasp(tmp_path):
+    args = _setup(tmp_path)
+    args["frame_timestamp_source"] = "foundpose_publish"
+    with pytest.raises(ValueError, match="acquisition-time"):
+        assess_xy_retry(**args)
+    args = _setup(tmp_path / "other")
+    args["candidate_key"] = ("table", "0", "2")
+    with pytest.raises(ValueError, match="not endpoint eligible"):
+        assess_xy_retry(**args)
+
+
+def test_observed_key_hand_drift_stops_retry_before_vlm(tmp_path):
+    args = _setup(tmp_path)
+    shifted = args["observed_T_key_hand"].copy()
+    shifted[0, 3] += 0.003
+    args["observed_T_key_hand"] = shifted
+    result = assess_xy_retry(**args)
+    assert result.status == "stop"
+    assert "relation_drift" in result.reason
+    assert args["backend"].calls == 0

@@ -11,8 +11,11 @@ import math
 from pathlib import Path
 from typing import Callable
 
+import numpy as np
+
 from .config import TaskMode
 from .endpoint import screen_grasp_endpoint
+from .geometry import validate_se3
 from .xy_voting import axis_1mm_proposals
 
 
@@ -20,6 +23,7 @@ def screen_axis_1mm_endpoint_choices(
     *, shared_root: Path, mode: TaskMode, candidate_dir: Path,
     current_offset_socket_m: tuple[float, float],
     max_total_offset_m: float, minimum_hand_clearance_m: float,
+    T_key_hand_override: np.ndarray | None = None,
     screen: Callable = screen_grasp_endpoint,
 ) -> dict:
     """Test hold and four cardinal 1 mm absolute targets at 20 mm depth.
@@ -35,6 +39,9 @@ def screen_axis_1mm_endpoint_choices(
     if (not math.isfinite(minimum_hand_clearance_m) or
             minimum_hand_clearance_m <= 0):
         raise ValueError("minimum_hand_clearance_m must be positive and finite")
+    if T_key_hand_override is not None:
+        T_key_hand_override = validate_se3(
+            T_key_hand_override, name="observed T_key_hand")
     choices = axis_1mm_proposals(current_offset_socket_m)
     current = choices[0].offset_socket_m
     rows = []
@@ -50,11 +57,15 @@ def screen_axis_1mm_endpoint_choices(
             "endpoint_pass": False,
         }
         if row["within_total_offset_budget"]:
+            kwargs = {}
+            if T_key_hand_override is not None:
+                kwargs["T_key_hand_override"] = T_key_hand_override
             report = screen(
                 shared_root=shared_root, mode=mode,
                 candidate_dir=candidate_dir,
                 minimum_hand_clearance_m=minimum_hand_clearance_m,
                 xy_offset_socket_m=target,
+                **kwargs,
             )
             if (report.get("xy_offset_socket_m") != list(target) or
                     report.get("verification_depth_m") != mode.target_depth_m):
@@ -76,6 +87,9 @@ def screen_axis_1mm_endpoint_choices(
         "current_offset_socket_m": list(current),
         "max_total_offset_m": max_total_offset_m,
         "minimum_hand_clearance_m": minimum_hand_clearance_m,
+        "T_key_hand_source": (
+            "v8_candidate" if T_key_hand_override is None
+            else "observed_postlift_override"),
         "rows": rows,
         "endpoint_clear_choice_ids": [
             row["choice_id"] for row in rows if row["endpoint_pass"]],

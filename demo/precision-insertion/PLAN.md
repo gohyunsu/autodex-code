@@ -450,6 +450,19 @@ replan from the live state, and rerun collision and force gates. Store an
 ablation of geometry-only, VLM-gated, and VLM-ranked XY selection with the
 same trial conditions.
 
+The demo now implements the read-only part of this chain in `xy_retry.py`:
+fresh exact-mesh 20 mm screens use the observed post-lift key/hand relation,
+`xy_overlay.py` projects the surviving 1 mm candidate centers into each
+calibrated view, and a minimum separation check on the **original** pixels
+rejects views that cannot resolve the candidates. The VLM sees raw/annotated
+crops and can return only an ID or abstain; the existing multi-view resolver
+requires agreement. This still lacks an executable guarded withdrawal,
+fresh-state XY path replan, contact controller, and measured Inspire joints.
+For 0.3/0.5 mm gaps, a full-depth 1 mm offset can be geometrically invalid;
+the screen correctly blocks it even if VLM votes for it. A finer or
+force-guided search would be a separate commissioned experiment, not a silent
+change to this requested 1 mm policy.
+
 For the initial professor-requested experiment, expose exactly two learnable
 execution parameters, `dx` and `dy` in the frozen socket frame. Build a small
 calibration-derived metric offset set inside the validated free space (for
@@ -521,6 +534,7 @@ demo/precision-insertion/
     targets.py                    # frozen-socket, rigid key/hand hold and 20 mm goals
     camera.py                     # unchanged AutoDex camera API adapter
     calibration.py                # read-only ChArUco/socket measurement and freeze; live capture adapter pending
+    perception_evidence.py        # per-view FoundPose quality and true capture-time gate
     symmetry.py                   # local square/cylinder pose handling
     world.py                      # fixed fixture and attached-key worlds
     candidates.py                 # v8 pose-indexed endpoint catalog and selection; live planning pending
@@ -529,6 +543,8 @@ demo/precision-insertion/
     planner.py                    # future motion authorization and XY replanning
     execution.py                  # Franka/Inspire and guarded stroke adapter
     xy_voting.py                  # read-only multi-view XY ID consensus
+    xy_overlay.py                 # pixel-resolvability check and calibrated ID crops
+    xy_retry.py                   # offline endpoint/overlay/VLM consensus proposal
     outcome.py                    # VLM-led tri-state insertion result fusion
     observer.py                   # read-only ZeroDex-backed VLM prompts, parsing, per-view votes
     recovery.py                   # retreat, repose, reorient, stop

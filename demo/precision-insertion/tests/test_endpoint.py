@@ -14,9 +14,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.config import select_mode  # noqa: E402
+from precision_insertion.assets import AssetPaths  # noqa: E402
 from precision_insertion.endpoint import (  # noqa: E402
     _nominal_inspire_hold_poses,
     _validate_geometry,
+    screen_grasp_endpoint,
 )
 
 
@@ -94,3 +96,43 @@ def test_triangle_mesh_collision_and_clearance_are_distinct():
     overlap = data["overlap"]
     assert overlap["colliding"] is True
     assert overlap["minimum_surface_distance_m"] == pytest.approx(0.0, abs=1e-8)
+
+
+def test_retry_endpoint_uses_observed_key_hand_transform(tmp_path, monkeypatch):
+    mode = select_mode("square", 1.5)
+    paths = AssetPaths(tmp_path, mode)
+    for file in (paths.raw_mesh(mode.key_object), paths.socket_collision_mesh,
+                 paths.robot_urdf):
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("placeholder mesh", encoding="utf-8")
+    paths.task_geometry.parent.mkdir(parents=True, exist_ok=True)
+    paths.task_geometry.write_text(json.dumps(_geometry()), encoding="utf-8")
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    np.save(candidate / "wrist_se3.npy", np.eye(4))
+    np.save(candidate / "pregrasp_pose.npy", np.zeros(6))
+    np.save(candidate / "grasp_pose.npy", np.ones(6) * 0.1)
+
+    class FakeMesh:
+        is_watertight = True
+
+    monkeypatch.setattr("precision_insertion.endpoint._load_mesh",
+                        lambda _path: FakeMesh())
+    monkeypatch.setattr("precision_insertion.endpoint._coal_mesh",
+                        lambda _mesh: object())
+    monkeypatch.setattr("precision_insertion.endpoint._mesh_pair_report",
+                        lambda *_args: {
+                            "colliding": False,
+                            "minimum_surface_distance_m": 0.01,
+                        })
+    monkeypatch.setattr("precision_insertion.endpoint._hand_link_meshes",
+                        lambda _urdf, _q: {"finger": FakeMesh()})
+    observed = np.eye(4)
+    observed[0, 3] = 0.001
+    result = screen_grasp_endpoint(
+        shared_root=tmp_path, mode=mode, candidate_dir=candidate,
+        minimum_hand_clearance_m=0.0002, T_key_hand_override=observed)
+    assert result["endpoint_pass"] is True
+    assert result["T_key_hand_source"] == "observed_postlift_override"
+    assert result["T_key_hand"][0][3] == pytest.approx(0.001)
+    assert result["candidate_T_key_hand"][0][3] == pytest.approx(0.0)
