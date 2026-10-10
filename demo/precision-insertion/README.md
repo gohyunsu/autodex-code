@@ -205,6 +205,10 @@ is descriptive, **not** a guaranteed future-trial error bound. It has not
 been connected to `prepare_postlift_transfer` or XY retry; both still require
 the existing independent held-key observation. No real calibration samples
 or commissioned error limits have been supplied yet.
+`verify_physical_held_relation` can later reconstruct the summary from the
+hashed source JSON files and the currently selected v8 `wrist_se3.npy`;
+changing either fails. This checks file consistency, not that the data were
+truly acquired from a physical robot or that claimed measurement bounds hold.
 
 Before permitting the occlusion route to drive a robot, separately validate
 repeatability on held-out physical pickups, bind the exact candidate and

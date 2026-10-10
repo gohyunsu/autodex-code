@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.physical_grasp_calibration import (  # noqa: E402
-    calibrate_physical_held_relation,
+    calibrate_physical_held_relation, verify_physical_held_relation,
 )
 
 
@@ -101,3 +101,26 @@ def test_unbound_fields_cannot_be_substituted_after_hashing(tmp_path):
     samples[0]["T_robot_hand_measured"][0][3] = 0.1
     with pytest.raises(ValueError, match="differ from hashed evidence"):
         _build(tmp_path, samples)
+
+
+def test_summary_rebuilds_from_sources_and_current_v8_candidate(tmp_path):
+    candidate = ("table", "000", "084")
+    samples = [_sample(tmp_path, i, candidate) for i in range(5)]
+    record = _build(tmp_path, samples)
+    candidate_dir = tmp_path / "candidate"
+    candidate_dir.mkdir()
+    np.save(candidate_dir / "wrist_se3.npy", np.eye(4))
+    kwargs = dict(record=record, mode=select_mode("square", 1.5),
+                  shared_root=tmp_path, candidate_key=candidate,
+                  candidate_dir=candidate_dir)
+    assert verify_physical_held_relation(**kwargs) == record
+    record["T_key_hand_medoid"][0][3] = 0.1
+    with pytest.raises(ValueError, match="summary differs"):
+        verify_physical_held_relation(**kwargs)
+    record = _build(tmp_path, samples)
+    kwargs["record"] = record
+    moved = np.eye(4)
+    moved[0, 3] = 0.01
+    np.save(candidate_dir / "wrist_se3.npy", moved)
+    with pytest.raises(ValueError, match="summary differs"):
+        verify_physical_held_relation(**kwargs)

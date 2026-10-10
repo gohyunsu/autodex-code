@@ -172,6 +172,10 @@ def calibrate_physical_held_relation(
         "candidate_T_key_hand": nominal.tolist(),
         "candidate_T_key_hand_sha256": hashlib.sha256(
             np.ascontiguousarray(nominal, dtype=np.float64).tobytes()).hexdigest(),
+        "selection_scales": {
+            "max_nominal_translation_drift_m": translation_scale,
+            "max_nominal_rotation_drift_deg": rotation_scale,
+        },
         "source": "distinct_physical_pickups_with_independent_key_and_wrist_measurement",
         "sample_count": len(admitted),
         "minimum_independent_trials": minimum_independent_trials,
@@ -198,3 +202,60 @@ def calibrate_physical_held_relation(
         "scope": "commissioning_summary_only_not_online_pose_or_motion_authorization",
         "robot_ready": False,
     }
+
+
+def verify_physical_held_relation(
+    *, record: Mapping, mode: TaskMode, shared_root: Path,
+    candidate_key: tuple[str, str, str], candidate_dir: Path,
+) -> dict:
+    """Rebuild a summary from immutable source files and current v8 grasp.
+
+    This proves internal file/summary consistency, not that the source files
+    are genuine physical measurements or that their stated errors are sound.
+    A moved or edited source file fails closed instead of silently promoting
+    stale evidence into a runtime held-key transform.
+    """
+    if (not isinstance(record, Mapping) or
+            record.get("schema") != "precision_insertion_physical_grasp_calibration_v1" or
+            record.get("candidate_key") != list(candidate_key) or
+            record.get("mode") != {
+                "family": mode.family, "gap_mm": mode.gap_mm,
+                "key_object": mode.key_object,
+                "socket_object": mode.socket_object,
+            }):
+        raise ValueError("physical calibration targets a different grasp or mode")
+    candidate_path = Path(candidate_dir).expanduser().resolve() / "wrist_se3.npy"
+    nominal = validate_se3(np.load(candidate_path, allow_pickle=False),
+                           name="current selected v8 T_key_hand")
+    scales = record.get("selection_scales")
+    samples = record.get("samples")
+    if not isinstance(scales, Mapping) or not isinstance(samples, list):
+        raise ValueError("physical calibration lacks reconstruction inputs")
+    inputs = []
+    for row in samples:
+        if not isinstance(row, Mapping):
+            raise ValueError("invalid physical calibration source row")
+        source_path = Path(row.get("evidence_path", "")).expanduser()
+        if not source_path.is_absolute() or not source_path.is_file():
+            raise ValueError("physical calibration source file is missing")
+        source_hash = row.get("evidence_sha256")
+        if source_hash != _file_sha256(source_path):
+            raise ValueError("physical calibration source evidence changed")
+        source_record = json.loads(source_path.read_text(encoding="utf-8"))
+        if not isinstance(source_record, dict):
+            raise ValueError("physical calibration source is not a JSON object")
+        inputs.append({**source_record,
+                       "evidence_path": str(source_path),
+                       "evidence_sha256": source_hash})
+    rebuilt = calibrate_physical_held_relation(
+        mode=mode, shared_root=shared_root, candidate_key=candidate_key,
+        candidate_T_key_hand=nominal, samples=inputs,
+        minimum_independent_trials=record.get("minimum_independent_trials"),
+        max_nominal_translation_drift_m=scales.get(
+            "max_nominal_translation_drift_m"),
+        max_nominal_rotation_drift_deg=scales.get(
+            "max_nominal_rotation_drift_deg"))
+    if json.dumps(rebuilt, sort_keys=True, allow_nan=False) != json.dumps(
+            dict(record), sort_keys=True, allow_nan=False):
+        raise ValueError("physical calibration summary differs from sources or v8 candidate")
+    return rebuilt
