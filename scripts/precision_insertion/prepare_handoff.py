@@ -43,6 +43,12 @@ PROXIES = (
     "precision_key_0p3mm_handle_contact_proxy",
 )
 SOCKET = "precision_socket_unified"
+CYLINDER_KEY = "precision_key_cylinder_r15_h80"
+CYLINDER_PROXY = f"{CYLINDER_KEY}_grip_proxy"
+CYLINDER_SOCKETS = tuple(
+    f"precision_socket_cylinder_gap_{gap:02d}mm"
+    for gap in (1, 3, 5, 10, 15, 20)
+)
 
 
 @dataclass(frozen=True)
@@ -204,6 +210,20 @@ def _specs(
         ),
         CopySpec(
             "canonical_source",
+            repo / "docs/precision_insertion_pose_catalog.md",
+            Path("source/autodex-code/docs/precision_insertion_pose_catalog.md"),
+            True,
+            "Pose-by-pose full-task evidence and AutoDex reorientation seed contract.",
+        ),
+        CopySpec(
+            "canonical_source",
+            repo / "tests/test_pose_task_catalog.py",
+            Path("source/autodex-code/tests/test_pose_task_catalog.py"),
+            True,
+            "Fail-closed catalog evidence checks.",
+        ),
+        CopySpec(
+            "canonical_source",
             repo / "tests/test_precision_insertion_assets.py",
             Path("source/autodex-code/tests/test_precision_insertion_assets.py"),
             True,
@@ -266,7 +286,8 @@ def _specs(
         ),
     ]
 
-    for name in (*KEYS, *PROXIES, SOCKET):
+    for name in (*KEYS, *PROXIES, SOCKET, CYLINDER_KEY,
+                 CYLINDER_PROXY, *CYLINDER_SOCKETS):
         specs.append(
             CopySpec(
                 "runtime",
@@ -276,7 +297,7 @@ def _specs(
                 "Metric object-processing asset.",
             )
         )
-    for name in (*KEYS, *PROXIES):
+    for name in (*KEYS, *PROXIES, CYLINDER_KEY, CYLINDER_PROXY):
         specs.append(
             CopySpec(
                 "runtime",
@@ -308,7 +329,7 @@ def _specs(
             "Source finger pose and contacts for the symmetry-derived rear insertion grasp preview.",
         )
     )
-    for name in (*KEYS, SOCKET):
+    for name in (*KEYS, SOCKET, CYLINDER_KEY, *CYLINDER_SOCKETS):
         specs.append(
             CopySpec(
                 "runtime_gate",
@@ -342,6 +363,14 @@ def _specs(
                     Path("reproducibility/precision_insertion_v4_common_grasp_sim_filter_pass.tar"),
                     False,
                     "Historical MuJoCo/scene-clearance evidence; not a whole-hand insertion proof.",
+                ),
+                CopySpec(
+                    "reproducibility",
+                    shared / "AutoDex/bodex_raw/inspire/"
+                    "precision_insertion_cylinder_reorient_proxy_pilot_100",
+                    Path("reproducibility/precision_insertion_cylinder_reorient_proxy_pilot_100.tar"),
+                    False,
+                    "Two-cell raw cylinder BODex reorientation pilot; no native successful seeds.",
                 ),
             ]
         )
@@ -454,6 +483,11 @@ def _open_items() -> str:
 7. Add phase-aligned multi-view evidence and a read-only, shadow-mode VLM
    evaluator. Do not transplant ZeroDex's current task checker as a safety or
    success authority without a strict schema and an `unknown` result.
+8. The pose-task catalog currently has no full-task simulation pass for any
+   square or cylindrical pose. The cylinder reorientation pilot saved raw
+   BODex seeds but no native BODex success or validated reset candidate.
+   Run contact/whole-hand, dynamics, and continuous full-chain gates before
+   copying anything into the AutoDex runtime reset pool.
 
 ## Assets intentionally not fabricated
 

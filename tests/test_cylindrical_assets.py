@@ -37,8 +37,14 @@ class CylindricalAssetsTest(unittest.TestCase):
                                      "simplified.json").read_text())
             proxy_symmetry = json.loads((proxy / "processed_data" / "info" /
                                          "symmetry.json").read_text())
+            proxy_mesh = trimesh.load(proxy / "processed_data" / "mesh" /
+                                      "simplified.obj", force="mesh", process=False)
             self.assertAlmostEqual(proxy_info["obb"][2], 0.08, places=8)
             self.assertEqual(proxy_symmetry["type"], "none")
+            self.assertEqual(manifest["grasp_generation_proxy"]["radial_segments"],
+                             builder.BODEX_PROXY_SEGMENTS)
+            self.assertLessEqual(len(proxy_mesh.vertices),
+                                 2 * builder.BODEX_PROXY_SEGMENTS + 2)
             for socket in manifest["sockets"]:
                 fixture = (shared / "AutoDex" / "precision_insertion" /
                            "fixtures" / socket["object"])

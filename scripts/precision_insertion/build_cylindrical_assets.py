@@ -44,6 +44,10 @@ KEY_SOURCE = "key_r15_h80.stl"
 KEY_RADIUS_M = 0.015
 KEY_HEIGHT_M = 0.080
 GRIP_ZONE_HEIGHT_M = 0.025
+# BODex's COAL contact convex hull fails on the 256-sided cylinder with
+# "Too many neighbors". This is proposal-only geometry: 64 sides differ from
+# the exact 15 mm radius by at most 0.0181 mm. Full-key gates use 256 sides.
+BODEX_PROXY_SEGMENTS = 64
 SOCKET_BASE_RADIUS_M = 0.060
 SOCKET_BASE_HEIGHT_M = 0.005
 SOCKET_RIM_Z_M = 0.055
@@ -355,7 +359,9 @@ def _build_key_proxy(source: Path, object_root: Path, project_root: Path) -> dic
     # cylinder from the source generator instead of clipping triangles.
     from generate_cylindrical_mesh import cylinder_mesh
 
-    proxy = cylinder_mesh(KEY_RADIUS_M, GRIP_ZONE_HEIGHT_M, segments=256)
+    proxy = cylinder_mesh(
+        KEY_RADIUS_M, GRIP_ZONE_HEIGHT_M, segments=BODEX_PROXY_SEGMENTS
+    )
     hull = convex_hull_mesh(proxy)
     root = object_root / KEY_PROXY_OBJECT
     raw = root / "raw_mesh"
@@ -425,6 +431,10 @@ def _build_key_proxy(source: Path, object_root: Path, project_root: Path) -> dic
         "object": KEY_PROXY_OBJECT,
         "runtime_object": KEY_OBJECT,
         "grip_zone_height_m": GRIP_ZONE_HEIGHT_M,
+        "radial_segments": BODEX_PROXY_SEGMENTS,
+        "max_radial_sagitta_m": KEY_RADIUS_M * (
+            1.0 - math.cos(math.pi / BODEX_PROXY_SEGMENTS)
+        ),
     }
 
 

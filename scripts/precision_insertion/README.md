@@ -722,6 +722,20 @@ video is therefore explicitly a composed presentation preview.
 The detailed current-vs-proposed pipeline comparison, including cuRobo and
 MuJoCo scope, is in `docs/autodex_vs_precision_insertion.md`.
 
+The pose-by-pose full-task evidence inventory and directed `i_j` reorientation
+scene/seed inventory are in
+`docs/precision_insertion_pose_catalog.md`. Regenerate their two JSON catalogs
+after any BODex, screening, simulation, or hardware-evidence update:
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  scripts/precision_insertion/build_pose_task_catalog.py \
+  --shared-root ~/shared_data --force
+```
+
+The files appear under `~/shared_data/AutoDex/precision_insertion/pose_task_catalog/`.
+They inventory evidence; they do not create or approve runtime candidates.
+
 The full presentation set lives under
 `~/shared_data/AutoDex/precision_insertion/presentation_assets`. Rebuild its
 pose-local inventory after rendering:

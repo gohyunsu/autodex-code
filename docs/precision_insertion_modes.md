@@ -1,5 +1,10 @@
 # Precision insertion: square and cylinder modes
 
+The per-tabletop evidence and directed reorientation seed inventory, including
+regeneration commands and the distinction between an untested pose and an
+exhausted finite candidate pool, is in
+[`precision_insertion_pose_catalog.md`](precision_insertion_pose_catalog.md).
+
 This is an implementation/status document, not a claim that the robot can
 perform insertion today. The present `run_pipeline.py` still performs the
 original grasp/lift/place action. `insertion_session.py` is an offline,
