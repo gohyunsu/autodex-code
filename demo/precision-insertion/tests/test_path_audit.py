@@ -21,6 +21,9 @@ from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.path_audit import (  # noqa: E402
     PathAuditLimits, audit_held_joint_paths, audit_held_lateral_path,
 )
+from precision_insertion.solid_occupancy import (  # noqa: E402
+    CylinderSocketOccupancy,
+)
 from precision_insertion.repose_path_audit import (  # noqa: E402
     audit_repose_held_paths,
 )
@@ -130,6 +133,46 @@ def _audit(tmp_path, fixture, transfer, descent):
         planner=_FakePlanner(), transfer_trajectory=transfer,
         descent_trajectory=descent, held_hand_q=np.zeros(6),
         limits=_limits())
+
+
+def test_cylinder_path_audit_uses_same_validated_bore_as_endpoint_screen(
+        tmp_path, monkeypatch):
+    from precision_insertion.path_audit import _fixed_world_models
+
+    mode = select_mode("cylinder", 1.0)
+    paths = AssetPaths(tmp_path, mode)
+    profile = np.array([
+        [0., 0.], [.06, 0.], [.06, .005], [.021, .005],
+        [.021, .055], [.016, .055], [.016, .005], [0., .005],
+    ])
+    paths.socket_collision_mesh.parent.mkdir(parents=True)
+    trimesh.creation.revolve(profile, sections=256).export(
+        paths.socket_collision_mesh)
+    geometry = {
+        "socket_bore_radius_m": .016,
+        "socket_bore_bottom_z_m": .005,
+        "socket_rim_z_m": .055,
+    }
+    paths.task_geometry.parent.mkdir(parents=True)
+    paths.task_geometry.write_text(json.dumps(geometry), encoding="utf-8")
+    # The task-geometry contract has its own tests. This isolates the path
+    # auditor's choice of already-validated analytic cylinder occupancy.
+    monkeypatch.setattr(
+        "precision_insertion.path_audit.validate_task_geometry",
+        lambda _geometry, _mode: np.eye(4))
+    board = {"table_surface_z_m": -.1}
+    scene = add_fixed_mesh_fixtures(
+        {"mesh": {}, "cuboid": {"table": table_cuboid(board)}},
+        {"fixture_socket": {"pose_robot": np.eye(4),
+                            "collision_mesh": paths.socket_collision_mesh}})
+    calibration = SessionCalibration(board, np.eye(4), {}, scene, {})
+    fixed, hashes = _fixed_world_models(
+        calibration, mode=mode, shared_root=tmp_path)
+    occupancy = fixed["mesh/fixture_socket"][3]
+    assert isinstance(occupancy, CylinderSocketOccupancy)
+    assert occupancy.classify(np.array([[0., 0., .03]])).intersects_solid is False
+    assert occupancy.classify(np.array([[.018, 0., .03]])).intersects_solid is True
+    assert len(hashes["task_geometry"]) == 64
 
 
 def test_sampled_path_checks_full_held_key_and_hand_without_authorizing_robot(

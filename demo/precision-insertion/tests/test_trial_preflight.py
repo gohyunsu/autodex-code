@@ -199,6 +199,73 @@ def test_fresh_trial_rejects_hand_drift_without_query_evidence(
         _run(tmp_path, fixture, _Planner())
 
 
+def test_rejected_sampled_path_keeps_collision_cause_after_next_grasp(
+    tmp_path, monkeypatch,
+):
+    fixture = _fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.build_rigid_insertion_targets",
+        lambda **_: SimpleNamespace(T_key_hand=np.eye(4)))
+    monkeypatch.setattr(
+        _Planner, "fk_wrist", lambda _self, _q: np.eye(4), raising=False)
+
+    def plan_after(*, pickup_plan, **_kwargs):
+        is_rejected = pickup_plan.scene_info[-1] == "2"
+        audit = ({
+            "sampled_clear": False,
+            "failures": [
+                {"stage": "lift", "sample": 1,
+                 "reason": "held_geometry_collision_or_clearance",
+                 "moving": "key", "obstacle": "cuboid/table",
+                 "colliding": True, "distance_m": 0.0},
+                {"stage": "lift", "sample": 1,
+                 "reason": "held_geometry_collision_or_clearance",
+                 "moving": "key", "obstacle": "cuboid/table",
+                 "colliding": True, "distance_m": 0.0},
+            ],
+            "minimum_surface_distances_m": {"key->cuboid/table": 0.0},
+        } if is_rejected else {"sampled_clear": True})
+        path = np.zeros((2, 13))
+        return InsertionPreflight(
+            "sampled_held_path_rejected" if is_rejected else
+            "sampled_planning_pass", path, path, path, audit, 1,
+            np.zeros(6), "commanded_nominal", ())
+
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.plan_insertion_after_pickup",
+        plan_after)
+    result = _run(tmp_path, fixture, _Planner())
+    assert result.status == "sampled_planning_pass"
+    rejected = result.to_record()["attempted_candidates"][1]
+    assert rejected["key"] == ["table", "0", "2"]
+    summary = rejected["sampled_audit_rejection"]
+    assert summary["failure_count"] == 2
+    assert summary["failure_counts"] == [{
+        "stage": "lift", "reason": "held_geometry_collision_or_clearance",
+        "count": 2}]
+    assert summary["first_failure"]["obstacle"] == "cuboid/table"
+    assert summary["minimum_surface_distances_m"] == {
+        "key->cuboid/table": 0.0}
+    assert summary["sample_counts"] == {
+        "lift": 2, "transfer": 2, "axial": 2}
+    assert summary["first_failure_sample_q"] == [0.0] * 13
+    assert np.asarray(summary["first_failure_T_robot_key"]) == pytest.approx(
+        np.eye(4))
+
+
+def test_rejected_sampled_path_cannot_hide_missing_audit(
+    tmp_path, monkeypatch,
+):
+    fixture = _fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.plan_insertion_after_pickup",
+        lambda **_: InsertionPreflight(
+            "sampled_held_path_rejected", None, None, None, None, 0,
+            np.zeros(6), "commanded_nominal", ()))
+    with pytest.raises(ValueError, match="lacks collision-audit evidence"):
+        _run(tmp_path, fixture, _Planner())
+
+
 def test_no_current_pose_grasp_requests_repose_only_if_other_stem_has_one(
     tmp_path, monkeypatch,
 ):

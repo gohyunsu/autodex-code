@@ -22,9 +22,9 @@ from autodex.utils.tabletop_geometry import table_cuboid
 
 from .assets import AssetPaths
 from .endpoint import (_coal_mesh, _coal_models_report, _hand_link_meshes,
-                       _load_mesh)
+                       _load_mesh, validate_task_geometry)
 from .geometry import pose_angle_deg, validate_se3
-from .solid_occupancy import SolidMeshOccupancy
+from .solid_occupancy import CylinderSocketOccupancy, SolidMeshOccupancy
 from .targets import InsertionTargets, build_rigid_insertion_targets
 from .world import validated_frozen_socket_pose
 
@@ -82,7 +82,7 @@ def _joint_path(value: np.ndarray, name: str,
     return path
 
 
-def _fixed_world_models(calibration) -> tuple[dict, dict]:
+def _fixed_world_models(calibration, *, mode, shared_root: Path) -> tuple[dict, dict]:
     """Build Coal surfaces and solid occupancy for the frozen world."""
     import coal  # noqa: F401 -- must precede trimesh on the AutoDex host
     import trimesh
@@ -98,6 +98,14 @@ def _fixed_world_models(calibration) -> tuple[dict, dict]:
         raise ValueError("table cuboid differs from frozen ChArUco measurement")
     models = {}
     source_hashes = {}
+    cylinder_geometry = None
+    if mode.family == "cylinder":
+        geometry_path = AssetPaths(shared_root, mode).task_geometry
+        geometry_bytes = geometry_path.read_bytes()
+        cylinder_geometry = json.loads(geometry_bytes)
+        validate_task_geometry(cylinder_geometry, mode)
+        source_hashes["task_geometry"] = hashlib.sha256(
+            geometry_bytes).hexdigest()
     for name, spec in sorted(scene["mesh"].items()):
         path = Path(spec["file_path"]).expanduser().resolve()
         if not path.is_file():
@@ -107,8 +115,12 @@ def _fixed_world_models(calibration) -> tuple[dict, dict]:
         mesh = _load_mesh(path)
         if name == "fixture_socket" and not mesh.is_watertight:
             raise ValueError("exact socket collision mesh is not watertight")
+        occupancy = (
+            CylinderSocketOccupancy(mesh, cylinder_geometry)
+            if name == "fixture_socket" and cylinder_geometry is not None else
+            SolidMeshOccupancy(mesh))
         models[f"mesh/{name}"] = (
-            _coal_mesh(mesh), pose, mesh, SolidMeshOccupancy(mesh))
+            _coal_mesh(mesh), pose, mesh, occupancy)
         source_hashes[f"mesh/{name}"] = _sha256(path)
     for name, spec in sorted(scene["cuboid"].items()):
         dims = np.asarray(spec["dims"], dtype=np.float64)
@@ -164,7 +176,8 @@ def _audit_held_geometry_samples(
     volume or contact-force proof. In particular, a lateral hold shift never
     exempts its first key/table sample.
     """
-    fixed, world_hashes = _fixed_world_models(calibration)
+    fixed, world_hashes = _fixed_world_models(
+        calibration, mode=mode, shared_root=shared_root)
     paths = AssetPaths(Path(shared_root).expanduser().resolve(), mode)
     key_path = paths.raw_mesh(mode.key_object)
     robot_path = paths.robot_urdf

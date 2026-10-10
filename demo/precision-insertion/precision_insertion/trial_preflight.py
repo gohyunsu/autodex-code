@@ -8,6 +8,7 @@ candidate. No planning result is a physical grasp or insertion success label.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 import hashlib
 import json
@@ -39,6 +40,69 @@ def _canonical_sha256(value: dict) -> str:
     return hashlib.sha256(json.dumps(
         value, sort_keys=True, separators=(",", ":"), allow_nan=False,
     ).encode("utf-8")).hexdigest()
+
+
+def _rejected_path_summary(trial: InsertionPreflight, *, planner,
+                           targets) -> dict:
+    """Retain why a failed sampled candidate was skipped, without dense paths.
+
+    The selected candidate's full audit is saved elsewhere. Previously every
+    rejected candidate lost its collision/clearance evidence, making a pose
+    exhaustion or pilot-budget report impossible to diagnose afterward.
+    """
+    audit = trial.sampled_held_path_audit
+    if (trial.status != "sampled_held_path_rejected" or
+            not isinstance(audit, dict) or audit.get("sampled_clear") is not False or
+            not isinstance(audit.get("failures"), list) or
+            not audit["failures"] or
+            not isinstance(audit.get("minimum_surface_distances_m"), dict)):
+        raise ValueError("rejected sampled path lacks collision-audit evidence")
+    failures = audit["failures"]
+    if any(not isinstance(failure, dict) or
+           not isinstance(failure.get("stage"), str) or
+           not isinstance(failure.get("reason"), str)
+           for failure in failures):
+        raise ValueError("rejected sampled path has malformed failures")
+    counts = Counter((row["stage"], row["reason"]) for row in failures)
+    summary = {
+        "failure_count": len(failures),
+        "failure_counts": [
+            {"stage": stage, "reason": reason, "count": count}
+            for (stage, reason), count in sorted(counts.items())
+        ],
+        "first_failure": failures[0],
+        "minimum_surface_distances_m": audit["minimum_surface_distances_m"],
+        "sample_counts": {
+            "lift": None if trial.lift_trajectory is None else
+            len(trial.lift_trajectory),
+            "transfer": None if trial.transfer_trajectory is None else
+            len(trial.transfer_trajectory),
+            "axial": None if trial.axial_trajectory is None else
+            len(trial.axial_trajectory),
+        },
+        "scope": "sampled_numerical_rejection_not_physical_failure",
+    }
+    first = failures[0]
+    path = {
+        "lift": trial.lift_trajectory,
+        "transfer": trial.transfer_trajectory,
+        "descent": trial.axial_trajectory,
+    }.get(first["stage"])
+    sample = first.get("sample")
+    if (path is not None and type(sample) is int and
+            0 <= sample < len(path)):
+        q = np.asarray(path[sample], dtype=float)
+        if q.shape != (13,) or not np.all(np.isfinite(q)):
+            raise ValueError("rejected path sample lacks finite 13-DOF state")
+        wrist = validate_se3(planner.fk_wrist(q), name="failed wrist FK")
+        key = validate_se3(
+            wrist @ np.linalg.inv(targets.T_key_hand),
+            name="rigid failed key FK")
+        summary["first_failure_sample_q"] = q.tolist()
+        summary["first_failure_T_robot_key"] = key.tolist()
+        summary["first_failure_geometry_scope"] = (
+            "rigid_nominal_key_hand_transform_not_measured_post_squeeze")
+    return summary
 
 
 @dataclass(frozen=True)
@@ -319,6 +383,9 @@ def plan_fresh_key_trial(
                 held_hand_q=hold, held_hand_source="commanded_nominal",
                 limits=limits, axial_waypoint_step_m=axial_waypoint_step_m)
             row["insertion_preflight_status"] = trial.status
+            if trial.status == "sampled_held_path_rejected":
+                row["sampled_audit_rejection"] = _rejected_path_summary(
+                    trial, planner=planner, targets=targets)
             drift_stages = {
                 "held_lift_hand_drift": "held_lift",
                 "transfer_hand_drift": "transfer",

@@ -74,3 +74,42 @@ scene/NPZ hashes, selected-candidate and sampled-audit array digests, stage
 continuity, at-most-0.01494 rad held joint steps, and at-most-3.6e-8 rad held
 hand drift. This is artifact integrity and a fixed-hand contract check, **not**
 a repeated collision audit or a physical/robot-ready result.
+
+## Cylinder 20 mm-gap path-audit consistency check
+
+An additional hypothetical scene used the *current* complete 20 mm-gap
+cylinder endpoint catalogue, tabletop pose `000`, key XY `(0.4, 0)` m,
+socket XY `(0.6, 0)` m, a 40 mm table and the stock FR3/Inspire home state.
+The native locked-hand v8 planner passed pickup for `table/0/194`, but the
+first sampled-path audit rejected exactly **one** descent sample as a
+key/socket collision. The diagnostic report preserved stage, sample 417,
+pair and minimum surface distances under
+`/tmp/precision-synthetic-cylinder20-pose000-native-audit-20261011/`.
+
+The inconsistency exposed two offline checks applying different *solid
+occupancy* methods to the same validated cylinder fixture: endpoint screening
+used the geometry-checked analytic cylinder bore, whereas path auditing used
+generic triangle-ray parity. The latter can report an ambiguous/occupied
+vertex in this concave socket despite the surface being well separated.
+The earlier rejected trajectory was not retained, so this comparison does
+not prove bitwise identity of both planner runs or the exact ray that failed.
+The sampled path, reset/repose path and release-footprint audits now reuse
+the same `CylinderSocketOccupancy` as the endpoint screen; the exact socket
+mesh remains in the Coal surface-intersection check, so this does not waive
+wall or floor contact. Square sockets retain generic watertight-mesh
+occupancy. The path audit also hashes the cylinder task geometry it used.
+
+With this consistency fix, the otherwise unchanged synthetic plan selected
+`table/0/194` and passed all sampled stages. The [saved report](/tmp/precision-synthetic-cylinder20-pose000-native-analytic-20261011/report.json)
+records 226 pickup, 501 held-lift, 77 transfer and 621 axial samples;
+no sampled audit failure; **19.86 mm** minimum sampled key/socket surface
+distance; **20.0035 mm** rigid-model depth past entry; and **5.94 µm** lateral
+FK residual. Independent `verify-saved-preflight` checked the saved scene,
+trajectory hashes, stage continuity, candidate identity, and maximum held
+hand drift of **4.77e-8 rad**. It did **not** rerun collision checking.
+
+This is a useful cross-check of the nominal planning and collision contracts,
+not evidence of real grasp retention, calibrated geometry, closed-loop contact
+control, or physical insertion. The 20 mm radial gap is a very loose
+bring-up condition; smaller gaps still need their own complete preflights
+and physical calibration. No synthetic report is a motor permit.

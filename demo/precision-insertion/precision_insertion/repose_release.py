@@ -135,7 +135,8 @@ def audit_repose_release_open_and_lift(
     rest = validate_se3(held_plan.T_robot_key_rest, name="reset rest key")
     floating = rest.copy()
     floating[2, 3] += held_plan.release_height_m
-    fixed, hashes = _fixed_world_models(calibration)
+    fixed, hashes = _fixed_world_models(
+        calibration, mode=mode, shared_root=shared_root)
     assets = AssetPaths(Path(shared_root).expanduser().resolve(), mode)
     key_path = assets.raw_mesh(mode.key_object)
     urdf = assets.robot_urdf

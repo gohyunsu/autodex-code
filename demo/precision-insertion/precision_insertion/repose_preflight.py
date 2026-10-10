@@ -158,7 +158,8 @@ def validate_repose_rest_target(
     board_edge_distance = float(np.min(-signed))
     if board_edge_distance < board_margin:
         raise ValueError("reset key footprint exceeds measured ChArUco interior")
-    fixed, _ = _fixed_world_models(calibration)
+    fixed, _ = _fixed_world_models(
+        calibration, mode=mode, shared_root=shared_root)
     socket_model, socket_pose, socket_mesh, occupancy = fixed["mesh/fixture_socket"]
     relative = np.linalg.inv(socket_pose) @ rest
     result = _held_pair_report(

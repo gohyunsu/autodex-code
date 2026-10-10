@@ -101,7 +101,8 @@ def audit_repose_held_paths(
                                      "previous_z_m": prior, "z_m": z})
                 prior = z
 
-    fixed, fixed_hashes = _fixed_world_models(calibration)
+    fixed, fixed_hashes = _fixed_world_models(
+        calibration, mode=mode, shared_root=shared_root)
     assets = AssetPaths(Path(shared_root).expanduser().resolve(), mode)
     key_path = assets.raw_mesh(mode.key_object)
     urdf = assets.robot_urdf
