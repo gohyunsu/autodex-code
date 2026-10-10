@@ -72,7 +72,7 @@ from .postshift_checkpoint import (
 )
 from .postshift_insertion import (
     PostShiftInsertionPreflight, plan_postshift_insertion_preflight,
-    write_postshift_insertion_preflight,
+    verify_postshift_insertion_preflight, write_postshift_insertion_preflight,
 )
 from .repose_artifacts import write_repose_preflight_artifacts
 from .repose_preflight import validate_repose_rest_target
@@ -2165,6 +2165,11 @@ class SessionRunner:
         output = (self._attempt_dir / "postshift_20mm_preflights" /
                   f"{self._postshift_20mm_index:03d}")
         write_postshift_insertion_preflight(result, output)
+        verify_postshift_insertion_preflight(
+            output / "report.json", expected=result,
+            checkpoint=checkpoint, shift_plan=shift_plan,
+            mode=self.mode, shared_root=self.shared_root,
+            calibration=self.calibration)
         self._postshift_20mm_used_reports.add(source)
         self._postshift_20mm_index += 1
         return result

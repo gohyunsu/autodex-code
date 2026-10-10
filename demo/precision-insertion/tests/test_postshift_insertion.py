@@ -15,6 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion import postshift_checkpoint, postshift_insertion  # noqa: E402
+from precision_insertion.assets import AssetPaths  # noqa: E402
 from precision_insertion.preflight import InsertionPreflight  # noqa: E402
 from precision_insertion.uncertainty_margin import SurfaceDeviationBounds  # noqa: E402
 from test_postshift_checkpoint import _case  # noqa: E402
@@ -171,3 +172,72 @@ def test_postshift_replan_rejects_changed_capture_or_endpoint_target(
     with pytest.raises(ValueError, match="raw camera PNG changed"):
         postshift_insertion.plan_postshift_insertion_preflight(**args)
     assert "screen" not in seen
+
+
+def test_saved_postshift_20mm_rechecks_paths_and_cad(
+        tmp_path, monkeypatch):
+    args, _seen = _setup(tmp_path, monkeypatch)
+    result = postshift_insertion.plan_postshift_insertion_preflight(**args)
+    mode = args["mode"]
+    paths = AssetPaths(tmp_path, mode)
+    candidate = paths.candidate_dir / Path(*result.candidate_id.split("/"))
+    files = {
+        "key_mesh": paths.raw_mesh(mode.key_object),
+        "socket_mesh": paths.socket_collision_mesh,
+        "task_geometry": paths.task_geometry,
+        "robot_urdf": paths.robot_urdf,
+        "wrist_se3": candidate / "wrist_se3.npy",
+        "pregrasp_pose": candidate / "pregrasp_pose.npy",
+        "grasp_pose": candidate / "grasp_pose.npy",
+    }
+    for name, file in files.items():
+        file.parent.mkdir(parents=True, exist_ok=True)
+        if not file.exists():
+            file.write_bytes(name.encode("ascii"))
+    endpoint = {
+        **result.endpoint,
+        "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
+                 "key_object": mode.key_object,
+                 "socket_object": mode.socket_object},
+        "T_key_hand": result.hypothesis.T_key_hand.tolist(),
+        "cylinder_yaw_gauge_socket_rad": result.yaw_gauge_socket_rad,
+        "input_sha256": {
+            name: hashlib.sha256(file.read_bytes()).hexdigest()
+            for name, file in files.items()},
+    }
+    start = args["checkpoint"].joint_sample.full_q.copy()
+    middle = start.copy()
+    middle[0] += .0001
+    end = middle.copy()
+    end[0] += .0001
+    planning = replace(
+        result.planning,
+        transfer_trajectory=np.stack([start, middle]),
+        axial_trajectory=np.stack([middle, end]))
+    result = replace(result, endpoint=endpoint, candidate_dir=candidate,
+                     planning=planning)
+    monkeypatch.setattr(postshift_insertion,
+                        "verify_bounded_postlift_preflight",
+                        lambda *_args, **_kwargs: {})
+    report = postshift_insertion.write_postshift_insertion_preflight(
+        result, tmp_path / "saved_20mm")
+    verify = lambda: postshift_insertion.verify_postshift_insertion_preflight(
+        report, expected=result, checkpoint=args["checkpoint"],
+        shift_plan=args["shift_plan"], mode=mode,
+        shared_root=tmp_path, calibration=args["calibration"])
+    assert verify()["status"] == "sampled_postshift_20mm_preflight_pass"
+    archive = report.parent / "planned_trajectories.npz"
+    with archive.open("ab") as stream:
+        stream.write(b"changed")
+    with pytest.raises(ValueError, match="trajectory bytes changed"):
+        verify()
+    # The original archive bytes are not recoverable from this test report;
+    # use a second immutable report to isolate the CAD-source rejection.
+    other = postshift_insertion.write_postshift_insertion_preflight(
+        result, tmp_path / "saved_20mm_other")
+    files["key_mesh"].write_bytes(b"new CAD bytes")
+    with pytest.raises(ValueError, match="CAD/candidate inputs changed"):
+        postshift_insertion.verify_postshift_insertion_preflight(
+            other, expected=result, checkpoint=args["checkpoint"],
+            shift_plan=args["shift_plan"], mode=mode,
+            shared_root=tmp_path, calibration=args["calibration"])

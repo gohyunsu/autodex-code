@@ -120,3 +120,7 @@ also preserves the cylinder's unobservable yaw gauge in both the endpoint
 and target poses. Its positive sampled status is still not a physical retry:
 no commissioned shift executor or guarded insertion controller is supplied,
 and this host has no cylinder v8 candidate/FoundPose assets for a real run.
+The report verifier reopens the original pixels, controller-source hashes,
+physical medoid, CAD/candidate inputs and exact saved trajectories before a
+future execution adapter could consume it. The stock generic trajectory
+follower is not the guarded contact adapter.

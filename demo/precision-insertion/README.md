@@ -107,7 +107,16 @@ and hashed planned joint paths are stored under the same attempt at
 symmetry. A passing status is
 `sampled_postshift_20mm_preflight_pass`, but the report still sets
 `insertion_replan_allowed=false` and `robot_ready=false`: it is **not** an
-execution or guarded-contact controller. The real 15 mm radial-gap cylinder
+execution or guarded-contact controller. The session runner immediately calls
+`verify_postshift_insertion_preflight(...)` after saving: it rechecks the
+checkpoint/source files, physical medoid, candidate and CAD hashes, sampled
+margin, and exact saved transfer/axial joint arrays. A later executor must
+recheck those sources again immediately before motion. The unchanged
+`FrankaExecutor.follow_joint_trajectory` is **not** a guarded insertion
+controller: its generic path does not require contact abort and can attempt
+an endpoint landing after a stalled or timed-out stream. Do not replay the
+saved axial path with that API as a contact insertion command. The real
+15 mm radial-gap cylinder
 asset audit on this host currently finds zero v8 grasp candidates and no
 key/socket FoundPose representations, so a real cylinder replay is not yet
 possible here.

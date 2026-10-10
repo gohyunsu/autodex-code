@@ -18,6 +18,7 @@ from typing import Any, Callable
 import numpy as np
 
 from .assets import AssetPaths
+from .bounded_postlift import verify_bounded_postlift_preflight
 from .candidates import select_pose_candidates
 from .config import TaskMode
 from .endpoint import _load_mesh, screen_grasp_endpoint
@@ -30,7 +31,9 @@ from .postshift_pose import (
     AxisymmetricHeldHypothesis, reconstruct_axisymmetric_held_hypothesis,
     tip_axis_visual_surface_bound,
 )
-from .preflight import InsertionPreflight, plan_held_transfer_and_axial
+from .preflight import (
+    InsertionPreflight, _path, plan_held_transfer_and_axial,
+)
 from .raw_camera_capture import verify_raw_camera_capture
 from .retry_session import _validated_retry_trial_context
 from .targets import InsertionTargets, build_rigid_insertion_targets
@@ -278,9 +281,18 @@ def write_postshift_insertion_preflight(
 ) -> Path:
     """Save provenance, exact joint paths and no physical success claim."""
     target = Path(output_dir).expanduser().resolve()
+    record = result.to_record()
+    if result.status == "sampled_postshift_20mm_preflight_pass" and (
+            result.endpoint.get("endpoint_pass") is not True or
+            result.planning is None or
+            not result.planning.sampled_planning_pass or
+            result.planning.transfer_trajectory is None or
+            result.planning.axial_trajectory is None or
+            result.uncertainty_margin is None or
+            result.uncertainty_margin.get("sampled_margin_pass") is not True):
+        raise ValueError("passing post-shift report lacks endpoint/path/margin")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.mkdir(exist_ok=False)
-    record = result.to_record()
     if result.planning is not None:
         arrays = {
             name: path for name, path in (
@@ -297,3 +309,130 @@ def write_postshift_insertion_preflight(
         json.dump(record, stream, indent=2, sort_keys=True, allow_nan=False)
         stream.write("\n")
     return path
+
+
+def verify_postshift_insertion_preflight(
+    report_path: Path, *, expected: PostShiftInsertionPreflight,
+    checkpoint: PostShiftCheckpoint,
+    shift_plan: GroundedLateralPreflight,
+    mode: TaskMode, shared_root: Path, calibration,
+) -> dict:
+    """Recheck a saved 20 mm plan before any future execution integration.
+
+    Integrity and sampled continuity are necessary but never sufficient for
+    robot motion. This does not authenticate the external physical producer,
+    re-run cuRobo or prove contact/force safety.
+    """
+    report_file = Path(report_path).expanduser().resolve()
+    saved = json.loads(report_file.read_text(encoding="utf-8"))
+    fields = {"planned_trajectories", "planned_trajectories_sha256"}
+    if (not isinstance(expected, PostShiftInsertionPreflight) or
+            not isinstance(saved, dict) or
+            {key: value for key, value in saved.items()
+             if key not in fields} != expected.to_record() or
+            saved.get("schema") !=
+            "precision_insertion_postshift_20mm_preflight_v1" or
+            saved.get("robot_ready") is not False or
+            saved.get("insertion_replan_allowed") is not False or
+            expected.attempt_id != checkpoint.attempt_id or
+            expected.candidate_id != checkpoint.candidate_id or
+            expected.attempt_id != shift_plan.attempt_id or
+            expected.candidate_id != shift_plan.candidate_id):
+        raise ValueError("saved post-shift 20 mm report changed")
+    root = Path(shared_root).expanduser().resolve()
+    source = expected.postshift_report_path.resolve()
+    if (not source.is_file() or
+            _sha(source) != expected.postshift_report_sha256):
+        raise ValueError("post-shift checkpoint source changed")
+    verify_postshift_checkpoint(checkpoint, source, plan=shift_plan)
+    postlift = expected.postlift_report_path.resolve()
+    if (not postlift.is_file() or
+            _sha(postlift) != expected.postlift_report_sha256 or
+            postlift != shift_plan.postlift_report_path.resolve()):
+        raise ValueError("post-shift physical medoid source changed")
+    expected.candidate_dir.resolve().relative_to(
+        AssetPaths(root, mode).candidate_dir.resolve())
+    verify_bounded_postlift_preflight(
+        postlift, mode=mode, shared_root=root,
+        candidate_dir=expected.candidate_dir)
+    validated_frozen_socket_pose(
+        mode=mode, shared_root=root, calibration=calibration)
+
+    endpoint = saved.get("endpoint")
+    hashes = endpoint.get("input_sha256") if isinstance(endpoint, dict) else None
+    paths = AssetPaths(root, mode)
+    candidate = expected.candidate_dir
+    files = {
+        "key_mesh": paths.raw_mesh(mode.key_object),
+        "socket_mesh": paths.socket_collision_mesh,
+        "task_geometry": paths.task_geometry,
+        "robot_urdf": paths.robot_urdf,
+        "wrist_se3": candidate / "wrist_se3.npy",
+        "pregrasp_pose": candidate / "pregrasp_pose.npy",
+        "grasp_pose": candidate / "grasp_pose.npy",
+    }
+    if (not isinstance(hashes, dict) or set(hashes) != set(files) or
+            any(not file.is_file() or _sha(file) != hashes[name]
+                for name, file in files.items())):
+        raise ValueError("post-shift endpoint CAD/candidate inputs changed")
+    if (endpoint.get("mode") != {
+            "family": mode.family, "gap_mm": mode.gap_mm,
+            "key_object": mode.key_object,
+            "socket_object": mode.socket_object} or
+            not math.isclose(float(endpoint.get(
+                "cylinder_yaw_gauge_socket_rad", float("nan"))),
+                expected.yaw_gauge_socket_rad, abs_tol=1e-12) or
+            not np.allclose(endpoint.get("T_key_hand"),
+                            expected.hypothesis.T_key_hand,
+                            atol=1e-8, rtol=0)):
+        raise ValueError("post-shift endpoint differs from held hypothesis")
+    planning = expected.planning
+    if saved.get("status") == "sampled_postshift_20mm_preflight_pass" and (
+            endpoint.get("endpoint_pass") is not True or
+            planning is None or not planning.sampled_planning_pass or
+            saved.get("uncertainty_margin", {}).get(
+                "sampled_margin_pass") is not True):
+        raise ValueError("passing post-shift plan lacks endpoint/path/margin")
+    if saved.get("status") == "sampled_postshift_20mm_preflight_pass":
+        repeated_margin = audit_sampled_uncertainty_margins(
+            mode=mode, endpoint=endpoint, targets=expected.targets,
+            planning=planning, bounds=expected.bounds)
+        if (repeated_margin.get("sampled_margin_pass") is not True or
+                repeated_margin != expected.uncertainty_margin):
+            raise ValueError("post-shift sampled uncertainty margin changed")
+    name = saved.get("planned_trajectories")
+    if name is None:
+        if ("planned_trajectories_sha256" in saved or
+                (planning is not None and any(path is not None for path in (
+                    planning.transfer_trajectory, planning.axial_trajectory)))):
+            raise ValueError("post-shift joint trajectory artifact is missing")
+        return saved
+    if name != "planned_trajectories.npz":
+        raise ValueError("post-shift joint trajectory name is invalid")
+    artifact = (report_file.parent / name).resolve()
+    if (not artifact.is_relative_to(report_file.parent) or
+            not artifact.is_file() or
+            _sha(artifact) != saved.get("planned_trajectories_sha256") or
+            planning is None):
+        raise ValueError("post-shift planned trajectory bytes changed")
+    expected_arrays = {
+        stage: path for stage, path in (
+            ("transfer", planning.transfer_trajectory),
+            ("axial", planning.axial_trajectory)) if path is not None}
+    if (saved.get("status") == "sampled_postshift_20mm_preflight_pass" and
+            set(expected_arrays) != {"transfer", "axial"}):
+        raise ValueError("passing post-shift plan lacks full joint paths")
+    with np.load(artifact, allow_pickle=False) as archive:
+        if set(archive.files) != set(expected_arrays):
+            raise ValueError("post-shift archive contains different path stages")
+        start = np.asarray(checkpoint.joint_sample.full_q, dtype=np.float64)
+        held = start[7:]
+        for stage in ("transfer", "axial"):
+            if stage not in expected_arrays:
+                continue
+            path = _path(archive[stage], f"saved post-shift {stage}", start,
+                         held)
+            if not np.array_equal(path, expected_arrays[stage]):
+                raise ValueError("post-shift path differs from sampled audit")
+            start = path[-1]
+    return saved

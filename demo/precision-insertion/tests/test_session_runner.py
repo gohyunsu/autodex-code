@@ -264,6 +264,9 @@ def test_postshift_20mm_session_requires_its_saved_checkpoint(
                         "write_postshift_insertion_preflight",
                         lambda _result, output: output.mkdir(
                             parents=True, exist_ok=False))
+    monkeypatch.setattr(session_runner,
+                        "verify_postshift_insertion_preflight",
+                        lambda *_args, **_kwargs: {})
     args = dict(
         planner=object(), shift_plan=plan, checkpoint=checkpoint,
         checkpoint_report_path=source, bounds=object(),
