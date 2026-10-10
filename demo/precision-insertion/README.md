@@ -27,6 +27,17 @@ The first independent helpers are in `precision_insertion/`:
   socket-pose medoid. For a C∞ round socket it ignores only unobservable axial
   yaw, not axis tilt or a reversed open rim. Repeatability is not a guarantee
   of absolute camera or hand-eye accuracy.
+- `calibration.py` combines already-captured synchronized board images and
+  multiple multi-view socket FoundPose observations. It calls AutoDex's
+  `measure_tabletop_from_images` first, converts every socket observation with
+  the session C2R transform, rejects stale ordering, unsynchronized captures,
+  uncalibrated cameras, and non-repeatable socket poses, then adds the exact
+  socket collision mesh to a **copy** of the base scene. The caller explicitly
+  supplies time/translation/angle limits; no bring-up threshold is silently
+  treated as precision accuracy. `write_session_calibration` saves all pose
+  observations and the mesh hash to a new JSON file without overwriting a
+  previous session. The capture images/masks themselves must be retained
+  separately under their capture IDs.
 - `symmetry.py` reads the v8 `object_processing/<object>/processed_data/info/`
   symmetry and tabletop poses. The D∞ cylindrical key may exchange identical
   ends; the C∞ socket may not.
@@ -105,11 +116,14 @@ Run the current offline tests from the repository root:
   demo/precision-insertion/tests
 ```
 
-The future runner must measure ChArUco first, then the socket, with the socket
-already rigidly fixed. It must explicitly select `--shared-root` and use the
-matching v8 `object_processing` assets and Inspire candidates; see `PLAN.md`
-for the full execution and evidence gates. Until those gates are implemented,
-there is intentionally no robot-mode command to run here.
+The future runner must acquire ChArUco images first, then several socket
+captures, with the socket already rigidly fixed. It will pass the captured
+evidence to `calibrate_session`; the calibration helper does **not** acquire
+images, assess the SAM3 mask/FoundPose photometric quality, prove hand-eye
+accuracy, or authorize robot motion. The runner must explicitly select
+`--shared-root` and use the matching v8 `object_processing` assets and Inspire
+candidates; see `PLAN.md` for the remaining gates. Until those gates are
+implemented, there is intentionally no robot-mode command to run here.
 
 The path component `precision-insertion` is a directory name, not an importable
 Python package name. If helper modules are added, use an importable package

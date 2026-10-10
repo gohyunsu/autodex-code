@@ -460,7 +460,7 @@ demo/precision-insertion/
     assets.py                     # v8/object_processing and evidence checks
     endpoint.py                   # grasp-only exact 20 mm hand/socket screen
     camera.py                     # unchanged AutoDex camera API adapter
-    calibration.py                # ChArUco/socket measurement and freeze
+    calibration.py                # read-only ChArUco/socket measurement and freeze; live capture adapter pending
     symmetry.py                   # local square/cylinder pose handling
     world.py                      # fixed fixture and attached-key worlds
     candidates.py                 # pose-conditioned scenario selection
