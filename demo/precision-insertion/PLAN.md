@@ -145,9 +145,10 @@ grasp only after these offline gates:
 1. BODex candidate and source tabletop scene are internally consistent with
    v8 `object_processing`; hand joints and object-frame wrist transform exist.
 2. Reuse the v8 pregrasp collision, squeeze-contact, and MuJoCo gravity
-   stability evidence with verified provenance. Contact location may rank
-   grasps, but is not an extra hard restriction unless the task needs one.
-3. Keep the simulated grasp joints and `T_wrist_key` rigid. Place the **full
+stability evidence with verified provenance. Contact location may rank
+grasps, but is not an extra hard restriction unless the task needs one.
+3. For the *nominal* endpoint screen, hold the candidate joints and
+   `T_wrist_key` rigid. Place the **full
    physical key** at the nominal centered, axis-aligned 20 mm insertion pose
    and transform every Inspire finger/palm/hand-mount collision link with it.
    Reject any hand/socket intersection, requiring a documented clearance
@@ -164,6 +165,18 @@ unreachable, the key could slip, or contact could jam. Optional simulated
 full-task trajectories may be kept as supporting evidence, but they are not
 the prerequisite for *grasp-level* eligibility and cannot be replayed when
 the live start pose has changed.
+
+The 2026-10-10 cylinder audit exposed a further distinction: AutoDex's
+MuJoCo gravity check starts *after* closure, so it does not guarantee that
+the key retained its initial `T_wrist_key` during squeeze. All 19 of that
+run's nominal fixed-key/commanded-squeeze illustrations sample deep hand/key
+overlap, whereas using achieved MuJoCo key and joint poses largely removes
+it. The cylinder center nevertheless shifted 2.4–35.2 mm relative to the
+hand in closure. Thus the old 13/socket count remains a **nominal endpoint
+screen count**, not a usable-grasp count. Before any physical promotion,
+require a separately calibrated post-lift relation check and redo endpoint
+and live path checks with that observed relation; do not silently add a
+numerical drift cutoff to the original 1,000-seed experiment.
 
 ### Coverage and evidence are different axes
 
@@ -613,7 +626,9 @@ and endpoint-only geometry do not fill these gaps.
    collision/squeeze/MuJoCo filtering and v8 coverage when needed, keeping
    the generation recipe and hashes. Screen candidate grasps against the
    centered, aligned 20 mm whole-hand/socket endpoint and keep a separate
-   immutable eligibility catalog. No eligible grasp means no robot insertion;
+   immutable eligibility catalog. Audit hand/key pose fidelity and achieved
+   hand shape separately before promoting nominal passes. No eligible grasp
+   means no robot insertion;
    a positive catalog result alone does not enable robot motion.
 4. Run supervised 1.5 mm square bring-up with calibrated camera/hand-eye and
    approved force limits. First commission online full-motion geometric

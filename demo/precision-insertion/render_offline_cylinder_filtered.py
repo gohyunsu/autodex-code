@@ -4,7 +4,9 @@
 This consumes the isolated AutoDex sim-filter pool, not the empty live v8
 candidate tree. It verifies the complete original filter result and freshly
 re-screens every stable grasp for every socket before rendering anything.
-Images are grasp/endpoint illustrations, not robot or insertion successes.
+Images are *nominal fixed-key/commanded-hand* diagnostics, not achieved
+MuJoCo poses or robot/insertion successes. The separate grasp-fidelity audit
+found deep hand/key overlap in all such fixed-pose cylinder illustrations.
 """
 
 from __future__ import annotations
@@ -139,6 +141,10 @@ def render(*, summary_path: Path, shared_root: Path, output_root: Path,
         "source_summary_sha256": _sha256(Path(summary_path).resolve()),
         "source_pool": summary["original_autodex_sim_candidate_root"],
         "source_evidence": "full-key AutoDex tabletop filter + MuJoCo + exact 20 mm key/hand/socket endpoint",
+        "pose_fidelity_warning": (
+            "Nominal initial T_key_hand and commanded squeeze joints are combined. "
+            "The resulting hand/key penetration does not depict achieved MuJoCo contact; "
+            "consult the separate dynamic grasp-fidelity audit before use."),
         "verification_depth_mm": 20.0,
         "numerical_hand_clearance_m": summary["minimum_hand_clearance_m"],
         "eligible_per_socket": {label: len(info["eligible_offline_grasp_ids"])
@@ -147,7 +153,8 @@ def render(*, summary_path: Path, shared_root: Path, output_root: Path,
         "complete": False,
         "robot_ready": False,
         "not_validated": ["Franka reachability or continuous trajectory",
-                          "visual hand/key contact quality",
+                          "rigid hand/key relation through squeeze and lift",
+                          "achieved hand/key contact quality",
                           "guarded contact dynamics or physical insertion"],
         "grasps": [],
     }

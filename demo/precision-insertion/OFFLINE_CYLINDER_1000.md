@@ -112,7 +112,50 @@ closed `grasp_pose` and is superseded by the `..._squeeze_...` result.
 
 These 13 are **offline filter passes**, not proven physically usable grasps:
 the default controller squeeze is only a nominal commanded pose, there has
-been no visual hand/key penetration audit or live Franka/fixture path check,
-and the endpoint is not a continuous insertion simulation. Do not publish
-them as successful robot insertion demonstrations or copy them into the
-active v8 runtime pool without those reviews.
+been no live Franka/fixture path check, and the endpoint is not a continuous
+insertion simulation. Do not publish them as successful robot insertion
+demonstrations or copy them into the active v8 runtime pool without review.
+
+## Post-squeeze fidelity audit: do not use nominal renders as success evidence
+
+The stock MuJoCo filter compares key motion **after** the squeeze closure;
+it does not require the key to retain the initial BODex hand-relative pose
+during closure. The original endpoint screen and 312 still images combine
+that initial `T_key_hand` with commanded squeeze joints, not the achieved
+MuJoCo object pose and joint angles. The resulting deep-looking finger/key
+overlap is therefore not an acceptable visual grasp validation.
+
+Run the independent, non-filtering diagnostic from the repository root:
+
+```bash
+PYTHONPATH=demo/precision-insertion \
+  /home/hyunsu/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/audit_cylinder_grasp_fidelity.py \
+  --summary /home/hyunsu/shared_data/AutoDex/precision_insertion/cylinder_endpoint_screen_1000_squeeze_20261010/summary.json \
+  --shared-root /home/hyunsu/shared_data \
+  --output-root /home/hyunsu/shared_data/AutoDex/precision_insertion/cylinder_grasp_fidelity_analytic_v2_20261010
+```
+
+The completed audit is
+`/home/hyunsu/shared_data/AutoDex/precision_insertion/cylinder_grasp_fidelity_analytic_v2_20261010/summary.json`.
+It covers all 19 stock-MuJoCo-stable grasps. All 19 nominal fixed-key images
+have sampled hand surface points more than 0.2 mm inside the cylindrical
+key; maximum sampled depths are 4–15 mm depending on the grasp and hold.
+Using the *achieved* MuJoCo key pose and hand joints greatly reduces this:
+14/19 have any sampled overlap above 0.2 mm at either recorded squeeze or
+gravity state, and the observed end-squeeze maximum is under 2 mm. These
+sampling results are diagnostics, not certified collision depths or proof
+of real physical success. The exact 256-sided key mesh is approximated by
+its enclosing analytic cylinder for this interior test; the radial bound
+differs by at most 1.13 µm, below the 0.2 mm diagnostic threshold.
+
+More importantly, the cylinder center moves **2.4–35.2 mm relative to the
+hand** during squeeze across the 19 candidates; the axis tilt, modulo the
+key's axial-yaw/end-flip symmetry, ranges approximately **3–26 degrees**.
+Thus the initial `T_key_hand` is not a validated rigid relation at lift or
+insertion. These data do **not** retroactively change the requested stock
+AutoDex plus 20 mm endpoint counts: 13 still pass those narrowly defined
+checks per socket. They do prevent treating that count, or the old images,
+as the number of robot-ready insertion grasps. The runtime must measure the
+post-lift key pose, reject unacceptable drift using calibrated limits, and
+repeat hand/socket endpoint and path checks with the actual hand–key relation.

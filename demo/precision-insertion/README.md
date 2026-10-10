@@ -4,6 +4,10 @@ The isolated cylinder BODex 1,000-per-tabletop-scene run, exact filter
 sequence, reproducibility commands, and per-socket 20 mm endpoint counts are
 in [OFFLINE_CYLINDER_1000.md](OFFLINE_CYLINDER_1000.md). Passing its offline
 endpoint is not permission to execute a robot insertion.
+The follow-up [grasp-fidelity audit](OFFLINE_CYLINDER_1000.md#post-squeeze-fidelity-audit-do-not-use-nominal-renders-as-success-evidence)
+shows that the existing fixed-key/commanded-squeeze cylinder images are
+diagnostic only: they do not depict achieved MuJoCo grasp geometry. Do not
+promote the 13 socket-clear candidates to robot trials from those images.
 
 This directory is reserved for an independent precision-insertion demo. Its
 runner must not call `src.execution.run_auto.main()` or require edits to the
@@ -20,6 +24,10 @@ axis-aligned 20 mm key-in-socket endpoint at which the full Inspire hand does
 not collide with the socket. It deliberately does not screen the Franka arm
 or a fixed transfer trajectory. Each observed trial still needs online
 collision-checked planning from its live pose and guarded insertion contact.
+The endpoint screen assumes the initial BODex hand/key transform stays rigid;
+the cylinder audit shows this assumption is not verified through squeeze.
+Consequently `eligible` in an offline endpoint catalogue means only that
+these *nominal* gates passed, never that the grasp is runtime-ready.
 The original AutoDex source files are kept at the `main` baseline; the
 previous feature-branch changes are preserved at
 `archive/precision-pre-isolation`. `PLAN.md` maps existing APIs to the demo
