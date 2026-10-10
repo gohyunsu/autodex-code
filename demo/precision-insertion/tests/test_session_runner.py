@@ -140,6 +140,38 @@ def _bind_postlift(runner):
     return str(report)
 
 
+def _bind_preinsert(runner, monkeypatch):
+    """Unit-test the runner's checkpoint binding without GPU/camera hardware."""
+    report = runner._attempt_dir / "preinsert_assessments/000/report.json"
+    report.parent.mkdir(parents=True)
+    transfer = runner._attempt_dir / "transfer_execution.json"
+    transfer.write_text('{"completed_at_s":10.35}\n', encoding="utf-8")
+    raw_bundle = runner._attempt_dir / "preinsert_raw"
+    raw_bundle.mkdir()
+    (raw_bundle / "manifest.json").write_text("{}\n", encoding="utf-8")
+    payload = {
+        "attempt_id": runner._attempt.attempt_id,
+        "candidate_id": runner._attempt.candidate_id,
+        "preinsert_reached": True,
+        "observation_completed_at_s": 10.36,
+        "transfer_execution_path": str(transfer),
+        "raw_bundle": str(raw_bundle),
+    }
+    report.write_text(json.dumps(payload), encoding="utf-8")
+    runner._preinsert_checkpoint = SimpleNamespace(**payload)
+    runner._preinsert_report_path = report
+    runner._preinsert_report_sha256 = hashlib.sha256(report.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        session_runner, "verify_preinsert_checkpoint",
+        lambda path: json.loads(path.read_text(encoding="utf-8")))
+    return {
+        "trajectory": str(transfer), "grasp_state": str(transfer),
+        "key_socket_pose": str(report), "preinsert_checkpoint": str(report),
+        "preinsert_image": str(raw_bundle / "manifest.json"),
+        "postlift_preflight": str(runner._postlift_report_path),
+    }
+
+
 def _bind_lift(runner):
     """Existing stage tests inject an already checked VLM lift bundle."""
     report = runner._attempt_dir / "lift_assessments/000/report.json"
@@ -291,6 +323,10 @@ def test_first_postlift_capture_binds_candidate_prior_and_gates_arrival(
                              evidence_refs=arrival_refs)
     report.write_text('{"status": "sampled_postlift_preflight_pass"}\n',
                       encoding="utf-8")
+    with pytest.raises(ValueError, match="observed checkpoint"):
+        runner.observe_stage("preinsert_reached", True, timestamp_s=10.7,
+                             evidence_refs=arrival_refs)
+    arrival_refs = _bind_preinsert(runner, monkeypatch)
     assert runner.observe_stage(
         "preinsert_reached", True, timestamp_s=10.7,
         evidence_refs=arrival_refs).labels["preinsert_reached"] is True
@@ -470,12 +506,10 @@ def test_verified_insertion_cannot_start_new_trial_until_reset_observed(
         "grasp_success", True, timestamp_s=10.3,
         evidence_refs=_bind_lift(runner))
     postlift_report = _bind_postlift(runner)
+    arrival_refs = _bind_preinsert(runner, monkeypatch)
     runner.observe_stage(
         "preinsert_reached", True, timestamp_s=10.4,
-        evidence_refs={"trajectory": "path/transfer.json",
-                       "key_socket_pose": "pose/hold.json",
-                       "grasp_state": "pose/grip.json",
-                       "postlift_preflight": postlift_report})
+        evidence_refs=arrival_refs)
     runner._record(lambda row: row.record_insertion_evidence(
         InsertionEvidence("normal_appearance", (0.0201, 0.021),
                           "key_pose_multiview", True, False, True),
@@ -590,12 +624,10 @@ def test_retry_requires_matching_two_view_vote_and_live_replan(
         "grasp_success", True, timestamp_s=10.3,
         evidence_refs=_bind_lift(runner))
     postlift_report = _bind_postlift(runner)
+    arrival_refs = _bind_preinsert(runner, monkeypatch)
     runner.observe_stage(
         "preinsert_reached", True, timestamp_s=10.4,
-        evidence_refs={"trajectory": "path/transfer.json",
-                       "key_socket_pose": "pose/hold.json",
-                       "grasp_state": "pose/grip.json",
-                       "postlift_preflight": postlift_report})
+        evidence_refs=arrival_refs)
     runner._record(lambda row: row.record_insertion_evidence(
         InsertionEvidence("partial", (0.005, 0.008),
                           "key_pose_multiview", True, False, True),
@@ -828,3 +860,82 @@ def test_reset_seed_rejections_are_scoped_to_directed_height_cell(
         runner.preflight_repose(**{**kwargs, "height_cm": height})
         assert runner.current_decision().action == "continue_repose_seed_preflight"
     assert seen == [(8, "001", ()), (12, "001", ()), (8, "001", ("7",))]
+
+
+def test_preinsert_assessment_is_saved_before_positive_arrival_label(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        session_runner, "plan_admitted_key_trial",
+        lambda **kwargs: _report(runner, kwargs["key_observation"]))
+    _plan(runner, _observation("key_1", 10.0))
+    runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
+    runner.observe_stage(
+        "grasp_success", True, timestamp_s=10.3,
+        evidence_refs=_bind_lift(runner))
+    postlift = _bind_postlift(runner)
+    transfer = runner._attempt_dir / "transfer_execution.json"
+    transfer.write_text('{"completed_at_s":10.4}\n', encoding="utf-8")
+    raw_bundle = runner._attempt_dir / "preinsert_raw"
+    raw_bundle.mkdir()
+    (raw_bundle / "manifest.json").write_text("{}\n", encoding="utf-8")
+    seen = []
+
+    def assess(**kwargs):
+        seen.append(kwargs)
+        return SimpleNamespace(
+            attempt_id="attempt_1", candidate_id="table/0/3",
+            preinsert_reached=True)
+
+    def write(result, output):
+        output.mkdir(parents=True)
+        report = output / "report.json"
+        report.write_text(json.dumps({
+            "attempt_id": result.attempt_id,
+            "candidate_id": result.candidate_id,
+            "preinsert_reached": True,
+            "observation_completed_at_s": 10.45,
+            "transfer_execution_path": str(transfer),
+            "raw_bundle": str(raw_bundle),
+        }), encoding="utf-8")
+        return report
+
+    monkeypatch.setattr(session_runner, "assess_preinsert_checkpoint", assess)
+    monkeypatch.setattr(session_runner, "write_preinsert_checkpoint", write)
+    monkeypatch.setattr(
+        session_runner, "verify_preinsert_checkpoint",
+        lambda path: json.loads(path.read_text(encoding="utf-8")))
+    result = runner.prepare_observed_preinsert_label(
+        raw_bundle=tmp_path / "saved_raw", transfer_execution_path=transfer,
+        joint_sample=object(), backend=object(),
+        max_capture_skew_s=0.02, max_joint_frame_skew_s=0.02,
+        max_transfer_observation_gap_s=0.5,
+        max_hand_translation_error_m=0.005,
+        max_hand_rotation_error_deg=5.0,
+        max_arm_hand_skew_s=0.02,
+        max_hand_command_error_raw=30.0,
+        max_arm_velocity_rad_s=0.05)
+    assert result.preinsert_reached is True
+    assert seen[0]["attempt"].attempt_id == "attempt_1"
+    report = runner._preinsert_report_path
+    refs = {"trajectory": str(transfer), "grasp_state": str(transfer),
+            "key_socket_pose": str(report),
+            "preinsert_image": str(raw_bundle / "manifest.json"),
+            "postlift_preflight": postlift,
+            "preinsert_checkpoint": str(report)}
+    wrong_image = dict(refs, preinsert_image="unrelated/manifest.json")
+    with pytest.raises(ValueError, match="verified checkpoint"):
+        runner.observe_stage("preinsert_reached", True, timestamp_s=10.5,
+                             evidence_refs=wrong_image)
+    original_report = report.read_bytes()
+    report.write_bytes(original_report + b" ")
+    with pytest.raises(ValueError, match="observed checkpoint"):
+        runner.observe_stage("preinsert_reached", True, timestamp_s=10.5,
+                             evidence_refs=refs)
+    report.write_bytes(original_report)
+    with pytest.raises(ValueError, match="verified checkpoint"):
+        runner.observe_stage("preinsert_reached", True, timestamp_s=10.42,
+                             evidence_refs=refs)
+    assert runner.observe_stage(
+        "preinsert_reached", True, timestamp_s=10.5,
+        evidence_refs=refs).labels["preinsert_reached"] is True

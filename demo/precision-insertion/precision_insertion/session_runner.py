@@ -46,6 +46,10 @@ from .postlift_preflight import (
     PostLiftPreflight, plan_postlift_observed_transfer,
     write_postlift_preflight,
 )
+from .preinsert_checkpoint import (
+    PreinsertCheckpoint, assess_preinsert_checkpoint,
+    verify_preinsert_checkpoint, write_preinsert_checkpoint,
+)
 from .records import AttemptRecord, begin_attempt
 from .retry_session import (
     RetrySessionLimits, RetrySessionResult,
@@ -133,6 +137,10 @@ class SessionRunner:
         self._postlift_report_path: Path | None = None
         self._postlift_report_sha256: str | None = None
         self._postlift_index = 0
+        self._preinsert_checkpoint: PreinsertCheckpoint | None = None
+        self._preinsert_report_path: Path | None = None
+        self._preinsert_report_sha256: str | None = None
+        self._preinsert_assessment_index = 0
         self._lift_checkpoint: LiftCheckpoint | None = None
         self._lift_report_path: Path | None = None
         self._lift_report_sha256: str | None = None
@@ -353,6 +361,10 @@ class SessionRunner:
         self._postlift_report_path = None
         self._postlift_report_sha256 = None
         self._postlift_index = 0
+        self._preinsert_checkpoint = None
+        self._preinsert_report_path = None
+        self._preinsert_report_sha256 = None
+        self._preinsert_assessment_index = 0
         self._lift_checkpoint = None
         self._lift_report_path = None
         self._lift_report_sha256 = None
@@ -555,6 +567,10 @@ class SessionRunner:
         self._postlift_report_path = None
         self._postlift_report_sha256 = None
         self._postlift_index = 0
+        self._preinsert_checkpoint = None
+        self._preinsert_report_path = None
+        self._preinsert_report_sha256 = None
+        self._preinsert_assessment_index = 0
         self._lift_checkpoint = None
         self._lift_report_path = None
         self._lift_report_sha256 = None
@@ -610,6 +626,10 @@ class SessionRunner:
         self._postlift_report_path = None
         self._postlift_report_sha256 = None
         self._postlift_index = 0
+        self._preinsert_checkpoint = None
+        self._preinsert_report_path = None
+        self._preinsert_report_sha256 = None
+        self._preinsert_assessment_index = 0
         self._lift_checkpoint = None
         self._lift_report_path = None
         self._lift_report_sha256 = None
@@ -967,6 +987,69 @@ class SessionRunner:
         self._postlift_index += 1
         return result
 
+    def prepare_observed_preinsert_label(
+        self, *, raw_bundle: Path, transfer_execution_path: Path,
+        joint_sample: LiveRobotState, backend: ImageVLM,
+        max_capture_skew_s: float, max_joint_frame_skew_s: float,
+        max_transfer_observation_gap_s: float,
+        max_hand_translation_error_m: float,
+        max_hand_rotation_error_deg: float,
+        max_arm_hand_skew_s: float,
+        max_hand_command_error_raw: float,
+        max_arm_velocity_rad_s: float,
+        renderer_factory=None, robot_loader=None,
+    ) -> PreinsertCheckpoint:
+        """Save an observed arrival assessment; never command the transfer.
+
+        A positive checkpoint is required by ``observe_stage`` before an
+        insertion attempt can carry ``preinsert_reached=True``. It remains an
+        external-evidence result, not a commissioned motion or contact gate.
+        """
+        if (self._attempt is None or self._attempt_dir is None or
+                self._attempt.labels["grasp_success"] is not True or
+                self._attempt.labels["preinsert_reached"] is not None or
+                self._postlift_preflight is None or
+                self._postlift_report_path is None or
+                self._postlift_report_sha256 is None or
+                self._postlift_preflight.status !=
+                "sampled_postlift_preflight_pass" or
+                not self._postlift_report_path.is_file() or
+                hashlib.sha256(self._postlift_report_path.read_bytes()).hexdigest()
+                != self._postlift_report_sha256 or
+                _digest(self.calibration.record) != self.session_sha256):
+            raise ValueError("preinsert assessment needs the same passing post-lift plan")
+        kwargs = {}
+        if renderer_factory is not None:
+            kwargs["renderer_factory"] = renderer_factory
+        if robot_loader is not None:
+            kwargs["robot_loader"] = robot_loader
+        result = assess_preinsert_checkpoint(
+            attempt=self._attempt, postlift=self._postlift_preflight,
+            postlift_report_path=self._postlift_report_path,
+            calibration=self.calibration, shared_root=self.shared_root,
+            mode=self.mode, raw_bundle=raw_bundle,
+            transfer_execution_path=transfer_execution_path,
+            joint_sample=joint_sample, backend=backend,
+            max_capture_skew_s=max_capture_skew_s,
+            max_joint_frame_skew_s=max_joint_frame_skew_s,
+            max_transfer_observation_gap_s=max_transfer_observation_gap_s,
+            max_hand_translation_error_m=max_hand_translation_error_m,
+            max_hand_rotation_error_deg=max_hand_rotation_error_deg,
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s,
+            **kwargs)
+        output = (self._attempt_dir / "preinsert_assessments" /
+                  f"{self._preinsert_assessment_index:03d}")
+        report_path = write_preinsert_checkpoint(result, output)
+        verify_preinsert_checkpoint(report_path)
+        self._preinsert_checkpoint = result
+        self._preinsert_report_path = report_path
+        self._preinsert_report_sha256 = hashlib.sha256(
+            report_path.read_bytes()).hexdigest()
+        self._preinsert_assessment_index += 1
+        return result
+
     def observe_stage(
         self, stage: str, status: bool | None, *, timestamp_s: float,
         evidence_refs: Mapping[str, str],
@@ -1014,7 +1097,8 @@ class SessionRunner:
         if stage == "reset_success" and status is True:
             raise ValueError("use observe_reset_landing for verified reset success")
         if stage == "preinsert_reached" and status is True:
-            if (self._postlift_preflight is None or
+            if (self._attempt is None or
+                    self._postlift_preflight is None or
                     self._postlift_preflight.status !=
                     "sampled_postlift_preflight_pass" or
                     self._postlift_report_path is None or
@@ -1025,8 +1109,38 @@ class SessionRunner:
                     self._postlift_report_sha256 is None or
                     hashlib.sha256(
                         self._postlift_report_path.read_bytes()).hexdigest() !=
-                    self._postlift_report_sha256):
+                        self._postlift_report_sha256):
                 raise ValueError("preinsert arrival needs this attempt's passing post-lift plan")
+            if (self._preinsert_checkpoint is None or
+                    self._preinsert_checkpoint.preinsert_reached is not True or
+                    self._preinsert_checkpoint.attempt_id !=
+                    self._attempt.attempt_id or
+                    self._preinsert_checkpoint.candidate_id !=
+                    self._attempt.candidate_id or
+                    self._preinsert_report_path is None or
+                    evidence_refs.get("preinsert_checkpoint") !=
+                    str(self._preinsert_report_path) or
+                    not self._preinsert_report_path.is_file() or
+                    self._preinsert_report_sha256 is None or
+                    hashlib.sha256(
+                        self._preinsert_report_path.read_bytes()).hexdigest() !=
+                        self._preinsert_report_sha256):
+                raise ValueError("preinsert arrival needs this attempt's observed checkpoint")
+            checkpoint_record = verify_preinsert_checkpoint(
+                self._preinsert_report_path)
+            if (checkpoint_record["preinsert_reached"] is not True or
+                    float(timestamp_s) <
+                    checkpoint_record["observation_completed_at_s"] or
+                    evidence_refs.get("trajectory") !=
+                    checkpoint_record["transfer_execution_path"] or
+                    evidence_refs.get("grasp_state") !=
+                    checkpoint_record["transfer_execution_path"] or
+                    evidence_refs.get("key_socket_pose") !=
+                    str(self._preinsert_report_path) or
+                    evidence_refs.get("preinsert_image") !=
+                    str(Path(checkpoint_record["raw_bundle"]) /
+                        "manifest.json")):
+                raise ValueError("preinsert stage contradicts verified checkpoint")
             if float(timestamp_s) < max(
                     self._postlift_preflight.key_capture_timestamp_s,
                     self._postlift_preflight.joint_timestamp_s):

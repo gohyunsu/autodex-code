@@ -20,7 +20,7 @@ import numpy as np
 
 from .calibration import SessionCalibration, validate_session_camera_calibration
 from .config import TaskMode
-from .frame_provenance import bounded_capture_skew_s
+from .frame_provenance import bounded_capture_skew_s, image_sha256
 from .geometry import pose_angle_deg, validate_se3
 from .held_scene_overlay import (
     HeldSceneComparison, build_held_scene_comparison,
@@ -282,7 +282,98 @@ def assess_preinsert_checkpoint(
             "transfer_measurement": measurement,
             "transfer_started_at_s": started,
             "transfer_completed_at_s": completed,
+            "observation_completed_at_s": last_exposure,
             "joint_feedback": joint_sample.to_record(),
             "max_hand_translation_error_m": max_hand_translation_error_m,
             "max_hand_rotation_error_deg": max_hand_rotation_error_deg,
         })
+
+
+def write_preinsert_checkpoint(
+    checkpoint: PreinsertCheckpoint, output_dir: Path,
+) -> Path:
+    """Save the exact VLM overlay pixels alongside an immutable report."""
+    if not isinstance(checkpoint, PreinsertCheckpoint):
+        raise TypeError("expected a computed preinsert checkpoint")
+    target = Path(output_dir).expanduser().resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.mkdir(exist_ok=False)
+    image_dir = target / "overlays"
+    image_dir.mkdir()
+    record = checkpoint.to_record()
+    png_hashes = {}
+    for view in checkpoint.comparison.views:
+        path = image_dir / f"{view.camera_id}.png"
+        overlay_bgr = cv2.cvtColor(
+            np.asarray(view.predicted_overlay), cv2.COLOR_RGB2BGR)
+        if not cv2.imwrite(str(path), overlay_bgr):
+            raise OSError(f"could not save preinsert overlay: {path}")
+        if (image_sha256(overlay_bgr) != checkpoint.comparison.pixel_digests[
+                view.camera_id]["overlay_image_sha256"]):
+            raise ValueError("saved preinsert overlay differs from VLM input")
+        png_hashes[view.camera_id] = _sha(path)
+    record["overlay_png_sha256"] = png_hashes
+    report = target / "report.json"
+    with report.open("x", encoding="utf-8") as stream:
+        json.dump(record, stream, indent=2, sort_keys=True, allow_nan=False)
+        stream.write("\n")
+    return report
+
+
+def verify_preinsert_checkpoint(report_path: Path) -> dict:
+    """Recheck saved bytes; do not re-run VLM or certify external producers."""
+    path = Path(report_path).expanduser().resolve()
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if (not isinstance(report, dict) or report.get("schema") !=
+            "precision_insertion_preinsert_checkpoint_v1" or
+            report.get("robot_ready") is not False or
+            report.get("visual", {}).get("status") not in {
+                "coarse_match", "gross_misalignment", "slip_or_miss", "unknown"}):
+        raise ValueError("invalid preinsert checkpoint report")
+    postlift = Path(report["postlift_report_path"])
+    transfer = Path(report["transfer_execution_path"])
+    raw = Path(report["raw_bundle"])
+    if (not postlift.is_absolute() or not transfer.is_absolute() or
+            not raw.is_absolute() or
+            _sha(postlift) != report["postlift_report_sha256"] or
+            _sha(transfer) != report["transfer_execution_sha256"] or
+            _sha(raw / "manifest.json") != report["raw_manifest_sha256"]):
+        raise ValueError("preinsert checkpoint source file changed")
+    identity = type("AttemptRef", (), {
+        "attempt_id": report["attempt_id"],
+        "candidate_id": report["candidate_id"],
+    })()
+    source = _transfer_log(transfer, identity)
+    if (source["measurement"] != report["transfer_measurement"] or
+            float(source["started_at_s"]) != report["transfer_started_at_s"] or
+            float(source["completed_at_s"]) != report["transfer_completed_at_s"]):
+        raise ValueError("preinsert transfer report changed")
+    capture = verify_raw_camera_capture(raw, phase="preinsert")
+    views = report.get("comparison", {}).get("views", {})
+    png_hashes = report.get("overlay_png_sha256", {})
+    if (set(views) != set(capture["frame_evidence"]) or
+            set(png_hashes) != set(views) or len(views) < 2):
+        raise ValueError("preinsert overlay camera set changed")
+    for serial, hashes in views.items():
+        source_image = cv2.imread(str(raw / "images" / f"{serial}.png"),
+                                  cv2.IMREAD_COLOR)
+        overlay_path = path.parent / "overlays" / f"{serial}.png"
+        overlay_image = cv2.imread(str(overlay_path), cv2.IMREAD_COLOR)
+        if (source_image is None or overlay_image is None or
+                image_sha256(source_image) != hashes["raw_image_sha256"] or
+                image_sha256(overlay_image) != hashes["overlay_image_sha256"] or
+                _sha(overlay_path) != png_hashes[serial] or
+                hashes["timestamp_s"] !=
+                capture["frame_evidence"][serial]["timestamp_s"]):
+            raise ValueError("preinsert VLM pixel evidence changed")
+    if (report["preinsert_reached"] is True and
+            (report["visual"]["status"] != "coarse_match" or
+             report["transfer_measurement"] != {
+                 "trajectory_complete": True, "safety_abort": False,
+                 "grasp_held": True} or
+             report["hand_translation_error_m"] >
+             report["max_hand_translation_error_m"] or
+             report["hand_rotation_error_deg"] >
+             report["max_hand_rotation_error_deg"])):
+        raise ValueError("preinsert success contradicts saved evidence")
+    return report

@@ -80,9 +80,12 @@ that session and catalogue. For each new key observation:
    passing report changes the supervisor's next action to
    `transfer_execution_gate_required`; it is a plan, **not** an arrival label
    or motion permit.
-   Following separately controlled transfer, `preinsert_reached=True`
-   requires this exact unchanged passing report plus independent trajectory,
-   key/socket pose, and grip evidence. For the 20 mm outcome,
+   Following separately controlled transfer, run
+   `prepare_observed_preinsert_label` on a fresh raw camera bundle, measured
+   stationary joints and external transfer log. `preinsert_reached=True`
+   requires its saved positive multi-view checkpoint, the exact unchanged
+   post-lift plan, and bound trajectory/key/socket/grip evidence. For the
+   20 mm outcome,
    collect a later raw full-frame multi-camera capture even if FoundPose fails,
    save it with `write_final_insertion_capture`, and call
    `prepare_observed_insertion_label` with that final bundle, a
@@ -354,11 +357,20 @@ The first independent helpers are in `precision_insertion/`:
   `source_records` for `trajectory_feedback`, `safety`, `grasp_state`.
   Visible two-view coarse alignment plus passing measured/log gates can yield
   a provisional `preinsert_reached=True` checkpoint; occlusion gives unknown.
-  This read-only checkpoint is **not yet persisted or wired into**
-  `SessionRunner.observe_stage`: the old reference-only positive-stage API
-  must not be treated as a commissioned hardware arrival verdict. The module
-  checks source file consistency, not that the controller/clock/sensor producer
-  is authentic or that the grasp stayed rigid after the post-lift estimate.
+  `write_preinsert_checkpoint` saves the exact overlay PNGs and hashes, and
+  `verify_preinsert_checkpoint` rechecks saved frames, overlays, transfer
+  sources and the plan file. After a separately controlled transfer,
+  `SessionRunner.prepare_observed_preinsert_label(...)` creates this report.
+  `observe_stage("preinsert_reached", True, ...)` now requires the *same*
+  positive report, saved transfer log, raw preinsert manifest, frozen
+  post-lift plan and non-early observation time. Use its report path for both
+  `preinsert_checkpoint` and `key_socket_pose`, its transfer-log path for
+  `trajectory` and `grasp_state`, and its raw bundle's `manifest.json` for
+  `preinsert_image`. The subsequent insertion checkpoint compares against
+  that same raw before-image; an arbitrary path string no longer creates a
+  positive arrival label through `SessionRunner`. This remains a read-only
+  evidence gate, not proof that the controller/clock/sensor producer is
+  authentic or that the grasp stayed rigid after the post-lift estimate.
   Local CPU tests cover assembly and adapter validation with a fake renderer;
   actual GPU rendering and optical alignment still require the AutoDex PC,
   its nvdiffrast/ParaDex dependencies, and calibrated live frames.

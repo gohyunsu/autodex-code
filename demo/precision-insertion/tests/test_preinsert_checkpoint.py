@@ -21,7 +21,8 @@ from precision_insertion.held_relation import HeldRelation  # noqa: E402
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.postlift_preflight import PostLiftPreflight  # noqa: E402
 from precision_insertion.preinsert_checkpoint import (  # noqa: E402
-    assess_preinsert_checkpoint,
+    assess_preinsert_checkpoint, verify_preinsert_checkpoint,
+    write_preinsert_checkpoint,
 )
 from precision_insertion.raw_camera_capture import (  # noqa: E402
     RawCameraCapture, write_raw_camera_capture,
@@ -178,6 +179,12 @@ def test_measured_preinsert_arrival_needs_multiview_visible_key(tmp_path):
     assert report.reason == "measured_arrival_and_visible_held_key"
     assert report.to_record()["robot_ready"] is False
     assert len(report.to_record()["comparison"]["views"]) == 2
+    saved = write_preinsert_checkpoint(report, tmp_path / "arrival")
+    assert verify_preinsert_checkpoint(saved)["preinsert_reached"] is True
+    overlay = tmp_path / "arrival" / "overlays" / "cam_a.png"
+    overlay.write_bytes(overlay.read_bytes() + b"tampered")
+    with pytest.raises(ValueError, match="pixel evidence changed"):
+        verify_preinsert_checkpoint(saved)
     assert assess_preinsert_checkpoint(
         **{**args, "backend": _VLM("unobservable")}).preinsert_reached is None
 
