@@ -34,6 +34,47 @@ previous feature-branch changes are preserved at
 modules that will reuse them, so the runner will not duplicate camera,
 FoundPose, Franka pickup, or cuRobo primitives.
 
+## Evidence-only session supervisor
+
+`precision_insertion/session_runner.py` now links the existing pieces into a
+single frozen-socket session **without connecting to a robot**. Construct
+`SessionRunner(mode=..., calibration=..., catalog=..., shared_root=...,
+output_dir=<new directory>, max_xy_retries=...)` only after the board/socket
+bootstrap and a complete endpoint catalogue. The constructor binds hashes of
+that session and catalogue. For each new key observation:
+
+1. Save the admitted multi-view image/mask/pose bundle with
+   `write_key_capture_artifacts`; pass its directory as `key_evidence_dir` to
+   `preflight_next_key` along with the measured 13-joint state, its timestamp,
+   the existing AutoDex planner and commissioned planning limits. The runner
+   verifies the saved frame bundle before calling `plan_admitted_key_trial`.
+2. Inspect `current_decision()`. A passing pickup/transfer/20 mm **plan**
+   yields `execution_gate_required`, not a motor command. Only then call
+   `begin_selected_attempt(attempt_id=..., started_at_s=...)` to create an
+   unlabelled attempt record. Actual physical execution requires a separate
+   commissioned adapter and the named safety gates.
+3. After each physical observation, call `observe_stage` for lift/grasp,
+   pre-insertion hold, reset or reorientation; use `observe_insertion` for
+   the 20 mm task outcome. Call `current_decision()` again before the next
+   phase. A missed grasp excludes that candidate on the next *fresh* key
+   observation. Planning-only rejects are skipped only when continuing the
+   same budget-limited camera capture; a new pose/state may make them viable.
+4. For a 1 mm retry, `record_retry` accepts only a two-view
+   `XYRetryAssessment` joined to a passing fresh-state `XYRetryPreflight` for
+   the same grasp and offset, plus references to completed guarded withdrawal,
+   vote and preflight evidence. It records a pending retry, never commands it.
+
+The supervisor writes a new `session_run.json`, immutable copies of the
+frozen calibration and endpoint catalogue, numbered
+`trial_preflights/<n>/` reports with hashed key-evidence bindings, and
+`attempts/<id>/state_<n>.json` immutable label snapshots. A failed process
+does not overwrite earlier evidence; there is not yet an automatic resume
+loader. Passing a file path as an evidence reference asserts that the caller
+actually collected it: the supervisor does **not** establish physical truth
+from filenames. Neither this bookkeeping nor a green offline plan replaces
+post-lift measured key/hand preflight, guarded contact control, calibrated
+camera acquisition, recovery execution or real-robot validation.
+
 The first independent helpers are in `precision_insertion/`:
 
 - `geometry.py` validates SE(3) measurements and freezes one **observed**

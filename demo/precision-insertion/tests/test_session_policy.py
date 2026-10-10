@@ -194,3 +194,26 @@ def test_verified_insertion_waits_for_supervised_completion():
                        "force_trace": "sensors/wrench.json"})
     assert decide_after_attempt(
         record, max_xy_retries=2).action == "hold_for_supervised_completion"
+
+
+def test_unmatched_failure_codes_cannot_resolve_to_a_motion_phase():
+    unknown_key = _attempt()
+    unknown_key.record_failure(
+        "perception_unreliable", timestamp_s=2.0,
+        evidence_refs={"camera": "images/occluded.json"})
+    assert decide_after_attempt(
+        unknown_key, max_xy_retries=2).action == "stop_for_review"
+    unmatched = _attempt()
+    unmatched.record_failure(
+        "rim_jam", timestamp_s=2.0,
+        evidence_refs={"camera": "images/jam.json"})
+    assert decide_after_attempt(
+        unmatched, max_xy_retries=2).reason == (
+            "failure_code_lacks_matching_observed_stage")
+    slipped = _attempt()
+    _grasp(slipped, False)
+    slipped.record_failure(
+        "slip", timestamp_s=3.0,
+        evidence_refs={"camera": "images/slip.json"})
+    assert decide_after_attempt(
+        slipped, max_xy_retries=2).action == "stop_for_review"

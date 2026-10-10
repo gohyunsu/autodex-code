@@ -628,12 +628,13 @@ demo/precision-insertion/
     retry_preflight.py            # fresh withdrawn-state retry planning only
     records.py                    # separate append-only observed task labels
     session_policy.py             # fail-closed next evidence gate, no motor commands
+    session_runner.py             # evidence-only session/preflight/label supervisor
     outcome.py                    # VLM-led tri-state insertion result fusion
     observer.py                   # read-only ZeroDex-backed VLM prompts, parsing, per-view votes
   tests/                          # offline contracts and replay fixtures
 
 Planned below the same demo directory, but **not implemented**:
-  session_runner.py               # live camera/robot orchestration and labels
+  live_session_runner.py          # commissioned camera/robot orchestration
   guarded_execution.py            # bounded Franka/Inspire contact and aborts
   recovery.py                     # safe return/repose/reorient/extraction policy
 ```
