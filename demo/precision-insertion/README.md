@@ -1248,6 +1248,12 @@ To measure local/API model errors rather than relying on one illustrative
 render, use the independent-annotation dataset replay in
 [`VLM_BENCHMARK.md`](VLM_BENCHMARK.md).
 
+To exercise **local-model pixel grounding → calibrated multi-view XY
+diagnostic** on saved cylinder pre-insertion images, use the separate
+[`GROUNDING_PROBE.md`](GROUNDING_PROBE.md) manifest/CLI. It checks native
+image geometry and records raw per-view marks, but does not certify camera
+provenance, metric accuracy or robot readiness.
+
 `before_pil` and `after_pil` must be supplied from the same saved trial; the
 timestamps above are placeholders. Semantic labels can use ZeroDex's
 aspect-preserving resize. **Metric point/axis grounding cannot:** create a
