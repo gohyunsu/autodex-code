@@ -1438,6 +1438,10 @@ Its SHA-256 is
 The archive has **not** been copied to NAS. Scene JSONs embed this host's
 absolute mesh/URDF paths; a different AutoDex-host shared root requires
 scene regeneration and fresh evidence validation, not a blind path edit.
+The demo-local [reset handoff rehydration tool](RESET_HANDOFF_RELOCATION.md)
+does this without changing stock code or overwriting canonical reset seeds;
+it has been exercised against the actual archive extracted under a different
+root. Its output remains a staged grasp pool, not a Franka reset plan.
 Even after installation on a writable AutoDex host, both seeds still need
 socket-aware full-chain Franka planning and physical validation.
 
