@@ -116,7 +116,7 @@ def _case(tmp_path, monkeypatch):
     return kwargs, archive, attempt_dir
 
 
-def test_reuses_stock_pickup_without_replaying_lift(tmp_path, monkeypatch):
+def test_binds_pickup_without_replaying_lift(tmp_path, monkeypatch):
     kwargs, _archive, attempt_dir = _case(tmp_path, monkeypatch)
     report = execute_bound_pickup(**kwargs)
     assert report["status"] == "squeeze_command_and_feedback_complete"
@@ -128,6 +128,21 @@ def test_reuses_stock_pickup_without_replaying_lift(tmp_path, monkeypatch):
     assert (attempt_dir / "pickup_started.json").is_file()
     with pytest.raises(FileExistsError):
         execute_bound_pickup(**kwargs)
+
+
+@pytest.mark.parametrize("subclass", [False, True])
+def test_known_stock_franka_follower_is_rejected_before_motion(
+        tmp_path, monkeypatch, subclass):
+    kwargs, _archive, attempt_dir = _case(tmp_path, monkeypatch)
+    stock_type = type("FrankaExecutor", (_Executor,), {
+        "__module__": "src.execution.franka_executor"})
+    stock_like = (type("DerivedExecutor", (stock_type,), {})()
+                  if subclass else stock_type())
+    kwargs["executor"] = stock_like
+    with pytest.raises(RuntimeError, match="stalled stream"):
+        execute_bound_pickup(**kwargs)
+    assert stock_like.calls == []
+    assert not (attempt_dir / "pickup_started.json").exists()
 
 
 @pytest.mark.parametrize("defect", ["disabled", "stale", "plan_changed",

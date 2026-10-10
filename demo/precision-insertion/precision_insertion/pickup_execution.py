@@ -1,8 +1,10 @@
-"""Demo-only physical pickup boundary using the unchanged AutoDex executor.
+"""Demo-only pickup boundary for a separately commissioned motion adapter.
 
 This module may command *approach, grasp and squeeze* after an explicit live
-interlock. It never replays the separately planned held lift, transfer or
-contact insertion. A completed squeeze is not an observed grasp-success label.
+interlock. The unchanged stock FrankaExecutor is refused: its follower can
+fall through from a stall to a blocking endpoint move. This module never
+replays held lift, transfer or contact insertion. A completed squeeze is not
+an observed grasp-success label.
 """
 
 from __future__ import annotations
@@ -53,6 +55,21 @@ def _write_new(path: Path, record: dict) -> None:
         stream.write("\n")
 
 
+def _reject_known_stock_follower(executor) -> None:
+    """Do not accidentally promote the known stock follower to demo motion.
+
+    This class-lineage check is only a *negative* gate; passing it does not
+    certify a replacement executor or its robot daemon. Those still require
+    the external hardware interlock and separate safety commissioning.
+    """
+    if any(kind.__name__ == "FrankaExecutor" and
+           kind.__module__.endswith("franka_executor")
+           for kind in type(executor).__mro__):
+        raise RuntimeError(
+            "unchanged FrankaExecutor is not a fail-closed pickup follower: "
+            "a stalled stream may make a blocking final landing move")
+
+
 def execute_bound_pickup(
     *, runner: SessionRunner, executor, planner,
     pre_state: LiveRobotState,
@@ -75,6 +92,7 @@ def execute_bound_pickup(
             runner.current_decision().action != "await_lift_observation" or
             not callable(read_post_state) or not callable(motion_interlock)):
         raise ValueError("pickup needs an active attempt and live interlock")
+    _reject_known_stock_follower(executor)
     attempt = runner.active_attempt
     trial = runner._preflight  # same demo's immutable, hash-bound selection
     if (attempt is None or not isinstance(trial, TrialPreflight) or

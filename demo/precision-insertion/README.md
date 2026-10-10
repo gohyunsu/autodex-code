@@ -1049,13 +1049,15 @@ acquisition adapter or full-task robot executor has been commissioned. The old
 nominal preflight remains a candidate-selection estimate, not the motion
 plan to replay after squeeze.
 
-The demo-only [pickup execution boundary](PICKUP_EXECUTION.md) now wraps the
-unchanged `FrankaExecutor.execute(..., skip_lift=True,
-start_from_current=True)`. It verifies the bound saved v8 approach, a fresh
-measured 13-DOF start, an explicit live interlock, and post-squeeze feedback;
-its default refuses motion. It commands **no lift, transfer or insertion** and
-does not set `grasp_success`. It has fake-executor tests only and is not a
-commissioned live-robot launch path.
+The demo-only [pickup execution boundary](PICKUP_EXECUTION.md) accepts the
+v8 `execute(..., skip_lift=True, start_from_current=True)` contract and
+verifies the saved approach, measured 13-DOF start, live interlock and
+post-squeeze feedback. It now **rejects the unchanged stock
+`FrankaExecutor`**: its follower may make a blocking final move after a
+stream stall. A replacement still requires hardware-side velocity-command
+expiry and commissioning. The boundary commands **no lift, transfer or
+insertion** and does not set `grasp_success`. It has fake-executor tests only,
+not a commissioned live-robot launch path.
 
 After a measured squeeze, [the measured-lift replan](MEASURED_LIFT.md)
 re-screens the 20 mm endpoint with achieved finger joints and uses existing

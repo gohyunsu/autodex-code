@@ -1,10 +1,14 @@
 # Demo-local AutoDex pickup command boundary
 
-`precision_insertion.pickup_execution.execute_bound_pickup` is the first
-physical-motion adapter for this demo. It reuses the original v8
-`FrankaExecutor.execute` for **approach → pregrasp → grasp → squeeze**, with
-`skip_lift=True` and `start_from_current=True`. It does not modify stock
-AutoDex code or implement a separate grasp controller.
+`precision_insertion.pickup_execution.execute_bound_pickup` is the pickup
+command boundary for **approach → pregrasp → grasp → squeeze**. Its executor
+must support the original `execute(..., skip_lift=True,
+start_from_current=True)` call, but the **unchanged** stock `FrankaExecutor`
+is now rejected before the start marker or any command. Stock `_follow()`
+breaks on a stalled stream, then may make a blocking move to the *unreached*
+final waypoint. `abort_on_contact=True` covers a reflex, not that stall path.
+Subclasses of that stock class are rejected too. This check is only negative:
+passing it does not certify a replacement safe.
 
 The function refuses to call the executor unless:
 
@@ -19,8 +23,11 @@ The function refuses to call the executor unless:
   it reports a commanded nominal hand pose.
 - The caller opts into physical motion and a separately commissioned live
   hardware/intervention interlock returns `True`.
+- The executor is not the unchanged stock `FrankaExecutor`; a replacement
+  still needs independently reviewed fail-closed stall/reflex behavior and
+  an actual controller-side command-expiry watchdog.
 
-After the stock executor returns, fresh measured feedback must match the
+After the commissioned executor returns, fresh measured feedback must match the
 approach arm endpoint and final raw Inspire squeeze command. Before motor
 invocation it saves `attempts/<id>/pickup_started.json` exclusively; an
 orphaned marker blocks an automatic re-command after a process crash. It then
@@ -41,7 +48,7 @@ from precision_insertion.pickup_execution import (
 # runner.begin_selected_attempt(...) has already saved its binding.
 # read_measured_state() must return LiveRobotState from the actual controllers.
 result = execute_bound_pickup(
-    runner=runner, executor=franka_executor, planner=v8_planner,
+    runner=runner, executor=commissioned_pickup_executor, planner=v8_planner,
     pre_state=read_measured_state(),
     read_post_state=read_measured_state,
     limits=commissioned_pickup_limits,  # PickupExecutionLimits
@@ -52,10 +59,14 @@ result = execute_bound_pickup(
 
 The default `enable_robot_motion=False` cannot send commands. The interlock
 callback must be supplied by the robot PC; a test lambda is **not** a safety
-interlock. This code has only fake-executor tests, no Franka hardware test.
-Nothing here commissions an E-stop, workspace, hand-eye calibration or force
-limits. Do not deploy it until those external gates are implemented and
-reviewed.
+interlock. ParaDex's current Cartesian/joint velocity daemon accepts
+`duration_ms` but does not expire a stale streaming target; if the Python
+process or network fails while moving, a Python-only polling loop is not a
+watchdog. The daemon must enforce command freshness and stop on timeout,
+and that behavior must be tested on the AutoDex PC. This code has only
+fake-executor tests, no Franka hardware test. Nothing here commissions an
+E-stop, workspace, hand-eye calibration or force limits. Do not deploy it
+until those external gates are implemented and reviewed.
 
 The stock `execute(lift_traj_override=...)` must **not** receive the demo's
 separately replanned nominal lift. The stock start check refers to its own
