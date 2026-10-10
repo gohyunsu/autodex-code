@@ -1431,6 +1431,8 @@ extra squeeze contacts do not establish a reset path.
 | `000→004`, 50 mm seed inflation, 30°, seed 11011 | 843 | 251 | 7 | 0 |
 | `000→004`, 50 mm seed inflation, 180°, seed 11011 | 852 | 291 | 10 | 1 |
 | `000→004`, 50 mm seed inflation, 180°, seed 11013 | 859 | 279 | 6 | 0 |
+| `001→004`, 50 mm seed inflation, 180°, seed 11014 | 852 | 229 | 0 | 0 |
+| `002→004`, 50 mm seed inflation, 180°, seed 11014 | 869 | 216 | 0 | 0 |
 | `003→004`, 50 mm seed inflation, 30°, seed 11012 | 750 | 17 | 0 | 0 |
 | `003→004`, 50 mm seed inflation, 180°, seed 11012 | 745 | 25 | 1 | 0 |
 | `000→004`, 10 mm seed inflation, 180°, seed 11011 | 780 | 191 | 0 | 0 |
@@ -1456,6 +1458,22 @@ pass nor an illustrative fidelity pass means this seed is physically reset-
 ready. It still lacks a commissioned fidelity bound, fixture-aware Franka
 path and real-robot test. Do not install these handoffs into the canonical
 runtime reset tree.
+
+The 180° scans now cover all four directed cells toward pose `004`, each with
+1,000 proposals: **4,000 raw → 3,318 scene-clear → 761 squeeze-contact →
+11 MuJoCo-stable → 1 provisional pose-fidelity pass**. The `001→004` and
+`002→004` results are bound in separate local [cell 1 manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/reorient_gamma180_handoff_1_4_1000_20261011/manifest.json)
+and [cell 2 manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/reorient_gamma180_handoff_2_4_1000_20261011/manifest.json).
+They used [`square_reorient_1_2_to_4.json`](configs/square_reorient_1_2_to_4.json)
+with unchanged `precision_insertion.yml` plus `--task_gamma 180 --seed 11014`;
+the earlier `003→004` scan used seed 11012. The stock `sim_eval.json` records
+no detailed failure reason after squeeze, but its evaluator stops when the
+key drifts more than 50 mm or rotates more than 15° under simulated gravity.
+For the `001→004` and `002→004` contact subsets, **none** completed all 50
+gravity steps; their median recorded force-test lengths were 5 and 6 steps.
+Thus these are early stability failures, not merely a shortage of contact.
+They do not justify labeling either pose impossible, nor do they establish
+automatic repose to pose `004`.
 
 The 10 mm ablation is reproducible by replacing `-c` in the BODex command
 above with the absolute path to the demo-only YAML, adding
