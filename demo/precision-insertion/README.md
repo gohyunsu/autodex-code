@@ -51,7 +51,11 @@ The first independent helpers are in `precision_insertion/`:
   anchors for overlays and returns `propose`, `abstain`, `stop`, or
   `no_correction` with camera provenance. It rejects ties, single-view
   decisions, stale/asynchronous frames, a possible slip, and step/total
-  budget violations; it never averages candidate positions. A `propose`
+  budget violations; it never averages candidate positions. The current VLM
+  retry policy proposes only `hold` or one **1 mm** socket-frame axial step
+  (`+X`, `-X`, `+Y`, `-Y`); diagonal and fractional-step votes are rejected.
+  These are raw hypotheses: exact key/socket/hand geometry and the live path
+  must screen them before they are offered to a VLM or robot. A `propose`
   result is not motion authorization or evidence of insertion success.
 - `endpoint.py` evaluates one fixed-grasp candidate using the full metric CAD
   key, exact socket collision mesh, and every Inspire visual link at the
@@ -62,10 +66,13 @@ The first independent helpers are in `precision_insertion/`:
 - `candidates.py` scans the selected shared root's Inspire v8 candidate tree,
   reads matching scene `meta.pose_idx` and tabletop assets, requires full-key
   simulation evidence, and applies `endpoint.py` to surviving grasps. The
+  cylindrical key has one shared v8 grasp tree; every socket gap receives a
+  separate endpoint catalogue using that socket's exact collision mesh. The
   catalogue distinguishes a complete finite scan from missing or truncated
   input. Per-trial selection matches the observed tabletop pose, excludes
-  session-attempted grasps, optionally ranks by v8 coverage, and rejects
-  changed source files. AutoDex's `load_candidate` is reused with an explicit
+  session-attempted grasps, optionally ranks by v8 coverage, and rejects a
+  different selected key/socket/gap or changed source files. AutoDex's
+  `load_candidate` is reused with an explicit
   root and whitelist to form a planner `candidate_override`; this does not
   extend AutoDex's lift-only planner to transfer or insertion.
 - `outcome.py` defines a VLM-led, sensor-vetoed tri-state task label. A
@@ -163,11 +170,12 @@ catalogue (the example clearance remains uncommissioned):
   demo/precision-insertion/run_pipeline.py screen-catalog \
   --shared-root /home/hyunsu/shared_data --mode square --gap-mm 1.5 \
   --min-hand-clearance-mm 0.2 \
-  --output /home/hyunsu/shared_data/AutoDex/precision_insertion/endpoint_catalogs/square_1p5mm_20261010.json
+  --output /home/hyunsu/shared_data/AutoDex/precision_insertion/endpoint_catalogs/square_1p5mm_NEW_SCAN.json
 
 ~/miniconda3/envs/autodex_bodex/bin/python \
   demo/precision-insertion/run_pipeline.py select-catalog \
-  --catalog /home/hyunsu/shared_data/AutoDex/precision_insertion/endpoint_catalogs/square_1p5mm_20261010.json \
+  --mode square --gap-mm 1.5 \
+  --catalog /home/hyunsu/shared_data/AutoDex/precision_insertion/endpoint_catalogs/square_1p5mm_NEW_SCAN.json \
   --pose-stem 000
 ```
 
@@ -181,12 +189,58 @@ grasps or tabletop poses impossible. `select-catalog` exits 2 for no eligible
 grasp or an incomplete/stale catalogue. It does not execute reorientation.
 The example catalogue is in local `shared_data`, **not** the read-only
 `/mnt/paradex2` NAS mount.
+
+For the cylindrical family, generate the key's BODex/MuJoCo v8 grasp pool
+**once**, then screen that same pool against **each** selected socket. A
+recommended per-socket output layout is
+`endpoint_catalogs/cylindrical/<socket_object>/<scan_id>.json`. For example,
+after the grasp pool is present, select the 20 mm radial-gap variant with
+`--mode cylinder --gap-mm 20` for both `screen-catalog` and `select-catalog`;
+the latter now rejects a catalogue for any other socket gap. Keep each scan's
+exact key/socket/URDF hashes and clearance rule. At live startup the operator
+or a validated fixture identifier must independently confirm which physical
+socket is mounted; measuring only its pose does not establish its size.
+The `gap_01mm` name denotes a **1 mm one-sided radial clearance**, not 0.1 mm.
 The same scan across all four square gaps yields one `table/0/78` per gap
 and zero endpoint-eligible grasps, with the same three Inspire-link
 intersections. The cylinder 20 mm-gap catalogue is incomplete because its
 runtime v8 grasp directory has no candidate files. A compact index of all
 five local reports and two staging-grasp checks is at
 `~/shared_data/AutoDex/precision_insertion/endpoint_catalogs/README.md`.
+
+### Cylinder endpoint diagnostic images (not runtime grasps)
+
+`render_cylinder_endpoint_diagnostics.py` provides a reproducible *visual
+diagnostic* while the cylinder's tabletop v8 grasp pool is absent. It reads the
+local, trusted raw **reorientation** pilot, applies the documented relaxed
+numeric threshold, and uses `endpoint.py` to test the centered 20 mm key fit
+and all Inspire visual links against each of the six exact socket meshes.
+Only endpoint-geometry passes receive a Blender bundle. The demonstration
+0.2 mm hand/socket clearance is **not calibrated**. Native BODex success,
+tabletop suitability, MuJoCo stability, Franka planning, continuous insertion,
+and physical success are all unverified; no diagnostic image may be imported
+into the runtime candidate catalogue as a validated grasp.
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/render_cylinder_endpoint_diagnostics.py \
+  --shared-root /home/hyunsu/shared_data \
+  --raw-root /home/hyunsu/shared_data/AutoDex/bodex_raw/inspire/precision_insertion_cylinder_reorient_proxy_pilot_100/precision_key_cylinder_r15_h80_grip_proxy/reorient_12 \
+  --output-root /home/hyunsu/shared_data/AutoDex/precision_insertion/visualizations/NEW_DIAGNOSTIC_RUN \
+  --min-hand-clearance-mm 0.2
+
+blender --background --python \
+  scripts/precision_insertion/render_blender_actual_mesh_animation.py -- \
+  /home/hyunsu/shared_data/AutoDex/precision_insertion/visualizations/NEW_DIAGNOSTIC_RUN/precision_socket_cylinder_gap_01mm/raw_reorient_0_1_0/endpoint_bundle.npz \
+  --output /home/hyunsu/shared_data/AutoDex/precision_insertion/visualizations/NEW_DIAGNOSTIC_RUN/precision_socket_cylinder_gap_01mm/raw_reorient_0_1_0/key_socket.png \
+  --width 1600 --height 900 --view key-socket --still-frame 1
+```
+
+The script creates an exclusive output directory, with one folder and
+`screen_report.json` per physical socket variant, then a subfolder for every
+endpoint-geometry-pass raw seed. Each seed folder contains actual CAD/URDF
+meshes and a transform bundle; render it from `key-socket` and `task` views.
+The root `manifest.json` records the evidence scope and runtime eligibility.
 
 Run the current offline tests from the repository root:
 
