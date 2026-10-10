@@ -24,6 +24,12 @@ from precision_insertion.planner_mode import require_declared_cartesian_mode
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     command = parser.add_subparsers(dest="command", required=True)
+    verify_saved = command.add_parser(
+        "verify-saved-preflight",
+        help="read-only integrity and fixed-hand check of a saved passing plan",
+    )
+    verify_saved.add_argument("--report", type=Path, required=True,
+                              help="saved trial preflight report.json")
     audit = command.add_parser("audit", help="read-only v8 asset readiness report")
     audit.add_argument("--shared-root", type=Path, required=True)
     audit.add_argument("--mode", choices=("square", "cylinder"), required=True)
@@ -205,6 +211,19 @@ def main(argv: list[str] | None = None) -> int:
     repose.add_argument("--output-dir", type=Path, required=True,
                         help="new exclusive output directory; no overwrite")
     args = parser.parse_args(argv)
+
+    if args.command == "verify-saved-preflight":
+        from precision_insertion.saved_preflight import (
+            verify_saved_passing_trial,
+        )
+
+        try:
+            result = verify_saved_passing_trial(args.report)
+        except (FileNotFoundError, KeyError, TypeError, ValueError,
+                OSError) as exc:
+            parser.error(str(exc))
+        print(json.dumps(result, indent=2))
+        return 0
 
     if args.command == "audit":
         try:

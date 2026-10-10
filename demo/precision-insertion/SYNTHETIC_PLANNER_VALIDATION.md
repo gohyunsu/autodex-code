@@ -49,3 +49,17 @@ two exact versions. Unknown implementations fail closed. The third issue,
 default-route finger motion, is **not** suppressed by a compatibility patch:
 the path is rejected, or the explicitly selected native locked-hand mode
 must itself pass the fixed-hand and sampled-world checks.
+
+## Current-tree recheck
+
+On 2026-10-11 the same hypothetical scene and seven-candidate cap were
+re-run against the current local v8 catalogue. The [saved report](/tmp/precision-synthetic-square-pose004-20261011-recheck/report.json)
+again selected `table/4/5102` after the same three attempted candidates.
+The saved paths have 193 pickup, 855 held-lift, 107 transfer and 621 axial
+samples. The transfer sample count differs from the older run (94); numerical
+planning is not assumed bitwise deterministic. The new
+`run_pipeline.py verify-saved-preflight` command independently confirmed the
+scene/NPZ hashes, selected-candidate and sampled-audit array digests, stage
+continuity, at-most-0.01494 rad held joint steps, and at-most-3.6e-8 rad held
+hand drift. This is artifact integrity and a fixed-hand contract check, **not**
+a repeated collision audit or a physical/robot-ready result.

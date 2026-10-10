@@ -2249,6 +2249,23 @@ and rejects a mismatched environment flag. The native mode has **not** passed
 hardware-stack validation, and neither result is a physical grasp/insertion
 outcome or a motion authorization. See [synthetic planner validation](SYNTHETIC_PLANNER_VALIDATION.md).
 
+To inspect a saved passing report after transferring it to another PC, run
+the independent **read-only** artifact/trajectory verifier:
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/run_pipeline.py verify-saved-preflight \
+  --report /path/to/saved_trial/report.json
+```
+
+It rejects changed scene/NPZ bytes, disagreement between the selected grasp
+and sampled audit, nonfinite/oversize joint steps, hand motion while the key
+is supposedly held, and disconnected pickup/lift/transfer/axial segments.
+It does **not** rerun collision planning, verify camera calibration, measure
+the actual post-squeeze key pose, or authorize Franka motion. A report from
+`diagnose_synthetic_full_chain.py` remains synthetic even if this verifier
+passes.
+
 The startup call enforces ChArUco before repeated socket captures, with the
 socket already rigidly fixed. Its calibration helper does **not** independently
 prove the SAM3 mask/FoundPose photometric quality, hand-eye accuracy, or
