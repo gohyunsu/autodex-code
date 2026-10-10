@@ -85,6 +85,20 @@ The first independent helpers are in `precision_insertion/`:
   offset is expressed in the socket frame and applied equally at all three
   poses. The result records source hashes and poses but does not solve Franka
   IK, verify an attached-object trajectory, or authorize contact motion.
+- `path_audit.py` consumes the **actual planned** 13-DOF transfer (after the
+  lift) and axial-descent joint samples, using the unchanged AutoDex planner's
+  `fk_wrist()` (cuRobo `ee_link: base_link`). It requires fixed Inspire joints,
+  continuous segment handoff, sufficiently dense samples, pre-insertion and
+  20 mm goal agreement, and a monotone socket-axis descent. At every FK sample
+  it attaches the full key CAD and every Inspire visual link with the same
+  `T_key_hand`, then checks Coal collision and hand clearance against the
+  frozen socket, measured table and other fixed scene obstacles. It records
+  input hashes, failures and minimum observed clearances. This is a
+  **sampled held-geometry audit**, not a swept-volume proof: collisions
+  between samples, cuRobo Franka arm checks, controller force response and
+  physical grasp/insertion remain independent gates. A tilted socket can be
+  audited only if an axis-following path has already been generated; AutoDex's
+  world-Z stroke planner cannot create that path.
 - `candidates.py` scans the selected shared root's Inspire v8 candidate tree,
   reads matching scene `meta.pose_idx` and tabletop assets, requires full-key
   simulation evidence, and applies `endpoint.py` to surviving grasps. The
@@ -123,6 +137,39 @@ the guarded insertion controller must independently enforce contact limits.
 The older `autodex.tasks.precision_insertion.decide_retry` proposes a
 continuous pose-residual correction; it is not the bounded candidate-ID vote
 policy and is not imported as this demo's control loop.
+
+To inspect saved or freshly planned paths, keep the original planner instance
+and the **actual** dense transfer/descent `(N, 13)` joint arrays. The first
+transfer sample is after the verified lift; the descent begins at the same
+joint state where transfer ends. With a `SessionCalibration` and
+`InsertionTargets` from this demo, call:
+
+```python
+from precision_insertion.path_audit import PathAuditLimits, audit_held_joint_paths
+
+limits = PathAuditLimits(
+    max_joint_step_rad=0.02,
+    max_wrist_step_m=0.005,
+    max_wrist_rotation_deg=1.0,
+    goal_position_tolerance_m=0.001,
+    goal_rotation_tolerance_deg=1.0,
+    axial_lateral_tolerance_m=0.001,
+    axial_rotation_tolerance_deg=1.0,
+    minimum_hand_clearance_m=0.001,
+)
+report = audit_held_joint_paths(
+    shared_root=shared_root, calibration=session, targets=targets,
+    planner=planner, transfer_trajectory=transfer_q,
+    descent_trajectory=descent_q, held_hand_q=held_hand_q, limits=limits,
+)
+print(report["sampled_clear"], report["failures"])
+```
+
+These numbers are **illustrative API arguments, not calibrated thresholds**.
+Supply the measured/selected held hand state; do not treat AutoDex's nominal
+commanded grip as measured feedback. `sampled_clear=True` is never a robot
+execution permit. The caller must retain cuRobo's arm/world path result and
+commission a guarded insertion controller and between-sample swept checks.
 
 For a **saved-image, read-only** observer replay, place this demo directory
 and a compatible ZeroDex checkout on `PYTHONPATH`, then pass already-loaded

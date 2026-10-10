@@ -118,10 +118,9 @@ def _coal_mesh(mesh):
     return model
 
 
-def _mesh_pair_report(moving_mesh, fixed_model, T_fixed_moving: np.ndarray) -> dict:
+def _coal_models_report(moving, fixed_model, T_fixed_moving: np.ndarray) -> dict:
     import coal
 
-    moving = _coal_mesh(moving_mesh)
     transform = coal.Transform3s(T_fixed_moving[:3, :3],
                                  T_fixed_moving[:3, 3])
     collision = coal.CollisionResult()
@@ -132,6 +131,11 @@ def _mesh_pair_report(moving_mesh, fixed_model, T_fixed_moving: np.ndarray) -> d
         moving, transform, fixed_model, coal.Transform3s(),
         coal.DistanceRequest(), coal.DistanceResult())
     return {"colliding": colliding, "minimum_surface_distance_m": float(distance)}
+
+
+def _mesh_pair_report(moving_mesh, fixed_model, T_fixed_moving: np.ndarray) -> dict:
+    return _coal_models_report(_coal_mesh(moving_mesh), fixed_model,
+                               T_fixed_moving)
 
 
 def validate_task_geometry(geometry: dict[str, Any], mode: TaskMode) -> np.ndarray:

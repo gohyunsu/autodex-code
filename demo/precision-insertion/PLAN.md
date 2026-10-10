@@ -81,6 +81,12 @@ handled separately. A tilted socket cannot be fed to the world-Z primitive:
 either commission a socket-axis stroke planner or reject it under an
 explicit, measured uprightness tolerance. No target-pose result may be
 promoted to `preinsert_reached` or `insertion_success` on this basis alone.
+The demo's `path_audit.py` now provides a read-only **sampled** full-key and
+whole-Inspire collision check on actual FK trajectories, including frozen
+table/socket scene provenance, fixed finger state and socket-axis/goal checks.
+It must be combined with the original planner's arm collision result; finite
+samples alone do not prove swept clearance between samples or contact safety.
+There is still no robot-executable full-task preflight or guarded controller.
 
 ## What the existing v8 candidate pool proves
 
