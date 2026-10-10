@@ -397,10 +397,15 @@ The first post-lift candidate pose prior must be available **before** the
 grasp-success verdict so its fresh held-key FoundPose observation can inform
 that verdict; the prior itself is not evidence of a held key. Only a positive
 observed grasp verdict may unlock the post-lift endpoint/path replan. The
-current read-only VLM observer checks temporal same-camera pairs, but its
-lift/insertion raw images and model answers are not yet automatically
-hash-bound to the session's stage labels. Implement that checkpoint evidence
-binding before treating those labels as live VLM-derived outcomes.
+read-only VLM observer checks temporal same-camera pairs. The new
+`lift_checkpoint.py` binds two saved key captures, their source PNG hashes,
+the measured hand state and the VLM prompt/raw answer; `SessionRunner` permits
+a positive grasp label only from that verified checkpoint. This positive
+path requires an admitted post-lift FoundPose, so an obvious miss with no
+held-key observation still needs a separate raw-frame negative-evidence
+path. Insertion visual images and model answers are not yet automatically
+hash-bound to the session's task verdict; complete that checkpoint before
+calling insertion labels live VLM-derived outcomes.
 Candidate grasp statistics update from `grasp_success`; insertion retry
 statistics update from `insertion_success` and failure cause. Unknown is not
 success and must not erase a known earlier milestone. Use a controlled failure
@@ -631,6 +636,7 @@ demo/precision-insertion/
     preflight.py                  # planning-only pickup/lift/transfer/20 mm composition
     held_relation.py              # observed held pose with Dinf frame ambiguity
     live_robot_state.py            # actual Franka/Inspire feedback; no commands
+    lift_checkpoint.py             # saved two-capture VLM grasp-label evidence
     postlift_preflight.py         # measured post-lift endpoint/transfer replan
     path_audit.py                 # sampled held-key/hand scene collision checks
     repose_path_audit.py          # sampled held reset-path/fixture check, no execution

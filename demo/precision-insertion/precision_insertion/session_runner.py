@@ -26,9 +26,14 @@ from .config import TaskMode
 from .key_perception import (
     KeyPoseObservation, verify_key_capture_artifacts,
 )
+from .lift_checkpoint import (
+    LiftCheckpoint, assess_lift_checkpoint, verify_lift_checkpoint,
+    write_lift_checkpoint,
+)
 from .geometry import validate_se3
 from .endpoint import _load_mesh
 from .live_robot_state import LiveRobotState
+from .observer import ImageVLM
 from .path_audit import PathAuditLimits
 from .pose_selection import classify_key_tabletop_pose
 from .postlift_preflight import (
@@ -122,6 +127,13 @@ class SessionRunner:
         self._postlift_report_path: Path | None = None
         self._postlift_report_sha256: str | None = None
         self._postlift_index = 0
+        self._lift_checkpoint: LiftCheckpoint | None = None
+        self._lift_report_path: Path | None = None
+        self._lift_report_sha256: str | None = None
+        self._lift_execution_path: Path | None = None
+        self._lift_execution_sha256: str | None = None
+        self._lift_assessment_index = 0
+        self._lift_assessed_capture_ids: set[str] = set()
         self._retry_assessment_index = 0
         self._write_exclusive(
             target / "frozen_session_calibration.json", calibration.record)
@@ -324,6 +336,13 @@ class SessionRunner:
         self._postlift_report_path = None
         self._postlift_report_sha256 = None
         self._postlift_index = 0
+        self._lift_checkpoint = None
+        self._lift_report_path = None
+        self._lift_report_sha256 = None
+        self._lift_execution_path = None
+        self._lift_execution_sha256 = None
+        self._lift_assessment_index = 0
+        self._lift_assessed_capture_ids.clear()
         self._capture_id = key_observation.capture_id
         self._capture_timestamp_s = float(
             key_observation.selected_acquisition_timestamp_s)
@@ -518,6 +537,13 @@ class SessionRunner:
         self._postlift_report_path = None
         self._postlift_report_sha256 = None
         self._postlift_index = 0
+        self._lift_checkpoint = None
+        self._lift_report_path = None
+        self._lift_report_sha256 = None
+        self._lift_execution_path = None
+        self._lift_execution_sha256 = None
+        self._lift_assessment_index = 0
+        self._lift_assessed_capture_ids.clear()
         self._attempt_index = 0
         self._retry_assessment_index = 0
         return deepcopy(attempt)
@@ -566,6 +592,13 @@ class SessionRunner:
         self._postlift_report_path = None
         self._postlift_report_sha256 = None
         self._postlift_index = 0
+        self._lift_checkpoint = None
+        self._lift_report_path = None
+        self._lift_report_sha256 = None
+        self._lift_execution_path = None
+        self._lift_execution_sha256 = None
+        self._lift_assessment_index = 0
+        self._lift_assessed_capture_ids.clear()
         self._attempt_index = 0
         self._retry_assessment_index = 0
         return deepcopy(attempt)
@@ -582,6 +615,111 @@ class SessionRunner:
         if updated.events and updated.candidate_id is not None:
             self._attempted.add(tuple(updated.candidate_id.split("/")))
         return deepcopy(updated)
+
+    def prepare_observed_lift_label(
+        self, *, planner, after_observation: KeyPoseObservation,
+        after_key_evidence_dir: Path, joint_sample: LiveRobotState,
+        backend: ImageVLM, lift_execution_log_path: Path,
+        decision_timestamp_s: float, max_state_skew_s: float,
+        max_phase_skew_s: float, max_lift_observation_gap_s: float,
+        min_center_rise_m: float, max_arm_hand_skew_s: float,
+        max_hand_command_error_raw: float, max_arm_velocity_rad_s: float,
+        minimum_visual_views: int = 2,
+    ) -> LiftCheckpoint:
+        """Persist paired lift VLM evidence and record only a decisive label.
+
+        The execution log supplies the physical completion time; its content
+        remains an external controller assertion. Unknown visual/pose
+        evidence is saved but leaves the attempt unlabelled for re-observation.
+        """
+        if (self.current_decision().action != "await_lift_observation" or
+                self._attempt is None or self._attempt_dir is None or
+                self._preflight is None or self._key_evidence_dir is None or
+                after_observation.capture_id in self._lift_assessed_capture_ids):
+            raise ValueError("lift assessment needs a new held-key capture for this attempt")
+        lift_file = Path(lift_execution_log_path).expanduser().resolve()
+        lift_bytes = lift_file.read_bytes()
+        execution = json.loads(lift_bytes)
+        if not isinstance(execution, dict):
+            raise ValueError("lift execution log must be a JSON object")
+        try:
+            completed = float(execution.get("completed_at_s", float("nan")))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("lift completion time is invalid") from exc
+        if (execution.get("schema") !=
+                "precision_insertion_lift_execution_v1" or
+                execution.get("attempt_id") != self._attempt.attempt_id or
+                execution.get("candidate_id") != self._attempt.candidate_id or
+                execution.get("trajectory_complete") is not True or
+                execution.get("force_abort") is not False or
+                not math.isfinite(completed) or
+                completed <= self._attempt.started_at_s):
+            raise ValueError("lift needs a completed non-aborted execution log")
+        prior = self.postlift_candidate_pose_prior(
+            planner=planner, joint_sample=joint_sample,
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s)
+        result = assess_lift_checkpoint(
+            mode=self.mode, shared_root=self.shared_root,
+            calibration=self.calibration,
+            attempt_id=self._attempt.attempt_id,
+            candidate_id=self._attempt.candidate_id,
+            attempt_started_at_s=self._attempt.started_at_s,
+            lift_completed_at_s=completed,
+            decision_timestamp_s=decision_timestamp_s,
+            before_capture_id=self._preflight.key_observation_id,
+            before_pose_world=self._preflight.key_pose_world,
+            before_bundle=self._key_evidence_dir,
+            after_observation=after_observation,
+            after_bundle=after_key_evidence_dir,
+            joint_sample=joint_sample,
+            expected_candidate_prior_world=prior,
+            backend=backend, max_state_skew_s=max_state_skew_s,
+            max_phase_skew_s=max_phase_skew_s,
+            max_lift_observation_gap_s=max_lift_observation_gap_s,
+            min_center_rise_m=min_center_rise_m,
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s,
+            minimum_visual_views=minimum_visual_views)
+        if (result.attempt_id != self._attempt.attempt_id or
+                result.candidate_id != self._attempt.candidate_id or
+                result.lift_completed_at_s != completed):
+            raise ValueError("lift checkpoint does not match this physical attempt")
+        output = (self._attempt_dir / "lift_assessments" /
+                  f"{self._lift_assessment_index:03d}")
+        write_lift_checkpoint(result, output)
+        report_path = output / "report.json"
+        verify_lift_checkpoint(report_path)
+        self._write_exclusive(output / "execution_binding.json", {
+            "schema": "precision_insertion_lift_execution_binding_v1",
+            "lift_execution_log": str(lift_file),
+            "lift_execution_log_sha256": hashlib.sha256(
+                lift_bytes).hexdigest(),
+            "lift_checkpoint_report_sha256": hashlib.sha256(
+                report_path.read_bytes()).hexdigest(),
+            "session_calibration_sha256": self.session_sha256,
+            "catalog_sha256": self.catalog_sha256,
+            "robot_ready": False,
+        })
+        self._lift_assessment_index += 1
+        self._lift_assessed_capture_ids.add(after_observation.capture_id)
+        if result.grasp_success is not None:
+            self._lift_checkpoint = result
+            self._lift_report_path = report_path
+            self._lift_report_sha256 = hashlib.sha256(
+                report_path.read_bytes()).hexdigest()
+            self._lift_execution_path = lift_file
+            self._lift_execution_sha256 = hashlib.sha256(
+                lift_bytes).hexdigest()
+            refs = {"vlm_observation": str(report_path),
+                    "key_wrist_check": str(report_path),
+                    "lift_execution": str(lift_file)}
+            self.observe_stage(
+                "grasp_success", result.grasp_success,
+                timestamp_s=completed, evidence_refs=refs)
+        return result
 
     def postlift_candidate_pose_prior(
         self, *, planner, joint_sample: LiveRobotState,
@@ -662,6 +800,15 @@ class SessionRunner:
                 not isinstance(joint_sample, LiveRobotState) or
                 key_observation.phase != "held_postlift"):
             raise ValueError("post-lift replan needs one first held-key observation")
+        if (self._lift_report_path is None or
+                not self._lift_report_path.is_file() or
+                self._lift_report_sha256 is None or
+                hashlib.sha256(
+                    self._lift_report_path.read_bytes()).hexdigest() !=
+                self._lift_report_sha256):
+            raise ValueError("post-lift replan needs unchanged lift evidence")
+        if isinstance(self._lift_checkpoint, LiftCheckpoint):
+            verify_lift_checkpoint(self._lift_report_path)
         if self._postlift_preflight is not None and (
                 key_observation.selected_acquisition_timestamp_s <=
                 self._postlift_preflight.key_capture_timestamp_s or
@@ -742,10 +889,42 @@ class SessionRunner:
     ) -> AttemptRecord:
         if stage == "reorient_success":
             raise ValueError("use observe_repose_landing for the target-pose label")
-        if stage == "reset_success" and status is True:
-            raise ValueError("use observe_reset_landing for verified reset success")
         if self._attempt is not None and self._attempt.candidate_id is None:
             raise ValueError("repose and insertion attempt labels must stay separate")
+        if stage == "grasp_success" and status is True:
+            if (self._lift_checkpoint is None or
+                    self._lift_checkpoint.grasp_success is not True or
+                    self._attempt is None or
+                    self._lift_checkpoint.attempt_id !=
+                    self._attempt.attempt_id or
+                    self._lift_checkpoint.candidate_id !=
+                    self._attempt.candidate_id or
+                    float(timestamp_s) !=
+                    self._lift_checkpoint.lift_completed_at_s or
+                    self._lift_report_path is None or
+                    not isinstance(evidence_refs, Mapping) or
+                    evidence_refs.get("vlm_observation") !=
+                    str(self._lift_report_path) or
+                    evidence_refs.get("key_wrist_check") !=
+                    str(self._lift_report_path) or
+                    self._lift_execution_path is None or
+                    evidence_refs.get("lift_execution") !=
+                    str(self._lift_execution_path) or
+                    not self._lift_execution_path.is_file() or
+                    self._lift_execution_sha256 is None or
+                    hashlib.sha256(
+                        self._lift_execution_path.read_bytes()).hexdigest() !=
+                    self._lift_execution_sha256 or
+                    not self._lift_report_path.is_file() or
+                    self._lift_report_sha256 is None or
+                    hashlib.sha256(
+                        self._lift_report_path.read_bytes()).hexdigest() !=
+                    self._lift_report_sha256):
+                raise ValueError("grasp success needs this attempt's bound lift checkpoint")
+            if isinstance(self._lift_checkpoint, LiftCheckpoint):
+                verify_lift_checkpoint(self._lift_report_path)
+        if stage == "reset_success" and status is True:
+            raise ValueError("use observe_reset_landing for verified reset success")
         if stage == "preinsert_reached" and status is True:
             if (self._postlift_preflight is None or
                     self._postlift_preflight.status !=

@@ -57,8 +57,13 @@ that session and catalogue. For each new key observation:
    Franka/Inspire feedback and the selected v8 grasp to form a **loose**
    search prior *before* the grasp-success verdict. Admit a new key capture
    with `admit_postlift_key_capture` (phase `held_postlift`) and save it with
-   `write_key_capture_artifacts`. Assess the lift using VLM images and the
-   observed key–wrist relation; only then record `grasp_success`. This prior
+   `write_key_capture_artifacts`. Call `prepare_observed_lift_label` with
+   that bundle, the same measured joint sample, a ZeroDex-compatible VLM
+   backend, commissioned camera/rise limits, and a completed-lift log. It
+   uses the **saved** tabletop and post-lift raw frames, requires two paired
+   camera views, and stores prompt/raw response plus source image hashes.
+   A decisive visual/observed-key-rise result records `grasp_success`;
+   conflict or abstention leaves the label unknown. The candidate prior
    alone never proves that the key was held. With an observed success, call
    `prepare_postlift_transfer` with that bundle and the *same* measured joint
    sample. It verifies the candidate/prior/frame binding, replaces the
@@ -118,6 +123,17 @@ A supervised reset log is JSON with schema
 `key_removed_from_socket` must also be `true`. These are operator assertions,
 not sensor proof; `observe_reset_landing` independently checks the returned
 key's fresh multi-view pose and fixed-socket/table geometry.
+
+The lift adapter must provide a JSON execution log with schema
+`precision_insertion_lift_execution_v1`, matching `attempt_id` and
+`candidate_id`, `trajectory_complete: true`, `force_abort: false`, and
+`completed_at_s` between attempt start and the after-lift exposure.
+`prepare_observed_lift_label` hashes that log separately from the VLM report.
+The physical lift completion is the attempt event time; the later VLM
+decision time is retained in the report. This is still an external execution
+assertion, not a robot-control interface. A clear miss with no admitted
+held-key FoundPose cannot yet use this positive-evidence pathway; its
+raw-frame failure observation needs a separate binding.
 
 The supervisor writes a new `session_run.json`, immutable copies of the
 frozen calibration and endpoint catalogue, numbered
@@ -331,6 +347,12 @@ The first independent helpers are in `precision_insertion/`:
   `held_preinsert` in the VLM retry. Set prior drift and timing limits from
   measured hardware; a tight limit may reject genuine squeeze drift, while
   a loose limit cannot itself establish that the hand truly holds the key.
+- `lift_checkpoint.py` consumes the exact saved tabletop/post-lift key bundles,
+  validates paired camera IDs, pixel hashes, exposure order, measured joint
+  alignment, the selected candidate prior and observed key-center rise, then
+  persists the VLM prompt/raw answer and source PNG hashes. Its verifier
+  rejects changed input captures before a positive session label is written.
+  An ambiguous result remains unlabelled so newer frames can be assessed.
 - `trial_preflight.plan_admitted_key_trial()` first aligns the measured robot
   state to that whole key-capture interval, then calls the existing
   `plan_fresh_key_trial()` candidate filter and pickup-to-20 mm preflight.

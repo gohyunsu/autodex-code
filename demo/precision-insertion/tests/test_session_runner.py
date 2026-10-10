@@ -140,6 +140,26 @@ def _bind_postlift(runner):
     return str(report)
 
 
+def _bind_lift(runner):
+    """Existing stage tests inject an already checked VLM lift bundle."""
+    report = runner._attempt_dir / "lift_assessments/000/report.json"
+    report.parent.mkdir(parents=True)
+    report.write_text('{"grasp_success":true}\n', encoding="utf-8")
+    runner._lift_checkpoint = SimpleNamespace(
+        attempt_id=runner._attempt.attempt_id,
+        candidate_id=runner._attempt.candidate_id,
+        lift_completed_at_s=10.3, grasp_success=True)
+    runner._lift_report_path = report
+    runner._lift_report_sha256 = hashlib.sha256(report.read_bytes()).hexdigest()
+    lift_log = runner._attempt_dir / "lift_execution.json"
+    lift_log.write_text('{"completed_at_s":10.3}\n', encoding="utf-8")
+    runner._lift_execution_path = lift_log
+    runner._lift_execution_sha256 = hashlib.sha256(
+        lift_log.read_bytes()).hexdigest()
+    return {"vlm_observation": str(report), "key_wrist_check": str(report),
+            "lift_execution": str(lift_log)}
+
+
 def test_observed_failed_grasp_is_excluded_only_after_saved_event(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)
@@ -186,8 +206,7 @@ def test_first_postlift_capture_binds_candidate_prior_and_gates_arrival(
     runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
     runner.observe_stage(
         "grasp_success", True, timestamp_s=10.3,
-        evidence_refs={"vlm_observation": "vlm/lift.json",
-                       "key_wrist_check": "pose/lift.json"})
+        evidence_refs=_bind_lift(runner))
     arrival_refs = {"trajectory": "path/transfer.json",
                     "key_socket_pose": "pose/hold.json",
                     "grasp_state": "pose/grip.json",
@@ -314,6 +333,104 @@ def test_candidate_pose_prior_is_available_before_vlm_grasp_label(
         runner.postlift_candidate_pose_prior(**inputs)
 
 
+def test_lift_checkpoint_abstains_then_records_hash_bound_positive_label(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        session_runner, "plan_admitted_key_trial",
+        lambda **kwargs: _report(runner, kwargs["key_observation"]))
+    _plan(runner, _observation("key_1", 10.0))
+    runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
+    with pytest.raises(ValueError, match="bound lift checkpoint"):
+        runner.observe_stage(
+            "grasp_success", True, timestamp_s=10.4,
+            evidence_refs={"vlm_observation": "vlm.json",
+                           "key_wrist_check": "pose.json"})
+    candidate_dir = tmp_path / "candidate"
+    candidate_dir.mkdir()
+    np.save(candidate_dir / "wrist_se3.npy", np.eye(4))
+    monkeypatch.setattr(session_runner, "select_pose_candidates",
+                        lambda *_args, **_kwargs: {
+                            "status": "candidates_available",
+                            "candidates": [{"key": list(KEY_A),
+                                            "candidate_dir": str(candidate_dir)}]})
+    raw = np.zeros(6)
+    q = np.zeros(13)
+    q[7:] = convert_inspire_raw(raw[None, :])[0]
+    joint = LiveRobotState(
+        q, np.zeros(7), 10.6, 10.6, 12.0, 10.6,
+        raw, raw.copy(), 0.0, np.zeros(6))
+    lift_log = tmp_path / "lift_execution.json"
+    valid_log = {
+        "schema": "precision_insertion_lift_execution_v1",
+        "attempt_id": "attempt_1", "candidate_id": "table/0/3",
+        "trajectory_complete": True, "force_abort": False,
+        "completed_at_s": 10.4,
+    }
+    lift_log.write_text(json.dumps({**valid_log, "force_abort": True}),
+                        encoding="utf-8")
+    labels = [None, True]
+    calls = []
+    def fake_assess(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            attempt_id="attempt_1", candidate_id="table/0/3",
+            lift_completed_at_s=10.4, grasp_success=labels.pop(0))
+    def fake_write(result, output):
+        output.mkdir(parents=True, exist_ok=False)
+        (output / "report.json").write_text(
+            json.dumps({"grasp_success": result.grasp_success}) + "\n",
+            encoding="utf-8")
+    monkeypatch.setattr(session_runner, "assess_lift_checkpoint", fake_assess)
+    monkeypatch.setattr(session_runner, "write_lift_checkpoint", fake_write)
+    monkeypatch.setattr(session_runner, "verify_lift_checkpoint",
+                        lambda path: json.loads(path.read_text()))
+    common = dict(
+        planner=SimpleNamespace(fk_wrist=lambda _q: np.eye(4)),
+        joint_sample=joint, backend=object(),
+        lift_execution_log_path=lift_log,
+        decision_timestamp_s=10.7,
+        max_state_skew_s=0.05, max_phase_skew_s=0.05,
+        max_lift_observation_gap_s=2.0, min_center_rise_m=0.03,
+        max_arm_hand_skew_s=0.05,
+        max_hand_command_error_raw=30.0,
+        max_arm_velocity_rad_s=0.05)
+    unknown = replace(_observation("held_unknown", 10.6),
+                      phase="held_postlift")
+    with pytest.raises(ValueError, match="non-aborted execution log"):
+        runner.prepare_observed_lift_label(
+            after_observation=unknown, after_key_evidence_dir=tmp_path,
+            **common)
+    assert calls == []
+    lift_log.write_text(json.dumps(valid_log), encoding="utf-8")
+    result = runner.prepare_observed_lift_label(
+        after_observation=unknown, after_key_evidence_dir=tmp_path,
+        **common)
+    assert result.grasp_success is None
+    assert runner.active_attempt.labels["grasp_success"] is None
+    assert runner.current_decision().action == "await_lift_observation"
+    with pytest.raises(ValueError, match="new held-key capture"):
+        runner.prepare_observed_lift_label(
+            after_observation=unknown, after_key_evidence_dir=tmp_path,
+            **common)
+    held = replace(_observation("held_good", 10.8), phase="held_postlift")
+    fresh_joint = replace(
+        joint, sample_timestamp_s=10.8,
+        arm_timestamp_s=10.8, hand_timestamp_s=10.8)
+    result = runner.prepare_observed_lift_label(
+        after_observation=held, after_key_evidence_dir=tmp_path,
+        **{**common, "joint_sample": fresh_joint})
+    assert result.grasp_success is True
+    assert runner.active_attempt.labels["grasp_success"] is True
+    assert runner.active_attempt.events[0]["timestamp_s"] == 10.4
+    assert runner.current_decision().action == (
+        "postlift_observed_preflight_required")
+    assert calls[1]["before_capture_id"] == "key_1"
+    assert calls[1]["lift_completed_at_s"] == 10.4
+    assert (runner._attempt_dir /
+            "lift_assessments/001/execution_binding.json").is_file()
+
+
 def test_budgeted_preflight_continues_same_capture_but_new_capture_resets_rejects(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)
@@ -349,8 +466,7 @@ def test_verified_insertion_cannot_start_new_trial_until_reset_observed(
     runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
     runner.observe_stage(
         "grasp_success", True, timestamp_s=10.3,
-        evidence_refs={"vlm_observation": "vlm/lift.json",
-                       "key_wrist_check": "pose/lift.json"})
+        evidence_refs=_bind_lift(runner))
     postlift_report = _bind_postlift(runner)
     runner.observe_stage(
         "preinsert_reached", True, timestamp_s=10.4,
@@ -470,8 +586,7 @@ def test_retry_requires_matching_two_view_vote_and_live_replan(
     runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
     runner.observe_stage(
         "grasp_success", True, timestamp_s=10.3,
-        evidence_refs={"vlm_observation": "vlm/lift.json",
-                       "key_wrist_check": "pose/lift.json"})
+        evidence_refs=_bind_lift(runner))
     postlift_report = _bind_postlift(runner)
     runner.observe_stage(
         "preinsert_reached", True, timestamp_s=10.4,
