@@ -101,6 +101,16 @@ trial; the label is therefore a transport/format smoke-test result only.
 The source hashes and raw response are saved in
 `/tmp/precision-local-vlm-smoke-current-20261011.json` on this workstation.
 
+The local metric-point path now checks **both** ZeroDex's outer resize and
+Qwen's internal image-processor geometry. The cached Qwen3-VL-2B processor
+uses 16-pixel patches merged 2×2 (32-pixel dimension factor). A direct
+processor check gave a 640×480 input grid of 30×40 patches (unchanged), but
+a 1280×720 input grid of 44×80 patches (1280×704). The latter is rejected
+for native-pixel grounding rather than interpreted as original-frame pixel
+coordinates. Semantic lift/insertion classification may still resize. This
+geometry gate prevents an unrecorded coordinate transform; it does **not**
+validate whether the VLM can localize a tip to the needed pixel accuracy.
+
 Collect time-synchronized, phase-paired **raw AutoDex camera images** with
 independent lift and insertion labels. Evaluate false-positive `held`, jam,
 and insertion-appearance rates against those labels, including occlusion and

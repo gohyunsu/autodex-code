@@ -292,7 +292,11 @@ def test_preinsert_rejects_async_duplicate_or_mismatched_overlay():
 
 def test_local_backend_reuses_loaded_vlm():
     class StubModel:
+        family = "qwen"
         max_input_size = (16, 12)
+        processor = SimpleNamespace(image_processor=SimpleNamespace(
+            patch_size=2, merge_size=2,
+            size={"shortest_edge": 1, "longest_edge": 1000}))
 
         def infer_images_prompt(self, images, prompt, max_new_tokens):
             assert max_new_tokens == 40
@@ -300,6 +304,36 @@ def test_local_backend_reuses_loaded_vlm():
 
     backend = ZeroDexLocalBackend(StubModel(), max_new_tokens=40)
     assert backend.infer([_image()], "test") == "{}"
+
+
+def test_local_metric_pixels_reject_qwen_internal_resize():
+    class StubModel:
+        family = "qwen"
+        max_input_size = (1280, 720)
+        processor = SimpleNamespace(image_processor=SimpleNamespace(
+            patch_size=16, merge_size=2,
+            size={"shortest_edge": 65536,
+                  "longest_edge": 16777216}))
+
+        def infer_images_prompt(self, images, prompt, max_new_tokens):
+            return SimpleNamespace(answer="{}")
+
+    native = ZeroDexLocalBackend(StubModel())
+    assert native.infer([Image.new("RGB", (640, 480))], "pixel") == "{}"
+    with pytest.raises(ValueError, match="processor would resize"):
+        native.infer([Image.new("RGB", (1280, 720))], "pixel")
+    semantic = ZeroDexLocalBackend(
+        StubModel(), require_native_pixels=False)
+    assert semantic.infer([Image.new("RGB", (1280, 720))], "label") == "{}"
+
+
+def test_local_metric_pixels_reject_unverified_processor():
+    model = SimpleNamespace(
+        family="gemma", max_input_size=(640, 480),
+        infer_images_prompt=lambda *args, **kwargs: SimpleNamespace(answer="{}"))
+    with pytest.raises(ValueError, match="verified Qwen processor"):
+        ZeroDexLocalBackend(model).infer(
+            [Image.new("RGB", (640, 480))], "pixel")
 
 
 def test_local_backend_rejects_implicit_resize_of_metric_pixels():
@@ -333,7 +367,11 @@ def test_local_loader_reuses_zerodex_without_gemini_or_resize(monkeypatch):
     class StubBaseVLM:
         def __init__(self, **kwargs):
             loaded.append(kwargs)
+            self.family = kwargs["family"]
             self.max_input_size = kwargs["max_input_size"]
+            self.processor = SimpleNamespace(image_processor=SimpleNamespace(
+                patch_size=2, merge_size=2,
+                size={"shortest_edge": 1, "longest_edge": 1000}))
 
         def infer_images_prompt(self, images, prompt, max_new_tokens):
             return SimpleNamespace(answer='{"class":"held"}')

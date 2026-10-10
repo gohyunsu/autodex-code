@@ -209,6 +209,42 @@ class ZeroDexLocalBackend:
         return cls(vlm, max_new_tokens=max_new_tokens,
                    require_native_pixels=require_native_pixels)
 
+    def _require_native_processor_geometry(self, images: list[Image.Image]) -> None:
+        """Reject Qwen inputs whose internal patch processor would resize.
+
+        ZeroDex's outer aspect-preserving resize is not the only transform:
+        the installed Qwen image processor rounds both dimensions to its
+        patch/merge factor and enforces pixel-area bounds. For metric point
+        grounding, neither transform may change the input coordinate frame.
+        Unknown processor families/configurations fail closed.
+        """
+        if getattr(self.vlm, "family", None) != "qwen":
+            raise ValueError(
+                "native-pixel grounding requires a verified Qwen processor")
+        processor = getattr(getattr(self.vlm, "processor", None),
+                            "image_processor", None)
+        try:
+            patch = processor.patch_size
+            merge = processor.merge_size
+            minimum = processor.size["shortest_edge"]
+            maximum = processor.size["longest_edge"]
+        except (AttributeError, KeyError, TypeError) as exc:
+            raise ValueError(
+                "native-pixel grounding needs Qwen processor geometry") from exc
+        if (any(type(value) is not int or value <= 0
+                for value in (patch, merge, minimum, maximum)) or
+                minimum > maximum):
+            raise ValueError("invalid Qwen processor geometry")
+        factor = patch * merge
+        for frame in images:
+            area = frame.width * frame.height
+            if (frame.width % factor or frame.height % factor or
+                    not minimum <= area <= maximum):
+                raise ValueError(
+                    "local VLM processor would resize an original grounding "
+                    f"image {frame.width}x{frame.height}; use a verified "
+                    "crop/pad-to-original pixel mapper")
+
     def infer(self, images: list[Image.Image], prompt: str) -> str:
         if (not images or any(not isinstance(img, Image.Image)
                               for img in images) or
@@ -222,6 +258,8 @@ class ZeroDexLocalBackend:
             raise ValueError(
                 "local VLM would resize an original grounding image; "
                 "increase max_input_size or use a crop-to-original mapper")
+        if self.native_pixel_coordinates:
+            self._require_native_processor_geometry(images)
         result = self.vlm.infer_images_prompt(
             images, prompt, max_new_tokens=self.max_new_tokens)
         return result.answer

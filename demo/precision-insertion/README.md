@@ -1251,8 +1251,13 @@ aspect-preserving resize. **Metric point/axis grounding cannot:** create a
 backend with `require_native_pixels=True` and a `max_input_size` at least as
 large as every supplied undistorted frame (or implement an explicit crop-to-
 original-pixel transform). The backend rejects a frame that ZeroDex would
-silently resize; the point-grounding path also rejects a semantic-only local
-backend. This safeguards coordinate bookkeeping, not VLM pixel accuracy:
+silently resize **or** that the installed Qwen image processor would resize
+to its patch grid or pixel-area limits. For the cached Qwen3-VL-2B processor,
+both dimensions must be multiples of 32 and the area within its configured
+limits: 640×480 is unchanged, whereas 1280×720 becomes 1280×704 internally
+and is rejected for metric grounding. Unknown local processor geometry also
+fails closed. The point-grounding path rejects a semantic-only local backend.
+This safeguards coordinate bookkeeping, not VLM pixel accuracy:
 calibration/held-out grounding error limits remain mandatory. Lift and
 insertion comparisons reject unpaired camera IDs, duplicate phase frames,
 or reversed timestamps; a front
