@@ -21,6 +21,7 @@ import numpy as np
 from .assets import AssetPaths
 from .config import TaskMode, select_mode
 from .geometry import validate_se3
+from .square_promotion import SCHEMA as SQUARE_PROMOTION_SCHEMA, SOURCE_FILES as SQUARE_SOURCE_FILES
 
 
 def _sha256(path: Path) -> str:
@@ -108,6 +109,28 @@ def _grasp_evidence(candidate: Path, key_mesh: Path) -> tuple[bool, str]:
                    source_hashes[name] != _sha256(candidate / name)
                    for name in bound_files):
                 return False, "stale_cylinder_source_file"
+        if validation.get("schema") == SQUARE_PROMOTION_SCHEMA:
+            source_hashes = validation.get("source_file_sha256")
+            endpoint_file = candidate / "nominal_endpoint_screen.json"
+            highres_copy = candidate.parent / "highres_report.json"
+            if (not isinstance(source_hashes, dict) or
+                    set(source_hashes) != set(SQUARE_SOURCE_FILES) or
+                    declared is None or
+                    validation.get("physical_validation") is not False or
+                    validation.get("robot_ready") is not False or
+                    validation.get("contact_policy_mode") != "report-only" or
+                    not endpoint_file.is_file() or
+                    not highres_copy.is_file()):
+                return False, "incomplete_square_source_evidence"
+            if (any(not (candidate / name).is_file() or
+                    source_hashes[name] != _sha256(candidate / name)
+                    for name in SQUARE_SOURCE_FILES) or
+                    validation.get("nominal_endpoint_screen_sha256") !=
+                    _sha256(endpoint_file) or
+                    validation.get("highres_report_copy_sha256") !=
+                    _sha256(highres_copy) or
+                    _json(endpoint_file).get("endpoint_pass") is not True):
+                return False, "stale_square_source_file"
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return False, f"invalid_grasp_evidence:{exc}"
     return True, "mujoco_grasp_passed_not_physical"
@@ -188,11 +211,25 @@ def build_endpoint_catalog(
                 "sim_traj": candidate / "sim_traj.json",
                 "coll_valid": candidate / "coll_valid.npy",
             }
+            if (candidate / "nominal_endpoint_screen.json").is_file():
+                grasp_inputs.update({
+                    "nominal_endpoint_screen": (
+                        candidate / "nominal_endpoint_screen.json"),
+                    "highres_report_copy": candidate.parent / "highres_report.json",
+                })
             row["grasp_input_sha256"] = {
                 name: _sha256(path) if path.is_file() else None
                 for name, path in grasp_inputs.items()
             }
             passed, reason = _grasp_evidence(candidate, paths.key_planning_mesh)
+            if passed and mode.family == "square":
+                validation = _json(candidate / "simulation_validation.json")
+                if validation.get("schema") == SQUARE_PROMOTION_SCHEMA and (
+                        validation.get("source_scene_sha256") !=
+                        row["scene_sha256"] or
+                        validation.get("raw_key_mesh_sha256") !=
+                        _sha256(paths.raw_mesh(mode.key_object))):
+                    passed, reason = False, "stale_square_scene_or_full_key"
             row["grasp_stability_pass"] = passed
             row["grasp_stability_reason"] = reason
             if passed:
@@ -326,6 +363,9 @@ def select_pose_candidates(
             "bodex_info": candidate / "bodex_info.npy",
             "sim_traj": candidate / "sim_traj.json",
             "coll_valid": candidate / "coll_valid.npy",
+            "nominal_endpoint_screen": (
+                candidate / "nominal_endpoint_screen.json"),
+            "highres_report_copy": candidate.parent / "highres_report.json",
         }
         for name, saved_hash in row["grasp_input_sha256"].items():
             source = sources[name]

@@ -742,20 +742,22 @@ remain unimplemented.
 
 ## Current asset evidence and missing gates
 
-In the local `~/shared_data` snapshot, metric v8 key/socket meshes and
-metadata exist for the square and cylindrical families. The FoundPose asset
-directories checked for the 1.5 mm square key, unified socket, cylindrical
-key, and 20 mm-gap cylindrical socket contain `GENERATION_REQUIRED.json`,
-not `object_repre/v1/<object>/1/repre.pth`. The cylindrical Inspire v8
-candidate directory likewise contains only a generation marker. The square
-1.5 mm v8 directory contains one grasp-simulation candidate. A complete scan
-of each of the four square-gap finite local pools finds zero 20 mm
-endpoint-eligible grasps: their sole `table/0/78` candidate has
-grasp-simulation evidence, but three Inspire visual links intersect the
-socket. The cylinder 20 mm-gap v8 pool has no grasp files and cannot be
-called a complete screen. Two further stable staging grasps (`v3/84`,
-`v4/85`) also fail the square 1.5 mm endpoint and are not runtime candidates.
-This is not proof that a new BODex grasp cannot succeed.
+In the 2026-10-11 local `~/shared_data` snapshot, metric v8 key/socket
+meshes and metadata exist for both families, but the checked square and
+cylinder key/socket pairs still lack canonical FoundPose `repre.pth` files.
+The current square 1.5 mm v8 pool has eight candidates: the original
+`table/0/78` fails at the 20 mm hand/socket endpoint, while seven full-key
+pilot grasps at tabletop pose `004` pass the **nominal** endpoint screen.
+All seven used the original AutoDex MuJoCo filter with the contact-region
+policy report-only; they have source-file hashes and a non-overwriting v8
+promotion manifest. Their simulated end-squeeze key-in-hand center drift is
+2.9–21.1 mm, so none is a measured held-key or physical insertion success.
+The other three square gaps retain one endpoint-failing candidate each.
+The cylinder v8 pool has 12 promoted tabletop grasps; all pass the nominal
+20 mm endpoint against each of six socket meshes, but their simulated grasp
+drift and physical relation remain unresolved. Two older stable square
+staging grasps (`v3/84`, `v4/85`) also fail the 1.5 mm endpoint. These
+finite-pool observations are not impossibility or robot-readiness proofs.
 No precision-key native-v8 reset candidate directory
 was found under the expected Inspire `reset_{0,4,8,12}` roots. These are
 local-file observations, not a claim about a different AutoDex host or NAS

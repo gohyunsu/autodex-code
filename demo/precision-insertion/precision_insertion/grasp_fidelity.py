@@ -63,6 +63,76 @@ def cylinder_pose_change(
     }
 
 
+def rigid_pose_change(
+    *, initial_key: np.ndarray, final_key: np.ndarray,
+    initial_hand: np.ndarray, final_hand: np.ndarray,
+    key_center_local_m: np.ndarray,
+) -> dict[str, float]:
+    """Measure a nonsymmetric key's center and orientation drift in the hand.
+
+    This is simulated closure diagnostics, not a physical grasp criterion.
+    Unlike the cylinder audit, no axial-yaw or end-flip equivalence is taken.
+    """
+    from scipy.spatial.transform import Rotation
+
+    poses = (initial_key, final_key, initial_hand, final_hand)
+    center = np.asarray(key_center_local_m, dtype=np.float64)
+    if (center.shape != (3,) or not np.all(np.isfinite(center)) or
+            any(np.asarray(T).shape != (4, 4) or
+                not np.all(np.isfinite(T)) for T in poses)):
+        raise ValueError("rigid closure needs finite poses and a key center")
+    before = np.linalg.inv(initial_hand) @ initial_key
+    after = np.linalg.inv(final_hand) @ final_key
+    before_center = before[:3, :3] @ center + before[:3, 3]
+    after_center = after[:3, :3] @ center + after[:3, 3]
+    rotation = before[:3, :3].T @ after[:3, :3]
+    return {
+        "center_in_hand_displacement_m": float(np.linalg.norm(
+            after_center - before_center)),
+        "full_relative_rotation_deg": float(np.degrees(
+            Rotation.from_matrix(rotation).magnitude())),
+    }
+
+
+def trajectory_rigid_closure_audit(
+    trajectory: dict, *, key_center_local_m: np.ndarray,
+) -> dict:
+    """Compare the first squeeze and subsequent gravity replay to pregrasp."""
+    phases = trajectory.get("phase")
+    objects = trajectory.get("object_pose")
+    robots = trajectory.get("robot_qpos")
+    if (not isinstance(phases, list) or not phases or
+            not isinstance(objects, list) or not isinstance(robots, list) or
+            len(phases) != len(objects) or len(phases) != len(robots) or
+            phases[0] != "pregrasp"):
+        raise ValueError("incomplete MuJoCo trajectory")
+    squeeze = [i for i, phase in enumerate(phases) if phase == "squeeze"]
+    gravity = [i for i, phase in enumerate(phases) if phase == "force_gravity"]
+    if not squeeze or not gravity or squeeze[-1] >= gravity[0]:
+        raise ValueError("trajectory lacks squeeze followed by gravity replay")
+
+    def pose_pair(index: int) -> tuple[np.ndarray, np.ndarray]:
+        robot = np.asarray(robots[index], dtype=np.float64)
+        if robot.ndim != 1 or robot.size < 7:
+            raise ValueError("trajectory has no floating-hand qpos")
+        return pose7_to_se3(objects[index]), pose7_to_se3(robot[:7])
+
+    initial_key, initial_hand = pose_pair(0)
+    result = {}
+    for label, index in (("end_squeeze", squeeze[-1]),
+                         ("first_gravity_step", gravity[0]),
+                         ("end_gravity", gravity[-1])):
+        final_key, final_hand = pose_pair(index)
+        result[label] = {
+            "trajectory_index": index,
+            **rigid_pose_change(
+                initial_key=initial_key, final_key=final_key,
+                initial_hand=initial_hand, final_hand=final_hand,
+                key_center_local_m=key_center_local_m),
+        }
+    return result
+
+
 def trajectory_closure_audit(trajectory: dict, *, key_height_m: float) -> dict:
     """Compare the recorded first closure with the stock gravity-test replay."""
     phases = trajectory.get("phase")

@@ -1032,8 +1032,10 @@ print(preflight.to_record())
 
 `sampled_planning_pass` is **not** a physical success label or execution
 permit. Run this against the actual selected candidate and measured session;
-the current local square v8 pool has no 20 mm endpoint-eligible candidate,
-and the cylinder runtime pool is still missing. The nominal squeeze pose is
+the 2026-10-11 local square 1.5 mm pool has seven **nominally** eligible
+pose-`004` grasps, while the other four square poses have none. The cylinder
+pool has 12 nominally eligible grasps, but no physical relation is certified.
+The nominal squeeze pose is
 not a measurement; before physical transfer, re-observe the held key and
 validate the hand–key relation against the planned one. A guarded contact
 controller, true acquisition-timestamped camera adapter, measured-state
@@ -1217,19 +1219,76 @@ catalogue (the example clearance remains uncommissioned):
   demo/precision-insertion/run_pipeline.py select-catalog \
   --mode square --gap-mm 1.5 \
   --catalog /home/hyunsu/shared_data/AutoDex/precision_insertion/endpoint_catalogs/square_1p5mm_NEW_SCAN.json \
-  --pose-stem 000
+  --pose-stem 004
 ```
 
 `screen-catalog` writes exclusively; a rerun needs a new output name.
-`--max-candidates N` is a pilot scan and always marked incomplete. The local
-1.5 mm scan currently finds one candidate, `table/0/78`: MuJoCo grasp evidence
-passes and nominal key/socket CAD fit has about 1.5 mm gap, but the Inspire
-base, index, and middle links intersect the socket at 20 mm. Thus **0 of this
-finite 1-candidate pool** are endpoint eligible; this does not prove other
-grasps or tabletop poses impossible. `select-catalog` exits 2 for no eligible
-grasp or an incomplete/stale catalogue. It does not execute reorientation.
+`--max-candidates N` is a pilot scan and always marked incomplete. The
+historical 2026-10-10 1.5 mm scan had only `table/0/78`, whose Inspire links
+intersect the socket. The current local 2026-10-11 scan has eight installed
+v8 candidates: that old pose-`000` failure plus seven pose-`004` grasps from
+the full-key 10,000-proposal pilot. All seven pass the *nominal* exact-CAD
+20 mm endpoint at the **uncommissioned** 0.2 mm hand clearance. The other
+four square tabletop poses still have no eligible grasp in this finite pool.
+The current complete catalogue is
+`~/shared_data/AutoDex/precision_insertion/endpoint_catalogs/square_1p5mm_20261011_v8_8_nominal_r2.json`.
+`select-catalog` exits 2 for no eligible grasp or an incomplete/stale
+catalogue. It does not execute reorientation.
 The example catalogue is in local `shared_data`, **not** the read-only
 `/mnt/paradex2` NAS mount.
+
+The seven candidates were installed with the demo-local
+[`promote_square_candidates.py`](promote_square_candidates.py), which checks
+the complete original AutoDex sim-filter pass set, original BODex quality,
+the 3,000-samples/link pilot screen, and a fresh exact 20 mm endpoint screen
+before atomically creating the previously absent `table/4` v8 scene. It
+refuses to replace an existing scene; each candidate carries source-file
+hashes, an endpoint report, and `robot_ready: false`. The source experiment
+used `contact_policy_mode=report-only`, so the old handle-surface restriction
+was **not** an acceptance gate. The physical consequence of contact on other
+key surfaces is not established. For a fresh host with the complete source
+stage and pass pool, inspect the script's `--help` and supply the explicit
+source scene, pass scene, high-resolution report, destination and clearance;
+do not re-run it over this already installed scene.
+
+On an otherwise identical *fresh* shared-data root, the exact input contract
+is:
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/promote_square_candidates.py \
+  --shared-root /home/hyunsu/shared_data --gap-mm 1.5 \
+  --source-scene /home/hyunsu/shared_data/AutoDex/sim_staging/inspire/precision_insertion_unconstrained_20mm_10k_top50/precision_key_1p5mm/table/4 \
+  --pass-scene /home/hyunsu/shared_data/AutoDex/sim_filter_pass/inspire/precision_insertion_unconstrained_20mm_10k_top50/precision_key_1p5mm/table/4 \
+  --highres-report /home/hyunsu/shared_data/AutoDex/precision_insertion/experiments/unconstrained_20mm_10k/highres_task_screen_pose_004.json \
+  --output-scene /home/hyunsu/shared_data/AutoDex/candidates/inspire/v8/precision_key_1p5mm/table/4 \
+  --simulation-version precision_insertion_unconstrained_20mm_10k_top50 \
+  --min-hand-clearance-mm 0.2
+```
+
+The destination must be absent. A different host/root requires source
+scenes and their absolute CAD references to be regenerated/verified for that
+host; copying the JSON path strings alone is not sufficient.
+
+The separate
+[`audit_square_grasp_fidelity.py`](audit_square_grasp_fidelity.py) reads
+the selected catalogue and records the MuJoCo achieved key-in-hand change.
+Its local report is
+`~/shared_data/AutoDex/precision_insertion/experiments/unconstrained_20mm_10k/square_pose004_fidelity_20261011_r2.json`.
+To regenerate it, use a new output filename:
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/audit_square_grasp_fidelity.py \
+  --catalog /home/hyunsu/shared_data/AutoDex/precision_insertion/endpoint_catalogs/square_1p5mm_20261011_v8_8_nominal_r2.json \
+  --gap-mm 1.5 --pose-stem 004 \
+  --output /tmp/square_pose004_fidelity_NEW.json
+```
+
+At squeeze end, the seven key centers move **2.9–21.1 mm** in the hand and
+rotate **7.0–17.0°** relative to the initial pose. These are diagnostics,
+not calibrated acceptance limits. The nominal endpoint result must not be
+used as a measured held-key endpoint or a robot execution permit.
 
 ### Repose/reorientation proposal assets
 
@@ -1467,9 +1526,11 @@ exact key/socket/URDF hashes and clearance rule. At live startup the operator
 or a validated fixture identifier must independently confirm which physical
 socket is mounted; measuring only its pose does not establish its size.
 The `gap_01mm` name denotes a **1 mm one-sided radial clearance**, not 0.1 mm.
-The same scan across all four square gaps yields one `table/0/78` per gap
-and zero endpoint-eligible grasps, with the same three Inspire-link
-intersections. The historical `cylinder_gap20mm_20261010.json` is incomplete
+The historical scan across all four square gaps yielded one `table/0/78`
+per gap and zero endpoint-eligible grasps. A later full-key pilot supplied
+seven nominally endpoint-clear 1.5 mm grasps at pose `004`; it did not
+populate the 0.3, 0.5, or 1.0 mm square pools. The historical
+`cylinder_gap20mm_20261010.json` is incomplete
 because it was built before the cylinder v8 candidates were promoted. The
 2026-10-11 scan screens all **12 currently installed** cylinder candidates
 separately against each of the six socket meshes. All 12 pass each *nominal*

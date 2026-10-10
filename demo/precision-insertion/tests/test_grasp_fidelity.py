@@ -1,12 +1,17 @@
 import math
+from pathlib import Path
+import sys
 
 import numpy as np
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import precision_insertion.grasp_fidelity as fidelity
 from precision_insertion.grasp_fidelity import (
-    cylinder_pose_change, pose7_to_se3, simulated_visual_penetration_audit,
-    trajectory_closure_audit,
+    cylinder_pose_change, pose7_to_se3, rigid_pose_change,
+    simulated_visual_penetration_audit, trajectory_closure_audit,
+    trajectory_rigid_closure_audit,
 )
 
 
@@ -48,6 +53,31 @@ def test_trajectory_audits_squeeze_separately_from_gravity():
     trajectory["phase"][1] = "grasp"
     with pytest.raises(ValueError, match="lacks squeeze"):
         trajectory_closure_audit(trajectory, key_height_m=0.08)
+
+
+def test_square_closure_keeps_full_relative_rotation_and_center():
+    original = np.eye(4)
+    rotated = np.eye(4)
+    rotated[:3, :3] = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+    result = rigid_pose_change(
+        initial_key=original, final_key=rotated,
+        initial_hand=original, final_hand=original,
+        key_center_local_m=np.array([.01, 0, 0]),
+    )
+    assert result["center_in_hand_displacement_m"] == pytest.approx(
+        math.sqrt(2) * .01)
+    assert result["full_relative_rotation_deg"] == pytest.approx(90)
+    trajectory = {
+        "phase": ["pregrasp", "squeeze", "force_gravity"],
+        "object_pose": [_pose(), _pose(x=.003), _pose(x=.004)],
+        "robot_qpos": [_pose() + [0] * 12] * 3,
+    }
+    closure = trajectory_rigid_closure_audit(
+        trajectory, key_center_local_m=np.zeros(3))
+    assert closure["end_squeeze"]["center_in_hand_displacement_m"] == (
+        pytest.approx(.003))
+    assert closure["end_gravity"]["center_in_hand_displacement_m"] == (
+        pytest.approx(.004))
 
 
 def test_achieved_visual_audit_uses_mujoco_joint_order_and_dynamic_key(monkeypatch):
