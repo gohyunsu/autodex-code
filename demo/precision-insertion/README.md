@@ -1394,6 +1394,39 @@ commissioned policy. For square keys, the latter tests full relative
 rotation; for cylinders, it tests symmetry-reduced axis tilt. The old
 `--max-reset-axis-tilt-deg` spelling remains an alias for existing commands.
 
+The other three directed cells toward the only currently insertion-eligible
+square tabletop class `004` were then sampled at the same **1,000 proposals
+per scene** using
+[`square_reorient_remaining_to_4.json`](configs/square_reorient_remaining_to_4.json)
+and the same unchanged stock filter. Results are per cell, not evidence that
+other samples or a different grasp policy cannot work:
+
+| Directed cell | Scene-clear | Squeeze contact | MuJoCo stable | Handoff evidence |
+| --- | ---: | ---: | ---: | --- |
+| `000→004` | 843 | 251 | 7 | [manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/reorient_handoff_0_4_1000_20261011/manifest.json) |
+| `001→004` | 871 | 170 | 0 | [manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/reorient_handoff_1_4_1000_20261011/manifest.json) |
+| `002→004` | 891 | 180 | 0 | [manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/reorient_handoff_2_4_1000_20261011/manifest.json) |
+| `003→004` | 750 | 17 | 0 | [manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/reorient_handoff_3_4_1000_20261011/manifest.json) |
+
+Overall, **4,000 raw → 3,355 scene-clear → 618 squeeze-contact → 7
+MuJoCo-gravity-stable**, and **0/7** satisfy the provisional 3 mm / 5°
+key-in-hand pose gate. The catalog has seven insertion-endpoint-eligible
+grasps at pose `004`, none at poses `000–003`; the one stock grasp at `000`
+fails the insertion endpoint. Thus *no automatic repose route to a known
+insertable pose is established*. These are local handoff reports, not
+canonical NAS reset seeds, and do not include fixture-aware Franka plans.
+The very low `003→004` squeeze-contact count (17/1,000) motivates inspecting
+proposal placement and scene geometry before merely increasing sampling.
+To repeat only these remaining cells, use the preceding BODex and stock-filter
+commands with `--scene_filter_file
+demo/precision-insertion/configs/square_reorient_remaining_to_4.json`,
+`--seed 11012`, and **new** raw/filter output roots. Then call
+`stage_square_reorient_passes.py` separately with `--cell 1_4`, `2_4`, and
+`3_4`, `--expected-seed-count 1000`, and a distinct `--output-root` for each.
+An empty stable pool still gets a complete per-cell manifest; it is not an
+executable reset candidate. Do not copy those empty or uncommissioned pools
+to `AutoDex/candidates/inspire/reset_12`.
+
 For the cylinder's 12 cm release scene, direct full-key BODex generation
 failed in Coal convex-hull construction (`Too many neighbors`), so it did
 **not** yield valid raw full-key proposals. The isolated pilot instead reused
