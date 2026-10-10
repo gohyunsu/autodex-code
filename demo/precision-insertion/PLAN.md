@@ -448,8 +448,11 @@ collision path for the first shift. Post-shift observation is not inferred
 from the plan: a separate, source-bound read-only checkpoint
 requires an external
 completed-motion log, newer raw camera frames and measured stationary joints.
-Physical execution and a new insertion endpoint/guarded retry are still
-missing. The square-key yaw remains unobservable from an axial line alone.
+Physical execution and a guarded retry are still missing. A separate
+read-only post-shift 20 mm endpoint/held-path preflight is now available,
+with the cylinder yaw gauge shared between its screen and targets; it has
+not been run with commissioned physical calibration on this host. The
+square-key yaw remains unobservable from an axial line alone.
 Candidate grasp statistics update from `grasp_success`; insertion retry
 statistics update from `insertion_success` and failure cause. Unknown is not
 success and must not erase a known earlier milestone. Use a controlled failure

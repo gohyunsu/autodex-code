@@ -116,3 +116,25 @@ def test_targets_reject_wrong_socket_geometry_and_bad_preinsert(tmp_path):
         build_rigid_insertion_targets(
             mode=mode, shared_root=tmp_path, calibration=session,
             T_key_hand=np.eye(4), xy_offset_socket_m=(float("nan"), 0.0))
+
+
+def test_cylinder_targets_preserve_observed_yaw_gauge(tmp_path):
+    mode = select_mode("cylinder", 20)
+    session, _, _ = _fixture(tmp_path, mode)
+    yaw = 0.8
+    targets = build_rigid_insertion_targets(
+        mode=mode, shared_root=tmp_path, calibration=session,
+        T_key_hand=np.eye(4), cylinder_yaw_gauge_socket_rad=yaw)
+    socket_key = np.linalg.inv(session.socket_pose_robot) @ (
+        targets.T_robot_key_verification)
+    assert socket_key[:3, :3] @ [0., 0., 1.] == pytest.approx([0., 0., -1.])
+    assert socket_key[:3, :3] @ [1., 0., 0.] == pytest.approx(
+        [np.cos(yaw), np.sin(yaw), 0.])
+    assert targets.to_record()["cylinder_yaw_gauge_socket_rad"] == yaw
+    square = select_mode("square", 1.5)
+    square_session, _, _ = _fixture(tmp_path / "square", square)
+    with pytest.raises(ValueError, match="only cylinder"):
+        build_rigid_insertion_targets(
+            mode=square, shared_root=tmp_path / "square",
+            calibration=square_session, T_key_hand=np.eye(4),
+            cylinder_yaw_gauge_socket_rad=yaw)

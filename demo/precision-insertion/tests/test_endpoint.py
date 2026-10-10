@@ -160,3 +160,56 @@ def test_retry_endpoint_uses_observed_key_hand_transform(tmp_path, monkeypatch):
             shared_root=tmp_path, mode=mode, candidate_dir=candidate,
             minimum_hand_clearance_m=0.0002,
             hand_poses_override={"unpaired": np.zeros(6)})
+
+
+def test_cylinder_endpoint_uses_same_yaw_gauge_as_target(tmp_path, monkeypatch):
+    mode = select_mode("cylinder", 20)
+    paths = AssetPaths(tmp_path, mode)
+    for file in (paths.raw_mesh(mode.key_object), paths.socket_collision_mesh,
+                 paths.robot_urdf):
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("placeholder", encoding="utf-8")
+    geometry = _geometry()
+    geometry["socket_pose_object"] = mode.socket_object
+    geometry["key_object"] = mode.key_object
+    paths.task_geometry.parent.mkdir(parents=True, exist_ok=True)
+    paths.task_geometry.write_text(json.dumps(geometry), encoding="utf-8")
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    np.save(candidate / "wrist_se3.npy", np.eye(4))
+    np.save(candidate / "pregrasp_pose.npy", np.zeros(6))
+    np.save(candidate / "grasp_pose.npy", np.ones(6) * .1)
+
+    class FakeMesh:
+        is_watertight = True
+
+    checked = []
+    monkeypatch.setattr("precision_insertion.endpoint._load_mesh",
+                        lambda _path: FakeMesh())
+    monkeypatch.setattr("precision_insertion.endpoint._coal_mesh",
+                        lambda _mesh: object())
+    monkeypatch.setattr("precision_insertion.endpoint.CylinderSocketOccupancy",
+                        lambda _mesh, _geometry: object())
+    monkeypatch.setattr("precision_insertion.endpoint._hand_link_meshes",
+                        lambda _urdf, _q: {"finger": FakeMesh()})
+    def pair(_moving, _fixed, transform, _occupancy):
+        checked.append(transform.copy())
+        return {"colliding": False, "minimum_surface_distance_m": .01}
+    monkeypatch.setattr("precision_insertion.endpoint._mesh_pair_report", pair)
+    result = screen_grasp_endpoint(
+        shared_root=tmp_path, mode=mode, candidate_dir=candidate,
+        minimum_hand_clearance_m=.0002,
+        cylinder_yaw_gauge_socket_rad=.7)
+    expected = np.diag([1., -1., -1., 1.])
+    c, s = np.cos(.7), np.sin(.7)
+    expected[:3, :3] = np.array([[c, -s, 0.],
+                                  [s, c, 0.], [0., 0., 1.]]) @ expected[:3, :3]
+    expected[2, 3] = .124
+    np.testing.assert_allclose(result["T_socket_key_tested"], expected)
+    np.testing.assert_allclose(checked[0], expected)
+    assert result["cylinder_yaw_gauge_socket_rad"] == .7
+    with pytest.raises(ValueError, match="only cylinder"):
+        screen_grasp_endpoint(
+            shared_root=tmp_path, mode=select_mode("square", 1.5),
+            candidate_dir=candidate, minimum_hand_clearance_m=.0002,
+            cylinder_yaw_gauge_socket_rad=.7)

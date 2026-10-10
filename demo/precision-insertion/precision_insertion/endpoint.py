@@ -204,6 +204,7 @@ def screen_grasp_endpoint(
     T_key_hand_override: np.ndarray | None = None,
     hand_poses_override: dict[str, np.ndarray] | None = None,
     override_source: str | None = None,
+    cylinder_yaw_gauge_socket_rad: float = 0.0,
 ) -> dict[str, Any]:
     """Screen CAD key/socket fit and Inspire links at one aligned 20 mm pose.
 
@@ -221,6 +222,10 @@ def screen_grasp_endpoint(
     offset = np.asarray(xy_offset_socket_m, dtype=np.float64)
     if offset.shape != (2,) or not np.all(np.isfinite(offset)):
         raise ValueError("xy_offset_socket_m must be two finite metric values")
+    yaw = float(cylinder_yaw_gauge_socket_rad)
+    if (not math.isfinite(yaw) or
+            (mode.family != "cylinder" and yaw != 0.0)):
+        raise ValueError("only cylinder endpoint may use a finite yaw gauge")
     if hand_poses_override is not None:
         if T_key_hand_override is None or not override_source:
             raise ValueError("joint override requires a paired T_key_hand and source")
@@ -249,6 +254,10 @@ def screen_grasp_endpoint(
     geometry = json.loads(files["task_geometry"].read_text(encoding="utf-8"))
     T_socket_key_nominal = validate_task_geometry(geometry, mode)
     T_socket_key = T_socket_key_nominal.copy()
+    if yaw != 0.0:
+        c, s = math.cos(yaw), math.sin(yaw)
+        Rz = np.array([[c, -s, 0.], [s, c, 0.], [0., 0., 1.]])
+        T_socket_key[:3, :3] = Rz @ T_socket_key[:3, :3]
     T_socket_key[:2, 3] += offset
     # On this host, a fresh process must load Coal before trimesh/yourdfpy
     # to avoid binding the older system libstdc++. The CLI starts fresh.
@@ -314,6 +323,7 @@ def screen_grasp_endpoint(
                  "socket_object": mode.socket_object},
         "verification_depth_m": mode.target_depth_m,
         "xy_offset_socket_m": offset.tolist(),
+        "cylinder_yaw_gauge_socket_rad": yaw,
         "minimum_required_hand_clearance_m": minimum_hand_clearance_m,
         "minimum_observed_hand_clearance_m": minimum,
         "key_socket_fit": key_fit,
@@ -321,7 +331,7 @@ def screen_grasp_endpoint(
         "hold_pose_contract": (
             "AutoDex default Inspire squeeze_level=2; measured hardware pose must be checked online"
             if hand_poses_override is None else
-            "explicit paired hand/key state; not measured hardware feedback"),
+            "explicit supplied hand/key state; source authenticity is checked by the caller"),
         "hand_socket_clear_at_20mm": hand_pass,
         "endpoint_pass": not key_fit["colliding"] and hand_pass,
         "method": ("Coal triangle-surface collision/distance plus validated analytic cylinder-solid vertex containment"
@@ -340,7 +350,9 @@ def screen_grasp_endpoint(
             "Franka arm IK or collisions",
             "continuous pick, lift, transfer, insertion or retreat motion",
             "contact forces, slip, or physical insertion success",
-            "measured post-grasp hand joint state and controller tracking",
+            ("measured post-grasp hand joint state and controller tracking"
+             if hand_poses_override is None else
+             "source authenticity and future tracking of supplied hand joints"),
         ],
         "robot_ready": False,
     }

@@ -230,6 +230,60 @@ def test_postshift_session_consumes_new_capture_without_attempt_label(
         runner.assess_postshift_lateral_alignment(**args)
 
 
+def test_postshift_20mm_session_requires_its_saved_checkpoint(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    runner._attempt = SimpleNamespace(
+        attempt_id="attempt_1", candidate_id="table/0/3")
+    runner._preflight = object()
+    runner._attempt_dir = runner.output_dir / "attempts" / "attempt_1"
+    runner._attempt_dir.mkdir(parents=True)
+    monkeypatch.setattr(runner, "current_decision", lambda: SimpleNamespace(
+        action="guarded_withdrawal_then_xy_assessment"))
+    checks = []
+    monkeypatch.setattr(runner, "verify_current_preflight_evidence",
+                        lambda: checks.append("trial") or {})
+    source = (runner._attempt_dir / "postshift_checkpoints" /
+              "000/report.json").resolve()
+    source.parent.mkdir(parents=True)
+    source.write_text("{}", encoding="utf-8")
+    capture = tmp_path / "new_camera_capture"
+    runner._postshift_saved_reports.add(source)
+    runner._postshift_used_capture_dirs.add(capture.resolve())
+    checkpoint = SimpleNamespace(
+        attempt_id="attempt_1", candidate_id="table/0/3",
+        capture_dir=capture)
+    plan = SimpleNamespace(attempt_id="attempt_1",
+                           candidate_id="table/0/3")
+    calls = []
+    result = object()
+    monkeypatch.setattr(session_runner,
+                        "plan_postshift_insertion_preflight",
+                        lambda **kwargs: calls.append(kwargs) or result)
+    monkeypatch.setattr(session_runner,
+                        "write_postshift_insertion_preflight",
+                        lambda _result, output: output.mkdir(
+                            parents=True, exist_ok=False))
+    args = dict(
+        planner=object(), shift_plan=plan, checkpoint=checkpoint,
+        checkpoint_report_path=source, bounds=object(),
+        max_visual_tip_error_m=.001,
+        max_visual_axis_error_deg=1.,
+        max_axis_prior_residual_deg=2.,
+        max_hold_height_delta_m=.005,
+        max_preinsert_hand_rotation_deg=1.)
+    assert runner.prepare_postshift_insertion_preflight(**args) is result
+    assert checks == ["trial"]
+    assert calls[0]["checkpoint_report_path"] == source
+    assert runner._postshift_20mm_index == 1
+    assert (runner._attempt_dir / "postshift_20mm_preflights/000").is_dir()
+    with pytest.raises(ValueError, match="not a new session checkpoint"):
+        runner.prepare_postshift_insertion_preflight(**args)
+    with pytest.raises(ValueError, match="not a new session checkpoint"):
+        runner.prepare_postshift_insertion_preflight(**{
+            **args, "checkpoint_report_path": tmp_path / "outside.json"})
+
+
 def test_attempt_rejects_changed_preflight_report_and_binding(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)

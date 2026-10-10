@@ -69,8 +69,9 @@ then grounds the tip/shaft axis in the *new* frames. The report is stored at
 `held_relation_inconsistent`, or `visual_abstain`. The visual budget must fit
 inside cylinder radial clearance after the future key-surface bound. Even
 `visual_alignment_within_budget` sets `insertion_replan_allowed=false`:
-fresh 20 mm exact key/hand endpoint screening, an axial preflight, and guarded
-contact are separate unfinished gates. There is no automatic second shift.
+the fresh 20 mm key/hand endpoint and axial planning checks below are separate
+read-only gates, while guarded contact remains unfinished. There is no
+automatic second shift.
 
 Before using such a checkpoint as a held-key hypothesis, call
 `verify_postshift_checkpoint(result, report_path, plan=shift_plan)` to
@@ -84,11 +85,55 @@ unobservable: its yaw is inherited from the medoid, **not** measured by the
 VLM. A tip/axis disagreement beyond commissioned limits rejects the
 hypothesis. `tip_axis_visual_surface_bound(...)` computes the extra possible
 CAD-surface displacement from commissioned tip/axis error limits; this must
-be added to the physical medoid's surface bound before a future 20 mm endpoint
+be added to the physical medoid's surface bound before the 20 mm endpoint
 and sampled-path margin check. These functions still do not create an
 insertion retry or approve a robot command.
 
-For use by that future binding layer, the API is
+`SessionRunner.prepare_postshift_insertion_preflight(...)` is the next
+**read-only** gate for that same saved checkpoint. It rechecks the original
+trial binding, failed held attempt, physical grasp-medoid source, completed
+lateral-shift report and fresh post-shift camera pixels. Its inputs include
+commissioned worst-case visual tip/axis errors, maximum allowed discrepancy
+from the medoid, height/orientation drift limits and a future whole-surface
+`SurfaceDeviationBounds`. The latter must cover the physical grasp bound
+**plus** the key-surface displacement caused by visual tip/axis error; a
+95%-confidence covariance alone is not a worst-case bound. It applies one
+cylinder yaw gauge consistently to the exact 20 mm key/whole-Inspire endpoint
+screen and the key/hand axial targets, uses measured Inspire joints, calls
+the existing FR3/Inspire cuRobo transfer and axial planner, then runs the
+sampled held-key/hand collision and uncertainty-margin audits. The report
+and hashed planned joint paths are stored under the same attempt at
+`postshift_20mm_preflights/NNN/`. Square mode does not inherit cylinder yaw
+symmetry. A passing status is
+`sampled_postshift_20mm_preflight_pass`, but the report still sets
+`insertion_replan_allowed=false` and `robot_ready=false`: it is **not** an
+execution or guarded-contact controller. The real 15 mm radial-gap cylinder
+asset audit on this host currently finds zero v8 grasp candidates and no
+key/socket FoundPose representations, so a real cylinder replay is not yet
+possible here.
+
+For a commissioned session, reuse the *same* runner and saved checkpoint:
+
+```python
+result = runner.prepare_postshift_insertion_preflight(
+    planner=planner,
+    shift_plan=completed_shift_plan,
+    checkpoint=postshift_checkpoint,
+    checkpoint_report_path=postshift_report_path,
+    bounds=commissioned_future_surface_bounds,
+    max_visual_tip_error_m=commissioned_tip_worst_case_m,
+    max_visual_axis_error_deg=commissioned_axis_worst_case_deg,
+    max_axis_prior_residual_deg=commissioned_prior_axis_limit_deg,
+    max_hold_height_delta_m=commissioned_hold_height_limit_m,
+    max_preinsert_hand_rotation_deg=commissioned_xy_only_rotation_limit_deg,
+)
+```
+
+The five error/limit variables above are measurements to commission; do not
+copy numbers from the unit tests. This call writes a report but never moves
+Franka or changes an attempt label.
+
+The underlying first-shift planning API used by this binder is
 `plan_lateral_hold_shift(planner, mode, shared_root, calibration, trial_scene,
 start_q, expected_hold_pose, T_key_hand, increment_socket_xy_m, bounds,
 limits, max_path_deviation_m, max_hold_height_deviation_m,

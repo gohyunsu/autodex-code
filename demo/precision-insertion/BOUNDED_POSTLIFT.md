@@ -107,12 +107,16 @@ lateral-execution log, fresh `post_lateral_hold` camera bundle and measured
 stationary joints. It rechecks the plan/trajectory bytes and old-versus-new
 frame provenance, then reruns the cylinder tip/axis estimator. Its visual
 alignment status never records a positive insertion label or initiates a
-second shift. The physical execution adapter, commissioned visual accuracy,
-new 20 mm endpoint/axial plan and guarded contact still do not exist.
+second shift. The physical execution adapter, commissioned visual accuracy
+and guarded contact still do not exist.
 `postshift_pose.py` now supplies only the missing axisymmetric geometry
 bridge: a freshly grounded tip/axis plus measured wrist and physical medoid
 give a yaw-gauge-fixed held relation, with explicit prior-consistency checks
 and an extra whole-key surface-error formula. The saved post-shift report and
-raw PNGs have an independent re-verifier. The bridge has **not** yet been
-bound to a fresh endpoint/path planning result, so it cannot turn
-`visual_alignment_within_budget` into an insertion authorization.
+raw PNGs have an independent re-verifier.
+The subsequent `postshift_insertion.py` binder now performs that **read-only**
+20 mm endpoint, cuRobo held-path and sampled surface-margin preflight. It
+also preserves the cylinder's unobservable yaw gauge in both the endpoint
+and target poses. Its positive sampled status is still not a physical retry:
+no commissioned shift executor or guarded insertion controller is supplied,
+and this host has no cylinder v8 candidate/FoundPose assets for a real run.

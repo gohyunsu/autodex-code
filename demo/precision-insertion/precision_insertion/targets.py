@@ -41,6 +41,7 @@ class InsertionTargets:
     insertion_axis_robot: np.ndarray
     xy_offset_socket_m: tuple[float, float]
     preinsert_clearance_m: float
+    cylinder_yaw_gauge_socket_rad: float = 0.0
 
     def to_record(self) -> dict:
         return {
@@ -63,6 +64,8 @@ class InsertionTargets:
             "T_robot_hand_verification": self.T_robot_hand_verification.tolist(),
             "insertion_axis_robot": self.insertion_axis_robot.tolist(),
             "xy_offset_socket_m": list(self.xy_offset_socket_m),
+            "cylinder_yaw_gauge_socket_rad": (
+                self.cylinder_yaw_gauge_socket_rad),
             "preinsert_clearance_m": self.preinsert_clearance_m,
             "robot_ready": False,
         }
@@ -72,6 +75,7 @@ def build_rigid_insertion_targets(
     *, mode: TaskMode, shared_root: Path, calibration: SessionCalibration,
     T_key_hand: np.ndarray,
     xy_offset_socket_m: tuple[float, float] = (0.0, 0.0),
+    cylinder_yaw_gauge_socket_rad: float = 0.0,
 ) -> InsertionTargets:
     """Compose CAD key targets with the frozen socket and one fixed grasp.
 
@@ -86,6 +90,12 @@ def build_rigid_insertion_targets(
     offset = np.asarray(xy_offset_socket_m, dtype=np.float64)
     if offset.shape != (2,) or not np.all(np.isfinite(offset)):
         raise ValueError("socket XY offset must contain two finite meters")
+    yaw = float(cylinder_yaw_gauge_socket_rad)
+    if (not math.isfinite(yaw) or
+            (mode.family != "cylinder" and yaw != 0.0)):
+        raise ValueError("only cylinder targets may use a finite yaw gauge")
+    c, s = math.cos(yaw), math.sin(yaw)
+    gauge_rotation = np.array([[c, -s, 0.], [s, c, 0.], [0., 0., 1.]])
 
     path = AssetPaths(root, mode).task_geometry
     geometry_bytes = path.read_bytes()
@@ -113,6 +123,7 @@ def build_rigid_insertion_targets(
 
     def in_robot(pose_socket_key: np.ndarray) -> np.ndarray:
         shifted = pose_socket_key.copy()
+        shifted[:3, :3] = gauge_rotation @ shifted[:3, :3]
         shifted[:3, 3] += displacement
         return validate_se3(socket @ shifted, name="T_robot_key_goal")
 
@@ -135,4 +146,5 @@ def build_rigid_insertion_targets(
         insertion_axis_robot=axis_robot,
         xy_offset_socket_m=(float(offset[0]), float(offset[1])),
         preinsert_clearance_m=clearance,
+        cylinder_yaw_gauge_socket_rad=yaw,
     )

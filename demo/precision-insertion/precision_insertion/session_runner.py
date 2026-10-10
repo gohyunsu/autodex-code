@@ -70,6 +70,10 @@ from .postshift_checkpoint import (
     PostShiftCheckpoint, assess_postshift_alignment,
     write_postshift_checkpoint,
 )
+from .postshift_insertion import (
+    PostShiftInsertionPreflight, plan_postshift_insertion_preflight,
+    write_postshift_insertion_preflight,
+)
 from .repose_artifacts import write_repose_preflight_artifacts
 from .repose_preflight import validate_repose_rest_target
 from .repose_transition import (
@@ -181,6 +185,9 @@ class SessionRunner:
         self._lateral_used_diagnostic_reports: set[Path] = set()
         self._postshift_checkpoint_index = 0
         self._postshift_used_capture_dirs: set[Path] = set()
+        self._postshift_saved_reports: set[Path] = set()
+        self._postshift_20mm_used_reports: set[Path] = set()
+        self._postshift_20mm_index = 0
         self._write_exclusive(
             target / "frozen_session_calibration.json", calibration.record)
         self._write_exclusive(target / "endpoint_catalog.json", catalog)
@@ -2109,6 +2116,57 @@ class SessionRunner:
         write_postshift_checkpoint(result, output)
         self._postshift_checkpoint_index += 1
         self._postshift_used_capture_dirs.add(capture)
+        self._postshift_saved_reports.add((output / "report.json").resolve())
+        return result
+
+    def prepare_postshift_insertion_preflight(
+        self, *, planner, shift_plan: GroundedLateralPreflight,
+        checkpoint: PostShiftCheckpoint,
+        checkpoint_report_path: Path, bounds: SurfaceDeviationBounds,
+        max_visual_tip_error_m: float,
+        max_visual_axis_error_deg: float,
+        max_axis_prior_residual_deg: float,
+        max_hold_height_delta_m: float,
+        max_preinsert_hand_rotation_deg: float,
+    ) -> PostShiftInsertionPreflight:
+        """Save a new 20 mm endpoint/path audit, never an insertion command."""
+        if (self.current_decision().action !=
+                "guarded_withdrawal_then_xy_assessment" or
+                self._attempt is None or self._preflight is None or
+                self._attempt_dir is None or
+                checkpoint.attempt_id != self._attempt.attempt_id or
+                checkpoint.candidate_id != self._attempt.candidate_id or
+                shift_plan.attempt_id != self._attempt.attempt_id or
+                shift_plan.candidate_id != self._attempt.candidate_id):
+            raise ValueError("post-shift 20 mm plan needs this failed held attempt")
+        source = Path(checkpoint_report_path).expanduser().resolve()
+        expected_parent = (self._attempt_dir /
+                           "postshift_checkpoints").resolve()
+        if (source.parent.parent != expected_parent or
+                source.name != "report.json" or
+                source not in self._postshift_saved_reports or
+                source in self._postshift_20mm_used_reports or
+                checkpoint.capture_dir.resolve() not in
+                self._postshift_used_capture_dirs):
+            raise ValueError("post-shift 20 mm source is not a new session checkpoint")
+        self.verify_current_preflight_evidence()
+        result = plan_postshift_insertion_preflight(
+            planner=planner, mode=self.mode, shared_root=self.shared_root,
+            calibration=self.calibration, catalog=self.catalog,
+            trial=self._preflight, attempt=self._attempt,
+            shift_plan=shift_plan, checkpoint=checkpoint,
+            checkpoint_report_path=source, bounds=bounds,
+            max_visual_tip_error_m=max_visual_tip_error_m,
+            max_visual_axis_error_deg=max_visual_axis_error_deg,
+            max_axis_prior_residual_deg=max_axis_prior_residual_deg,
+            max_hold_height_delta_m=max_hold_height_delta_m,
+            max_preinsert_hand_rotation_deg=(
+                max_preinsert_hand_rotation_deg))
+        output = (self._attempt_dir / "postshift_20mm_preflights" /
+                  f"{self._postshift_20mm_index:03d}")
+        write_postshift_insertion_preflight(result, output)
+        self._postshift_20mm_used_reports.add(source)
+        self._postshift_20mm_index += 1
         return result
 
     def record_failure(
