@@ -108,6 +108,8 @@ def test_lift_prompt_preserves_image_order_and_validates_closed_set():
     assert "Hidden is not held" in backend.calls[0][1]
     assert "at most 12 words" in backend.calls[0][1]
     assert "never repeat a sentence" in backend.calls[0][1]
+    assert "held|miss|slip|unobservable" not in backend.calls[0][1]
+    assert "exactly ONE of these strings" in backend.calls[0][1]
     assert len(backend.calls[0][0]) == 2
     assert observed.to_record()["scope"].endswith("not_motion_authorization")
     assert observed.to_record()["latency_s"] >= 0
@@ -159,6 +161,8 @@ def test_insertion_visual_is_not_physical_depth_label():
     })), _frames("preinsert", "final_or_abort"))
     assert observed.parsed["visual_class"] == "normal_appearance"
     assert "Do not claim numerical depth" in observed.prompt
+    assert "normal_appearance|partial" not in observed.prompt
+    assert "Do not copy the entire option list" in observed.prompt
     outcome = judge_insertion(InsertionEvidence(
         vlm_class=observed.parsed["visual_class"],
         key_depth_interval_m=None, key_depth_source=None,
@@ -182,6 +186,7 @@ def test_independent_per_view_xy_calls_produce_proposals_not_motion():
     assert len(backend.calls) == 2
     assert [vote.choice_id for vote in votes] == ["C1", "C1"]
     assert all("Never invent coordinates" in call[1] for call in backend.calls)
+    assert all("ID|abstain" not in call[1] for call in backend.calls)
     decision = resolve_multiview_choice(
         choices, votes, current_offset_socket_m=(0.0, 0.0),
         grasp_held=True, hard_abort=False,
@@ -233,6 +238,7 @@ def test_preinsert_raw_and_mesh_overlay_needs_two_agreeing_views():
     assert "not_metric_alignment_or_arrival_label" in result.to_record()["scope"]
     assert "RAW pixels first" in backend.calls[0][1]
     assert "Do not estimate millimetres" in backend.calls[0][1]
+    assert "coarse_match|gross_misalignment" not in backend.calls[0][1]
     assert len(backend.calls) == 2
     assert len(backend.calls[0][0]) == 2
 

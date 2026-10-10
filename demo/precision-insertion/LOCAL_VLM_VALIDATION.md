@@ -64,6 +64,25 @@ synchronized physical lift pair; **this is format validation only, not an
 accuracy result or a trusted grasp label**. Malformed output still maps to
 `unobservable` rather than being repaired or used to authorize motion.
 
+## Saved-render prompt regression (2026-10-11)
+
+An insertion-appearance smoke test initially returned the *literal* pipe-
+separated choice list from the prompt as its `visual_class`. The parser
+correctly rejected this and returned `unobservable`. The closed-set prompts
+now list alternatives outside the JSON field instead of presenting a
+`label_a|label_b` value template. With the same cached Qwen3-VL-2B model and
+the same two presentation renders, the response was valid JSON and parsed as
+`normal_appearance` in 1.01 s of model inference. This demonstrates improved
+format adherence only: its evidence said the key was *above* the socket, so
+the label is not a trustworthy insertion result. The render pair is neither
+time-synchronized AutoDex camera footage nor an independently labeled trial.
+Malformed answers continue to map to `unobservable`.
+
+The saved-image lift probe also loaded the model offline and returned a
+parseable `held` response in 0.83 s. Its images are different presentation
+scenes, not a before/after grasp, so this is likewise only a transport and
+schema test. All physical task outcomes still require independent evidence.
+
 ## Remaining validation before live use
 
 Collect time-synchronized, phase-paired **raw AutoDex camera images** with

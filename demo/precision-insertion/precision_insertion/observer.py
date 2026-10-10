@@ -329,6 +329,14 @@ def _infer_closed_set(
         "outside it. Keep evidence to one short visual phrase (at most "
         "12 words); never repeat a sentence.\n\n"
         + prompt_body
+        + f"\nThe JSON object must have exactly these keys: {field}, "
+        "evidence_views, evidence. Set "
+        + field
+        + " to exactly ONE of these strings: "
+        + ", ".join(json.dumps(value) for value in sorted(allowed))
+        + ". Do not copy the entire option list as a value. "
+        "evidence_views must be an array of cited camera ID strings; "
+        "evidence must be one short string."
     )
     started = time.perf_counter()
     answer = backend.infer([frame.image for frame in frames], prompt)
@@ -374,9 +382,6 @@ def observe_lift(backend: ImageVLM, frames: Sequence[LabeledFrame]) -> VLMObserv
             "a hidden key, or a commanded lift are not held evidence. "
             "Classify only visible evidence. Hidden is not held; classify it "
             "as unobservable. "
-            "Return JSON only: "
-            '{"class":"held|miss|slip|unobservable","evidence_views":'
-            '["camera_id"],"evidence":"..."}. '
             "Do not infer a grasp from the commanded hand closure."
         ),
         field="class", allowed=frozenset({"held", "miss", "slip", "unobservable"}),
@@ -399,9 +404,7 @@ def observe_insertion_visual(
             "Compare the time-ordered RAW key and socket pixels. CAD overlays "
             "are predictions, not measurements. A hidden key is not proof "
             "of insertion. Do not claim numerical depth from pixels. "
-            "Return JSON only: "
-            '{"visual_class":"normal_appearance|partial|rim_jam|slip|'
-            'unobservable","evidence_views":["camera_id"],"evidence":"..."}.'
+            "Describe only what the raw images visibly establish."
         ),
         field="visual_class",
         allowed=frozenset({
@@ -465,9 +468,6 @@ def observe_preinsert_hold_views(
                 "If the key/rim is occluded, pixels do not resolve the state, "
                 "or the overlay alone suggests success, choose unobservable. "
                 "Do not estimate millimetres, depth, or contact from images. "
-                'Return JSON only: {"class":"coarse_match|gross_misalignment|'
-                'slip_or_miss|unobservable","evidence_views":'
-                '["camera_id"],"evidence":"..."}. '
                 f"Use only camera ID {view.camera_id}."
             ),
             field="class", allowed=frozenset({
@@ -525,10 +525,13 @@ def observe_xy_views(
             "occluded, indistinguishable, tilted, or uncertain. Never invent "
             "coordinates or a new ID. "
             f"Allowed IDs: [{ids}]. Camera: {view.camera_id}. "
-            "Return JSON only: "
-            '{"visible":true|false,"choice_id":"ID|abstain",'
-            '"failure_class":"misaligned|rim_jam|roughly_aligned|slip|'
-            'occluded|unknown","evidence":"..."}.'
+            "Return one compact JSON object with exactly the keys visible, "
+            "choice_id, failure_class, evidence. Set visible to a JSON "
+            "boolean. Set choice_id to exactly one allowed ID or abstain. "
+            "Set failure_class to exactly one of these strings: "
+            '"misaligned", "rim_jam", "roughly_aligned", "slip", '
+            '"occluded", "unknown". Do not copy an entire option list as '
+            "one value. Set evidence to one short visual phrase."
         )
         started = time.perf_counter()
         answer = backend.infer([view.raw, view.overlay], prompt)
