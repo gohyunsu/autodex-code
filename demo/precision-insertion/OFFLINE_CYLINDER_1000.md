@@ -124,6 +124,8 @@ the default controller squeeze is only a nominal commanded pose, there has
 been no live Franka/fixture path check, and the endpoint is not a continuous
 insertion simulation. Do not publish them as successful robot insertion
 demonstrations or copy them into the active v8 runtime pool without review.
+The later 2026-10-11 staged subset and its stricter provenance checks are
+documented below; the original 13-count remains a nominal-only result.
 
 ## Post-squeeze fidelity audit: do not use nominal renders as success evidence
 
@@ -166,8 +168,10 @@ insertion. These data do **not** retroactively change the requested stock
 AutoDex plus 20 mm endpoint counts: 13 still pass those narrowly defined
 checks per socket. They do prevent treating that count, or the old images,
 as the number of robot-ready insertion grasps. The runtime must measure the
-post-lift key pose, reject unacceptable drift using calibrated limits, and
-repeat hand/socket endpoint and path checks with the actual hand–key relation.
+grasp relation from physical calibration and/or independently visible
+post-lift evidence, reject unacceptable drift using calibrated limits, and
+repeat hand/socket endpoint and path checks with that relation. A hand-
+occluded key cannot be assumed measured merely because a VLM sees the hand.
 
 ## Achieved-MuJoCo-pose endpoint comparison
 
@@ -202,3 +206,63 @@ intersects at the 20 mm end-squeeze state). The per-state reports record
 which links intersect and how many vertices lie in solid socket volume.
 This is still **endpoint-only offline evidence**: no continuous insertion,
 Franka motion, physical grasp, or real 20 mm task success has been tested.
+
+## 2026-10-11 v8 tabletop candidate staging
+
+`promote_cylinder_tabletop_candidates.py` verifies the complete stock
+full-key MuJoCo pass set, byte-identical raw/stock grasp arrays, scene and
+mesh hashes, the nominal 20 mm reports, and both achieved MuJoCo endpoint
+reports for **all six** socket gaps. It intersects those tests across the
+socket family before writing to the canonical v8 key candidate tree. The
+intersection is **12 candidates**: 11 from `table/0`, one from `table/1`.
+The nominal-only `table/0/71` is excluded because the achieved hand collides
+with the 15/20 mm socket bodies. This is a conservative offline endpoint
+selection, **not** a post-squeeze drift or physical-repeatability pass.
+
+```bash
+PY=/home/hyunsu/miniconda3/envs/autodex_bodex/bin/python
+SHARED=/home/hyunsu/shared_data
+ACHIEVED=$SHARED/AutoDex/precision_insertion/cylinder_achieved_endpoint_solid_verified_20261010/summary.json
+
+# Read-only source preflight (omit --install).
+$PY demo/precision-insertion/promote_cylinder_tabletop_candidates.py \
+  --shared-root "$SHARED" --achieved-summary "$ACHIEVED"
+
+# First-time, non-overwriting installation only after reviewing that output.
+$PY demo/precision-insertion/promote_cylinder_tabletop_candidates.py \
+  --shared-root "$SHARED" --achieved-summary "$ACHIEVED" --install \
+  --manifest "$SHARED/AutoDex/precision_insertion/cylindrical/tabletop_v8_promotion_1000_20261011.json"
+```
+
+The installed files are under
+`AutoDex/candidates/inspire/v8/precision_key_cylinder_r15_h80/table/<scene>/<seed>/`.
+Each candidate retains the exact stock arrays and original `sim_eval.json`,
+`sim_traj.json`, `coll_valid.npy`, plus `simulation_validation.json` with
+source-byte hashes, achieved-endpoint report hashes and the squeeze/gravity
+drift diagnostic. The demo catalogue now checks those source hashes and its
+own implementation hash; editing an input invalidates the saved catalogue.
+Do not mistake `simulation_validation.status="passed"` for a real-robot
+result: its schema explicitly says `physical_validation=false` and
+`robot_ready=false`.
+
+On this host, each of the six socket modes was independently rescreened from
+the installed v8 pool at 1 µm **numerical** hand clearance. Each complete
+catalogue contains 12/12 offline-eligible nominal endpoints and zero screen
+errors. The current catalogues are
+`AutoDex/precision_insertion/cylindrical/endpoint_catalog_staged_verified_gap_<N>mm_20261011.json`,
+where `N` is `1`, `3`, `5`, `10`, `15` or `20`. The earlier files without
+`verified` in their names are superseded because the candidate-evidence
+implementation hash was extended after they were written.
+
+The selected 12 still move **4.4–38.5 mm** in hand-relative cylinder center
+from the initial BODex relation to the end of gravity replay, with roughly
+**4.4–25.9°** symmetry-reduced axis tilt. No acceptable physical drift
+threshold has been commissioned. The v8 arrays are therefore proposals for
+pose-conditioned live preflight and physical-grasp calibration, not replay-
+ready insertion grasps. Canonical FoundPose representations for key and
+socket are missing from this `~/shared_data` runtime tree. The mounted
+`/mnt/paradex2/hyunsu/autodex_precision_insertion_handoff_20261010_652ac909/pending_foundpose/`
+contains synthetic-onboarded **candidates**, explicitly withheld from
+canonical installation pending real AutoDex-image pose/mask QA. Physical
+transfer paths, guarded contact and insertion labels are also unverified.
+The unchanged stock AutoDex execution files remain untouched.

@@ -40,7 +40,8 @@ def _endpoint_implementation_sha256() -> dict[str, str]:
     """Bind a catalogue to the exact collision algorithm that screened it."""
     package = Path(__file__).resolve().parent
     return {name: _sha256(package / name)
-            for name in ("endpoint.py", "solid_occupancy.py")}
+            for name in ("endpoint.py", "solid_occupancy.py", "candidates.py",
+                         "config.py", "assets.py")}
 
 
 def _candidate_dirs(root: Path) -> list[Path]:
@@ -90,6 +91,21 @@ def _grasp_evidence(candidate: Path, key_mesh: Path) -> tuple[bool, str]:
         declared = validation.get("full_object_mesh_sha256")
         if declared is not None and declared != _sha256(key_mesh):
             return False, "stale_full_key_mesh"
+        if validation.get("schema") == "precision_insertion_cylinder_tabletop_simulation_v1":
+            source_hashes = validation.get("source_file_sha256")
+            bound_files = ("wrist_se3.npy", "pregrasp_pose.npy", "grasp_pose.npy",
+                           "bodex_info.npy", "sim_eval.json", "sim_traj.json",
+                           "coll_valid.npy")
+            if (not isinstance(source_hashes, dict) or
+                    set(source_hashes) != set(bound_files) or
+                    declared is None or
+                    validation.get("physical_validation") is not False or
+                    validation.get("robot_ready") is not False):
+                return False, "incomplete_cylinder_source_evidence"
+            if any(not (candidate / name).is_file() or
+                   source_hashes[name] != _sha256(candidate / name)
+                   for name in bound_files):
+                return False, "stale_cylinder_source_file"
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return False, f"invalid_grasp_evidence:{exc}"
     return True, "mujoco_grasp_passed_not_physical"
@@ -165,6 +181,9 @@ def build_endpoint_catalog(
                 "grasp_pose": candidate / "grasp_pose.npy",
                 "sim_eval": candidate / "sim_eval.json",
                 "simulation_validation": candidate / "simulation_validation.json",
+                "bodex_info": candidate / "bodex_info.npy",
+                "sim_traj": candidate / "sim_traj.json",
+                "coll_valid": candidate / "coll_valid.npy",
             }
             row["grasp_input_sha256"] = {
                 name: _sha256(path) if path.is_file() else None
@@ -294,6 +313,9 @@ def select_pose_candidates(
             "grasp_pose": candidate / "grasp_pose.npy",
             "sim_eval": candidate / "sim_eval.json",
             "simulation_validation": candidate / "simulation_validation.json",
+            "bodex_info": candidate / "bodex_info.npy",
+            "sim_traj": candidate / "sim_traj.json",
+            "coll_valid": candidate / "coll_valid.npy",
         }
         for name, saved_hash in row["grasp_input_sha256"].items():
             source = sources[name]

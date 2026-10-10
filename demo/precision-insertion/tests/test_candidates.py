@@ -155,6 +155,37 @@ def test_catalog_detects_changed_scene_and_evidence(tmp_path):
     assert "grasp evidence changed" in result["reason"]
 
 
+def test_promoted_cylinder_source_bytes_are_bound_to_catalog(tmp_path):
+    mode, paths, candidates, screen = _candidate_fixture(
+        tmp_path, select_mode("cylinder", 15))
+    candidate = candidates[0]
+    for name, payload in (("bodex_info.npy", b"proposal"),
+                          ("sim_traj.json", b"{}"),
+                          ("coll_valid.npy", b"collision")):
+        (candidate / name).write_bytes(payload)
+    names = ("wrist_se3.npy", "pregrasp_pose.npy", "grasp_pose.npy",
+             "bodex_info.npy", "sim_eval.json", "sim_traj.json",
+             "coll_valid.npy")
+    _write_json(candidate / "simulation_validation.json", {
+        "schema": "precision_insertion_cylinder_tabletop_simulation_v1",
+        "status": "passed", "physical_validation": False,
+        "robot_ready": False,
+        "full_object_mesh_sha256": _sha(paths.key_planning_mesh),
+        "source_file_sha256": {name: _sha(candidate / name) for name in names},
+    })
+    first = build_endpoint_catalog(
+        shared_root=tmp_path, mode=mode,
+        minimum_hand_clearance_m=0.0002, screen=screen)
+    assert first["candidates"][0]["eligible"] is True
+    (candidate / "sim_traj.json").write_text('{"changed": true}')
+    second = build_endpoint_catalog(
+        shared_root=tmp_path, mode=mode,
+        minimum_hand_clearance_m=0.0002, screen=screen)
+    assert second["candidates"][0]["eligible"] is False
+    assert second["candidates"][0]["grasp_stability_reason"] == (
+        "stale_cylinder_source_file")
+
+
 def test_pilot_or_bad_scene_cannot_become_complete_catalog(tmp_path, monkeypatch):
     mode, paths, candidates, screen = _candidate_fixture(tmp_path)
     pilot = build_endpoint_catalog(
