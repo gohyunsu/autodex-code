@@ -305,6 +305,12 @@ The endpoint screen assumes the initial BODex hand/key transform stays rigid;
 the cylinder audit shows this assumption is not verified through squeeze.
 Consequently `eligible` in an offline endpoint catalogue means only that
 these *nominal* gates passed, never that the grasp is runtime-ready.
+For promoted cylindrical candidates the catalogue also carries the hashed
+MuJoCo `simulated_post_squeeze_fidelity_diagnostic` through pose selection.
+It is diagnostic evidence, not a commissioned acceptance threshold or a
+measured post-lift key-in-hand relation. Before transfer, the live pipeline
+must establish a bounded relation and recheck the endpoint and route against
+that relation; the catalogue alone cannot authorize insertion.
 The original AutoDex source files are kept at the `main` baseline; the
 previous feature-branch changes are preserved at
 `archive/precision-pre-isolation`. `PLAN.md` maps existing APIs to the demo
@@ -1463,16 +1469,24 @@ socket is mounted; measuring only its pose does not establish its size.
 The `gap_01mm` name denotes a **1 mm one-sided radial clearance**, not 0.1 mm.
 The same scan across all four square gaps yields one `table/0/78` per gap
 and zero endpoint-eligible grasps, with the same three Inspire-link
-intersections. The cylinder 20 mm-gap catalogue is incomplete because its
-runtime v8 grasp directory has no candidate files. A compact index of all
-five local reports and two staging-grasp checks is at
+intersections. The historical `cylinder_gap20mm_20261010.json` is incomplete
+because it was built before the cylinder v8 candidates were promoted. The
+2026-10-11 scan screens all **12 currently installed** cylinder candidates
+separately against each of the six socket meshes. All 12 pass each *nominal*
+20 mm endpoint at the example 0.2 mm hand clearance (11 `end_down`, one
+`side_down`). This is not a physical grasp or insertion success count: the
+same candidates' MuJoCo end-squeeze key-in-hand center drift spans about
+4.4–35.2 mm, and no post-squeeze fidelity threshold has been commissioned.
+The new catalogues are under `endpoint_catalogs/cylindrical/<socket_object>/`
+and retain a `robot_ready: false` marker. A compact index of the local
+reports and two square staging-grasp checks is at
 `~/shared_data/AutoDex/precision_insertion/endpoint_catalogs/README.md`.
 
 ### Cylinder endpoint diagnostic images (not runtime grasps)
 
-`render_cylinder_endpoint_diagnostics.py` provides a reproducible *visual
-diagnostic* while the cylinder's tabletop v8 grasp pool is absent. It reads the
-local, trusted raw **reorientation** pilot, applies the documented relaxed
+`render_cylinder_endpoint_diagnostics.py` provides a reproducible *historical
+visual diagnostic* from before the cylinder's tabletop v8 pool was promoted.
+It reads the local, trusted raw **reorientation** pilot, applies the documented relaxed
 numeric threshold, and uses `endpoint.py` to test the centered 20 mm key fit
 and all Inspire visual links against each of the six exact socket meshes.
 Only endpoint-geometry passes receive a Blender bundle. The demonstration

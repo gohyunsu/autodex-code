@@ -172,11 +172,22 @@ def test_promoted_cylinder_source_bytes_are_bound_to_catalog(tmp_path):
         "robot_ready": False,
         "full_object_mesh_sha256": _sha(paths.key_planning_mesh),
         "source_file_sha256": {name: _sha(candidate / name) for name in names},
+        "post_squeeze_fidelity_diagnostic": {
+            "end_squeeze": {"center_in_hand_displacement_m": 0.024},
+        },
     })
     first = build_endpoint_catalog(
         shared_root=tmp_path, mode=mode,
         minimum_hand_clearance_m=0.0002, screen=screen)
     assert first["candidates"][0]["eligible"] is True
+    assert first["candidates"][0][
+        "simulated_post_squeeze_fidelity_diagnostic"]["end_squeeze"][
+            "center_in_hand_displacement_m"] == 0.024
+    selected = select_pose_candidates(
+        first, expected_mode=mode, tabletop_pose_stem="000")
+    assert selected["candidates"][0][
+        "simulated_post_squeeze_fidelity_diagnostic"]["end_squeeze"][
+            "center_in_hand_displacement_m"] == 0.024
     (candidate / "sim_traj.json").write_text('{"changed": true}')
     second = build_endpoint_catalog(
         shared_root=tmp_path, mode=mode,

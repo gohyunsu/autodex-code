@@ -1,9 +1,11 @@
 """Explicit-root v8 insertion grasp catalogue and pose-conditioned selection.
 
-Offline eligibility is MuJoCo-supported grasp stability plus a centered
-20 mm whole-hand/socket endpoint. It is not continuous arm planning, contact
-control, or physical success. AutoDex's v8 NPY loader is reused only after
-this module has resolved exact candidate keys under the selected shared root.
+Offline eligibility is MuJoCo-supported grasp stability plus a centered,
+*nominal-key-in-hand* 20 mm whole-hand/socket endpoint. The stock gravity
+test does not certify that the key retained that nominal relation during
+squeeze. It is not continuous arm planning, contact control, or physical
+success. AutoDex's v8 NPY loader is reused only after this module has
+resolved exact candidate keys under the selected shared root.
 """
 
 from __future__ import annotations
@@ -166,6 +168,7 @@ def build_endpoint_catalog(
             "grasp_input_sha256": {},
             "endpoint_pass": False,
             "endpoint_report": None,
+            "simulated_post_squeeze_fidelity_diagnostic": None,
             "eligible": False,
             "error": None,
         }
@@ -193,6 +196,11 @@ def build_endpoint_catalog(
             row["grasp_stability_pass"] = passed
             row["grasp_stability_reason"] = reason
             if passed:
+                validation = _json(candidate / "simulation_validation.json")
+                if (validation.get("schema") ==
+                        "precision_insertion_cylinder_tabletop_simulation_v1"):
+                    row["simulated_post_squeeze_fidelity_diagnostic"] = (
+                        validation.get("post_squeeze_fidelity_diagnostic"))
                 endpoint_attempted += 1
                 endpoint = screen(
                     shared_root=root, mode=mode, candidate_dir=candidate,
@@ -229,6 +237,8 @@ def build_endpoint_catalog(
         "candidates": rows,
         "eligible_count": sum(row["eligible"] for row in rows),
         "not_validated": [
+            "nominal BODex key-in-hand relation after physical squeeze/lift; "
+            "MuJoCo drift is diagnostic and not an acceptance threshold",
             "live pose-conditioned Franka IK or full transfer/insertion paths",
             "guarded contact, release, reset, or reorientation",
             "physical grasp or insertion success",
@@ -344,6 +354,8 @@ def select_pose_candidates(
             "key": row["key"], "candidate_dir": row["candidate_dir"],
             "uncovered_scene_gain": gains.get(candidate_key),
             "endpoint_report": row["endpoint_report"],
+            "simulated_post_squeeze_fidelity_diagnostic": row.get(
+                "simulated_post_squeeze_fidelity_diagnostic"),
         })
     matching.sort(key=lambda row: (
         -(row["uncovered_scene_gain"] or 0), tuple(row["key"])))
