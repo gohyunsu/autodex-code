@@ -215,6 +215,37 @@ def test_repose_held_chain_keeps_socket_and_does_not_authorize_release(
     assert "target" not in calibration.collision_scene["mesh"]
 
 
+def test_measured_repose_lift_starts_from_entire_post_squeeze_state(
+    tmp_path, monkeypatch,
+):
+    calibration, scene, pickup, rest, limits = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    measured = pickup.traj[-1].copy()
+    measured[4] = 0.01  # an arm joint ignored by the minimal fake FK
+    kwargs = dict(
+        planner=planner, pickup_plan=pickup, trial_scene=scene,
+        shared_root=tmp_path, calibration=calibration, mode=MODE,
+        T_key_hand=np.eye(4), T_robot_key_rest=rest,
+        release_height_m=0.10, minimum_rest_socket_clearance_m=0.01,
+        minimum_board_edge_clearance_m=0.01, held_hand_q=np.zeros(6),
+        held_hand_source="measured", limits=limits)
+    with pytest.raises(ValueError, match="full post-squeeze start"):
+        plan_repose_held_chain(**kwargs)
+    wrong_hand = measured.copy()
+    wrong_hand[7] = 0.2
+    with pytest.raises(ValueError, match="differs from held Inspire"):
+        plan_repose_held_chain(**kwargs, measured_start_q=wrong_hand)
+    result = plan_repose_held_chain(**kwargs, measured_start_q=measured)
+    assert result.status == "sampled_held_path_pass_release_unplanned"
+    assert result.held_hand_source == "measured"
+    assert np.array_equal(result.lift_trajectory[0], measured)
+    assert result.to_record()["robot_ready"] is False
+    with pytest.raises(ValueError, match="nominal repose cannot"):
+        plan_repose_held_chain(
+            **{**kwargs, "held_hand_source": "commanded_nominal"},
+            measured_start_q=measured)
+
+
 def test_repose_rejects_rest_key_on_socket_before_planning(tmp_path, monkeypatch):
     calibration, scene, pickup, _, limits = _fixture(tmp_path, monkeypatch)
     rest_on_socket = _pose(0.30, 0.003)

@@ -65,6 +65,7 @@ class ReposeHeldPreflight:
             "sampled_held_path_audit": self.sampled_held_path_audit,
             "not_validated": [
                 "observed post-squeeze key-in-hand pose and controller tracking",
+                "measured start joint source, age and arm-hand timestamp alignment",
                 "open-hand release, retreat and falling-key landing pose",
                 "tabletop workspace/board-boundary coverage at release",
                 "continuous swept geometry between sampled held-key poses",
@@ -184,14 +185,17 @@ def plan_repose_held_chain(
     held_hand_q: np.ndarray, held_hand_source: str,
     limits: PathAuditLimits, lift_height_m: float = 0.10,
     preplace_vertical_travel_m: float = 0.10,
+    measured_start_q: np.ndarray | None = None,
 ) -> ReposeHeldPreflight:
     """Plan pickup-end → held lift → high transfer → straight-down release.
 
     ``pickup_plan`` is the unchanged AutoDex v8 planner result for one exact
-    reset seed and the fresh key scene. The selected key-to-hand transform is
-    held fixed in the nominal plan, then audited against full CAD and the
-    frozen socket. A measured post-lift relation is required before any real
-    transfer; this planner-only result never grants motor authorization.
+    reset seed and the fresh key scene. In ``measured`` mode the *whole* 13-DoF
+    post-squeeze state is required; only changing the finger joints of the
+    nominal pickup endpoint would not represent the robot's actual start.
+    The selected key-to-hand transform is still a hypothesis that requires
+    independent physical calibration and a future-trial surface bound before
+    any real transfer. This planner-only result never grants motor permission.
     """
     limits.validate()
     if (getattr(planner, "_n_arm", None) != 7 or
@@ -238,8 +242,20 @@ def plan_repose_held_chain(
                                    name="selected reset pickup wrist")
     if not _goal_met(requested_wrist, initial @ key_hand, limits):
         raise ValueError("reset pickup wrist differs from fresh key/seed")
-    lift_start = pickup[-1].copy()
-    lift_start[7:] = held
+    if held_hand_source == "measured":
+        if measured_start_q is None:
+            raise ValueError("measured repose needs a full post-squeeze start")
+        lift_start = np.asarray(measured_start_q, dtype=np.float64)
+        if (lift_start.shape != (13,) or
+                not np.all(np.isfinite(lift_start)) or
+                not np.allclose(lift_start[7:], held, atol=1e-8, rtol=0)):
+            raise ValueError("measured repose start differs from held Inspire")
+        lift_start = lift_start.copy()
+    else:
+        if measured_start_q is not None:
+            raise ValueError("nominal repose cannot consume a measured start")
+        lift_start = pickup[-1].copy()
+        lift_start[7:] = held
     if not _goal_met(validate_se3(planner.fk_wrist(lift_start),
                                   name="reset post-grasp FK"),
                      requested_wrist, limits):

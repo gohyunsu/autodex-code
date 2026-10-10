@@ -516,6 +516,15 @@ that session and catalogue. For each new key observation:
    exercises the staged candidate through the same planner without promoting
    it to a runtime reset asset.
 
+   The initial reset chain is **nominal**: its squeeze hand state and
+   key-in-hand transform are hypotheses. The demo-local
+   `plan_repose_held_chain` also accepts `held_hand_source="measured"`, but
+   then requires the entire measured post-squeeze 13-DoF start and plans the
+   lift from those joints. Measured fingers with the nominal arm endpoint
+   are rejected. This is a planner primitive, not a source-bound physical
+   reset executor; a commissioned grasp-specific key/hand relation and
+   future-trial error bound are still needed before physical transfer.
+
 A supervised reset log is JSON with schema
 `precision_insertion_supervised_reset_v1`, the exact `attempt_id`,
 `method: "supervised_manual_return"`, a nonempty `reviewed_by`, a
