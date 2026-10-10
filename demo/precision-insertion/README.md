@@ -1597,7 +1597,7 @@ from precision_insertion.live_key_trial import prepare_next_live_key
 prepared = prepare_next_live_key(
     runner=runner, init_orchestrator=init,
     acquisition_metadata_for_request=acquisition_metadata_for_request,
-    state_at_capture=buffered_measured_state_for_capture,
+    state_for_observation=feedback_sampler.state_for_observation,
     capture_root=shared_capture_root,
     key_evidence_dir=new_key_evidence_dir, capture_id="key_001",
     calibrated_camera_ids=active_serials,
@@ -1622,11 +1622,58 @@ prepared = prepare_next_live_key(
 print(prepared.preflight.status, runner.current_decision().action)
 ```
 
-`buffered_measured_state_for_capture(capture)` must return a
-`LiveRobotState` from a continuously sampled, time-stamped feedback buffer
-that overlaps **all** admitted camera exposure-time bounds. Reading the arm
-and hand only *after* slow SAM/FoundPose inference is insufficient; the
-function rejects out-of-window or commanded-instead-of-measured feedback.
+Create `feedback_sampler` **after the arm/hand have settled but before the
+key capture**. The demo-only `ExposureStateBuffer` and
+`RobotFeedbackSampler` can be configured as follows (commission all limits;
+keep enough samples to survive the full FoundPose inference time):
+
+```python
+from precision_insertion.feedback_buffer import (
+    ExposureStateBuffer, RobotFeedbackSampler,
+)
+from precision_insertion.live_robot_state import read_live_franka_inspire_state
+
+feedback_buffer = ExposureStateBuffer(
+    max_samples=commissioned_history_capacity,
+    max_bracket_span_s=commissioned_bracket_span_s,
+    max_key_state_skew_s=commissioned_key_state_skew_s,
+    max_arm_hold_drift_rad=commissioned_arm_drift_rad,
+    max_hand_hold_drift_raw=commissioned_hand_drift_raw,
+    max_arm_hand_skew_s=commissioned_arm_hand_skew_s,
+    max_hand_command_error_raw=commissioned_hand_error_raw,
+    max_arm_velocity_rad_s=commissioned_hold_velocity_rad_s,
+)
+feedback_sampler = RobotFeedbackSampler(
+    feedback_buffer,
+    lambda: read_live_franka_inspire_state(
+        arm=franka, hand=inspire,
+        max_arm_hand_skew_s=commissioned_arm_hand_skew_s,
+        max_sample_age_s=commissioned_feedback_age_s,
+        max_hand_command_error_raw=commissioned_hand_error_raw,
+        max_arm_update_wait_s=commissioned_arm_update_wait_s,
+        max_arm_velocity_rad_s=commissioned_hold_velocity_rad_s,
+    ),
+    period_s=commissioned_feedback_period_s,
+)
+with feedback_sampler:
+    feedback_sampler.wait_until_ready(
+        timeout_s=commissioned_feedback_warmup_s)
+    # Trigger prepare_next_live_key(...) here, passing
+    # state_for_observation=feedback_sampler.state_for_observation.
+    ...
+```
+
+The buffer requires measured feedback samples **before and after every
+admitted camera exposure**, checks every intervening sample for arm/hand
+motion, and returns an unmodified measured state rather than an invented
+interpolation. A missing/wide bracket, stale camera relation, motion or
+sampler error rejects preflight. Reading the arm and hand only *after* slow
+SAM/FoundPose inference is insufficient. Franka state receipt and Inspire
+software-read timestamps are **not hardware-latched joint timestamps**;
+their relation to calibrated camera UTC must be commissioned and checked on
+the AutoDex rig before using this for physical motion. These read-only
+checks never authorize contact control.
+
 An optional `planning_options` mapping accepts only the existing repose
 fidelity/root arguments, never runner-owned candidate exclusions. The saved
 camera evidence survives a failed state or planner gate for diagnosis. This

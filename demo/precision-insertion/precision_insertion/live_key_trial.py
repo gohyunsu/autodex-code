@@ -18,7 +18,7 @@ from .key_perception import (
     KeyPoseObservation, admit_key_capture, verify_key_capture_artifacts,
     write_key_capture_artifacts,
 )
-from .live_capture import KeyCaptureInput, collect_key_capture
+from .live_capture import collect_key_capture
 from .live_robot_state import LiveRobotState
 from .path_audit import PathAuditLimits
 from .perception_evidence import SocketViewLimits
@@ -40,7 +40,7 @@ class PreparedLiveKeyTrial:
 def prepare_next_live_key(
     *, runner: SessionRunner, init_orchestrator,
     acquisition_metadata_for_request: Callable[[int], Mapping],
-    state_at_capture: Callable[[KeyCaptureInput], LiveRobotState],
+    state_for_observation: Callable[[KeyPoseObservation], LiveRobotState],
     capture_root: Path, key_evidence_dir: Path, capture_id: str,
     calibrated_camera_ids: set[str], intrinsics_full: Mapping,
     extrinsics_full: Mapping, image_hw: tuple[int, int],
@@ -66,7 +66,7 @@ def prepare_next_live_key(
 
     The socket calibration/catalogue come from ``runner`` and are never
     replaced here. The key pose and 13-DOF feedback must overlap in time.
-    The callback may read a continuously sampled robot-state buffer, but
+    The callback must read a continuously sampled robot-state buffer, but
     must not manufacture a camera-time state from a later read. If any gate
     fails, no selected candidate or motor command is produced. Capture/evidence
     directories already created on failure remain available for diagnosis.
@@ -83,7 +83,7 @@ def prepare_next_live_key(
             key_prompt == "object"):
         raise ValueError("fresh key needs a specific SAM prompt")
     if not callable(acquisition_metadata_for_request) or not callable(
-            state_at_capture):
+            state_for_observation):
         raise TypeError("camera evidence and exposure-time state providers are required")
     capture_source = Path(capture_root).expanduser()
     if not capture_source.is_absolute() or not capture_source.is_dir():
@@ -180,7 +180,7 @@ def prepare_next_live_key(
         raise ValueError("fresh key trial requires a tabletop observation")
     write_key_capture_artifacts(capture, observation, output)
     verify_key_capture_artifacts(output)
-    state = state_at_capture(capture)
+    state = state_for_observation(observation)
     if not isinstance(state, LiveRobotState):
         raise TypeError("key trial needs measured Franka/Inspire state")
     state.validate(

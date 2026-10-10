@@ -102,13 +102,13 @@ def _setup(tmp_path, monkeypatch, *, state_timestamp=100.005):
 
     def state_provider(received):
         events.append("measured_state_at_exposure")
-        assert received is capture
+        assert received is observation
         return _measured_state(state_timestamp)
 
     arguments = {
         "runner": runner, "init_orchestrator": init,
         "acquisition_metadata_for_request": lambda _request: {},
-        "state_at_capture": state_provider,
+        "state_for_observation": state_provider,
         "capture_root": capture_root,
         "key_evidence_dir": tmp_path / "key_evidence",
         "capture_id": "key_001",

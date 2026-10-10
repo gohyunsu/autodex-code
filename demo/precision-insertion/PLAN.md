@@ -661,6 +661,7 @@ demo/precision-insertion/
     preflight.py                  # planning-only pickup/lift/transfer/20 mm composition
     held_relation.py              # observed held pose with Dinf frame ambiguity
     live_robot_state.py            # actual Franka/Inspire feedback; no commands
+    feedback_buffer.py            # measured state bracketing key exposure
     lift_checkpoint.py             # saved two-capture VLM grasp-label evidence
     postlift_preflight.py         # measured post-lift endpoint/transfer replan
     path_audit.py                 # sampled held-key/hand scene collision checks
