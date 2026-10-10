@@ -1407,6 +1407,27 @@ The [handoff v4 audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/cyli
 uses `run_pipeline.py audit-reorient --candidate-root` to count the two
 evidence-bound seeds separately from the canonical NAS audit, which still
 counts zero.
+An optional read-only **pose-fidelity** audit applies the exact drift/axis
+gate also used by the direct-v8 reset seed loader. Supply *both* limits;
+without them, `stable_reset_seed_counts_by_height_cm` means only an
+evidence-bound MuJoCo pass, not a key-in-hand pose repeatability pass:
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/run_pipeline.py audit-reorient \
+  --shared-root /home/hyunsu/shared_data --mode cylinder --gap-mm 20 \
+  --candidate-root /home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_handoff \
+  --max-reset-drift-mm 3 --max-reset-axis-tilt-deg 8 \
+  --output /path/to/new_reset_fidelity_diagnostic.json
+```
+
+The 3 mm / 8 degree values are **illustrative, not commissioned robot
+limits**. In [this local diagnostic](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_fidelity_diagnostic_example_3mm_8deg_20261011.json),
+`0_1/191` passes and `1_0/631` fails the pose-fidelity gate despite both
+passing the original MuJoCo gravity test. Neither has a verified socket-aware
+Franka reset trajectory or a physical repose result. A runtime with these
+limits would therefore have no eligible `1 -> 0` reset seed; it must not
+assume that the original two MuJoCo passes provide bidirectional coverage.
 The 999 KB [local handoff bundle](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_handoff_bundle_20261010.tar.gz)
 contains both candidates, audit reports, v8 key scenes, key and six cylinder
 socket object-processing assets, fixture geometries, and a handoff README.

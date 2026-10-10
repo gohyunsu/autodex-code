@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -202,11 +203,24 @@ def prepare_v8_reorient_scenes(
 def audit_v8_reorient_assets(
     *, shared_root: Path, mode: TaskMode,
     candidate_root: Path | None = None,
+    max_center_in_hand_drift_m: float | None = None,
+    max_symmetry_axis_tilt_deg: float | None = None,
 ) -> dict:
-    """Separate BODex scene availability from truly staged reset grasps."""
+    """Separate proposal, MuJoCo pass, and optional pose-fidelity eligibility."""
     # Import here to avoid a module cycle: the direct-v8 loader reuses this
     # module's scene contract, while this audit reuses its seed validator.
-    from .reset_candidates import _candidate_arrays
+    from .reset_candidates import _candidate_arrays, fidelity_within_limits
+
+    if (max_center_in_hand_drift_m is None) != (
+            max_symmetry_axis_tilt_deg is None):
+        raise ValueError("reset fidelity audit needs both drift and tilt limits")
+    check_fidelity = max_center_in_hand_drift_m is not None
+    if check_fidelity:
+        drift = float(max_center_in_hand_drift_m)
+        tilt = float(max_symmetry_axis_tilt_deg)
+        if (not math.isfinite(drift) or drift <= 0 or
+                not math.isfinite(tilt) or tilt <= 0):
+            raise ValueError("positive finite reset fidelity limits are required")
 
     root, object_dir = _paths(shared_root, mode)
     candidate_base = (root / "AutoDex" / "candidates" / "inspire"
@@ -223,6 +237,9 @@ def audit_v8_reorient_assets(
             candidate_counts = {}
             reported_counts = {}
             rejected_ids = {}
+            fidelity_eligible_counts = {}
+            fidelity_rejected_ids = {}
+            fidelity_rows = {}
             for h_cm in RESET_RELEASE_HEIGHTS_CM:
                 scene = _scene_path(object_dir, h_cm, i, j)
                 sim_scene = _sim_filter_scene_path(root, mode, h_cm, i, j)
@@ -245,6 +262,9 @@ def audit_v8_reorient_assets(
                 candidates = []
                 reported = []
                 rejected = []
+                eligible = []
+                fidelity_rejected = []
+                metrics = []
                 if cell.is_dir():
                     for seed in cell.iterdir():
                         if not seed.is_dir() or not seed.name.isdigit():
@@ -261,7 +281,7 @@ def audit_v8_reorient_assets(
                             continue
                         reported.append(seed.name)
                         try:
-                            _candidate_arrays(
+                            arrays = _candidate_arrays(
                                 seed, mode=mode, cell=f"{i}_{j}",
                                 h_cm=h_cm, scenes=(scene, sim_scene))
                         except (FileNotFoundError, ValueError, TypeError,
@@ -269,10 +289,30 @@ def audit_v8_reorient_assets(
                             rejected.append(seed.name)
                             continue
                         candidates.append(seed.name)
+                        if check_fidelity:
+                            fidelity = arrays[5]
+                            accepted = fidelity_within_limits(
+                                fidelity,
+                                max_center_in_hand_drift_m=drift,
+                                max_symmetry_axis_tilt_deg=tilt)
+                            (eligible if accepted else fidelity_rejected).append(
+                                seed.name)
+                            metrics.append({
+                                "seed_id": seed.name,
+                                "end_squeeze": fidelity["end_squeeze"],
+                                "end_gravity": fidelity["end_gravity"],
+                                "fidelity_gate_passed": accepted,
+                            })
                 candidate_counts[str(h_cm)] = len(candidates)
                 reported_counts[str(h_cm)] = len(reported)
                 rejected_ids[str(h_cm)] = sorted(rejected, key=int)
-            rows.append({
+                if check_fidelity:
+                    fidelity_eligible_counts[str(h_cm)] = len(eligible)
+                    fidelity_rejected_ids[str(h_cm)] = sorted(
+                        fidelity_rejected, key=int)
+                    fidelity_rows[str(h_cm)] = sorted(
+                        metrics, key=lambda row: int(row["seed_id"]))
+            row = {
                 "from_v8_pose": i, "to_v8_pose": j,
                 "scene_heights_cm": scenes,
                 "bodex_scene_missing_sim_filter_mirror_heights_cm":
@@ -281,7 +321,18 @@ def audit_v8_reorient_assets(
                 "reported_mujoco_pass_counts_by_height_cm": reported_counts,
                 "reported_passes_rejected_by_loader_by_height_cm": rejected_ids,
                 "has_any_stable_seed": any(candidate_counts.values()),
-            })
+            }
+            if check_fidelity:
+                row.update({
+                    "fidelity_eligible_seed_counts_by_height_cm":
+                        fidelity_eligible_counts,
+                    "fidelity_rejected_seed_ids_by_height_cm":
+                        fidelity_rejected_ids,
+                    "seed_fidelity_by_height_cm": fidelity_rows,
+                    "has_any_fidelity_eligible_seed": any(
+                        fidelity_eligible_counts.values()),
+                })
+            rows.append(row)
     legacy = (root / "AutoDex" / "object" / "paradex" /
               mode.key_object / "processed_data" / "info" / "tabletop")
     staging = []
@@ -298,7 +349,7 @@ def audit_v8_reorient_assets(
         except (ValueError, OSError):
             staging.append({"manifest": str(manifest),
                             "status": "unreadable_staging_manifest"})
-    return {
+    report = {
         "schema": "precision_insertion_v8_reorient_asset_audit_v4",
         "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
                  "key_object": mode.key_object},
@@ -313,3 +364,10 @@ def audit_v8_reorient_assets(
         "staging_manifests_not_runtime_candidates": staging,
         "robot_ready": False,
     }
+    if check_fidelity:
+        report["fidelity_limits"] = {
+            "max_center_in_hand_drift_m": drift,
+            "max_symmetry_axis_tilt_deg": tilt,
+            "source": "caller_supplied_not_automatically_commissioned",
+        }
+    return report

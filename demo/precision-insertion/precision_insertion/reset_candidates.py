@@ -30,6 +30,28 @@ GRASP_FILES = ("wrist_se3.npy", "pregrasp_pose.npy", "grasp_pose.npy",
 EVIDENCE_SCHEMA = "precision_insertion_v8_reset_candidate_evidence_v1"
 
 
+def fidelity_within_limits(
+    fidelity: dict, *, max_center_in_hand_drift_m: float,
+    max_symmetry_axis_tilt_deg: float,
+) -> bool:
+    """Apply the same commissioned post-squeeze gate in audit and seed loading."""
+    drift = float(max_center_in_hand_drift_m)
+    tilt = float(max_symmetry_axis_tilt_deg)
+    if (not math.isfinite(drift) or drift <= 0 or
+            not math.isfinite(tilt) or tilt <= 0):
+        raise ValueError("positive finite reset fidelity limits are required")
+    try:
+        values = [(float(fidelity[state]["center_in_hand_displacement_m"]),
+                   float(fidelity[state]["symmetry_reduced_axis_tilt_deg"]))
+                  for state in ("end_squeeze", "end_gravity")]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("incomplete reset pose-fidelity evidence") from exc
+    if any(not math.isfinite(center) or center < 0 or
+           not math.isfinite(axis) or axis < 0 for center, axis in values):
+        raise ValueError("invalid reset pose-fidelity evidence")
+    return all(center <= drift and axis <= tilt for center, axis in values)
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -172,10 +194,10 @@ def load_v8_reset_seeds(
     checked = [(seed, _candidate_arrays(seed, mode=mode, cell=cell,
                                         h_cm=height_cm, scenes=scenes))
                for seed in seeds]
-    checked = [(seed, row) for seed, row in checked if all(
-        row[5][state]["center_in_hand_displacement_m"] <= drift_limit and
-        row[5][state]["symmetry_reduced_axis_tilt_deg"] <= tilt_limit
-        for state in ("end_squeeze", "end_gravity"))]
+    checked = [(seed, row) for seed, row in checked if
+               fidelity_within_limits(
+                   row[5], max_center_in_hand_drift_m=drift_limit,
+                   max_symmetry_axis_tilt_deg=tilt_limit)]
     if not checked:
         return None
     seeds = [seed for seed, _ in checked]

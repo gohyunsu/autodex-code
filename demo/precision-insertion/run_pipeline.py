@@ -37,6 +37,14 @@ def main(argv: list[str] | None = None) -> int:
         "--candidate-root", type=Path,
         help="optional local handoff root containing reset_<h>/; not canonical NAS",
     )
+    reorient_audit.add_argument(
+        "--max-reset-drift-mm", type=float,
+        help="optional commissioned key-in-hand center drift limit; requires tilt",
+    )
+    reorient_audit.add_argument(
+        "--max-reset-axis-tilt-deg", type=float,
+        help="optional commissioned cylinder-axis tilt limit; requires drift",
+    )
     reorient_audit.add_argument("--output", type=Path,
                                 help="optional new JSON report; no overwrite")
     reorient_scenes = command.add_parser(
@@ -204,7 +212,11 @@ def main(argv: list[str] | None = None) -> int:
             mode = select_mode(args.mode, args.gap_mm)
             report = audit_v8_reorient_assets(
                 shared_root=args.shared_root, mode=mode,
-                candidate_root=args.candidate_root)
+                candidate_root=args.candidate_root,
+                max_center_in_hand_drift_m=(
+                    None if args.max_reset_drift_mm is None else
+                    args.max_reset_drift_mm / 1000.0),
+                max_symmetry_axis_tilt_deg=args.max_reset_axis_tilt_deg)
         except (FileNotFoundError, KeyError, TypeError, ValueError) as exc:
             parser.error(str(exc))
         payload = json.dumps(report, indent=2) + "\n"

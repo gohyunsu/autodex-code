@@ -196,6 +196,22 @@ def test_promotes_only_stock_mujoco_pass_and_loads_direct_v8_cell(
     assert handoff_audit["candidate_root_is_canonical"] is False
     assert handoff_audit["directed_pairs"][0][
         "stable_reset_seed_counts_by_height_cm"]["12"] == 1
+    bounded_audit = audit_v8_reorient_assets(
+        shared_root=tmp_path, mode=mode,
+        candidate_root=handoff_root.parent,
+        max_center_in_hand_drift_m=0.0005,
+        max_symmetry_axis_tilt_deg=8.0)
+    bounded_cell = bounded_audit["directed_pairs"][0]
+    assert bounded_cell["stable_reset_seed_counts_by_height_cm"]["12"] == 1
+    assert bounded_cell[
+        "fidelity_eligible_seed_counts_by_height_cm"]["12"] == 0
+    assert bounded_cell["fidelity_rejected_seed_ids_by_height_cm"]["12"] == ["0"]
+    assert bounded_cell["seed_fidelity_by_height_cm"]["12"][0][
+        "fidelity_gate_passed"] is False
+    with pytest.raises(ValueError, match="both drift and tilt"):
+        audit_v8_reorient_assets(
+            shared_root=tmp_path, mode=mode,
+            max_center_in_hand_drift_m=0.003)
     T_robot_key = np.eye(4)
     T_robot_key[:3, 3] = [0.5, 0.1, 0.2]
     seeds = load_v8_reset_seeds(
