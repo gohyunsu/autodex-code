@@ -75,6 +75,32 @@ def _hand_link_meshes(robot_urdf: Path, grasp_q: np.ndarray) -> dict:
     return result
 
 
+def _nominal_inspire_hold_poses(pregrasp_q: np.ndarray,
+                                grasp_q: np.ndarray) -> dict[str, np.ndarray]:
+    """Return simulated squeeze and AutoDex's default executed hold pose.
+
+    ``run_sim_filter.eval_single_grasp`` uses ``2*grasp-pregrasp``. The
+    unchanged ``RealExecutor.execute`` defaults to squeeze_level=2 and its
+    final loop index is 9/5, so its Inspire controller command corresponds
+    to ``grasp + 1.8*(grasp-pregrasp)`` after joint-limit clipping. This is a
+    *nominal* controller pose, not measured hand feedback.
+    """
+    pre = np.asarray(pregrasp_q, dtype=np.float64).reshape(-1)
+    grasp = np.asarray(grasp_q, dtype=np.float64).reshape(-1)
+    if (pre.shape != (6,) or grasp.shape != (6,) or
+            not np.all(np.isfinite(pre)) or not np.all(np.isfinite(grasp))):
+        raise ValueError("pregrasp and grasp must be six finite Inspire joints")
+    limits = np.asarray([1.15, 0.55, 1.6, 1.6, 1.6, 1.6])
+    pre_action_equivalent = np.clip(pre, 0.0, limits)
+    grasp_action_equivalent = np.clip(grasp, 0.0, limits)
+    return {
+        "mujoco_squeeze": np.clip(2.0 * grasp - pre, 0.0, limits),
+        "autodex_default_controller_hold": np.clip(
+            grasp_action_equivalent + 1.8 *
+            (grasp_action_equivalent - pre_action_equivalent), 0.0, limits),
+    }
+
+
 def _coal_mesh(mesh):
     import coal
 
@@ -144,15 +170,20 @@ def _validate_geometry(geometry: dict[str, Any], mode: TaskMode) -> np.ndarray:
 def screen_grasp_endpoint(
     *, shared_root: Path, mode: TaskMode, candidate_dir: Path,
     minimum_hand_clearance_m: float,
+    xy_offset_socket_m: tuple[float, float] = (0.0, 0.0),
 ) -> dict[str, Any]:
-    """Screen exact CAD key/socket fit and every URDF Inspire visual link.
+    """Screen CAD key/socket fit and Inspire links at one aligned 20 mm pose.
 
     `candidate_dir` may be a staged BODex candidate or v8 candidate. This
     function does not verify simulated grasp stability; callers must combine
-    this result with independently checked v8/MuJoCo evidence.
+    this result with independently checked v8/MuJoCo evidence. The offset is
+    an absolute target in the *socket* XY frame, not a robot or camera delta.
     """
     if not math.isfinite(minimum_hand_clearance_m) or minimum_hand_clearance_m <= 0:
         raise ValueError("minimum_hand_clearance_m must be positive and calibrated")
+    offset = np.asarray(xy_offset_socket_m, dtype=np.float64)
+    if offset.shape != (2,) or not np.all(np.isfinite(offset)):
+        raise ValueError("xy_offset_socket_m must be two finite metric values")
     paths = AssetPaths(Path(shared_root).expanduser().resolve(), mode)
     candidate = Path(candidate_dir).expanduser().resolve()
     files = {
@@ -161,6 +192,7 @@ def screen_grasp_endpoint(
         "task_geometry": paths.task_geometry,
         "robot_urdf": paths.robot_urdf,
         "wrist_se3": candidate / "wrist_se3.npy",
+        "pregrasp_pose": candidate / "pregrasp_pose.npy",
         "grasp_pose": candidate / "grasp_pose.npy",
     }
     missing = [f"{name}: {path}" for name, path in files.items()
@@ -168,14 +200,18 @@ def screen_grasp_endpoint(
     if missing:
         raise FileNotFoundError("missing endpoint input: " + ", ".join(missing))
     geometry = json.loads(files["task_geometry"].read_text(encoding="utf-8"))
-    T_socket_key = _validate_geometry(geometry, mode)
+    T_socket_key_nominal = _validate_geometry(geometry, mode)
+    T_socket_key = T_socket_key_nominal.copy()
+    T_socket_key[:2, 3] += offset
     # On this host, a fresh process must load Coal before trimesh/yourdfpy
     # to avoid binding the older system libstdc++. The CLI starts fresh.
     import coal  # noqa: F401
 
     T_key_hand = validate_se3(np.load(files["wrist_se3"], allow_pickle=False),
                               name="T_key_hand")
-    hand_q = np.load(files["grasp_pose"], allow_pickle=False)
+    hand_poses = _nominal_inspire_hold_poses(
+        np.load(files["pregrasp_pose"], allow_pickle=False),
+        np.load(files["grasp_pose"], allow_pickle=False))
     key_mesh = _load_mesh(files["key_mesh"])
     socket_mesh = _load_mesh(files["socket_mesh"])
     if not key_mesh.is_watertight or not socket_mesh.is_watertight:
@@ -183,40 +219,53 @@ def screen_grasp_endpoint(
     fixed_socket = _coal_mesh(socket_mesh)
     key_fit = _mesh_pair_report(key_mesh, fixed_socket, T_socket_key)
     T_socket_hand = T_socket_key @ T_key_hand
-    hand = _hand_link_meshes(files["robot_urdf"], hand_q)
-    links = {
-        name: _mesh_pair_report(mesh, fixed_socket, T_socket_hand)
-        for name, mesh in sorted(hand.items())
-    }
-    minimum = min(row["minimum_surface_distance_m"] for row in links.values())
-    hand_pass = all(
-        not row["colliding"] and
-        row["minimum_surface_distance_m"] >= minimum_hand_clearance_m
-        for row in links.values()
-    )
+    hold_screens = {}
+    for hold_name, hand_q in hand_poses.items():
+        hand = _hand_link_meshes(files["robot_urdf"], hand_q)
+        links = {
+            name: _mesh_pair_report(mesh, fixed_socket, T_socket_hand)
+            for name, mesh in sorted(hand.items())
+        }
+        minimum_hold = min(row["minimum_surface_distance_m"]
+                           for row in links.values())
+        hold_screens[hold_name] = {
+            "hand_q": hand_q.tolist(),
+            "hand_links": links,
+            "minimum_observed_hand_clearance_m": minimum_hold,
+            "clear": all(not row["colliding"] and
+                         row["minimum_surface_distance_m"] >=
+                         minimum_hand_clearance_m for row in links.values()),
+        }
+    minimum = min(row["minimum_observed_hand_clearance_m"]
+                  for row in hold_screens.values())
+    hand_pass = all(row["clear"] for row in hold_screens.values())
     return {
         "schema": "precision_insertion_endpoint_screen_v1",
-        "scope": "nominal_centered_20mm_key_fit_and_whole_inspire_hand_endpoint",
+        "scope": "aligned_20mm_key_fit_and_whole_inspire_hand_endpoint",
         "candidate_dir": str(candidate),
         "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
                  "key_object": mode.key_object,
                  "socket_object": mode.socket_object},
         "verification_depth_m": mode.target_depth_m,
+        "xy_offset_socket_m": offset.tolist(),
         "minimum_required_hand_clearance_m": minimum_hand_clearance_m,
         "minimum_observed_hand_clearance_m": minimum,
         "key_socket_fit": key_fit,
-        "hand_links": links,
+        "hold_pose_screens": hold_screens,
+        "hold_pose_contract": "AutoDex default Inspire squeeze_level=2; measured hardware pose must be checked online",
         "hand_socket_clear_at_20mm": hand_pass,
         "endpoint_pass": not key_fit["colliding"] and hand_pass,
         "method": "Coal triangle-mesh surface collision and minimum distance",
         "T_key_hand": T_key_hand.tolist(),
-        "T_socket_key_verification": T_socket_key.tolist(),
+        "T_socket_key_verification": T_socket_key_nominal.tolist(),
+        "T_socket_key_tested": T_socket_key.tolist(),
         "input_sha256": {name: _sha256(path) for name, path in files.items()},
         "not_validated": [
             "simulated or physical grasp stability",
             "Franka arm IK or collisions",
             "continuous pick, lift, transfer, insertion or retreat motion",
             "contact forces, slip, or physical insertion success",
+            "measured post-grasp hand joint state and controller tracking",
         ],
         "robot_ready": False,
     }

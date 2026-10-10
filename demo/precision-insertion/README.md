@@ -1,5 +1,10 @@
 # Precision insertion demo
 
+The isolated cylinder BODex 1,000-per-tabletop-scene run, exact filter
+sequence, reproducibility commands, and per-socket 20 mm endpoint counts are
+in [OFFLINE_CYLINDER_1000.md](OFFLINE_CYLINDER_1000.md). Passing its offline
+endpoint is not permission to execute a robot insertion.
+
 This directory is reserved for an independent precision-insertion demo. Its
 runner must not call `src.execution.run_auto.main()` or require edits to the
 existing AutoDex execution files (`run_auto.py`, `run_pipeline.py`, or

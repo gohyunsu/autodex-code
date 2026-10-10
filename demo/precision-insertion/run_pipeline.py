@@ -35,6 +35,20 @@ def main(argv: list[str] | None = None) -> int:
         "--output", type=Path,
         help="optional JSON report path; refuses to overwrite an existing file",
     )
+    xy = command.add_parser(
+        "screen-xy-endpoint",
+        help="read-only exact-mesh 1 mm XY retry endpoint pre-filter",
+    )
+    xy.add_argument("--shared-root", type=Path, required=True)
+    xy.add_argument("--mode", choices=("square", "cylinder"), required=True)
+    xy.add_argument("--gap-mm", type=float, required=True)
+    xy.add_argument("--candidate-dir", type=Path, required=True)
+    xy.add_argument("--current-x-mm", type=float, required=True)
+    xy.add_argument("--current-y-mm", type=float, required=True)
+    xy.add_argument("--max-total-mm", type=float, required=True)
+    xy.add_argument("--min-hand-clearance-mm", type=float, required=True)
+    xy.add_argument("--output", type=Path,
+                    help="optional new JSON path; refuses to overwrite")
     catalog = command.add_parser(
         "screen-catalog", help="screen all current pose-indexed v8 grasp endpoints",
     )
@@ -86,6 +100,40 @@ def main(argv: list[str] | None = None) -> int:
                 stream.write(payload)
         print(payload, end="")
         return 0 if report["endpoint_pass"] else 2
+    if args.command == "screen-xy-endpoint":
+        from precision_insertion.xy_endpoint import (
+            screen_axis_1mm_endpoint_choices,
+        )
+
+        try:
+            mode = select_mode(args.mode, args.gap_mm)
+            report = screen_axis_1mm_endpoint_choices(
+                shared_root=args.shared_root, mode=mode,
+                candidate_dir=args.candidate_dir,
+                current_offset_socket_m=(
+                    args.current_x_mm / 1000.0,
+                    args.current_y_mm / 1000.0,
+                ),
+                max_total_offset_m=args.max_total_mm / 1000.0,
+                minimum_hand_clearance_m=(
+                    args.min_hand_clearance_mm / 1000.0),
+            )
+        except (FileNotFoundError, KeyError, ValueError, TypeError) as exc:
+            parser.error(str(exc))
+        payload = json.dumps(report, indent=2) + "\n"
+        if args.output is not None:
+            target = args.output.expanduser().resolve()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("x", encoding="utf-8") as stream:
+                stream.write(payload)
+            print(json.dumps({
+                "report": str(target),
+                "endpoint_clear_choice_ids": report["endpoint_clear_choice_ids"],
+                "robot_ready": False,
+            }, indent=2))
+        else:
+            print(payload, end="")
+        return 0 if report["endpoint_clear_choice_ids"] else 2
     if args.command == "screen-catalog":
         from precision_insertion.candidates import build_endpoint_catalog
 

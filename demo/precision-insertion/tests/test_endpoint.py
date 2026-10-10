@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.endpoint import (  # noqa: E402
+    _nominal_inspire_hold_poses,
     _validate_geometry,
 )
 
@@ -39,6 +40,21 @@ def _geometry():
 def test_verification_contract_accepts_centered_axial_20mm():
     target = _validate_geometry(_geometry(), select_mode("square", 1.5))
     assert target[2, 3] == pytest.approx(0.124)
+
+
+def test_endpoint_uses_squeeze_not_merely_grasp_pose():
+    pre = np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
+    grasp = np.array([0.2, 0.2, 0.2, 0.2, 0.2, 0.2])
+    poses = _nominal_inspire_hold_poses(pre, grasp)
+    assert poses["mujoco_squeeze"] == pytest.approx([0.3] * 6)
+    assert poses["autodex_default_controller_hold"] == pytest.approx([0.38] * 6)
+    assert not np.allclose(poses["autodex_default_controller_hold"], grasp)
+
+
+def test_endpoint_hardware_nominal_hold_clips_to_inspire_limits():
+    poses = _nominal_inspire_hold_poses(np.zeros(6), np.ones(6))
+    assert poses["autodex_default_controller_hold"] == pytest.approx(
+        [1.15, 0.55, 1.6, 1.6, 1.6, 1.6])
 
 
 def test_verification_contract_rejects_lateral_offset_and_wrong_depth():
