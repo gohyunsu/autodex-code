@@ -9,9 +9,9 @@ read-only decision layer and **does not command Franka or Inspire**.
 
 | Order | AutoDex `run_pipeline.py` today | Intended precision-insertion session | Present status |
 |---|---|---|---|
-| 1. Startup | Initialize robot and AutoDex cameras; optionally measure the fixed socket and ChArUco tabletop. | Require session socket pose, hand–eye/camera calibration, and immutable fixture record; construct table + socket collision scene. | Socket preflight exists; cylinder geometry is generated but its FoundPose representation is missing. Offline session can freeze a fixture-record hash. |
-| 2. Trial choice | Place object; collect candidate coverage and exclude attempted candidates. | Choose one previously screened scenario for the current mode, gap, tabletop pose, and fixture. Keep that scenario/grasp fixed across bounded retries to identify the effect of pose correction. | Catalog and one-scenario selection implemented. No full-task-simulation pass exists; robot execution is blocked. |
-| 3. Perception | Distributed FoundPose estimates object pose; tabletop pose is classified. | Estimate key pose using the same AutoDex cameras and mesh; use socket pose frozen at startup. Symmetry quotient differs by mode: square yaw matters; cylinder axial yaw does not. | Square code path exists; cylinder metric mesh exists, but its FoundPose weights and tested symmetry integration are missing. |
+| 1. Startup | Initialize robot and AutoDex cameras; optionally measure the fixed socket and ChArUco tabletop. | Require session socket pose, hand–eye/camera calibration, and immutable fixture record; construct table + socket collision scene. | Socket preflight supports both modes. Cylinder sockets use a C∞-aware center/axis repeatability metric that ignores unobservable axial yaw. Cylinder FoundPose representations remain missing. |
+| 2. Perception | Distributed FoundPose estimates object pose; tabletop pose is classified. | Estimate key pose using the same AutoDex cameras and mesh; use socket pose frozen at startup. Symmetry quotient differs by mode: square yaw matters; cylinder axial yaw does not. | Cylinder geometry declares D∞ key/C∞ socket symmetry; scene snapping and fixture repeatability consume those declarations. Learned FoundPose weights still require onboarding and robot-camera validation. |
+| 3. Trial choice | Use the observed pose, candidate coverage and attempted-candidate exclusions. | Filter the pre-simulated catalog by mode, gap **and observed tabletop pose**, then choose one scenario. Keep that scenario/grasp fixed across bounded retries to identify the effect of pose correction. | Offline catalog and pose-conditional selection implemented. No full-task-simulation pass exists; robot execution is blocked. |
 | 4. Planning | Select a v8 grasp using coverage plus IK/collision; preflight approach and attached 10 cm lift. | For the selected scenario, require collision-checked approach, grasp, lift, *held-key transfer*, pre-insertion hold, and a 20 mm insertion path with fixture/hand clearance. | AutoDex preflight stops at lift. Square pilot has sampled insertion endpoint geometry, not a continuous Franka path; cylinder has nominal CAD fit only. |
 | 5. Grasp/lift | Execute arm + Inspire grasp/lift. | Execute the same pickup, then observe a synchronized post-lift checkpoint; stop on slip or uncertain grasp. | Existing AutoDex pickup path available. New read-only VLM observer implemented, not wired into robot capture/execution. |
 | 6. Transfer/hold | Transfer to a tabletop placement and plan descent. | Hold hand joints fixed; transfer key rigidly to calibrated socket pre-insertion pose; compare measured key pose with target and retain socket-frame XY residual. | Not implemented in live task pipeline. Offline bounded correction policy implemented. |
@@ -59,6 +59,9 @@ cd ~/autodex-code
   scripts/precision_insertion/build_cylindrical_assets.py \
   --shared-root ~/shared_data
 ~/miniconda3/envs/autodex_bodex/bin/python \
+  scripts/precision_insertion/validate_cylindrical_assets.py \
+  --shared-root ~/shared_data
+~/miniconda3/envs/autodex_bodex/bin/python \
   scripts/precision_insertion/insertion_session.py catalog \
   --shared-root ~/shared_data \
   --out ~/shared_data/AutoDex/precision_insertion/scenario_catalog.json
@@ -71,13 +74,13 @@ created by session socket preflight:
 ~/miniconda3/envs/autodex_bodex/bin/python \
   scripts/precision_insertion/insertion_session.py start \
   --catalog ~/shared_data/AutoDex/precision_insertion/scenario_catalog.json \
-  --mode square --gap-mm 1.5 \
+  --mode square --gap-mm 1.5 --tabletop-pose 4 \
   --session ~/shared_data/AutoDex/precision_insertion/sessions/square_001.json \
   --fixture-pose /path/to/fixture_pose.session.json
 ```
 
 For cylinder CAD-only inspection, use `--mode cylinder --gap-mm 20
---minimum-level geometry_only`. This is **not** a valid robot scenario. Omitting
+--tabletop-pose 0 --minimum-level geometry_only`. This is **not** a valid robot scenario. Omitting
 `--minimum-level geometry_only` correctly rejects it; `--purpose robot`
 rejects both modes today.
 

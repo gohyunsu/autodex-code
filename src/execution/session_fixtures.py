@@ -36,6 +36,24 @@ def rotation_distance_deg(a, b) -> float:
     return float(np.degrees(np.arccos(cosine)))
 
 
+def axis_distance_deg(a, b, *, local_axis) -> float:
+    """Distance between one oriented local axis in two SE(3) poses.
+
+    Rotation about ``local_axis`` is quotiented out, but the axis sign is
+    retained.  This matches a C-infinity socket: circular yaw is unobservable,
+    while an upside-down open rim is not equivalent.
+    """
+    axis = np.asarray(local_axis, dtype=np.float64).reshape(3)
+    norm = float(np.linalg.norm(axis))
+    if not np.isfinite(norm) or norm <= 1e-12:
+        raise ValueError("local_axis must be a finite non-zero 3-vector")
+    axis /= norm
+    ra = validate_se3(a, name="pose_a")[:3, :3]
+    rb = validate_se3(b, name="pose_b")[:3, :3]
+    cosine = np.clip(np.dot(ra @ axis, rb @ axis), -1.0, 1.0)
+    return float(np.degrees(np.arccos(cosine)))
+
+
 def freeze_pose_medoid(
     poses: Iterable[np.ndarray],
     *,
@@ -98,5 +116,67 @@ def freeze_pose_medoid(
             f"translation {max_translation:.3f} mm "
             f"(limit {translation_limit_mm:.3f}), rotation "
             f"{max_rotation:.3f} deg (limit {rotation_limit_deg:.3f})"
+        )
+    return samples[selected_index], diagnostics
+
+
+def freeze_axisymmetric_pose_medoid(
+    poses: Iterable[np.ndarray],
+    *,
+    local_axis,
+    translation_limit_mm: float,
+    axis_limit_deg: float,
+) -> tuple[np.ndarray, dict]:
+    """Select an observed C-infinity fixture pose while ignoring axial yaw."""
+    if translation_limit_mm <= 0 or axis_limit_deg <= 0:
+        raise ValueError("fixture repeatability limits must be positive")
+    samples = [validate_se3(p, name=f"pose[{i}]").copy()
+               for i, p in enumerate(poses)]
+    if len(samples) < 2:
+        raise ValueError("at least two fixture measurements are required")
+
+    n_samples = len(samples)
+    translation_mm = np.zeros((n_samples, n_samples), dtype=np.float64)
+    axis_deg = np.zeros((n_samples, n_samples), dtype=np.float64)
+    for i in range(n_samples):
+        for j in range(i + 1, n_samples):
+            dt = float(np.linalg.norm(
+                samples[i][:3, 3] - samples[j][:3, 3]) * 1000.0)
+            da = axis_distance_deg(samples[i], samples[j], local_axis=local_axis)
+            translation_mm[i, j] = translation_mm[j, i] = dt
+            axis_deg[i, j] = axis_deg[j, i] = da
+
+    normalized_cost = (
+        translation_mm / float(translation_limit_mm)
+        + axis_deg / float(axis_limit_deg)
+    ).sum(axis=1)
+    selected_index = int(np.argmin(normalized_cost))
+    selected_translation = translation_mm[selected_index]
+    selected_axis = axis_deg[selected_index]
+    max_translation = float(selected_translation.max())
+    max_axis = float(selected_axis.max())
+    accepted = max_translation <= translation_limit_mm and max_axis <= axis_limit_deg
+    diagnostics = {
+        "method": "observed_axisymmetric_se3_medoid",
+        "sample_count": n_samples,
+        "selected_index": selected_index,
+        "local_symmetry_axis": np.asarray(local_axis, dtype=float).reshape(3).tolist(),
+        "translation_limit_mm": float(translation_limit_mm),
+        "axis_limit_deg": float(axis_limit_deg),
+        "translation_residuals_mm": selected_translation.tolist(),
+        "axis_residuals_deg": selected_axis.tolist(),
+        "max_translation_residual_mm": max_translation,
+        "max_axis_residual_deg": max_axis,
+        # Existing preflight output consumes this generic compatibility key.
+        "max_rotation_residual_deg": max_axis,
+        "ignored_dof": "rotation_about_local_symmetry_axis",
+        "accepted": accepted,
+    }
+    if not accepted:
+        raise ValueError(
+            "fixture pose measurements are not repeatable: "
+            f"translation {max_translation:.3f} mm "
+            f"(limit {translation_limit_mm:.3f}), axis "
+            f"{max_axis:.3f} deg (limit {axis_limit_deg:.3f})"
         )
     return samples[selected_index], diagnostics

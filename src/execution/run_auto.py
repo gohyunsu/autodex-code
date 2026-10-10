@@ -2952,7 +2952,7 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
         default="auto",
         help="run_pipeline only: measure and freeze the unified socket pose "
              "before precision-key trials. auto=measure for precision_key_* "
-             "objects and skip for all other objects.",
+             "and precision_key_cylinder_* objects and skip otherwise.",
     )
     parser.add_argument("--socket-object", default="precision_socket_unified")
     parser.add_argument(
@@ -3053,7 +3053,8 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
         and (
             args.socket_preflight == "measure"
             or (args.socket_preflight == "auto"
-                and args.obj.startswith("precision_key_"))
+                and args.obj.startswith(
+                    ("precision_key_", "precision_key_cylinder_")))
             or (args.socket_preflight == "prompt" and args.auto)
         )
     )

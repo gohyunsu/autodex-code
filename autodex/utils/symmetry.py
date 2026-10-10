@@ -73,7 +73,8 @@ def _derive_pose_symmetry(obj_name: str) -> Optional[Tuple[np.ndarray, int]]:
         _pose_sym_cache[obj_name] = None
         return None
     try:
-        groups = json.load(open(psp))["groups"]
+        with psp.open(encoding="utf-8") as stream:
+            groups = json.load(stream)["groups"]
     except Exception:
         _pose_sym_cache[obj_name] = None
         return None
@@ -141,7 +142,8 @@ def get_asset_symmetry(obj_name: str, obj_root=None):
     out = None
     if f.is_file():
         try:
-            d = json.load(open(f))
+            with f.open(encoding="utf-8") as stream:
+                d = json.load(stream)
             got = []
             for ax in (d.get("axes") or []):
                 a = np.asarray(ax.get("axis"), dtype=float).reshape(3)

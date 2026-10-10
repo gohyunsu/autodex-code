@@ -7,6 +7,28 @@ comparison, and exact usage are in
 Robot insertion is not yet implemented; `run_pipeline.py` still executes
 the original AutoDex grasp/lift/place path.
 
+For the symmetric cylindrical task, build and validate the supplied metric
+STLs with the same v8 `object_processing`/`AutoDex/scene` layout:
+
+```bash
+~/.venvs/autodex-assets/bin/python \
+  scripts/precision_insertion/build_cylindrical_assets.py \
+  --shared-root ~/shared_data
+~/.venvs/autodex-assets/bin/python \
+  scripts/precision_insertion/validate_cylindrical_assets.py \
+  --shared-root ~/shared_data
+```
+
+The stable object IDs are `precision_key_cylinder_r15_h80` and
+`precision_socket_cylinder_gap_01mm` through `..._20mm`. The key is D∞ and
+therefore has two symmetry-reduced tabletop classes (end-down and side-down);
+the open-rim socket is C∞ about local z but has no end-for-end symmetry.
+`run_pipeline.py --socket-object precision_socket_cylinder_gap_20mm` consumes
+that metadata during session preflight. It ignores unobservable socket yaw,
+but still rejects excessive center or axis variation. Generated geometry does
+not supply FoundPose weights, BODex grasps, full-task trajectories, or physical
+validation; the validator reports each such runtime blocker explicitly.
+
 This directory builds the assets for the staged unified-socket experiment:
 
 | gap | experiment stage |

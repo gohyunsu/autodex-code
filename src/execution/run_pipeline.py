@@ -45,7 +45,10 @@ from src.execution.scene_cfg import (
     add_fixed_mesh_fixtures,
     pose_world_to_scene_cfg,
 )
-from src.execution.session_fixtures import freeze_pose_medoid
+from src.execution.session_fixtures import (
+    freeze_axisymmetric_pose_medoid,
+    freeze_pose_medoid,
+)
 from autodex.planner.obstacles import add_obstacles
 from autodex.pipeline_trace import PipelineTrace
 from autodex.tasks import TaskInterface
@@ -250,7 +253,8 @@ def _socket_preflight(**context) -> dict | None:
     args = context["args"]
     mode = args.socket_preflight
     if mode == "auto":
-        mode = "measure" if args.obj.startswith("precision_key_") else "skip"
+        mode = "measure" if args.obj.startswith(
+            ("precision_key_", "precision_key_cylinder_")) else "skip"
     if mode == "skip":
         print("[socket-preflight] skipped — no socket collision mesh will be "
               "added to this session")
@@ -368,16 +372,32 @@ def _socket_preflight(**context) -> dict | None:
                 "perception": timing,
             })
 
-        frozen_pose_robot, repeatability = freeze_pose_medoid(
-            pose_robot_samples,
-            translation_limit_mm=args.socket_repeat_translation_max_mm,
-            rotation_limit_deg=args.socket_repeat_rotation_max_deg,
-        )
+        from autodex.utils.symmetry import get_asset_symmetry
+
+        symmetry = get_asset_symmetry(
+            socket_object, shared_root / "object_processing") or []
+        continuous_axes = [axis for axis, fold in symmetry if fold is None]
+        if continuous_axes:
+            frozen_pose_robot, repeatability = freeze_axisymmetric_pose_medoid(
+                pose_robot_samples,
+                local_axis=continuous_axes[0],
+                translation_limit_mm=args.socket_repeat_translation_max_mm,
+                axis_limit_deg=args.socket_repeat_rotation_max_deg,
+            )
+        else:
+            frozen_pose_robot, repeatability = freeze_pose_medoid(
+                pose_robot_samples,
+                translation_limit_mm=args.socket_repeat_translation_max_mm,
+                rotation_limit_deg=args.socket_repeat_rotation_max_deg,
+            )
         selected_index = int(repeatability["selected_index"])
         frozen_pose_world = pose_world_samples[selected_index]
+        fixture_name = ("fixture_unified_socket" if
+                        socket_object == "precision_socket_unified" else
+                        f"fixture_{socket_object}")
         fixture = {
             "schema": "autodex_frozen_fixture_v1",
-            "name": "fixture_unified_socket",
+            "name": fixture_name,
             "object": socket_object,
             "fixed_for_session": True,
             "pose_source": "foundpose_multiview_session_preflight",
@@ -405,7 +425,7 @@ def _socket_preflight(**context) -> dict | None:
                 measurement_dir=str(preflight_dir),
                 repeatability=repeatability,
             )
-        return {"fixture_unified_socket": fixture}
+        return {fixture_name: fixture}
     except Exception as exc:
         if preflight_span is not None:
             trace.end(preflight_span, outcome="failure", exception=repr(exc),
