@@ -11,9 +11,16 @@ AutoDex entry points. A simulated grasp pass is not an insertion pass.
 `main` at `448732d` is the reference for the original execution files. The
 current feature branch still changes `src/execution/run_auto.py`,
 `run_pipeline.py`, and `scene_cfg.py`; those changes have **not** yet been
-removed. Before declaring the demo isolated, migrate any required behavior to
-this directory and verify that these three files match `main`. Do not discard
-unrelated worktree edits while doing so.
+removed. The branch also modifies 15 other pre-existing files in the planner,
+symmetry, BODex, simulation filter, reorientation, and visualization paths.
+Restoring only the three execution files will preserve neither a fully
+unmodified AutoDex tree nor all current precision-specific tests. Before
+declaring the demo isolated, identify the intended baseline scope, migrate
+required behavior and tests into this directory, then compare every file in
+that scope with `main`. Do not discard unrelated worktree edits while doing
+so. The current `tests/test_session_fixtures.py` imports helpers from both
+`scene_cfg.py` and the added `session_fixtures.py`; it must be migrated with
+those helpers before `scene_cfg.py` is restored.
 
 The `scene_cfg.py` change contains two useful behaviors, but neither must live
 in that shared file: (1) the cylindrical key is authored along local z, not
@@ -256,8 +263,9 @@ Changing a global path constant in the shared AutoDex package is not allowed.
 
 1. Build the independent CLI, explicit path configuration, adapters, and
    record schema. Port only needed startup, symmetry, and fixture behavior;
-   then restore the three legacy execution files to `main` and verify their
-   exact diff is empty. Baseline AutoDex tests must still pass.
+   then restore the agreed legacy-file scope to `main` and verify its exact
+   diff is empty. Migrate feature-specific tests into this demo and keep the
+   baseline AutoDex tests passing.
 2. Replay saved camera captures to test ChArUco-then-socket startup, pose
    repeatability, symmetry, table/socket world construction, and mismatch
    rejection without robot motion.
