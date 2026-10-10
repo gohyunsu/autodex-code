@@ -162,16 +162,92 @@ class ZeroDexGeminiBackend:
 
 
 class ZeroDexLocalBackend:
-    """Reuse an already-loaded ZeroDex BaseVLM (Qwen/Gemma)."""
+    """Reuse ZeroDex BaseVLM (Qwen/Gemma), guarding original pixel geometry."""
 
-    def __init__(self, vlm, *, max_new_tokens: int = 512):
+    def __init__(self, vlm, *, max_new_tokens: int = 512,
+                 require_native_pixels: bool = True):
+        if (not hasattr(vlm, "infer_images_prompt") or
+                type(max_new_tokens) is not int or max_new_tokens <= 0):
+            raise ValueError("local VLM needs BaseVLM and positive token limit")
         self.vlm = vlm
         self.max_new_tokens = max_new_tokens
+        self.native_pixel_coordinates = bool(require_native_pixels)
+
+    @classmethod
+    def from_zerodex(
+        cls, *, model_id: str = "Qwen/Qwen3-VL-2B-Instruct",
+        family: str = "qwen", max_input_size: tuple[int, int],
+        max_new_tokens: int = 512, require_cuda: bool = True,
+        require_native_pixels: bool = True,
+    ) -> "ZeroDexLocalBackend":
+        """Explicitly load a local model; fail before downloading if no GPU.
+
+        Set ``require_cuda=False`` only for a slow offline CPU smoke test.
+        ``max_input_size`` is a native-image ceiling, not a target resize.
+        """
+        if (not isinstance(model_id, str) or not model_id.strip() or
+                family not in {"qwen", "gemma"} or
+                not isinstance(max_input_size, tuple) or
+                len(max_input_size) != 2 or
+                any(type(v) is not int or v <= 0 for v in max_input_size)):
+            raise ValueError("local VLM needs model, family and native size ceiling")
+        if require_cuda:
+            import torch
+            if not torch.cuda.is_available():
+                raise RuntimeError(
+                    "CUDA is unavailable; local VLM model was not downloaded")
+        try:
+            from main.vlm_base import BaseVLM
+        except ImportError as exc:
+            raise RuntimeError(
+                "ZeroDex BaseVLM or its optional dependencies are unavailable; "
+                "put realtime_vlm on PYTHONPATH and install local VLM extras"
+            ) from exc
+        vlm = BaseVLM(
+            model_id=model_id, family=family,
+            max_input_size=max_input_size, use_thinking=False)
+        return cls(vlm, max_new_tokens=max_new_tokens,
+                   require_native_pixels=require_native_pixels)
 
     def infer(self, images: list[Image.Image], prompt: str) -> str:
+        if (not images or any(not isinstance(img, Image.Image)
+                              for img in images) or
+                not isinstance(prompt, str) or not prompt.strip()):
+            raise ValueError("local VLM needs ordered PIL images and a prompt")
+        ceiling = getattr(self.vlm, "max_input_size", None)
+        if self.native_pixel_coordinates and (
+                not isinstance(ceiling, (tuple, list)) or len(ceiling) != 2 or
+                any(img.width > ceiling[0] or img.height > ceiling[1]
+                    for img in images)):
+            raise ValueError(
+                "local VLM would resize an original grounding image; "
+                "increase max_input_size or use a crop-to-original mapper")
         result = self.vlm.infer_images_prompt(
             images, prompt, max_new_tokens=self.max_new_tokens)
         return result.answer
+
+
+def load_vlm_backend(
+    *, mode: str, model_id: str,
+    max_input_size: tuple[int, int] | None = None,
+    max_new_tokens: int = 512, require_cuda: bool = True,
+    require_native_pixels: bool = True,
+) -> ImageVLM:
+    """Choose one VLM for existing read-only checkpoint/grounding calls.
+
+    Neither branch acquires cameras or authorizes a robot action. Gemini is
+    explicit external-API opt-in; local uses ZeroDex's existing BaseVLM.
+    """
+    if mode == "gemini":
+        return ZeroDexGeminiBackend.from_env(model=model_id)
+    if mode == "local":
+        if max_input_size is None:
+            raise ValueError("local mode needs original image-size ceiling")
+        return ZeroDexLocalBackend.from_zerodex(
+            model_id=model_id, max_input_size=max_input_size,
+            max_new_tokens=max_new_tokens, require_cuda=require_cuda,
+            require_native_pixels=require_native_pixels)
+    raise ValueError("VLM mode must be gemini or local")
 
 
 def _frame_order(frames: Sequence[LabeledFrame]) -> tuple[str, ...]:
@@ -211,7 +287,14 @@ def _require_temporal_camera_pairs(
 
 
 def _parse_object(answer: str) -> dict:
-    value = json.loads(answer)
+    source = answer.strip()
+    # Small local VLMs often wrap otherwise valid JSON in one Markdown fence.
+    # Accept only a complete JSON fence, never extra prose or a JSON fragment.
+    fenced = re.fullmatch(r"```(?:json)?\s*\n([\s\S]*?)\n```", source,
+                          flags=re.IGNORECASE)
+    if fenced is not None:
+        source = fenced.group(1).strip()
+    value = json.loads(source)
     if not isinstance(value, dict):
         raise ValueError("VLM answer must be a JSON object")
     return value
@@ -238,7 +321,11 @@ def _infer_closed_set(
     prompt = (
         "Images are supplied in this exact order:\n"
         + "\n".join(f"{i + 1}: {label}" for i, label in enumerate(order))
-        + "\n\n" + prompt_body
+        + "\n\nValid camera IDs: "
+        + ", ".join(sorted({frame.camera_id for frame in frames}))
+        + ". In evidence_views use camera IDs only, never image numbers "
+        "or phase names. Use [] if nothing is visually established.\n\n"
+        + prompt_body
     )
     started = time.perf_counter()
     answer = backend.infer([frame.image for frame in frames], prompt)

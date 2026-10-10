@@ -1,0 +1,7 @@
+# Optional, isolated local-inference extras matching the ZeroDex checkout.
+# Install in a separate venv with the hardware-compatible PyTorch already
+# available; do not install these into the production AutoDex environment.
+transformers==5.5.0
+accelerate==1.13.0
+huggingface_hub==1.11.0
+safetensors>=0.7,<1

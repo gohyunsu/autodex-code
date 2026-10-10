@@ -881,17 +881,55 @@ gate still refers to the original pickup `lift_preflight` modeled at grasp
 joint values. A demo-local execution adapter must compare live arm/hand state
 with the **same** held-lift plan before replay, or replan from live state.
 
-For a **saved-image, read-only** observer replay, place this demo directory
-and a compatible ZeroDex checkout on `PYTHONPATH`, then pass already-loaded
-PIL images with explicit camera IDs and capture times. For example:
+For a **saved-image, read-only** observer replay, choose a backend explicitly.
+The local option reuses ZeroDex's `main.vlm_base.BaseVLM`; it does not use a
+Gemini key or send images to an API. Install its optional dependencies in an
+**isolated** venv, not the production AutoDex Python environment:
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python -m venv --system-site-packages \
+  ~/.venvs/precision-vlm
+~/.venvs/precision-vlm/bin/python -m pip install \
+  -r demo/precision-insertion/requirements-local-vlm.txt
+export PYTHONPATH="$PWD/demo/precision-insertion:$HOME/realtime_vlm"
+```
+
+This example reuses the existing hardware-compatible PyTorch installation.
+Check CUDA visibility outside a sandbox that hides the GPU:
+
+```bash
+~/.venvs/precision-vlm/bin/python -c 'import torch; print(torch.cuda.is_available())'
+```
+
+The first model load downloads public weights into the Hugging Face
+cache. For a semantic-only smoke test on *saved* images (not a real trial):
+
+```bash
+~/.venvs/precision-vlm/bin/python demo/precision-insertion/probe_vlm.py \
+  --backend local --model-id Qwen/Qwen3-VL-2B-Instruct --task lift \
+  --view front /path/to/before.png /path/to/after.png \
+  --output /tmp/precision-local-lift-probe.json
+```
+
+Repeat `--view CAMERA BEFORE_PNG AFTER_PNG` for more cameras. This probe
+records ordered source paths and hashes, the exact prompt and raw response,
+and a fail-closed parsed label; it refuses to overwrite an existing report.
+Its timestamps are synthetic ordering markers, **not** acquisition times.
+It performs no live camera capture, metric XY grounding, motion, or physical
+success certification. Initial GPU smoke-test findings and caveats are in
+[`LOCAL_VLM_VALIDATION.md`](LOCAL_VLM_VALIDATION.md). `--allow-cpu` only
+permits a slow exploratory smoke test. For a programmatic checkpoint using
+actual capture timestamps:
 
 ```python
-from main.vlm_base import BaseVLM
 from precision_insertion.observer import (
-    LabeledFrame, ZeroDexLocalBackend, observe_lift,
+    LabeledFrame, load_vlm_backend, observe_lift,
 )
 
-backend = ZeroDexLocalBackend(BaseVLM(model_id="Qwen/Qwen3-VL-2B-Instruct"))
+backend = load_vlm_backend(
+    mode="local", model_id="Qwen/Qwen3-VL-2B-Instruct",
+    max_input_size=(640, 640), require_native_pixels=False,
+)
 result = observe_lift(backend, [
     LabeledFrame("front", "before_grasp", 1.0, before_pil),
     LabeledFrame("front", "after_lift", 2.0, after_pil),
@@ -900,8 +938,16 @@ print(result.to_record())  # review only; not a robot command
 ```
 
 `before_pil` and `after_pil` must be supplied from the same saved trial; the
-timestamps above are placeholders. Lift and insertion comparisons now reject
-unpaired camera IDs, duplicate phase frames, or reversed timestamps; a front
+timestamps above are placeholders. Semantic labels can use ZeroDex's
+aspect-preserving resize. **Metric point/axis grounding cannot:** create a
+backend with `require_native_pixels=True` and a `max_input_size` at least as
+large as every supplied undistorted frame (or implement an explicit crop-to-
+original-pixel transform). The backend rejects a frame that ZeroDex would
+silently resize; the point-grounding path also rejects a semantic-only local
+backend. This safeguards coordinate bookkeeping, not VLM pixel accuracy:
+calibration/held-out grounding error limits remain mandatory. Lift and
+insertion comparisons reject unpaired camera IDs, duplicate phase frames,
+or reversed timestamps; a front
 "before" image cannot be compared to a side "after" image as if it tracked
 one object. The optional Gemini adapter accepts an already-configured
 `google.genai.Client` and a model ID, or explicitly reads `GEMINI_API_KEY` via
@@ -918,7 +964,8 @@ an external API. The configured backend is passed explicitly to the relevant
 `SessionRunner` observation method; there is no implicit model/API call.
 Neither adapter chooses cameras, creates image crops/overlays, measures key
 depth, or executes Franka commands. A future capture adapter must supply those
-inputs and log the raw images alongside every VLM response.
+inputs and log the raw images alongside every VLM response. The saved-image
+probe is therefore not a live local-VLM insertion loop.
 
 Run the read-only asset audit from the repository root, for example:
 

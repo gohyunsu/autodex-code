@@ -245,3 +245,16 @@ def test_line_grounding_abstains_if_shaft_or_tip_hidden():
         _Backend(response), [rows[0].frame])
     assert grounded[0].axis_line_uv_px is None
     assert records[0].parse_error is None
+
+
+def test_metric_grounding_rejects_a_resized_local_backend():
+    class ResizedBackend:
+        native_pixel_coordinates = False
+
+        def infer(self, images, prompt):
+            raise AssertionError("grounding must reject before inference")
+
+    frame = _line_rig(np.array([0., 0., .09]),
+                      np.array([0., 0., -1.]))[0].frame
+    with pytest.raises(ValueError, match="forbids local VLM image resizing"):
+        observe_grounded_cylinder_axis(ResizedBackend(), [frame])

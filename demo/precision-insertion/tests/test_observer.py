@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.observer import (  # noqa: E402
     HeldSceneView, LabeledFrame, XYView, ZeroDexGeminiBackend,
-    ZeroDexLocalBackend,
+    ZeroDexLocalBackend, load_vlm_backend,
     observe_insertion_visual, observe_lift, observe_preinsert_hold_views,
     observe_xy_views,
 )
@@ -117,6 +117,18 @@ def test_malformed_lift_answer_abstains_and_missing_phase_fails():
     assert observed.parse_error is not None
     with pytest.raises(ValueError, match="before_grasp and after_lift"):
         observe_lift(FakeBackend("{}"), _frames("before_grasp", "after_close"))
+
+
+def test_complete_markdown_json_fence_is_accepted_but_extra_prose_is_not():
+    wrapped = '```json\n{"class":"held","evidence_views":["front"],"evidence":"visible key"}\n```'
+    result = observe_lift(FakeBackend(wrapped), _frames())
+    assert result.parsed["class"] == "held"
+    assert result.raw_answer == wrapped
+    assert result.parse_error is None
+    for bad in (wrapped + "\nThe grasp succeeded", '{"class":"held"} extra'):
+        rejected = observe_lift(FakeBackend(bad), _frames())
+        assert rejected.parsed["class"] == "unobservable"
+        assert rejected.parse_error is not None
 
 
 def test_temporal_vlm_needs_same_camera_before_after_in_time_order():
@@ -272,9 +284,62 @@ def test_preinsert_rejects_async_duplicate_or_mismatched_overlay():
 
 def test_local_backend_reuses_loaded_vlm():
     class StubModel:
+        max_input_size = (16, 12)
+
         def infer_images_prompt(self, images, prompt, max_new_tokens):
             assert max_new_tokens == 40
             return type("Result", (), {"answer": "{}"})()
 
     backend = ZeroDexLocalBackend(StubModel(), max_new_tokens=40)
     assert backend.infer([_image()], "test") == "{}"
+
+
+def test_local_backend_rejects_implicit_resize_of_metric_pixels():
+    class StubModel:
+        max_input_size = (8, 8)
+
+        def infer_images_prompt(self, images, prompt, max_new_tokens):
+            return SimpleNamespace(answer="{}")
+
+    backend = ZeroDexLocalBackend(StubModel())
+    with pytest.raises(ValueError, match="would resize"):
+        backend.infer([_image()], "pixel grounding")
+    semantic_only = ZeroDexLocalBackend(
+        StubModel(), require_native_pixels=False)
+    assert semantic_only.infer([_image()], "held or missed") == "{}"
+
+
+def test_local_loader_fails_before_model_download_without_cuda(monkeypatch):
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with pytest.raises(RuntimeError, match="model was not downloaded"):
+        ZeroDexLocalBackend.from_zerodex(max_input_size=(1280, 720))
+
+
+def test_local_loader_reuses_zerodex_without_gemini_or_resize(monkeypatch):
+    loaded = []
+    zerodex_main = ModuleType("main")
+    zerodex_core = ModuleType("main.vlm_base")
+
+    class StubBaseVLM:
+        def __init__(self, **kwargs):
+            loaded.append(kwargs)
+            self.max_input_size = kwargs["max_input_size"]
+
+        def infer_images_prompt(self, images, prompt, max_new_tokens):
+            return SimpleNamespace(answer='{"class":"held"}')
+
+    zerodex_core.BaseVLM = StubBaseVLM
+    monkeypatch.setitem(sys.modules, "main", zerodex_main)
+    monkeypatch.setitem(sys.modules, "main.vlm_base", zerodex_core)
+    backend = load_vlm_backend(
+        mode="local", model_id="Qwen/test", max_input_size=(16, 12),
+        max_new_tokens=40, require_cuda=False)
+    assert loaded == [{
+        "model_id": "Qwen/test", "family": "qwen",
+        "max_input_size": (16, 12), "use_thinking": False,
+    }]
+    assert backend.infer([_image()], "label") == '{"class":"held"}'
+    with pytest.raises(ValueError, match="mode must be gemini or local"):
+        load_vlm_backend(mode="auto", model_id="Qwen/test")

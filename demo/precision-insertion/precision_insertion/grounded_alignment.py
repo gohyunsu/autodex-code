@@ -371,6 +371,8 @@ def observe_grounded_key_axis(
     a smooth cylinder is not a valid correspondence.
     """
     views, records = [], []
+    if getattr(backend, "native_pixel_coordinates", True) is not True:
+        raise ValueError("metric grounding forbids local VLM image resizing")
     if len({frame.camera_id for frame in frames}) != len(frames):
         raise ValueError("grounding needs unique camera IDs")
     for frame in frames:
@@ -654,6 +656,8 @@ def observe_grounded_cylinder_axis(
 ) -> tuple[list[GroundedLineView], list[VLMObservation]]:
     """Ask for a tip centre and a visible shaft centreline, raw images only."""
     views, records = [], []
+    if getattr(backend, "native_pixel_coordinates", True) is not True:
+        raise ValueError("metric grounding forbids local VLM image resizing")
     if len({frame.camera_id for frame in frames}) != len(frames):
         raise ValueError("line grounding needs unique camera IDs")
     for frame in frames:
