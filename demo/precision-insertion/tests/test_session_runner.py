@@ -277,6 +277,43 @@ def test_first_postlift_capture_binds_candidate_prior_and_gates_arrival(
         evidence_refs=arrival_refs).labels["preinsert_reached"] is True
 
 
+def test_candidate_pose_prior_is_available_before_vlm_grasp_label(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        session_runner, "plan_admitted_key_trial",
+        lambda **kwargs: _report(runner, kwargs["key_observation"]))
+    _plan(runner, _observation("key_1", 10.0))
+    runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
+    assert runner.current_decision().action == "await_lift_observation"
+    candidate_dir = tmp_path / "candidate"
+    candidate_dir.mkdir()
+    np.save(candidate_dir / "wrist_se3.npy", np.eye(4))
+    monkeypatch.setattr(session_runner, "select_pose_candidates",
+                        lambda *_args, **_kwargs: {
+                            "status": "candidates_available",
+                            "candidates": [{"key": list(KEY_A),
+                                            "candidate_dir": str(candidate_dir)}]})
+    hand_raw = np.zeros(6)
+    q = np.zeros(13)
+    q[7:] = convert_inspire_raw(hand_raw[None, :])[0]
+    measured = LiveRobotState(
+        q, np.zeros(7), 10.5, 10.5, 12.0, 10.5,
+        hand_raw, hand_raw.copy(), 0.0, np.zeros(6))
+    inputs = dict(
+        planner=SimpleNamespace(fk_wrist=lambda _q: np.eye(4)),
+        joint_sample=measured, max_arm_hand_skew_s=0.05,
+        max_hand_command_error_raw=30.0, max_arm_velocity_rad_s=0.05)
+    np.testing.assert_allclose(
+        runner.postlift_candidate_pose_prior(**inputs), np.eye(4))
+    assert runner.active_attempt.labels["grasp_success"] is None
+    runner.observe_stage(
+        "grasp_success", False, timestamp_s=10.6,
+        evidence_refs={"vlm_observation": "vlm/miss.json"})
+    with pytest.raises(ValueError, match="active selected lift"):
+        runner.postlift_candidate_pose_prior(**inputs)
+
+
 def test_budgeted_preflight_continues_same_capture_but_new_capture_resets_rejects(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)

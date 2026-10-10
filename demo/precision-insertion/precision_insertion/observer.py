@@ -114,6 +114,25 @@ def _frame_order(frames: Sequence[LabeledFrame]) -> tuple[str, ...]:
     return tuple(order)
 
 
+def _require_temporal_camera_pairs(
+    frames: Sequence[LabeledFrame], *, before: str, after: str,
+) -> None:
+    """A temporal VLM comparison needs the *same* camera at both phases."""
+    grouped: dict[str, dict[str, float]] = {before: {}, after: {}}
+    for frame in frames:
+        if frame.phase not in grouped:
+            raise ValueError("unexpected image phase in temporal comparison")
+        if frame.camera_id in grouped[frame.phase]:
+            raise ValueError("duplicate camera in one observation phase")
+        grouped[frame.phase][frame.camera_id] = float(frame.timestamp_s)
+    if (not grouped[before] or
+            set(grouped[before]) != set(grouped[after])):
+        raise ValueError(f"{before} and {after} need paired camera views")
+    if any(grouped[before][camera] >= grouped[after][camera]
+           for camera in grouped[before]):
+        raise ValueError("temporal camera pairs are not time ordered")
+
+
 def _parse_object(answer: str) -> dict:
     value = json.loads(answer)
     if not isinstance(value, dict):
@@ -177,6 +196,8 @@ def observe_lift(backend: ImageVLM, frames: Sequence[LabeledFrame]) -> VLMObserv
     phases = {frame.phase for frame in frames}
     if not {"before_grasp", "after_lift"} <= phases:
         raise ValueError("lift observation needs before_grasp and after_lift")
+    _require_temporal_camera_pairs(
+        frames, before="before_grasp", after="after_lift")
     return _infer_closed_set(
         backend, stage="post_lift", frames=frames,
         prompt_body=(
@@ -199,6 +220,8 @@ def observe_insertion_visual(
     phases = {frame.phase for frame in frames}
     if not {"preinsert", "final_or_abort"} <= phases:
         raise ValueError("insertion observation needs preinsert and final_or_abort")
+    _require_temporal_camera_pairs(
+        frames, before="preinsert", after="final_or_abort")
     return _infer_closed_set(
         backend, stage="insertion_visual", frames=frames,
         prompt_body=(

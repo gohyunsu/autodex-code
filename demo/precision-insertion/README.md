@@ -53,11 +53,13 @@ that session and catalogue. For each new key observation:
    `begin_selected_attempt(attempt_id=..., started_at_s=...)` to create an
    unlabelled attempt record. Actual physical execution requires a separate
    commissioned adapter and the named safety gates.
-3. After the physical lift, record `grasp_success` from observed evidence.
-   Use `postlift_candidate_pose_prior` with measured Franka/Inspire feedback
-   to form a **loose** search prior from the selected v8 grasp. Admit a new
-   key capture with `admit_postlift_key_capture` (phase `held_postlift`) and
-   save it with `write_key_capture_artifacts`. Then call
+3. After the physical lift, `postlift_candidate_pose_prior` can use measured
+   Franka/Inspire feedback and the selected v8 grasp to form a **loose**
+   search prior *before* the grasp-success verdict. Admit a new key capture
+   with `admit_postlift_key_capture` (phase `held_postlift`) and save it with
+   `write_key_capture_artifacts`. Assess the lift using VLM images and the
+   observed key–wrist relation; only then record `grasp_success`. This prior
+   alone never proves that the key was held. With an observed success, call
    `prepare_postlift_transfer` with that bundle and the *same* measured joint
    sample. It verifies the candidate/prior/frame binding, replaces the
    nominal grasp relation with the observed one, screens the measured hand
@@ -494,10 +496,12 @@ validate the hand–key relation against the planned one. A guarded contact
 controller, true acquisition-timestamped camera adapter, and reset/repose
 execution remain to be implemented.
 
-After the lift is physically observed and `AttemptRecord.grasp_success` is
-`true`, use the session runner's `postlift_candidate_pose_prior(...)`,
-`admit_postlift_key_capture(...)`, and `prepare_postlift_transfer(...)` sequence
-described above. The latter reuses `plan_postlift_observed_transfer(...)` and
+After the physical lift, use the session runner's
+`postlift_candidate_pose_prior(...)` and `admit_postlift_key_capture(...)`
+before assigning a grasp-success label. Only after a separate observed
+`AttemptRecord.grasp_success=True` may the runner call
+`prepare_postlift_transfer(...)`. The latter reuses
+`plan_postlift_observed_transfer(...)` and
 `write_postlift_preflight(...)`; it saves each rejected/passing observation
 under `attempts/<id>/postlift_preflights/<index>/` with a hash-bound key
 capture. Only `sampled_postlift_preflight_pass` can proceed to a separately
@@ -532,7 +536,10 @@ print(result.to_record())  # review only; not a robot command
 ```
 
 `before_pil` and `after_pil` must be supplied from the same saved trial; the
-timestamps above are placeholders. The optional Gemini adapter accepts an
+timestamps above are placeholders. Lift and insertion comparisons now reject
+unpaired camera IDs, duplicate phase frames, or reversed timestamps; a front
+"before" image cannot be compared to a side "after" image as if it tracked
+one object. The optional Gemini adapter accepts an
 already-configured `google.genai.Client` and a model ID instead. Both
 adapters require the ZeroDex package importable at runtime. Neither adapter
 chooses cameras, creates image crops/overlays, measures key depth, or executes

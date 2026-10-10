@@ -593,20 +593,28 @@ class SessionRunner:
         This is a search prior, never an achieved hand/key relation. The
         separately admitted post-lift image must replace it before transfer.
         """
-        if (self.current_decision().action !=
-                "postlift_observed_preflight_required" or
-                self._attempt is None or self._preflight is None or
-                self._preflight.selected_candidate_key is None):
-            raise ValueError("candidate pose prior requires observed lift success")
+        if (self._attempt is None or self._preflight is None or
+                self._preflight.selected_candidate_key is None or
+                self._attempt.candidate_id !=
+                "/".join(self._preflight.selected_candidate_key) or
+                self._attempt.failure_code is not None or
+                self._attempt.labels["grasp_success"] is False or
+                self._attempt.labels["preinsert_reached"] is not None or
+                self.current_decision().action not in {
+                    "await_lift_observation",
+                    "postlift_observed_preflight_required"}):
+            raise ValueError("candidate pose prior needs an active selected lift")
         if not isinstance(joint_sample, LiveRobotState):
             raise TypeError("post-lift prior needs measured robot feedback")
         joint_sample.validate(
             max_arm_hand_skew_s=max_arm_hand_skew_s,
             max_hand_command_error_raw=max_hand_command_error_raw,
             max_arm_velocity_rad_s=max_arm_velocity_rad_s)
-        last_grasp_time = self._attempt.events[-1]["timestamp_s"]
-        if joint_sample.sample_timestamp_s <= last_grasp_time:
-            raise ValueError("post-lift joint sample predates observed grasp")
+        earliest = (self._attempt.events[-1]["timestamp_s"]
+                    if self._attempt.events else self._attempt.started_at_s)
+        if joint_sample.sample_timestamp_s <= max(
+                earliest, self._capture_interval_end_s):
+            raise ValueError("candidate pose prior predates this physical attempt")
         if (_digest(self.calibration.record) != self.session_sha256 or
                 _digest(self.catalog) != self.catalog_sha256):
             raise ValueError("frozen session or endpoint catalogue changed")

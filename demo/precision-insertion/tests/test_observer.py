@@ -66,6 +66,25 @@ def test_malformed_lift_answer_abstains_and_missing_phase_fails():
         observe_lift(FakeBackend("{}"), _frames("before_grasp", "after_close"))
 
 
+def test_temporal_vlm_needs_same_camera_before_after_in_time_order():
+    with pytest.raises(ValueError, match="paired camera views"):
+        observe_lift(FakeBackend("{}"), [
+            LabeledFrame("front", "before_grasp", 1.0, _image()),
+            LabeledFrame("side", "after_lift", 2.0, _image()),
+        ])
+    with pytest.raises(ValueError, match="not time ordered"):
+        observe_insertion_visual(FakeBackend("{}"), [
+            LabeledFrame("front", "preinsert", 3.0, _image()),
+            LabeledFrame("front", "final_or_abort", 2.0, _image()),
+        ])
+    with pytest.raises(ValueError, match="duplicate camera"):
+        observe_lift(FakeBackend("{}"), [
+            LabeledFrame("front", "before_grasp", 1.0, _image()),
+            LabeledFrame("front", "before_grasp", 1.1, _image()),
+            LabeledFrame("front", "after_lift", 2.0, _image()),
+        ])
+
+
 def test_insertion_visual_is_not_physical_depth_label():
     observed = observe_insertion_visual(FakeBackend(json.dumps({
         "visual_class": "normal_appearance", "evidence_views": ["front"],

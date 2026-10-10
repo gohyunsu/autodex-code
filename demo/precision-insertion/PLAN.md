@@ -393,6 +393,14 @@ Do not collapse these fields to one `success`. Persist the phase reached,
 failure category, candidate ID, frozen fixture record, calibration and asset
 hashes, trajectory checks, robot state, F/T/depth trace, synchronized camera
 frames, VLM raw/parsed answer, and any human override in a per-attempt record.
+The first post-lift candidate pose prior must be available **before** the
+grasp-success verdict so its fresh held-key FoundPose observation can inform
+that verdict; the prior itself is not evidence of a held key. Only a positive
+observed grasp verdict may unlock the post-lift endpoint/path replan. The
+current read-only VLM observer checks temporal same-camera pairs, but its
+lift/insertion raw images and model answers are not yet automatically
+hash-bound to the session's stage labels. Implement that checkpoint evidence
+binding before treating those labels as live VLM-derived outcomes.
 Candidate grasp statistics update from `grasp_success`; insertion retry
 statistics update from `insertion_success` and failure cause. Unknown is not
 success and must not erase a known earlier milestone. Use a controlled failure
