@@ -48,7 +48,8 @@ def _hold(record, value=True):
         "preinsert_reached", value, timestamp_s=3.0,
         evidence_refs={"trajectory": "plan/transfer.json",
                        "key_socket_pose": "sensors/hold.json",
-                       "grasp_state": "sensors/grip.json"})
+                       "grasp_state": "sensors/grip.json",
+                       "postlift_preflight": "plan/postlift/report.json"})
 
 
 def _insert(record, *, vlm="partial", grasp_held=True, safety_abort=False,
@@ -112,6 +113,9 @@ def test_grasp_transfer_and_unknown_observations_branch_separately():
     assert missed.labels["preinsert_reached"] is None
     failed_transfer = _attempt()
     _grasp(failed_transfer)
+    assert decide_after_attempt(
+        failed_transfer, max_xy_retries=2).action == (
+            "postlift_observed_preflight_required")
     _hold(failed_transfer, False)
     assert decide_after_attempt(
         failed_transfer, max_xy_retries=2).action == "recover_key_then_reobserve"

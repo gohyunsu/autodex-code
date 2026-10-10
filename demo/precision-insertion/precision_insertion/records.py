@@ -33,7 +33,8 @@ PREREQUISITE = {
 TRUE_EVIDENCE = {
     "grasp_success": frozenset({"vlm_observation", "key_wrist_check"}),
     "preinsert_reached": frozenset({
-        "trajectory", "key_socket_pose", "grasp_state"}),
+        "trajectory", "key_socket_pose", "grasp_state",
+        "postlift_preflight"}),
     "insertion_success": frozenset({
         "vlm_observation", "key_depth", "alignment", "force_trace"}),
     "release_success": frozenset({"release_observation", "key_pose"}),

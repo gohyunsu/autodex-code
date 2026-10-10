@@ -148,6 +148,18 @@ The first independent helpers are in `precision_insertion/`:
   squeezes farther; reusing its lift without checking the selected hold would
   compare different hand geometries. Every caller must distinguish a nominal
   commanded hold from actual measured hand state.
+- `held_relation.py` resolves the lifted key pose against the measured wrist.
+  For the cylindrical D∞ key, it removes only axial-yaw and identical-end
+  frame ambiguity **about the CAD symmetry center** before measuring drift;
+  a real center shift is not erased. The square key keeps its full pose.
+- `postlift_preflight.py` binds the selected v8 candidate, frozen session,
+  append-only observed grasp label, fresh multi-view key pose and synchronized
+  measured 13-DOF Franka/Inspire state. It rejects excessive post-squeeze
+  key/hand drift, rechecks the exact centered 20 mm hand/socket endpoint with
+  the **measured** finger joints, then reuses `preflight.py` to plan transfer
+  and axial descent from the observed lift state. No initial BODex
+  `T_key_hand` is silently replayed after physical squeeze. A saved result
+  is still a planning report, not contact-control or physical success.
 - `candidates.py` scans the selected shared root's Inspire v8 candidate tree,
   reads matching scene `meta.pose_idx` and tabletop assets, requires full-key
   simulation evidence, and applies `endpoint.py` to surviving grasps. The
@@ -283,7 +295,22 @@ not a measurement; before physical transfer, re-observe the held key and
 validate the hand–key relation against the planned one. A guarded contact
 controller, true acquisition-timestamped camera adapter, and reset/repose
 execution remain to be implemented.
-Do not feed this separately replanned `lift_trajectory` straight into the
+
+After the lift is physically observed and `AttemptRecord.grasp_success` is
+`true`, the live runner must keep the `TrialPreflight` object and call
+`plan_postlift_observed_transfer(...)` with the fresh multi-view key pose,
+measured joint vector, acquisition timestamps, selected session/catalog and
+commissioned drift/path limits. Only its
+`sampled_postlift_preflight_pass` status can proceed to a separately guarded
+transfer gate. `write_postlift_preflight(result, new_output_dir)` saves the
+observed relation, endpoint report and planned paths without overwriting an
+earlier run. This in-memory API is not yet a CLI because no live acquisition
+adapter or safe robot executor has been commissioned. The old nominal
+preflight remains a candidate-selection estimate, not the motion plan to
+replay after squeeze.
+
+Do not feed the nominal `plan_insertion_after_pickup`'s separately replanned
+`lift_trajectory` straight into the
 unchanged `FrankaExecutor.execute(lift_traj_override=...)`: its start-state
 gate still refers to the original pickup `lift_preflight` modeled at grasp
 joint values. A demo-local execution adapter must compare live arm/hand state

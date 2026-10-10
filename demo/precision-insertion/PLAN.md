@@ -291,7 +291,10 @@ does not prove cross-camera synchronization.
 6. `PICK_AND_LIFT`: execute the chosen approach and grasp, then observe the
    held key. If visible, update `T_wrist_key` from key pose and wrist FK;
    compare it with the planned rigid transform. A slip or uncertain hold
-   prevents transfer.
+   prevents transfer. The demo's `postlift_preflight.py` now recomputes this
+   relation from fresh observations, resolves cylindrical D∞ frame ambiguity,
+   repeats the measured-hand 20 mm endpoint screen and replans held transfer
+   and axial motion. It does not execute those paths.
 7. `TRANSFER_AND_HOLD`: keep hand joints fixed while moving to a collision-
    checked pre-insertion pose. Measure the actual key-to-socket residual;
    record whether the required transfer endpoint was reached.
@@ -596,6 +599,8 @@ demo/precision-insertion/
     repose_policy.py              # insertion target vs reset-seed assessment only
     trial_preflight.py            # fresh-key candidate-by-candidate planning replay
     preflight.py                  # planning-only pickup/lift/transfer/20 mm composition
+    held_relation.py              # observed held pose with Dinf frame ambiguity
+    postlift_preflight.py         # measured post-lift endpoint/transfer replan
     path_audit.py                 # sampled held-key/hand scene collision checks
     repose_path_audit.py          # sampled held reset-path/fixture check, no execution
     repose_preflight.py           # v8 tabletop rest target and held reset path

@@ -43,7 +43,8 @@ def _grasp_refs():
 def _transfer_refs():
     return {"trajectory": "planner/transfer.json",
             "key_socket_pose": "sensors/hold_pose.json",
-            "grasp_state": "sensors/grasp_state.json"}
+            "grasp_state": "sensors/grasp_state.json",
+            "postlift_preflight": "planner/postlift/report.json"}
 
 
 def _insertion_refs():
@@ -59,6 +60,11 @@ def test_separate_stage_labels_and_fused_insertion_success(tmp_path):
                         evidence_refs=_grasp_refs())
     assert record.to_record()["preinsert_reached"] is None
     assert record.to_record()["insertion_success"] is None
+    with pytest.raises(ValueError, match="postlift_preflight"):
+        refs_without_postlift = _transfer_refs()
+        del refs_without_postlift["postlift_preflight"]
+        record.record_stage("preinsert_reached", True, timestamp_s=3.0,
+                            evidence_refs=refs_without_postlift)
     record.record_stage("preinsert_reached", True, timestamp_s=3.0,
                         evidence_refs=_transfer_refs())
     assert record.to_record()["insertion_success"] is None

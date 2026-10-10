@@ -152,8 +152,9 @@ def decide_after_attempt(
             "fresh_key_pose", "fresh_robot_state", "exclude_attempted_grasp")
     if labels["grasp_success"] is True:
         return result(
-            "await_transfer_and_observation", "lifted_key_observed",
-            "measured_key_hand_relation", "fresh_held_transfer_preflight")
+            "postlift_observed_preflight_required", "lifted_key_observed",
+            "fresh_multiview_key_pose", "measured_franka_inspire_state",
+            "observed_key_hand_endpoint_and_held_path_preflight")
     if any(event["stage"] == "grasp_success" for event in attempt.events):
         return result("stop_for_review", "grasp_verdict_unknown")
     return result("await_lift_observation", "no_physical_stage_recorded")
