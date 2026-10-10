@@ -19,6 +19,7 @@ import numpy as np
 from .assets import AssetPaths
 from .config import TaskMode
 from .geometry import validate_se3
+from .solid_occupancy import CylinderSocketOccupancy, SolidMeshOccupancy
 
 
 def _sha256(path: Path) -> str:
@@ -137,9 +138,25 @@ def _coal_models_report(moving, fixed_model, T_fixed_moving: np.ndarray) -> dict
     return {"colliding": colliding, "minimum_surface_distance_m": float(distance)}
 
 
-def _mesh_pair_report(moving_mesh, fixed_model, T_fixed_moving: np.ndarray) -> dict:
-    return _coal_models_report(_coal_mesh(moving_mesh), fixed_model,
-                               T_fixed_moving)
+def _mesh_pair_report(moving_mesh, fixed_model, T_fixed_moving: np.ndarray,
+                      fixed_occupancy: SolidMeshOccupancy | CylinderSocketOccupancy | None = None) -> dict:
+    report = _coal_models_report(_coal_mesh(moving_mesh), fixed_model,
+                                 T_fixed_moving)
+    if fixed_occupancy is None:
+        return report
+    # A triangle-surface BVH alone says that a box wholly inside another box
+    # is collision-free. Check every moving vertex against the fixed *solid*
+    # as well; any ambiguous point-in-solid vote is rejected conservatively.
+    vertices = (moving_mesh.vertices @ T_fixed_moving[:3, :3].T +
+                T_fixed_moving[:3, 3])
+    occupied = fixed_occupancy.classify(vertices)
+    report["surface_intersection"] = report["colliding"]
+    report["moving_vertices_inside_fixed"] = occupied.inside_vertices
+    report["moving_vertices_occupancy_ambiguous"] = occupied.ambiguous_vertices
+    if occupied.intersects_solid:
+        report["colliding"] = True
+        report["minimum_surface_distance_m"] = 0.0
+    return report
 
 
 def validate_task_geometry(geometry: dict[str, Any], mode: TaskMode) -> np.ndarray:
@@ -185,6 +202,8 @@ def screen_grasp_endpoint(
     minimum_hand_clearance_m: float,
     xy_offset_socket_m: tuple[float, float] = (0.0, 0.0),
     T_key_hand_override: np.ndarray | None = None,
+    hand_poses_override: dict[str, np.ndarray] | None = None,
+    override_source: str | None = None,
 ) -> dict[str, Any]:
     """Screen CAD key/socket fit and Inspire links at one aligned 20 mm pose.
 
@@ -192,14 +211,26 @@ def screen_grasp_endpoint(
     function does not verify simulated grasp stability; callers must combine
     this result with independently checked v8/MuJoCo evidence. The offset is
     an absolute target in the *socket* XY frame, not a robot or camera delta.
-    A retry may substitute a separately verified post-lift ``T_key_hand``;
-    nominal Inspire squeeze joints remain modelled, not measured feedback.
+    A retry may substitute a separately verified post-lift ``T_key_hand``.
+    An offline trajectory audit may supply both the *achieved* MuJoCo joint
+    state and its matching key-relative hand pose. Neither is hardware
+    feedback or motion authorization.
     """
     if not math.isfinite(minimum_hand_clearance_m) or minimum_hand_clearance_m <= 0:
         raise ValueError("minimum_hand_clearance_m must be positive and calibrated")
     offset = np.asarray(xy_offset_socket_m, dtype=np.float64)
     if offset.shape != (2,) or not np.all(np.isfinite(offset)):
         raise ValueError("xy_offset_socket_m must be two finite metric values")
+    if hand_poses_override is not None:
+        if T_key_hand_override is None or not override_source:
+            raise ValueError("joint override requires a paired T_key_hand and source")
+        if not isinstance(hand_poses_override, dict) or not hand_poses_override:
+            raise ValueError("joint override must contain named hand poses")
+    if override_source is not None and T_key_hand_override is None:
+        raise ValueError("override source requires a T_key_hand override")
+    if override_source is not None and (not isinstance(override_source, str) or
+                                        not override_source.strip()):
+        raise ValueError("override source must be a nonempty string")
     paths = AssetPaths(Path(shared_root).expanduser().resolve(), mode)
     candidate = Path(candidate_dir).expanduser().resolve()
     files = {
@@ -229,21 +260,36 @@ def screen_grasp_endpoint(
     T_key_hand = (candidate_T_key_hand if T_key_hand_override is None else
                   validate_se3(T_key_hand_override,
                                name="observed T_key_hand override"))
-    hand_poses = nominal_inspire_hold_poses(
-        np.load(files["pregrasp_pose"], allow_pickle=False),
-        np.load(files["grasp_pose"], allow_pickle=False))
+    if hand_poses_override is None:
+        hand_poses = nominal_inspire_hold_poses(
+            np.load(files["pregrasp_pose"], allow_pickle=False),
+            np.load(files["grasp_pose"], allow_pickle=False))
+    else:
+        hand_poses = {}
+        for name, value in hand_poses_override.items():
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("hand pose override names must be nonempty")
+            joints = np.asarray(value, dtype=np.float64)
+            if joints.shape != (6,) or not np.all(np.isfinite(joints)):
+                raise ValueError(f"invalid hand pose override: {name}")
+            hand_poses[name] = joints
     key_mesh = _load_mesh(files["key_mesh"])
     socket_mesh = _load_mesh(files["socket_mesh"])
     if not key_mesh.is_watertight or not socket_mesh.is_watertight:
         raise ValueError("key and socket CAD meshes must be watertight")
     fixed_socket = _coal_mesh(socket_mesh)
-    key_fit = _mesh_pair_report(key_mesh, fixed_socket, T_socket_key)
+    solid_socket = (CylinderSocketOccupancy(socket_mesh, geometry)
+                    if mode.family == "cylinder" else
+                    SolidMeshOccupancy(socket_mesh))
+    key_fit = _mesh_pair_report(key_mesh, fixed_socket, T_socket_key,
+                                solid_socket)
     T_socket_hand = T_socket_key @ T_key_hand
     hold_screens = {}
     for hold_name, hand_q in hand_poses.items():
         hand = _hand_link_meshes(files["robot_urdf"], hand_q)
         links = {
-            name: _mesh_pair_report(mesh, fixed_socket, T_socket_hand)
+            name: _mesh_pair_report(mesh, fixed_socket, T_socket_hand,
+                                    solid_socket)
             for name, mesh in sorted(hand.items())
         }
         minimum_hold = min(row["minimum_surface_distance_m"]
@@ -272,14 +318,19 @@ def screen_grasp_endpoint(
         "minimum_observed_hand_clearance_m": minimum,
         "key_socket_fit": key_fit,
         "hold_pose_screens": hold_screens,
-        "hold_pose_contract": "AutoDex default Inspire squeeze_level=2; measured hardware pose must be checked online",
+        "hold_pose_contract": (
+            "AutoDex default Inspire squeeze_level=2; measured hardware pose must be checked online"
+            if hand_poses_override is None else
+            "explicit paired hand/key state; not measured hardware feedback"),
         "hand_socket_clear_at_20mm": hand_pass,
         "endpoint_pass": not key_fit["colliding"] and hand_pass,
-        "method": "Coal triangle-mesh surface collision and minimum distance",
+        "method": ("Coal triangle-surface collision/distance plus validated analytic cylinder-solid vertex containment"
+                   if mode.family == "cylinder" else
+                   "Coal triangle-surface collision/distance plus two-direction watertight-solid vertex containment"),
         "T_key_hand": T_key_hand.tolist(),
         "T_key_hand_source": (
             "v8_candidate" if T_key_hand_override is None
-            else "observed_postlift_override"),
+            else (override_source or "observed_postlift_override")),
         "candidate_T_key_hand": candidate_T_key_hand.tolist(),
         "T_socket_key_verification": T_socket_key_nominal.tolist(),
         "T_socket_key_tested": T_socket_key.tolist(),

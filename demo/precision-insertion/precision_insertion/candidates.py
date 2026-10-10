@@ -36,6 +36,13 @@ def _json(path: Path) -> dict:
     return data
 
 
+def _endpoint_implementation_sha256() -> dict[str, str]:
+    """Bind a catalogue to the exact collision algorithm that screened it."""
+    package = Path(__file__).resolve().parent
+    return {name: _sha256(package / name)
+            for name in ("endpoint.py", "solid_occupancy.py")}
+
+
 def _candidate_dirs(root: Path) -> list[Path]:
     """Walk only the v8 ``scene_type/scene_id/grasp_id`` layout."""
     if not root.is_dir():
@@ -192,6 +199,7 @@ def build_endpoint_catalog(
             "target_depth_m": mode.target_depth_m,
         },
         "minimum_hand_clearance_m": float(minimum_hand_clearance_m),
+        "endpoint_implementation_sha256": _endpoint_implementation_sha256(),
         "candidate_root": str(paths.candidate_dir),
         "total_candidate_directories": len(all_dirs),
         "screened_directories": len(dirs),
@@ -238,6 +246,9 @@ def select_pose_candidates(
     if not catalog.get("complete_scan"):
         return {"status": "catalog_incomplete", "candidates": [],
                 "reason": "full endpoint screen or source pool is missing"}
+    if catalog.get("endpoint_implementation_sha256") != _endpoint_implementation_sha256():
+        return {"status": "catalog_stale", "candidates": [],
+                "reason": "endpoint collision implementation changed"}
     root = Path(catalog["shared_root"])
     paths = AssetPaths(root, mode)
     if Path(catalog["candidate_root"]).resolve() != paths.candidate_dir.resolve():

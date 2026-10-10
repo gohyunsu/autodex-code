@@ -54,7 +54,7 @@ SHARED=/home/hyunsu/shared_data
 RAW=$SHARED/AutoDex/bodex_raw/inspire/precision_insertion_cylinder_proxy_1000_20261010
 STAGED=$SHARED/AutoDex/bodex_raw/inspire/precision_insertion_cylinder_fullkey_eval_1000_20261010
 SIMPASS=$SHARED/AutoDex/precision_insertion/cylinder_fullkey_sim_pass_1000_20261010
-SCREEN=$SHARED/AutoDex/precision_insertion/cylinder_endpoint_screen_1000_squeeze_20261010
+SCREEN=$SHARED/AutoDex/precision_insertion/cylinder_endpoint_screen_1000_solid_20261010
 
 $PY src/grasp_generation/BODex/generate.py \
   -c sim_inspire/precision_insertion.yml -w 2 \
@@ -110,6 +110,15 @@ grasp-stable candidates against six socket meshes. The earlier diagnostic
 directory `cylinder_endpoint_screen_1000_20261010` checked only the less-
 closed `grasp_pose` and is superseded by the `..._squeeze_...` result.
 
+The latest `..._solid_...` result additionally rejects key/hand vertices
+inside the *solid socket*, not just intersecting triangle surfaces. A
+surface-only BVH can report a box fully inside another box as clear. The
+cylinder uses its validated analytic blind-socket solid; the square socket
+uses two oblique ray-parity checks. The new full-family nominal count and
+candidate IDs remain 13/19 for each gap, with zero screen errors. The old
+`..._squeeze_...` reports and renders remain historical diagnostics rather
+than current collision-screen evidence.
+
 These 13 are **offline filter passes**, not proven physically usable grasps:
 the default controller squeeze is only a nominal commanded pose, there has
 been no live Franka/fixture path check, and the endpoint is not a continuous
@@ -131,13 +140,13 @@ Run the independent, non-filtering diagnostic from the repository root:
 PYTHONPATH=demo/precision-insertion \
   /home/hyunsu/miniconda3/envs/autodex_bodex/bin/python \
   demo/precision-insertion/audit_cylinder_grasp_fidelity.py \
-  --summary /home/hyunsu/shared_data/AutoDex/precision_insertion/cylinder_endpoint_screen_1000_squeeze_20261010/summary.json \
+  --summary /home/hyunsu/shared_data/AutoDex/precision_insertion/cylinder_endpoint_screen_1000_solid_20261010/summary.json \
   --shared-root /home/hyunsu/shared_data \
-  --output-root /home/hyunsu/shared_data/AutoDex/precision_insertion/cylinder_grasp_fidelity_analytic_v2_20261010
+  --output-root /home/hyunsu/shared_data/AutoDex/precision_insertion/cylinder_grasp_fidelity_solid_20261010
 ```
 
 The completed audit is
-`/home/hyunsu/shared_data/AutoDex/precision_insertion/cylinder_grasp_fidelity_analytic_v2_20261010/summary.json`.
+`/home/hyunsu/shared_data/AutoDex/precision_insertion/cylinder_grasp_fidelity_solid_20261010/summary.json`.
 It covers all 19 stock-MuJoCo-stable grasps. All 19 nominal fixed-key images
 have sampled hand surface points more than 0.2 mm inside the cylindrical
 key; maximum sampled depths are 4–15 mm depending on the grasp and hold.
@@ -159,3 +168,37 @@ checks per socket. They do prevent treating that count, or the old images,
 as the number of robot-ready insertion grasps. The runtime must measure the
 post-lift key pose, reject unacceptable drift using calibrated limits, and
 repeat hand/socket endpoint and path checks with the actual hand–key relation.
+
+## Achieved-MuJoCo-pose endpoint comparison
+
+The independent `screen_cylinder_achieved_endpoints.py` reuses the same
+20 mm CAD/whole-hand endpoint checker but pairs each recorded *achieved*
+MuJoCo hand joint vector with its corresponding key-relative wrist pose.
+It separately tests the end of the first squeeze and the end of AutoDex's
+second closure/gravity test. An ID appears in the comparison count only when
+both states avoid the socket. No post-squeeze drift acceptance threshold is
+assumed, and a simulation-achieved pose is not measured robot feedback.
+
+```bash
+PYTHONPATH=demo/precision-insertion \
+  /home/hyunsu/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/screen_cylinder_achieved_endpoints.py \
+  --fidelity-audit /home/hyunsu/shared_data/AutoDex/precision_insertion/cylinder_grasp_fidelity_solid_20261010/summary.json \
+  --shared-root /home/hyunsu/shared_data \
+  --output-root /home/hyunsu/shared_data/AutoDex/precision_insertion/cylinder_achieved_endpoint_solid_verified_20261010 \
+  --minimum-hand-clearance-m 0.000001
+```
+
+| Radial socket gap | Nominal initial-pose clear | Both achieved MuJoCo states clear |
+| --- | ---: | ---: |
+| 1, 3, 5, 10 mm (each) | 13/19 | 13/19 |
+| 15, 20 mm (each) | 13/19 | 12/19 |
+
+The full report is
+`/home/hyunsu/shared_data/AutoDex/precision_insertion/cylinder_achieved_endpoint_solid_verified_20261010/summary.json`.
+At 15 and 20 mm, `table/0/71` loses endpoint clearance: its achieved
+index-finger link intersects the larger socket body (the palm also
+intersects at the 20 mm end-squeeze state). The per-state reports record
+which links intersect and how many vertices lie in solid socket volume.
+This is still **endpoint-only offline evidence**: no continuous insertion,
+Franka motion, physical grasp, or real 20 mm task success has been tested.

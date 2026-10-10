@@ -116,6 +116,10 @@ def test_catalog_selects_pose_and_reuses_v8_loader(tmp_path):
     selected = select_pose_candidates(
         catalog, expected_mode=mode, tabletop_pose_stem="000")
     assert selected["status"] == "candidates_available"
+    outdated = {**catalog, "endpoint_implementation_sha256": {"endpoint.py": "old"}}
+    assert select_pose_candidates(
+        outdated, expected_mode=mode,
+        tabletop_pose_stem="000")["status"] == "catalog_stale"
     assert [row["key"] for row in selected["candidates"]] == [["table", "0", "1"]]
     assert selected["candidates"][0]["uncovered_scene_gain"] == 2
 

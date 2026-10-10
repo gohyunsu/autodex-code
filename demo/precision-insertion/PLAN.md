@@ -145,14 +145,15 @@ grasp only after these offline gates:
 1. BODex candidate and source tabletop scene are internally consistent with
    v8 `object_processing`; hand joints and object-frame wrist transform exist.
 2. Reuse the v8 pregrasp collision, squeeze-contact, and MuJoCo gravity
-stability evidence with verified provenance. Contact location may rank
-grasps, but is not an extra hard restriction unless the task needs one.
+   stability evidence with verified provenance. Contact location may rank
+   grasps, but is not an extra hard restriction unless the task needs one.
 3. For the *nominal* endpoint screen, hold the candidate joints and
-   `T_wrist_key` rigid. Place the **full
-   physical key** at the nominal centered, axis-aligned 20 mm insertion pose
+   `T_wrist_key` rigid. Place the **full physical key** at the nominal
+   centered, axis-aligned 20 mm insertion pose
    and transform every Inspire finger/palm/hand-mount collision link with it.
-   Reject any hand/socket intersection, requiring a documented clearance
-   margin. Check the intended key/socket fit separately: its permitted contact
+   Reject surface intersections **and solid-volume containment**, requiring
+   a documented clearance margin. Check the intended key/socket fit
+   separately: its permitted contact
    is not a forbidden hand/socket collision. Square-key yaw is explicit;
    cylinder axial yaw is quotiented by its symmetry.
 
@@ -177,6 +178,12 @@ screen count**, not a usable-grasp count. Before any physical promotion,
 require a separately calibrated post-lift relation check and redo endpoint
 and live path checks with that observed relation; do not silently add a
 numerical drift cutoff to the original 1,000-seed experiment.
+The separate achieved-MuJoCo-pose endpoint comparison checks both the
+end-squeeze and end-gravity states with paired hand/key transforms. It gives
+13/19 geometry-clear IDs per cylinder socket at 1–10 mm radial gaps and
+12/19 at 15–20 mm; those still require post-lift measurement and live
+motion/contact validation. An old endpoint catalogue is rejected when the
+screening implementation bytes change.
 
 ### Coverage and evidence are different axes
 

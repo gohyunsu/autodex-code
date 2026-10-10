@@ -182,6 +182,36 @@ def _visual_penetration_at_pose(
     }
 
 
+def achieved_hand_state(trajectory: dict, state: str) -> tuple[np.ndarray, np.ndarray, int]:
+    """Return key-frame hand pose and six actual Inspire joints at one phase.
+
+    ``state`` is ``end_squeeze`` or ``end_gravity``. The latter belongs to
+    AutoDex's second closure and 50-step force test, not a lift trajectory.
+    """
+    phases = trajectory.get("phase")
+    robots = trajectory.get("robot_qpos")
+    objects = trajectory.get("object_pose")
+    if (not isinstance(phases, list) or not isinstance(robots, list) or
+            not isinstance(objects, list) or
+            not len(phases) == len(robots) == len(objects)):
+        raise ValueError("incomplete MuJoCo trajectory")
+    phase = {"end_squeeze": "squeeze",
+             "end_gravity": "force_gravity"}.get(state)
+    if phase is None:
+        raise ValueError("unknown achieved MuJoCo state")
+    matches = [i for i, value in enumerate(phases) if value == phase]
+    if not matches:
+        raise ValueError(f"missing MuJoCo phase: {phase}")
+    index = matches[-1]
+    robot = np.asarray(robots[index], dtype=np.float64)
+    if robot.shape != (19,) or not np.all(np.isfinite(robot)):
+        raise ValueError("expected 7 floating-wrist and 12 Inspire joint qpos")
+    hand_q = robot[7:][[0, 1, 4, 6, 8, 10]]
+    T_key_hand = (np.linalg.inv(pose7_to_se3(objects[index])) @
+                  pose7_to_se3(robot[:7]))
+    return T_key_hand, hand_q, index
+
+
 def simulated_visual_penetration_audit(
     *, trajectory: dict, key_mesh_path: Path, robot_urdf: Path,
     points_per_link: int = 300, depth_threshold_m: float = 0.0002,
@@ -195,27 +225,10 @@ def simulated_visual_penetration_audit(
     """
     if points_per_link < 10 or not 0 < depth_threshold_m < 0.01:
         raise ValueError("invalid sampling resolution or penetration tolerance")
-    phases = trajectory.get("phase")
-    robots = trajectory.get("robot_qpos")
-    objects = trajectory.get("object_pose")
-    if (not isinstance(phases, list) or not isinstance(robots, list) or
-            not isinstance(objects, list) or
-            not len(phases) == len(robots) == len(objects)):
-        raise ValueError("incomplete MuJoCo trajectory")
-    squeeze = [i for i, phase in enumerate(phases) if phase == "squeeze"]
-    gravity = [i for i, phase in enumerate(phases) if phase == "force_gravity"]
-    if not squeeze or not gravity or squeeze[-1] >= gravity[0]:
-        raise ValueError("trajectory lacks squeeze followed by gravity")
     _verify_cylinder_mesh(Path(key_mesh_path))
     result = {}
-    for label, index in (("end_squeeze", squeeze[-1]),
-                         ("end_gravity", gravity[-1])):
-        robot = np.asarray(robots[index], dtype=np.float64)
-        if robot.shape != (19,) or not np.all(np.isfinite(robot)):
-            raise ValueError("expected 7 floating-wrist and 12 Inspire joint qpos")
-        hand_q = robot[7:][[0, 1, 4, 6, 8, 10]]
-        T_key_hand = (np.linalg.inv(pose7_to_se3(objects[index])) @
-                      pose7_to_se3(robot[:7]))
+    for label in ("end_squeeze", "end_gravity"):
+        T_key_hand, hand_q, index = achieved_hand_state(trajectory, label)
         result[label] = {
             "trajectory_index": index,
             "achieved_hand_q": hand_q.tolist(),

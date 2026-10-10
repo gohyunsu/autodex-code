@@ -103,10 +103,19 @@ The first independent helpers are in `precision_insertion/`:
   produces `no_safe_direction`, not an override from the VLM.
 - `endpoint.py` evaluates one fixed-grasp candidate using the full metric CAD
   key, exact socket collision mesh, and every Inspire visual link at the
-  centered 20 mm insertion pose. It uses Coal triangle-mesh collision and
-  minimum surface distance, excludes the Franka arm and all trajectories,
-  and records source hashes. This is grasp-level **endpoint** evidence only;
+  centered 20 mm insertion pose. It combines Coal triangle-surface collision
+  and minimum distance with solid-volume vertex containment, so a hand link
+  fully inside socket material is not called clear. A paired simulated or
+  observed hand/key pose may be supplied explicitly; catalogues are bound
+  to the screening implementation hash. It excludes the Franka arm and all
+  trajectories and records source hashes. This is **endpoint** evidence only;
   simulated grasp stability is still a separate v8/MuJoCo gate.
+- `grasp_fidelity.py` and `screen_cylinder_achieved_endpoints.py` audit how
+  the cylinder and hand actually moved during stock MuJoCo closure and then
+  rescreen those paired achieved states at 20 mm for each socket. These
+  diagnostics explain why a fixed-key/commanded-squeeze illustration can
+  show false deep penetration. Their full results and reproduction commands
+  are in [OFFLINE_CYLINDER_1000.md](OFFLINE_CYLINDER_1000.md).
 - `targets.py` validates the selected socket's CAD entry, pre-insertion hold,
   and 20 mm transforms; it composes them with the **session-frozen measured
   socket pose** and one fixed `T_key_hand` grasp relation. An optional XY
