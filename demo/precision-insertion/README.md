@@ -11,6 +11,9 @@ landmarks and a metric report in
 `xy_retry_assessments/NNN/`. It does not call `record_retry`, plan a robot path,
 or send a motion command. The earlier candidate-ID voting path remains
 available for comparison.
+The continuous-offset reports use `precision_insertion_grounded_xy_diagnostic_v2`;
+the evaluator rejects earlier cardinal-step reports rather than silently
+interpreting them as continuous-offset results.
 
 The VLM sees each **raw, full-resolution, undistorted** camera image separately.
 For the smooth cylindrical key it returns the insertion-tip centre and two
@@ -43,19 +46,34 @@ time synchronization and correlated visual bias. It also requires explicit
 parallax, reprojection, tilt, 20 mm sweep and 95% uncertainty limits. Defaults
 are intentionally absent except for three required views. Two can be set
 explicitly for a diagnostic but cannot independently reject a bad camera by
-consensus. The report only suggests one of ±1 mm socket-X/Y moves when the
-95% lower bound of its reduction in mean squared rim/depth error is positive;
-otherwise it abstains. This is a *visual hypothesis*, not certified physical
+consensus. The report estimates the **continuous socket-frame XY correction**
+`(ΔX, ΔY)` that aligns the key axis at the socket rim and 20 mm depth. Only
+the next motion increment is limited to 1 mm in norm, preserving the earlier
+retry-motion bound; it is not quantized to cardinal directions. The increment
+is offered only when the 95% lower bound of its reduction in mean squared
+rim/depth error is positive; otherwise it abstains. This is a *visual
+hypothesis*, not certified physical
 accuracy. Actual key/socket fit, whole-hand clearance, live cuRobo preflight,
 guarded contact and independent task-success measurement remain separate
 requirements. A highly accurate point fit can still be wrong if the VLM
 consistently labels the wrong physical feature, or the fixture moves.
 
+For the lateral key-axis offsets `e₀` at the rim and `e₂₀` at 20 mm depth,
+minimizing `||e₀ + δ||² + ||e₂₀ + δ||²` gives the unique unconstrained
+translation `δ* = -(e₀ + e₂₀)/2`. For the bounded next increment `δ`, its
+squared-error improvement is `-2 e·δ - ||δ||²`, where
+`e = (e₀ + e₂₀)/2`. Its conservative 95% lower bound subtracts
+`2 sqrt(χ²₂(0.95)) sqrt(δᵀΣδ)`, with `Σ` the measured lateral-error
+covariance. The 2D ellipse accounts for selecting a correction from the
+estimated error itself.
+The bound remains conditional on the commissioned pixel-noise and systematic
+error model; held-out coverage must be measured before physical use.
+
 Before allowing this diagnostic to influence a physical retry, collect a
 held-out AutoDex-camera dataset with independently measured cylinder tip/axis
 poses and deliberate ±1 mm socket-frame offsets. Preserve native image sizes,
 capture timestamps and per-camera extrinsics. Measure tip/line pixel errors,
-3D lateral error, axis error, abstention rate and 1 mm direction accuracy
+3D lateral error, axis error, abstention rate and metric XY-correction accuracy
 separately by view and by occlusion. Populate `AlignmentLimits` from those
 held-out results; its numbers must not be guessed from VLM text. Check that
 the shaft centreline is recoverable in at least three simultaneous views.
@@ -86,7 +104,7 @@ python demo/precision-insertion/evaluate_grounded_alignment.py \
 ```
 
 The exclusive output reports abstentions, lateral/axis errors, empirical
-95%-radius coverage and whether the advised 1 mm step truly improved or
+95%-radius coverage and whether the advised bounded XY increment improved or
 worsened alignment. It always reports `robot_ready=false`; source-file hashes
 and a method label cannot themselves certify the metrology's calibration.
 
@@ -96,9 +114,14 @@ are unsuitable as unvalidated millimetre tolerances. 3D feature-based
 insertion servoing motivates using the key and socket axes rather than the
 image's lowest pixel. CAD-constrained pose tracking motivates the longer-term
 silhouette/depth refinement. See the [ZeroDex paper](https://arxiv.org/abs/2606.19340),
+[Hartley–Sturm triangulation](https://doi.org/10.1006/cviu.1997.0547),
+[visual servoing fundamentals](https://doi.org/10.1109/MRA.2006.250573),
 [3D-feature insertion visual servoing](https://arxiv.org/abs/2405.18830),
 [uncertainty-aware triangulation](https://arxiv.org/abs/2008.01258), and
 [FoundationPose](https://arxiv.org/abs/2312.08344).
+The tip-plus-axis-line reconstruction, its confidence gate, and VLM prompts
+are **our adaptation** of these ideas, not a result experimentally validated
+by those papers on this AutoDex rig.
 
 The isolated cylinder BODex 1,000-per-tabletop-scene run, exact filter
 sequence, reproducibility commands, and per-socket 20 mm endpoint counts are
@@ -558,8 +581,8 @@ The first independent helpers are in `precision_insertion/`:
   diagnostic** in `grounded_alignment.py` and `retry_session.py`, described
   above. It uses raw synchronized views, a frozen socket coordinate system,
   triangulated tip and multi-view projected shaft lines. It rejects poor
-  parallax, reprojection, axis tilt, uncertainty or a 1 mm step that cannot
-  confidently improve the lateral residual. Square-key yaw still lacks a
+  parallax, reprojection, axis tilt, uncertainty or a continuous XY increment
+  that cannot confidently improve the lateral residual. Square-key yaw still lacks a
   non-collinear feature, so square mode abstains. The independent held-out
   evaluator is implemented, but no real AutoDex-camera error dataset or
   externally measured held-key pose has been supplied. CAD silhouette/depth

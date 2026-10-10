@@ -8,7 +8,8 @@ If the shaft is hidden, one triangulated tip does not determine key tilt.
 
 All pixels refer to original, undistorted AutoDex images. T_camera_socket is
 composed from the frozen session camera/robot/socket transforms. The returned
-1 mm step is diagnostic; it does not bypass grasp, collision, path or guarded
+continuous XY correction and its at-most-1-mm increment are diagnostic;
+they do not bypass grasp, collision, path or guarded
 contact gates and cannot command the Franka.
 """
 
@@ -162,10 +163,39 @@ def _mean_axis_error(x: np.ndarray, rim_z_m: float,
 
 def _abstain(reason: str, **extra) -> dict:
     return {
-        "schema": "precision_insertion_grounded_alignment_v1",
-        "status": "abstain", "reason": reason, "step_socket_m": None,
+        "schema": "precision_insertion_grounded_alignment_v2",
+        "status": "abstain", "reason": reason,
+        "xy_correction_socket_m": None,
+        "bounded_xy_increment_socket_m": None,
         "scope": "read_only_metric_diagnostic_not_robot_motion",
         "robot_ready": False, **extra,
+    }
+
+
+def _continuous_xy_advice(mean: np.ndarray, cov_xy: np.ndarray) -> dict:
+    """Estimate metric translation, then cap only the *execution increment*.
+
+    For rim/depth axis offsets e0,e1, minimizing
+    ||e0 + d||² + ||e1 + d||² gives d* = -(e0+e1)/2 = -mean.
+    The estimated correction is continuous; the 1 mm bound is an inherited
+    retry-motion limit, not a quantization or a candidate-direction vote.
+    """
+    correction = -np.asarray(mean, dtype=float)
+    magnitude = float(np.linalg.norm(correction))
+    increment = (correction * min(1.0, VLM_XY_STEP_M / magnitude)
+                 if magnitude else correction)
+    improvement = -2 * float(mean @ increment) - float(increment @ increment)
+    # A single 2D confidence ellipse bounds the selected, data-dependent
+    # direction. If true error lies in it, this lower bound is conservative.
+    simultaneous_95 = math.sqrt(float(chi2.ppf(0.95, df=2)))
+    lower = improvement - 2 * simultaneous_95 * math.sqrt(
+        float(increment @ cov_xy @ increment))
+    return {
+        "xy_correction_socket_m": correction.tolist(),
+        "bounded_xy_increment_socket_m": increment.tolist(),
+        "xy_correction_norm_m": magnitude,
+        "increment_norm_m": float(np.linalg.norm(increment)),
+        "increment_squared_error_improvement_lower_95_m2": lower,
     }
 
 
@@ -174,12 +204,12 @@ def estimate_grounded_alignment(
     socket_rim_z_m: float, verification_depth_m: float,
     limits: AlignmentLimits, yaw_relevant: bool = False,
 ) -> dict:
-    """Robust two-landmark triangulation, CAD check, uncertainty, 1 mm step.
+    """Robust two-landmark triangulation, CAD check, continuous XY correction.
 
     A single VLM-selected pixel cannot determine scale or axis by itself.
-    The 1 mm cardinal step minimizes mean lateral error at rim and 20 mm,
-    subject to a 95% lower confidence bound on squared-error improvement.
-    It remains advisory even when all checks pass.
+    The least-squares XY correction minimizes mean lateral error at rim and
+    20 mm. Only its next increment is capped at 1 mm, with a 95% lower
+    confidence bound on squared-error improvement. Both remain advisory.
     """
     limits.validate()
     if (not all(math.isfinite(v) and v > 0 for v in
@@ -294,22 +324,13 @@ def estimate_grounded_alignment(
             np.linalg.eigvalsh(cov_xy).min() <= 0):
         return _abstain("invalid_metric_uncertainty")
     # 2D radial 95% confidence ellipse, not the 1D 1.96-sigma interval.
-    uncertainty_95 = math.sqrt(float(chi2.ppf(0.95, df=2))) * math.sqrt(
+    simultaneous_95 = math.sqrt(float(chi2.ppf(0.95, df=2)))
+    uncertainty_95 = simultaneous_95 * math.sqrt(
         float(np.linalg.eigvalsh(cov_xy).max()))
     if uncertainty_95 > limits.max_lateral_uncertainty_95_m:
         return _abstain("lateral_uncertainty_exceeds_budget",
                         lateral_uncertainty_95_m=uncertainty_95)
-    step = VLM_XY_STEP_M
-    steps = ((step, 0.0), (-step, 0.0), (0.0, step), (0.0, -step))
-    choices = []
-    for move in steps:
-        delta = np.asarray(move)
-        # Equivalent to improvement in the sum of squared rim/depth errors.
-        improvement = -2 * float(np.dot(mean, delta)) - step * step
-        improvement_sigma = 2 * math.sqrt(float(delta @ cov_xy @ delta))
-        choices.append((improvement - 1.96 * improvement_sigma,
-                        improvement, move))
-    lower, improvement, move = max(choices, key=lambda row: row[0])
+    advice = _continuous_xy_advice(mean, cov_xy)
     details = {
         "inlier_cameras": [v.frame.camera_id for v in inliers],
         "rejected_cameras": sorted(set(v.frame.camera_id for v in admitted) -
@@ -325,15 +346,16 @@ def estimate_grounded_alignment(
         "parallax_deg": _parallax(inliers),
         "lateral_covariance_m2": cov_xy.tolist(),
         "lateral_uncertainty_95_m": uncertainty_95,
-        "best_step_squared_error_improvement_lower_95_m2": lower,
+        **advice,
     }
-    if lower <= 0:
-        return _abstain("no_1mm_cardinal_step_has_confident_improvement",
-                        **details)
+    if advice["increment_squared_error_improvement_lower_95_m2"] <= 0:
+        return _abstain("continuous_xy_correction_not_confident", **{
+            k: v for k, v in details.items() if k not in (
+                "xy_correction_socket_m", "bounded_xy_increment_socket_m")})
     return {
-        "schema": "precision_insertion_grounded_alignment_v1",
-        "status": "diagnostic_1mm_step", "reason": "confident_lateral_reduction",
-        "step_socket_m": list(move), **details,
+        "schema": "precision_insertion_grounded_alignment_v2",
+        "status": "diagnostic_metric_xy_correction",
+        "reason": "confident_lateral_reduction", **details,
         "scope": "read_only_metric_diagnostic_not_robot_motion",
         "robot_ready": False,
     }
@@ -589,21 +611,13 @@ def estimate_grounded_line_alignment(
     if (not np.all(np.isfinite(cov_xy)) or
             np.linalg.eigvalsh(cov_xy).min() <= 0):
         return _abstain("invalid_metric_uncertainty")
-    uncertainty_95 = math.sqrt(float(chi2.ppf(0.95, df=2))) * math.sqrt(
+    simultaneous_95 = math.sqrt(float(chi2.ppf(0.95, df=2)))
+    uncertainty_95 = simultaneous_95 * math.sqrt(
         float(np.linalg.eigvalsh(cov_xy).max()))
     if uncertainty_95 > limits.max_lateral_uncertainty_95_m:
         return _abstain("lateral_uncertainty_exceeds_budget",
                         lateral_uncertainty_95_m=uncertainty_95)
-    step = VLM_XY_STEP_M
-    options = ((step, 0.), (-step, 0.), (0., step), (0., -step))
-    candidates = []
-    for move in options:
-        delta = np.asarray(move)
-        improvement = -2 * float(np.dot(mean, delta)) - step * step
-        lower = improvement - 1.96 * 2 * math.sqrt(
-            float(delta @ cov_xy @ delta))
-        candidates.append((lower, move))
-    lower, move = max(candidates, key=lambda row: row[0])
+    advice = _continuous_xy_advice(mean, cov_xy)
     details = {
         "estimator": "multiview_tip_plus_projected_axis_planes",
         "inlier_cameras": [v.frame.camera_id for v in inliers],
@@ -620,15 +634,16 @@ def estimate_grounded_line_alignment(
         "axis_plane_angle_deg": plane_angle,
         "lateral_covariance_m2": cov_xy.tolist(),
         "lateral_uncertainty_95_m": uncertainty_95,
-        "best_step_squared_error_improvement_lower_95_m2": lower,
+        **advice,
     }
-    if lower <= 0:
-        return _abstain("no_1mm_cardinal_step_has_confident_improvement",
-                        **details)
+    if advice["increment_squared_error_improvement_lower_95_m2"] <= 0:
+        return _abstain("continuous_xy_correction_not_confident", **{
+            k: v for k, v in details.items() if k not in (
+                "xy_correction_socket_m", "bounded_xy_increment_socket_m")})
     return {
-        "schema": "precision_insertion_grounded_alignment_v1",
-        "status": "diagnostic_1mm_step", "reason": "confident_lateral_reduction",
-        "step_socket_m": list(move), **details,
+        "schema": "precision_insertion_grounded_alignment_v2",
+        "status": "diagnostic_metric_xy_correction",
+        "reason": "confident_lateral_reduction", **details,
         "scope": "read_only_metric_diagnostic_not_robot_motion",
         "robot_ready": False,
     }

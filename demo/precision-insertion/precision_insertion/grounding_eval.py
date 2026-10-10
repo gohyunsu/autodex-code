@@ -19,9 +19,9 @@ import numpy as np
 
 _SCHEMA = "precision_insertion_grounded_eval_manifest_v1"
 _TRUTH_SCHEMA = "precision_insertion_independent_key_pose_v1"
-_REPORT_SCHEMA = "precision_insertion_grounded_xy_diagnostic_v1"
+_REPORT_SCHEMA = "precision_insertion_grounded_xy_diagnostic_v2"
 _METHODS = frozenset({"external_optical_metrology", "independent_fiducial_pose"})
-_CARDINAL_STEPS = ((.001, 0.), (-.001, 0.), (0., .001), (0., -.001))
+_MAX_INCREMENT_M = .001
 
 
 def _sha(path: Path) -> str:
@@ -160,6 +160,12 @@ def evaluate_grounding_manifest(manifest_path: Path) -> dict:
             raise ValueError("duplicate attempt/camera request in evaluation")
         seen.add(identity)
         alignment = diagnostic["alignment"]
+        if (alignment.get("schema") !=
+                "precision_insertion_grounded_alignment_v2"):
+            raise ValueError("unsupported grounded alignment result schema")
+        if alignment.get("status") not in {
+                "abstain", "diagnostic_metric_xy_correction"}:
+            raise ValueError("unsupported grounded alignment status")
         true_mean, entry, depth = _true_residuals(truth, alignment)
         estimate = alignment.get("mean_error_xy_m")
         estimate_xy = (None if estimate is None else
@@ -177,19 +183,48 @@ def evaluate_grounding_manifest(manifest_path: Path) -> dict:
                 estimated_axis @ true_axis / axis_norm, -1, 1))))
         else:
             axis_error_deg = None
-        suggested = alignment.get("step_socket_m")
-        if (suggested is not None and
-                (alignment.get("status") != "diagnostic_1mm_step" or
-                 tuple(suggested) not in _CARDINAL_STEPS)):
-            raise ValueError("diagnostic step is not a single cardinal millimetre")
-        if alignment.get("status") == "diagnostic_1mm_step" and suggested is None:
-            raise ValueError("advice status lacks its 1 mm step")
+        suggested = alignment.get("bounded_xy_increment_socket_m")
+        full_correction = alignment.get("xy_correction_socket_m")
+        if alignment.get("status") == "diagnostic_metric_xy_correction":
+            if suggested is None or full_correction is None:
+                raise ValueError("metric advice lacks correction/increment")
+            delta = _finite_vector(suggested, 2, "bounded XY increment")
+            full = _finite_vector(full_correction, 2, "full XY correction")
+            if estimate_xy is None or not np.allclose(
+                    full, -estimate_xy, atol=1e-10, rtol=0):
+                raise ValueError("full correction disagrees with observed axis error")
+            norm = float(np.linalg.norm(full))
+            expected = full * min(1., _MAX_INCREMENT_M / norm) if norm else full
+            if (norm <= 0 or np.linalg.norm(delta) > _MAX_INCREMENT_M + 1e-10
+                    or not np.allclose(delta, expected, atol=1e-10, rtol=0)):
+                raise ValueError("metric increment is not a bounded correction")
+            covariance = np.asarray(alignment.get("lateral_covariance_m2"),
+                                    dtype=float)
+            if (covariance.shape != (2, 2) or
+                    not np.all(np.isfinite(covariance)) or
+                    not np.allclose(covariance, covariance.T, atol=1e-15) or
+                    np.linalg.eigvalsh(covariance).min() <= 0):
+                raise ValueError("metric increment lacks positive covariance")
+            improvement = (-2 * float(estimate_xy @ delta) -
+                           float(delta @ delta))
+            lower = (improvement - 2 * math.sqrt(-2 * math.log(.05)) *
+                     math.sqrt(float(delta @ covariance @ delta)))
+            reported_lower = float(alignment.get(
+                "increment_squared_error_improvement_lower_95_m2", math.nan))
+            if (lower <= 0 or not math.isfinite(reported_lower) or
+                    not math.isclose(lower, reported_lower,
+                                     rel_tol=1e-6, abs_tol=1e-14)):
+                raise ValueError("metric increment lacks valid 95% improvement")
+        elif suggested is not None or full_correction is not None:
+            raise ValueError("abstained diagnostic contains actionable XY offset")
         truth_improvement = None
-        best_improvement = max(-2 * float(true_mean @ np.asarray(step)) - 1e-6
-                               for step in _CARDINAL_STEPS)
+        true_norm = float(np.linalg.norm(true_mean))
+        best_improvement = (true_norm ** 2 if true_norm <= _MAX_INCREMENT_M
+                            else 2 * true_norm * _MAX_INCREMENT_M -
+                            _MAX_INCREMENT_M ** 2)
         if suggested is not None:
             delta = np.asarray(suggested, dtype=float)
-            truth_improvement = -2 * float(true_mean @ delta) - 1e-6
+            truth_improvement = -2 * float(true_mean @ delta) - float(delta @ delta)
         error_m = (None if estimate_xy is None else
                    float(np.linalg.norm(estimate_xy - true_mean)))
         radius = alignment.get("lateral_uncertainty_95_m")
@@ -211,15 +246,17 @@ def evaluate_grounding_manifest(manifest_path: Path) -> dict:
             "axis_angle_error_deg": axis_error_deg,
             "inside_reported_95_radius": (None if error_m is None or radius is None
                                           else error_m <= radius),
-            "advised_step_socket_m": suggested,
-            "advised_step_true_improvement_m2": truth_improvement,
-            "advised_step_reduces_true_error": (None if truth_improvement is None
-                                               else truth_improvement > 0),
-            "advised_step_is_best_cardinal": (
+            "estimated_full_correction_socket_m": full_correction,
+            "advised_xy_increment_socket_m": suggested,
+            "advised_increment_true_improvement_m2": truth_improvement,
+            "advised_increment_reduces_true_error": (
+                None if truth_improvement is None else truth_improvement > 0),
+            "advised_increment_regret_m2": (
                 None if truth_improvement is None else
-                truth_improvement >= best_improvement - 1e-12),
+                max(0., best_improvement - truth_improvement)),
         })
-    advised = [row for row in rows if row["advised_step_socket_m"] is not None]
+    advised = [row for row in rows
+               if row["advised_xy_increment_socket_m"] is not None]
     errors = [row["estimated_lateral_error_m"] for row in rows
               if row["estimated_lateral_error_m"] is not None]
     axis_errors = [row["axis_angle_error_deg"] for row in rows
@@ -232,10 +269,11 @@ def evaluate_grounding_manifest(manifest_path: Path) -> dict:
         "sample_count": len(rows), "estimate_count": len(errors),
         "advice_count": len(advised),
         "abstention_count": len(rows) - len(advised),
-        "false_advice_count": sum(row["advised_step_reduces_true_error"] is False
+        "false_advice_count": sum(row["advised_increment_reduces_true_error"] is False
                                   for row in advised),
-        "best_cardinal_advice_count": sum(
-            row["advised_step_is_best_cardinal"] is True for row in advised),
+        "median_increment_regret_m2": (
+            None if not advised else float(np.median([
+                row["advised_increment_regret_m2"] for row in advised]))),
         "empirical_95_radius_coverage": (
             None if not covered else sum(
                 row["inside_reported_95_radius"] is True for row in covered

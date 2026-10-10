@@ -357,7 +357,7 @@ def test_grounded_diagnostic_binds_failure_and_never_records_retry(
     output = write_retry_session_artifacts(
         result, kwargs["frames"], tmp_path / "grounded_diagnostic")
     saved = json.loads((output / "report.json").read_text())
-    assert saved["schema"] == "precision_insertion_grounded_xy_diagnostic_v1"
+    assert saved["schema"] == "precision_insertion_grounded_xy_diagnostic_v2"
     assert saved["frame_request_id"] == kwargs["frame_request_id"]
     assert saved["task_geometry_sha256"] == hashlib.sha256(
         fixture.read_bytes()).hexdigest()

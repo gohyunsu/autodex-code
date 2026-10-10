@@ -187,7 +187,7 @@ class GroundedXYDiagnostic:
 
     def to_record(self) -> dict:
         return {
-            "schema": "precision_insertion_grounded_xy_diagnostic_v1",
+            "schema": "precision_insertion_grounded_xy_diagnostic_v2",
             "status": self.status,
             "attempt_id": self.attempt_id,
             "candidate_id": self.candidate_id,
@@ -700,13 +700,15 @@ def assess_grounded_xy_diagnostic(
             socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
             verification_depth_m=mode.target_depth_m,
             limits=alignment_limits)
-    step = alignment["step_socket_m"]
-    if step is not None:
-        proposed = np.asarray(attempt.xy_offset_socket_m) + np.asarray(step)
+    increment = alignment["bounded_xy_increment_socket_m"]
+    if increment is not None:
+        proposed = (np.asarray(attempt.xy_offset_socket_m) +
+                    np.asarray(increment))
         if np.linalg.norm(proposed) > limits.max_total_offset_m:
             alignment = dict(alignment, status="abstain",
                              reason="proposed_offset_exceeds_session_budget",
-                             step_socket_m=None)
+                             xy_correction_socket_m=None,
+                             bounded_xy_increment_socket_m=None)
     alignment = dict(
         alignment, estimator_limits=asdict(alignment_limits),
         key_object=mode.key_object, socket_object=mode.socket_object,

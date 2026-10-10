@@ -69,12 +69,16 @@ def _estimate(rows, **kwargs):
         verification_depth_m=0.02, limits=_limits(), **kwargs)
 
 
-def test_metric_1mm_step_comes_from_triangulated_tip_and_axis():
+def test_continuous_xy_offset_comes_from_triangulated_tip_and_axis():
     tip = np.array([0.0016, -0.0002, 0.09])
     ref = tip + [0, 0, 0.05]
     result = _estimate(_rig(tip, ref))
-    assert result["status"] == "diagnostic_1mm_step"
-    assert result["step_socket_m"] == [-0.001, 0.0]
+    assert result["status"] == "diagnostic_metric_xy_correction"
+    assert result["xy_correction_socket_m"] == pytest.approx(
+        [-.0016, .0002], abs=1e-7)
+    assert np.linalg.norm(result["bounded_xy_increment_socket_m"]) == (
+        pytest.approx(.001))
+    assert result["bounded_xy_increment_socket_m"][1] > 0
     assert result["mean_error_xy_m"] == pytest.approx(tip[:2], abs=1e-7)
     assert result["robot_ready"] is False
 
@@ -82,9 +86,10 @@ def test_metric_1mm_step_comes_from_triangulated_tip_and_axis():
 def test_wrong_view_landmark_is_rejected_not_averaged():
     tip = np.array([0.0017, 0, 0.09])
     result = _estimate(_rig(tip, tip + [0, 0, 0.05], outlier=True))
-    assert result["status"] == "diagnostic_1mm_step"
+    assert result["status"] == "diagnostic_metric_xy_correction"
     assert result["rejected_cameras"] == ["back"]
-    assert result["step_socket_m"] == [-0.001, 0.0]
+    assert result["xy_correction_socket_m"] == pytest.approx(
+        [-.0017, 0.], abs=1e-7)
 
 
 def test_one_point_only_cannot_determine_axis():
@@ -106,10 +111,27 @@ def test_tilt_and_square_yaw_cannot_be_solved_by_xy():
         "two_collinear_landmarks_cannot_estimate_square_key_yaw")
 
 
-def test_tiny_error_does_not_justify_a_whole_millimeter():
+def test_tiny_error_does_not_justify_even_a_continuous_increment():
     tip = np.array([0.0002, 0, 0.09])
     assert _estimate(_rig(tip, tip + [0, 0, 0.05]))["reason"] == (
-        "no_1mm_cardinal_step_has_confident_improvement")
+        "continuous_xy_correction_not_confident")
+
+
+def test_submillimetre_offset_is_not_forced_into_a_cardinal_step():
+    # This was incorrectly rejected when forced into a full 1 mm move.
+    # Continuous XY uses the observed error; only an actual execution
+    # increment exceeding 1 mm would be capped.
+    tip = np.array([.00072, 0., .09])
+    result = estimate_grounded_alignment(
+        _rig(tip, tip + [0, 0, .05]), landmark_spacing_m=.05,
+        socket_rim_z_m=.055, verification_depth_m=.02,
+        limits=_limits(systematic_lateral_sigma_m=.0001))
+    assert result["status"] == "diagnostic_metric_xy_correction"
+    assert result["xy_correction_socket_m"] == pytest.approx(
+        [-.00072, 0.], abs=1e-7)
+    assert result["bounded_xy_increment_socket_m"] == pytest.approx(
+        [-.00072, 0.], abs=1e-7)
+    assert result["increment_squared_error_improvement_lower_95_m2"] > 0
 
 
 def test_no_parallax_and_uncertain_calibration_abstain():
@@ -181,17 +203,30 @@ def _line_estimate(rows, **limit_overrides):
 def test_cylinder_tip_plus_visible_axis_line_needs_no_second_physical_point():
     tip = np.array([.0018, -.0002, .09])
     result = _line_estimate(_line_rig(tip, np.array([0, 0, -1.])))
-    assert result["status"] == "diagnostic_1mm_step"
-    assert result["step_socket_m"] == [-.001, 0.]
+    assert result["status"] == "diagnostic_metric_xy_correction"
+    assert result["xy_correction_socket_m"] == pytest.approx(
+        [-.0018, .0002], abs=1e-6)
+    assert np.linalg.norm(result["bounded_xy_increment_socket_m"]) == (
+        pytest.approx(.001))
     assert result["mean_error_xy_m"] == pytest.approx(tip[:2], abs=1e-6)
     assert len(result["inlier_cameras"]) == 4
+
+
+def test_cylinder_line_proposes_continuous_submillimetre_correction():
+    tip = np.array([.00072, 0., .09])
+    result = _line_estimate(
+        _line_rig(tip, np.array([0, 0, -1.])),
+        systematic_lateral_sigma_m=.0001)
+    assert result["status"] == "diagnostic_metric_xy_correction"
+    assert result["bounded_xy_increment_socket_m"] == pytest.approx(
+        [-.00072, 0.], abs=1e-6)
 
 
 def test_line_estimator_rejects_bad_view_and_tilt():
     tip = np.array([.0018, 0, .09])
     result = _line_estimate(_line_rig(tip, np.array([0, 0, -1.]),
                                       outlier=True))
-    assert result["status"] == "diagnostic_1mm_step"
+    assert result["status"] == "diagnostic_metric_xy_correction"
     assert result["rejected_cameras"] == ["other"]
     axis = np.array([.25, 0., -.96824583655])
     assert _line_estimate(_line_rig(tip, axis))["reason"] == (

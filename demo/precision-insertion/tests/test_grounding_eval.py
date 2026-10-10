@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 from pathlib import Path
 import sys
 
@@ -31,7 +32,7 @@ def _sample(tmp_path):
     image.write_bytes(b"saved raw frame")
     diagnostic = directory / "report.json"
     _save(diagnostic, {
-        "schema": "precision_insertion_grounded_xy_diagnostic_v1",
+        "schema": "precision_insertion_grounded_xy_diagnostic_v2",
         "robot_ready": False,
         "attempt_id": "trial1", "candidate_id": "table/0/1",
         "session_calibration_sha256": "a" * 64,
@@ -41,12 +42,17 @@ def _sample(tmp_path):
                                     "max_error_s": .001}},
         "artifacts_sha256": {"frames/front.png": _sha(image)},
         "alignment": {
-            "status": "diagnostic_1mm_step",
+            "schema": "precision_insertion_grounded_alignment_v2",
+            "status": "diagnostic_metric_xy_correction",
             "reason": "confident_lateral_reduction",
-            "step_socket_m": [-.001, 0.],
+            "xy_correction_socket_m": [-.0015, 0.],
+            "bounded_xy_increment_socket_m": [-.001, 0.],
             "socket_entry_plane_z_m": .055,
             "verification_depth_m": .02,
             "mean_error_xy_m": [.0015, 0.],
+            "lateral_covariance_m2": [[1e-8, 0.], [0., 1e-8]],
+            "increment_squared_error_improvement_lower_95_m2": (
+                2e-6 - 2 * math.sqrt(-2 * math.log(.05)) * 1e-7),
             "insertion_axis_socket": [0., 0., -1.],
             "lateral_uncertainty_95_m": .0003,
         },
@@ -80,13 +86,13 @@ def _sample(tmp_path):
     return manifest, diagnostic, truth, image
 
 
-def test_evaluation_reports_true_1mm_direction_and_uncertainty(tmp_path):
+def test_evaluation_reports_true_continuous_increment_and_uncertainty(tmp_path):
     manifest, _diagnostic, _truth, _image = _sample(tmp_path)
     result = evaluate_grounding_manifest(manifest)
     assert result["sample_count"] == 1
     assert result["advice_count"] == 1
     assert result["false_advice_count"] == 0
-    assert result["best_cardinal_advice_count"] == 1
+    assert result["median_increment_regret_m2"] == pytest.approx(0.)
     assert result["median_lateral_error_m"] == pytest.approx(.0001)
     assert result["median_axis_error_deg"] == pytest.approx(0.)
     assert result["empirical_95_radius_coverage"] == 1.
@@ -124,12 +130,32 @@ def test_evaluation_rejects_unbounded_or_nonindependent_reference(tmp_path):
 def test_evaluation_flags_wrong_direction_without_promoting(tmp_path):
     manifest, report, _truth, _image = _sample(tmp_path)
     value = json.loads(report.read_text())
-    value["alignment"]["step_socket_m"] = [.001, 0.]
+    value["alignment"]["mean_error_xy_m"] = [-.0015, 0.]
+    value["alignment"]["xy_correction_socket_m"] = [.0015, 0.]
+    value["alignment"]["bounded_xy_increment_socket_m"] = [.001, 0.]
     _save(report, value)
     result = evaluate_grounding_manifest(manifest)
     assert result["false_advice_count"] == 1
-    assert result["best_cardinal_advice_count"] == 0
+    assert result["median_increment_regret_m2"] > 0
     assert result["robot_ready"] is False
+
+
+def test_evaluation_rejects_legacy_cardinal_report(tmp_path):
+    manifest, report, _truth, _image = _sample(tmp_path)
+    value = json.loads(report.read_text())
+    value["schema"] = "precision_insertion_grounded_xy_diagnostic_v1"
+    _save(report, value)
+    with pytest.raises(ValueError, match="read-only grounded XY diagnostic"):
+        evaluate_grounding_manifest(manifest)
+
+
+def test_evaluation_rejects_inconsistent_continuous_correction(tmp_path):
+    manifest, report, _truth, _image = _sample(tmp_path)
+    value = json.loads(report.read_text())
+    value["alignment"]["xy_correction_socket_m"] = [.0015, 0.]
+    _save(report, value)
+    with pytest.raises(ValueError, match="disagrees with observed axis error"):
+        evaluate_grounding_manifest(manifest)
 
 
 def test_cli_writes_report_exclusively(tmp_path):
