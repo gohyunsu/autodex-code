@@ -82,6 +82,10 @@ presently carried into SHM. Reading/validating that timestamp per imaging
 camera (or instrumenting an external trigger) and measuring its UTC clock
 conversion is the next capture-PC commissioning task. No real calibration
 record is included, so the adapter cannot make the current rig robot-ready.
+An opt-in [same-image chunk journal](CAMERA_CHUNK_CAPTURE.md) now records raw
+frame/tick pairs without changing ParaDex source. It remains an offline
+commissioning input: raw ticks and host receipt time are **not** UTC exposure
+measurements and are never fed into a session by themselves.
 
 ## What the existing AutoDex path actually provides
 
