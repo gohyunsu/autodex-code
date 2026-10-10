@@ -903,12 +903,22 @@ print(result.to_record())  # review only; not a robot command
 timestamps above are placeholders. Lift and insertion comparisons now reject
 unpaired camera IDs, duplicate phase frames, or reversed timestamps; a front
 "before" image cannot be compared to a side "after" image as if it tracked
-one object. The optional Gemini adapter accepts an
-already-configured `google.genai.Client` and a model ID instead. Both
-adapters require the ZeroDex package importable at runtime. Neither adapter
-chooses cameras, creates image crops/overlays, measures key depth, or executes
-Franka commands. A future capture adapter must supply those inputs and log
-the raw images alongside every VLM response.
+one object. The optional Gemini adapter accepts an already-configured
+`google.genai.Client` and a model ID, or explicitly reads `GEMINI_API_KEY` via
+`ZeroDexGeminiBackend.from_env(model="YOUR_MODEL_ID")`. Install the optional
+`google-genai` package in the execution environment first with
+`python -m pip install -r demo/precision-insertion/requirements-gemini.txt`
+(the pin matches the local ZeroDex checkout). Unlike the earlier
+adapter, Gemini no longer imports ZeroDex's complete voting script, which
+also imports unrelated local-model dependencies; it sends the same ordered
+PNG images plus one text prompt through the Google Gen AI SDK. The local
+adapter still requires the ZeroDex package and model weights. In either case,
+no key is saved in trial reports, and calling Gemini sends camera images to
+an external API. The configured backend is passed explicitly to the relevant
+`SessionRunner` observation method; there is no implicit model/API call.
+Neither adapter chooses cameras, creates image crops/overlays, measures key
+depth, or executes Franka commands. A future capture adapter must supply those
+inputs and log the raw images alongside every VLM response.
 
 Run the read-only asset audit from the repository root, for example:
 

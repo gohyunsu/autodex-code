@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+from types import ModuleType, SimpleNamespace
 
 from PIL import Image
 import pytest
@@ -13,7 +14,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.observer import (  # noqa: E402
-    HeldSceneView, LabeledFrame, XYView, ZeroDexLocalBackend,
+    HeldSceneView, LabeledFrame, XYView, ZeroDexGeminiBackend,
+    ZeroDexLocalBackend,
     observe_insertion_visual, observe_lift, observe_preinsert_hold_views,
     observe_xy_views,
 )
@@ -42,6 +44,56 @@ def _frames(before="before_grasp", after="after_lift"):
         LabeledFrame("front", before, 1.0, _image()),
         LabeledFrame("front", after, 2.0, _image()),
     ]
+
+
+def test_gemini_backend_requires_explicit_key_without_leaking_it(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY is not configured"):
+        ZeroDexGeminiBackend.from_env(model="test-model")
+    monkeypatch.setenv("GEMINI_API_KEY", "secret-for-test")
+    sent = []
+    google = ModuleType("google")
+    genai = ModuleType("google.genai")
+    sdk_types = ModuleType("google.genai.types")
+
+    class Part:
+        @staticmethod
+        def from_bytes(*, data, mime_type):
+            return (mime_type, data)
+
+        @staticmethod
+        def from_text(*, text):
+            return ("text", text)
+
+    class Client:
+        def __init__(self, *, api_key):
+            assert api_key == "secret-for-test"
+            self.models = SimpleNamespace(generate_content=self.generate_content)
+
+        def generate_content(self, **kwargs):
+            sent.append(kwargs)
+            return SimpleNamespace(text='{"class":"held"}')
+
+    sdk_types.Part = Part
+    sdk_types.Content = lambda **kwargs: kwargs
+    sdk_types.ThinkingConfig = lambda **kwargs: kwargs
+    sdk_types.GenerateContentConfig = lambda **kwargs: kwargs
+    genai.Client = Client
+    genai.types = sdk_types
+    google.genai = genai
+    for name, module in (("google", google), ("google.genai", genai),
+                         ("google.genai.types", sdk_types)):
+        monkeypatch.setitem(sys.modules, name, module)
+    backend = ZeroDexGeminiBackend.from_env(model="test-model")
+    answer = backend.infer([_image(), _image()], "label the held key")
+    assert answer == '{"class":"held"}'
+    assert sent[0]["model"] == "test-model"
+    parts = sent[0]["contents"][0]["parts"]
+    assert [part[0] for part in parts] == ["image/png", "image/png", "text"]
+    assert all(part[1].startswith(b"\x89PNG") for part in parts[:2])
+    assert parts[-1][1] == "label the held key"
+    assert sent[0]["config"]["thinking_config"]["thinking_level"] == "LOW"
+    assert "secret-for-test" not in str(sent)
 
 
 def test_lift_prompt_preserves_image_order_and_validates_closed_set():

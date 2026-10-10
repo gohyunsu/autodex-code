@@ -8,8 +8,10 @@ does not measure millimetres or authorize a retry or insertion contact.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import io
 import json
 import math
+import os
 import re
 import time
 from typing import Protocol, Sequence
@@ -100,24 +102,63 @@ class PreinsertVisualAssessment:
 
 
 class ZeroDexGeminiBackend:
-    """Reuse ZeroDex's Gemini multi-image request; client/key are injected."""
+    """ZeroDex-style ordered multi-image Gemini request without its CLI imports.
+
+    Only inference is reused conceptually. Importing ZeroDex's full voting
+    script also imports local-model/vision dependencies unrelated to Gemini;
+    this narrow adapter preserves its PNG-part ordering and one-turn prompt.
+    The key is never persisted or included in observation records.
+    """
 
     def __init__(self, client, model: str, *, thinking_level: str = "LOW"):
+        if (client is None or not isinstance(model, str) or not model.strip() or
+                thinking_level not in {"MINIMAL", "LOW", "MEDIUM", "HIGH"}):
+            raise ValueError("Gemini needs a client, model and valid thinking level")
         self.client = client
         self.model = model
         self.thinking_level = thinking_level
 
-    def infer(self, images: list[Image.Image], prompt: str) -> str:
+    @classmethod
+    def from_env(cls, *, model: str, env_name: str = "GEMINI_API_KEY",
+                 thinking_level: str = "LOW") -> "ZeroDexGeminiBackend":
+        """Explicit opt-in; fail closed if SDK/key is absent (no API call)."""
+        if env_name != "GEMINI_API_KEY":
+            raise ValueError("precision Gemini key must use GEMINI_API_KEY")
+        key = os.environ.get(env_name, "").strip()
+        if not key:
+            raise RuntimeError("GEMINI_API_KEY is not configured")
         try:
-            from mv_grounding_voting.mv_grounding_depth_voting import infer_gemini_multi
+            from google import genai
+        except ImportError as exc:
+            raise RuntimeError("Install google-genai for Gemini inference") from exc
+        return cls(genai.Client(api_key=key), model,
+                   thinking_level=thinking_level)
+
+    def infer(self, images: list[Image.Image], prompt: str) -> str:
+        if (not isinstance(prompt, str) or not prompt.strip() or
+                not images or any(not isinstance(img, Image.Image)
+                                  for img in images)):
+            raise ValueError("Gemini needs ordered PIL images and a prompt")
+        try:
+            from google.genai import types
         except ImportError as exc:
             raise RuntimeError(
-                "Install the ZeroDex realtime_vlm package on PYTHONPATH "
-                "to use its Gemini inference helper") from exc
-        answer, _elapsed = infer_gemini_multi(
-            self.client, self.model, images, prompt,
-            thinking_level=self.thinking_level)
-        return answer
+                "Install google-genai for Gemini inference") from exc
+        parts = []
+        for img in images:
+            stream = io.BytesIO()
+            img.save(stream, format="PNG")
+            parts.append(types.Part.from_bytes(
+                data=stream.getvalue(), mime_type="image/png"))
+        parts.append(types.Part.from_text(text=prompt))
+        response = self.client.models.generate_content(
+            model=self.model,
+            contents=[types.Content(role="user", parts=parts)],
+            config=types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(
+                    thinking_level=self.thinking_level)),
+        )
+        return (response.text or "").strip()
 
 
 class ZeroDexLocalBackend:

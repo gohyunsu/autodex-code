@@ -1,0 +1,2 @@
+# Optional inference-only dependency; match realtime_vlm/requirements.txt.
+google-genai==1.73.1
