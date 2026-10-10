@@ -4,8 +4,10 @@ The new **square/cylinder dual-mode** asset inventory, offline scenario
 selection, VLM observation, bounded retry policy, execution-sequence
 comparison, and exact usage are in
 [`docs/precision_insertion_modes.md`](../../docs/precision_insertion_modes.md).
-Robot insertion is not yet implemented; `run_pipeline.py` still executes
-the original AutoDex grasp/lift/place path.
+Robot insertion is not yet implemented. The original `run_pipeline.py` remains
+the AutoDex grasp/lift/place path and no longer accepts precision-specific
+socket preflight options. All future insertion runtime work belongs under
+[`demo/precision-insertion/`](../../demo/precision-insertion/README.md).
 
 For the symmetric cylindrical task, build and validate the supplied metric
 STLs with the same v8 `object_processing`/`AutoDex/scene` layout:
@@ -23,15 +25,12 @@ The stable object IDs are `precision_key_cylinder_r15_h80` and
 `precision_socket_cylinder_gap_01mm` through `..._20mm`. The key is D∞ and
 therefore has two symmetry-reduced tabletop classes (end-down and side-down);
 the open-rim socket is C∞ about local z but has no end-for-end symmetry.
-`run_pipeline.py --socket-object precision_socket_cylinder_gap_20mm` consumes
-that metadata during session preflight. It ignores unobservable socket yaw,
-but still rejects excessive center or axis variation. Generated geometry does
-not supply FoundPose weights, BODex grasps, full-task trajectories, or physical
-validation; the validator reports each such runtime blocker explicitly.
-The cylinder key requires an explicit matching `--socket-object`; passing the
-default square `precision_socket_unified` now fails before robot/camera startup.
-The default segmentation prompt switches to a round-opening prompt for this
-key. This is still the original grasp/lift/place runner, not insertion control.
+The independent demo's local geometry helper can ignore unobservable socket
+yaw while rejecting excessive center or axis variation; it is not wired to a
+robot runner yet. Generated geometry does not supply FoundPose weights, BODex
+grasps, full-task trajectories, or physical validation. The future demo must
+require an explicitly matching socket and round-opening segmentation prompt
+before camera or robot startup.
 
 The **canonical path layout is shared with the square-key assets**. Source
 STLs live in this repository under `assets/precision_insertion/`; runtime
@@ -892,41 +891,19 @@ a representation. When capturing the socket, the segmentation prompt should
 include the whole red fixture and keyed opening; masking only the nearly
 symmetric exterior makes yaw underconstrained.
 
-Once the representation and a matching AutoDex calibration are available,
-`run_pipeline.py` measures the socket at each process start. The default
-`--socket-preflight auto` means "measure for `precision_key_*`, skip for other
-objects". It takes three independent multi-view estimates, transforms each
-`T_world_socket` into `T_robot_socket = inv(C2R) @ T_world_socket`, selects an
-actually observed SE(3) medoid, and rejects the session if any residual from
-that medoid exceeds 2 mm or 2 degrees. These defaults are a bring-up
-repeatability gate, **not** evidence of sub-millimetre absolute accuracy.
+The previous feature-branch version of `run_pipeline.py` measured the socket,
+but those edits have been removed to preserve original AutoDex behavior. The
+independent demo will first measure ChArUco, then take multiple multi-view
+socket estimates, transform each `T_world_socket` into
+`T_robot_socket = inv(C2R) @ T_world_socket`, select an observed SE(3) medoid,
+and check its repeatability. The earlier 2 mm / 2 degree thresholds were
+bring-up gates, **not** evidence of sub-millimetre absolute accuracy.
 
-The accepted pose is written only under that run's
-`~/shared_data/AutoDex/experiment/<exp_name>/<hand>/<key>/`
-`_socket_preflight_<timestamp>/fixture_pose.session.json`. It is then frozen
-in memory and the exact concave `static_collision.obj` is inserted into every
-normal and reorientation-recovery planning scene. The pose is never reread or
-updated inside the trial loop. If the physical fixture moves, abort and start
-a new session; do not edit a session JSON or promote it into a global
-`fixture_pose.json`.
-
-After all runtime gates below pass, the 1.5 mm pickup-only bring-up command is:
-
-```bash
-~/miniconda3/envs/autodex_bodex/bin/python src/execution/run_pipeline.py \
-  --obj precision_key_1p5mm --arm franka --hand inspire \
-  --grasp_version v8 --candidate-scene-type table \
-  --pc_list capture1 capture2 capture3 capture5 capture6 \
-  --calib_dir <AUTODEX_CALIB_DIR> \
-  --socket-preflight measure \
-  --socket-measurements 3 --charuco-preflight measure \
-  --isolate_experiment --exp_name precision_insertion_1p5_bringup \
-  --max_trials 1
-```
-
-This command still executes the current grasp/lift task. It measures and
-collision-registers the socket but does not insert the key: the insertion
-motion task/controller is deliberately a remaining implementation gate.
+The future session record will freeze that measured pose and insert the exact
+concave `static_collision.obj` into each planning scene. If the fixture moves,
+abort and start a new session. There is currently **no supported command**
+to run socket-aware precision insertion on the robot; do not pass the removed
+`--socket-preflight` or `--socket-object` options to the original runner.
 
 ## AutoDex camera profile
 

@@ -5,7 +5,6 @@ init-pipeline-based runner (and any future entry points).
 """
 from __future__ import annotations
 
-import copy
 import glob
 import os
 from typing import Optional
@@ -16,8 +15,6 @@ import trimesh
 from autodex.utils.conversion import se32cart
 from autodex.utils.path import obj_path
 from autodex.utils.tabletop_geometry import table_cuboid, table_surface_z_at_xy
-
-from src.execution.session_fixtures import validate_se3
 
 
 # Physical tabletop top in the robot frame.  Keep the object snap and the
@@ -31,7 +28,6 @@ CYLINDER_OBJECTS = [
     "pepper_tuna", "pepper_tuna_light", "pepsi", "pepsi_light",
     "smallbowl", "jja_ramen", "open_short_pringles",
     "beige_brush",
-    "precision_key_cylinder_r15_h80",
 ]
 
 # Spherical objects — use first tabletop pose rotation directly.
@@ -135,55 +131,28 @@ def _snap_cylinder_pose(pose_robot: np.ndarray, obj_name: str,
     if not tabletop_files:
         return pose_robot
 
-    # Resolve the actual continuous-symmetry axis from the asset.  Historical
-    # cans use local y, while the precision cylinder is authored along local z.
-    # Falling back to y preserves the old objects' behavior when metadata is
-    # missing.
-    from autodex.utils.symmetry import get_asset_symmetry
-
-    symmetry = get_asset_symmetry(obj_name, obj_root) or []
-    axis_local = np.array([0.0, 1.0, 0.0])
-    for axis, fold in symmetry:
-        if fold is None:
-            axis_local = np.asarray(axis, dtype=float)
-            axis_local /= np.linalg.norm(axis_local) + 1e-12
-            break
-
     R_est = pose_robot[:3, :3]
-    axis_est = R_est @ axis_local
+    y_est = R_est @ np.array([0, 1, 0])
 
     best_diff = float("inf")
     best_R_tab = R_est
     for tf in tabletop_files:
         R_tab = np.load(tf)[:3, :3]
-        axis_tab = R_tab @ axis_local
-        end_exchange = any(fold == 2 for _axis, fold in symmetry)
-        diff = (np.abs(np.abs(axis_est[2]) - np.abs(axis_tab[2]))
-                if end_exchange else np.abs(axis_est[2] - axis_tab[2]))
+        y_tab_z = R_tab[2, 1]
+        diff = np.abs(np.abs(y_est[2]) - np.abs(y_tab_z))
         if diff < best_diff:
             best_diff = diff
             best_R_tab = R_tab.copy()
-            # Dinf objects have identical ends, so the symmetry comparison is
-            # axial (an unoriented line).  Cinf objects retain the axis sign.
-            if axis_est[2] * axis_tab[2] < 0:
-                if end_exchange:
-                    best_R_tab = best_R_tab @ np.diag([1, -1, -1]).astype(float)
+            if y_est[2] * y_tab_z < 0:
+                best_R_tab = best_R_tab @ np.diag([1, -1, -1]).astype(float)
 
-    axis_tab = best_R_tab @ axis_local
-    est_xy = np.linalg.norm(axis_est[:2])
-    tab_xy = np.linalg.norm(axis_tab[:2])
-    # For an upright body of revolution, world yaw is unobservable and does
-    # not change task geometry.  Keep the canonical tabletop yaw.
-    phi = 0.0 if min(est_xy, tab_xy) < 1e-8 else (
-        np.arctan2(axis_est[1], axis_est[0])
-        - np.arctan2(axis_tab[1], axis_tab[0])
-    )
+    y_tab = best_R_tab[:, 1]
+    phi = np.arctan2(y_est[1], y_est[0]) - np.arctan2(y_tab[1], y_tab[0])
     c, s = np.cos(phi), np.sin(phi)
     R_z = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
     best_R = R_z @ best_R_tab
 
-    print(f"    [cylinder] Snapped (axis-z diff={best_diff:.3f}, "
-          f"z-rot={np.degrees(phi):.1f}deg)")
+    print(f"    [cylinder] Snapped (y-z diff={best_diff:.3f}, z-rot={np.degrees(phi):.1f}deg)")
     pose_robot = pose_robot.copy()
     pose_robot[:3, :3] = best_R
     return pose_robot
@@ -216,13 +185,9 @@ def pose_world_to_scene_cfg(pose_world: np.ndarray, c2r: np.ndarray, obj_name: s
     object_processing. Defaults to the legacy ``obj_path``.
     """
     pose_robot = np.linalg.inv(c2r) @ pose_world
-    from autodex.utils.symmetry import get_asset_symmetry
-
-    symmetry = get_asset_symmetry(obj_name, obj_root) or []
-    has_continuous_axis = any(fold is None for _axis, fold in symmetry)
     if obj_name in SPHERE_OBJECTS:
         pose_robot = _snap_sphere_pose(pose_robot, obj_name, obj_root)
-    elif obj_name in CYLINDER_OBJECTS or has_continuous_axis:
+    elif obj_name in CYLINDER_OBJECTS:
         pose_robot = _snap_cylinder_pose(pose_robot, obj_name, obj_root)
     # Preserve the historical perception pose when the optional preflight was
     # skipped.  With a measured surface, raise only an estimate that would
@@ -241,37 +206,3 @@ def pose_world_to_scene_cfg(pose_world: np.ndarray, c2r: np.ndarray, obj_name: s
             "table": table_cuboid(tabletop_geometry, thickness_m=TABLE_THICKNESS_Z),
         },
     }
-
-
-def add_fixed_mesh_fixtures(scene_cfg: dict,
-                            fixed_fixtures: Optional[dict]) -> dict:
-    """Return a scene containing session-frozen static mesh fixtures.
-
-    ``fixed_fixtures`` is a mapping from stable fixture name to a record with
-    ``pose_robot`` and ``collision_mesh``.  The target remains a separate mesh;
-    fixture names are rejected rather than silently replacing scene content.
-    A deep copy prevents one recovery branch from mutating another's scene.
-    """
-    result = copy.deepcopy(scene_cfg)
-    if not fixed_fixtures:
-        return result
-    meshes = result.setdefault("mesh", {})
-    for name, fixture in sorted(fixed_fixtures.items()):
-        if not isinstance(name, str) or not name or name == "target":
-            raise ValueError(f"invalid fixed fixture name: {name!r}")
-        if name in meshes:
-            raise ValueError(f"fixed fixture would replace scene mesh {name!r}")
-        if not isinstance(fixture, dict):
-            raise ValueError(f"fixed fixture {name!r} must be a mapping")
-        pose_robot = validate_se3(
-            fixture.get("pose_robot"), name=f"fixed fixture {name} pose_robot")
-        mesh_path = os.path.abspath(os.path.expanduser(
-            str(fixture.get("collision_mesh", ""))))
-        if not fixture.get("collision_mesh") or not os.path.isfile(mesh_path):
-            raise FileNotFoundError(
-                f"fixed fixture {name!r} collision mesh not found: {mesh_path}")
-        meshes[name] = {
-            "pose": se32cart(pose_robot).tolist(),
-            "file_path": mesh_path,
-        }
-    return result

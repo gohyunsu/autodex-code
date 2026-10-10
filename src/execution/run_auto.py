@@ -53,12 +53,6 @@ from autodex.executor.lift_policy import LiftExecutionError
 from autodex.pipeline_trace import PipelineTrace, ScopedPipelineTrace
 from autodex.perception.init_orchestrator import InitOrchestrator
 from autodex.perception.snapshot_orchestrator import SnapshotOrchestrator
-from autodex.tasks import (
-    LiftTask,
-    TaskContext,
-    TaskInterface,
-    attach_task_outcome,
-)
 
 from autodex.utils.coverage import (
     experiment_candidate_state_root,
@@ -69,10 +63,7 @@ from autodex.utils.robot_config import (
     CHARUCO_BOARD_CENTER_X_OFFSETS_M,
 )
 from src.demo.continuous_basket.recording import resolve_signal_generator_params
-from src.execution.scene_cfg import (
-    add_fixed_mesh_fixtures,
-    pose_world_to_scene_cfg,
-)
+from src.execution.scene_cfg import pose_world_to_scene_cfg
 from src.execution.handeye import save_arm_C2R
 from src.execution.label import auto_label_charuco, get_label
 
@@ -715,13 +706,11 @@ def run_single_trial(
     pose_adjust_handler=None,
     reorient_handler=None,
     tabletop_geometry=None,
-    fixed_fixtures=None,
     rotate_recovery_state: Optional[Dict[str, object]] = None,
     pipeline_trace: Optional[PipelineTrace] = None,
     attempt_id: Optional[str] = None,
     episode_id: Optional[str] = None,
     session_attempted_candidates: Optional[set] = None,
-    task: Optional[TaskInterface] = None,
 ) -> dict:
     global _active_vis
     if _active_vis is not None:
@@ -749,7 +738,6 @@ def run_single_trial(
     sub = f"{scene_prefix}/{hand}" if scene_prefix else hand
     img_dir = os.path.join(project_dir, "experiment", args.exp_name, sub, obj, dir_idx)
     os.makedirs(img_dir, exist_ok=True)
-    task = task or LiftTask()
     # This dict is execution-local control data only.  It is never persisted;
     # the run-level append-only trace below is the sole timing authority.
     timing: dict = {}
@@ -800,34 +788,6 @@ def run_single_trial(
 
     episode_finalized = False
 
-    def _with_task_outcome(
-        record: dict,
-        grasp_success: Optional[bool],
-        *,
-        grasp_evidence: Optional[dict] = None,
-    ) -> dict:
-        scene_info = record.get("scene_info")
-        context = TaskContext(
-            object_name=obj,
-            arm=args.arm,
-            hand=hand,
-            trial_dir=img_dir,
-            scene_info=(tuple(str(part) for part in scene_info)
-                        if scene_info is not None else None),
-            metadata={
-                "scene_type": args.scene,
-                "candidate_result_scope": record.get("candidate_result_scope"),
-                "fixed_fixtures": fixed_fixtures or {},
-            },
-        )
-        outcome = task.evaluate(
-            context=context,
-            grasp_success=grasp_success,
-            grasp_evidence=grasp_evidence,
-        )
-        return attach_task_outcome(
-            record, grasp_success=grasp_success, task_outcome=outcome)
-
     def _stamp_end(result_dict):
         """Link this episode to the one canonical run-level timeline."""
         nonlocal episode_finalized
@@ -837,7 +797,6 @@ def run_single_trial(
         result_dict.pop("timing", None)
         if pipeline_trace is not None and trial_scope is not None:
             success = result_dict.get("success")
-            grasp_success = result_dict.get("grasp_success", success)
             outcome = ("success" if success is True else
                        "failure" if success is False else "skipped")
             if result_dict.get("retry_current_trial"):
@@ -859,9 +818,6 @@ def run_single_trial(
                 "episode.result", phase="episode", kind="result",
                 parent_id=episode_span, outcome=outcome,
                 success=success, reason=result_dict.get("reason"),
-                grasp_success=result_dict.get("grasp_success"),
-                task_success=result_dict.get("task_success"),
-                task_name=(result_dict.get("task") or {}).get("name"),
                 scene_info=result_dict.get("scene_info"),
                 retry_current_trial=bool(result_dict.get("retry_current_trial")),
                 recovery_action=recovery_action,
@@ -870,15 +826,11 @@ def run_single_trial(
                 reorient_target_stem=result_dict.get("reorient_target_stem"),
             )
             if result_dict.get("scene_info") is not None:
-                grasp_outcome = (
-                    "success" if grasp_success is True else
-                    "failure" if grasp_success is False else "skipped"
-                )
                 trial_scope.event(
                     "grasp.execution_result", phase="validation", kind="result",
-                    parent_id=episode_span, outcome=grasp_outcome,
+                    parent_id=episode_span, outcome=outcome,
                     scene_info=result_dict.get("scene_info"),
-                    success=grasp_success, reason=result_dict.get("reason"),
+                    success=success, reason=result_dict.get("reason"),
                 )
             ended = (trial_scope.end(
                 episode_span, outcome=outcome,
@@ -909,9 +861,6 @@ def run_single_trial(
                 "duration_s": (ended or {}).get("duration_s"),
                 "outcome": outcome,
                 "success": success,
-                "grasp_success": result_dict.get("grasp_success"),
-                "task_success": result_dict.get("task_success"),
-                "task_name": (result_dict.get("task") or {}).get("name"),
                 "reason": result_dict.get("reason"),
                 "retry_current_trial": bool(result_dict.get("retry_current_trial")),
                 "scene_info": result_dict.get("scene_info"),
@@ -1059,7 +1008,6 @@ def run_single_trial(
         shelf_top=not args.no_shelf_top,
         tabletop_geometry=tabletop_geometry,
     )
-    scene_cfg = add_fixed_mesh_fixtures(scene_cfg, fixed_fixtures)
     timing["scene_construction_s"] = round(
         time.perf_counter() - t_scene_construction, 3)
     if scene_span is not None:
@@ -1083,7 +1031,6 @@ def run_single_trial(
                 scene_cfg=scene_cfg, pose_world=pose_world, c2r=c2r,
                 obj_root=obj_root, img_dir=img_dir, scene_prefix=scene_prefix,
                 tabletop_geometry=tabletop_geometry,
-                fixed_fixtures=fixed_fixtures,
                 pipeline_trace=trial_scope,
             )
         except CudaPlanningFault as reorient_exc:
@@ -2136,12 +2083,6 @@ def run_single_trial(
                 "candidate_result_scope": (
                     "experiment" if args.isolate_experiment else "shared_v8"),
                 "timing": timing}
-        if not reposition_mode:
-            fail = _with_task_outcome(
-                fail,
-                False,
-                grasp_evidence={"source": "execute_exception"},
-            )
         try:
             return _save_result(fail)
         except Exception:
@@ -2260,15 +2201,6 @@ def run_single_trial(
                     "candidate_result_scope": (
                         "experiment" if args.isolate_experiment else "shared_v8"),
                     "auto_label": auto_label_info, "timing": timing}
-            if not reposition_mode:
-                fail = _with_task_outcome(
-                    fail,
-                    auto_succ_lift,
-                    grasp_evidence={
-                        "source": "auto_label_charuco",
-                        **auto_label_info,
-                    },
-                )
             return _save_result(fail)
 
         # Resume video for place phase.
@@ -2666,15 +2598,6 @@ def run_single_trial(
             "manual_recovery_required": recovery_error is not None,
             "timing": timing,
         }
-        if not reposition_mode:
-            record = _with_task_outcome(
-                record,
-                trial_success,
-                grasp_evidence={
-                    "source": "auto_label_charuco",
-                    **auto_label_info,
-                },
-            )
         return _save_result(record)
 
     # ── 5. Label ─────────────────────────────────────────────────────────────
@@ -2806,16 +2729,6 @@ def run_single_trial(
     }
     if note is not None:
         trial_result["note"] = note
-    if not reposition_mode:
-        trial_result = _with_task_outcome(
-            trial_result,
-            succ,
-            grasp_evidence={
-                "source": "auto_label_charuco" if args.auto else "manual_label",
-                "note": note,
-                **(auto_label_info if args.auto else {}),
-            },
-        )
     _save_result(trial_result)
 
     # Persist result back to the candidate dir for ALL scenes (table, wall,
@@ -2841,8 +2754,7 @@ def run_single_trial(
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
-         pipeline_trace: Optional[PipelineTrace] = None,
-         task: Optional[TaskInterface] = None):
+         pipeline_trace: Optional[PipelineTrace] = None):
     owns_pipeline_trace = pipeline_trace is None
     if pipeline_trace is None:
         pipeline_trace = PipelineTrace()
@@ -2947,48 +2859,8 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
              "first object is placed. prompt=choose at runtime, "
              "measure=require it, skip=use fixed default tabletop geometry.",
     )
-    parser.add_argument(
-        "--socket-preflight", choices=["auto", "prompt", "measure", "skip"],
-        default="auto",
-        help="run_pipeline only: measure and freeze the unified socket pose "
-             "before precision-key trials. auto=measure for precision_key_* "
-             "and precision_key_cylinder_* objects and skip otherwise.",
-    )
-    parser.add_argument("--socket-object", default="precision_socket_unified")
-    parser.add_argument(
-        "--socket-prompt", default="fixed red socket fixture with keyed opening",
-        help="FoundPose segmentation prompt for the fixed socket.",
-    )
-    parser.add_argument(
-        "--socket-measurements", type=int, default=3,
-        help="Independent socket pose estimates used by the startup medoid gate.",
-    )
-    parser.add_argument("--socket-sil-iters", type=int, default=100)
-    parser.add_argument(
-        "--socket-sil-loss-max", type=float, default=0.01,
-        help="Socket silhouette-loss rejection threshold. The open cavity often "
-             "scores worse than a convex key; this is only a selection gate, "
-             "not an absolute pose-accuracy guarantee.",
-    )
-    parser.add_argument(
-        "--socket-repeat-translation-max-mm", type=float, default=2.0,
-        help="Maximum residual from the selected socket-pose medoid.",
-    )
-    parser.add_argument(
-        "--socket-repeat-rotation-max-deg", type=float, default=2.0,
-        help="Maximum angular residual from the selected socket-pose medoid.",
-    )
 
     args = parser.parse_args()
-    from autodex.tasks.precision_insertion import validate_runtime_socket_pair
-
-    try:
-        validate_runtime_socket_pair(args.obj, args.socket_object)
-    except ValueError as exc:
-        parser.error(str(exc))
-    if (args.obj == "precision_key_cylinder_r15_h80" and
-            args.socket_prompt == "fixed red socket fixture with keyed opening"):
-        args.socket_prompt = "fixed cylindrical socket fixture with round opening"
     if args.grasp_version != "v8":
         parser.error("run_auto supports only --grasp_version v8; legacy asset pools are disabled")
     if args.max_consecutive_rotates < 0:
@@ -2997,16 +2869,6 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
         parser.error("--external-sync-cue-duration-s must be > 0")
     if args.external_sync_cue_fps <= 0:
         parser.error("--external-sync-cue-fps must be > 0")
-    if args.socket_measurements < 2:
-        parser.error("--socket-measurements must be >= 2")
-    if args.socket_sil_iters < 0:
-        parser.error("--socket-sil-iters must be >= 0")
-    if args.socket_sil_loss_max <= 0:
-        parser.error("--socket-sil-loss-max must be > 0")
-    if args.socket_repeat_translation_max_mm <= 0:
-        parser.error("--socket-repeat-translation-max-mm must be > 0")
-    if args.socket_repeat_rotation_max_deg <= 0:
-        parser.error("--socket-repeat-rotation-max-deg must be > 0")
     if args.exp_name is None:
         args.exp_name = args.grasp_version
     if args.isolate_experiment:
@@ -3053,34 +2915,6 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
     if not (assets_root / "object_repre/v1" / args.obj / "1/repre.pth").exists():
         sys.exit(f"repre.pth missing for {args.obj} (expected under {assets_root})")
 
-    # A precision run must discover a missing socket representation before it
-    # claims cameras, connects the robot, or performs the clear-view home.
-    # Prompted manual runs may explicitly skip later; automatic/pinned measure
-    # modes are fail-closed here.
-    socket_measure_required = (
-        startup_handler is not None
-        and (
-            args.socket_preflight == "measure"
-            or (args.socket_preflight == "auto"
-                and args.obj.startswith(
-                    ("precision_key_", "precision_key_cylinder_")))
-            or (args.socket_preflight == "prompt" and args.auto)
-        )
-    )
-    if socket_measure_required:
-        socket_root = mesh_root / args.socket_object
-        socket_assets = ASSETS_BASE / args.socket_object
-        socket_required = (
-            socket_root / "raw_mesh" / f"{args.socket_object}.obj",
-            socket_root / "processed_data" / "mesh" / "static_collision.obj",
-            socket_assets / "object_repre" / "v1" / args.socket_object / "1" /
-            "repre.pth",
-        )
-        socket_missing = [path for path in socket_required if not path.is_file()]
-        if socket_missing:
-            sys.exit("socket preflight assets missing before hardware startup: "
-                     + ", ".join(str(path) for path in socket_missing))
-
     # FoundPose and the planner now share the version-resolved mesh. Keep this
     # check because a caller may still point a non-v8 pool at a mismatched
     # custom object tree.
@@ -3102,15 +2936,6 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
     pc_ips = [get_pc_ip(p) for p in args.pc_list]
     pc_serials = {p: get_camera_list(p) for p in args.pc_list}
     active_serials = {s for pc in args.pc_list for s in pc_serials[pc]}
-    missing_intrinsics = sorted(active_serials - set(intrinsics_full))
-    missing_extrinsics = sorted(active_serials - set(extrinsics_full))
-    if missing_intrinsics or missing_extrinsics:
-        parser.error(
-            f"camera calibration {calib_dir} does not cover the active AutoDex "
-            f"camera set; missing intrinsics={missing_intrinsics}, "
-            f"missing extrinsics={missing_extrinsics}. Pass an explicit "
-            "--calib_dir matching paradex/system/current/pc.json."
-        )
     intrinsics_full = {s: v for s, v in intrinsics_full.items() if s in active_serials}
     extrinsics_full = {s: v for s, v in extrinsics_full.items() if s in active_serials}
     print(f"  {len(intrinsics_full)} cams active across {len(args.pc_list)} PCs  ({H}x{W})")
@@ -3124,9 +2949,9 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
                                    stall_timeout=15.0)
     _ensure_camera_lock(rcc)
     _clear_camera_errors(rcc)
-    # Preserve the established AutoDex acquisition contract: all remote FLIR
-    # cameras are hardware-triggered by the local UTG900 and accompanied by
-    # the configured local timestamp camera.
+    # Linux can renumber the UTG900E away from the configured /dev/usbtmc0
+    # once other USBTMC devices have appeared, so resolve a sole visible
+    # node instead of aborting the run before any camera is armed.
     trigger_params, trigger_note = resolve_signal_generator_params(
         network_info["signal_generator"]["param"]
     )
@@ -3193,29 +3018,19 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
     # clear-view but before any object perception, so the measurement can use
     # all Charuco corners without paying for a second FoundPose init.
     session_tabletop_geometry = None
-    session_fixed_fixtures = None
     startup_cancelled = False
     if startup_handler is not None:
         try:
             startup_result = startup_handler(
-                args=args, rcc=rcc, executor=executor, orch=orch,
+                args=args, rcc=rcc, executor=executor,
                 intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
                 capture_ips=pc_ips, n_cameras=len(intrinsics_full),
-                pc_serials=pc_serials, image_hw=(H, W),
-                calib_dir=str(calib_dir),
-                target_mesh_path=str(mesh_path),
-                target_assets_root=str(assets_root),
                 scene_prefix=scene_prefix,
                 pipeline_trace=pipeline_trace.scoped(parent_id=startup_span),
             )
             if isinstance(startup_result, dict) and startup_result.get("cancel"):
                 startup_cancelled = True
-            elif (isinstance(startup_result, dict)
-                  and startup_result.get("schema") == "autodex_session_startup_v1"):
-                session_tabletop_geometry = startup_result.get("tabletop_geometry")
-                session_fixed_fixtures = startup_result.get("fixed_fixtures")
             elif startup_result is not None:
-                # Backward-compatible contract for existing startup hooks.
                 session_tabletop_geometry = startup_result
         except Exception as startup_exc:
             # A startup hook must never silently leave us using stale geometry
@@ -3347,13 +3162,11 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
                 pose_adjust_handler=pose_adjust_handler,
                 reorient_handler=reorient_handler,
                 tabletop_geometry=session_tabletop_geometry,
-                fixed_fixtures=session_fixed_fixtures,
                 rotate_recovery_state=rotate_recovery_state,
                 pipeline_trace=pipeline_trace,
                 attempt_id=attempt_id,
                 episode_id=episode_id,
                 session_attempted_candidates=session_attempted_candidates,
-                task=task,
             )
             if tr.get("retry_current_trial"):
                 if tr.get("reason") in ("reoriented", "reoriented_manual"):
@@ -3389,8 +3202,7 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
             # remaining uncovered count + how many scenes this trial just
             # covered (delta vs before).
             if (_is_coverage_pool(args.grasp_version)
-                    and not args.ignore_coverage
-                    and tr.get("grasp_success", tr.get("success"))):
+                    and not args.ignore_coverage and tr.get("success")):
                 from autodex.utils.coverage import uncovered_scenes
                 lines = []
                 total_now = 0

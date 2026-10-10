@@ -10,12 +10,7 @@ from torch.utils.data._utils.collate import default_collate
 from curobo.util.logger import log_warn
 from curobo.util_file import load_json, load_scene_cfg, join_path, get_assets_path
 
-# ``rsslib`` was a lab-local helper that is not part of this repository.  Keep
-# the legacy fallback configurable, while normal AutoDex callers pass an
-# explicit output directory.
-bodex_path = os.environ.get(
-    "BODEX_OUTPUT_DIR", os.path.expanduser("~/BODex_outputs")
-)
+from rsslib.path import bodex_path
 
 def scenecfg2worldcfg(scene_cfg):
     world_cfg = {}

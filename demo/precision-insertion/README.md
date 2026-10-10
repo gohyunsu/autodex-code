@@ -10,6 +10,11 @@ There is no robot-executable insertion runner in this directory yet. The
 existing scenario catalog, VLM observer, and retry policy are offline evidence
 and decision helpers, not proof of a continuous insertion plan or hardware
 readiness. Do not interpret a grasp/lift simulation pass as an insertion pass.
+The original AutoDex source files are kept at the `main` baseline; the
+previous feature-branch changes are preserved at
+`archive/precision-pre-isolation`. `PLAN.md` maps existing APIs to the demo
+modules that will reuse them, so the runner will not duplicate camera,
+FoundPose, Franka pickup, or cuRobo primitives.
 
 The first independent helpers are in `precision_insertion/`:
 

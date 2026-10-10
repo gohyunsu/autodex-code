@@ -593,7 +593,7 @@ class GraspPlanner:
         if self._ik_solver is None:
             self._init_ik_solver(world_cfg)
         else:
-            self._ik_solver.update_world([WorldConfig.from_dict(world_cfg)])
+            self._ik_solver.update_world(WorldConfig.from_dict(world_cfg))
 
     def fk_wrist(self, full_qpos: np.ndarray) -> np.ndarray:
         """Return the planner wrist pose for a full robot joint state.
@@ -701,8 +701,7 @@ class GraspPlanner:
         if ik_created:
             self._init_ik_solver(world_cfg_no_target)
         else:
-            self._ik_solver.update_world(
-                [WorldConfig.from_dict(world_cfg_no_target)])
+            self._ik_solver.update_world(WorldConfig.from_dict(world_cfg_no_target))
         t_end = _time.perf_counter()
         self.setup_timing.update({
             "warmup_motion_gen_s": round(t_mg - t0, 3),
@@ -929,8 +928,7 @@ class GraspPlanner:
         if self._ik_solver is None:
             self._init_ik_solver(world_cfg_no_target)
         else:
-            self._ik_solver.update_world(
-                [WorldConfig.from_dict(world_cfg_no_target)])
+            self._ik_solver.update_world(WorldConfig.from_dict(world_cfg_no_target))
         t_world = _time.time() - t0
 
         # Filter: backward + hand-table collision (no object mesh — hand should be near object)
@@ -1139,8 +1137,7 @@ class GraspPlanner:
         if self._ik_solver is None:
             self._init_ik_solver(world_cfg_no_target)
         else:
-            self._ik_solver.update_world(
-                [WorldConfig.from_dict(world_cfg_no_target)])
+            self._ik_solver.update_world(WorldConfig.from_dict(world_cfg_no_target))
 
         # 2. Generate N yaw candidates around world-z.
         R_target = target_wrist_se3[:3, :3]
@@ -1320,7 +1317,7 @@ class GraspPlanner:
             self._init_ik_solver(world_cfg_no_target)
         else:
             self._ik_solver.update_world(
-                [WorldConfig.from_dict(world_cfg_no_target)])
+                WorldConfig.from_dict(world_cfg_no_target))
 
         # 2. Build (x, y, yaw, cyl_yaw) candidate wrist targets.
         if y_grid is None:
@@ -2750,8 +2747,7 @@ class GraspPlanner:
             if self._ik_solver is None:
                 self._init_ik_solver(world_no_target)
             else:
-                self._ik_solver.update_world(
-                    [WorldConfig.from_dict(world_no_target)])
+                self._ik_solver.update_world(WorldConfig.from_dict(world_no_target))
 
             def _run_ik(poses):
                 """Returns success bool array of length len(poses)."""

@@ -1843,13 +1843,7 @@ class MotionGen(MotionGenConfig):
         self.reset(reset_seed=False)
         self.world_coll_checker.clear_cache()
         self.world_coll_checker.load_collision_model(world, fix_cache_reference=self.use_cuda_graph)
-        # Motion planning normally has no designated grasp-contact object.
-        # The BODex fork called load_contact_obj unconditionally, so a regular
-        # world update (especially a table-only lift world) attempted to find
-        # mesh ``None`` and crashed. Preserve contact refresh only for callers
-        # that explicitly request it.
-        if contact_obj_names is not None:
-            self.world_coll_checker.load_contact_obj(world, contact_obj_names)
+        self.world_coll_checker.load_contact_obj(world, contact_obj_names)
         self.graph_planner.reset_buffer()
 
     def clear_world_cache(self):

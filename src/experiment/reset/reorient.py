@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """Reorient policy: drop-style chain plan (approach → lift → reorient → descent).
 
-The live object/tabletop pose remains v8/object_processing. Historical reset
-candidates use strictly mapped legacy ParaDex IDs; objects introduced directly
-in v8 use their native object_processing stems. The full v8
-approach/lift/reorient/descent preflight remains the final safety gate before
-any physical grasp.
+The live object/tabletop pose remains v8/object_processing.  Existing reset
+candidates use the legacy paradex tabletop numbering, so every reset cell is
+selected through ``autodex.utils.tabletop_map``'s strict pose mapping before
+being used.  The full v8 approach/lift/reorient/descent preflight remains the
+final safety gate before any physical grasp.
 
 Per-cycle (mirrors ``reorient_drop.py`` structure):
     perception -> classify tabletop_before (i)
     -> if i == target_j: skip
-    -> resolve v8 cell {i}_{target_j} to a mapped-legacy or native-v8 reset
-       cell and load its seeds for the smallest reorient_{h_cm}
+    -> map v8 cell {i}_{target_j} to its validated legacy reset cell
+       and load its seeds for the smallest reorient_{h_cm}
     -> for each seed (IK-feasible): approach -> lift -> reorient -> descent
        (first seed whose full chain plans wins)
     -> execute init→approach→pregrasp→grasp→squeeze (skip_lift)
@@ -70,7 +70,7 @@ from paradex.utils.system import network_info, get_pc_ip, get_camera_list
 from paradex.calibration.utils import save_current_camparam, load_c2r
 
 from autodex.utils.path import (
-    project_dir, obj_path, get_obj_root, get_reset_candidate_root,
+    project_dir, get_obj_root, get_reset_candidate_root,
     iter_reset_candidate_roots,
 )
 from autodex.utils.conversion import cart2se3, se32cart
@@ -369,26 +369,6 @@ def _legacy_reset_cell_indices(obj: str, i_int: int, j_int: int,
     )
 
 
-def _reset_cell_indices(obj: str, i_int: int, j_int: int,
-                        obj_root: str) -> tuple[int, int, str]:
-    """Resolve one runtime reset cell without forcing a legacy index map.
-
-    Historical pools are stored under legacy ParaDex tabletop IDs and retain
-    strict mapping.  New v8-native objects (including the precision key) have
-    no legacy counterpart; their generated reset cells use the exact
-    object_processing stems directly.
-    """
-    legacy_tabletop = (
-        Path(obj_path) / obj / "processed_data" / "info" / "tabletop"
-    )
-    if legacy_tabletop.is_dir():
-        legacy_i, legacy_j = _legacy_reset_cell_indices(
-            obj, i_int, j_int, obj_root
-        )
-        return legacy_i, legacy_j, "legacy_mapped_reset"
-    return i_int, j_int, "native_v8_reset"
-
-
 def _autoselect_h_cm(hand: str, obj: str, target_j: int | None = None,
                      *, obj_root: str, version: str = "v8") -> int | None:
     """Pick the smallest ``reorient_{h_cm}`` folder that contains at least one
@@ -397,31 +377,24 @@ def _autoselect_h_cm(hand: str, obj: str, target_j: int | None = None,
 
     ``target_j`` is a v8 tabletop filename integer and is resolved to its
     verified legacy reset-cell ID before inspecting the existing pool."""
-    cell_target = None
+    legacy_target = None
     if target_j is not None:
-        legacy_tabletop = (
-            Path(obj_path) / obj / "processed_data" / "info" / "tabletop"
-        )
-        if legacy_tabletop.is_dir():
+        try:
             # The source index is irrelevant when selecting by target only;
             # map the target directly so standalone startup can find a cell.
             from autodex.utils.tabletop_map import to_reset_index
-            try:
-                cell_target = to_reset_index(
-                    obj, target_j, obj_root, allow_partial=True)
-            except (ValueError, KeyError):
-                return None
-        else:
-            # Objects introduced directly in v8 use object_processing stems.
-            cell_target = target_j
+            legacy_target = to_reset_index(
+                obj, target_j, obj_root, allow_partial=True)
+        except (ValueError, KeyError):
+            return None
     cands = []
     for h, root in iter_reset_candidate_roots(hand, version=version):
         p = Path(root) / obj / f"reorient_{h}"
         if not p.is_dir():
             continue
-        if cell_target is not None:
+        if legacy_target is not None:
             has_target = any(
-                c.is_dir() and c.name.endswith(f"_{cell_target}")
+                c.is_dir() and c.name.endswith(f"_{legacy_target}")
                 and c.name.split("_", 1)[0].isdigit()
                 for c in p.iterdir()
             )
@@ -454,14 +427,18 @@ def _autoselect_h_cm_for_cell(hand: str, obj: str, i_int: int,
 def _available_h_cm_for_cell(hand: str, obj: str, i_int: int, j_int: int,
                              *, obj_root: str,
                              version: str = "v8") -> list[int]:
-    """Available reset heights for a mapped-legacy or native-v8 cell."""
-    cell_i, cell_j, _ = _reset_cell_indices(obj, i_int, j_int, obj_root)
+    """Legacy reset heights for a strictly mapped v8 tabletop transition."""
+    try:
+        legacy_i, legacy_j = _legacy_reset_cell_indices(
+            obj, i_int, j_int, obj_root)
+    except (ValueError, KeyError):
+        return []
     hs = []
     for h, root in iter_reset_candidate_roots(hand, version=version):
         p = Path(root) / obj / f"reorient_{h}"
         if not p.is_dir():
             continue
-        if (p / f"{cell_i}_{cell_j}").is_dir():
+        if (p / f"{legacy_i}_{legacy_j}").is_dir():
             hs.append(h)
     return hs
 
@@ -510,11 +487,13 @@ def _load_reset_seeds(hand: str, obj: str, h_cm: int, i_int: int, j_int: int,
     Output dict mirrors ``GraspPlanner.solve_ik``'s candidate-related
     fields plus ``openpose_start`` and ``openpose_target``.
     """
-    cell_i, cell_j, candidate_contract = _reset_cell_indices(
-        obj, i_int, j_int, obj_root
-    )
+    try:
+        legacy_i, legacy_j = _legacy_reset_cell_indices(
+            obj, i_int, j_int, obj_root)
+    except (ValueError, KeyError):
+        return None
     cell_dir = (Path(get_reset_candidate_root(hand, h_cm, version=version)) / obj
-                / f"reorient_{h_cm}" / f"{cell_i}_{cell_j}")
+                / f"reorient_{h_cm}" / f"{legacy_i}_{legacy_j}")
     if not cell_dir.exists():
         return None
     # Order by stats.json priority desc (Laplace-smoothed success rate),
@@ -548,20 +527,17 @@ def _load_reset_seeds(hand: str, obj: str, h_cm: int, i_int: int, j_int: int,
     op_start = []
     op_target = []
     for g in grasp_dirs:
-        op_s_path = g / f"openpose_{cell_i:03d}.npy"
-        op_t_path = g / f"openpose_{cell_j:03d}.npy"
+        op_s_path = g / f"openpose_{legacy_i:03d}.npy"
+        op_t_path = g / f"openpose_{legacy_j:03d}.npy"
         op_start.append(np.load(op_s_path) if op_s_path.exists() else None)
         op_target.append(np.load(op_t_path) if op_t_path.exists() else None)
     wrist_world = T_obj_world[None] @ wrist_obj
     scene_info = [{
         "grasp_idx": g.name,
-        "cell": f"{cell_i}_{cell_j}",
+        "cell": f"{legacy_i}_{legacy_j}",
         "v8_cell": f"{i_int}_{j_int}",
-        "legacy_cell": (
-            f"{cell_i}_{cell_j}"
-            if candidate_contract == "legacy_mapped_reset" else None
-        ),
-        "candidate_contract": candidate_contract,
+        "legacy_cell": f"{legacy_i}_{legacy_j}",
+        "candidate_contract": "legacy_mapped_reset",
         "h_cm": h_cm,
         "source": str(g),
     } for g in grasp_dirs]
@@ -573,10 +549,8 @@ def _load_reset_seeds(hand: str, obj: str, h_cm: int, i_int: int, j_int: int,
         "openpose_target": op_target,
         "scene_info": scene_info,
         "n_total": len(grasp_dirs),
-        "legacy_i": cell_i if candidate_contract == "legacy_mapped_reset" else None,
-        "legacy_j": cell_j if candidate_contract == "legacy_mapped_reset" else None,
-        "cell_i": cell_i,
-        "cell_j": cell_j,
+        "legacy_i": legacy_i,
+        "legacy_j": legacy_j,
     }
 
 
@@ -702,16 +676,14 @@ def _ik_check_seeds(planner: GraspPlanner, scene_cfg: dict, seeds: dict) -> dict
                     from curobo.geom.types import WorldConfig as _WC
                     empty_world = {"mesh": {}, "cuboid": {}}
                     saved_world_cfg = world_cfg_no_target
-                    planner._ik_solver.update_world(
-                        [_WC.from_dict(empty_world)])
+                    planner._ik_solver.update_world(_WC.from_dict(empty_world))
                     result2 = _solve_reset_ik_batch(
                         planner, goal,
                         operation="reorient_grasp_seed_ik_no_world_diagnostic",
                         retract_config=retract,
                     )
                     diag_succ_noworld = result2.success.cpu().numpy()[:B].reshape(-1)
-                    planner._ik_solver.update_world(
-                        [_WC.from_dict(saved_world_cfg)])
+                    planner._ik_solver.update_world(_WC.from_dict(saved_world_cfg))
                 except CudaPlanningFault:
                     raise
                 except Exception as _de:
@@ -1201,13 +1173,20 @@ def reorient_from_live_scene(
             "camera_capture_stopped": camera_capture_stopped,
         }
 
-    cell_i, cell_j, candidate_contract = _reset_cell_indices(
-        obj, i_int, target_j, obj_root
-    )
-    print(
-        f"[reorient] v8 cell {i_int}_{target_j} -> reset cell "
-        f"{cell_i}_{cell_j} ({candidate_contract})"
-    )
+    try:
+        legacy_i, legacy_j = _legacy_reset_cell_indices(
+            obj, i_int, target_j, obj_root)
+    except (ValueError, KeyError) as exc:
+        return {
+            "success": False,
+            "reason": "reorient_legacy_mapping_unavailable",
+            "i_int": i_int,
+            "target_j": target_j,
+            "mapping_error": str(exc),
+            "camera_capture_stopped": camera_capture_stopped,
+        }
+    print(f"[reorient] v8 cell {i_int}_{target_j} -> legacy reset cell "
+          f"{legacy_i}_{legacy_j}")
 
     available_h_cm = _available_h_cm_for_cell(
         hand, obj, i_int, target_j, obj_root=obj_root,
@@ -1301,8 +1280,8 @@ def reorient_from_live_scene(
         print(f"[reorient] rcc.stop before motion failed: {exc!r}")
 
     try:
-        print(f"[reorient] selected v8 cell {i_int}_{target_j} via "
-              f"{candidate_contract} cell {cell_i}_{cell_j}, h={h_cm}cm; "
+        print(f"[reorient] selected v8 cell {i_int}_{target_j} via legacy "
+              f"cell {legacy_i}_{legacy_j}, h={h_cm}cm; "
               "full approach/lift/reorient/place/release/exit preflight passed")
         execution_span = (pipeline_trace.begin(
             phase="recovery", kind="motion", name="reorient_physical_chain",
@@ -1412,11 +1391,9 @@ def reorient_from_live_scene(
         "success": True,
         "i_int": i_int,
         "target_j": target_j,
-        "legacy_i": cell_i if candidate_contract == "legacy_mapped_reset" else None,
-        "legacy_j": cell_j if candidate_contract == "legacy_mapped_reset" else None,
-        "cell_i": cell_i,
-        "cell_j": cell_j,
-        "candidate_contract": candidate_contract,
+        "legacy_i": legacy_i,
+        "legacy_j": legacy_j,
+        "candidate_contract": "legacy_mapped_reset",
         "h_cm": h_cm,
         "charuco": charuco_info,
         "plan_counts": plan["counts"],
@@ -1541,13 +1518,13 @@ def main():
     if not (assets_root / "object_repre/v1" / args.obj / "1/repre.pth").exists():
         sys.exit(f"repre.pth missing for {args.obj}")
 
-    # Historical candidates use strict v8→legacy mapping; native-v8 objects
-    # use the object_processing stem directly.
+    # Reset candidates use legacy tabletop IDs, but only after the target's
+    # strict v8→legacy mapping has been verified.
     h_cm = _autoselect_h_cm(args.hand, args.obj, args.target_j,
                             obj_root=asset_root, version=args.version)
     if h_cm is None:
         sys.exit(
-            f"no mapped-legacy or native-v8 reset cell for target_j={args.target_j} under "
+            f"no validated legacy reset cell for v8 target_j={args.target_j} under "
             f"{get_reset_candidate_root(args.hand, 0)}/... through "
             f"{get_reset_candidate_root(args.hand, 12)}/..."
         )
@@ -1851,9 +1828,8 @@ def main():
                           f"under reorient_{h_cm} — skipping cycle")
                     raise _SoftSkip
                 print(f"    loaded {seeds['n_total']} seeds from v8 cell "
-                      f"{i_int}_{args.target_j} via "
-                      f"{seeds['scene_info'][0]['candidate_contract']} cell "
-                      f"{seeds['cell_i']}_{seeds['cell_j']}")
+                      f"{i_int}_{args.target_j} via legacy cell "
+                      f"{seeds['legacy_i']}_{seeds['legacy_j']}")
                 # Cylinder freedom for approach IK — expand seeds by cyl_yaw
                 # rotations around the object's symmetry axis when not (nearly)
                 # vertical at the start pose.

@@ -19,7 +19,6 @@ observation used by the normal trial, not duplicated setup work.
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
 import time
@@ -41,17 +40,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from src.execution import run_auto
 from src.execution.rotate_obj_yaw import rotate_from_live_scene
-from src.execution.scene_cfg import (
-    add_fixed_mesh_fixtures,
-    pose_world_to_scene_cfg,
-)
-from src.execution.session_fixtures import (
-    freeze_axisymmetric_pose_medoid,
-    freeze_pose_medoid,
-)
+from src.execution.scene_cfg import pose_world_to_scene_cfg
 from autodex.planner.obstacles import add_obstacles
 from autodex.pipeline_trace import PipelineTrace
-from autodex.tasks import TaskInterface
 from autodex.utils.robot_config import CHARUCO_BOARD_11_CENTER_XY
 from src.experiment.reset.reorient import reorient_from_live_scene
 
@@ -242,224 +233,6 @@ def _charuco_preflight(**context):
                     pass
 
 
-def _socket_preflight(**context) -> dict | None:
-    """Measure the socket repeatedly and freeze one pose for this process.
-
-    The resulting transform is deliberately session-scoped.  It is never
-    promoted to a reusable calibration because moving the fixture or changing
-    hand-eye calibration invalidates it.  Every accepted sample is retained
-    for audit, while one observed SE(3) medoid becomes the collision pose.
-    """
-    args = context["args"]
-    mode = args.socket_preflight
-    if mode == "auto":
-        mode = "measure" if args.obj.startswith(
-            ("precision_key_", "precision_key_cylinder_")) else "skip"
-    if mode == "skip":
-        print("[socket-preflight] skipped — no socket collision mesh will be "
-              "added to this session")
-        return None
-    if mode == "prompt" and args.auto:
-        print("[socket-preflight] --auto: measuring the fixed socket before "
-              "the one-time key-placement gate")
-    elif mode == "prompt":
-        try:
-            choice = input(
-                "[socket-preflight] Remove the key; rigidly fix and expose the "
-                "socket. Enter=measure, 's'=skip, 'q'=quit: "
-            ).strip().lower()
-        except KeyboardInterrupt:
-            choice = "q"
-        if choice == "s":
-            print("[socket-preflight] explicitly skipped")
-            return None
-        if choice == "q":
-            return {"cancel": True}
-
-    shared_root = Path.home() / "shared_data"
-    socket_object = args.socket_object
-    socket_root = shared_root / "object_processing" / socket_object
-    mesh_path = socket_root / "raw_mesh" / f"{socket_object}.obj"
-    collision_mesh = (
-        socket_root / "processed_data" / "mesh" / "static_collision.obj"
-    )
-    assets_root = shared_root / "AutoDex" / "foundpose_assets" / socket_object
-    representation = (
-        assets_root / "object_repre" / "v1" / socket_object / "1" / "repre.pth"
-    )
-    missing = [
-        path for path in (mesh_path, collision_mesh, representation)
-        if not path.is_file()
-    ]
-    if missing:
-        missing_text = ", ".join(str(path) for path in missing)
-        raise FileNotFoundError(
-            "socket preflight cannot run until all pose/collision assets exist: "
-            f"{missing_text}. Generate the FoundPose representation on the "
-            "AutoDex host; do not substitute fixture_pose.template.json."
-        )
-
-    trace = context.get("pipeline_trace")
-    preflight_span = (trace.begin(
-        phase="startup", kind="measurement", name="socket_pose_preflight",
-        object=socket_object, sample_count=args.socket_measurements,
-    ) if trace is not None else None)
-    sub = (f"{context['scene_prefix']}/{args.hand}"
-           if context["scene_prefix"] else args.hand)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    preflight_dir = (
-        Path(run_auto.project_dir) / "experiment" / args.exp_name / sub /
-        args.obj / f"_socket_preflight_{stamp}"
-    )
-    preflight_dir.mkdir(parents=True, exist_ok=False)
-
-    from src.execution.handeye import save_arm_C2R
-
-    c2r, _ = save_arm_C2R(preflight_dir, args.arm)
-    np.save(preflight_dir / "C2R.npy", c2r)
-    orch = context["orch"]
-    switched_object = False
-    pose_world_samples: list[np.ndarray] = []
-    pose_robot_samples: list[np.ndarray] = []
-    sample_records: list[dict] = []
-    try:
-        print(f"[socket-preflight] initializing FoundPose for {socket_object}")
-        orch.init_object(
-            obj_name=socket_object,
-            mesh_path=str(mesh_path),
-            assets_root=str(assets_root),
-            intrinsics_full=context["intrinsics_full"],
-            extrinsics_full=context["extrinsics_full"],
-            image_hw=context["image_hw"], mode="live",
-            pc_serials=context["pc_serials"],
-        )
-        switched_object = True
-        for sample_index in range(args.socket_measurements):
-            sample_dir = preflight_dir / f"sample_{sample_index:02d}"
-            sample_dir.mkdir(parents=True, exist_ok=False)
-            print(f"[socket-preflight] measurement {sample_index + 1}/"
-                  f"{args.socket_measurements}")
-            pose_world, timing = orch.trigger_init(
-                prompt=args.socket_prompt,
-                n_expected_serials=context["n_cameras"],
-                timeout_s=args.init_timeout_s,
-                sil_iters=args.socket_sil_iters,
-                sil_lr=args.sil_lr,
-                save_capture_dir=str(sample_dir),
-                sil_loss_threshold=args.socket_sil_loss_max,
-                selection_mode="iou",
-            )
-            (sample_dir / "perception.json").write_text(
-                json.dumps(timing, indent=2, default=str) + "\n",
-                encoding="utf-8",
-            )
-            if pose_world is None:
-                raise RuntimeError(
-                    f"socket pose sample {sample_index} rejected: "
-                    f"{timing.get('reason', 'unknown')}; diagnostics: {sample_dir}"
-                )
-            pose_world = np.asarray(pose_world, dtype=np.float64)
-            pose_robot = np.linalg.inv(c2r) @ pose_world
-            np.save(sample_dir / "pose_world.npy", pose_world)
-            np.save(sample_dir / "pose_robot.npy", pose_robot)
-            pose_world_samples.append(pose_world)
-            pose_robot_samples.append(pose_robot)
-            sample_records.append({
-                "index": sample_index,
-                "directory": str(sample_dir),
-                "pose_world": pose_world.tolist(),
-                "pose_robot": pose_robot.tolist(),
-                "perception": timing,
-            })
-
-        from autodex.utils.symmetry import get_asset_symmetry
-
-        symmetry = get_asset_symmetry(
-            socket_object, shared_root / "object_processing") or []
-        continuous_axes = [axis for axis, fold in symmetry if fold is None]
-        if continuous_axes:
-            frozen_pose_robot, repeatability = freeze_axisymmetric_pose_medoid(
-                pose_robot_samples,
-                local_axis=continuous_axes[0],
-                translation_limit_mm=args.socket_repeat_translation_max_mm,
-                axis_limit_deg=args.socket_repeat_rotation_max_deg,
-            )
-        else:
-            frozen_pose_robot, repeatability = freeze_pose_medoid(
-                pose_robot_samples,
-                translation_limit_mm=args.socket_repeat_translation_max_mm,
-                rotation_limit_deg=args.socket_repeat_rotation_max_deg,
-            )
-        selected_index = int(repeatability["selected_index"])
-        frozen_pose_world = pose_world_samples[selected_index]
-        fixture_name = ("fixture_unified_socket" if
-                        socket_object == "precision_socket_unified" else
-                        f"fixture_{socket_object}")
-        fixture = {
-            "schema": "autodex_frozen_fixture_v1",
-            "name": fixture_name,
-            "object": socket_object,
-            "fixed_for_session": True,
-            "pose_source": "foundpose_multiview_session_preflight",
-            "pose_robot": frozen_pose_robot.tolist(),
-            "pose_world": frozen_pose_world.tolist(),
-            "perception_mesh": str(mesh_path),
-            "collision_mesh": str(collision_mesh),
-            "measurement_dir": str(preflight_dir),
-            "calibration_dir": context.get("calib_dir"),
-            "repeatability": repeatability,
-            "samples": sample_records,
-        }
-        (preflight_dir / "fixture_pose.session.json").write_text(
-            json.dumps(fixture, indent=2, default=str) + "\n",
-            encoding="utf-8",
-        )
-        xyz = np.asarray(frozen_pose_robot)[:3, 3]
-        print("[socket-preflight] accepted and frozen for this process: "
-              f"xyz=({xyz[0]:.4f}, {xyz[1]:.4f}, {xyz[2]:.4f}) m, "
-              f"max residual={repeatability['max_translation_residual_mm']:.3f} mm/"
-              f"{repeatability['max_rotation_residual_deg']:.3f} deg")
-        if preflight_span is not None:
-            trace.end(
-                preflight_span, outcome="success",
-                measurement_dir=str(preflight_dir),
-                repeatability=repeatability,
-            )
-        return {fixture_name: fixture}
-    except Exception as exc:
-        if preflight_span is not None:
-            trace.end(preflight_span, outcome="failure", exception=repr(exc),
-                      measurement_dir=str(preflight_dir))
-        raise
-    finally:
-        if switched_object:
-            print(f"[socket-preflight] restoring FoundPose target {args.obj}")
-            orch.init_object(
-                obj_name=args.obj,
-                mesh_path=context["target_mesh_path"],
-                assets_root=context["target_assets_root"],
-                intrinsics_full=context["intrinsics_full"],
-                extrinsics_full=context["extrinsics_full"],
-                image_hw=context["image_hw"], mode="live",
-                pc_serials=context["pc_serials"],
-            )
-
-
-def _session_preflight(**context) -> dict:
-    """Compose fixed-socket and tabletop measurements into one contract."""
-    fixed_fixtures = _socket_preflight(**context)
-    if isinstance(fixed_fixtures, dict) and fixed_fixtures.get("cancel"):
-        return {"cancel": True}
-    tabletop_geometry = _charuco_preflight(**context)
-    if isinstance(tabletop_geometry, dict) and tabletop_geometry.get("cancel"):
-        return {"cancel": True}
-    return {
-        "schema": "autodex_session_startup_v1",
-        "tabletop_geometry": tabletop_geometry,
-        "fixed_fixtures": fixed_fixtures,
-    }
-
-
 def _capture_running_state(rcc) -> bool | None:
     """Return aggregate camera-acquisition state, or ``None`` if unknown.
 
@@ -646,8 +419,6 @@ def _reorient_in_process(**context) -> dict:
     )
     table_scene = add_obstacles(
         table_scene, "table", tabletop_geometry=context.get("tabletop_geometry"))
-    table_scene = add_fixed_mesh_fixtures(
-        table_scene, context.get("fixed_fixtures"))
     if scene_span is not None:
         trace.end(scene_span)
 
@@ -689,7 +460,7 @@ def _reorient_in_process(**context) -> dict:
     return info
 
 
-def main(task: TaskInterface | None = None) -> None:
+def main() -> None:
     trace = PipelineTrace(
         origin_monotonic_ns=_PROCESS_BOOT_MONOTONIC_NS,
         origin_wall_ns=_PROCESS_BOOT_WALL_NS,
@@ -699,9 +470,8 @@ def main(task: TaskInterface | None = None) -> None:
         run_auto.main(
             pose_adjust_handler=_rotate_in_process,
             reorient_handler=_reorient_in_process,
-            startup_handler=_session_preflight,
+            startup_handler=_charuco_preflight,
             pipeline_trace=trace,
-            task=task,
         )
     except KeyboardInterrupt:
         outcome = "aborted"

@@ -255,8 +255,7 @@ def ik_check_seeds(planner: GraspPlanner, scene_cfg: dict, seeds: dict) -> dict:
     if planner._ik_solver is None:
         planner._init_ik_solver(world_no_target)
     else:
-        planner._ik_solver.update_world(
-            [WorldConfig.from_dict(world_no_target)])
+        planner._ik_solver.update_world(WorldConfig.from_dict(world_no_target))
 
     if planner._hand.startswith("inspire"):
         backward = np.zeros(N, dtype=bool)
@@ -690,7 +689,7 @@ def _compute_reachability(planner, obj, wrist_obj, grasp_meta):
     if planner._ik_solver is None:
         planner._init_ik_solver(world)
     else:
-        planner._ik_solver.update_world([WorldConfig.from_dict(world)])
+        planner._ik_solver.update_world(WorldConfig.from_dict(world))
     dev, BS = planner._tensor_args.device, planner.BATCH_SIZE
     uposes = sorted(set(int(p) for p in gpose))
     for xi, x in enumerate(X_GRID):
@@ -920,7 +919,7 @@ def cartesian_object_path(planner, scene_lift, start_qpos, obj_wps, T_obj_in_wri
     if planner._ik_solver is None:
         planner._init_ik_solver(world)
     else:
-        planner._ik_solver.update_world([WorldConfig.from_dict(world)])
+        planner._ik_solver.update_world(WorldConfig.from_dict(world))
     dev, BS = planner._tensor_args.device, planner.BATCH_SIZE
     inv_oiw = np.linalg.inv(T_obj_in_wrist)
     lo, hi = _arm_limits(planner)

@@ -18,6 +18,7 @@ from typing import List, Optional, Union, Dict
 import numpy as np
 import torch
 import warp as wp
+import trimesh 
 import trimesh
         
 # CuRobo
@@ -37,6 +38,7 @@ from curobo.util.logger import log_error, log_info, log_warn
 from curobo.util.warp_init import init_warp
 from curobo.util.sample_lib import random_sample_points_on_sphere
 
+from rsslib.conversion import cart2se3
 @dataclass(frozen=True)
 class WarpMeshData:
     """Data helper to use with warp for representing a mesh"""
@@ -886,6 +888,7 @@ class WorldMeshCollision(WorldPrimitiveCollision):
             env_query_idx=env_query_idx,
             return_loss=return_loss,
         )
+        print("Primitive Collision D:", d_prim)
         d_val = d.view(d_prim.shape) + d_prim
 
         return d_val
@@ -1036,6 +1039,7 @@ class WorldMeshCollision(WorldPrimitiveCollision):
             enable_speed_metric=enable_speed_metric,
             return_loss=return_loss,
         )
+        print(d, "mesh collision")
         if "primitive" not in self.collision_types or not self.collision_types["primitive"]:
             return d
 
@@ -1050,6 +1054,7 @@ class WorldMeshCollision(WorldPrimitiveCollision):
             enable_speed_metric=enable_speed_metric,
             return_loss=return_loss,
         )
+        print(d_prim, "prim collision")
         d_val = d.view(d_prim.shape) + d_prim
 
         return d_val

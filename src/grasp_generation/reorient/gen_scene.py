@@ -86,7 +86,6 @@ def gen_reorient_scene(
     table_size: float = 2.0,
     table_thickness: float = 0.2,
     raw_mesh: bool = True,
-    target_obj_name: str | None = None,
 ) -> dict:
     """Reorientation grasp scene for transition pose_i -> pose_j.
 
@@ -201,15 +200,9 @@ def gen_reorient_scene(
         "pose": _rotmat_to_xyzquat(R_table_j, table_j_center),
     }
 
-    target_obj_name = target_obj_name or obj_name
     return {
         "scene": {
-            # Obstacles/table_j are derived from the full object's geometry,
-            # while an optional BODex-only proxy may constrain contact search
-            # to a safe subset in the exact same object frame.
-            "mesh": {"target": _mesh_target_entry(
-                target_obj_name, _se3_to_xyzquat(Ti), obj_root
-            )},
+            "mesh": {"target": _mesh_target_entry(obj_name, _se3_to_xyzquat(Ti), obj_root)},
             "cuboid": cuboids,
         },
         "meta": {
@@ -219,8 +212,6 @@ def gen_reorient_scene(
             "h": h,
             "thickness": thickness,
             "version": "v8",
-            "geometry_object": obj_name,
-            "grasp_target_object": target_obj_name,
         },
     }
 
@@ -235,10 +226,6 @@ def main():
     parser.add_argument("--version", default="v8",
                         help="v8 tabletop asset contract (only supported value)")
     parser.add_argument("--thickness", type=float, default=0.01)
-    parser.add_argument(
-        "--target-obj",
-        help="optional BODex contact proxy sharing the full object's frame",
-    )
     parser.add_argument("--out", type=str, default=None,
                         help="output json; default outputs/reorient_scenes/{obj}/{i}_{j}_h{h}.json")
     args = parser.parse_args()
@@ -248,7 +235,7 @@ def main():
 
     scene = gen_reorient_scene(
         args.obj, args.i, args.j, args.h, thickness=args.thickness,
-        obj_root=obj_root, target_obj_name=args.target_obj,
+        obj_root=obj_root,
     )
     default_name = f"{args.i:03d}_{args.j:03d}_h{int(round(args.h * 1000))}.json"
     out_path = Path(args.out) if args.out else (

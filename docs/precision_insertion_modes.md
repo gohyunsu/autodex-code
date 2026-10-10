@@ -9,19 +9,24 @@ This is an implementation/status document, not a claim that the robot can
 perform insertion today. The present `run_pipeline.py` still performs the
 original grasp/lift/place action. `insertion_session.py` is an offline,
 read-only decision layer and **does not command Franka or Inspire**.
+The original AutoDex execution files have been restored to `main`; any
+description below of a socket preflight or cylinder-specific runner option is
+historical, not a supported command. The current independent runtime design
+and usage boundary are in
+[`demo/precision-insertion/PLAN.md`](../demo/precision-insertion/PLAN.md).
 
 ## Ordered execution comparison
 
 | Order | AutoDex `run_pipeline.py` today | Intended precision-insertion session | Present status |
 |---|---|---|---|
-| 1. Startup | Initialize robot and AutoDex cameras; optionally measure the fixed socket and ChArUco tabletop. | Require session socket pose, hand–eye/camera calibration, and immutable fixture record; construct table + socket collision scene. | Socket preflight supports both modes. Cylinder sockets use a C∞-aware center/axis repeatability metric that ignores unobservable axial yaw. Cylinder FoundPose representations remain missing. |
-| 2. Perception | Distributed FoundPose estimates object pose; tabletop pose is classified. | Estimate key pose using the same AutoDex cameras and mesh; use socket pose frozen at startup. Symmetry quotient differs by mode: square yaw matters; cylinder axial yaw does not. | Cylinder geometry declares D∞ key/C∞ socket symmetry; scene snapping and fixture repeatability consume those declarations. Learned FoundPose weights still require onboarding and robot-camera validation. |
+| 1. Startup | Initialize robot and AutoDex cameras; optionally measure the ChArUco tabletop. No socket measurement. | Measure ChArUco, then the fixed socket, and construct a session-frozen table + socket world. | Demo-local C∞-aware pose/fixture helpers exist; no integrated runner or FoundPose representation. |
+| 2. Perception | Distributed FoundPose estimates object pose; tabletop pose is classified. | Estimate key pose using the same AutoDex cameras and mesh; use socket pose frozen at startup. Symmetry quotient differs by mode: square yaw matters; cylinder axial yaw does not. | Cylinder geometry declares D∞ key/C∞ socket symmetry; demo-local snapping and fixture repeatability read those declarations, but are not wired to the robot. FoundPose weights still require onboarding. |
 | 3. Trial choice | Use the observed pose, candidate coverage and attempted-candidate exclusions. | Filter the pre-simulated catalog by mode, gap **and observed tabletop pose**, then choose one scenario. Keep that scenario/grasp fixed across bounded retries to identify the effect of pose correction. | Offline catalog and pose-conditional selection implemented. No full-task-simulation pass exists; robot execution is blocked. |
 | 4. Planning | Select a v8 grasp using coverage plus IK/collision; preflight approach and attached 10 cm lift. | For the selected scenario, require collision-checked approach, grasp, lift, *held-key transfer*, pre-insertion hold, and a 20 mm insertion path with fixture/hand clearance. | AutoDex preflight stops at lift. Square pilot has sampled insertion endpoint geometry, not a continuous Franka path; cylinder has nominal CAD fit only. |
 | 5. Grasp/lift | Execute arm + Inspire grasp/lift. | Execute the same pickup, then observe a synchronized post-lift checkpoint; stop on slip or uncertain grasp. | Existing AutoDex pickup path available. New read-only VLM observer implemented, not wired into robot capture/execution. |
 | 6. Transfer/hold | Transfer to a tabletop placement and plan descent. | Hold hand joints fixed; transfer key rigidly to calibrated socket pre-insertion pose; compare measured key pose with target and retain socket-frame XY residual. | Not implemented in live task pipeline. Offline bounded correction policy implemented. |
 | 7. Insertion | No insertion action. | Force-limited guarded axial motion to measured 20 mm depth; square may need yaw alignment, cylinder ignores yaw. Optional finish press is separate. | Controller, F/T limits and contact dynamics not commissioned. No physical execution. |
-| 8. Outcome | ChArUco lift label or manual label; update grasp candidate result. | Fuse measured depth, force/abort, grip state and read-only VLM visual class; record grasp success and task success separately. Unknown/occluded is not success. | Separate outcome schema exists; offline evidence gate exists. Live insertion outcome integration pending. |
+| 8. Outcome | ChArUco lift label or manual label; update grasp candidate result. | Fuse measured depth, force/abort, grip state and read-only VLM visual class; record grasp, pre-insertion reach, and insertion success independently. Unknown/occluded is not success. | Historical offline task schema exists outside the demo; live insertion labels remain unimplemented. |
 | 9. Failure | Failed grasp/candidate can lead to another candidate, rotate, reset or reorient. | On misalignment with reliable metric pose, propose a bounded XY offset for the *same* grasp; on slip/safety abort/unknown, stop or inspect. Replan full path and enforce attempt cap. Reorient/regrasp only if fixed-grasp route has no feasible path. | Offline recommendation and attempt cap implemented. No robot retry loop. |
 | 10. Success/reset | Return/release to tabletop and update grasp coverage. | Confirm task success, then pick from socket, move to safe reset region and release; record insertion success separately from grasp coverage. | Not implemented. |
 
@@ -60,11 +65,10 @@ because it describes the family as a whole. All runtime object assets keep
 the standard AutoDex `object_processing/<object_id>` layout. The legacy
 root-level `cylindrical_assets.json` was archived and is not a catalog source.
 The cylinder `gap_XXmm` suffix denotes one-sided *radial* nominal clearance.
-When launching `run_pipeline.py` with the cylinder key, explicitly pass the
-matching `--socket-object precision_socket_cylinder_gap_XXmm`; the square
-default socket is rejected before hardware initialization. The default
-segmentation prompt then changes to a round-opening description. This guard
-does not make the existing runner perform insertion.
+The future demo runner must require the matching cylindrical socket before
+hardware initialization and choose a round-opening segmentation prompt.
+The original `run_pipeline.py` does not implement this guard or accept
+`--socket-object`.
 
 ## Offline usage
 
@@ -155,5 +159,6 @@ fixture calibration file is hashed at session start and cannot silently change.
    chosen scenarios, including force/contact abort behavior and reset.
 4. Commission a low-speed guarded insertion controller with measured depth,
    F/T limits, emergency stop, rollback and operator supervision. Integrate
-   checkpoint capture/VLM, frozen scenario, and retry policy into a task
-   action hook in `run_auto.py`; preserve original AutoDex as default.
+   checkpoint capture/VLM, frozen scenario, and retry policy into the
+   independent `demo/precision-insertion/` runner, leaving original AutoDex
+   unchanged.
