@@ -186,6 +186,37 @@ squeeze relation is a better simulation prior, but hardware drift and camera
 visibility need grasp-specific calibration or another bounded relation
 estimate before a physical transfer is authorized.
 
+### Occluded key after grasp: calibration route (not yet a transfer permit)
+
+Re-estimating the full key pose after every pickup should **not** be a required
+runtime step: Inspire can hide most of it. The intended alternative is to
+retain the tabletop key pose for planning the pickup, classify `held`/`miss`/
+`slip`/`unknown` from paired pre/post-lift raw views and measured hand state,
+and predict the held key from measured wrist FK and a **grasp-specific physical
+key–hand calibration**. Visual `held` does not itself measure that transform.
+For commissioning, temporarily use a viewpoint, fiducial or external tracker
+that independently observes the key during several distinct physical pickups
+of the *same* v8 candidate; log paired key pose, measured wrist and Inspire
+joints, measurement-error bounds and hashed source evidence. The read-only
+`physical_grasp_calibration.calibrate_physical_held_relation` summarizes those
+samples using a symmetry-aware measured medoid. It explicitly rejects
+MuJoCo/nominal samples and never reports `robot_ready`. Its empirical spread
+is descriptive, **not** a guaranteed future-trial error bound. It has not
+been connected to `prepare_postlift_transfer` or XY retry; both still require
+the existing independent held-key observation. No real calibration samples
+or commissioned error limits have been supplied yet.
+
+Before permitting the occlusion route to drive a robot, separately validate
+repeatability on held-out physical pickups, bind the exact candidate and
+gripper command to that calibration, bound camera/board/socket/FK/grasp/slip
+error jointly, and re-screen the full key plus hand at 20 mm and along the
+fresh planned path with that uncertainty margin. Reject or pause when measured
+hand joints or visual cues differ from the calibrated grasp, the key disappears
+without independent grip evidence, or the uncertainty exceeds the socket
+clearance. At pre-insertion, VLM can flag gross misalignment or slip; it must
+not turn hidden pixels into a millimetre-accurate key pose. Guarded contact
+and observed depth/force remain necessary for insertion success.
+
 The supervisor writes a new `session_run.json`, immutable copies of the
 frozen calibration and endpoint catalogue, numbered
 `trial_preflights/<n>/` reports with hashed key-evidence bindings, and

@@ -420,6 +420,12 @@ hand occlusion may make this impractical. Replace that dependency only after
 commissioning a grasp-specific key–hand relation with uncertainty and a
 fail-closed endpoint/path margin. MuJoCo achieved squeeze pose is a simulation
 prior, not a measured physical grasp transform.
+The read-only `physical_grasp_calibration.py` now defines the commissioning
+sample contract and symmetry-aware empirical relation summary. It does not
+change the runtime gate: physical samples, held-out repeatability, a
+conservative future-trial bound, uncertain endpoint/path checks and guarded
+controller evidence are still missing. A raw visual `held` label must never
+silently promote this descriptive artifact into a live 6D key observation.
 Candidate grasp statistics update from `grasp_success`; insertion retry
 statistics update from `insertion_success` and failure cause. Unknown is not
 success and must not erase a known earlier milestone. Use a controlled failure
