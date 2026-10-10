@@ -210,6 +210,8 @@ class SessionRunner:
         self._postshift_arrival_replan_saved_reports: set[Path] = set()
         self._postshift_arrival_replan_committed_reports: set[Path] = set()
         self._postshift_arrival_replan_index = 0
+        self._retry_axial_handoff_used_reports: set[Path] = set()
+        self._retry_axial_handoff_index = 0
         self._write_exclusive(
             target / "frozen_session_calibration.json", calibration.record)
         self._write_exclusive(target / "endpoint_catalog.json", catalog)
@@ -2531,6 +2533,73 @@ class SessionRunner:
             timestamp_s=timestamp_s, evidence_refs=refs))
         self._postshift_arrival_replan_committed_reports.add(report)
         return updated
+
+    def prepare_retry_axial_handoff(
+        self, *, replan: PostShiftArrivalReplan,
+        replan_report_path: Path,
+        previous: PostShiftInsertionPreflight,
+        arrival: PostShiftArrivalCheckpoint,
+        checkpoint: PostShiftCheckpoint,
+        shift_plan: GroundedLateralPreflight,
+        measured_start: LiveRobotState, decision_timestamp_s: float,
+        max_state_age_s: float, max_arrival_age_s: float,
+        max_start_joint_error_rad: float, max_hand_drift_raw: float,
+        max_arm_hand_skew_s: float,
+        max_hand_command_error_raw: float,
+        max_arm_velocity_rad_s: float,
+    ) -> Path:
+        """Bind the recorded metric retry to its new axial-only path."""
+        from .retry_axial_handoff import (
+            prepare_retry_axial_handoff as write_retry_axial_handoff,
+            verify_retry_axial_handoff,
+        )
+        if (self.current_decision().action !=
+                "await_retry_execution_and_observation" or
+                self._attempt is None or self._attempt_dir is None or
+                replan.status != "sampled_arrival_20mm_axial_preflight_pass" or
+                replan.attempt_id != self._attempt.attempt_id or
+                replan.candidate_id != self._attempt.candidate_id):
+            raise ValueError("retry handoff needs this pending grounded attempt")
+        source = Path(replan_report_path).expanduser().resolve()
+        pending_state = (self._attempt_dir /
+                         f"state_{self._attempt_index:03d}.json").resolve()
+        if (source not in self._postshift_arrival_replan_committed_reports or
+                source in self._retry_axial_handoff_used_reports or
+                source.parent.parent !=
+                    (self._attempt_dir /
+                     "postshift_arrival_axial_replans").resolve() or
+                not pending_state.is_file() or
+                not self._attempt.events or
+                self._attempt.events[-1].get("evidence_refs", {}).get(
+                    "arrival_axial_preflight") != str(source)):
+            raise ValueError("retry handoff source is not the pending XY event")
+        self.verify_current_preflight_evidence()
+        output = (self._attempt_dir / "retry_guarded_axial_handoffs" /
+                  f"{self._retry_axial_handoff_index:03d}")
+        kwargs = dict(
+            replan_report_path=source, expected=replan,
+            previous=previous, arrival=arrival,
+            checkpoint=checkpoint, shift_plan=shift_plan,
+            pending_state_path=pending_state, mode=self.mode,
+            shared_root=self.shared_root, calibration=self.calibration,
+            measured_start=measured_start,
+            decision_timestamp_s=decision_timestamp_s,
+            max_state_age_s=max_state_age_s,
+            max_arrival_age_s=max_arrival_age_s,
+            max_start_joint_error_rad=max_start_joint_error_rad,
+            max_hand_drift_raw=max_hand_drift_raw,
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s)
+        path = write_retry_axial_handoff(output_dir=output, **kwargs)
+        verify_retry_axial_handoff(
+            path, expected=replan, previous=previous, arrival=arrival,
+            checkpoint=checkpoint, shift_plan=shift_plan,
+            mode=self.mode, shared_root=self.shared_root,
+            calibration=self.calibration)
+        self._retry_axial_handoff_used_reports.add(source)
+        self._retry_axial_handoff_index += 1
+        return path
 
     def record_failure(
         self, code: str, *, timestamp_s: float,

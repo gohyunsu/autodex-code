@@ -154,6 +154,44 @@ point in any XY direction but must be nonzero and at most 1 mm. The attempt
 then awaits a **new** guarded execution and a fresh post-choice camera pair;
 the previous insertion verdict remains false until new evidence is recorded.
 Recording a pending retry is not a motion command or insertion-success label.
-The first-attempt guarded executor and v2 insertion checkpoint still reject
-this retry source: a separate source-bound retry contact boundary and physical
-key-depth verifier remain to be commissioned and integrated.
+Now bind that pending event to its **new** axial-only archive and a second
+measured, stationary arm/hand sample:
+
+```python
+retry_packet = runner.prepare_retry_axial_handoff(
+    replan=replan,
+    replan_report_path=arrival_axial_report,
+    previous=postshift_preflight,
+    arrival=arrival_checkpoint,
+    checkpoint=postshift_checkpoint,
+    shift_plan=completed_shift_plan,
+    measured_start=fresh_stationary_robot_state,
+    decision_timestamp_s=decision_time_after_state,
+    max_state_age_s=commissioned_state_age,
+    max_arrival_age_s=commissioned_arrival_age,
+    max_start_joint_error_rad=commissioned_joint_error,
+    max_hand_drift_raw=commissioned_hand_drift,
+    max_arm_hand_skew_s=commissioned_arm_hand_skew,
+    max_hand_command_error_raw=commissioned_hand_tracking_error,
+    max_arm_velocity_rad_s=commissioned_stationary_velocity,
+)
+```
+
+This writes an exclusive
+`retry_guarded_axial_handoffs/NNN/report.json`. It re-verifies the fresh
+arrival/CAD/path source chain, checks that the archive contains **only** axial
+samples starting at the measured arrival, and binds the latest append-only
+`grounded_continuous_xy` event and current measured 13-DOF state. A stale
+arrival, changed archive, different candidate or earlier/duplicate event
+cannot be reused. `verify_retry_axial_handoff(...)` replays these checks
+without querying the VLM or moving the robot.
+
+The packet deliberately says `robot_ready=false` and
+`read_only_grounded_retry_axial_packet_not_contact_permission`. Its saved
+joint sample becomes stale; a future contact executor must recheck fresh
+feedback, a command-time deadline, force/depth limits, watchdog and interlock
+before *any* stroke. The first-attempt guarded executor and v2 insertion
+checkpoint still reject this retry source. A retry-specific contact executor,
+fresh post-contact observations and physical key-depth verifier remain to be
+commissioned and integrated. Neither a passing packet nor a VLM label is
+evidence that the key entered 20 mm.

@@ -175,7 +175,10 @@ read-only. A passing report can be committed through
 `SessionRunner.record_grounded_xy_retry(...)`, which checks the saved
 multi-view diagnostic, completed shift, fresh arrival and axial preflight,
 then records a pending continuous <=1 mm XY retry without moving the robot.
-A separate retry-specific guarded contact handoff/executor and
+A fresh measured, stationary state can then be bound through
+`SessionRunner.prepare_retry_axial_handoff(...)` to the pending event and
+the **new axial-only archive**; its exclusive packet is read-only and does
+not authorize contact. A separately commissioned retry contact executor and
 physical key-depth admission are still needed before retry success can be
 labeled. See
 [POSTSHIFT_HANDOFF.md](POSTSHIFT_HANDOFF.md) for the call contract.
