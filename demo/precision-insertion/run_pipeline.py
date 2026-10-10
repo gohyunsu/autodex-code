@@ -10,6 +10,11 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from precision_insertion.assets import audit_assets
 from precision_insertion.config import select_mode
@@ -22,6 +27,26 @@ def main(argv: list[str] | None = None) -> int:
     audit.add_argument("--shared-root", type=Path, required=True)
     audit.add_argument("--mode", choices=("square", "cylinder"), required=True)
     audit.add_argument("--gap-mm", type=float, required=True)
+    reorient_audit = command.add_parser(
+        "audit-reorient", help="read-only v8 reset scene/seed readiness report",
+    )
+    reorient_audit.add_argument("--shared-root", type=Path, required=True)
+    reorient_audit.add_argument("--mode", choices=("square", "cylinder"), required=True)
+    reorient_audit.add_argument("--gap-mm", type=float, required=True)
+    reorient_audit.add_argument("--output", type=Path,
+                                help="optional new JSON report; no overwrite")
+    reorient_scenes = command.add_parser(
+        "prepare-reorient-scenes",
+        help="generate missing v8 BODex proposal scenes, not executable reset paths",
+    )
+    reorient_scenes.add_argument("--shared-root", type=Path, required=True)
+    reorient_scenes.add_argument("--mode", choices=("square", "cylinder"),
+                                 required=True)
+    reorient_scenes.add_argument("--gap-mm", type=float, required=True)
+    reorient_scenes.add_argument("--manifest", type=Path, required=True,
+                                 help="new output manifest path; no overwrite")
+    reorient_scenes.add_argument("--height-cm", type=int, action="append",
+                                 help="release-height subset; default 0,4,8,12")
     endpoint = command.add_parser(
         "screen-endpoint",
         help="offline exact-mesh grasp-only 20 mm endpoint screen",
@@ -112,6 +137,44 @@ def main(argv: list[str] | None = None) -> int:
         report = audit_assets(args.shared_root, mode)
         print(json.dumps(report, indent=2))
         return 0 if report["file_inputs_present"] else 2
+    if args.command == "audit-reorient":
+        from precision_insertion.reorient_assets import audit_v8_reorient_assets
+
+        try:
+            mode = select_mode(args.mode, args.gap_mm)
+            report = audit_v8_reorient_assets(
+                shared_root=args.shared_root, mode=mode)
+        except (FileNotFoundError, KeyError, TypeError, ValueError) as exc:
+            parser.error(str(exc))
+        payload = json.dumps(report, indent=2) + "\n"
+        if args.output is not None:
+            target = args.output.expanduser().resolve()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("x", encoding="utf-8") as stream:
+                stream.write(payload)
+        print(payload, end="")
+        return 0
+    if args.command == "prepare-reorient-scenes":
+        from precision_insertion.reorient_assets import prepare_v8_reorient_scenes
+        from autodex.utils.path import RESET_RELEASE_HEIGHTS_CM
+
+        try:
+            mode = select_mode(args.mode, args.gap_mm)
+            report = prepare_v8_reorient_scenes(
+                shared_root=args.shared_root, mode=mode,
+                manifest_path=args.manifest,
+                heights_cm=tuple(args.height_cm) if args.height_cm
+                else RESET_RELEASE_HEIGHTS_CM)
+        except (FileExistsError, FileNotFoundError, KeyError, TypeError,
+                ValueError) as exc:
+            parser.error(str(exc))
+        print(json.dumps({
+            "manifest": str(args.manifest.expanduser().resolve()),
+            "new_scene_count": report["new_scene_count"],
+            "directed_scene_count": report["directed_scene_count"],
+            "scope": report["scope"], "robot_ready": False,
+        }, indent=2))
+        return 0
     if args.command == "screen-endpoint":
         from precision_insertion.endpoint import screen_grasp_endpoint
 

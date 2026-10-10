@@ -344,6 +344,44 @@ grasp or an incomplete/stale catalogue. It does not execute reorientation.
 The example catalogue is in local `shared_data`, **not** the read-only
 `/mnt/paradex2` NAS mount.
 
+### Repose/reorientation proposal assets
+
+The new key object IDs have v8 tabletop poses but no legacy `paradex`
+tabletop tree. Therefore the stock `src/experiment/reset/reorient.py`
+cannot resolve its usual v8-to-legacy reset-cell mapping. Its carried-object
+planning scene also drops the session-frozen socket mesh, so it must **not**
+be invoked as this demo's executable repose path. The demo's
+`audit-reorient` command reports directed v8 pose-pair scenes separately
+from MuJoCo-stable reset grasp seeds and staged diagnostics. An available
+BODex scene is *not* an executable reorientation trajectory.
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/run_pipeline.py audit-reorient \
+  --shared-root /home/hyunsu/shared_data --mode square --gap-mm 1.5
+
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/run_pipeline.py prepare-reorient-scenes \
+  --shared-root /home/hyunsu/shared_data --mode cylinder --gap-mm 20 \
+  --manifest /home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_scene_manifest_v8_NEW.json
+```
+
+`prepare-reorient-scenes` reuses AutoDex's v8 BODex scene generator, creates
+only missing directed pose-pair scenes at release heights 0, 4, 8 and 12 cm,
+verifies existing scenes, and refuses to overwrite its manifest. The current
+local cylinder run created eight proposal scenes (two pose directions × four
+heights) under `object_processing/precision_key_cylinder_r15_h80/scene/`;
+[the local manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_scene_manifest_v8_20261010.json)
+records their hashes. The square key already has 20 h=12 cm proposal scenes.
+[The square audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/reorient_square_1p5_audit_20261010.json)
+and [cylinder audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_asset_audit_v8_20261010.json)
+find **zero runtime-stable reset seeds** for either family. Earlier square
+whole-hand staging manifests also report zero sampled passes; they must not
+be counted as runtime reset assets. BODex/MuJoCo seed generation, a direct
+v8 reset loader, and socket-aware Franka pickup–lift–reorient–place–retreat
+preflight remain required before automatic repose can replace the current
+`repose_required_unplanned` outcome.
+
 For the cylindrical family, generate the key's BODex/MuJoCo v8 grasp pool
 **once**, then screen that same pool against **each** selected socket. A
 recommended per-socket output layout is
