@@ -1442,6 +1442,11 @@ The demo-local [reset handoff rehydration tool](RESET_HANDOFF_RELOCATION.md)
 does this without changing stock code or overwriting canonical reset seeds;
 it has been exercised against the actual archive extracted under a different
 root. Its output remains a staged grasp pool, not a Franka reset plan.
+The six socket CAD/fixture directories have a separate
+[socket handoff relocation tool](CYLINDER_SOCKET_HANDOFF_RELOCATION.md),
+because their pose template and task geometry also embed this host's absolute
+paths. Its default is a read-only preflight; installation never fabricates a
+FoundPose representation or a calibrated socket pose.
 Even after installation on a writable AutoDex host, both seeds still need
 socket-aware full-chain Franka planning and physical validation.
 
