@@ -436,7 +436,11 @@ clearance. Its checks are now used by the occluded-key planning branch, but
 remain diagnostic-only until the future-trial bound has a verified physical
 source, swept-volume/controller validation and guarded contact. Do not pass
 the empirical calibration radius as that bound. The live XY retry route still
-requires an observed held-key pose after guarded withdrawal.
+requires an observed held-key pose after guarded withdrawal. The cylinder
+multi-view tip/axis diagnostic now accepts a verified bounded post-lift source,
+but only reports a continuous, at-most-1 mm XY hypothesis; it does not add a
+pending retry or motion preflight. The square-key yaw remains unobservable
+from an axial line alone.
 Candidate grasp statistics update from `grasp_success`; insertion retry
 statistics update from `insertion_success` and failure cause. Unknown is not
 success and must not erase a known earlier milestone. Use a controlled failure

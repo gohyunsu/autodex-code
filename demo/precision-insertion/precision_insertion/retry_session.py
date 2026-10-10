@@ -19,6 +19,7 @@ from PIL import Image
 
 from .calibration import validate_session_camera_calibration
 from .assets import AssetPaths
+from .bounded_postlift import verify_bounded_postlift_preflight
 from .candidates import select_pose_candidates, validate_catalog_session
 from .config import TaskMode
 from .endpoint import screen_grasp_endpoint
@@ -240,15 +241,25 @@ def _validated_retry_trial_context(
             .expanduser().resolve() != postlift_file):
         raise ValueError("retry needs the preinsert stage's saved post-lift preflight")
     postlift = json.loads(postlift_file.read_text(encoding="utf-8"))
-    if (not isinstance(postlift, dict) or
-            not isinstance(postlift.get("planning"), dict) or
-            not isinstance(postlift.get("observed_held_relation"), dict) or
-            postlift.get("schema") !=
-            "precision_insertion_postlift_preflight_v1" or
+    if not isinstance(postlift, dict):
+        raise ValueError("post-lift preflight must be a JSON object")
+    observed_route = (postlift.get("schema") ==
+                      "precision_insertion_postlift_preflight_v1")
+    bounded_route = (postlift.get("schema") ==
+                     "precision_insertion_bounded_postlift_preflight_v1")
+    relation_field = ("bounded_held_relation" if bounded_route else
+                      "observed_held_relation")
+    bounded_margin = postlift.get("uncertainty_margin")
+    if (not isinstance(postlift.get("planning"), dict) or
+            not isinstance(postlift.get(relation_field), dict) or
+            not (observed_route or bounded_route) or
             postlift.get("status") != "sampled_postlift_preflight_pass" or
             postlift.get("attempt_id") != attempt.attempt_id or
             postlift.get("candidate_key") != attempt.candidate_id.split("/") or
             postlift["planning"].get("sampled_planning_pass") is not True or
+            (bounded_route and (not isinstance(bounded_margin, dict) or
+                                bounded_margin.get(
+                                    "sampled_margin_pass") is not True)) or
             postlift.get("session_calibration_sha256") !=
             attempt.session_calibration_sha256):
         raise ValueError("post-lift preflight is not a passing plan for this attempt")
@@ -272,6 +283,18 @@ def _validated_retry_trial_context(
         raise ValueError("retry catalogue or frozen session changed since trial")
     if postlift.get("catalog_sha256") != trial.catalog_sha256:
         raise ValueError("post-lift preflight uses another endpoint catalogue")
+    if bounded_route:
+        selected = select_pose_candidates(
+            catalog, expected_mode=mode,
+            tabletop_pose_stem=attempt.tabletop_pose_stem)
+        matches = [row for row in selected["candidates"]
+                   if tuple(row["key"]) == trial.selected_candidate_key]
+        if (selected["status"] != "candidates_available" or
+                len(matches) != 1):
+            raise ValueError("bounded retry grasp is no longer endpoint eligible")
+        verify_bounded_postlift_preflight(
+            postlift_file, mode=mode, shared_root=root,
+            candidate_dir=matches[0]["candidate_dir"])
     return insertion, postlift, postlift_file, root
 
 
@@ -328,6 +351,8 @@ def assess_and_plan_observed_xy_retry(
         mode=mode, shared_root=shared_root, calibration=calibration,
         catalog=catalog, trial=trial, attempt=attempt,
         postlift_preflight_report_path=postlift_preflight_report_path)
+    if postlift["schema"] != "precision_insertion_postlift_preflight_v1":
+        raise ValueError("observed XY retry needs an observed held-key post-lift plan")
     if (not isinstance(held_key_observation, KeyPoseObservation) or
             held_key_observation.phase != "held_preinsert" or
             held_key_observation.key_object != mode.key_object or

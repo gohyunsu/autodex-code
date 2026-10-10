@@ -276,6 +276,16 @@ that session and catalogue. For each new key observation:
    preflight, a pending `xy_retry` event or a robot command. Its nominal
    key/socket collision is diagnostic only because squeeze may have shifted
    the actual key relative to the commanded hand target.
+   For the cylindrical key, `prepare_grounded_xy_diagnostic` accepts either
+   the observed post-lift plan or a re-verified bounded physical-calibration
+   plan after the same guarded-withdrawal and camera checks. It asks each
+   native-pixel view for a visible tip centre and shaft axis line, triangulates
+   the tip/axis, and calculates a continuous socket-frame correction with an
+   at-most-1 mm increment. Missing landmarks, weak parallax, tilt, or high
+   uncertainty abstain. This is still a **diagnostic**, not a pending retry:
+   the new lateral path, actual held geometry, and contact retry have not been
+   preflighted. The square key additionally needs insertion yaw and therefore
+   abstains with only an axial line.
 5. If the pose's candidate pool is exhausted, `current_decision()` returns
    `preflight_repose`. Call `preflight_repose` with the **same saved key capture**,
    synchronized measured joints, a listed target tabletop stem, directed v8

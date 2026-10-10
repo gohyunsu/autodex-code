@@ -362,3 +362,65 @@ def test_grounded_diagnostic_binds_failure_and_never_records_retry(
     assert saved["task_geometry_sha256"] == hashlib.sha256(
         fixture.read_bytes()).hexdigest()
     assert (output / "frames/a.png").is_file()
+
+
+def test_grounded_diagnostic_accepts_only_verified_bounded_postlift_source(
+        tmp_path, monkeypatch):
+    kwargs = _inputs(tmp_path, monkeypatch)
+    postlift_file = kwargs["postlift_preflight_report_path"]
+    saved = json.loads(postlift_file.read_text(encoding="utf-8"))
+    saved["schema"] = "precision_insertion_bounded_postlift_preflight_v1"
+    saved["bounded_held_relation"] = saved.pop("observed_held_relation")
+    saved["uncertainty_margin"] = {"sampled_margin_pass": True}
+    postlift_file.write_text(json.dumps(saved), encoding="utf-8")
+    fixture = next((tmp_path / "AutoDex/precision_insertion/fixtures").rglob(
+        "task_geometry.json"))
+    fixture.write_text(json.dumps({
+        "key_frame": {"tip_z_m": 0.08},
+        "verification_depth_m": 0.02,
+        "insertion_direction_socket": [0., 0., -1.],
+        "socket_entry_plane_z_m": 0.055,
+    }), encoding="utf-8")
+    alignment_limits = AlignmentLimits(
+        pixel_sigma_px=1., max_reprojection_px=3.,
+        min_parallax_deg=5., max_axis_tilt_deg=3.,
+        max_20mm_axis_sweep_m=.001,
+        max_lateral_uncertainty_95_m=.0005,
+        systematic_lateral_sigma_m=.0001,
+        cad_spacing_sigma_m=.0005)
+    verification_calls = []
+
+    def verify(path, **_kwargs):
+        verification_calls.append(path)
+        return saved
+
+    monkeypatch.setattr(retry_session,
+                        "verify_bounded_postlift_preflight", verify)
+    # This synthetic fixture rewrites task_geometry after building its catalog;
+    # isolate the source-routing contract from that deliberate fixture shortcut.
+    candidate_dir = (tmp_path / "AutoDex/candidates/inspire/v8" /
+                     kwargs["mode"].key_object / "table/0/1")
+    monkeypatch.setattr(retry_session, "select_pose_candidates",
+                        lambda *_args, **_kwargs: {
+                            "status": "candidates_available",
+                            "candidates": [{"key": ["table", "0", "1"],
+                                            "candidate_dir": str(candidate_dir)}]})
+    diagnostic_inputs = {key: value for key, value in kwargs.items()
+                         if key not in {"planner", "held_key_observation",
+                                        "held_key_evidence_dir"}}
+    result = assess_grounded_xy_diagnostic(
+        **diagnostic_inputs, alignment_limits=alignment_limits,
+        axis_reference_key_z_m=.03)
+    assert result.status == "abstain"  # square yaw still unobservable
+    assert verification_calls == [postlift_file.resolve()]
+    assert kwargs["backend"].calls == 0
+    with pytest.raises(ValueError, match="observed held-key post-lift plan"):
+        assess_and_plan_observed_xy_retry(**kwargs)
+    monkeypatch.setattr(
+        retry_session, "verify_bounded_postlift_preflight",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("physical calibration source changed")))
+    with pytest.raises(ValueError, match="physical calibration source changed"):
+        assess_grounded_xy_diagnostic(
+            **diagnostic_inputs, alignment_limits=alignment_limits,
+            axis_reference_key_z_m=.03)

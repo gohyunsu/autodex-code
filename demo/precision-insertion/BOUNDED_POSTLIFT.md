@@ -83,6 +83,12 @@ statistical coverage of the supplied bound.
 No grasp-specific physical calibration or commissioned future-trial bound is
 present in the current local/NAS handoff. There is also no commissioned live
 camera provenance adapter, fail-closed transfer/contact controller, or
-bounded-relation XY retry. The existing observed-key XY retry still requires
-a fresh held-key FoundPose after withdrawal. Do not use a test fixture or a
+bounded-relation **live** XY retry. After a logged safe withdrawal, the
+cylinder-only `prepare_grounded_xy_diagnostic(...)` can now re-verify this
+post-lift report and use native-pixel multi-view VLM tip/axis observations to
+calculate a continuous socket-frame XY correction capped to a 1 mm increment.
+It saves a metric hypothesis only; no lateral or renewed insertion plan is
+recorded. The existing observed-key **live** XY retry still requires a fresh
+held-key FoundPose after withdrawal. A square key also needs observable yaw,
+so its two-collinear-landmark route abstains. Do not use a test fixture or a
 nominal/MuJoCo transform in place of the missing physical records.
