@@ -180,6 +180,34 @@ The first independent helpers are in `precision_insertion/`:
   separate; their output still goes through `xy_voting.py`, not directly to
   a motion controller. This module cannot manufacture synchronized images,
   CAD overlays, depth estimates, or physical ground-truth labels.
+- `records.py` keeps separate observed grasp, pre-insertion and insertion
+  labels. An XY retry record now requires an actual `false` insertion verdict,
+  a still-held key, no safety abort, two different voting cameras, and a
+  choice ID matching exactly one 1 mm socket-frame cardinal move. `null`
+  insertion evidence cannot trigger a retry.
+- `session_policy.py` connects existing trial preflight and attempt records to
+  the next **evidence gate**. It routes failed grasp to fresh key observation
+  and candidate exclusion, failed transfer to recovery, held/no-abort
+  insertion failure to guarded withdrawal and 1 mm XY assessment, and pose
+  exhaustion to a separate repose preflight. An explicit retry-count limit
+  is required. Its `execution_gate_required` result does not authorize a
+  robot command; the live capture/executor and commissioned F/T gates are
+  still absent.
+
+For a saved `preflight-trial` report, the decision API can be inspected without
+connecting to the robot:
+
+```python
+import json
+from precision_insertion.session_policy import decide_after_trial_preflight
+
+report = json.loads(open("trial/report.json", encoding="utf-8").read())
+print(decide_after_trial_preflight(report).to_record())
+```
+
+After actual stage observations have been appended to an `AttemptRecord`, use
+`decide_after_attempt(attempt, max_xy_retries=<commissioned_limit>)`; this is
+an in-memory policy API, not a replay parser or live execution loop.
 
 The XY voting resolver remains a read-only contract even when an optional
 ZeroDex-backed observer supplies votes. Its caller must first validate the

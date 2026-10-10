@@ -94,7 +94,7 @@ class AttemptRecord:
         already_recorded = any(event["stage"] == stage for event in self.events)
         if already_recorded and not (
                 stage == "insertion_success" and self._pending_retry and
-                self.labels[stage] is not True):
+                self.labels[stage] is False):
             raise ValueError(f"stage already recorded: {stage}")
         required = PREREQUISITE.get(stage)
         if required is not None and self.labels[required] is not True:
@@ -152,19 +152,39 @@ class AttemptRecord:
         """
         if not any(event["stage"] == "insertion_success" for event in self.events):
             raise ValueError("retry needs a preceding insertion observation")
-        if self.labels["insertion_success"] is True or self._pending_retry:
-            raise ValueError("cannot retry a success or an unobserved retry")
+        if self.labels["insertion_success"] is not False or self._pending_retry:
+            raise ValueError("retry requires an observed failure and no pending retry")
+        last_insertion = next(
+            event for event in reversed(self.events)
+            if event["stage"] == "insertion_success")
+        insertion_input = last_insertion["detail"]["input"]
+        if (insertion_input["grasp_held"] is not True or
+                insertion_input["safety_abort"] is not False or
+                self.failure_code in {"force_abort", "slip", "reset_failed"}):
+            raise ValueError("retry requires held grasp without safety abort")
         if (not isinstance(decision, ChoiceDecision) or
                 decision.status != "propose" or
                 decision.offset_socket_m is None or
-                len(decision.supporting_cameras) < 2):
+                len(set(decision.supporting_cameras)) < 2 or
+                not all(isinstance(camera, str) and camera
+                        for camera in decision.supporting_cameras)):
             raise ValueError("retry needs a two-view proposed XY choice")
         target = decision.offset_socket_m
+        if len(target) != 2 or not all(math.isfinite(float(v)) for v in target):
+            raise ValueError("retry target needs two finite socket-frame offsets")
         dx = target[0] - self.xy_offset_socket_m[0]
         dy = target[1] - self.xy_offset_socket_m[1]
         if (abs(math.hypot(dx, dy) - VLM_XY_STEP_M) > 1e-12 or
                 min(abs(dx), abs(dy)) > 1e-12):
             raise ValueError("retry must be exactly one 1 mm cardinal step")
+        expected_id = (
+            "x_plus_1mm" if dx > 0 and abs(dy) <= 1e-12 else
+            "x_minus_1mm" if dx < 0 and abs(dy) <= 1e-12 else
+            "y_plus_1mm" if dy > 0 and abs(dx) <= 1e-12 else
+            "y_minus_1mm"
+        )
+        if decision.choice_id != expected_id:
+            raise ValueError("retry ID does not describe the 1 mm socket-frame move")
         refs = _refs(evidence_refs, "preinsert_reached", False)
         required = {"axial_withdrawal", "live_preflight", "xy_vlm_vote"}
         if not required <= refs.keys():

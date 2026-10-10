@@ -477,7 +477,12 @@ calibrated view, and a minimum separation check on the **original** pixels
 rejects views that cannot resolve the candidates. The VLM sees raw/annotated
 crops and can return only an ID or abstain; the existing multi-view resolver
 requires agreement. This still lacks an executable guarded withdrawal,
-fresh-state XY path replan, contact controller, and measured Inspire joints.
+contact controller, and measured Inspire joints. The planning-only
+`retry_preflight.py` now rescreens the selected endpoint and replans from a
+fresh, synchronized withdrawn-hold state; this is not a live retry executor.
+`session_policy.py` routes a physical `false` insertion label to withdrawal
+and this 1 mm assessment only while the key is still held, no safety abort
+occurred, and the caller-specified retry count has not been exhausted.
 For 0.3/0.5 mm gaps, a full-depth 1 mm offset can be geometrically invalid;
 the screen correctly blocks it even if VLM votes for it. A finer or
 force-guided search would be a separate commissioned experiment, not a silent
@@ -600,6 +605,9 @@ demo/precision-insertion/
     xy_voting.py                  # read-only multi-view XY ID consensus
     xy_overlay.py                 # pixel-resolvability check and calibrated ID crops
     xy_retry.py                   # offline endpoint/overlay/VLM consensus proposal
+    retry_preflight.py            # fresh withdrawn-state retry planning only
+    records.py                    # separate append-only observed task labels
+    session_policy.py             # fail-closed next evidence gate, no motor commands
     outcome.py                    # VLM-led tri-state insertion result fusion
     observer.py                   # read-only ZeroDex-backed VLM prompts, parsing, per-view votes
   tests/                          # offline contracts and replay fixtures
