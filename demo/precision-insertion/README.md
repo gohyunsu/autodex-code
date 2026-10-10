@@ -9,6 +9,18 @@ shows that the existing fixed-key/commanded-squeeze cylinder images are
 diagnostic only: they do not depict achieved MuJoCo grasp geometry. Do not
 promote the 13 socket-clear candidates to robot trials from those images.
 
+The NAS handoff at
+`/mnt/paradex2/hyunsu/autodex_precision_insertion_handoff_20261010_652ac909`
+contains large per-object `pending_foundpose/.../repre.pth` onboarding
+artifacts, but its own README labels them **validation pending**: no real
+AutoDex key/socket camera images were used to check masks, axes, and open-rim
+direction. They have not been promoted into canonical runtime
+`foundpose_assets`. No grasp-specific *physical* key–hand calibration record
+was found in that handoff. Consequently the current retry route still needs
+an observed held-key pose, and the occlusion-tolerant calibrated route is not
+eligible for robot execution. File presence and synthetic-template counts do
+not establish live perception accuracy.
+
 This directory is reserved for an independent precision-insertion demo. Its
 runner must not call `src.execution.run_auto.main()` or require edits to the
 existing AutoDex execution files (`run_auto.py`, `run_pipeline.py`, or
@@ -361,6 +373,10 @@ The first independent helpers are in `precision_insertion/`:
   `verify_preinsert_checkpoint` rechecks saved frames, overlays, transfer
   sources and the plan file. After a separately controlled transfer,
   `SessionRunner.prepare_observed_preinsert_label(...)` creates this report.
+  A repeated VLM call must use genuinely newer camera exposures; reusing the
+  same frame IDs/pixels or an overlapping exposure interval is rejected even
+  if the capture directory has a new name. Unknown assessments may be retried
+  only with fresh synchronized images.
   `observe_stage("preinsert_reached", True, ...)` now requires the *same*
   positive report, saved transfer log, raw preinsert manifest, frozen
   post-lift plan and non-early observation time. Use its report path for both

@@ -903,9 +903,18 @@ def test_preinsert_assessment_is_saved_before_positive_arrival_label(
     monkeypatch.setattr(session_runner, "assess_preinsert_checkpoint", assess)
     monkeypatch.setattr(session_runner, "write_preinsert_checkpoint", write)
     monkeypatch.setattr(
+        session_runner, "verify_raw_camera_capture",
+        lambda _path, phase: {
+            "frame_evidence": {
+                "cam_a": {"frame_id": 31, "image_sha256": "a" * 64,
+                          "timestamp_s": 10.45, "max_error_s": 0.001},
+                "cam_b": {"frame_id": 32, "image_sha256": "b" * 64,
+                          "timestamp_s": 10.455, "max_error_s": 0.001},
+            }})
+    monkeypatch.setattr(
         session_runner, "verify_preinsert_checkpoint",
         lambda path: json.loads(path.read_text(encoding="utf-8")))
-    result = runner.prepare_observed_preinsert_label(
+    assessment_kwargs = dict(
         raw_bundle=tmp_path / "saved_raw", transfer_execution_path=transfer,
         joint_sample=object(), backend=object(),
         max_capture_skew_s=0.02, max_joint_frame_skew_s=0.02,
@@ -915,8 +924,11 @@ def test_preinsert_assessment_is_saved_before_positive_arrival_label(
         max_arm_hand_skew_s=0.02,
         max_hand_command_error_raw=30.0,
         max_arm_velocity_rad_s=0.05)
+    result = runner.prepare_observed_preinsert_label(**assessment_kwargs)
     assert result.preinsert_reached is True
     assert seen[0]["attempt"].attempt_id == "attempt_1"
+    with pytest.raises(ValueError, match="newer camera exposures"):
+        runner.prepare_observed_preinsert_label(**assessment_kwargs)
     report = runner._preinsert_report_path
     refs = {"trajectory": str(transfer), "grasp_state": str(transfer),
             "key_socket_pose": str(report),

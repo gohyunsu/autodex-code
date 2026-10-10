@@ -181,6 +181,18 @@ def test_measured_preinsert_arrival_needs_multiview_visible_key(tmp_path):
     assert len(report.to_record()["comparison"]["views"]) == 2
     saved = write_preinsert_checkpoint(report, tmp_path / "arrival")
     assert verify_preinsert_checkpoint(saved)["preinsert_reached"] is True
+    original_report = saved.read_bytes()
+    wrong_consensus = json.loads(original_report)
+    wrong_consensus["visual"]["status"] = "unknown"
+    saved.write_text(json.dumps(wrong_consensus), encoding="utf-8")
+    with pytest.raises(ValueError, match="consensus differs"):
+        verify_preinsert_checkpoint(saved)
+    wrong_label = json.loads(original_report)
+    wrong_label["preinsert_reached"] = False
+    saved.write_text(json.dumps(wrong_label), encoding="utf-8")
+    with pytest.raises(ValueError, match="label contradicts"):
+        verify_preinsert_checkpoint(saved)
+    saved.write_bytes(original_report)
     overlay = tmp_path / "arrival" / "overlays" / "cam_a.png"
     overlay.write_bytes(overlay.read_bytes() + b"tampered")
     with pytest.raises(ValueError, match="pixel evidence changed"):

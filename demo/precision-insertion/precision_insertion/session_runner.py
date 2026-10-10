@@ -141,6 +141,8 @@ class SessionRunner:
         self._preinsert_report_path: Path | None = None
         self._preinsert_report_sha256: str | None = None
         self._preinsert_assessment_index = 0
+        self._preinsert_frame_signatures: set[tuple] = set()
+        self._preinsert_latest_exposure_s = -math.inf
         self._lift_checkpoint: LiftCheckpoint | None = None
         self._lift_report_path: Path | None = None
         self._lift_report_sha256: str | None = None
@@ -365,6 +367,8 @@ class SessionRunner:
         self._preinsert_report_path = None
         self._preinsert_report_sha256 = None
         self._preinsert_assessment_index = 0
+        self._preinsert_frame_signatures.clear()
+        self._preinsert_latest_exposure_s = -math.inf
         self._lift_checkpoint = None
         self._lift_report_path = None
         self._lift_report_sha256 = None
@@ -571,6 +575,8 @@ class SessionRunner:
         self._preinsert_report_path = None
         self._preinsert_report_sha256 = None
         self._preinsert_assessment_index = 0
+        self._preinsert_frame_signatures.clear()
+        self._preinsert_latest_exposure_s = -math.inf
         self._lift_checkpoint = None
         self._lift_report_path = None
         self._lift_report_sha256 = None
@@ -630,6 +636,8 @@ class SessionRunner:
         self._preinsert_report_path = None
         self._preinsert_report_sha256 = None
         self._preinsert_assessment_index = 0
+        self._preinsert_frame_signatures.clear()
+        self._preinsert_latest_exposure_s = -math.inf
         self._lift_checkpoint = None
         self._lift_report_path = None
         self._lift_report_sha256 = None
@@ -1018,6 +1026,19 @@ class SessionRunner:
                 != self._postlift_report_sha256 or
                 _digest(self.calibration.record) != self.session_sha256):
             raise ValueError("preinsert assessment needs the same passing post-lift plan")
+        raw_root = Path(raw_bundle).expanduser().resolve()
+        raw_capture = verify_raw_camera_capture(raw_root, phase="preinsert")
+        rows = raw_capture["frame_evidence"]
+        signature = tuple(sorted((serial, row["frame_id"],
+                                  row["image_sha256"])
+                                 for serial, row in rows.items()))
+        first_exposure = min(row["timestamp_s"] - row["max_error_s"]
+                             for row in rows.values())
+        last_exposure = max(row["timestamp_s"] + row["max_error_s"]
+                            for row in rows.values())
+        if (signature in self._preinsert_frame_signatures or
+                first_exposure <= self._preinsert_latest_exposure_s):
+            raise ValueError("preinsert reassessment needs newer camera exposures")
         kwargs = {}
         if renderer_factory is not None:
             kwargs["renderer_factory"] = renderer_factory
@@ -1027,7 +1048,7 @@ class SessionRunner:
             attempt=self._attempt, postlift=self._postlift_preflight,
             postlift_report_path=self._postlift_report_path,
             calibration=self.calibration, shared_root=self.shared_root,
-            mode=self.mode, raw_bundle=raw_bundle,
+            mode=self.mode, raw_bundle=raw_root,
             transfer_execution_path=transfer_execution_path,
             joint_sample=joint_sample, backend=backend,
             max_capture_skew_s=max_capture_skew_s,
@@ -1048,6 +1069,8 @@ class SessionRunner:
         self._preinsert_report_sha256 = hashlib.sha256(
             report_path.read_bytes()).hexdigest()
         self._preinsert_assessment_index += 1
+        self._preinsert_frame_signatures.add(signature)
+        self._preinsert_latest_exposure_s = last_exposure
         return result
 
     def observe_stage(

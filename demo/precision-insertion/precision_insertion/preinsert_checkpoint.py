@@ -80,6 +80,72 @@ def _transfer_log(path: Path, attempt: AttemptRecord) -> dict:
     return data
 
 
+def _arrival_label(
+    *, measurement: dict, position_error: float, rotation_error: float,
+    max_position_error: float, max_rotation_error: float, visual_status: str,
+) -> tuple[bool | None, str]:
+    if (measurement["trajectory_complete"] is False or
+            measurement["safety_abort"] is True or
+            measurement["grasp_held"] is False):
+        return False, "transfer_or_grasp_failed"
+    if (position_error > max_position_error or
+            rotation_error > max_rotation_error):
+        return False, "measured_hold_pose_outside_limits"
+    if visual_status in {"gross_misalignment", "slip_or_miss"}:
+        return False, "multiview_visible_preinsert_failure"
+    if (visual_status == "coarse_match" and measurement == {
+            "trajectory_complete": True, "safety_abort": False,
+            "grasp_held": True}):
+        return True, "measured_arrival_and_visible_held_key"
+    return None, "preinsert_evidence_incomplete_or_occluded"
+
+
+def _verify_visual_record(visual: dict, views: dict) -> None:
+    rows = visual.get("per_view")
+    if (not isinstance(rows, list) or len(rows) != len(views) or
+            len(rows) < 2):
+        raise ValueError("preinsert visual report lacks its camera responses")
+    decisive: dict[str, list[str]] = {}
+    seen: set[str] = set()
+    for row in rows:
+        if (not isinstance(row, dict) or
+                row.get("stage") != "preinsert_visual" or
+                not isinstance(row.get("image_order"), list) or
+                len(row["image_order"]) != 2 or
+                not isinstance(row.get("parsed"), dict)):
+            raise ValueError("preinsert per-view response is invalid")
+        label = row["image_order"][0]
+        if not isinstance(label, str) or not label.startswith("raw_preinsert/"):
+            raise ValueError("preinsert per-view raw image order changed")
+        camera = label.removeprefix("raw_preinsert/").split("@", 1)[0]
+        if (camera not in views or camera in seen or
+                row["image_order"] != [
+                    f"raw_preinsert/{camera}@{views[camera]['timestamp_s']:.6f}",
+                    f"predicted_scene/{camera}@{views[camera]['timestamp_s']:.6f}"]):
+            raise ValueError("preinsert VLM camera/frame order changed")
+        seen.add(camera)
+        parsed = row["parsed"]
+        category = parsed.get("class")
+        if category not in {
+                "coarse_match", "gross_misalignment", "slip_or_miss",
+                "unobservable"}:
+            raise ValueError("preinsert per-view class is invalid")
+        if (row.get("parse_error") is None and
+                category != "unobservable" and
+                isinstance(parsed.get("evidence"), str) and
+                parsed["evidence"].strip() and
+                parsed.get("evidence_views") == [camera]):
+            decisive.setdefault(category, []).append(camera)
+    if len(decisive) == 1 and len(next(iter(decisive.values()))) >= 2:
+        status = next(iter(decisive))
+        supporting = sorted(decisive[status])
+    else:
+        status, supporting = "unknown", []
+    if (visual.get("status") != status or
+            visual.get("supporting_cameras") != supporting):
+        raise ValueError("preinsert visual consensus differs from per-view responses")
+
+
 @dataclass(frozen=True)
 class PreinsertCheckpoint:
     attempt_id: str
@@ -253,22 +319,12 @@ def assess_preinsert_checkpoint(
     visual = observe_preinsert_hold_views(
         backend, comparison.views, max_capture_skew_s=max_capture_skew_s)
     measurement = transfer["measurement"]
-    if (measurement["trajectory_complete"] is False or
-            measurement["safety_abort"] is True or
-            measurement["grasp_held"] is False):
-        label, reason = False, "transfer_or_grasp_failed"
-    elif (position_error > max_hand_translation_error_m or
-          rotation_error > max_hand_rotation_error_deg):
-        label, reason = False, "measured_hold_pose_outside_limits"
-    elif visual.status in {"gross_misalignment", "slip_or_miss"}:
-        label, reason = False, "multiview_visible_preinsert_failure"
-    elif (visual.status == "coarse_match" and
-          measurement == {
-              "trajectory_complete": True, "safety_abort": False,
-              "grasp_held": True}):
-        label, reason = True, "measured_arrival_and_visible_held_key"
-    else:
-        label, reason = None, "preinsert_evidence_incomplete_or_occluded"
+    label, reason = _arrival_label(
+        measurement=measurement, position_error=position_error,
+        rotation_error=rotation_error,
+        max_position_error=max_hand_translation_error_m,
+        max_rotation_error=max_hand_rotation_error_deg,
+        visual_status=visual.status)
     return PreinsertCheckpoint(
         attempt.attempt_id, attempt.candidate_id, label, reason,
         position_error, rotation_error, visual, comparison, {
@@ -366,14 +422,15 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
                 hashes["timestamp_s"] !=
                 capture["frame_evidence"][serial]["timestamp_s"]):
             raise ValueError("preinsert VLM pixel evidence changed")
-    if (report["preinsert_reached"] is True and
-            (report["visual"]["status"] != "coarse_match" or
-             report["transfer_measurement"] != {
-                 "trajectory_complete": True, "safety_abort": False,
-                 "grasp_held": True} or
-             report["hand_translation_error_m"] >
-             report["max_hand_translation_error_m"] or
-             report["hand_rotation_error_deg"] >
-             report["max_hand_rotation_error_deg"])):
-        raise ValueError("preinsert success contradicts saved evidence")
+    _verify_visual_record(report["visual"], views)
+    expected_label, expected_reason = _arrival_label(
+        measurement=report["transfer_measurement"],
+        position_error=report["hand_translation_error_m"],
+        rotation_error=report["hand_rotation_error_deg"],
+        max_position_error=report["max_hand_translation_error_m"],
+        max_rotation_error=report["max_hand_rotation_error_deg"],
+        visual_status=report["visual"]["status"])
+    if (report["preinsert_reached"] is not expected_label or
+            report["reason"] != expected_reason):
+        raise ValueError("preinsert label contradicts saved evidence")
     return report
