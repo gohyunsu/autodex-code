@@ -1269,6 +1269,10 @@ is:
 The destination must be absent. A different host/root requires source
 scenes and their absolute CAD references to be regenerated/verified for that
 host; copying the JSON path strings alone is not sufficient.
+The hash-verified local [square tabletop handoff](SQUARE_TABLETOP_HANDOFF.md)
+packages the necessary offline files for transfer, but its source-bound
+scene/fixture JSONs and candidate source-scene hashes still need a
+non-overwriting recipient relocation step before use on a different root.
 
 The separate
 [`audit_square_grasp_fidelity.py`](audit_square_grasp_fidelity.py) reads
