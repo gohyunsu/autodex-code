@@ -491,6 +491,24 @@ Only camera views present in both captures are compared, and a positive
 visual class needs at least two supporting views. Hidden/ambiguous images do
 not prove insertion. A command stroke alone is not an allowed key-depth
 source. The output remains read-only and cannot start guarded contact.
+The demo now also has a pure, **non-actuating**
+[`GuardedContactMonitor`](precision_insertion/guarded_contact.py) for the
+planned 20 mm stroke. With separately commissioned limits and acquisition-
+time samples already expressed in the frozen **socket frame**, it latches an
+abort on stale/missing samples, Inspire command-tracking loss, axial/lateral
+force or moment excess, key-axis/yaw alignment excess, implausible depth
+jumps or overshoot. At the nominal 20 mm wrist/FK endpoint it returns
+`hold_for_key_depth_and_vlm`, **not** `insertion_success`: nominal progress
+does not measure the key after squeeze. The saved VLM checkpoint still needs
+an independently bounded physical key-depth source. This monitor does not
+transform the FR3 wrench, verify sensor calibration, stop the robot, or
+generate the `guarded_execution_v1` metric record. Its Python-side sample
+deadline is not an independent daemon dead-man; the checked-out ParaDex
+velocity stream has no verified command-expiry watchdog. An actuator must
+meet that robot-side safety prerequisite before interpreting any `continue`
+decision as permission to follow a preflighted path. The thresholds in unit
+tests are synthetic examples, **not** robot settings. The exact sample,
+frame and API contract is in [GUARDED_CONTACT.md](GUARDED_CONTACT.md).
 The observed `prepare_postlift_transfer` still insists on a fresh held-key
 FoundPose relation. The alternative `prepare_bounded_postlift_transfer` accepts
 only an exact-candidate physical calibration, future-trial bound and fresh
