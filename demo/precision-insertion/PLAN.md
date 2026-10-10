@@ -548,8 +548,17 @@ key CAD and Inspire visual links. It checks the specified release pose,
 path continuity/density and sampled solid contact with the frozen socket and
 table (including completely enclosed links that a triangle-BVH surface test
 would miss). This is a diagnostic primitive, not a reset planner or execution
-permission. Release-hand opening, post-release retreat, landing pose and live
-post-lift grasp relation are still outstanding.
+permission. `preflight_v8_repose_transition` now joins a fresh, synchronized
+key/start observation to an insertion-eligible target pose, a provenance-bound
+directed v8 reset seed, AutoDex's unchanged pickup planner, and the
+socket-aware held lift/transfer/descent preflight. Its strongest possible
+status is `held_reset_path_available_release_unplanned`: **opening the hand,
+post-release retreat, landing-pose verification and live post-lift grasp
+relation are still outstanding**. An explicitly commissioned release XY is
+required; the broad table cuboid does not establish that the key footprint
+lies inside the usable ChArUco board area. The current held descent only
+supports nonzero v8 drop heights 4/8/12 cm; the original 0 cm reset cell is
+not yet planned by this module.
 
 ## Code and data layout
 
@@ -576,6 +585,8 @@ demo/precision-insertion/
     preflight.py                  # planning-only pickup/lift/transfer/20 mm composition
     path_audit.py                 # sampled held-key/hand scene collision checks
     repose_path_audit.py          # sampled held reset-path/fixture check, no execution
+    repose_preflight.py           # v8 tabletop rest target and held reset path
+    repose_transition.py          # seed -> AutoDex pickup -> held reset preflight
     xy_voting.py                  # read-only multi-view XY ID consensus
     xy_overlay.py                 # pixel-resolvability check and calibrated ID crops
     xy_retry.py                   # offline endpoint/overlay/VLM consensus proposal

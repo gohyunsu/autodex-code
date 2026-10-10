@@ -1,0 +1,299 @@
+"""Planning-only reset composition retains the frozen socket."""
+
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+import sys
+from types import SimpleNamespace
+
+import coal  # noqa: F401 -- AutoDex host loads Coal before Trimesh
+import numpy as np
+import pytest
+import trimesh
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from autodex.utils.conversion import se32cart  # noqa: E402
+from autodex.utils.tabletop_geometry import table_cuboid  # noqa: E402
+from precision_insertion.assets import AssetPaths  # noqa: E402
+from precision_insertion.calibration import SessionCalibration  # noqa: E402
+from precision_insertion.config import select_mode  # noqa: E402
+from precision_insertion.path_audit import PathAuditLimits  # noqa: E402
+from precision_insertion.repose_preflight import (  # noqa: E402
+    build_v8_repose_rest_pose, plan_repose_held_chain,
+    validate_repose_rest_target,
+)
+from precision_insertion.repose_transition import (  # noqa: E402
+    preflight_v8_repose_transition,
+)
+from precision_insertion.world import add_fixed_mesh_fixtures  # noqa: E402
+
+
+MODE = select_mode("square", 1.5)
+
+
+def _pose(x: float, z: float) -> np.ndarray:
+    pose = np.eye(4)
+    pose[:3, 3] = (x, 0.0, z)
+    return pose
+
+
+class _Planner:
+    _n_arm = 7
+    _hand = "fr3_inspire"
+    _robot_cfg = {"kinematics": {"ee_link": "base_link"}}
+
+    def __init__(self):
+        self.calls = []
+        self.reject_transfer = False
+        self.pickup_plan = None
+
+    def set_start_state(self, q):
+        self.calls.append(("start", tuple(np.asarray(q).shape)))
+
+    def plan(self, scene, *, candidate_override, **kwargs):
+        self.calls.append(("pickup", sorted(scene["mesh"])))
+        assert candidate_override[0].shape == (1, 4, 4)
+        assert candidate_override[3][0][0] == "reset"
+        return self.pickup_plan
+
+    def fk_wrist(self, q):
+        return _pose(float(q[0]), float(q[2]))
+
+    def plan_lift_preflight(self, start, scene, lift_h):
+        self.calls.append(("lift", sorted(scene["mesh"])))
+        result = np.repeat(np.asarray(start)[None], 11, axis=0)
+        result[:, 2] = np.linspace(start[2], start[2] + lift_h, 11)
+        return SimpleNamespace(traj=result)
+
+    def plan_cartesian_pose(self, start, goal, *, scene_cfg, **kwargs):
+        self.calls.append(("transfer", sorted(scene_cfg["mesh"])))
+        if self.reject_transfer:
+            return SimpleNamespace(success=False, trajectory=None,
+                                   constraint_mode="test",
+                                   failure_stage="blocked")
+        path = np.repeat(np.asarray(start)[None], 11, axis=0)
+        path[:, 0] = np.linspace(start[0], goal[0, 3], 11)
+        path[:, 2] = np.linspace(start[2], goal[2, 3], 11)
+        return SimpleNamespace(success=True, trajectory=path,
+                               constraint_mode="test", failure_stage=None)
+
+    def plan_vertical_stroke(self, start, wrist_start, wrist_end, *,
+                             scene_cfg, **kwargs):
+        self.calls.append(("descent", sorted(scene_cfg["mesh"])))
+        assert np.allclose(wrist_start[:3, 3], self.fk_wrist(start)[:3, 3])
+        path = np.repeat(np.asarray(start)[None], 11, axis=0)
+        path[:, 2] = np.linspace(start[2], wrist_end[2, 3], 11)
+        return SimpleNamespace(success=True, trajectory=path,
+                               failure_code=None)
+
+
+def _fixture(tmp_path, monkeypatch):
+    assets = AssetPaths(tmp_path, MODE)
+    key_path = assets.raw_mesh(MODE.key_object)
+    socket_path = assets.socket_collision_mesh
+    key_path.parent.mkdir(parents=True)
+    socket_path.parent.mkdir(parents=True)
+    trimesh.creation.box(extents=(0.006, 0.006, 0.006)).export(key_path)
+    socket = trimesh.creation.box(extents=(0.04, 0.04, 0.04))
+    socket.apply_translation([0.0, 0.0, 0.02])
+    socket.export(socket_path)
+    assets.robot_urdf.parent.mkdir(parents=True)
+    assets.robot_urdf.write_text("test URDF stand-in", encoding="utf-8")
+    assets.key_tabletop_dir.mkdir(parents=True)
+    np.save(assets.key_tabletop_dir / "001.npy", _pose(0.0, 0.003))
+    hand = trimesh.creation.box(extents=(0.006, 0.006, 0.006))
+    hand.apply_translation([0.0, 0.0, 0.06])
+    monkeypatch.setattr(
+        "precision_insertion.repose_path_audit._hand_link_meshes",
+        lambda *_: {"hand": hand})
+    board = {"table_surface_z_m": 0.0}
+    socket_pose = _pose(0.30, 0.0)
+    frozen = add_fixed_mesh_fixtures(
+        {"mesh": {}, "cuboid": {"table": table_cuboid(board)}},
+        {"fixture_socket": {"pose_robot": socket_pose,
+                            "collision_mesh": socket_path}})
+    record = {
+        "schema": "precision_insertion_session_calibration_v1",
+        "mode": {"family": MODE.family, "gap_mm": MODE.gap_mm,
+                 "key_object": MODE.key_object,
+                 "socket_object": MODE.socket_object},
+        "socket_pose_robot": socket_pose.tolist(),
+        "socket_collision_mesh": str(socket_path),
+        "socket_collision_mesh_sha256": hashlib.sha256(
+            socket_path.read_bytes()).hexdigest(),
+    }
+    calibration = SessionCalibration(board, socket_pose, {}, frozen, record)
+    initial = _pose(-0.10, 0.003)
+    rest = _pose(-0.05, 0.003)
+    scene = {"mesh": dict(frozen["mesh"]), "cuboid": frozen["cuboid"]}
+    scene["mesh"]["target"] = {
+        "file_path": str(key_path), "pose": se32cart(initial).tolist()}
+    pickup_q = np.zeros((2, 13))
+    pickup_q[:, 0] = -0.10
+    pickup_q[:, 2] = 0.003
+    pickup = SimpleNamespace(
+        success=True, lift_preflight=object(), traj=pickup_q,
+        wrist_se3=initial)
+    limits = PathAuditLimits(
+        max_joint_step_rad=0.02, max_wrist_step_m=0.02,
+        max_wrist_rotation_deg=1.0,
+        goal_position_tolerance_m=0.0005,
+        goal_rotation_tolerance_deg=1.0,
+        axial_lateral_tolerance_m=0.001,
+        axial_rotation_tolerance_deg=1.0,
+        minimum_hand_clearance_m=0.001)
+    return calibration, scene, pickup, rest, limits
+
+
+def _plan(tmp_path, calibration, scene, pickup, rest, limits, planner):
+    return plan_repose_held_chain(
+        planner=planner, pickup_plan=pickup, trial_scene=scene,
+        shared_root=tmp_path, calibration=calibration, mode=MODE,
+        T_key_hand=np.eye(4), T_robot_key_rest=rest,
+        release_height_m=0.10, minimum_rest_socket_clearance_m=0.01,
+        held_hand_q=np.zeros(6), held_hand_source="commanded_nominal",
+        limits=limits)
+
+
+def test_repose_held_chain_keeps_socket_and_does_not_authorize_release(
+    tmp_path, monkeypatch,
+):
+    calibration, scene, pickup, rest, limits = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    result = _plan(tmp_path, calibration, scene, pickup, rest, limits, planner)
+    assert result.status == "sampled_held_path_pass_release_unplanned"
+    assert result.sampled_held_path_audit["sampled_clear"] is True
+    assert result.to_record()["robot_ready"] is False
+    assert result.to_record()["sampled_held_path_pass"] is True
+    assert planner.calls == [
+        ("lift", ["fixture_socket", "target"]),
+        ("transfer", ["fixture_socket"]),
+        ("descent", ["fixture_socket", "target"]),
+    ]
+    assert "target" not in calibration.collision_scene["mesh"]
+
+
+def test_repose_rejects_rest_key_on_socket_before_planning(tmp_path, monkeypatch):
+    calibration, scene, pickup, _, limits = _fixture(tmp_path, monkeypatch)
+    rest_on_socket = _pose(0.30, 0.003)
+    with pytest.raises(ValueError, match="collides with or approaches socket"):
+        validate_repose_rest_target(
+            shared_root=tmp_path, mode=MODE, calibration=calibration,
+            T_robot_key_rest=rest_on_socket,
+            support_tolerance_m=limits.goal_position_tolerance_m,
+            minimum_rest_socket_clearance_m=0.01)
+    planner = _Planner()
+    with pytest.raises(ValueError, match="collides with or approaches socket"):
+        _plan(tmp_path, calibration, scene, pickup, rest_on_socket, limits,
+              planner)
+    assert planner.calls == []
+
+
+def test_repose_reports_transfer_infeasible_without_running_descent(
+    tmp_path, monkeypatch,
+):
+    calibration, scene, pickup, rest, limits = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    planner.reject_transfer = True
+    result = _plan(tmp_path, calibration, scene, pickup, rest, limits, planner)
+    assert result.status == "held_transfer_unreachable"
+    assert result.descent_trajectory is None
+    assert result.to_record()["robot_ready"] is False
+    assert [row[0] for row in planner.calls] == ["lift", "transfer"]
+
+
+def test_v8_target_builder_uses_measured_table_and_rejects_bad_asset(
+    tmp_path, monkeypatch,
+):
+    calibration, _, _, _, limits = _fixture(tmp_path, monkeypatch)
+    result = build_v8_repose_rest_pose(
+        shared_root=tmp_path, mode=MODE, calibration=calibration,
+        target_pose_stem="001", release_xy_robot_m=(-0.05, 0.02),
+        asset_support_tolerance_m=limits.goal_position_tolerance_m)
+    assert np.allclose(result[:3, 3], [-0.05, 0.02, 0.003])
+    with pytest.raises(ValueError, match="three-digit"):
+        build_v8_repose_rest_pose(
+            shared_root=tmp_path, mode=MODE, calibration=calibration,
+            target_pose_stem="1", release_xy_robot_m=(-0.05, 0.02),
+            asset_support_tolerance_m=limits.goal_position_tolerance_m)
+    bad = _pose(0.0, 0.02)
+    np.save(AssetPaths(tmp_path, MODE).key_tabletop_dir / "001.npy", bad)
+    with pytest.raises(ValueError, match="does not rest"):
+        build_v8_repose_rest_pose(
+            shared_root=tmp_path, mode=MODE, calibration=calibration,
+            target_pose_stem="001", release_xy_robot_m=(-0.05, 0.02),
+            asset_support_tolerance_m=limits.goal_position_tolerance_m)
+
+
+def _transition(tmp_path, calibration, scene, limits, planner):
+    catalog = {
+        "shared_root": str(tmp_path),
+        "mode": {"family": MODE.family, "gap_mm": MODE.gap_mm,
+                 "key_object": MODE.key_object,
+                 "socket_object": MODE.socket_object,
+                 "target_depth_m": MODE.target_depth_m},
+    }
+    q = np.zeros(13)
+    q[0], q[2] = -0.10, 0.003
+    return preflight_v8_repose_transition(
+        planner=planner, shared_root=tmp_path, mode=MODE,
+        calibration=calibration, trial_scene=scene, catalog=catalog,
+        from_pose_stem="000", to_pose_stem="001", height_cm=12,
+        release_xy_robot_m=(-0.05, 0.0), live_start_q=q,
+        observation_id="camera-seq-42", key_capture_timestamp_s=1.0,
+        start_q_acquisition_timestamp_s=1.01, max_state_skew_s=0.1,
+        max_pose_error_deg=10.0, max_center_in_hand_drift_m=0.003,
+        max_symmetry_axis_tilt_deg=8.0,
+        minimum_rest_socket_clearance_m=0.01, limits=limits)
+
+
+def test_v8_reset_seed_is_screened_then_planned_in_frozen_socket_world(
+    tmp_path, monkeypatch,
+):
+    calibration, scene, pickup, _, limits = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    planner.pickup_plan = pickup
+    monkeypatch.setattr(
+        "precision_insertion.repose_transition.select_pose_candidates",
+        lambda *_, **__: {"status": "candidates_available",
+                        "candidates": [object()]})
+    monkeypatch.setattr(
+        "precision_insertion.repose_transition.classify_key_tabletop_pose",
+        lambda **_: {"stem": "000"})
+    initial = _pose(-0.10, 0.003)
+    monkeypatch.setattr(
+        "precision_insertion.repose_transition.load_v8_reset_seeds",
+        lambda **_: {
+            "n_total": 1,
+            "wrist_se3": initial[None],
+            "pregrasp": np.zeros((1, 6)),
+            "grasp": np.zeros((1, 6)),
+            "openpose_start": [None],
+            "scene_info": [{"grasp_idx": "191", "source": "/verified/191",
+                            "cell": "0_1"}],
+        })
+    result = _transition(tmp_path, calibration, scene, limits, planner)
+    assert result.status == "held_reset_path_available_release_unplanned"
+    assert result.selected_seed["seed_id"] == "191"
+    assert result.to_record()["robot_ready"] is False
+    assert [call[0] for call in planner.calls] == [
+        "start", "pickup", "lift", "transfer", "descent"]
+    assert planner.calls[3] == ("transfer", ["fixture_socket"])
+
+
+def test_repose_does_not_plan_if_target_has_no_insertable_grasp(
+    tmp_path, monkeypatch,
+):
+    calibration, scene, pickup, _, limits = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    planner.pickup_plan = pickup
+    monkeypatch.setattr(
+        "precision_insertion.repose_transition.select_pose_candidates",
+        lambda *_, **__: {"status": "no_eligible_in_screened_pool",
+                        "candidates": []})
+    result = _transition(tmp_path, calibration, scene, limits, planner)
+    assert result.status == "target_without_insertable_grasp"
+    assert result.to_record()["robot_ready"] is False
+    assert planner.calls == []

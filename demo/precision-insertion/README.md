@@ -700,6 +700,30 @@ this optional assessment enabled, missing reset seeds produce
 `repose_staged_only_unplanned`, and a canonical seed still produces
 `repose_required_unplanned` until the whole reset path has passed preflight.
 
+For a **separate planning-only reset attempt**, call
+`precision_insertion.repose_transition.preflight_v8_repose_transition(...)`
+from a process that already holds the session calibration, fresh trial scene,
+complete insertion endpoint catalog and the unchanged
+`GraspPlanner(hand="fr3_inspire")`. Supply the observed source and desired
+target three-digit v8 tabletop stems, a commissioned release XY in robot
+meters, one of the 4/8/12 cm v8 release-height cells, measured 13-joint start
+state plus acquisition timestamps, reset-grasp fidelity limits, frozen-socket
+clearance and path-audit limits. The function first requires an eligible
+insertion grasp at the *target* pose; then it loads provenance-bound reset
+seeds, plans one AutoDex pickup per seed and checks the same held key through
+lift, transfer and straight-down descent with the socket still present. The
+returned `ReposeTransitionPreflight.to_record()` can be saved alongside the
+trial report; its best status is
+`held_reset_path_available_release_unplanned`, **not** reset success or robot
+authorization. It has no CLI or motor mode yet. The 0 cm original AutoDex
+release cell, safe open-hand release/retreat, measured post-lift key/hand
+relation, landing verification and usable-board footprint check remain to be
+implemented. See `tests/test_repose_preflight.py` for a fully offline usage
+contract; its fake planner does not demonstrate real Franka reachability.
+If using the library's `reset_candidate_root` override for a staged handoff,
+pass the specific `reset_12/` directory for a 12 cm run; this differs from
+the assessment CLI's `--reset-candidate-root` parent-of-heights path.
+
 ### Socket perception evidence and current camera-timestamp blocker
 
 AutoDex's unchanged `InitOrchestrator.collect_payloads()` supplies one SAM
