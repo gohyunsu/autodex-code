@@ -48,6 +48,14 @@ proposal rule, not a proof: every Inspire link must clear the socket for the
 whole 20 mm descent. The square mode retains its existing key-specific
 contact policy. Neither uses a VLM to choose a grasp contact point.
 
+The square fixture is at `~/shared_data/AutoDex/precision_insertion/fixtures/unified_socket`;
+all six cylinder fixtures are its siblings under `fixtures/precision_socket_cylinder_gap_XXmm`.
+The cylinder family manifest is under `precision_insertion/cylindrical/` only
+because it describes the family as a whole. All runtime object assets keep
+the standard AutoDex `object_processing/<object_id>` layout. The legacy
+root-level `cylindrical_assets.json` was archived and is not a catalog source.
+The cylinder `gap_XXmm` suffix denotes one-sided *radial* nominal clearance.
+
 ## Offline usage
 
 Use the existing AutoDex Conda environment. The commands below create local

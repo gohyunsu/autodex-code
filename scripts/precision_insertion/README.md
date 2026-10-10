@@ -29,6 +29,28 @@ but still rejects excessive center or axis variation. Generated geometry does
 not supply FoundPose weights, BODex grasps, full-task trajectories, or physical
 validation; the validator reports each such runtime blocker explicitly.
 
+The **canonical path layout is shared with the square-key assets**. Source
+STLs live in this repository under `assets/precision_insertion/`; runtime
+objects (key, proposal proxy, sockets) live directly under
+`~/shared_data/object_processing/<object_id>/`, with scenes and FoundPose
+markers under `~/shared_data/AutoDex/{scene,foundpose_assets,candidates}/`.
+Task-specific fixture files live together under
+`~/shared_data/AutoDex/precision_insertion/fixtures/`: `unified_socket/`
+for the square family and `precision_socket_cylinder_gap_XXmm/` for each
+cylinder socket. The six-socket manifest remains under
+`precision_insertion/cylindrical/`; that directory is *not* a second runtime
+object root. `gap_01mm` means **1 mm radial clearance**, not 0.1 mm or
+diametral clearance.
+
+The processed full-key cylinder mesh is split at local `z=25 mm`, so its
+`contact_allowed.obj` really includes the lateral grip zone and rear cap.
+The original raw mesh remains unchanged for perception. The proposal proxy
+keeps the full key's mass/OBB reference but declares no standalone symmetry;
+any generated grasp must be rechecked on the full key. `mass` in generated
+metadata is AutoDex's unit-density volume proxy, **not measured printed-part
+mass**. Measure the real key and bore dimensions before quantitative MuJoCo
+or tight-gap conclusions.
+
 This directory builds the assets for the staged unified-socket experiment:
 
 | gap | experiment stage |

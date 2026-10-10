@@ -88,10 +88,10 @@ def build_catalog(shared_root: Path, report: Mapping[str, Any]) -> dict[str, Any
                 "fixed_fixture_franka_transfer": "not_tested",
             }))
     cylinder_scenarios = []
-    new_manifest = (shared_root / "AutoDex" / "precision_insertion" /
-                    "cylindrical" / "asset_manifest.json")
-    old_manifest = shared_root / "AutoDex" / "precision_insertion" / "cylindrical_assets.json"
-    manifest_path = new_manifest if new_manifest.is_file() else old_manifest
+    # The earlier root-level cylindrical_assets.json was an incomplete draft
+    # and may reference obsolete contact masks or fixture paths. Never use it.
+    manifest_path = (shared_root / "AutoDex" / "precision_insertion" /
+                     "cylindrical" / "asset_manifest.json")
     if manifest_path.is_file():
         manifest = json.loads(manifest_path.read_text())
         if "mode" in manifest and (
