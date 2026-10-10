@@ -533,6 +533,22 @@ as synchronized. This is a **live integration blocker**, not a missing CAD
 asset or an invitation to pass one request ID as a timestamp. The offline
 planner and catalogue renderer remain usable without cameras.
 
+`precision_insertion.live_capture` now connects the unchanged AutoDex
+`SnapshotOrchestrator.snap(decode=True)` and initialized
+`InitOrchestrator.collect_payloads()` to the session inputs. Call
+`collect_board_snapshot()` first, then `collect_socket_capture()` at least
+twice while the socket is fixed and the key is absent, then pass the returned
+frames/payloads and timestamps to `bootstrap_session()`. Socket frames are
+the **same-request undistorted PNGs** written by the stock init daemon; the
+adapter waits for those asynchronous files and refuses missing images rather
+than taking a later snapshot. Use a unique capture root on a filesystem
+shared by the robot PC and capture PCs (for example, a common absolute NAS
+mount), and preserve those intermediate directories until the evidence bundle
+has been verified. The metadata callback must return verified camera
+acquisition times keyed by the same request ID. The current stock daemons do
+not themselves provide that callback, so these adapters are **not yet a live
+calibration command** and cannot authorize robot motion.
+
 Run the current offline tests from the repository root:
 
 ```bash

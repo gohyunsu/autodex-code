@@ -35,7 +35,8 @@ def _capture(capture_id: str, timestamp: float) -> sb.SocketCaptureInput:
         "camera_acquisition")
 
 
-def _bootstrap(monkeypatch, captures=None, board_source="camera_acquisition"):
+def _bootstrap(monkeypatch, captures=None, board_source="camera_acquisition",
+               extra_camera_ids=()):
     received = {}
 
     def fake_calibrate_session(**kwargs):
@@ -49,21 +50,24 @@ def _bootstrap(monkeypatch, captures=None, board_source="camera_acquisition"):
         )
 
     monkeypatch.setattr(sb, "calibrate_session", fake_calibrate_session)
+    camera_ids = {"cam_a", "cam_b", *extra_camera_ids}
     board = {serial: np.zeros((24, 32, 3), dtype=np.uint8)
-             for serial in ("cam_a", "cam_b")}
+             for serial in camera_ids}
+    board_times = {"cam_a": 90.0, "cam_b": 90.005}
+    board_times.update({serial: 90.006 for serial in extra_camera_ids})
     result = sb.bootstrap_session(
         mode=select_mode("cylinder", 20), object_root=Path("/unused"),
         board_request_id=90,
         board_images_bgr=board,
-        board_timestamps_s={"cam_a": 90.0, "cam_b": 90.005},
+        board_timestamps_s=board_times,
         board_timestamp_source=board_source,
         socket_captures=(_capture("socket_1", 100.0),
                          _capture("socket_2", 101.0)) if captures is None
                         else captures,
-        calibrated_camera_ids={"cam_a", "cam_b"},
+        calibrated_camera_ids=camera_ids,
         view_limits=SocketViewLimits(50, 0.5, 10, 2, 0.02),
-        intrinsics_full={"cam_a": {}, "cam_b": {}},
-        extrinsics_full={"cam_a": {}, "cam_b": {}},
+        intrinsics_full={serial: {} for serial in camera_ids},
+        extrinsics_full={serial: {} for serial in camera_ids},
         c2r=np.eye(4), base_scene={"mesh": {}, "cuboid": {}},
         socket_collision_mesh=Path("/unused/socket.obj"),
         max_socket_translation_mm=1.0, max_socket_angle_deg=1.0)
@@ -109,6 +113,19 @@ def test_rejects_duplicate_or_unsafe_capture_ids(monkeypatch):
     with pytest.raises(ValueError, match="duplicate session capture request ID"):
         _bootstrap(monkeypatch, [_capture("socket_1", 100.0),
                                  _capture("socket_2", 100.5)])
+
+
+def test_preserves_missing_camera_payload_as_rejected_view(monkeypatch):
+    captures = [_capture("socket_1", 100.0), _capture("socket_2", 101.0)]
+    for capture in captures:
+        capture.images_bgr["cam_c"] = np.zeros((24, 32, 3), dtype=np.uint8)
+    result, received = _bootstrap(
+        monkeypatch, captures, extra_camera_ids=("cam_c",))
+    assert len(received["socket_observations"]) == 4
+    rejected = result.socket_admissions[0].per_view["cam_c"]
+    assert rejected["accepted"] is False
+    assert "missing_sam_mask" in rejected["reasons"]
+    assert "missing_foundpose_pose" in rejected["reasons"]
 
 
 def test_writes_non_overwriting_raw_evidence_bundle(monkeypatch, tmp_path):

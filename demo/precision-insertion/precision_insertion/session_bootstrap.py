@@ -122,20 +122,23 @@ def bootstrap_session(
                 not capture.prompt.strip() or capture.prompt == "object"):
             raise ValueError("each socket capture needs a specific SAM prompt")
         if (not isinstance(capture.images_bgr, Mapping) or
-                set(capture.images_bgr) != set(capture.masks) or
-                set(capture.images_bgr) != set(capture.poses)):
-            raise ValueError("socket image/mask/pose camera IDs must match")
+                not isinstance(capture.masks, Mapping) or
+                not isinstance(capture.poses, Mapping) or
+                not (set(capture.masks) | set(capture.poses)) <=
+                set(capture.images_bgr)):
+            raise ValueError("socket payloads need their same-request raw images")
         if not set(capture.images_bgr) <= calibrated_camera_ids:
             raise ValueError("socket capture includes uncalibrated camera")
         for camera_id, image in capture.images_bgr.items():
             _safe_id(camera_id, "socket camera ID")
             _bgr_image(image, f"socket image {capture_id}/{camera_id}")
-            mask_entry = capture.masks[camera_id]
-            if not isinstance(mask_entry, Mapping):
-                raise ValueError("socket mask payload must be a mapping")
-            mask = mask_entry.get("mask")
-            if not isinstance(mask, np.ndarray) or mask.shape != image.shape[:2]:
-                raise ValueError("socket mask and raw image dimensions differ")
+            if camera_id in capture.masks:
+                mask_entry = capture.masks[camera_id]
+                if not isinstance(mask_entry, Mapping):
+                    raise ValueError("socket mask payload must be a mapping")
+                mask = mask_entry.get("mask")
+                if not isinstance(mask, np.ndarray) or mask.shape != image.shape[:2]:
+                    raise ValueError("socket mask and raw image dimensions differ")
         admissions.append(admit_socket_capture(
             capture_id=capture_id, masks=capture.masks, poses=capture.poses,
             frame_timestamps_s=capture.frame_timestamps_s,
@@ -217,17 +220,19 @@ def write_session_bootstrap_artifacts(
         for camera_id, image in sorted(capture.images_bgr.items()):
             image_file = image_dir / f"{camera_id}.png"
             files[str(image_file.relative_to(target))] = _write_png(image_file, image)
-            mask_entry = capture.masks[camera_id]
-            mask = np.asarray(mask_entry["mask"], dtype=np.uint8) * 255
-            mask_file = mask_dir / f"{camera_id}.png"
-            files[str(mask_file.relative_to(target))] = _write_png(mask_file, mask)
-            payload["mask_payload_metadata"][camera_id] = {
-                key: value for key, value in mask_entry.items() if key != "mask"}
-            pose_entry = dict(capture.poses[camera_id])
-            if "pose_world" in pose_entry:
-                pose_entry["pose_world"] = np.asarray(
-                    pose_entry["pose_world"], dtype=float).tolist()
-            payload["pose_payloads"][camera_id] = pose_entry
+            if camera_id in capture.masks:
+                mask_entry = capture.masks[camera_id]
+                mask = np.asarray(mask_entry["mask"], dtype=np.uint8) * 255
+                mask_file = mask_dir / f"{camera_id}.png"
+                files[str(mask_file.relative_to(target))] = _write_png(mask_file, mask)
+                payload["mask_payload_metadata"][camera_id] = {
+                    key: value for key, value in mask_entry.items() if key != "mask"}
+            if camera_id in capture.poses:
+                pose_entry = dict(capture.poses[camera_id])
+                if "pose_world" in pose_entry:
+                    pose_entry["pose_world"] = np.asarray(
+                        pose_entry["pose_world"], dtype=float).tolist()
+                payload["pose_payloads"][camera_id] = pose_entry
         payload_file = capture_dir / "payloads.json"
         files[str(payload_file.relative_to(target))] = _write_json(
             payload_file, payload)
