@@ -19,7 +19,8 @@ from .frame_provenance import verify_frame_provenance
 from .session_bootstrap import _safe_id
 
 
-PHASES = frozenset({"after_lift", "preinsert", "final_or_abort"})
+PHASES = frozenset({"after_lift", "preinsert", "post_lateral_hold",
+                    "final_or_abort"})
 
 
 @dataclass(frozen=True)

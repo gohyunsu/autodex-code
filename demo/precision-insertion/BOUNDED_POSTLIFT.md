@@ -101,3 +101,11 @@ observed-key
 held-key FoundPose after withdrawal. A square key also needs observable yaw,
 so its two-collinear-landmark route abstains. Do not use a test fixture or a
 nominal/MuJoCo transform in place of the missing physical records.
+
+The read-only post-shift checkpoint now accepts a **separately produced**
+lateral-execution log, fresh `post_lateral_hold` camera bundle and measured
+stationary joints. It rechecks the plan/trajectory bytes and old-versus-new
+frame provenance, then reruns the cylinder tip/axis estimator. Its visual
+alignment status never records a positive insertion label or initiates a
+second shift. The physical execution adapter, commissioned visual accuracy,
+new 20 mm endpoint/axial plan and guarded contact still do not exist.

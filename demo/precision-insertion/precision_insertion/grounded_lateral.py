@@ -38,19 +38,10 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _verified_diagnostic_report(
-    diagnostic: GroundedXYDiagnostic, report_path: Path,
-) -> tuple[Path, str]:
-    path = Path(report_path).expanduser().resolve()
-    if not path.is_file():
-        raise FileNotFoundError("grounded diagnostic report is missing")
-    saved = json.loads(path.read_text(encoding="utf-8"))
-    expected = diagnostic.to_record()
-    artifacts = saved.pop("artifacts_sha256", None)
-    if saved != expected or not isinstance(artifacts, dict):
-        raise ValueError("grounded diagnostic differs from saved report")
-    cameras = set(diagnostic.frame_binding)
-    if (len(cameras) < 2 or
+def _verify_grounded_frame_artifacts(path: Path, saved: dict) -> None:
+    cameras = set(saved.get("frame_binding", {}))
+    artifacts = saved.get("artifacts_sha256")
+    if (not isinstance(artifacts, dict) or len(cameras) < 2 or
             set(artifacts) != {f"frames/{camera}.png" for camera in cameras} or
             any(not camera or not camera.replace("-", "").replace(
                 "_", "").replace(".", "").isalnum()
@@ -63,9 +54,23 @@ def _verified_diagnostic_report(
             raise ValueError("grounded source image bytes changed")
         with Image.open(image_path) as image:
             rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
-        if image_sha256(rgb[:, :, ::-1].copy()) != diagnostic.frame_binding[
-                camera]["image_sha256"]:
+        if image_sha256(rgb[:, :, ::-1].copy()) != saved[
+                "frame_binding"][camera]["image_sha256"]:
             raise ValueError("grounded report image differs from acquired pixels")
+
+
+def _verified_diagnostic_report(
+    diagnostic: GroundedXYDiagnostic, report_path: Path,
+) -> tuple[Path, str]:
+    path = Path(report_path).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError("grounded diagnostic report is missing")
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    expected = diagnostic.to_record()
+    if not isinstance(saved, dict) or {k: v for k, v in saved.items()
+            if k != "artifacts_sha256"} != expected:
+        raise ValueError("grounded diagnostic differs from saved report")
+    _verify_grounded_frame_artifacts(path, saved)
     return path, _sha(path)
 
 
@@ -328,3 +333,66 @@ def write_grounded_lateral_preflight(
         json.dump(record, stream, indent=2, sort_keys=True, allow_nan=False)
         stream.write("\n")
     return target
+
+
+def verify_grounded_lateral_preflight(
+    result: GroundedLateralPreflight, report_path: Path,
+) -> dict:
+    """Recheck the saved plan, trajectory bytes and linked source records.
+
+    This checks file consistency, not authenticity of the physical-calibration
+    producer or execution readiness.
+    """
+    path = Path(report_path).expanduser().resolve()
+    record = json.loads(path.read_text(encoding="utf-8"))
+    expected = result.to_record()
+    nested_hash = record.pop("lateral_report_sha256", None)
+    if (record != expected or
+            record.get("schema") !=
+            "precision_insertion_grounded_lateral_preflight_v1" or
+            record.get("pending_retry") is not False or
+            record.get("robot_ready") is not False):
+        raise ValueError("saved grounded lateral plan changed")
+    nested = path.parent / "lateral" / "report.json"
+    if (not nested.is_file() or nested_hash != _sha(nested)):
+        raise ValueError("saved lateral path report changed")
+    lateral = json.loads(nested.read_text(encoding="utf-8"))
+    trajectory_name = lateral.pop("lateral_trajectory", None)
+    trajectory_hash = lateral.pop("lateral_trajectory_sha256", None)
+    if lateral != result.lateral.to_record():
+        raise ValueError("saved lateral audit changed")
+    if result.lateral.status == "sampled_lateral_hold_shift_pass":
+        if (trajectory_name != "lateral_trajectory.npy" or
+                lateral.get("sampled_audit", {}).get("sampled_clear") is not True or
+                lateral.get("planner_query", {}).get("success") is not True or
+                not isinstance(trajectory_hash, str)):
+            raise ValueError("passing lateral plan lacks a checked trajectory")
+    if trajectory_name is not None:
+        trajectory_file = nested.parent / trajectory_name
+        if (trajectory_name != "lateral_trajectory.npy" or
+                not trajectory_file.is_file() or
+                trajectory_hash != _sha(trajectory_file)):
+            raise ValueError("saved lateral trajectory bytes changed")
+        path_q = np.load(trajectory_file, allow_pickle=False)
+        if (path_q.ndim != 2 or path_q.shape != (
+                lateral["trajectory_sample_count"], 13) or
+                not np.all(np.isfinite(path_q)) or
+                not np.allclose(path_q[0], result.lateral.start_q,
+                                atol=1e-4, rtol=0) or
+                not np.allclose(path_q[:, 7:],
+                                result.lateral.start_q[7:],
+                                atol=1e-4, rtol=0) or
+                not np.array_equal(path_q, result.lateral.trajectory)):
+            raise ValueError("saved lateral trajectory differs from audited path")
+    for source, digest in (
+            (result.diagnostic_report_path,
+             result.diagnostic_report_sha256),
+            (result.postlift_report_path, result.postlift_report_sha256),
+            (result.withdrawal_evidence_path,
+             result.withdrawal_evidence_sha256)):
+        if not source.is_file() or _sha(source) != digest:
+            raise ValueError("grounded lateral source record changed")
+    diagnostic = json.loads(result.diagnostic_report_path.read_text(
+        encoding="utf-8"))
+    _verify_grounded_frame_artifacts(result.diagnostic_report_path, diagnostic)
+    return record

@@ -34,6 +34,10 @@ def _setup(tmp_path, monkeypatch):
         "key_frame": {"tip_z_m": .08,
                       "insertion_axis": [0., 0., 1.]},
         "socket_entry_plane_z_m": .055,
+        "key_object": mode.key_object,
+        "socket_pose_object": mode.socket_object,
+        "key_radius_m": .015,
+        "socket_bore_radius_m": .030,
     }), encoding="utf-8")
     calibration = inputs["calibration"]
     calibration.record["camera_calibration_sha256"] = "a" * 64
@@ -112,7 +116,10 @@ def _setup(tmp_path, monkeypatch):
             "sampled_lateral_hold_shift_pass",
             kwargs["increment_socket_xy_m"], kwargs["start_q"], start,
             goal, kwargs["T_key_hand"], trajectory,
-            {"success": True}, {"sampled_clear": True})
+            {"success": True}, {"sampled_clear": True,
+                                "mode": {"family": mode.family,
+                                         "gap_mm": mode.gap_mm},
+                                "limits": {"key_surface_bound_m": .003}})
 
     monkeypatch.setattr(grounded_lateral, "plan_lateral_hold_shift", plan)
     planner = SimpleNamespace(fk_wrist=lambda _q: start)
@@ -150,6 +157,13 @@ def test_grounded_lateral_binds_diagnostic_and_medoid_without_retry(
     assert saved["pending_retry"] is False
     assert len(saved["lateral_report_sha256"]) == 64
     assert (saved_dir / "lateral/lateral_trajectory.npy").is_file()
+    grounded_lateral.verify_grounded_lateral_preflight(
+        result, saved_dir / "report.json")
+    with (saved_dir / "lateral/lateral_trajectory.npy").open("ab") as stream:
+        stream.write(b"changed")
+    with pytest.raises(ValueError, match="trajectory bytes changed"):
+        grounded_lateral.verify_grounded_lateral_preflight(
+            result, saved_dir / "report.json")
 
 
 def test_grounded_lateral_rejects_changed_pixels_and_relation_mismatch(

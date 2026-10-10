@@ -42,6 +42,36 @@ contract means a second adjustment needs a **new** capture and a separately
 verified post-shift hold, not reuse of the earlier diagnostic. Physical
 execution of even the first shift is not implemented.
 
+After an **external commissioned controller** executes that first shift,
+save a fresh same-request capture with
+`write_raw_camera_capture(capture, output_dir, phase="post_lateral_hold")`.
+Its frame IDs must advance beyond the diagnostic's per-camera IDs, and all
+exposures must follow the motion-completion time. Supply a
+`precision_insertion_lateral_hold_execution_v1` JSON log with matching
+`attempt_id`, `candidate_id`, absolute `preflight_report_path` and its SHA-256,
+`source="commissioned_lateral_controller"`, ordered `started_at_s` and
+`completed_at_s`, and
+`measurement={"trajectory_complete":true,"safety_abort":false,
+"grasp_held":true}`. Its `source_records` must hash and reference three
+separate files named `trajectory_feedback`, `safety`, and `grasp_state`.
+The schema is an external evidence contract; **this repository does not
+produce or authenticate those physical measurements**.
+
+Then call `SessionRunner.assess_postshift_lateral_alignment(...)` with the
+saved passing `GroundedLateralPreflight`, its `report.json`, execution log,
+new raw capture directory, synchronized measured Franka/Inspire state,
+frozen camera calibration, selected VLM backend, and commissioned timing,
+tracking and visual-error limits. It re-verifies the exact planned joint
+bytes, source hashes, live wrist target, camera timing and unchanged CAD,
+then grounds the tip/shaft axis in the *new* frames. The report is stored at
+`postshift_checkpoints/NNN/report.json` and has one of:
+`visual_alignment_within_budget`, `residual_requires_new_shift`,
+`held_relation_inconsistent`, or `visual_abstain`. The visual budget must fit
+inside cylinder radial clearance after the future key-surface bound. Even
+`visual_alignment_within_budget` sets `insertion_replan_allowed=false`:
+fresh 20 mm exact key/hand endpoint screening, an axial preflight, and guarded
+contact are separate unfinished gates. There is no automatic second shift.
+
 For use by that future binding layer, the API is
 `plan_lateral_hold_shift(planner, mode, shared_root, calibration, trial_scene,
 start_q, expected_hold_pose, T_key_hand, increment_socket_xy_m, bounds,

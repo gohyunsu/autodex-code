@@ -180,6 +180,56 @@ def test_grounded_lateral_session_only_accepts_own_saved_diagnostic(
         runner.prepare_grounded_lateral_hold_preflight(**args)
 
 
+def test_postshift_session_consumes_new_capture_without_attempt_label(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    runner._attempt = SimpleNamespace(
+        attempt_id="attempt_1", candidate_id="table/0/3")
+    runner._attempt_dir = runner.output_dir / "attempts" / "attempt_1"
+    runner._attempt_dir.mkdir(parents=True)
+    monkeypatch.setattr(runner, "current_decision", lambda: SimpleNamespace(
+        action="guarded_withdrawal_then_xy_assessment"))
+    diagnostic = (runner._attempt_dir / "xy_retry_assessments" /
+                  "000/report.json").resolve()
+    runner._lateral_used_diagnostic_reports.add(diagnostic)
+    source = (runner._attempt_dir / "lateral_hold_preflights" /
+              "000/report.json").resolve()
+    source.parent.mkdir(parents=True)
+    source.write_text("{}", encoding="utf-8")
+    capture = tmp_path / "new_camera_capture"
+    plan = SimpleNamespace(
+        attempt_id="attempt_1", candidate_id="table/0/3",
+        diagnostic_report_path=diagnostic)
+    calls = []
+    result = object()
+    monkeypatch.setattr(session_runner, "assess_postshift_alignment",
+                        lambda **kwargs: calls.append(kwargs) or result)
+    monkeypatch.setattr(session_runner, "write_postshift_checkpoint",
+                        lambda _result, output: output.mkdir(
+                            parents=True, exist_ok=False))
+    args = dict(
+        plan=plan, plan_report_path=source,
+        execution_log_path=tmp_path / "execution.json",
+        capture_dir=capture, joint_sample=object(),
+        decision_timestamp_s=3., planner=object(),
+        intrinsics_full={}, extrinsics_full={}, backend=object(),
+        alignment_limits=object(), max_capture_skew_s=.01,
+        max_execution_observation_gap_s=.2, max_frame_age_s=.2,
+        max_joint_frame_skew_s=.02, max_arm_hand_skew_s=.02,
+        max_hand_command_error_raw=30., max_arm_velocity_rad_s=.05,
+        max_joint_goal_error_rad=.01,
+        max_goal_translation_error_m=.002,
+        max_goal_rotation_error_deg=1.,
+        max_visual_lateral_error_m=.005,
+        max_visual_axis_tilt_deg=2., max_grounded_tip_error_m=.001)
+    assert runner.assess_postshift_lateral_alignment(**args) is result
+    assert len(calls) == 1
+    assert (runner._attempt_dir / "postshift_checkpoints/000").is_dir()
+    assert runner._postshift_checkpoint_index == 1
+    with pytest.raises(ValueError, match="not a new session event"):
+        runner.assess_postshift_lateral_alignment(**args)
+
+
 def test_attempt_rejects_changed_preflight_report_and_binding(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)

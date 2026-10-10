@@ -444,9 +444,12 @@ now plans with stock cuRobo and audits sampled full key/Inspire CAD plus future
 surface margins at <=1 mm, without insertion motion. Its new session
 binder rechecks saved diagnostic/camera bytes, the physical held medoid,
 the fresh withdrawn measured state, XY confidence math and full sampled
-collision path for the first shift. Post-shift observation, physical execution
-and a new insertion endpoint/guarded retry are still missing. The
-square-key yaw remains unobservable from an axial line alone.
+collision path for the first shift. Post-shift observation is not inferred
+from the plan: a separate, source-bound read-only checkpoint
+requires an external
+completed-motion log, newer raw camera frames and measured stationary joints.
+Physical execution and a new insertion endpoint/guarded retry are still
+missing. The square-key yaw remains unobservable from an axial line alone.
 Candidate grasp statistics update from `grasp_success`; insertion retry
 statistics update from `insertion_success` and failure cause. Unknown is not
 success and must not erase a known earlier milestone. Use a controlled failure
