@@ -168,6 +168,14 @@ it does not mean that every observed key location in that tabletop class is
 reachable or that the real task succeeded. Prefer explicit evidence fields
 and scope over a single ambiguous “validation level.”
 
+For the cylindrical family, key geometry and its v8 grasp pool are shared
+across the six socket gaps. Store one endpoint catalogue per **physical socket
+object**; do not copy grasp NPY files into six misleading independent pools.
+Bind online selection to the session's confirmed socket ID and gap, then
+reject any catalogue whose key/socket/depth identity differs. A pose estimate
+alone is not proof of which socket size is mounted. Each variant must use its
+own exact socket mesh and input hashes, even when a grasp passed a larger gap.
+
 Define insertion depth from the CAD socket rim plane along the measured
 socket axis, with positive depth inward. The nominal endpoint has the key's
 insertion axis coincident with the socket axis and its insertion centerline
@@ -283,6 +291,11 @@ re-estimate it after lift when possible. The pre-insertion wrist goal is
 `dx, dy` are metric offsets in the **socket frame**, never raw image pixel
 motions. The first experiment adjusts only these two parameters. Square-key
 yaw error is measured and gated; it is not silently corrected by XY updates.
+For the present VLM retry experiment, the allowed relative XY move is exactly
+one 1 mm socket-frame cardinal step, or no move. Diagonal `(1, 1) mm` is a
+1.41 mm move and is excluded. This is a requested experimental step size, not
+evidence it can resolve the 0.3 mm condition; each offered step still needs
+exact geometry, total-range, fresh-planning, and force safety gates.
 
 ## Labels and evidence
 

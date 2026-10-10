@@ -18,6 +18,10 @@ import numpy as np
 from .geometry import validate_se3
 
 
+VLM_XY_STEP_M = 0.001
+_STEP_TOLERANCE_M = 1e-12
+
+
 @dataclass(frozen=True)
 class XYChoice:
     choice_id: str
@@ -62,6 +66,26 @@ def _xy(value, name: str) -> tuple[float, float]:
     if not all(math.isfinite(x) for x in pair):
         raise ValueError(f"{name} must be finite")
     return pair
+
+
+def axis_1mm_proposals(
+    current_offset_socket_m: tuple[float, float],
+) -> tuple[XYChoice, ...]:
+    """Build unscreened hold/+X/-X/+Y/-Y options in the socket frame.
+
+    A later exact-geometry filter must remove unsafe options before any
+    projection or VLM call. Diagonals are excluded: (+1,+1) mm would move
+    sqrt(2) mm and violate the commissioned one-millimetre retry step.
+    """
+    x, y = _xy(current_offset_socket_m, "current_offset_socket_m")
+    step = VLM_XY_STEP_M
+    return (
+        XYChoice("hold", (x, y)),
+        XYChoice("x_plus_1mm", (x + step, y)),
+        XYChoice("x_minus_1mm", (x - step, y)),
+        XYChoice("y_plus_1mm", (x, y + step)),
+        XYChoice("y_minus_1mm", (x, y - step)),
+    )
 
 
 def validate_choices(choices: Iterable[XYChoice]) -> dict[str, XYChoice]:
@@ -208,10 +232,15 @@ def resolve_multiview_choice(
     target = by_id[selected].offset_socket_m
     if math.hypot(*target) > max_total_m:
         return result("abstain", "total_offset_budget_exceeded", counts=counts)
-    if math.dist(target, old) > max_step_m:
+    step_dx, step_dy = target[0] - old[0], target[1] - old[1]
+    step_distance = math.hypot(step_dx, step_dy)
+    if step_distance > max_step_m + _STEP_TOLERANCE_M:
         return result("abstain", "step_budget_exceeded", counts=counts)
-    if math.dist(target, old) <= 1e-12:
+    if step_distance <= _STEP_TOLERANCE_M:
         return result("no_correction", "selected_current_offset", selected=selected,
                       supporters=supporters, counts=counts)
+    if (abs(step_distance - VLM_XY_STEP_M) > _STEP_TOLERANCE_M or
+            min(abs(step_dx), abs(step_dy)) > _STEP_TOLERANCE_M):
+        return result("abstain", "not_one_mm_axis_step", counts=counts)
     return result("propose", "multiview_choice_requires_live_preflight",
                   selected=selected, supporters=supporters, counts=counts)

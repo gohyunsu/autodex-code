@@ -91,7 +91,7 @@ def test_independent_per_view_xy_calls_produce_proposals_not_motion():
         XYView("front", 10.0, _image(), _image()),
         XYView("side", 10.01, _image(), _image()),
     ]
-    choices = [XYChoice("C0", (0.0, 0.0)), XYChoice("C1", (0.0004, 0.0))]
+    choices = [XYChoice("C0", (0.0, 0.0)), XYChoice("C1", (0.001, 0.0))]
     votes, records = observe_xy_views(backend, views, choices)
     assert len(backend.calls) == 2
     assert [vote.choice_id for vote in votes] == ["C1", "C1"]
@@ -99,7 +99,7 @@ def test_independent_per_view_xy_calls_produce_proposals_not_motion():
     decision = resolve_multiview_choice(
         choices, votes, current_offset_socket_m=(0.0, 0.0),
         grasp_held=True, hard_abort=False,
-        max_step_m=0.0005, max_total_m=0.001,
+        max_step_m=0.001, max_total_m=0.002,
         max_timestamp_skew_s=0.02, decision_timestamp_s=10.02,
         max_frame_age_s=0.2,
     )
