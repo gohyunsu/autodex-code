@@ -79,7 +79,8 @@ def preflight_v8_repose_transition(
     start_q_acquisition_timestamp_s: float, max_state_skew_s: float,
     max_pose_error_deg: float, max_center_in_hand_drift_m: float,
     max_symmetry_axis_tilt_deg: float,
-    minimum_rest_socket_clearance_m: float, limits: PathAuditLimits,
+    minimum_rest_socket_clearance_m: float,
+    minimum_board_edge_clearance_m: float, limits: PathAuditLimits,
     attempted_insertion: Iterable[tuple[str, str, str]] = (),
     covered_scenes: Iterable[int] = (),
     attempted_reset_ids: tuple[str, ...] = (),
@@ -199,6 +200,7 @@ def preflight_v8_repose_transition(
             T_key_hand=np.linalg.inv(initial) @ seeds["wrist_se3"][i],
             T_robot_key_rest=rest, release_height_m=height_cm / 100.0,
             minimum_rest_socket_clearance_m=minimum_rest_socket_clearance_m,
+            minimum_board_edge_clearance_m=minimum_board_edge_clearance_m,
             held_hand_q=hold, held_hand_source="commanded_nominal",
             limits=limits)
         attempts.append({**seed_record, "status": planned.status})

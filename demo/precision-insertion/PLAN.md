@@ -554,9 +554,9 @@ directed v8 reset seed, AutoDex's unchanged pickup planner, and the
 socket-aware held lift/transfer/descent preflight. Its strongest possible
 status is `held_reset_path_available_release_unplanned`: **opening the hand,
 post-release retreat, landing-pose verification and live post-lift grasp
-relation are still outstanding**. An explicitly commissioned release XY is
-required; the broad table cuboid does not establish that the key footprint
-lies inside the usable ChArUco board area. The current held descent only
+relation are still outstanding**. An explicitly commissioned release XY and
+edge margin are required; the full key footprint is checked against the
+measured ChArUco corner hull, not the broad cuRobo table cuboid. The current held descent only
 supports nonzero v8 drop heights 4/8/12 cm; the original 0 cm reset cell is
 not yet planned by this module.
 

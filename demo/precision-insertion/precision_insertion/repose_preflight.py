@@ -115,17 +115,21 @@ def validate_repose_rest_target(
     *, shared_root: Path, mode: TaskMode, calibration,
     T_robot_key_rest: np.ndarray, support_tolerance_m: float,
     minimum_rest_socket_clearance_m: float,
+    minimum_board_edge_clearance_m: float,
 ) -> dict:
     """Fail closed on a floating/buried target or a key resting on socket.
 
-    The caller still owns board-boundary/fixture-footprint selection and
-    post-release observation; table support alone is not a safe drop policy.
+    The caller still owns the choice of release site and post-release
+    observation. ChArUco's measured *interior corner hull* is treated as a
+    conservative allowed footprint, not the larger physical board outline.
     """
     tolerance = float(support_tolerance_m)
     clearance = float(minimum_rest_socket_clearance_m)
+    board_margin = float(minimum_board_edge_clearance_m)
     if (not math.isfinite(tolerance) or tolerance <= 0 or
-            not math.isfinite(clearance) or clearance <= 0):
-        raise ValueError("support tolerance and socket clearance must be positive")
+            not math.isfinite(clearance) or clearance <= 0 or
+            not math.isfinite(board_margin) or board_margin <= 0):
+        raise ValueError("support, socket and board-edge limits must be positive")
     rest = validate_se3(T_robot_key_rest, name="reset target tabletop key")
     assets = AssetPaths(Path(shared_root).expanduser().resolve(), mode)
     key_mesh = _load_mesh(assets.raw_mesh(mode.key_object))
@@ -136,6 +140,24 @@ def validate_repose_rest_target(
     table_z = float(table_surface_z(calibration.board))
     if abs(min_z - table_z) > tolerance:
         raise ValueError("reset target key bottom does not match measured table")
+    raw_corners = calibration.board.get("corners_robot_m")
+    if raw_corners is None:
+        raise ValueError("measured ChArUco corners are needed for reset footprint")
+    corners = np.asarray(raw_corners, dtype=np.float64)
+    if (corners.ndim != 2 or corners.shape[1] != 3 or len(corners) < 3 or
+            not np.all(np.isfinite(corners))):
+        raise ValueError("measured ChArUco corners are needed for reset footprint")
+    from scipy.spatial import ConvexHull, QhullError
+
+    try:
+        hull = ConvexHull(corners[:, :2])
+    except QhullError as exc:
+        raise ValueError("measured ChArUco footprint is degenerate") from exc
+    signed = (vertices[:, :2] @ hull.equations[:, :2].T +
+              hull.equations[:, 2])
+    board_edge_distance = float(np.min(-signed))
+    if board_edge_distance < board_margin:
+        raise ValueError("reset key footprint exceeds measured ChArUco interior")
     fixed, _ = _fixed_world_models(calibration)
     socket_model, socket_pose, socket_mesh, occupancy = fixed["mesh/fixture_socket"]
     relative = np.linalg.inv(socket_pose) @ rest
@@ -146,6 +168,8 @@ def validate_repose_rest_target(
     if result["colliding"] or distance < clearance:
         raise ValueError("reset target key collides with or approaches socket")
     return {"key_bottom_z_m": min_z, "table_surface_z_m": table_z,
+            "minimum_board_edge_distance_m": board_edge_distance,
+            "minimum_required_board_edge_clearance_m": board_margin,
             "key_socket_clearance_m": distance,
             "minimum_required_socket_clearance_m": clearance}
 
@@ -155,6 +179,7 @@ def plan_repose_held_chain(
     calibration, mode: TaskMode, T_key_hand: np.ndarray,
     T_robot_key_rest: np.ndarray, release_height_m: float,
     minimum_rest_socket_clearance_m: float,
+    minimum_board_edge_clearance_m: float,
     held_hand_q: np.ndarray, held_hand_source: str,
     limits: PathAuditLimits, lift_height_m: float = 0.10,
     preplace_vertical_travel_m: float = 0.10,
@@ -199,7 +224,8 @@ def plan_repose_held_chain(
         shared_root=root, mode=mode, calibration=calibration,
         T_robot_key_rest=rest,
         support_tolerance_m=limits.goal_position_tolerance_m,
-        minimum_rest_socket_clearance_m=minimum_rest_socket_clearance_m)
+        minimum_rest_socket_clearance_m=minimum_rest_socket_clearance_m,
+        minimum_board_edge_clearance_m=minimum_board_edge_clearance_m)
     if (not pickup_plan.success or pickup_plan.lift_preflight is None or
             pickup_plan.traj is None):
         raise ValueError("AutoDex reset pickup did not pass approach/lift preflight")

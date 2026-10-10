@@ -108,7 +108,13 @@ def _fixture(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "precision_insertion.repose_path_audit._hand_link_meshes",
         lambda *_: {"hand": hand})
-    board = {"table_surface_z_m": 0.0}
+    board = {
+        "table_surface_z_m": 0.0,
+        "corners_robot_m": [
+            [-0.40, -0.40, 0.0], [-0.40, 0.40, 0.0],
+            [0.40, -0.40, 0.0], [0.40, 0.40, 0.0],
+        ],
+    }
     socket_pose = _pose(0.30, 0.0)
     frozen = add_fixed_mesh_fixtures(
         {"mesh": {}, "cuboid": {"table": table_cuboid(board)}},
@@ -153,6 +159,7 @@ def _plan(tmp_path, calibration, scene, pickup, rest, limits, planner):
         shared_root=tmp_path, calibration=calibration, mode=MODE,
         T_key_hand=np.eye(4), T_robot_key_rest=rest,
         release_height_m=0.10, minimum_rest_socket_clearance_m=0.01,
+        minimum_board_edge_clearance_m=0.01,
         held_hand_q=np.zeros(6), held_hand_source="commanded_nominal",
         limits=limits)
 
@@ -183,11 +190,23 @@ def test_repose_rejects_rest_key_on_socket_before_planning(tmp_path, monkeypatch
             shared_root=tmp_path, mode=MODE, calibration=calibration,
             T_robot_key_rest=rest_on_socket,
             support_tolerance_m=limits.goal_position_tolerance_m,
-            minimum_rest_socket_clearance_m=0.01)
+            minimum_rest_socket_clearance_m=0.01,
+            minimum_board_edge_clearance_m=0.01)
     planner = _Planner()
     with pytest.raises(ValueError, match="collides with or approaches socket"):
         _plan(tmp_path, calibration, scene, pickup, rest_on_socket, limits,
               planner)
+    assert planner.calls == []
+
+
+def test_repose_rejects_key_footprint_outside_measured_board(
+    tmp_path, monkeypatch,
+):
+    calibration, scene, pickup, _, limits = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    outside = _pose(0.405, 0.003)
+    with pytest.raises(ValueError, match="footprint exceeds"):
+        _plan(tmp_path, calibration, scene, pickup, outside, limits, planner)
     assert planner.calls == []
 
 
@@ -246,7 +265,8 @@ def _transition(tmp_path, calibration, scene, limits, planner):
         start_q_acquisition_timestamp_s=1.01, max_state_skew_s=0.1,
         max_pose_error_deg=10.0, max_center_in_hand_drift_m=0.003,
         max_symmetry_axis_tilt_deg=8.0,
-        minimum_rest_socket_clearance_m=0.01, limits=limits)
+        minimum_rest_socket_clearance_m=0.01,
+        minimum_board_edge_clearance_m=0.01, limits=limits)
 
 
 def test_v8_reset_seed_is_screened_then_planned_in_frozen_socket_world(

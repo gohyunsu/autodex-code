@@ -708,7 +708,10 @@ complete insertion endpoint catalog and the unchanged
 target three-digit v8 tabletop stems, a commissioned release XY in robot
 meters, one of the 4/8/12 cm v8 release-height cells, measured 13-joint start
 state plus acquisition timestamps, reset-grasp fidelity limits, frozen-socket
-clearance and path-audit limits. The function first requires an eligible
+clearance, a measured ChArUco interior-edge clearance and path-audit limits.
+The entire key footprint must lie inside the measured ChArUco corner hull;
+the broad cuRobo table cuboid alone is insufficient. The function first
+requires an eligible
 insertion grasp at the *target* pose; then it loads provenance-bound reset
 seeds, plans one AutoDex pickup per seed and checks the same held key through
 lift, transfer and straight-down descent with the socket still present. The
@@ -717,7 +720,7 @@ trial report; its best status is
 `held_reset_path_available_release_unplanned`, **not** reset success or robot
 authorization. It has no CLI or motor mode yet. The 0 cm original AutoDex
 release cell, safe open-hand release/retreat, measured post-lift key/hand
-relation, landing verification and usable-board footprint check remain to be
+relation and landing verification remain to be
 implemented. See `tests/test_repose_preflight.py` for a fully offline usage
 contract; its fake planner does not demonstrate real Franka reachability.
 If using the library's `reset_candidate_root` override for a staged handoff,
