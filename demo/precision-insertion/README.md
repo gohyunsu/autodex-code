@@ -1577,6 +1577,63 @@ synthetic-only candidates rather than canonical assets, so this call cannot
 yet complete on the current handoff. Its tests exercise ordering, missing
 assets and duplicate-request rejection, not live hardware accuracy.
 
+After a frozen session and a **complete, session-bound** endpoint catalogue
+have been loaded into `SessionRunner`,
+`precision_insertion.live_key_trial.prepare_next_live_key()` is the next
+non-motion boundary. It only accepts the runner's `capture_fresh_key` or
+`reobserve_key_and_preflight` decision. It prechecks the v8 key raw mesh and
+canonical FoundPose `repre.pth`, initializes the key in the existing AutoDex
+FoundPose orchestrator with silhouette refinement, takes a new
+acquisition-bound multi-view capture, rejects masks that include the frozen
+socket, saves and verifies that capture, checks **measured** 13-DOF
+Franka/Inspire feedback against the camera exposure interval, and calls the
+runner's existing pose-conditioned v8 pickup/transfer/20 mm preflight.
+It does not use the socket FoundPose result as the key pose, reuse an old key
+image, mark a physical grasp successful, or send a robot command.
+
+```python
+from precision_insertion.live_key_trial import prepare_next_live_key
+
+prepared = prepare_next_live_key(
+    runner=runner, init_orchestrator=init,
+    acquisition_metadata_for_request=acquisition_metadata_for_request,
+    state_at_capture=buffered_measured_state_for_capture,
+    capture_root=shared_capture_root,
+    key_evidence_dir=new_key_evidence_dir, capture_id="key_001",
+    calibrated_camera_ids=active_serials,
+    intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
+    image_hw=(H, W),
+    key_prompt="blue precision key on the board, excluding the fixed red socket",
+    view_limits=commissioned_view_limits,
+    maximum_multiview_center_error_mm=commissioned_center_mm,
+    maximum_multiview_angle_error_deg=commissioned_angle_deg,
+    maximum_socket_mask_overlap_fraction=commissioned_socket_overlap,
+    socket_projection_dilation_px=commissioned_socket_dilation_px,
+    max_arm_hand_skew_s=commissioned_arm_hand_skew_s,
+    max_hand_command_error_raw=commissioned_hand_error_raw,
+    max_arm_velocity_rad_s=commissioned_hold_velocity_rad_s,
+    max_key_state_skew_s=commissioned_key_state_skew_s,
+    planner=planner, limits=commissioned_path_limits,
+    max_pose_error_deg=commissioned_tabletop_pose_error_deg,
+    axial_waypoint_step_m=commissioned_axial_step_m,
+    capture_timeout_s=commissioned_capture_timeout_s,
+    image_write_timeout_s=commissioned_image_write_timeout_s,
+)
+print(prepared.preflight.status, runner.current_decision().action)
+```
+
+`buffered_measured_state_for_capture(capture)` must return a
+`LiveRobotState` from a continuously sampled, time-stamped feedback buffer
+that overlaps **all** admitted camera exposure-time bounds. Reading the arm
+and hand only *after* slow SAM/FoundPose inference is insufficient; the
+function rejects out-of-window or commanded-instead-of-measured feedback.
+An optional `planning_options` mapping accepts only the existing repose
+fidelity/root arguments, never runner-owned candidate exclusions. The saved
+camera evidence survives a failed state or planner gate for diagnosis. This
+API still requires commissioned camera clocks, real key/socket FoundPose
+representations, a complete endpoint catalogue and live feedback; there is
+no safe robot-execution CLI yet.
+
 Run the current offline tests from the repository root:
 
 ```bash

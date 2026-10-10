@@ -676,6 +676,8 @@ demo/precision-insertion/
     grounding_eval.py             # independent held-key pose comparison
     camera_transport.py           # demo-local fid/pixel-hash PUB adapters
     camera_time.py                # independent fid-to-exposure UTC calibration gate
+    live_session_start.py         # board -> repeated socket -> frozen world, no motion
+    live_key_trial.py             # fresh key -> observed state -> v8 trial preflight
     retry_preflight.py            # fresh withdrawn-state retry planning only
     retry_session.py              # same-frame failed-trial/VLM/live-state evidence gate
     records.py                    # separate append-only observed task labels
@@ -688,7 +690,7 @@ demo/precision-insertion/
   precision_init_daemon.py         # capture-PC FoundPose metadata variant
 
 Planned below the same demo directory, but **not implemented**:
-  live_session_runner.py          # commissioned camera/robot orchestration
+  live_session_runner.py          # continuous commissioned camera/robot loop
   guarded_execution.py            # bounded Franka/Inspire contact and aborts
   recovery.py                     # safe return/repose/reorient/extraction policy
 ```
