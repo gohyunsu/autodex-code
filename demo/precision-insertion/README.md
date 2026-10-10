@@ -166,8 +166,9 @@ The first independent helpers are in `precision_insertion/`:
   finished while the key remains held. It compares the multiview-key/live-
   wrist-derived `T_key_hand` against the v8 grasp using commissioned drift
   limits, then screens the actual observed rigid relation at each XY target;
-  a large drift stops the retry. Inspire finger configuration remains a
-  nominal controller model, not measured finger feedback.
+  a large drift stops the retry. The live retry screen now uses the measured
+  Inspire finger joints paired with that relation, and the withdrawn-state
+  preflight rejects a changed hand pose before rescreening the target.
   The multi-view retry now also binds every full-frame VLM image to its
   request/frame ID, decoded-pixel hash and bounded acquisition time. A missing
   capture-side provenance producer or excessive worst-case skew/age prevents

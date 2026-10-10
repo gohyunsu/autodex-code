@@ -116,6 +116,11 @@ def plan_xy_retry_from_withdrawn_hold(
     start = np.asarray(live_start_q, dtype=np.float64)
     if start.shape != (13,) or not np.all(np.isfinite(start)):
         raise ValueError("live withdrawn state must be 13 finite joints")
+    if (assessment.endpoint_screen.get("held_hand_q_measured") is None or
+            not np.allclose(start[7:],
+                            assessment.endpoint_screen["held_hand_q_measured"],
+                            rtol=0, atol=1e-8)):
+        raise ValueError("withdrawn measured hand differs from VLM endpoint screen")
     limits.validate()
     current_offset = tuple(assessment.endpoint_screen["current_offset_socket_m"])
     old_targets = build_rigid_insertion_targets(
@@ -133,7 +138,9 @@ def plan_xy_retry_from_withdrawn_hold(
         shared_root=root, mode=mode, candidate_dir=candidate,
         minimum_hand_clearance_m=catalog["minimum_hand_clearance_m"],
         xy_offset_socket_m=target_offset,
-        T_key_hand_override=relation)
+        T_key_hand_override=relation,
+        hand_poses_override={"measured_withdrawn": start[7:].copy()},
+        override_source="multiview_key_pose_plus_live_wrist")
     if fresh_screen["endpoint_pass"] is not True:
         raise ValueError("fresh exact 20 mm endpoint screen rejected retry")
     targets = build_rigid_insertion_targets(

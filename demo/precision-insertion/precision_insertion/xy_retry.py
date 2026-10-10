@@ -67,6 +67,7 @@ def assess_xy_retry(
     candidate_key: tuple[str, str, str], tabletop_pose_stem: str,
     current_offset_socket_m: tuple[float, float],
     observed_T_key_hand: np.ndarray,
+    held_hand_q_measured: np.ndarray,
     observed_key_hand_source: str,
     max_grasp_translation_drift_m: float,
     max_grasp_rotation_drift_deg: float,
@@ -151,6 +152,9 @@ def assess_xy_retry(
         raise ValueError("retry grasp is not endpoint eligible for this tabletop")
     if observed_key_hand_source != "multiview_key_pose_plus_live_wrist":
         raise ValueError("retry requires independently observed key/hand relation")
+    hand_q = np.asarray(held_hand_q_measured, dtype=np.float64)
+    if hand_q.shape != (6,) or not np.all(np.isfinite(hand_q)):
+        raise ValueError("retry needs six measured Inspire held joints")
     if (not math.isfinite(max_grasp_translation_drift_m) or
             max_grasp_translation_drift_m <= 0 or
             not math.isfinite(max_grasp_rotation_drift_deg) or
@@ -178,8 +182,10 @@ def assess_xy_retry(
         max_total_offset_m=max_total_offset_m,
         minimum_hand_clearance_m=catalog["minimum_hand_clearance_m"],
         T_key_hand_override=observed_relation,
+        held_hand_q_measured=hand_q,
         screen=screen)
     screen_report["observed_key_hand_source"] = observed_key_hand_source
+    screen_report["held_hand_q_measured"] = hand_q.tolist()
     screen_report["observed_relation_translation_drift_m"] = translation_drift
     screen_report["observed_relation_rotation_drift_deg"] = rotation_drift
     choices = tuple(XYChoice(row["choice_id"], tuple(row["xy_offset_socket_m"]))

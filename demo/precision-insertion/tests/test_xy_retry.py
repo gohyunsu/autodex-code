@@ -102,6 +102,7 @@ def _setup(tmp_path, *, focal=4000):
         "current_offset_socket_m": (0.0, 0.0),
         "observed_T_key_hand": np.load(
             candidates[0] / "wrist_se3.npy", allow_pickle=False),
+        "held_hand_q_measured": np.full(6, 0.2),
         "observed_key_hand_source": "multiview_key_pose_plus_live_wrist",
         "max_grasp_translation_drift_m": 0.002,
         "max_grasp_rotation_drift_deg": 5.0,
@@ -122,6 +123,16 @@ def _setup(tmp_path, *, focal=4000):
 
 def test_vlm_multiview_choice_is_only_a_replan_proposal(tmp_path):
     args = _setup(tmp_path)
+    original_screen = args["screen"]
+    checked = []
+    def measured_screen(**kwargs):
+        assert kwargs["override_source"] == (
+            "multiview_key_pose_plus_live_wrist")
+        assert kwargs["hand_poses_override"]["measured_held"] == (
+            pytest.approx(np.full(6, 0.2)))
+        checked.append(kwargs["xy_offset_socket_m"])
+        return original_screen(**kwargs)
+    args["screen"] = measured_screen
     result = assess_xy_retry(**args)
     assert result.status == "proposal_requires_live_preflight"
     assert result.decision.status == "propose"
@@ -131,6 +142,9 @@ def test_vlm_multiview_choice_is_only_a_replan_proposal(tmp_path):
     assert result.to_record()["robot_ready"] is False
     assert result.to_record()["frame_binding"]["request_id"] == 15
     assert len(result.endpoint_screen["endpoint_clear_choice_ids"]) == 5
+    assert len(checked) == 5
+    assert result.endpoint_screen["hand_pose_source"] == (
+        "measured_inspire_feedback")
 
 
 def test_retry_rejects_changed_or_missing_frozen_camera_calibration(tmp_path):

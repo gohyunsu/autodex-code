@@ -24,6 +24,7 @@ def screen_axis_1mm_endpoint_choices(
     current_offset_socket_m: tuple[float, float],
     max_total_offset_m: float, minimum_hand_clearance_m: float,
     T_key_hand_override: np.ndarray | None = None,
+    held_hand_q_measured: np.ndarray | None = None,
     screen: Callable = screen_grasp_endpoint,
 ) -> dict:
     """Test hold and four cardinal 1 mm absolute targets at 20 mm depth.
@@ -42,6 +43,12 @@ def screen_axis_1mm_endpoint_choices(
     if T_key_hand_override is not None:
         T_key_hand_override = validate_se3(
             T_key_hand_override, name="observed T_key_hand")
+    if held_hand_q_measured is not None:
+        held_hand_q_measured = np.asarray(held_hand_q_measured, dtype=np.float64)
+        if (T_key_hand_override is None or
+                held_hand_q_measured.shape != (6,) or
+                not np.all(np.isfinite(held_hand_q_measured))):
+            raise ValueError("measured hand joints need a paired observed key/hand pose")
     choices = axis_1mm_proposals(current_offset_socket_m)
     current = choices[0].offset_socket_m
     rows = []
@@ -60,6 +67,11 @@ def screen_axis_1mm_endpoint_choices(
             kwargs = {}
             if T_key_hand_override is not None:
                 kwargs["T_key_hand_override"] = T_key_hand_override
+            if held_hand_q_measured is not None:
+                kwargs["hand_poses_override"] = {
+                    "measured_held": held_hand_q_measured}
+                kwargs["override_source"] = (
+                    "multiview_key_pose_plus_live_wrist")
             report = screen(
                 shared_root=shared_root, mode=mode,
                 candidate_dir=candidate_dir,
@@ -90,6 +102,9 @@ def screen_axis_1mm_endpoint_choices(
         "T_key_hand_source": (
             "v8_candidate" if T_key_hand_override is None
             else "observed_postlift_override"),
+        "hand_pose_source": (
+            "v8_nominal" if held_hand_q_measured is None
+            else "measured_inspire_feedback"),
         "rows": rows,
         "endpoint_clear_choice_ids": [
             row["choice_id"] for row in rows if row["endpoint_pass"]],

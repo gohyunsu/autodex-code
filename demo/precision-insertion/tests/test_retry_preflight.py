@@ -89,12 +89,21 @@ def test_retry_plans_fresh_transfer_and_axial_from_withdrawn_state(
     tmp_path, monkeypatch,
 ):
     args = _inputs(tmp_path, monkeypatch)
+    checked = []
+    def measured_endpoint(**kwargs):
+        checked.append(kwargs)
+        return {"endpoint_pass": True}
+    monkeypatch.setattr(
+        "precision_insertion.retry_preflight.screen_grasp_endpoint",
+        measured_endpoint)
     result = plan_xy_retry_from_withdrawn_hold(**args)
     assert result.status == "sampled_retry_preflight_pass"
     assert result.choice_id == "x_plus_1mm"
     assert len(args["planner"].calls) == 11
     assert result.planning.lift_trajectory is None
     assert result.targets.xy_offset_socket_m == pytest.approx((0.001, 0.0))
+    assert checked[0]["hand_poses_override"]["measured_withdrawn"] == (
+        pytest.approx(args["live_start_q"][7:]))
     assert result.to_record()["robot_ready"] is False
     saved = write_xy_retry_preflight(result, tmp_path / "retry_report")
     assert (saved / "report.json").is_file()
@@ -115,6 +124,10 @@ def test_retry_rejects_stale_or_nonwithdrawn_state(tmp_path, monkeypatch):
     start[2] = 0.25
     args["live_start_q"] = start
     with pytest.raises(ValueError, match="not at the verified withdrawn hold"):
+        plan_xy_retry_from_withdrawn_hold(**args)
+    args = _inputs(tmp_path / "changed_hand", monkeypatch)
+    args["live_start_q"][7] += 0.05
+    with pytest.raises(ValueError, match="hand differs from VLM endpoint"):
         plan_xy_retry_from_withdrawn_hold(**args)
 
 
