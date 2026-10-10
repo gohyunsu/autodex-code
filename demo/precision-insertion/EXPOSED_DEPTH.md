@@ -53,3 +53,85 @@ Until those gates are established, `insertion_checkpoint.py` must not use
 the interval for a physical success label. Local VLM metric points require
 native-size images (`require_native_pixels=True`); resized coordinates are
 rejected.
+
+## Evaluate against independent depth measurements
+
+`evaluate_exposed_depth.py` compares saved visual-depth reports with a separate
+instrument measurement made during the **same final hold**. This is the next
+commissioning input, not a way to promote a visual interval to a task label.
+Collect both failures (short insertion/rim jams) and apparent successes,
+including hand occlusion; keep data used to choose VLM prompts/bounds separate
+from the held-out evaluation set. The evaluator checks source hashes, the
+frozen session/CAD/camera IDs, attempt/candidate/final-request identity,
+instrument calibration file, timestamp clock and maximum acquisition skew.
+These checks cannot verify the external instrument's physical accuracy or
+that the key stayed motionless between exposure and measurement.
+
+An `independent_depth.json` reference has this shape (replace all example
+IDs/hashes and use real absolute instrument file paths):
+
+```json
+{
+  "schema": "precision_insertion_independent_depth_v1",
+  "attempt_id": "trial_001",
+  "candidate_id": "table/0/3",
+  "mode": {"family": "cylinder", "gap_mm": 15.0},
+  "session_calibration_sha256": "<64 hex characters>",
+  "camera_calibration_sha256": "<64 hex characters>",
+  "task_geometry_sha256": "<64 hex characters>",
+  "final_manifest_sha256": "<64 hex characters>",
+  "final_capture_id": "final_001",
+  "final_request_id": 71,
+  "measurement_method": "calibrated_depth_gauge",
+  "measurement_time_s": 1790000000.0,
+  "clock_domain": "unix_utc",
+  "depth_interval_m": [0.0192, 0.0196],
+  "raw_evidence": [
+    {"path": "/abs/path/to/raw_gauge_log.csv", "sha256": "<64 hex characters>"}
+  ],
+  "instrument_calibration": {
+    "path": "/abs/path/to/gauge_calibration.json",
+    "sha256": "<64 hex characters>"
+  }
+}
+```
+
+The depth interval is the instrument's bounded *key penetration below the
+socket rim*, not commanded wrist travel. An external optical-metrology system
+can instead use `measurement_method: "external_optical_metrology"` and its raw
+pose/images. Its error interval must include the instrument, fiducial,
+hand-eye, socket-rim and timing errors; do not substitute a confidence score
+or the same VLM output as independent evidence. `clock_domain` must match the
+raw camera capture. A measurement after release/reset is not the same hold,
+even when file hashes and IDs match.
+
+Place a manifest beside the per-trial files, with relative paths that remain
+inside its directory:
+
+```json
+{
+  "schema": "precision_insertion_exposed_depth_eval_manifest_v1",
+  "max_reference_capture_skew_s": 0.02,
+  "samples": [
+    {"depth_report": "trial_001/depth/report.json",
+     "independent_depth": "trial_001/independent_depth.json"}
+  ]
+}
+```
+
+Then run from the repository root:
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/evaluate_exposed_depth.py \
+  --manifest /path/to/evaluation.json --shared-root ~/shared_data \
+  --mode cylinder --gap-mm 15 --session /path/to/session_calibration.json \
+  --output /path/to/new_depth_evaluation.json
+```
+
+The report includes abstention rate, visual intervals that do not contain the
+independent interval, definite/possible false 20 mm successes, and the largest
+observed overestimation bound required by these samples. A sample maximum is
+**not** a deterministic bound for future trials. The evaluator always emits
+`depth_source_admissible_for_task_label=false`; the insertion checkpoint still
+records `unknown` unless another separately verified source is commissioned.
