@@ -13,6 +13,10 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import re
+
+
+_CAMERA_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
 def _sha256(path: Path) -> str:
@@ -170,10 +174,31 @@ def audit_handoff(
         tally["reports"] += 1
         tally["numeric_pass"] += int(numeric)
         per_view_iou = report.get("per_view_iou", {})
-        valid_iou = ([float(value) for value in per_view_iou.values()
-                      if isinstance(value, (int, float)) and
-                      math.isfinite(value)]
-                     if isinstance(per_view_iou, dict) else [])
+        iou_by_camera = {}
+        if not isinstance(per_view_iou, dict):
+            errors.append(f"{condition}: per_view_iou is not a mapping")
+        else:
+            for camera, value in per_view_iou.items():
+                if (not isinstance(camera, str) or
+                        not _CAMERA_ID.fullmatch(camera) or
+                        type(value) not in (int, float) or
+                        not math.isfinite(value) or not 0 <= value <= 1 or
+                        (expected_camera_ids is not None and
+                         camera not in expected_camera_ids)):
+                    errors.append(f"{condition}: invalid per-view IoU entry")
+                    continue
+                iou_by_camera[camera] = float(value)
+        lowest_views = []
+        for camera, iou in sorted(iou_by_camera.items(),
+                                  key=lambda pair: (pair[1], pair[0]))[:3]:
+            overlay = report_file.parent / f"{camera}_cad_overlay.jpg"
+            mask = report_file.parent / f"{camera}_mask.png"
+            lowest_views.append({
+                "camera_id": camera, "iou": iou,
+                "mask_path": str(mask) if mask.is_file() else None,
+                "overlay_path": str(overlay) if overlay.is_file() else None,
+            })
+        valid_iou = list(iou_by_camera.values())
         if (type(n_valid) is not int or type(n_expected) is not int or
                 not 0 <= n_valid <= n_expected or
                 (shot is not None and n_expected != shot["camera_count"])):
@@ -189,6 +214,7 @@ def audit_handoff(
             "final_mean_iou": report.get("final_mean_iou_all_valid_masks"),
             "minimum_per_view_iou": min(valid_iou) if valid_iou else None,
             "zero_iou_view_count": sum(value <= 0 for value in valid_iou),
+            "lowest_iou_views_for_manual_review": lowest_views,
             "manual_pose_mask_rim_review": "REQUIRED_NOT_PROVEN",
         })
     evaluated = {row["condition_id"] for row in evaluations}

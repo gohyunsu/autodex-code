@@ -20,6 +20,12 @@ snapshot. Run it again whenever the evaluation changes:
 FoundPose candidate or modifies a capture. Use `--verify-candidate-hashes`
 when a full ~9 GB NAS read is acceptable; the initial snapshot checked the
 12 candidate PTHs' existence/expected size, **not** their SHA-256 bytes.
+Each evaluation now includes `lowest_iou_views_for_manual_review` with up to
+three camera IDs and existing mask/overlay paths. It ranks review work; it
+does not declare a passing IoU or replace inspection of all relevant views.
+The current re-audit at `/tmp/precision-perception-audit-review-20261011.json`
+found 61 reports and no capture-integrity error, and placed camera
+`24122734` first for the square 1.5 mm `pose_02` example below.
 
 At the initial snapshot, all 35 selected conditions had complete 20-camera
 shots and every indexed JPEG matched its recorded hash. Five planned square
@@ -49,6 +55,18 @@ The direct-cylinder SAM3 variant is closer to the live segmentation path,
 but its visual/numeric fit still needs held-out pose and symmetry-aware
 orientation checks. Socket overlay examples look plausible in some views;
 no exhaustive manual rim, socket-axis or calibration audit is recorded here.
+
+One concrete wrong-object example is square 1.5 mm key `pose_02`, camera
+`24122734`: its ROI-assisted key view has IoU **0.04947** with the refined
+CAD. The saved key mask has 10,224 pixels, 9,950 of which (97.32%) overlap
+the *same-camera* socket-only mask captured earlier. In the raw frame the
+white key is behind the socket, whereas the overlay places the CAD key over
+the socket. This comparison is a diagnostic across two static-board captures,
+not a synchronized live mask test or proof of the exact projected-socket
+overlap used by `admit_key_capture()`. It does show why a numeric full-image
+silhouette pass and even a high mean across other cameras cannot license that
+view. Review its [raw frame](/mnt/paradex2/hyunsu/tmp/precision_insertion_multiview_20261010_652ac909/square/precision_key_1p5mm/pose_02/views/shot_20261010T131640Z_585435e4/24122734.jpg)
+and [CAD overlay](/mnt/paradex2/hyunsu/autodex_precision_insertion_perception_eval_20261010_652ac909/results/key_roi_sam3_square/square/precision_key_1p5mm/pose_02/24122734_cad_overlay.jpg).
 
 None of the 35 selected `shot.json` files provides a verified **per-camera
 frame ID and exposure UTC interval**. Its overall `captured_at_utc` and

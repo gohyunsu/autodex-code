@@ -52,11 +52,13 @@ def _fixture(tmp_path):
     eval_root = tmp_path / "evaluation"
     report_file = eval_root / "results/socket/report.json"
     report_file.parent.mkdir(parents=True)
+    (report_file.parent / "cam_b_mask.png").write_bytes(b"mask for review")
     report_file.write_text(json.dumps({
         "condition_id": condition, "shot_dir": str(shot_dir),
         "n_valid_mask_pose": 2, "n_expected": 2,
         "passes_numeric_sil_threshold": True,
         "final_mean_iou_all_valid_masks": .97,
+        "per_view_iou": {"cam_a": .97, "cam_b": 0.0},
     }), encoding="utf-8")
     return capture_index, candidate_index, eval_root, shot_dir, report_file
 
@@ -70,6 +72,11 @@ def test_real_image_hash_and_numeric_fit_never_auto_promote(tmp_path):
     assert result["evaluation_variant_summary"]["socket"] == {
         "reports": 1, "numeric_pass": 1}
     assert result["candidate_representations"][0]["hash_verified"] is True
+    assert result["evaluations"][0]["lowest_iou_views_for_manual_review"][0] == {
+        "camera_id": "cam_b", "iou": 0.0,
+        "mask_path": str(eval_root / "results/socket/cam_b_mask.png"),
+        "overlay_path": None,
+    }
     assert result["conditions_without_per_camera_acquisition_time"] == [
         "square/socket_only"]
     assert result["perception_promotion_ready"] is False
@@ -88,6 +95,18 @@ def test_tampered_image_and_unbound_evaluation_are_reported(tmp_path):
                for row in result["integrity_errors"])
     assert any("evaluation is not bound" in row
                for row in result["integrity_errors"])
+
+
+def test_invalid_iou_entry_does_not_become_review_link(tmp_path):
+    index, candidates, eval_root, _shot, report_file = _fixture(tmp_path)
+    report = json.loads(report_file.read_text(encoding="utf-8"))
+    report["per_view_iou"]["../other"] = 0.0
+    report_file.write_text(json.dumps(report), encoding="utf-8")
+    result = audit_handoff(index, candidates, eval_root)
+    assert any("invalid per-view IoU" in row
+               for row in result["integrity_errors"])
+    assert all(row["camera_id"] != "../other" for row in
+               result["evaluations"][0]["lowest_iou_views_for_manual_review"])
 
 
 def test_cli_writes_exclusive_snapshot(tmp_path, capsys):

@@ -273,11 +273,14 @@ promote the 13 socket-clear candidates to robot trials from those images.
 The NAS handoff at
 `/mnt/paradex2/hyunsu/autodex_precision_insertion_handoff_20261010_652ac909`
 contains large per-object `pending_foundpose/.../repre.pth` onboarding
-artifacts, but its own README labels them **validation pending**: no real
-AutoDex key/socket camera images were used to check masks, axes, and open-rim
-direction. They have not been promoted into canonical runtime
-`foundpose_assets`. No grasp-specific *physical* key–hand calibration record
-was found in that handoff. Consequently the current retry route still needs
+artifacts, but its own README labels them **validation pending**. A later NAS
+addendum and [real-image audit](NAS_PERCEPTION_QA.md) now contain 35 selected
+20-camera shots and 61 offline evaluation reports. Those images expose
+wrong-object key masks and still lack per-camera exposure timestamps and
+independent pose/rim validation. The PTHs have therefore **not** been
+promoted into canonical runtime `foundpose_assets`. No grasp-specific
+*physical* key–hand calibration record was found in that handoff.
+Consequently the current retry route still needs
 an observed held-key pose **to reach live retry preflight**. A separate
 nominal-key diagnostic can ask the VLM for a direction without that pose, but
 cannot authorize a retry. The new bounded post-lift planning route can use a
