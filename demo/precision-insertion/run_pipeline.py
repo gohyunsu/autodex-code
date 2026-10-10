@@ -139,6 +139,54 @@ def main(argv: list[str] | None = None) -> int:
                        metavar="HEIGHT/TARGET_STEM/SEED_ID")
     trial.add_argument("--output-dir", type=Path, required=True,
                        help="new report directory; refuses to overwrite")
+    repose = command.add_parser(
+        "preflight-repose",
+        help="offline v8 directed reset planning; no camera or motor command",
+    )
+    repose.add_argument("--shared-root", type=Path, required=True)
+    repose.add_argument("--mode", choices=("square", "cylinder"), required=True)
+    repose.add_argument("--gap-mm", type=float, required=True)
+    repose.add_argument("--session", type=Path, required=True)
+    repose.add_argument("--catalog", type=Path, required=True,
+                        help="complete insertion endpoint catalog for target pose")
+    repose.add_argument("--key-pose-world-npy", type=Path, required=True)
+    repose.add_argument("--key-observation-id", required=True)
+    repose.add_argument("--key-capture-time-s", type=float, required=True)
+    repose.add_argument("--live-start-q-npy", type=Path, required=True)
+    repose.add_argument("--start-q-time-s", type=float, required=True)
+    repose.add_argument("--max-key-state-skew-s", type=float, required=True)
+    repose.add_argument("--limits-json", type=Path, required=True)
+    repose.add_argument("--from-pose-stem", required=True,
+                        help="freshly observed three-digit v8 tabletop class")
+    repose.add_argument("--to-pose-stem", required=True,
+                        help="desired three-digit v8 tabletop class")
+    repose.add_argument("--height-cm", type=int, choices=(4, 8, 12),
+                        required=True, help="existing directed v8 reset cell")
+    repose.add_argument("--release-x-m", type=float, required=True)
+    repose.add_argument("--release-y-m", type=float, required=True)
+    repose.add_argument("--min-rest-socket-clearance-mm", type=float,
+                        required=True)
+    repose.add_argument("--min-board-edge-clearance-mm", type=float,
+                        required=True)
+    repose.add_argument("--max-pose-error-deg", type=float, required=True)
+    repose.add_argument("--max-reset-drift-mm", type=float, required=True)
+    repose.add_argument("--max-reset-axis-tilt-deg", type=float,
+                        required=True)
+    repose.add_argument("--attempted-insertion", action="append", default=[],
+                        metavar="TYPE/SID/GID")
+    repose.add_argument("--covered-scene", type=int, action="append", default=[])
+    repose.add_argument("--attempted-reset-id", action="append", default=[],
+                        help="numeric seed ID already attempted in this directed cell")
+    repose.add_argument("--reset-candidate-dir", type=Path,
+                        help="exact staged reset_<height> directory, not its parent")
+    repose.add_argument("--max-seed-attempts", type=int,
+                        help="pilot prefix; report remains budget-limited")
+    repose.add_argument("--retreat-goal-q-npy", type=Path,
+                        help="commissioned 7-joint retreat target; requires key clearance")
+    repose.add_argument("--min-release-key-clearance-mm", type=float,
+                        help="enable nominal opening/+10 cm/retract preflight")
+    repose.add_argument("--output-dir", type=Path, required=True,
+                        help="new exclusive output directory; no overwrite")
     args = parser.parse_args(argv)
 
     if args.command == "audit":
@@ -353,6 +401,101 @@ def main(argv: list[str] | None = None) -> int:
             "robot_ready": False,
         }, indent=2))
         return 0 if result.status == "sampled_planning_pass" else 2
+    if args.command == "preflight-repose":
+        if args.output_dir.expanduser().resolve().exists():
+            parser.error("repose preflight output directory already exists")
+        from precision_insertion.calibration import load_session_calibration
+        from precision_insertion.path_audit import PathAuditLimits
+        from precision_insertion.repose_artifacts import (
+            write_repose_preflight_artifacts,
+        )
+        from precision_insertion.repose_transition import (
+            preflight_v8_repose_transition,
+        )
+        from precision_insertion.world import build_trial_scene_from_session
+        import numpy as np
+
+        try:
+            mode = select_mode(args.mode, args.gap_mm)
+            session = load_session_calibration(
+                args.session, mode=mode, shared_root=args.shared_root)
+            catalog_data = json.loads(args.catalog.read_text(encoding="utf-8"))
+            limits_data = json.loads(args.limits_json.read_text(encoding="utf-8"))
+            if not isinstance(catalog_data, dict) or not isinstance(
+                    limits_data, dict):
+                raise ValueError("catalog and limits files must be JSON objects")
+            limits = PathAuditLimits(**limits_data)
+            limits.validate()
+            key_pose = np.load(args.key_pose_world_npy, allow_pickle=False)
+            start_q = np.load(args.live_start_q_npy, allow_pickle=False)
+            attempted = tuple(tuple(item.split("/"))
+                              for item in args.attempted_insertion)
+            if any(len(item) != 3 or not all(item) for item in attempted):
+                raise ValueError("attempted insertion keys must be TYPE/SID/GID")
+            if any(not value.isdigit() for value in args.attempted_reset_id):
+                raise ValueError("attempted reset IDs must be numeric")
+            if ((args.retreat_goal_q_npy is None) !=
+                    (args.min_release_key_clearance_mm is None)):
+                raise ValueError("release preflight requires retreat goal and clearance")
+            retreat_q = (None if args.retreat_goal_q_npy is None else
+                         np.load(args.retreat_goal_q_npy, allow_pickle=False))
+            trial_scene = build_trial_scene_from_session(
+                mode=mode, shared_root=args.shared_root,
+                calibration=session, key_pose_world=key_pose)
+            from autodex.planner import GraspPlanner
+
+            planner = GraspPlanner(hand="fr3_inspire")
+            result = preflight_v8_repose_transition(
+                planner=planner, shared_root=args.shared_root,
+                mode=mode, calibration=session, trial_scene=trial_scene,
+                catalog=catalog_data,
+                from_pose_stem=args.from_pose_stem,
+                to_pose_stem=args.to_pose_stem, height_cm=args.height_cm,
+                release_xy_robot_m=(args.release_x_m, args.release_y_m),
+                live_start_q=start_q,
+                observation_id=args.key_observation_id,
+                key_capture_timestamp_s=args.key_capture_time_s,
+                start_q_acquisition_timestamp_s=args.start_q_time_s,
+                max_state_skew_s=args.max_key_state_skew_s,
+                max_pose_error_deg=args.max_pose_error_deg,
+                max_center_in_hand_drift_m=args.max_reset_drift_mm / 1000.0,
+                max_symmetry_axis_tilt_deg=args.max_reset_axis_tilt_deg,
+                minimum_rest_socket_clearance_m=(
+                    args.min_rest_socket_clearance_mm / 1000.0),
+                minimum_board_edge_clearance_m=(
+                    args.min_board_edge_clearance_mm / 1000.0),
+                limits=limits, attempted_insertion=attempted,
+                covered_scenes=tuple(args.covered_scene),
+                attempted_reset_ids=tuple(args.attempted_reset_id),
+                reset_candidate_root=args.reset_candidate_dir,
+                max_seed_attempts=args.max_seed_attempts,
+                retreat_goal_arm_q=retreat_q,
+                minimum_release_key_clearance_m=(
+                    None if args.min_release_key_clearance_mm is None else
+                    args.min_release_key_clearance_mm / 1000.0),
+            )
+            output = write_repose_preflight_artifacts(
+                result=result, trial_scene=trial_scene,
+                output_dir=args.output_dir,
+                source_files={
+                    "session": args.session, "catalog": args.catalog,
+                    "key_pose_world": args.key_pose_world_npy,
+                    "live_start_q": args.live_start_q_npy,
+                    "limits": args.limits_json,
+                })
+        except (FileNotFoundError, KeyError, TypeError, ValueError) as exc:
+            parser.error(str(exc))
+        print(json.dumps({
+            "status": result.status,
+            "attempted_reset_seeds": len(result.attempted_seeds),
+            "selected_seed": result.selected_seed,
+            "report": str(output / "report.json"),
+            "robot_ready": False,
+        }, indent=2))
+        return (0 if result.status in {
+            "held_reset_path_available_release_unplanned",
+            "nominal_reset_preflight_pass_drop_unobserved",
+        } else 2)
     raise AssertionError(f"unhandled command: {args.command}")
 
 

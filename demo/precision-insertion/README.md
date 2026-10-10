@@ -724,15 +724,47 @@ the original planner's joint-space retract. The conservative world contains
 both a key left at the release height and a key at the selected tabletop rest
 pose; the hand is screened against both after opening. Its strongest status is
 `nominal_reset_preflight_pass_drop_unobserved`, **not** reset success or robot
-authorization. It has no CLI or motor mode yet. The 0 cm original AutoDex
+authorization. The read-only CLI now exposes this as `preflight-repose`; it
+still has **no motor mode**. A saved session calibration, full v8 endpoint
+catalog, fresh key pose, measured start joints and commissioned numeric limits
+are required:
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/run_pipeline.py preflight-repose \
+  --shared-root /path/to/shared_data --mode cylinder --gap-mm 20 \
+  --session /path/to/session_calibration.json \
+  --catalog /path/to/current_endpoint_catalog.json \
+  --key-pose-world-npy /path/to/fresh_key_pose_world.npy \
+  --key-observation-id capture_001 --key-capture-time-s 100.0 \
+  --live-start-q-npy /path/to/measured_fr3_inspire_q13.npy \
+  --start-q-time-s 100.0 --max-key-state-skew-s 0.1 \
+  --limits-json /path/to/commissioned_path_audit_limits.json \
+  --from-pose-stem 000 --to-pose-stem 001 --height-cm 12 \
+  --release-x-m 0.40 --release-y-m 0.00 \
+  --min-rest-socket-clearance-mm 10 --min-board-edge-clearance-mm 10 \
+  --max-pose-error-deg 10 --max-reset-drift-mm 3 \
+  --max-reset-axis-tilt-deg 8 \
+  --retreat-goal-q-npy /path/to/approved_retreat_q7.npy \
+  --min-release-key-clearance-mm 1 \
+  --output-dir /path/to/new_repose_preflight_report
+```
+
+The numbers and release site shown are **illustrative, not commissioned**.
+Do not use them as physical safety limits. Omit both retreat options to stop
+at held-key descent. `--reset-candidate-dir`, when used, must point to the
+specific `reset_12/` directory for this example, not its parent; this differs
+from the assessment CLI's `--reset-candidate-root` parent-of-heights path.
+Every run creates a new `report.json`, `trial_scene.json`, and, on selected
+planning paths, `planned_trajectories.npz` with source hashes. Exit 0 means
+the requested *offline planning scope* passed, not that robot motion is safe;
+exit 2 means no qualifying nominal reset path or missing prerequisites.
+The 0 cm original AutoDex
 release cell, measured post-lift key/hand relation, dynamic drop and landing
 verification remain to be implemented. The retract uses the original cuRobo
 collision checker; unlike opening and vertical exit, it has no separate
 full-visual-mesh sample audit yet. See `tests/test_repose_preflight.py` for a fully offline usage
 contract; its fake planner does not demonstrate real Franka reachability.
-If using the library's `reset_candidate_root` override for a staged handoff,
-pass the specific `reset_12/` directory for a 12 cm run; this differs from
-the assessment CLI's `--reset-candidate-root` parent-of-heights path.
 
 ### Socket perception evidence and current camera-timestamp blocker
 

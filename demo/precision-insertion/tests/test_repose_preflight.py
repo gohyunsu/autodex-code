@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -29,6 +31,9 @@ from precision_insertion.repose_transition import (  # noqa: E402
 )
 from precision_insertion.repose_release import (  # noqa: E402
     build_repose_release_world, plan_repose_release_exit,
+)
+from precision_insertion.repose_artifacts import (  # noqa: E402
+    write_repose_preflight_artifacts,
 )
 from precision_insertion.world import add_fixed_mesh_fixtures  # noqa: E402
 
@@ -439,3 +444,65 @@ def test_release_exit_rejects_mutated_held_path_evidence(tmp_path, monkeypatch):
             retreat_goal_arm_q=np.zeros(7),
             minimum_release_key_clearance_m=0.001, limits=limits)
     assert not any(call[0] == "post_release_lift" for call in planner.calls)
+
+
+def test_repose_report_saves_paths_and_input_hashes_without_overwrite(
+    tmp_path, monkeypatch,
+):
+    calibration, scene, pickup, _, limits = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    planner.pickup_plan = pickup
+    monkeypatch.setattr(
+        "precision_insertion.repose_transition.select_pose_candidates",
+        lambda *_, **__: {"status": "candidates_available",
+                        "candidates": [object()]})
+    monkeypatch.setattr(
+        "precision_insertion.repose_transition.classify_key_tabletop_pose",
+        lambda **_: {"stem": "000"})
+    initial = _pose(-0.10, 0.003)
+    monkeypatch.setattr(
+        "precision_insertion.repose_transition.load_v8_reset_seeds",
+        lambda **_: {
+            "n_total": 1, "wrist_se3": initial[None],
+            "pregrasp": np.zeros((1, 6)), "grasp": np.zeros((1, 6)),
+            "openpose_start": [None],
+            "scene_info": [{"grasp_idx": "191", "source": "/verified/191",
+                            "cell": "0_1"}],
+        })
+    retreat = np.zeros(7)
+    retreat[0], retreat[2] = -0.10, 0.30
+    result = _transition(
+        tmp_path, calibration, scene, limits, planner,
+        retreat_goal_arm_q=retreat, minimum_release_key_clearance_m=0.001)
+    inputs = {}
+    for name in ("session", "catalog", "key_pose_world", "live_start_q",
+                 "limits"):
+        path = tmp_path / f"{name}.input"
+        path.write_text(name, encoding="utf-8")
+        inputs[name] = path
+    output = tmp_path / "new_reset_report"
+    write_repose_preflight_artifacts(
+        result=result, trial_scene=scene, output_dir=output,
+        source_files=inputs)
+    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    assert report["robot_ready"] is False
+    assert report["artifacts"]["input_files"]["session"]["sha256"] == (
+        hashlib.sha256(b"session").hexdigest())
+    with np.load(output / "planned_trajectories.npz") as saved:
+        assert {"pickup_approach", "held_lift", "held_transfer",
+                "held_descent", "post_release_lift",
+                "post_release_retract"} <= set(saved.files)
+    with pytest.raises(FileExistsError):
+        write_repose_preflight_artifacts(
+            result=result, trial_scene=scene, output_dir=output,
+            source_files=inputs)
+
+
+def test_repose_cli_exposes_planning_only_command():
+    cli = Path(__file__).resolve().parents[1] / "run_pipeline.py"
+    completed = subprocess.run(
+        [sys.executable, str(cli), "preflight-repose", "--help"],
+        capture_output=True, text=True, check=False)
+    assert completed.returncode == 0
+    assert "--reset-candidate-dir" in completed.stdout
+    assert "--retreat-goal-q-npy" in completed.stdout

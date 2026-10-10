@@ -224,7 +224,13 @@ def preflight_v8_repose_transition(
             minimum_board_edge_clearance_m=minimum_board_edge_clearance_m,
             held_hand_q=hold, held_hand_source="commanded_nominal",
             limits=limits)
-        attempts.append({**seed_record, "status": planned.status})
+        attempts.append({
+            **seed_record, "status": planned.status,
+            "held_planner_queries": list(planned.planner_query_records),
+            "held_sampled_failures": (
+                None if planned.sampled_held_path_audit is None else
+                planned.sampled_held_path_audit.get("failures")),
+        })
         if planned.status == "sampled_held_path_pass_release_unplanned":
             if full_release:
                 release = plan_repose_release_exit(
@@ -237,6 +243,11 @@ def preflight_v8_repose_transition(
                     minimum_release_key_clearance_m=release_clearance,
                     limits=limits)
                 attempts[-1]["release_status"] = release.status
+                attempts[-1]["release_planner_queries"] = list(
+                    release.planner_query_records)
+                attempts[-1]["release_sampled_failures"] = (
+                    None if release.release_geometry_audit is None else
+                    release.release_geometry_audit.get("failures"))
                 if release.status != (
                         "nominal_release_exit_path_pass_drop_unobserved"):
                     continue

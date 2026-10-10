@@ -564,6 +564,9 @@ edge margin are required; the full key footprint is checked against the
 measured ChArUco corner hull, not the broad cuRobo table cuboid. The current held descent only
 supports nonzero v8 drop heights 4/8/12 cm; the original 0 cm reset cell is
 not yet planned by this module.
+The independent `preflight-repose` CLI replays saved calibration/key/joint
+evidence and writes an exclusive provenance-bound report plus dense paths.
+It does not capture new images, move the robot or verify the landed pose.
 
 ## Code and data layout
 
@@ -572,7 +575,7 @@ All new or ported execution code and its tests belong below
 
 ```text
 demo/precision-insertion/
-  run_pipeline.py                 # independent read-only CLI; no robot mode
+  run_pipeline.py                 # independent read-only trial/repose CLI; no robot mode
   precision_insertion/
     config.py                     # explicit paths, modes, limits
     assets.py                     # v8/object_processing and evidence checks
@@ -592,6 +595,7 @@ demo/precision-insertion/
     repose_path_audit.py          # sampled held reset-path/fixture check, no execution
     repose_preflight.py           # v8 tabletop rest target and held reset path
     repose_release.py             # nominal opening/+Z/retract, dual key hypotheses
+    repose_artifacts.py           # exclusive reset report and path provenance
     repose_transition.py          # seed -> AutoDex pickup -> held reset preflight
     xy_voting.py                  # read-only multi-view XY ID consensus
     xy_overlay.py                 # pixel-resolvability check and calibrated ID crops
