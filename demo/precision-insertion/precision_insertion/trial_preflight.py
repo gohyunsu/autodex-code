@@ -21,6 +21,7 @@ from autodex.utils.conversion import cart2se3
 
 from .candidates import (planner_candidate_override, select_pose_candidates,
                          validate_catalog_session)
+from .curobo_compat import install_curobo_planner_compat
 from .config import TaskMode
 from .endpoint import nominal_inspire_hold_poses
 from .geometry import validate_se3
@@ -287,6 +288,7 @@ def plan_fresh_key_trial(
                 tabletop_pose_stem=stem)
             if len(override[0]) != 1 or tuple(override[3][0]) != key:
                 raise ValueError("v8 loader did not return exactly the selected grasp")
+            install_curobo_planner_compat()
             planner.set_start_state(start)
             pickup = planner.plan(
                 scene, mode.key_object, "v8", hand="fr3_inspire",

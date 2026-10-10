@@ -77,9 +77,15 @@ def _path(value: Any, name: str, start_q: np.ndarray,
     if not np.all(np.isfinite(path)):
         raise ValueError(f"{name} contains non-finite joints")
     if not np.allclose(path[0], start_q, atol=1e-4, rtol=0):
-        raise ValueError(f"{name} does not start at the previous joint state")
+        delta = float(np.max(np.abs(path[0] - start_q)))
+        raise ValueError(
+            f"{name} does not start at the previous joint state "
+            f"(max_abs_delta_rad={delta:.6g})")
     if not np.allclose(path[:, 7:], held_q, atol=1e-4, rtol=0):
-        raise ValueError(f"{name} does not keep the held Inspire pose")
+        delta = float(np.max(np.abs(path[:, 7:] - held_q)))
+        raise ValueError(
+            f"{name} does not keep the held Inspire pose "
+            f"(max_abs_delta_rad={delta:.6g})")
     return path
 
 

@@ -2048,6 +2048,37 @@ Run the current offline tests from the repository root:
   demo/precision-insertion/tests
 ```
 
+An explicitly **synthetic**, read-only full-chain planner diagnostic is
+available when the calibrated camera session is not yet captured. It uses
+real v8 candidate files and actual Franka/Inspire planner queries, but the
+table/key/socket placements and robot start are hypothetical:
+
+```bash
+PYTHONPATH="$PWD/demo/precision-insertion/compat" \
+  ~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/diagnose_synthetic_full_chain.py \
+  --shared-root "$HOME/shared_data" \
+  --catalog "$HOME/shared_data/AutoDex/precision_insertion/endpoint_catalogs/square_1p5mm_20261011_v8_8_nominal_r2.json" \
+  --mode square --gap-mm 1.5 --pose-stem 004 \
+  --table-z-m 0.04 --key-x-m 0.4 --key-y-m 0 \
+  --socket-x-m 0.6 --socket-y-m 0 --max-candidates 7 \
+  --output-dir /tmp/precision-synthetic-square-pose004-NEW
+```
+
+Use a **new** output directory each time. The report records source hashes,
+the hypothetical transforms, planner output, candidate status or a preserved
+code-failure traceback, and `robot_ready=false`; it must never be replayed on
+hardware. The demo installs two narrowly guarded, process-local compatibility
+adapters for this checkout: vendored cuRobo's default sample-count typo and
+the existing AutoDex singleton-world call to cuRobo's batch IK updater. It
+does not change either source tree. In the initial square 1.5 mm synthetic
+scene, one candidate passed pickup but its transfer was unreachable. A wider
+seven-candidate run then exposed an actual `0.03725 rad` Inspire-joint motion
+in a supposedly held transfer trajectory. The fixed-hand contract rejected
+it. This is **not** a physical grasp/insertion outcome and is not yet a valid
+full-chain preflight pass. Resolve the planner's hand-lock behavior before
+using any transfer path; do not relax the held-hand check to hide it.
+
 The startup call enforces ChArUco before repeated socket captures, with the
 socket already rigidly fixed. Its calibration helper does **not** independently
 prove the SAM3 mask/FoundPose photometric quality, hand-eye accuracy, or
