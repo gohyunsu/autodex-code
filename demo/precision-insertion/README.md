@@ -505,6 +505,22 @@ socket model. The provider contract is
 `{"request_id": int, "source": "camera_acquisition", "camera_times_s":
 {camera_id: timestamp_seconds}}` on one verified clock.
 
+`precision_insertion.session_bootstrap.bootstrap_session()` is the
+non-motion session assembly point. Supply the **raw distorted** empty-board
+BGR snapshots, their request ID and verified acquisition times, and at least two
+`SocketCaptureInput` records (each with a socket-specific SAM prompt,
+**undistorted** BGR frames from the *same* FoundPose request, SAM masks,
+FoundPose payloads, request ID, and verified acquisition times). It calls the existing
+per-view admission gate and `calibrate_session()` in order, then freezes one
+socket pose and collision scene. `write_session_bootstrap_artifacts()` creates
+a fresh directory containing board frames, every socket frame/mask/pose
+payload, the calibration record, and a SHA-256 file manifest. It refuses to
+replace a previous session; `verify_session_evidence_bundle()` detects
+subsequent file changes. The caller still needs a trusted acquisition-
+metadata adapter: this API does not convert AutoDex's publication `ts` into
+camera time. The bundle proves the inputs supplied to calibration, **not**
+sub-millimetre hand-eye accuracy or robot readiness.
+
 The current AutoDex daemons' `mask["ts"]` and `pose["ts"]` are stamped when
 results are **published after** SAM/FoundPose, not when the camera exposed its
 frame. `SnapshotOrchestrator.snap()` likewise does not return per-camera
