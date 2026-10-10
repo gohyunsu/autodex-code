@@ -1117,6 +1117,14 @@ fake-adapter tests, and no commissioned adapter exists yet. Its successful
 execution record is input to the later paired-camera lift checkpoint, never
 itself a grasp-success label.
 
+After the lift checkpoint and a passing observed or uncertainty-bounded
+post-lift replan, the separate [held transfer execution boundary](TRANSFER_EXECUTION.md)
+can submit only its exact saved non-contact transfer to a commissioned
+external controller. It is disabled by default and currently has fake-adapter
+tests only. Its controller log is consumed by the later synchronized-camera
+pre-insertion checkpoint; neither the controller log nor a successful end
+joint state alone sets `preinsert_reached=True`.
+
 Do not feed the nominal `plan_insertion_after_pickup`'s separately replanned
 `lift_trajectory` straight into the
 unchanged `FrankaExecutor.execute(lift_traj_override=...)`: its start-state
