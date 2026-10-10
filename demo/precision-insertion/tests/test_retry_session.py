@@ -23,6 +23,7 @@ from precision_insertion.path_audit import PathAuditLimits  # noqa: E402
 from precision_insertion.records import begin_attempt  # noqa: E402
 from precision_insertion.retry_session import (  # noqa: E402
     RetrySessionLimits, assess_and_plan_observed_xy_retry,
+    assess_unobserved_xy_diagnostic,
     write_retry_session_artifacts,
 )
 from precision_insertion import retry_session  # noqa: E402
@@ -252,3 +253,71 @@ def test_retry_artifacts_preserve_full_verified_camera_pixels(tmp_path, monkeypa
         "artifacts_sha256"]) == 2
     with pytest.raises(FileExistsError):
         write_retry_session_artifacts(result, kwargs["frames"], output)
+
+
+def test_unobserved_squeeze_diagnostic_is_saved_but_not_preflighted(
+        tmp_path, monkeypatch):
+    kwargs = _inputs(tmp_path, monkeypatch)
+    kwargs.pop("planner")
+    kwargs.pop("held_key_observation")
+    kwargs.pop("held_key_evidence_dir")
+    seen = []
+
+    def hand_clear_only(**screen_args):
+        seen.append(screen_args["xy_offset_socket_m"])
+        assert screen_args["override_source"] == "v8_nominal_unobserved_key"
+        return {
+            "endpoint_pass": False,
+            "hand_socket_clear_at_20mm": True,
+            "xy_offset_socket_m": list(screen_args["xy_offset_socket_m"]),
+            "verification_depth_m": kwargs["mode"].target_depth_m,
+        }
+
+    result = assess_unobserved_xy_diagnostic(**kwargs, screen=hand_clear_only)
+    assert len(seen) == 5
+    assert result.status == "diagnostic_xy_hypothesis_only"
+    assert result.preflight is None
+    assert result.assessment.decision.choice_id == "x_plus_1mm"
+    assert result.to_record()["robot_ready"] is False
+    assert kwargs["attempt"]._pending_retry is False
+    output = write_retry_session_artifacts(
+        result, kwargs["frames"], tmp_path / "unobserved_diagnostic")
+    saved = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    assert saved["schema"] == "precision_insertion_unobserved_xy_diagnostic_v1"
+    assert saved["preflight"] is None
+    assert (output / "frames/a.png").is_file()
+
+
+def test_unobserved_diagnostic_rejects_missing_withdrawal_and_wrong_attempt(
+        tmp_path, monkeypatch):
+    kwargs = _inputs(tmp_path, monkeypatch)
+    kwargs.pop("planner")
+    kwargs.pop("held_key_observation")
+    kwargs.pop("held_key_evidence_dir")
+    kwargs["withdrawal_evidence_path"].unlink()
+    with pytest.raises(ValueError, match="preceding logged withdrawal"):
+        assess_unobserved_xy_diagnostic(**kwargs)
+    assert kwargs["backend"].calls == 0
+    kwargs["withdrawal_evidence_path"].write_text(json.dumps({
+        "schema": "precision_insertion_guarded_withdrawal_v1",
+        "attempt_id": "wrong", "candidate_id": "table/0/1",
+        "status": "withdrawn_to_preinsert_hold",
+        "completed_at_s": 99.8, "key_still_held": True,
+        "safety_abort": False, "source": "commissioned_guarded_controller",
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="does not confirm a held safe return"):
+        assess_unobserved_xy_diagnostic(**kwargs)
+    assert kwargs["backend"].calls == 0
+
+
+def test_unobserved_diagnostic_rejects_stale_hand_feedback(tmp_path, monkeypatch):
+    kwargs = _inputs(tmp_path, monkeypatch)
+    kwargs.pop("planner")
+    kwargs.pop("held_key_observation")
+    kwargs.pop("held_key_evidence_dir")
+    kwargs["joint_sample"] = replace(
+        kwargs["joint_sample"], sample_timestamp_s=99.9,
+        arm_timestamp_s=99.9, hand_timestamp_s=99.9)
+    with pytest.raises(ValueError, match="not synchronized with retry frames"):
+        assess_unobserved_xy_diagnostic(**kwargs)
+    assert kwargs["backend"].calls == 0

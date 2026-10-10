@@ -52,8 +52,9 @@ from .preinsert_checkpoint import (
 )
 from .records import AttemptRecord, begin_attempt
 from .retry_session import (
-    RetrySessionLimits, RetrySessionResult,
-    assess_and_plan_observed_xy_retry, write_retry_session_artifacts,
+    RetrySessionLimits, RetrySessionResult, UnobservedXYDiagnostic,
+    assess_and_plan_observed_xy_retry, assess_unobserved_xy_diagnostic,
+    write_retry_session_artifacts,
 )
 from .repose_artifacts import write_repose_preflight_artifacts
 from .repose_preflight import validate_repose_rest_target
@@ -1599,6 +1600,42 @@ class SessionRunner:
                     "live_preflight": str(output / "preflight" / "report.json"),
                     "xy_vlm_vote": str(output / "report.json"),
                 })
+        return result
+
+    def prepare_unobserved_xy_diagnostic(
+        self, *, joint_sample: LiveRobotState, frames,
+        intrinsics_full: Mapping, extrinsics_full: Mapping,
+        frame_request_id: int, frame_ids: Mapping[str, int],
+        acquisition_metadata: Mapping, backend: ImageVLM,
+        withdrawal_completed_at_s: float,
+        withdrawal_evidence_path: Path,
+        postlift_preflight_report_path: Path,
+        decision_timestamp_s: float,
+        limits: RetrySessionLimits,
+    ) -> UnobservedXYDiagnostic:
+        """Save unobserved-key VLM advice without recording an XY retry."""
+        if (self.current_decision().action !=
+                "guarded_withdrawal_then_xy_assessment" or
+                self._attempt is None or self._preflight is None or
+                self._attempt_dir is None):
+            raise ValueError("XY diagnostic requires an observed failed insertion")
+        result = assess_unobserved_xy_diagnostic(
+            mode=self.mode, shared_root=self.shared_root,
+            calibration=self.calibration, catalog=self.catalog,
+            trial=self._preflight, attempt=self._attempt,
+            joint_sample=joint_sample, frames=frames,
+            intrinsics_full=intrinsics_full,
+            extrinsics_full=extrinsics_full,
+            frame_request_id=frame_request_id, frame_ids=frame_ids,
+            acquisition_metadata=acquisition_metadata, backend=backend,
+            withdrawal_completed_at_s=withdrawal_completed_at_s,
+            withdrawal_evidence_path=withdrawal_evidence_path,
+            postlift_preflight_report_path=postlift_preflight_report_path,
+            decision_timestamp_s=decision_timestamp_s, limits=limits)
+        output = (self._attempt_dir / "xy_retry_assessments" /
+                  f"{self._retry_assessment_index:03d}")
+        write_retry_session_artifacts(result, frames, output)
+        self._retry_assessment_index += 1
         return result
 
     def record_failure(

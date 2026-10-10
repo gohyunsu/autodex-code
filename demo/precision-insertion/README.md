@@ -136,6 +136,15 @@ that session and catalogue. For each new key observation:
    the held-key admission prior must agree before the VLM is consulted.
    Only a passing result calls `record_retry` to log a pending retry; neither
    method sends the robot an XY command.
+   If the withdrawn key is too occluded for another FoundPose estimate,
+   `prepare_unobserved_xy_diagnostic` can instead save same-request raw
+   camera frames, a measured 13-joint sample, the matching failed attempt,
+   guarded withdrawal and a multi-view VLM direction under
+   `xy_retry_assessments/NNN/`. It shares the failed-attempt and withdrawal
+   checks with the observed retry route, but does **not** produce a live
+   preflight, a pending `xy_retry` event or a robot command. Its nominal
+   key/socket collision is diagnostic only because squeeze may have shifted
+   the actual key relative to the commanded hand target.
 5. If the pose's candidate pool is exhausted, `current_decision()` returns
    `preflight_repose`. Call `preflight_repose` with the **same saved key capture**,
    synchronized measured joints, a listed target tabletop stem, directed v8
@@ -440,6 +449,33 @@ The first independent helpers are in `precision_insertion/`:
   attempt/candidate IDs, `completed_at_s`,
   `status=withdrawn_to_preinsert_hold`, `key_still_held=true`,
   `safety_abort=false`, and `source=commissioned_guarded_controller`.
+  Its separate `assess_unobserved_xy_diagnostic` path reuses those attempt,
+  plan, state, camera and withdrawal checks, but deliberately stops after
+  saving the VLM direction. The session runner cannot promote this result
+  into `record_retry`.
+
+- Point-grounded alignment experiment (planned, not implemented): the current
+  VLM votes over preprojected 1 mm socket-frame targets. A more direct
+  comparison is worth measuring: on **raw, full-resolution** synchronized
+  views, ask the VLM which visible key end is the insertion end and where its
+  end-cap center and a second axis-defining feature lie. Require an explicit
+  occlusion/uncertainty answer; the overlay is a *separate predicted
+  hypothesis*, never ground-truth pixels. The socket centerline comes from
+  the frozen session calibration, not a new VLM guess. Restore any crop/resize
+  coordinates to the original undistorted pixels, triangulate corresponding
+  visible key features with calibrated cameras, and reject inconsistent
+  reprojections or insufficient camera parallax. A cylinder cap center is
+  often an inferred point rather than an actual visual feature, so the
+  preferred final estimator is a local multi-view CAD/silhouette fit around
+  the wrist-and-grasp prior, with VLM points used as semantic initialization
+  and visibility evidence. Compute the key-axis residual at both socket entry
+  and 20 mm depth; one XY translation cannot repair axis tilt, slip or
+  square-key yaw. Convert a well-supported residual to at most one 1 mm
+  cardinal *proposal*, then reobserve after a guarded attempt. Before
+  promoting this path, measure point/CAD-fit error on held-out real camera
+  frames and check that the 1 mm movement is separable from localization and
+  calibration uncertainty. If not, abstain or retain the closed-set
+  contact-search route.
 - `endpoint.py` evaluates one fixed-grasp candidate using the full metric CAD
   key, exact socket collision mesh, and every Inspire visual link at the
   centered 20 mm insertion pose. It combines Coal triangle-surface collision

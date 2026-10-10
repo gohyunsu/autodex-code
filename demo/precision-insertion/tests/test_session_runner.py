@@ -701,6 +701,65 @@ def test_retry_requires_matching_two_view_vote_and_live_replan(
     assert runner.active_attempt.events[-1]["timestamp_s"] == 10.8
 
 
+def test_unobserved_xy_advice_is_saved_without_pending_retry(monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        session_runner, "plan_admitted_key_trial",
+        lambda **kwargs: _report(runner, kwargs["key_observation"]))
+    _plan(runner, _observation("key_1", 10.0))
+    runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
+    runner.observe_stage(
+        "grasp_success", True, timestamp_s=10.3,
+        evidence_refs=_bind_lift(runner))
+    postlift_report = _bind_postlift(runner)
+    runner.observe_stage(
+        "preinsert_reached", True, timestamp_s=10.4,
+        evidence_refs=_bind_preinsert(runner, monkeypatch))
+    runner._record(lambda row: row.record_insertion_evidence(
+        InsertionEvidence("partial", (0.005, 0.008),
+                          "key_pose_multiview", True, False, True),
+        timestamp_s=10.5,
+        evidence_refs={"vlm_observation": "vlm/insert.json",
+                       "key_depth": "pose/depth.json",
+                       "alignment": "pose/axis.json",
+                       "force_trace": "wrench/trace.json"}))
+    choice = ChoiceDecision(
+        "propose", "two_view_consensus", "x_plus_1mm", (0.001, 0.0),
+        ("cam0", "cam1"), {"x_plus_1mm": 2})
+    assessment = XYRetryAssessment(
+        "diagnostic_xy_hypothesis_only", {}, None, (), choice,
+        "two_view_consensus")
+    prepared = SimpleNamespace(
+        status="diagnostic_xy_hypothesis_only", assessment=assessment)
+    monkeypatch.setattr(
+        session_runner, "assess_unobserved_xy_diagnostic",
+        lambda **_kwargs: prepared)
+    def save_diagnostic(_result, _frames, output):
+        output.mkdir(parents=True, exist_ok=False)
+        (output / "report.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        session_runner, "write_retry_session_artifacts", save_diagnostic)
+    prior_events = len(runner.active_attempt.events)
+    result = runner.prepare_unobserved_xy_diagnostic(
+        joint_sample=object(), frames=(), intrinsics_full={},
+        extrinsics_full={}, frame_request_id=1, frame_ids={},
+        acquisition_metadata={}, backend=object(),
+        withdrawal_completed_at_s=10.6,
+        withdrawal_evidence_path=tmp_path / "withdrawal.json",
+        postlift_preflight_report_path=Path(postlift_report),
+        decision_timestamp_s=10.7, limits=object())
+    assert result is prepared
+    assert len(runner.active_attempt.events) == prior_events
+    assert runner.active_attempt._pending_retry is False
+    assert runner.current_decision().action == (
+        "guarded_withdrawal_then_xy_assessment")
+    assert (runner._attempt_dir / "xy_retry_assessments/000/report.json").is_file()
+    with pytest.raises(ValueError, match="voted proposal"):
+        runner.record_retry(
+            assessment, object(), timestamp_s=10.8,
+            evidence_refs={"xy_vlm_vote": "diagnostic_only"})
+
+
 @pytest.mark.parametrize(
     ("landing_stem", "next_action", "support_ok"),
     [("001", "reobserve_key_and_preflight", True),

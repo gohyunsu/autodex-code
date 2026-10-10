@@ -12,7 +12,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 import numpy as np
 from PIL import Image
@@ -20,6 +20,7 @@ from PIL import Image
 from .calibration import validate_session_camera_calibration
 from .candidates import select_pose_candidates, validate_catalog_session
 from .config import TaskMode
+from .endpoint import screen_grasp_endpoint
 from .frame_provenance import image_sha256, verify_frame_provenance
 from .geometry import validate_se3
 from .held_relation import HeldRelation, resolve_postlift_held_relation
@@ -118,37 +119,69 @@ class RetrySessionResult:
         }
 
 
-def assess_and_plan_observed_xy_retry(
-    *, planner, mode: TaskMode, shared_root: Path, calibration,
-    catalog: dict, trial, attempt: AttemptRecord,
-    held_key_observation: KeyPoseObservation,
-    held_key_evidence_dir: Path, joint_sample: LiveRobotState,
-    frames: Sequence[LabeledFrame], intrinsics_full: Mapping,
-    extrinsics_full: Mapping, frame_request_id: int,
-    frame_ids: Mapping[str, int], acquisition_metadata: Mapping,
-    backend: ImageVLM, withdrawal_completed_at_s: float,
-    withdrawal_evidence_path: Path, postlift_preflight_report_path: Path,
-    decision_timestamp_s: float,
-    limits: RetrySessionLimits,
-) -> RetrySessionResult:
-    """Require one withdrawn, still-held key and its same-frame VLM images."""
-    limits.validate()
+@dataclass(frozen=True)
+class UnobservedXYDiagnostic:
+    """Saved VLM direction after a failed attempt, never a pending retry."""
+
+    status: str
+    attempt_id: str
+    candidate_id: str
+    withdrawal_completed_at_s: float
+    withdrawal_evidence_path: Path
+    withdrawal_evidence_sha256: str
+    postlift_preflight_path: Path
+    postlift_preflight_sha256: str
+    frame_binding: dict
+    joint_sample: LiveRobotState
+    assessment: XYRetryAssessment
+    preflight: None = None
+
+    def to_record(self) -> dict:
+        return {
+            "schema": "precision_insertion_unobserved_xy_diagnostic_v1",
+            "status": self.status,
+            "attempt_id": self.attempt_id,
+            "candidate_id": self.candidate_id,
+            "withdrawal_completed_at_s": self.withdrawal_completed_at_s,
+            "withdrawal_evidence_path": str(self.withdrawal_evidence_path),
+            "withdrawal_evidence_sha256": self.withdrawal_evidence_sha256,
+            "postlift_preflight_path": str(self.postlift_preflight_path),
+            "postlift_preflight_sha256": self.postlift_preflight_sha256,
+            "frame_binding": self.frame_binding,
+            "joint_sample": self.joint_sample.to_record(),
+            "assessment": self.assessment.to_record(),
+            "preflight": None,
+            "held_key_relation_source": "v8_nominal_unobserved_key",
+            "scope": "saved_direction_only_not_pending_retry_or_robot_motion",
+            "robot_ready": False,
+        }
+
+
+def _validated_retry_trial_context(
+    *, mode: TaskMode, shared_root: Path, calibration, catalog: dict,
+    trial, attempt: AttemptRecord, postlift_preflight_report_path: Path,
+) -> tuple[dict, dict, Path, Path]:
+    """Shared failed-trial and saved-plan gate for both retry assessments."""
     if (not isinstance(attempt, AttemptRecord) or
             attempt.mode != mode or attempt.candidate_id is None or
             attempt.labels["insertion_success"] is not False or
             attempt._pending_retry):
         raise ValueError("retry needs an observed failed insertion with a held grasp")
-    insertion = next(
+    insertion = next((
         event for event in reversed(attempt.events)
-        if event["stage"] == "insertion_success")
+        if event["stage"] == "insertion_success"), None)
+    if insertion is None:
+        raise ValueError("retry needs a saved insertion observation")
     insertion_input = insertion["detail"]["input"]
     if (insertion_input["grasp_held"] is not True or
             insertion_input["safety_abort"] is not False or
             attempt.failure_code in {"slip", "force_abort", "reset_failed"}):
         raise ValueError("retry cannot follow slip or a safety abort")
-    preinsert = next(
+    preinsert = next((
         event for event in reversed(attempt.events)
-        if event["stage"] == "preinsert_reached")
+        if event["stage"] == "preinsert_reached"), None)
+    if preinsert is None or preinsert.get("value") is not True:
+        raise ValueError("retry needs an observed pre-insertion arrival")
     postlift_file = Path(postlift_preflight_report_path).expanduser().resolve()
     if (not postlift_file.is_file() or
             Path(preinsert["evidence_refs"]["postlift_preflight"])
@@ -187,6 +220,62 @@ def assess_and_plan_observed_xy_retry(
         raise ValueError("retry catalogue or frozen session changed since trial")
     if postlift.get("catalog_sha256") != trial.catalog_sha256:
         raise ValueError("post-lift preflight uses another endpoint catalogue")
+    return insertion, postlift, postlift_file, root
+
+
+def _validated_retry_withdrawal(
+    *, attempt: AttemptRecord, insertion: dict,
+    withdrawal_completed_at_s: float, withdrawal_evidence_path: Path,
+    verified_frames: Mapping, joint_sample: LiveRobotState,
+    held_capture_start_s: float | None = None,
+) -> tuple[float, Path]:
+    withdrawal_time = float(withdrawal_completed_at_s)
+    withdrawal_file = Path(withdrawal_evidence_path).expanduser().resolve()
+    if (not math.isfinite(withdrawal_time) or
+            withdrawal_time <= insertion["timestamp_s"] or
+            not withdrawal_file.is_file() or
+            withdrawal_time >= min(
+                row["timestamp_s"] - row["max_error_s"]
+                for row in verified_frames.values()) or
+            joint_sample.sample_timestamp_s <= withdrawal_time or
+            (held_capture_start_s is not None and
+             held_capture_start_s <= withdrawal_time)):
+        raise ValueError("held-key images/state need a preceding logged withdrawal")
+    withdrawal_log = json.loads(withdrawal_file.read_text(encoding="utf-8"))
+    if (not isinstance(withdrawal_log, dict) or
+            withdrawal_log.get("schema") !=
+            "precision_insertion_guarded_withdrawal_v1" or
+            withdrawal_log.get("attempt_id") != attempt.attempt_id or
+            withdrawal_log.get("candidate_id") != attempt.candidate_id or
+            withdrawal_log.get("status") != "withdrawn_to_preinsert_hold" or
+            withdrawal_log.get("completed_at_s") != withdrawal_time or
+            withdrawal_log.get("key_still_held") is not True or
+            withdrawal_log.get("safety_abort") is not False or
+            withdrawal_log.get("source") !=
+            "commissioned_guarded_controller"):
+        raise ValueError("guarded withdrawal log does not confirm a held safe return")
+    return withdrawal_time, withdrawal_file
+
+
+def assess_and_plan_observed_xy_retry(
+    *, planner, mode: TaskMode, shared_root: Path, calibration,
+    catalog: dict, trial, attempt: AttemptRecord,
+    held_key_observation: KeyPoseObservation,
+    held_key_evidence_dir: Path, joint_sample: LiveRobotState,
+    frames: Sequence[LabeledFrame], intrinsics_full: Mapping,
+    extrinsics_full: Mapping, frame_request_id: int,
+    frame_ids: Mapping[str, int], acquisition_metadata: Mapping,
+    backend: ImageVLM, withdrawal_completed_at_s: float,
+    withdrawal_evidence_path: Path, postlift_preflight_report_path: Path,
+    decision_timestamp_s: float,
+    limits: RetrySessionLimits,
+) -> RetrySessionResult:
+    """Require one withdrawn, still-held key and its same-frame VLM images."""
+    limits.validate()
+    insertion, postlift, postlift_file, root = _validated_retry_trial_context(
+        mode=mode, shared_root=shared_root, calibration=calibration,
+        catalog=catalog, trial=trial, attempt=attempt,
+        postlift_preflight_report_path=postlift_preflight_report_path)
     if (not isinstance(held_key_observation, KeyPoseObservation) or
             held_key_observation.phase != "held_preinsert" or
             held_key_observation.key_object != mode.key_object or
@@ -237,30 +326,12 @@ def assess_and_plan_observed_xy_retry(
                            for serial, row in intrinsics_full.items()},
         extrinsics_full=extrinsics_full,
         calibrated_camera_ids=set(intrinsics_full))
-    withdrawal_time = float(withdrawal_completed_at_s)
-    withdrawal_file = Path(withdrawal_evidence_path).expanduser().resolve()
-    if (not math.isfinite(withdrawal_time) or
-            withdrawal_time <= insertion["timestamp_s"] or
-            not withdrawal_file.is_file() or
-            withdrawal_time >= min(
-                row["timestamp_s"] - row["max_error_s"]
-                for row in verified.values()) or
-            joint_sample.sample_timestamp_s <= withdrawal_time or
-            held_key_observation.acquisition_interval_s[0] <= withdrawal_time):
-        raise ValueError("held-key images/state need a preceding logged withdrawal")
-    withdrawal_log = json.loads(withdrawal_file.read_text(encoding="utf-8"))
-    if (not isinstance(withdrawal_log, dict) or
-            withdrawal_log.get("schema") !=
-            "precision_insertion_guarded_withdrawal_v1" or
-            withdrawal_log.get("attempt_id") != attempt.attempt_id or
-            withdrawal_log.get("candidate_id") != attempt.candidate_id or
-            withdrawal_log.get("status") != "withdrawn_to_preinsert_hold" or
-            withdrawal_log.get("completed_at_s") != withdrawal_time or
-            withdrawal_log.get("key_still_held") is not True or
-            withdrawal_log.get("safety_abort") is not False or
-            withdrawal_log.get("source") !=
-            "commissioned_guarded_controller"):
-        raise ValueError("guarded withdrawal log does not confirm a held safe return")
+    withdrawal_time, withdrawal_file = _validated_retry_withdrawal(
+        attempt=attempt, insertion=insertion,
+        withdrawal_completed_at_s=withdrawal_completed_at_s,
+        withdrawal_evidence_path=withdrawal_evidence_path,
+        verified_frames=verified, joint_sample=joint_sample,
+        held_capture_start_s=held_key_observation.acquisition_interval_s[0])
     selected = select_pose_candidates(
         catalog, expected_mode=mode,
         tabletop_pose_stem=attempt.tabletop_pose_stem)
@@ -372,8 +443,109 @@ def assess_and_plan_observed_xy_retry(
         assessment, preflight)
 
 
+def assess_unobserved_xy_diagnostic(
+    *, mode: TaskMode, shared_root: Path, calibration, catalog: dict,
+    trial, attempt: AttemptRecord, joint_sample: LiveRobotState,
+    frames: Sequence[LabeledFrame], intrinsics_full: Mapping,
+    extrinsics_full: Mapping, frame_request_id: int,
+    frame_ids: Mapping[str, int], acquisition_metadata: Mapping,
+    backend: ImageVLM, withdrawal_completed_at_s: float,
+    withdrawal_evidence_path: Path, postlift_preflight_report_path: Path,
+    decision_timestamp_s: float, limits: RetrySessionLimits,
+    screen: Callable = screen_grasp_endpoint,
+) -> UnobservedXYDiagnostic:
+    """Bind a raw-camera XY direction to a failed attempt without key pose.
+
+    This deliberately does not call ``plan_xy_retry_from_withdrawn_hold``:
+    nominal key/socket collision says nothing decisive about a squeezed key's
+    true lateral shift. The saved direction is not a pending robot retry.
+    """
+    limits.validate()
+    insertion, _postlift, postlift_file, root = _validated_retry_trial_context(
+        mode=mode, shared_root=shared_root, calibration=calibration,
+        catalog=catalog, trial=trial, attempt=attempt,
+        postlift_preflight_report_path=postlift_preflight_report_path)
+    if (not isinstance(joint_sample, LiveRobotState) or
+            joint_sample.source != "robot_joint_feedback"):
+        raise ValueError("retry requires measured Franka and Inspire joints")
+    joint_sample.validate(
+        max_arm_hand_skew_s=limits.max_arm_hand_skew_s,
+        max_hand_command_error_raw=limits.max_hand_command_error_raw,
+        max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
+    if (not math.isfinite(float(decision_timestamp_s)) or
+            decision_timestamp_s < joint_sample.sample_timestamp_s):
+        raise ValueError("retry decision cannot precede measured robot feedback")
+    if (not frames or len({frame.camera_id for frame in frames}) != len(frames)
+            or any(frame.phase != "preinsert_hold" or
+                   not isinstance(frame.image, Image.Image) or
+                   frame.image.mode != "RGB" for frame in frames)):
+        raise ValueError("retry needs unique full-frame RGB preinsert views")
+    images_bgr = {frame.camera_id: np.asarray(
+        frame.image, dtype=np.uint8)[:, :, ::-1].copy() for frame in frames}
+    verified = verify_frame_provenance(
+        acquisition_metadata, request_id=frame_request_id,
+        images_bgr=images_bgr, frame_ids=frame_ids)
+    if (len(verified) < 2 or
+            any(frame.timestamp_s != verified[frame.camera_id]["timestamp_s"]
+                for frame in frames)):
+        raise ValueError("diagnostic needs two bound same-request camera frames")
+    exposure_begin = min(row["timestamp_s"] - row["max_error_s"]
+                         for row in verified.values())
+    exposure_end = max(row["timestamp_s"] + row["max_error_s"]
+                       for row in verified.values())
+    if (joint_sample.sample_timestamp_s <
+            exposure_begin - limits.max_state_skew_s or
+            joint_sample.sample_timestamp_s >
+            exposure_end + limits.max_state_skew_s):
+        raise ValueError("measured hand state is not synchronized with retry frames")
+    validate_session_camera_calibration(
+        calibration,
+        intrinsics_undist={serial: row["K_undist"]
+                           for serial, row in intrinsics_full.items()},
+        extrinsics_full=extrinsics_full,
+        calibrated_camera_ids=set(intrinsics_full))
+    withdrawal_time, withdrawal_file = _validated_retry_withdrawal(
+        attempt=attempt, insertion=insertion,
+        withdrawal_completed_at_s=withdrawal_completed_at_s,
+        withdrawal_evidence_path=withdrawal_evidence_path,
+        verified_frames=verified, joint_sample=joint_sample)
+    assessment = assess_xy_retry(
+        shared_root=root, mode=mode, calibration=calibration,
+        catalog=catalog, candidate_key=trial.selected_candidate_key,
+        tabletop_pose_stem=attempt.tabletop_pose_stem,
+        current_offset_socket_m=attempt.xy_offset_socket_m,
+        observed_T_key_hand=None,
+        held_hand_q_measured=joint_sample.full_q[7:],
+        observed_key_hand_source="v8_nominal_unobserved_key",
+        max_grasp_translation_drift_m=(
+            limits.max_grasp_translation_drift_m),
+        max_grasp_rotation_drift_deg=limits.max_grasp_rotation_drift_deg,
+        failed_insertion_observed=True,
+        guarded_withdrawal_complete=True, grasp_held=True, hard_abort=False,
+        frames=frames, intrinsics_full=dict(intrinsics_full),
+        extrinsics_full=dict(extrinsics_full),
+        frame_timestamp_source="camera_acquisition",
+        frame_request_id=frame_request_id, frame_ids=frame_ids,
+        acquisition_metadata=acquisition_metadata, backend=backend,
+        max_total_offset_m=limits.max_total_offset_m,
+        minimum_anchor_separation_px=limits.minimum_anchor_separation_px,
+        crop_width_px=limits.crop_width_px,
+        decision_timestamp_s=decision_timestamp_s,
+        max_frame_age_s=limits.max_frame_age_s,
+        max_capture_skew_s=limits.max_capture_skew_s, screen=screen)
+    if assessment.status == "proposal_requires_live_preflight":
+        raise RuntimeError("unobserved diagnostic cannot authorize a retry")
+    return UnobservedXYDiagnostic(
+        assessment.status, attempt.attempt_id, attempt.candidate_id,
+        withdrawal_time, withdrawal_file,
+        hashlib.sha256(withdrawal_file.read_bytes()).hexdigest(),
+        postlift_file, hashlib.sha256(postlift_file.read_bytes()).hexdigest(),
+        verified, joint_sample, assessment)
+
+
 def write_retry_session_artifacts(
-    result: RetrySessionResult, frames: Sequence[LabeledFrame],
+    result: RetrySessionResult | UnobservedXYDiagnostic,
+    frames: Sequence[LabeledFrame],
     output_dir: Path,
 ) -> Path:
     """Save complete source frames and every VLM/preflight artifact once."""
