@@ -31,6 +31,7 @@ class SocketObservation:
     camera_id: str
     timestamp_s: float
     pose_world: np.ndarray
+    timestamp_source: str
 
 
 @dataclass(frozen=True)
@@ -108,6 +109,13 @@ def load_session_calibration(
     board = record.get("board")
     if not isinstance(board, dict):
         raise ValueError("saved ChArUco board measurement is missing")
+    if (record.get("board_timestamp_source") != "camera_acquisition" or
+            not isinstance(record.get("socket_observations"), list) or
+            not record["socket_observations"] or
+            any(not isinstance(row, dict) or
+                row.get("timestamp_source") != "camera_acquisition"
+                for row in record["socket_observations"])):
+        raise ValueError("saved session lacks camera acquisition timestamps")
     from autodex.utils.tabletop_geometry import table_cuboid
 
     if scene["cuboid"].get("table") != table_cuboid(board):
@@ -163,6 +171,7 @@ def calibrate_session(
     object_root: Path,
     board_images_bgr: Mapping[str, np.ndarray],
     board_timestamps_s: Mapping[str, float],
+    board_timestamp_source: str,
     socket_observations: Sequence[SocketObservation],
     intrinsics_full: Mapping,
     extrinsics_full: Mapping,
@@ -192,6 +201,8 @@ def calibrate_session(
     angle_limit = _positive(max_socket_angle_deg, "max_socket_angle_deg")
     if min_socket_captures < 2 or min_views_per_capture < 2:
         raise ValueError("require at least two socket captures and two views per capture")
+    if board_timestamp_source != "camera_acquisition":
+        raise ValueError("ChArUco images require camera acquisition timestamps")
 
     camera_ids = set(intrinsics_full) & set(extrinsics_full)
     if not camera_ids or set(intrinsics_full) != set(extrinsics_full):
@@ -218,6 +229,8 @@ def calibrate_session(
             raise ValueError("socket capture ID and camera ID must be nonempty")
         if observation.camera_id not in camera_ids:
             raise ValueError(f"uncalibrated socket camera {observation.camera_id}")
+        if observation.timestamp_source != "camera_acquisition":
+            raise ValueError("socket observation requires camera acquisition timestamp")
         _finite_time(observation.timestamp_s, "socket timestamp")
         validate_se3(observation.pose_world, name="socket pose_world")
         groups.setdefault(observation.capture_id, []).append(observation)
@@ -281,6 +294,7 @@ def calibrate_session(
                 "capture_id": capture_id,
                 "camera_id": observation.camera_id,
                 "timestamp_s": float(observation.timestamp_s),
+                "timestamp_source": observation.timestamp_source,
                 "pose_world": pose_world.tolist(),
                 "pose_robot": pose_robot.tolist(),
             })
@@ -313,6 +327,7 @@ def calibrate_session(
         },
         "board": board,
         "board_timestamps_s": board_times,
+        "board_timestamp_source": board_timestamp_source,
         "socket_observations": source_rows,
         "socket_pose_robot": selected.tolist(),
         "socket_diagnostics": diagnostics,

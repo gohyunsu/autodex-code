@@ -425,6 +425,36 @@ found, `planned_trajectories.npz`; all are offline evidence and have
 `robot_ready: false`. A pose with no candidate may return
 `repose_required_unplanned`, not an executable reorientation trajectory.
 
+### Socket perception evidence and current camera-timestamp blocker
+
+AutoDex's unchanged `InitOrchestrator.collect_payloads()` supplies one SAM
+mask and FoundPose pose **per camera**, so the new
+`precision_insertion.perception_evidence.admit_socket_capture()` checks mask
+size/border clipping, FoundPose quality/inliers, pose validity, calibrated
+camera identity, and cross-camera *acquisition* skew before handing its
+`SocketObservation`s to `calibrate_session()`. Use a socket-specific SAM
+prompt while the key is absent. Repeat at least twice; calibration then
+checks socket-pose repeatability and freezes the collision world. All
+thresholds are explicit commissioning inputs, not silently inferred from a
+VLM score. `collect_and_admit_socket_capture()` calls that original AutoDex
+collector directly and joins its `request_id` to an injected acquisition
+metadata provider; it refuses a mismatched request or the wrong initialized
+socket model. The provider contract is
+`{"request_id": int, "source": "camera_acquisition", "camera_times_s":
+{camera_id: timestamp_seconds}}` on one verified clock.
+
+The current AutoDex daemons' `mask["ts"]` and `pose["ts"]` are stamped when
+results are **published after** SAM/FoundPose, not when the camera exposed its
+frame. `SnapshotOrchestrator.snap()` likewise does not return per-camera
+acquisition timestamps. The admission gate deliberately rejects those
+publication timestamps; saved session records now state and validate
+`camera_acquisition` as their time source. A demo-local acquisition metadata
+side channel (or compatible camera/daemon support) is still needed for the
+board, socket, and per-trial key frames before a live session can be treated
+as synchronized. This is a **live integration blocker**, not a missing CAD
+asset or an invitation to pass one request ID as a timestamp. The offline
+planner and catalogue renderer remain usable without cameras.
+
 Run the current offline tests from the repository root:
 
 ```bash

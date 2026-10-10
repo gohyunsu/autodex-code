@@ -54,11 +54,16 @@ def _arguments(tmp_path, *, family="square"):
             "cam_b": np.zeros((8, 8, 3), dtype=np.uint8),
         },
         "board_timestamps_s": {"cam_a": 1.000, "cam_b": 1.005},
+        "board_timestamp_source": "camera_acquisition",
         "socket_observations": [
-            SocketObservation("first", "cam_a", 2.000, _pose(1.1000)),
-            SocketObservation("first", "cam_b", 2.005, _pose(1.1002)),
-            SocketObservation("second", "cam_a", 3.000, _pose(1.1003)),
-            SocketObservation("second", "cam_b", 3.005, _pose(1.1004)),
+            SocketObservation("first", "cam_a", 2.000, _pose(1.1000),
+                              "camera_acquisition"),
+            SocketObservation("first", "cam_b", 2.005, _pose(1.1002),
+                              "camera_acquisition"),
+            SocketObservation("second", "cam_a", 3.000, _pose(1.1003),
+                              "camera_acquisition"),
+            SocketObservation("second", "cam_b", 3.005, _pose(1.1004),
+                              "camera_acquisition"),
         ],
         "intrinsics_full": {"cam_a": {}, "cam_b": {}},
         "extrinsics_full": {"cam_a": np.eye(4), "cam_b": np.eye(4)},
@@ -101,6 +106,9 @@ def test_calibration_freezes_robot_pose_and_adds_socket_without_mutation(
     assert table["pose"][2] + table["dims"][2] / 2 == pytest.approx(0.0)
     assert result.record["socket_pose_robot"] == result.socket_pose_robot.tolist()
     assert len(result.record["socket_observations"]) == 4
+    assert result.record["board_timestamp_source"] == "camera_acquisition"
+    assert all(row["timestamp_source"] == "camera_acquisition"
+               for row in result.record["socket_observations"])
     assert len(result.record["socket_collision_mesh_sha256"]) == 64
     assert result.record["robot_ready"] is False
     saved = write_session_calibration(result, tmp_path / "run" / "calibration.json")
@@ -110,6 +118,7 @@ def test_calibration_freezes_robot_pose_and_adds_socket_without_mutation(
 
 
 @pytest.mark.parametrize("change,error", [
+    ({"board_timestamp_source": "publish_time"}, "acquisition timestamps"),
     ({"board_timestamps_s": {"cam_a": 1.0, "cam_b": 1.1}}, "not synchronized"),
     ({"board_timestamps_s": {"cam_a": 1.0, "missing": 1.005}}, "identical camera IDs"),
     ({"max_capture_skew_s": 0.0}, "must be positive"),
@@ -140,6 +149,8 @@ def test_socket_captures_must_be_later_multiview_and_repeatable(
     args = _arguments(tmp_path)
     originals = args["socket_observations"]
     cases = [
+        ([replace(originals[0], timestamp_source="foundpose_publish"),
+          *originals[1:]], "acquisition timestamp"),
         ([replace(originals[0], timestamp_s=0.900),
           replace(originals[1], timestamp_s=0.905), *originals[2:]], "follow board"),
         ([replace(originals[0], camera_id="unknown"), *originals[1:]], "uncalibrated"),
@@ -216,3 +227,9 @@ def test_saved_session_rejects_missing_or_modified_world_snapshot(
     tampered.write_text(json.dumps(record), encoding="utf-8")
     with pytest.raises(ValueError, match="descriptor hash changed"):
         load_session_calibration(tampered, mode=args["mode"], shared_root=tmp_path)
+    record = json.loads(saved.read_text(encoding="utf-8"))
+    record["socket_observations"][0]["timestamp_source"] = "foundpose_publish"
+    bad_clock = tmp_path / "bad_clock.json"
+    bad_clock.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match="camera acquisition timestamps"):
+        load_session_calibration(bad_clock, mode=args["mode"], shared_root=tmp_path)
