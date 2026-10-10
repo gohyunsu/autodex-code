@@ -60,13 +60,24 @@ The first independent helpers are in `precision_insertion/`:
   and records source hashes. This is grasp-level **endpoint** evidence only;
   simulated grasp stability is still a separate v8/MuJoCo gate.
 - `outcome.py` defines a VLM-led, sensor-vetoed tri-state task label. A
-  multi-view `normal_20mm` assessment is required for `true`, together with
+  multi-view `normal_appearance` assessment is required for `true`, together with
   independently cross-checked **key** depth, commissioned alignment limits,
   held-grasp evidence, and no safety abort. Conflicting or occluded evidence
   is `null`; normal force or a commanded wrist stroke is not success proof.
+  Older recorded `normal_20mm` assessments remain accepted as an alias, but
+  the new VLM prompt deliberately does not ask the model to infer millimetres.
+- `observer.py` defines the event-driven lift, per-camera XY, and insertion
+  visual prompts; it reuses ZeroDex's Gemini helper or an already-loaded
+  ZeroDex local `BaseVLM` through optional adapters. Inputs have explicit
+  camera/phase/time order. Closed-set JSON parsing falls back to
+  `unobservable` or `abstain` on malformed responses. Per-view XY calls are
+  separate; their output still goes through `xy_voting.py`, not directly to
+  a motion controller. This module cannot manufacture synchronized images,
+  CAD overlays, depth estimates, or physical ground-truth labels.
 
-The XY voting module is a pure offline contract, not a VLM API integration.
-Its caller must first validate the candidate offsets against the exact
+The XY voting resolver remains a read-only contract even when an optional
+ZeroDex-backed observer supplies votes. Its caller must first validate the
+candidate offsets against the exact
 key/socket/hand geometry, match image intrinsics to the undistorted/resized
 AutoDex camera frames, and verify the current grasp and calibration. After a
 choice, the live planner must still check the Franka/attached-key path and
@@ -74,6 +85,32 @@ the guarded insertion controller must independently enforce contact limits.
 The older `autodex.tasks.precision_insertion.decide_retry` proposes a
 continuous pose-residual correction; it is not the bounded candidate-ID vote
 policy and is not imported as this demo's control loop.
+
+For a **saved-image, read-only** observer replay, place this demo directory
+and a compatible ZeroDex checkout on `PYTHONPATH`, then pass already-loaded
+PIL images with explicit camera IDs and capture times. For example:
+
+```python
+from main.vlm_base import BaseVLM
+from precision_insertion.observer import (
+    LabeledFrame, ZeroDexLocalBackend, observe_lift,
+)
+
+backend = ZeroDexLocalBackend(BaseVLM(model_id="Qwen/Qwen3-VL-2B-Instruct"))
+result = observe_lift(backend, [
+    LabeledFrame("front", "before_grasp", 1.0, before_pil),
+    LabeledFrame("front", "after_lift", 2.0, after_pil),
+])
+print(result.to_record())  # review only; not a robot command
+```
+
+`before_pil` and `after_pil` must be supplied from the same saved trial; the
+timestamps above are placeholders. The optional Gemini adapter accepts an
+already-configured `google.genai.Client` and a model ID instead. Both
+adapters require the ZeroDex package importable at runtime. Neither adapter
+chooses cameras, creates image crops/overlays, measures key depth, or executes
+Franka commands. A future capture adapter must supply those inputs and log
+the raw images alongside every VLM response.
 
 Run the read-only asset audit from the repository root, for example:
 

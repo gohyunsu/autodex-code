@@ -411,9 +411,11 @@ on labeled failure images before enabling bounded retries.
 At the final 20 mm checkpoint, VLM assessment is a **primary semantic
 component**, not merely a screenshot decoration: present preinsert, contact,
 and final/abort frames from informative views with projected CAD rim/key
-outlines and the measured depth/F/T summary. Require structured output such
-as `normal_20mm`, `partial`, `rim_jam`, `slip`, or `unobservable`, each with
-view-specific evidence. A deterministic resolver compares this with depth,
+outlines. The primary visual-only output is `normal_appearance`, `partial`,
+`rim_jam`, `slip`, or `unobservable`; it does **not** claim numerical depth.
+For a subsequent diagnostic explanation, measured depth/F/T summaries may be
+provided separately without contaminating the visual-only evaluation. A
+deterministic resolver compares the visual class with depth,
 alignment uncertainty, contact abort, and grasp state. A VLM success opposed
 by insufficient measured depth is not success; a numerical 20 mm wrist stroke
 with VLM-visible jam or possible slip is also not success. Conflicts are
@@ -468,7 +470,7 @@ demo/precision-insertion/
     execution.py                  # Franka/Inspire and guarded stroke adapter
     xy_voting.py                  # read-only multi-view XY ID consensus
     outcome.py                    # VLM-led tri-state insertion result fusion
-    observer.py                   # multi-view VLM and sensor evidence
+    observer.py                   # read-only ZeroDex-backed VLM prompts, parsing, per-view votes
     recovery.py                   # retreat, repose, reorient, stop
     records.py                    # tri-state results and immutable provenance
   tests/                          # offline contracts and replay fixtures

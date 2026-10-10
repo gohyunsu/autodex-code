@@ -12,7 +12,10 @@ import math
 
 
 VLM_CLASSES = frozenset({
-    "normal_20mm", "partial", "rim_jam", "slip", "unobservable",
+    # New observers emit normal_appearance: 20 mm is measured independently.
+    # Keep normal_20mm as an older recorded-assessment alias.
+    "normal_appearance", "normal_20mm", "partial", "rim_jam", "slip",
+    "unobservable",
 })
 KEY_DEPTH_SOURCES = frozenset({
     "key_pose_multiview", "exposed_length_cad", "crosschecked_wrist_key",
@@ -56,7 +59,7 @@ def judge_insertion(
 ) -> InsertionOutcome:
     """Return true/false/unknown with VLM and independent key-depth evidence.
 
-    A `normal_20mm` VLM verdict is required for true. A robust lower depth
+    A visually normal VLM verdict is required for true. A robust lower depth
     bound must reach the target; the bound's source cannot be a commanded or
     observed wrist stroke without an independent key/grasp cross-check.
     """
