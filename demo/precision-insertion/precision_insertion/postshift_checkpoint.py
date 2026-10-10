@@ -312,3 +312,44 @@ def write_postshift_checkpoint(
                   sort_keys=True, allow_nan=False)
         stream.write("\n")
     return target / "report.json"
+
+
+def verify_postshift_checkpoint(
+    result: PostShiftCheckpoint, report_path: Path,
+    *, plan: GroundedLateralPreflight,
+) -> dict:
+    """Bind a saved re-observation to its shift, feedback and raw pixels.
+
+    File integrity is rechecked before any later endpoint calculation. This
+    does not certify the authenticity of external controller or camera logs.
+    """
+    path = Path(report_path).expanduser().resolve()
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    if (not isinstance(result, PostShiftCheckpoint) or
+            not isinstance(saved, dict) or saved != result.to_record() or
+            saved.get("robot_ready") is not False or
+            saved.get("insertion_replan_allowed") is not False or
+            result.attempt_id != plan.attempt_id or
+            result.candidate_id != plan.candidate_id or
+            result.status not in {
+                "visual_alignment_within_budget", "visual_abstain",
+                "held_relation_inconsistent", "residual_requires_new_shift",
+            }):
+        raise ValueError("saved post-shift checkpoint changed")
+    plan_path = result.lateral_preflight_report_path.resolve()
+    if (not plan_path.is_file() or
+            _sha(plan_path) != result.lateral_preflight_report_sha256):
+        raise ValueError("post-shift lateral plan source changed")
+    verify_grounded_lateral_preflight(plan, plan_path)
+    execution = result.lateral_execution_path.resolve()
+    if (not execution.is_file() or
+            _sha(execution) != result.lateral_execution_sha256):
+        raise ValueError("post-shift execution source changed")
+    _execution_log(execution, plan=plan, plan_report_path=plan_path)
+    capture = result.capture_dir.resolve()
+    manifest = capture / "manifest.json"
+    if (not manifest.is_file() or
+            _sha(manifest) != result.capture_manifest_sha256):
+        raise ValueError("post-shift capture manifest changed")
+    verify_raw_camera_capture(capture, phase="post_lateral_hold")
+    return saved

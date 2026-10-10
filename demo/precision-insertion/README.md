@@ -72,6 +72,22 @@ inside cylinder radial clearance after the future key-surface bound. Even
 fresh 20 mm exact key/hand endpoint screening, an axial preflight, and guarded
 contact are separate unfinished gates. There is no automatic second shift.
 
+Before using such a checkpoint as a held-key hypothesis, call
+`verify_postshift_checkpoint(result, report_path, plan=shift_plan)` to
+recheck its report, earlier planned joint bytes, execution-source hashes and
+new raw camera PNGs. For a cylinder,
+`reconstruct_axisymmetric_held_hypothesis(...)` composes the measured wrist
+and physical grasp medoid, minimally rotates the predicted **directed** key
+axis onto the newly triangulated axis, then translates the selected local
+insertion tip onto the triangulated tip centre. Rotation about the key axis is
+unobservable: its yaw is inherited from the medoid, **not** measured by the
+VLM. A tip/axis disagreement beyond commissioned limits rejects the
+hypothesis. `tip_axis_visual_surface_bound(...)` computes the extra possible
+CAD-surface displacement from commissioned tip/axis error limits; this must
+be added to the physical medoid's surface bound before a future 20 mm endpoint
+and sampled-path margin check. These functions still do not create an
+insertion retry or approve a robot command.
+
 For use by that future binding layer, the API is
 `plan_lateral_hold_shift(planner, mode, shared_root, calibration, trial_scene,
 start_q, expected_hold_pose, T_key_hand, increment_socket_xy_m, bounds,

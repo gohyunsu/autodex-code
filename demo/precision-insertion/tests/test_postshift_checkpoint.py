@@ -142,6 +142,8 @@ def test_postshift_requires_new_capture_and_returns_visual_only(
     path = postshift_checkpoint.write_postshift_checkpoint(
         result, tmp_path / "postshift_checkpoint")
     assert json.loads(path.read_text())["status"] == result.status
+    assert postshift_checkpoint.verify_postshift_checkpoint(
+        result, path, plan=call["plan"])["status"] == result.status
     alignment["rim_error_xy_m"] = [.008, 0.]
     # The patched estimator returns a copy of the current synthetic result.
     assert postshift_checkpoint.assess_postshift_alignment(
@@ -182,3 +184,17 @@ def test_postshift_rechecks_original_diagnostic_pixels(
         stream.write(b"changed after planning")
     with pytest.raises(ValueError, match="grounded source image bytes changed"):
         postshift_checkpoint.assess_postshift_alignment(**call)
+
+
+def test_saved_postshift_checkpoint_rechecks_capture_pixels(
+        tmp_path, monkeypatch):
+    call, _alignment = _case(tmp_path, monkeypatch)
+    result = postshift_checkpoint.assess_postshift_alignment(**call)
+    path = postshift_checkpoint.write_postshift_checkpoint(
+        result, tmp_path / "postshift_checkpoint")
+    image = call["capture_dir"] / "images/a.png"
+    with image.open("ab") as stream:
+        stream.write(b"changed after checkpoint")
+    with pytest.raises(ValueError, match="raw camera PNG changed"):
+        postshift_checkpoint.verify_postshift_checkpoint(
+            result, path, plan=call["plan"])

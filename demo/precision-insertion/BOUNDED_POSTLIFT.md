@@ -109,3 +109,10 @@ frame provenance, then reruns the cylinder tip/axis estimator. Its visual
 alignment status never records a positive insertion label or initiates a
 second shift. The physical execution adapter, commissioned visual accuracy,
 new 20 mm endpoint/axial plan and guarded contact still do not exist.
+`postshift_pose.py` now supplies only the missing axisymmetric geometry
+bridge: a freshly grounded tip/axis plus measured wrist and physical medoid
+give a yaw-gauge-fixed held relation, with explicit prior-consistency checks
+and an extra whole-key surface-error formula. The saved post-shift report and
+raw PNGs have an independent re-verifier. The bridge has **not** yet been
+bound to a fresh endpoint/path planning result, so it cannot turn
+`visual_alignment_within_budget` into an insertion authorization.
