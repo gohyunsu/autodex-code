@@ -22,6 +22,7 @@ from .config import TaskMode
 from .endpoint import screen_grasp_endpoint
 from .geometry import validate_se3
 from .held_relation import HeldRelation, resolve_postlift_held_relation
+from .live_robot_state import LiveRobotState
 from .path_audit import PathAuditLimits
 from .preflight import InsertionPreflight, plan_held_transfer_and_axial
 from .records import AttemptRecord
@@ -42,6 +43,7 @@ class PostLiftPreflight:
     key_capture_timestamp_s: float
     joint_timestamp_s: float
     live_start_q: np.ndarray
+    joint_feedback: LiveRobotState
     T_world_key_observed: np.ndarray
     T_robot_wrist_measured: np.ndarray
     relation: HeldRelation
@@ -62,6 +64,7 @@ class PostLiftPreflight:
             "key_capture_timestamp_s": self.key_capture_timestamp_s,
             "joint_timestamp_s": self.joint_timestamp_s,
             "live_start_q": self.live_start_q.tolist(),
+            "joint_feedback": self.joint_feedback.to_record(),
             "T_world_key_observed": self.T_world_key_observed.tolist(),
             "T_robot_wrist_measured": self.T_robot_wrist_measured.tolist(),
             "observed_held_relation": self.relation.to_record(),
@@ -78,8 +81,9 @@ def plan_postlift_observed_transfer(
     calibration, catalog: dict, mode: TaskMode, shared_root: Path,
     key_pose_world: np.ndarray, key_observation_id: str,
     key_capture_timestamp_s: float, key_pose_source: str,
-    live_start_q: np.ndarray, joint_timestamp_s: float,
-    joint_state_source: str, max_state_skew_s: float,
+    joint_sample: LiveRobotState, max_state_skew_s: float,
+    max_arm_hand_skew_s: float, max_hand_command_error_raw: float,
+    max_arm_velocity_rad_s: float,
     max_grasp_translation_drift_m: float,
     max_grasp_rotation_drift_deg: float,
     limits: PathAuditLimits, axial_waypoint_step_m: float,
@@ -134,12 +138,17 @@ def plan_postlift_observed_transfer(
     if len(matches) != 1:
         raise ValueError("picked grasp is no longer endpoint-eligible")
     if (key_pose_source != "multiview_foundpose" or
-            joint_state_source != "robot_joint_feedback" or
+            not isinstance(joint_sample, LiveRobotState) or
+            joint_sample.source != "robot_joint_feedback" or
             not isinstance(key_observation_id, str) or
             not key_observation_id.strip()):
         raise ValueError("post-lift key and wrist need independent live sources")
+    joint_sample.validate(
+        max_arm_hand_skew_s=max_arm_hand_skew_s,
+        max_hand_command_error_raw=max_hand_command_error_raw,
+        max_arm_velocity_rad_s=max_arm_velocity_rad_s)
     timestamp = float(key_capture_timestamp_s)
-    joint_time = float(joint_timestamp_s)
+    joint_time = float(joint_sample.sample_timestamp_s)
     skew = float(max_state_skew_s)
     last_grasp_time = max(event["timestamp_s"] for event in attempt.events
                           if event["stage"] == "grasp_success")
@@ -147,9 +156,10 @@ def plan_postlift_observed_transfer(
                 (timestamp, joint_time, skew)) or skew <= 0 or
             timestamp <= max(last_grasp_time,
                              trial.key_capture_timestamp_s) or
+            joint_time <= last_grasp_time or
             abs(joint_time - timestamp) > skew):
         raise ValueError("post-lift key and joint samples are stale or asynchronous")
-    start = np.asarray(live_start_q, dtype=np.float64)
+    start = np.asarray(joint_sample.full_q, dtype=np.float64)
     if start.shape != (13,) or not np.all(np.isfinite(start)):
         raise ValueError("post-lift FR3/Inspire state must be 13 finite joints")
     limits.validate()
@@ -176,7 +186,7 @@ def plan_postlift_observed_transfer(
             status, attempt.attempt_id, key,
             trial.session_calibration_sha256, trial.catalog_sha256,
             trial.key_observation_id, key_observation_id,
-            timestamp, joint_time, start.copy(), pose_world,
+            timestamp, joint_time, start.copy(), joint_sample, pose_world,
             wrist_robot, relation, endpoint, targets, planning)
 
     if (relation.translation_drift_m > max_grasp_translation_drift_m or

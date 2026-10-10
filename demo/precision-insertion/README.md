@@ -160,6 +160,17 @@ The first independent helpers are in `precision_insertion/`:
   and axial descent from the observed lift state. No initial BODex
   `T_key_hand` is silently replayed after physical squeeze. A saved result
   is still a planning report, not contact-control or physical success.
+- `live_robot_state.py` reads a fresh Franka state and the Inspire IP
+  controller's actual raw motor angles. It reuses AutoDex's
+  `convert_inspire_raw` for planner order, rejects stale/asynchronous feedback
+  and excessive measured-versus-commanded hand error or arm velocity, then
+  supplies a typed `LiveRobotState` to the post-lift preflight. Do **not** use
+  `FrankaExecutor.get_hand_qpos()` for this: it returns `commanded_nominal`.
+  Franka `get_data()["time"]` is controller uptime, so this adapter waits for
+  an advanced state and stamps robot-PC receipt time; Inspire time is a
+  software read time. Their skew check does not prove hardware-level
+  simultaneity or camera synchronization. Thresholds must be commissioned.
+
 - `candidates.py` scans the selected shared root's Inspire v8 candidate tree,
   reads matching scene `meta.pose_idx` and tabletop assets, requires full-key
   simulation evidence, and applies `endpoint.py` to surviving grasps. The
@@ -205,6 +216,29 @@ The first independent helpers are in `precision_insertion/`:
   is required. Its `execution_gate_required` result does not authorize a
   robot command; the live capture/executor and commissioned F/T gates are
   still absent.
+
+For a physically stationary post-lift hold, reuse the executor's already-open
+ParaDex controller handles; do not construct a second controller. The call is
+read-only:
+
+```python
+from precision_insertion.live_robot_state import read_live_franka_inspire_state
+
+joint_sample = read_live_franka_inspire_state(
+    arm=executor.arm, hand=executor.hand,
+    max_arm_hand_skew_s=commissioned_arm_hand_skew_s,
+    max_sample_age_s=commissioned_state_age_s,
+    max_hand_command_error_raw=commissioned_hand_tracking_error_raw,
+    max_arm_update_wait_s=commissioned_state_update_wait_s,
+    max_arm_velocity_rad_s=commissioned_stationary_velocity_rad_s,
+)
+```
+
+The five limits are experiment-specific measurements, not values inferred by
+this helper. Pass `joint_sample` to `plan_postlift_observed_transfer` along
+with the same arm–hand skew, hand-error and velocity limits for boundary
+revalidation. The sample's single wrench vector is diagnostic only; guarded
+insertion needs a commissioned continuous trace and abort path.
 
 For a saved `preflight-trial` report, the decision API can be inspected without
 connecting to the robot:
@@ -299,7 +333,7 @@ execution remain to be implemented.
 After the lift is physically observed and `AttemptRecord.grasp_success` is
 `true`, the live runner must keep the `TrialPreflight` object and call
 `plan_postlift_observed_transfer(...)` with the fresh multi-view key pose,
-measured joint vector, acquisition timestamps, selected session/catalog and
+`LiveRobotState` feedback sample, acquisition timestamps, selected session/catalog and
 commissioned drift/path limits. Only its
 `sampled_postlift_preflight_pass` status can proceed to a separately guarded
 transfer gate. `write_postlift_preflight(result, new_output_dir)` saves the

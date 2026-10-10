@@ -255,7 +255,9 @@ removing the board must not move it.
 The live camera adapter must establish **acquisition-time** synchronization,
 not merely that each camera eventually returned a result. In unchanged
 AutoDex, `SnapshotOrchestrator.snap()` returns JPEGs but not the per-camera
-`fid`/timestamp carried by `snapshot_daemon`. `InitOrchestrator` exposes `ts`
+`fid` carried by `snapshot_daemon`. That daemon's `ts` is publication time,
+not frame exposure time; the image SHM contains a frame ID but no exposure
+timestamp. `InitOrchestrator` exposes `ts`
 on pose/mask payloads, but `init_daemon` stamps these when publishing after
 SAM/FoundPose processing, not at image acquisition. Those `ts` values must
 **not** be passed to `calibrate_session` as capture times. A demo-only adapter
@@ -600,6 +602,7 @@ demo/precision-insertion/
     trial_preflight.py            # fresh-key candidate-by-candidate planning replay
     preflight.py                  # planning-only pickup/lift/transfer/20 mm composition
     held_relation.py              # observed held pose with Dinf frame ambiguity
+    live_robot_state.py            # actual Franka/Inspire feedback; no commands
     postlift_preflight.py         # measured post-lift endpoint/transfer replan
     path_audit.py                 # sampled held-key/hand scene collision checks
     repose_path_audit.py          # sampled held reset-path/fixture check, no execution

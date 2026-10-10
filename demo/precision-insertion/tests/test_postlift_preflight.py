@@ -15,7 +15,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from autodex.utils.conversion import se32cart  # noqa: E402
+from autodex.executor.real import _convert_inspire  # noqa: E402
 from precision_insertion.candidates import build_endpoint_catalog  # noqa: E402
+from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.postlift_preflight import (  # noqa: E402
     plan_postlift_observed_transfer, write_postlift_preflight,
 )
@@ -80,6 +82,11 @@ def _setup(tmp_path, monkeypatch):
     start[0] = 0.001
     start[2] = 0.1
     start[7:] = 0.2
+    hand_raw = _convert_inspire(start[7:])
+    joint_sample = LiveRobotState(
+        start, np.zeros(7), 5.01, 5.0, 123.0, 5.02,
+        hand_raw, hand_raw.copy(),
+        0.0, np.zeros(6))
     screen_calls = []
 
     def screen(**kwargs):
@@ -117,9 +124,11 @@ def _setup(tmp_path, monkeypatch):
         "key_observation_id": "lift-key-2",
         "key_capture_timestamp_s": 5.0,
         "key_pose_source": "multiview_foundpose",
-        "live_start_q": start, "joint_timestamp_s": 5.01,
-        "joint_state_source": "robot_joint_feedback",
+        "joint_sample": joint_sample,
         "max_state_skew_s": 0.05,
+        "max_arm_hand_skew_s": 0.05,
+        "max_hand_command_error_raw": 30,
+        "max_arm_velocity_rad_s": 0.05,
         "max_grasp_translation_drift_m": 0.003,
         "max_grasp_rotation_drift_deg": 5.0,
         "limits": limits, "axial_waypoint_step_m": 0.005,
@@ -139,7 +148,7 @@ def test_measured_postlift_relation_rescreens_then_plans(tmp_path, monkeypatch):
         "multiview_key_pose_plus_live_wrist")
     np.testing.assert_allclose(
         screen_calls[0]["hand_poses_override"]["measured_post_lift"],
-        args["live_start_q"][7:])
+        args["joint_sample"].full_q[7:])
     assert result.to_record()["robot_ready"] is False
     bundle = write_postlift_preflight(result, tmp_path / "postlift")
     report = json.loads((bundle / "report.json").read_text())
@@ -176,7 +185,9 @@ def test_slipped_key_or_failed_endpoint_cannot_reach_planner(tmp_path, monkeypat
 
 def test_stale_state_wrong_candidate_and_catalog_are_rejected(tmp_path, monkeypatch):
     args, _ = _setup(tmp_path, monkeypatch)
-    args["joint_timestamp_s"] = 5.2
+    args["joint_sample"] = replace(
+        args["joint_sample"], sample_timestamp_s=5.2,
+        arm_timestamp_s=5.19, hand_timestamp_s=5.21)
     with pytest.raises(ValueError, match="stale or asynchronous"):
         plan_postlift_observed_transfer(**args)
     args, _ = _setup(tmp_path / "second", monkeypatch)
@@ -187,3 +198,13 @@ def test_stale_state_wrong_candidate_and_catalog_are_rejected(tmp_path, monkeypa
     args["catalog"] = {**args["catalog"], "minimum_hand_clearance_m": 0.004}
     with pytest.raises(ValueError, match="catalogue or frozen"):
         plan_postlift_observed_transfer(**args)
+
+
+def test_commanded_hand_vector_cannot_masquerade_as_feedback(tmp_path, monkeypatch):
+    args, _ = _setup(tmp_path, monkeypatch)
+    fake_q = args["joint_sample"].full_q.copy()
+    fake_q[7] += 0.1
+    args["joint_sample"] = replace(args["joint_sample"], full_q=fake_q)
+    with pytest.raises(ValueError, match="disagree with measured raw motors"):
+        plan_postlift_observed_transfer(**args)
+    assert args["planner"].calls == []
