@@ -88,3 +88,45 @@ be accepted as aligned **only** when it contains independently triangulated
 tip/axis inliers and their observed rim/depth residuals plus uncertainty fit
 the commissioned budget: an already centered key need not have a beneficial
 next XY step.
+
+## Fresh-arrival axial replan (read-only)
+
+A positive arrival checkpoint is **not** permission to use the axial path
+planned before transfer. The transfer may have changed the key/hand relation.
+Use the same session runner to reconstruct that relation from the newly
+observed tip/axis and measured wrist, then rerun the exact 20 mm endpoint,
+cuRobo axial waypoints and sampled held-key/hand margin checks:
+
+```python
+replan = runner.prepare_postshift_arrival_axial_replan(
+    planner=fr3_inspire_planner,
+    previous=postshift_preflight,
+    previous_report_path=postshift_20mm_report,
+    arrival=arrival_checkpoint,
+    arrival_report_path=arrival_report,
+    checkpoint=postshift_checkpoint,
+    shift_plan=completed_shift_plan,
+    bounds=commissioned_future_surface_bounds,
+    max_visual_tip_error_m=commissioned_tip_worst_case_m,
+    max_visual_axis_error_deg=commissioned_axis_worst_case_deg,
+    max_axis_prior_residual_deg=commissioned_prior_axis_limit_deg,
+)
+```
+
+`sampled_arrival_20mm_axial_preflight_pass` means the measured arrival was
+already at the newly reconstructed pre-insertion hand target and its **new**
+axial path passed sampled geometry. A mismatch returns
+`arrival_hold_goal_residual`; it does not quietly plan or execute
+another transfer. The report and `planned_axial.npz` are saved under
+`postshift_arrival_axial_replans/NNN/`. The archive contains no transfer
+command; the two identical transfer samples in the internal audit mean a
+stationary hold. The saved report binds both earlier preflight and new
+arrival source hashes, checks CAD/candidate inputs and stores the new
+tip/axis-derived yaw gauge. It explicitly marks the old axial path
+non-reusable and `axial_contact_authorized=false`.
+
+All error bounds above must come from physical commissioning. This remains
+a read-only preflight with synthetic-unit-test coverage, not a retry-specific
+guarded contact controller or a physical 20 mm success observation. Do not
+feed either old or newly planned axial path to the stock trajectory follower
+as a contact insertion command.

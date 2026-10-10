@@ -213,12 +213,17 @@ def plan_held_transfer_and_axial(
     limits: PathAuditLimits, axial_waypoint_step_m: float,
     lift_trajectory: np.ndarray | None = None,
     prior_query_records: tuple[dict[str, Any], ...] = (),
+    start_at_preinsert: bool = False,
 ) -> InsertionPreflight:
     """Plan from a measured held state to preinsert and nominal 20 mm pose.
 
     Initial trials call this after the held lift; bounded XY retries call it
-    after confirmed axial withdrawal. Both reuse the same cuRobo queries and
-    full-key/whole-hand sampled audit. This never executes contact motion.
+    after confirmed axial withdrawal. With ``start_at_preinsert=True``, a
+    measured post-transfer hold must already meet the freshly reconstructed
+    hand target: no second transfer is planned, and the two identical rows in
+    the transfer audit are a stationary hold, not an executable trajectory.
+    All variants reuse the same axial cuRobo queries and full-key/whole-hand
+    sampled audit. This never executes contact motion.
     """
     limits.validate()
     step = float(axial_waypoint_step_m)
@@ -259,29 +264,41 @@ def plan_held_transfer_and_axial(
             status, lift, transfer, axial, audit, waypoints, held.copy(),
             held_hand_source, tuple(query_records))
 
-    transfer_result = planner.plan_cartesian_pose(
-        start, targets.T_robot_hand_preinsert,
-        scene_cfg=trial_scene, include_obj_obstacle=False,
-        return_result=True, lock_hand=True,
-        timing_phase="precision_insertion_preflight")
-    query_records.append({
-        "stage": "transfer", "success": bool(transfer_result.success),
-        "planner_api": "plan_cartesian_pose",
-        "constraint_mode": getattr(transfer_result, "constraint_mode", None),
-        "failure_stage": getattr(transfer_result, "failure_stage", None),
-    })
-    if not transfer_result.success or transfer_result.trajectory is None:
-        return result("transfer_unreachable")
-    try:
-        transfer = _path(transfer_result.trajectory, "held transfer", start, held)
-    except HeldHandPoseDrift as exc:
-        query_records[-1]["held_hand_lock_verified"] = False
-        query_records[-1]["max_abs_hand_delta_rad"] = exc.max_abs_delta_rad
-        return result("transfer_hand_drift")
-    if not _goal_met(validate_se3(planner.fk_wrist(transfer[-1]),
-                                  name="transfer endpoint FK"),
-                     targets.T_robot_hand_preinsert, limits):
-        return result("transfer_goal_residual", transfer=transfer)
+    if start_at_preinsert:
+        if not _goal_met(validate_se3(planner.fk_wrist(start),
+                                      name="measured arrival wrist FK"),
+                         targets.T_robot_hand_preinsert, limits):
+            return result("arrival_hold_goal_residual")
+        transfer = np.repeat(start[None, :], 2, axis=0)
+        query_records.append({
+            "stage": "arrival_hold", "success": True,
+            "planner_api": "measured_fk_no_transfer",
+            "executable_transfer": False,
+        })
+    else:
+        transfer_result = planner.plan_cartesian_pose(
+            start, targets.T_robot_hand_preinsert,
+            scene_cfg=trial_scene, include_obj_obstacle=False,
+            return_result=True, lock_hand=True,
+            timing_phase="precision_insertion_preflight")
+        query_records.append({
+            "stage": "transfer", "success": bool(transfer_result.success),
+            "planner_api": "plan_cartesian_pose",
+            "constraint_mode": getattr(transfer_result, "constraint_mode", None),
+            "failure_stage": getattr(transfer_result, "failure_stage", None),
+        })
+        if not transfer_result.success or transfer_result.trajectory is None:
+            return result("transfer_unreachable")
+        try:
+            transfer = _path(transfer_result.trajectory, "held transfer", start, held)
+        except HeldHandPoseDrift as exc:
+            query_records[-1]["held_hand_lock_verified"] = False
+            query_records[-1]["max_abs_hand_delta_rad"] = exc.max_abs_delta_rad
+            return result("transfer_hand_drift")
+        if not _goal_met(validate_se3(planner.fk_wrist(transfer[-1]),
+                                      name="transfer endpoint FK"),
+                         targets.T_robot_hand_preinsert, limits):
+            return result("transfer_goal_residual", transfer=transfer)
 
     travel = targets.preinsert_clearance_m + targets.mode.target_depth_m
     count = int(math.ceil(travel / step))

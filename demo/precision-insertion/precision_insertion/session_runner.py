@@ -84,6 +84,7 @@ from .postshift_path_handoff import (
 )
 if TYPE_CHECKING:
     from .postshift_arrival_checkpoint import PostShiftArrivalCheckpoint
+    from .postshift_arrival_replan import PostShiftArrivalReplan
 from .repose_artifacts import write_repose_preflight_artifacts
 from .repose_preflight import validate_repose_rest_target
 from .repose_transition import (
@@ -203,7 +204,10 @@ class SessionRunner:
         self._postshift_handoff_index = 0
         self._postshift_saved_handoffs: set[Path] = set()
         self._postshift_arrival_used_capture_dirs: set[Path] = set()
+        self._postshift_arrival_saved_reports: set[Path] = set()
         self._postshift_arrival_index = 0
+        self._postshift_arrival_replan_used_reports: set[Path] = set()
+        self._postshift_arrival_replan_index = 0
         self._write_exclusive(
             target / "frozen_session_calibration.json", calibration.record)
         self._write_exclusive(target / "endpoint_catalog.json", catalog)
@@ -2384,7 +2388,67 @@ class SessionRunner:
             shift_plan=shift_plan, mode=self.mode,
             shared_root=self.shared_root, calibration=self.calibration)
         self._postshift_arrival_used_capture_dirs.add(capture)
+        self._postshift_arrival_saved_reports.add(path.resolve())
         self._postshift_arrival_index += 1
+        return result
+
+    def prepare_postshift_arrival_axial_replan(
+        self, *, planner, previous: PostShiftInsertionPreflight,
+        previous_report_path: Path, arrival: PostShiftArrivalCheckpoint,
+        arrival_report_path: Path, checkpoint: PostShiftCheckpoint,
+        shift_plan: GroundedLateralPreflight,
+        bounds: SurfaceDeviationBounds,
+        max_visual_tip_error_m: float,
+        max_visual_axis_error_deg: float,
+        max_axis_prior_residual_deg: float,
+    ) -> PostShiftArrivalReplan:
+        """Re-screen fresh arrival and plan axial only, without motion."""
+        from .postshift_arrival_replan import (
+            plan_postshift_arrival_axial,
+            verify_postshift_arrival_replan,
+            write_postshift_arrival_replan,
+        )
+        if (self.current_decision().action !=
+                "guarded_withdrawal_then_xy_assessment" or
+                self._attempt is None or self._preflight is None or
+                self._attempt_dir is None or
+                arrival.attempt_id != self._attempt.attempt_id or
+                arrival.candidate_id != self._attempt.candidate_id):
+            raise ValueError("arrival axial replan needs this failed held attempt")
+        source = Path(arrival_report_path).expanduser().resolve()
+        prior = Path(previous_report_path).expanduser().resolve()
+        if (source not in self._postshift_arrival_saved_reports or
+                source in self._postshift_arrival_replan_used_reports or
+                source.parent.parent !=
+                    (self._attempt_dir /
+                     "postshift_arrival_checkpoints").resolve() or
+                prior.parent.parent !=
+                    (self._attempt_dir /
+                     "postshift_20mm_preflights").resolve() or
+                arrival.capture_dir.resolve() not in
+                    self._postshift_arrival_used_capture_dirs):
+            raise ValueError("arrival replan source is not a new session event")
+        self.verify_current_preflight_evidence()
+        result = plan_postshift_arrival_axial(
+            planner=planner, mode=self.mode, shared_root=self.shared_root,
+            calibration=self.calibration, trial=self._preflight,
+            previous=previous, previous_report_path=prior,
+            arrival=arrival, arrival_report_path=source,
+            checkpoint=checkpoint, shift_plan=shift_plan,
+            bounds=bounds,
+            max_visual_tip_error_m=max_visual_tip_error_m,
+            max_visual_axis_error_deg=max_visual_axis_error_deg,
+            max_axis_prior_residual_deg=max_axis_prior_residual_deg)
+        output = (self._attempt_dir / "postshift_arrival_axial_replans" /
+                  f"{self._postshift_arrival_replan_index:03d}")
+        path = write_postshift_arrival_replan(result, output)
+        verify_postshift_arrival_replan(
+            path, expected=result, previous=previous, arrival=arrival,
+            checkpoint=checkpoint, shift_plan=shift_plan,
+            mode=self.mode, shared_root=self.shared_root,
+            calibration=self.calibration)
+        self._postshift_arrival_replan_used_reports.add(source)
+        self._postshift_arrival_replan_index += 1
         return result
 
     def record_failure(

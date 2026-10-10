@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import json
 from pathlib import Path
@@ -133,6 +134,29 @@ def _audit(tmp_path, fixture, transfer, descent):
         planner=_FakePlanner(), transfer_trajectory=transfer,
         descent_trajectory=descent, held_hand_q=np.zeros(6),
         limits=_limits())
+
+
+def test_sampled_audit_rebuilds_cylinder_target_with_same_yaw_gauge(
+        tmp_path, monkeypatch):
+    calibration, square_target, _ = _fixture(tmp_path, monkeypatch)
+    target = replace(
+        square_target, mode=select_mode("cylinder", 15),
+        cylinder_yaw_gauge_socket_rad=.7)
+    captured = {}
+
+    def rebuild(**kwargs):
+        captured.update(kwargs)
+        raise RuntimeError("rebuild inspected")
+
+    monkeypatch.setattr("precision_insertion.path_audit.build_rigid_insertion_targets",
+                        rebuild)
+    with pytest.raises(RuntimeError, match="rebuild inspected"):
+        audit_held_joint_paths(
+            shared_root=tmp_path, calibration=calibration, targets=target,
+            planner=_FakePlanner(), transfer_trajectory=_paths()[0],
+            descent_trajectory=_paths()[1], held_hand_q=np.zeros(6),
+            limits=_limits())
+    assert captured["cylinder_yaw_gauge_socket_rad"] == .7
 
 
 def test_cylinder_path_audit_uses_same_validated_bore_as_endpoint_screen(

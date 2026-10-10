@@ -13,7 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.path_audit import PathAuditLimits  # noqa: E402
-from precision_insertion.preflight import plan_insertion_after_pickup  # noqa: E402
+from precision_insertion.preflight import (  # noqa: E402
+    plan_held_transfer_and_axial, plan_insertion_after_pickup,
+)
 from precision_insertion.targets import InsertionTargets  # noqa: E402
 
 
@@ -206,3 +208,45 @@ def test_preflight_rejects_wrong_world_frame_or_untrusted_hold_source(monkeypatc
         _run(_Planner(), fixture, held_hand_source="assumed_measured")
     with pytest.raises(ValueError, match="<= 5 mm"):
         _run(_Planner(), fixture, axial_waypoint_step_m=0.01)
+
+
+def test_fresh_arrival_plans_axial_without_another_transfer(monkeypatch):
+    fixture = _fixture()
+    _pickup, scene, calibration, targets, limits = fixture
+    planner = _Planner()
+    captured = {}
+
+    def audit(**kwargs):
+        captured.update(kwargs)
+        return {"sampled_clear": True, "failures": []}
+
+    monkeypatch.setattr("precision_insertion.preflight.audit_held_joint_paths",
+                        audit)
+    start = np.zeros(13)
+    start[:3] = targets.T_robot_hand_preinsert[:3, 3]
+    start[7:] = .2
+    arguments = dict(
+        planner=planner, trial_scene=scene, shared_root=Path("/tmp"),
+        calibration=calibration, targets=targets, start_q=start,
+        held_hand_q=start[7:], held_hand_source="measured", limits=limits,
+        axial_waypoint_step_m=.005, start_at_preinsert=True)
+    result = plan_held_transfer_and_axial(**arguments)
+    assert result.status == "sampled_planning_pass"
+    assert len(planner.calls) == 10  # axial waypoints only
+    assert result.planner_query_records[0] == {
+        "stage": "arrival_hold", "success": True,
+        "planner_api": "measured_fk_no_transfer",
+        "executable_transfer": False,
+    }
+    np.testing.assert_array_equal(result.transfer_trajectory[0], start)
+    np.testing.assert_array_equal(result.transfer_trajectory[1], start)
+    np.testing.assert_array_equal(captured["transfer_trajectory"],
+                                  result.transfer_trajectory)
+    assert result.axial_trajectory[0].tolist() == start.tolist()
+
+    displaced = start.copy()
+    displaced[0] = .003
+    rejected = plan_held_transfer_and_axial(
+        **{**arguments, "start_q": displaced})
+    assert rejected.status == "arrival_hold_goal_residual"
+    assert len(planner.calls) == 10  # a shifted hold never reaches cuRobo

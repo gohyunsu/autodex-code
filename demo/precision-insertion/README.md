@@ -162,9 +162,18 @@ save a replayable execution log. No controller is bundled. The new
 `SessionRunner.assess_postshift_transfer_arrival(...)` requires fresh raw
 AutoDex views and measured joints *after* that transfer, re-grounds the
 cylinder tip/axis against the frozen socket, and saves a read-only arrival
-status. Even visual alignment does not authorize axial contact. A separate
-guarded contact executor and physical key-depth admission are still needed
-before retry success can be labeled. See
+status. If aligned, call
+`SessionRunner.prepare_postshift_arrival_axial_replan(...)` with the saved
+arrival and prior preflight, the same trial sources, and commissioned
+whole-surface and visual-error bounds. It refits the held relation to the
+**new** tip/axis, reruns exact 20 mm key/whole-hand endpoint screening and
+plans only axial waypoints from the **measured arrival joints**. Its sampled
+key/hand and uncertainty audits use the same cylinder yaw gauge; a changed
+goal outside the measured pre-insertion tolerance rejects without a second
+transfer. The previous axial path is never replayed. This new report remains
+read-only: a separate retry-specific guarded contact handoff/executor and
+physical key-depth admission are still needed before retry success can be
+labeled. See
 [POSTSHIFT_HANDOFF.md](POSTSHIFT_HANDOFF.md) for the call contract.
 
 The underlying first-shift planning API used by this binder is
@@ -906,6 +915,11 @@ The first independent helpers are in `precision_insertion/`:
   squeezes farther; reusing its lift without checking the selected hold would
   compare different hand geometries. Every caller must distinguish a nominal
   commanded hold from actual measured hand state.
+  For a fresh post-shift arrival, `start_at_preinsert=True` skips the old
+  transfer query and requires measured wrist FK to meet the newly fitted
+  pre-insertion target. Its two repeated transfer samples represent a
+  **stationary audit hold**, not an executable transfer trajectory. Only the
+  subsequent axial waypoints are replanned.
 - `held_relation.py` resolves the lifted key pose against the measured wrist.
   For the cylindrical D∞ key, it removes only axial-yaw and identical-end
   frame ambiguity **about the CAD symmetry center** before measuring drift;

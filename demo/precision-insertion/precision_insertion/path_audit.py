@@ -251,7 +251,9 @@ def audit_held_joint_paths(
     refreshed = build_rigid_insertion_targets(
         mode=mode, shared_root=root, calibration=calibration,
         T_key_hand=targets.T_key_hand,
-        xy_offset_socket_m=targets.xy_offset_socket_m)
+        xy_offset_socket_m=targets.xy_offset_socket_m,
+        cylinder_yaw_gauge_socket_rad=(
+            targets.cylinder_yaw_gauge_socket_rad))
     for name in ("T_robot_hand_preinsert", "T_robot_hand_entry",
                  "T_robot_hand_verification", "T_robot_key_verification"):
         if not np.allclose(getattr(refreshed, name), getattr(targets, name),
