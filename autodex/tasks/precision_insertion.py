@@ -137,7 +137,8 @@ def select_scenario(catalog: Mapping[str, Any], mode: str,
                     *, minimum_level: str = "grasp_sim_pass",
                     scenario_id: str | None = None,
                     key: str | None = None, socket: str | None = None,
-                    gap_mm: float | None = None) -> dict[str, Any]:
+                    gap_mm: float | None = None,
+                    tabletop_pose: int | None = None) -> dict[str, Any]:
     if minimum_level not in VALIDATION_ORDER:
         raise ValueError(f"unknown validation level: {minimum_level}")
     eligible = [s for s in catalog["scenarios"]
@@ -147,7 +148,8 @@ def select_scenario(catalog: Mapping[str, Any], mode: str,
                 (scenario_id is None or s["id"] == scenario_id) and
                 (key is None or s["key"] == key) and
                 (socket is None or s["socket"] == socket) and
-                (gap_mm is None or s["gap_mm"] == gap_mm)]
+                (gap_mm is None or s["gap_mm"] == gap_mm) and
+                (tabletop_pose is None or s["tabletop_pose"] == tabletop_pose)]
     if not eligible:
         raise RuntimeError(f"No {mode} scenario reaches {minimum_level}; "
                            "do not execute unvalidated insertion on the robot")

@@ -39,6 +39,8 @@ class InsertionModesTest(unittest.TestCase):
             self.assertEqual(chosen["validation_level"], "grasp_sim_pass")
             self.assertFalse(chosen["full_task_sim_pass"])
             with self.assertRaises(RuntimeError):
+                select_scenario(catalog, "square", tabletop_pose=0)
+            with self.assertRaises(RuntimeError):
                 select_scenario(catalog, "square", minimum_level="full_task_sim_pass")
             with self.assertRaises(RuntimeError):
                 select_scenario(catalog, "cylinder")

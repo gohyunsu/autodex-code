@@ -50,6 +50,8 @@ def main() -> None:
     start.add_argument("--catalog", type=Path, required=True)
     start.add_argument("--mode", choices=("square", "cylinder"), required=True)
     start.add_argument("--gap-mm", type=float)
+    start.add_argument("--tabletop-pose", type=int, required=True,
+                       help="observed AutoDex tabletop pose index; never assume pose 0")
     start.add_argument("--scenario-id")
     start.add_argument("--session", type=Path, required=True)
     start.add_argument("--fixture-pose", type=Path,
@@ -86,7 +88,8 @@ def main() -> None:
             args.minimum_level or "grasp_sim_pass")
         scenario = select_scenario(catalog, args.mode, minimum_level=minimum,
                                    scenario_id=args.scenario_id, key=mode.key,
-                                   socket=mode.socket, gap_mm=mode.socket_gap_mm)
+                                   socket=mode.socket, gap_mm=mode.socket_gap_mm,
+                                   tabletop_pose=args.tabletop_pose)
         # The recorded square pilot applies ONLY to the 1.5 mm key/socket.
         if scenario["key"] != mode.key or scenario["socket"] != mode.socket or scenario["gap_mm"] != mode.socket_gap_mm:
             raise RuntimeError("catalog scenario does not match requested geometry")
@@ -100,6 +103,7 @@ def main() -> None:
             fixture_path = args.fixture_pose.expanduser().resolve()
             fixture = {"path": str(fixture_path), "sha256": sha256(fixture_path)}
         session = {"schema_version": 1, "mode": mode.name, "gap_mm": mode.socket_gap_mm,
+                   "tabletop_pose": args.tabletop_pose,
                    "scenario": scenario, "purpose": args.purpose,
                    "offset_xy_m": [0.0, 0.0], "attempt": 1, "history": [],
                    "fixture_pose": fixture,
