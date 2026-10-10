@@ -47,8 +47,14 @@ The first independent helpers are in `precision_insertion/`:
   symmetry and tabletop poses. The D∞ cylindrical key may exchange identical
   ends; the C∞ socket may not.
 - `world.py` adds the frozen socket mesh to a copy of the cuRobo scene. It
-  checks the pose and mesh path and does not mutate the source scene. It does
-  not by itself authorize key/socket contact or a robot insertion.
+  checks the pose and mesh path and does not mutate the source scene. After
+  ChArUco measurement, `calibrate_session` replaces the base table cuboid
+  with that session's measured height. For every trial,
+  `build_trial_scene_from_session` calls the unchanged AutoDex v8 scene
+  converter with the **fresh** perceived key pose, retains the same measured
+  table and frozen socket, and rejects a changed socket mesh or pose. Cylinder
+  tabletop snapping uses this demo's local-z symmetry adapter. These helpers
+  do not capture images, plan the Franka path, or authorize insertion.
 - `config.py` resolves explicit square/cylinder key and socket IDs and the
   20 mm verification target; `assets.py` performs a read-only v8 input audit.
 - `xy_voting.py` accepts already geometry-screened **absolute socket-frame XY

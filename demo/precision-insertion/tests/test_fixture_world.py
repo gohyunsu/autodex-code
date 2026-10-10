@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 import sys
 
@@ -13,10 +14,16 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.geometry import freeze_fixture_pose, validate_se3  # noqa: E402
+from precision_insertion.calibration import SessionCalibration  # noqa: E402
+from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.symmetry import (  # noqa: E402
     load_axial_symmetry, snap_axisymmetric_tabletop_pose,
 )
-from precision_insertion.world import add_fixed_mesh_fixtures  # noqa: E402
+from precision_insertion.world import (  # noqa: E402
+    add_fixed_mesh_fixtures, build_trial_scene_from_session,
+)
+from autodex.utils.conversion import se32cart  # noqa: E402
+from autodex.utils.tabletop_geometry import table_cuboid  # noqa: E402
 
 
 def _pose(*, x_mm=0.0, yaw_deg=0.0, tilt_deg=0.0):
@@ -113,3 +120,134 @@ def test_fixed_fixture_addition_is_copy_and_rejects_shadowing(tmp_path):
         add_fixed_mesh_fixtures(original, {
             "target": {"pose_robot": _pose(), "collision_mesh": mesh}
         })
+
+
+def _session(tmp_path, mode):
+    mesh = (tmp_path / "object_processing" / mode.socket_object /
+            "processed_data" / "mesh" / "static_collision.obj")
+    mesh.parent.mkdir(parents=True)
+    mesh.write_text("v 0 0 0\n", encoding="utf-8")
+    frozen = _pose(x_mm=12)
+    board = {"table_surface_z_m": 0.043}
+    fixed = add_fixed_mesh_fixtures(
+        {"mesh": {}, "cuboid": {"table": table_cuboid(board)}},
+        {"fixture_socket": {"pose_robot": frozen, "collision_mesh": mesh}})
+    record = {
+        "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
+                 "key_object": mode.key_object,
+                 "socket_object": mode.socket_object},
+        "c2r": np.eye(4).tolist(),
+        "socket_pose_robot": frozen.tolist(),
+        "socket_collision_mesh": str(mesh),
+        "socket_collision_mesh_sha256": hashlib.sha256(mesh.read_bytes()).hexdigest(),
+    }
+    return SessionCalibration(board, frozen, {}, fixed, record), mesh
+
+
+def test_trial_scene_reuses_frozen_table_and_socket_but_refreshes_key(
+    tmp_path, monkeypatch,
+):
+    mode = select_mode("square", 1.5)
+    session, _ = _session(tmp_path, mode)
+    original = json.loads(json.dumps(session.collision_scene))
+    seen = []
+
+    def make_scene(pose_world, c2r, obj_name, *, obj_root, tabletop_geometry):
+        seen.append((pose_world.copy(), obj_name, obj_root, tabletop_geometry))
+        return {"mesh": {"target": {"pose": se32cart(pose_world).tolist(),
+                                    "file_path": "fresh_key.obj"}},
+                "cuboid": {"table": table_cuboid(tabletop_geometry)}}
+
+    monkeypatch.setattr("src.execution.scene_cfg.pose_world_to_scene_cfg", make_scene)
+    first = build_trial_scene_from_session(
+        mode=mode, shared_root=tmp_path, calibration=session,
+        key_pose_world=_pose(x_mm=100))
+    second = build_trial_scene_from_session(
+        mode=mode, shared_root=tmp_path, calibration=session,
+        key_pose_world=_pose(x_mm=200))
+    assert first["mesh"]["target"]["pose"][0] == pytest.approx(0.1)
+    assert second["mesh"]["target"]["pose"][0] == pytest.approx(0.2)
+    assert first["mesh"]["fixture_socket"] == second["mesh"]["fixture_socket"]
+    assert first["cuboid"]["table"] == session.collision_scene["cuboid"]["table"]
+    assert session.collision_scene == original
+    assert all(row[1] == mode.key_object and
+               row[2] == str(tmp_path / "object_processing") and
+               row[3] is session.board for row in seen)
+
+
+def test_trial_scene_rejects_wrong_socket_mode_or_changed_mesh(tmp_path, monkeypatch):
+    mode = select_mode("square", 1.5)
+    session, mesh = _session(tmp_path, mode)
+    with pytest.raises(ValueError, match="does not match trial"):
+        build_trial_scene_from_session(
+            mode=select_mode("square", 1.0), shared_root=tmp_path,
+            calibration=session, key_pose_world=np.eye(4))
+    mesh.write_text("v 1 0 0\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="differs from frozen session asset"):
+        build_trial_scene_from_session(
+            mode=mode, shared_root=tmp_path, calibration=session,
+            key_pose_world=np.eye(4))
+
+
+def test_trial_scene_rejects_inconsistent_frozen_socket_record(tmp_path):
+    mode = select_mode("square", 1.5)
+    session, _ = _session(tmp_path, mode)
+    session.record["socket_pose_robot"] = np.eye(4).tolist()
+    with pytest.raises(ValueError, match="record socket pose differs"):
+        build_trial_scene_from_session(
+            mode=mode, shared_root=tmp_path, calibration=session,
+            key_pose_world=np.eye(4))
+
+
+def test_trial_scene_uses_original_v8_scene_converter_with_measured_table(tmp_path):
+    mode = select_mode("square", 1.5)
+    session, _ = _session(tmp_path, mode)
+    planning_mesh = (tmp_path / "object_processing" / mode.key_object /
+                     "processed_data" / "mesh" / "simplified.obj")
+    planning_mesh.parent.mkdir(parents=True)
+    planning_mesh.write_text(
+        "v 0 0 0\nv 0.01 0 0\nv 0 0.01 0\n"
+        "v 0 0 0.01\nf 1 2 3\nf 1 2 4\nf 1 3 4\nf 2 3 4\n",
+        encoding="utf-8")
+    key_pose = np.eye(4)
+    key_pose[:3, 3] = [0.1, 0.2, 0.05]
+    scene = build_trial_scene_from_session(
+        mode=mode, shared_root=tmp_path, calibration=session,
+        key_pose_world=key_pose)
+    assert scene["mesh"]["target"]["file_path"] == str(planning_mesh)
+    assert scene["mesh"]["target"]["pose"][:3] == pytest.approx([0.1, 0.2, 0.05])
+    assert scene["cuboid"]["table"] == table_cuboid(session.board)
+    assert scene["mesh"]["fixture_socket"] == session.collision_scene[
+        "mesh"]["fixture_socket"]
+
+
+def test_trial_scene_snaps_cylinder_with_local_z_v8_symmetry(tmp_path, monkeypatch):
+    mode = select_mode("cylinder", 1)
+    session, _ = _session(tmp_path, mode)
+    info = (tmp_path / "object_processing" / mode.key_object /
+            "processed_data" / "info")
+    tabletop = info / "tabletop"
+    tabletop.mkdir(parents=True)
+    (info / "symmetry.json").write_text(json.dumps({
+        "type": "Dinf", "axes": [
+            {"axis": [0, 0, 1], "fold": "inf"},
+            {"axis": [1, 0, 0], "fold": 2}],
+    }), encoding="utf-8")
+    end_down = np.diag([1.0, -1.0, -1.0, 1.0])
+    np.save(tabletop / "000.npy", end_down)
+    seen = []
+
+    def make_scene(pose_world, c2r, obj_name, *, obj_root, tabletop_geometry):
+        seen.append(pose_world.copy())
+        return {"mesh": {"target": {"pose": se32cart(pose_world).tolist()}},
+                "cuboid": {"table": table_cuboid(tabletop_geometry)}}
+
+    monkeypatch.setattr("src.execution.scene_cfg.pose_world_to_scene_cfg", make_scene)
+    source = end_down.copy()
+    source[:3, 3] = [0.1, 0.2, 0.08]
+    scene = build_trial_scene_from_session(
+        mode=mode, shared_root=tmp_path, calibration=session,
+        key_pose_world=source)
+    assert scene["mesh"]["target"]["pose"] is not None
+    np.testing.assert_allclose(seen[0][:3, 2], [0, 0, -1])
+    assert "fixture_socket" in scene["mesh"]

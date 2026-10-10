@@ -283,6 +283,12 @@ python scripts/precision_insertion/validate_assets.py --require-runtime
 
 Run from the repository root after activating `autodex_bodex`:
 
+`BODex/generate.py` does not expose `--grasp_threshold` or
+`--distance_threshold` CLI options. Its native solver defaults are 0.001
+for maximum grasp error and 0.01 m for mean absolute contact-distance error;
+the separate project-level 0.2/10 mm quality screen must not be described as
+the native BODex success gate.
+
 ```bash
 python src/grasp_generation/BODex/generate.py \
   -c sim_inspire/precision_insertion.yml -w 1 \
@@ -290,7 +296,6 @@ python src/grasp_generation/BODex/generate.py \
   --obj_root_dir ~/shared_data/object_processing \
   --scene_filter_file assets/precision_insertion/bodex_baseline_scene_filter.json \
   --exp_name precision_insertion_v4_per_key_proxy --seed_num 1000 \
-  --grasp_threshold 0.2 --distance_threshold 0.01 \
   -o ~/shared_data/AutoDex/bodex_raw/inspire/precision_insertion_v4_per_key_proxy
 ```
 
@@ -450,7 +455,6 @@ poses inherited from the full key. Generate proposals for every scene with:
   --obj_root_dir ~/shared_data/object_processing \
   --scene_filter_file assets/precision_insertion/bodex_tabletop_all_scene_filter.json \
   --exp_name precision_insertion_tabletop_v1 --seed_num 1000 \
-  --grasp_threshold 0.2 --distance_threshold 0.01 \
   -o ~/shared_data/AutoDex/bodex_raw/inspire/precision_insertion_tabletop_v1
 ```
 

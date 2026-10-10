@@ -61,7 +61,7 @@ def _arguments(tmp_path, *, family="square"):
         "intrinsics_full": {"cam_a": {}, "cam_b": {}},
         "extrinsics_full": {"cam_a": np.eye(4), "cam_b": np.eye(4)},
         "c2r": c2r,
-        "base_scene": {"mesh": {"target": {"file_path": "key.obj"}}},
+        "base_scene": {"mesh": {}, "cuboid": {}},
         "socket_collision_mesh": mesh,
         "max_capture_skew_s": 0.020,
         "max_socket_translation_mm": 1.0,
@@ -92,8 +92,11 @@ def test_calibration_freezes_robot_pose_and_adds_socket_without_mutation(
     assert result.socket_pose_robot[0, 3] == pytest.approx(0.1002, abs=0.0002)
     assert result.socket_diagnostics["accepted"] is True
     assert "fixture_socket" not in args["base_scene"]["mesh"]
+    assert "table" not in args["base_scene"]["cuboid"]
     assert result.collision_scene["mesh"]["fixture_socket"]["file_path"] == str(
         args["socket_collision_mesh"])
+    table = result.collision_scene["cuboid"]["table"]
+    assert table["pose"][2] + table["dims"][2] / 2 == pytest.approx(0.0)
     assert result.record["socket_pose_robot"] == result.socket_pose_robot.tolist()
     assert len(result.record["socket_observations"]) == 4
     assert len(result.record["socket_collision_mesh_sha256"]) == 64
@@ -115,6 +118,16 @@ def test_bad_board_or_limits_stop_before_measurement(
     args = _arguments(tmp_path)
     args.update(change)
     with pytest.raises(ValueError, match=error):
+        calibrate_session(**args)
+    assert not board_measurement
+
+
+def test_fixed_session_world_rejects_stale_key_target_before_board_measurement(
+    tmp_path, board_measurement,
+):
+    args = _arguments(tmp_path)
+    args["base_scene"]["mesh"]["target"] = {"file_path": "old_key.obj"}
+    with pytest.raises(ValueError, match="must not contain a key target"):
         calibrate_session(**args)
     assert not board_measurement
 

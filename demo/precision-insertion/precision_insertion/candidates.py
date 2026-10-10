@@ -299,6 +299,7 @@ def select_pose_candidates(
             "task_geometry": paths.task_geometry,
             "robot_urdf": paths.robot_urdf,
             "wrist_se3": candidate / "wrist_se3.npy",
+            "pregrasp_pose": candidate / "pregrasp_pose.npy",
             "grasp_pose": candidate / "grasp_pose.npy",
         }
         for name, saved_hash in report["input_sha256"].items():

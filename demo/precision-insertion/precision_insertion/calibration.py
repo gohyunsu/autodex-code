@@ -10,6 +10,7 @@ captures images nor connects to, commands, or authorizes the robot.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import copy
 import hashlib
 import json
 import math
@@ -161,6 +162,14 @@ def calibrate_session(
     mesh = Path(socket_collision_mesh).expanduser().resolve()
     if not mesh.is_file():
         raise FileNotFoundError(f"exact socket collision mesh not found: {mesh}")
+    if not isinstance(base_scene, dict):
+        raise TypeError("base_scene must be a scene dictionary")
+    if not isinstance(base_scene.get("mesh", {}), dict):
+        raise TypeError("base_scene mesh must be a dictionary")
+    if not isinstance(base_scene.get("cuboid", {}), dict):
+        raise TypeError("base_scene cuboid must be a dictionary")
+    if "target" in base_scene.get("mesh", {}):
+        raise ValueError("session fixed collision world must not contain a key target")
     axis = None
     if mode.family == "cylinder":
         symmetry = load_axial_symmetry(Path(object_root), mode.socket_object)
@@ -173,9 +182,12 @@ def calibrate_session(
     # This is intentionally called only after temporal and asset validation:
     # measuring an empty board is the first geometric operation in a session.
     from src.execution.charuco_tabletop import measure_tabletop_from_images
+    from autodex.utils.tabletop_geometry import table_cuboid
 
     board = measure_tabletop_from_images(
         board_images_bgr, intrinsics_full, extrinsics_full, c2r_matrix)
+    measured_base_scene = copy.deepcopy(base_scene)
+    measured_base_scene.setdefault("cuboid", {})["table"] = table_cuboid(board)
     observations_robot: list[np.ndarray] = []
     source_rows: list[dict] = []
     for capture_id, observations in ordered_groups:
@@ -199,7 +211,7 @@ def calibrate_session(
         angle_limit_deg=angle_limit,
         continuous_axis_local=axis,
     )
-    scene = add_fixed_mesh_fixtures(base_scene, {
+    scene = add_fixed_mesh_fixtures(measured_base_scene, {
         "fixture_socket": {
             "pose_robot": selected,
             "collision_mesh": mesh,

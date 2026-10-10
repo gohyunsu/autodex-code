@@ -87,6 +87,7 @@ def _candidate_fixture(tmp_path, mode=None):
         files = {
             **input_paths,
             "wrist_se3": candidate_dir / "wrist_se3.npy",
+            "pregrasp_pose": candidate_dir / "pregrasp_pose.npy",
             "grasp_pose": candidate_dir / "grasp_pose.npy",
         }
         return {
@@ -217,6 +218,7 @@ def test_cylinder_grasps_shared_but_socket_catalogs_are_not_interchangeable(
             "task_geometry": paths.task_geometry,
             "robot_urdf": paths.robot_urdf,
             "wrist_se3": candidate_dir / "wrist_se3.npy",
+            "pregrasp_pose": candidate_dir / "pregrasp_pose.npy",
             "grasp_pose": candidate_dir / "grasp_pose.npy",
         }
         return {
