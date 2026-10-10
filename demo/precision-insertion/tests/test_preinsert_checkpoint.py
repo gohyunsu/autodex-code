@@ -67,18 +67,20 @@ class _Renderer:
 
 
 class _VLM:
-    def __init__(self, category="coarse_match"):
+    def __init__(self, category="coarse_match", *, fenced=False):
         self.category = category
+        self.fenced = fenced
 
     def infer(self, images, prompt):
         camera = "cam_a" if "Use only camera ID cam_a" in prompt else "cam_b"
-        return json.dumps({
+        answer = json.dumps({
             "class": self.category,
             "evidence_views": ([] if self.category == "unobservable"
                                else [camera]),
             "evidence": ("key is visible by hand" if self.category !=
                          "unobservable" else "hidden"),
         })
+        return "```json\n" + answer + "\n```" if self.fenced else answer
 
 
 def _setup(tmp_path):
@@ -199,6 +201,24 @@ def test_measured_preinsert_arrival_needs_multiview_visible_key(tmp_path):
         verify_preinsert_checkpoint(saved)
     assert assess_preinsert_checkpoint(
         **{**args, "backend": _VLM("unobservable")}).preinsert_reached is None
+
+
+def test_preinsert_replays_local_fenced_answer_and_rejects_changed_label(
+        tmp_path):
+    args = _setup(tmp_path)
+    report = assess_preinsert_checkpoint(
+        **{**args, "backend": _VLM(fenced=True)})
+    saved = write_preinsert_checkpoint(report, tmp_path / "fenced_arrival")
+    assert verify_preinsert_checkpoint(saved)["preinsert_reached"] is True
+    altered = json.loads(saved.read_text(encoding="utf-8"))
+    altered["visual"]["per_view"][0]["parsed"]["class"] = "slip_or_miss"
+    altered["visual"]["status"] = "unknown"
+    altered["visual"]["supporting_cameras"] = []
+    altered["preinsert_reached"] = None
+    altered["reason"] = "preinsert_evidence_incomplete_or_occluded"
+    saved.write_text(json.dumps(altered), encoding="utf-8")
+    with pytest.raises(ValueError, match="differs from replay"):
+        verify_preinsert_checkpoint(saved)
 
 
 def test_preinsert_vlm_or_measured_pose_can_veto_arrival(tmp_path):

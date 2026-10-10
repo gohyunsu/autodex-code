@@ -5,11 +5,13 @@ The independent demo can select `mode="local"` with
 `probe_vlm.py --backend local` runs lift or insertion-visual classification
 on saved image pairs only. No stock AutoDex execution files were changed.
 
-The saved lift and insertion checkpoint verifiers now replay the same strict
-JSON parser used at inference. A complete Markdown JSON fence from Qwen is
-accepted at both stages; partial JSON or extra prose is still rejected, and
-the exact raw answer remains in the evidence record. This fixes a case where
-local inference parsed successfully but checkpoint verification rejected it.
+The saved lift, pre-insertion and insertion checkpoint verifiers now replay
+the strict JSON parser used at inference. A complete Markdown JSON fence
+from Qwen is accepted at all three stages; partial JSON or extra prose is
+still rejected, and the exact raw answer remains in the evidence record.
+This fixes a case where local inference parsed successfully but checkpoint
+verification rejected it, and closes a pre-insertion parsed-label tampering
+gap. It does not certify the model's visual accuracy.
 
 ## Environment and smoke test
 

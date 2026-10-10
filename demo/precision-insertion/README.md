@@ -373,7 +373,10 @@ that session and catalogue. For each new key observation:
    `prepare_observed_preinsert_label` on a fresh raw camera bundle, measured
    stationary joints and external transfer log. `preinsert_reached=True`
    requires its saved positive multi-view checkpoint, the exact unchanged
-   post-lift plan, and bound trajectory/key/socket/grip evidence. For the
+   post-lift plan, and bound trajectory/key/socket/grip evidence. The saved
+   pre-insertion verifier replays each exact VLM raw answer against its prompt,
+   parsed label and image order; a changed JSON label cannot create arrival.
+   For the
    20 mm outcome,
    collect a later raw full-frame multi-camera capture even if FoundPose fails,
    save it with `write_final_insertion_capture`, and call

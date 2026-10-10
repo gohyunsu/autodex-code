@@ -17,6 +17,7 @@ from typing import Callable
 
 import cv2
 import numpy as np
+from PIL import Image
 
 from .assets import AssetPaths
 from .bounded_postlift import (
@@ -31,7 +32,10 @@ from .held_scene_overlay import (
     build_held_scene_prediction,
 )
 from .live_robot_state import LiveRobotState
-from .observer import ImageVLM, PreinsertVisualAssessment, observe_preinsert_hold_views
+from .observer import (
+    HeldSceneView, ImageVLM, PreinsertVisualAssessment,
+    observe_preinsert_hold_views,
+)
 from .postlift_preflight import PostLiftPreflight
 from .raw_camera_capture import verify_raw_camera_capture
 from .records import AttemptRecord
@@ -148,6 +152,48 @@ def _verify_visual_record(visual: dict, views: dict) -> None:
     if (visual.get("status") != status or
             visual.get("supporting_cameras") != supporting):
         raise ValueError("preinsert visual consensus differs from per-view responses")
+
+
+class _RecordedPreinsertAnswers:
+    """Replay saved text through the inference parser without a model call."""
+
+    def __init__(self, rows: list[dict]):
+        self.model = rows[0].get("backend_model")
+        self._answers = [row.get("raw_answer") for row in rows]
+
+    def infer(self, _images, _prompt):
+        return self._answers.pop(0)
+
+
+def _verify_visual_replay(
+    visual: dict, paired_pixels: list[HeldSceneView],
+) -> None:
+    """Bind parsed labels, prompts and consensus to exact saved VLM text."""
+    recorded = visual.get("per_view")
+    if (not isinstance(recorded, list) or
+            len(recorded) != len(paired_pixels) or
+            any(not isinstance(row, dict) or
+                not isinstance(row.get("raw_answer"), str) or
+                not isinstance(row.get("backend_model"), str) or
+                not row["backend_model"].strip() or
+                type(row.get("latency_s")) not in (float, int) or
+                not math.isfinite(row["latency_s"]) or
+                row["latency_s"] < 0 for row in recorded)):
+        raise ValueError("preinsert VLM saved answer is invalid")
+    stamps = [view.timestamp_s for view in paired_pixels]
+    # This replay bound merely admits the *same* already verified captures;
+    # it is not a new assertion about commissioned camera synchronization.
+    replay_skew_s = max(max(stamps) - min(stamps) + 1e-6, 1e-6)
+    try:
+        replay = observe_preinsert_hold_views(
+            _RecordedPreinsertAnswers(recorded), paired_pixels,
+            max_capture_skew_s=replay_skew_s).to_record()
+    except (TypeError, ValueError, IndexError) as exc:
+        raise ValueError("preinsert VLM saved answer cannot be replayed") from exc
+    for old, new in zip(recorded, replay["per_view"]):
+        new["latency_s"] = old["latency_s"]
+    if visual != replay:
+        raise ValueError("preinsert VLM text, prompt or parsed answer differs from replay")
 
 
 @dataclass(frozen=True)
@@ -447,7 +493,9 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
     if (set(views) != set(capture["frame_evidence"]) or
             set(png_hashes) != set(views) or len(views) < 2):
         raise ValueError("preinsert overlay camera set changed")
-    for serial, hashes in views.items():
+    paired_pixels = []
+    for serial in sorted(views):
+        hashes = views[serial]
         source_image = cv2.imread(str(raw / "images" / f"{serial}.png"),
                                   cv2.IMREAD_COLOR)
         overlay_path = path.parent / "overlays" / f"{serial}.png"
@@ -459,7 +507,12 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
                 hashes["timestamp_s"] !=
                 capture["frame_evidence"][serial]["timestamp_s"]):
             raise ValueError("preinsert VLM pixel evidence changed")
+        paired_pixels.append(HeldSceneView(
+            serial, hashes["timestamp_s"],
+            Image.fromarray(cv2.cvtColor(source_image, cv2.COLOR_BGR2RGB)),
+            Image.fromarray(cv2.cvtColor(overlay_image, cv2.COLOR_BGR2RGB))))
     _verify_visual_record(report["visual"], views)
+    _verify_visual_replay(report["visual"], paired_pixels)
     expected_label, expected_reason = _arrival_label(
         measurement=report["transfer_measurement"],
         position_error=report["hand_translation_error_m"],
