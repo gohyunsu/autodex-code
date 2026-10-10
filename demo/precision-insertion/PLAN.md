@@ -465,7 +465,7 @@ demo/precision-insertion/
     calibration.py                # read-only ChArUco/socket measurement and freeze; live capture adapter pending
     symmetry.py                   # local square/cylinder pose handling
     world.py                      # fixed fixture and attached-key worlds
-    candidates.py                 # pose-conditioned scenario selection
+    candidates.py                 # v8 pose-indexed endpoint catalog and selection; live planning pending
     planner.py                    # full-chain preflight and XY replanning
     execution.py                  # Franka/Inspire and guarded stroke adapter
     xy_voting.py                  # read-only multi-view XY ID consensus
@@ -497,8 +497,15 @@ directories checked for the 1.5 mm square key, unified socket, cylindrical
 key, and 20 mm-gap cylindrical socket contain `GENERATION_REQUIRED.json`,
 not `object_repre/v1/<object>/1/repre.pth`. The cylindrical Inspire v8
 candidate directory likewise contains only a generation marker. The square
-1.5 mm v8 directory has at least one grasp-simulation candidate, but that is
-not full-task evidence. No precision-key native-v8 reset candidate directory
+1.5 mm v8 directory contains one grasp-simulation candidate. A complete scan
+of each of the four square-gap finite local pools finds zero 20 mm
+endpoint-eligible grasps: their sole `table/0/78` candidate has
+grasp-simulation evidence, but three Inspire visual links intersect the
+socket. The cylinder 20 mm-gap v8 pool has no grasp files and cannot be
+called a complete screen. Two further stable staging grasps (`v3/84`,
+`v4/85`) also fail the square 1.5 mm endpoint and are not runtime candidates.
+This is not proof that a new BODex grasp cannot succeed.
+No precision-key native-v8 reset candidate directory
 was found under the expected Inspire `reset_{0,4,8,12}` roots. These are
 local-file observations, not a claim about a different AutoDex host or NAS
 mount. A startup validator must report each missing exact path before any

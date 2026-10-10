@@ -35,6 +35,25 @@ def main(argv: list[str] | None = None) -> int:
         "--output", type=Path,
         help="optional JSON report path; refuses to overwrite an existing file",
     )
+    catalog = command.add_parser(
+        "screen-catalog", help="screen all current pose-indexed v8 grasp endpoints",
+    )
+    catalog.add_argument("--shared-root", type=Path, required=True)
+    catalog.add_argument("--mode", choices=("square", "cylinder"), required=True)
+    catalog.add_argument("--gap-mm", type=float, required=True)
+    catalog.add_argument("--min-hand-clearance-mm", type=float, required=True)
+    catalog.add_argument("--max-candidates", type=int,
+                         help="pilot prefix only; output will be marked incomplete")
+    catalog.add_argument("--output", type=Path, required=True,
+                         help="new JSON path outside candidate geometry; no overwrite")
+    select = command.add_parser(
+        "select-catalog", help="read-only pose-conditioned offline candidate list",
+    )
+    select.add_argument("--catalog", type=Path, required=True)
+    select.add_argument("--pose-stem", required=True)
+    select.add_argument("--attempted", action="append", default=[],
+                        metavar="TYPE/SID/GID")
+    select.add_argument("--covered-scene", type=int, action="append", default=[])
     args = parser.parse_args(argv)
 
     if args.command == "audit":
@@ -65,6 +84,46 @@ def main(argv: list[str] | None = None) -> int:
                 stream.write(payload)
         print(payload, end="")
         return 0 if report["endpoint_pass"] else 2
+    if args.command == "screen-catalog":
+        from precision_insertion.candidates import build_endpoint_catalog
+
+        try:
+            mode = select_mode(args.mode, args.gap_mm)
+            report = build_endpoint_catalog(
+                shared_root=args.shared_root, mode=mode,
+                minimum_hand_clearance_m=args.min_hand_clearance_mm / 1000.0,
+                max_candidates=args.max_candidates,
+            )
+        except (FileNotFoundError, KeyError, ValueError) as exc:
+            parser.error(str(exc))
+        target = args.output.expanduser().resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("x", encoding="utf-8") as stream:
+            json.dump(report, stream, indent=2)
+            stream.write("\n")
+        print(json.dumps({
+            "catalog": str(target),
+            "complete_scan": report["complete_scan"],
+            "screened_directories": report["screened_directories"],
+            "eligible_count": report["eligible_count"],
+            "errors": report["errors"],
+            "robot_ready": False,
+        }, indent=2))
+        return 0 if report["complete_scan"] else 2
+    if args.command == "select-catalog":
+        from precision_insertion.candidates import select_pose_candidates
+
+        try:
+            report = json.loads(args.catalog.read_text(encoding="utf-8"))
+            attempted = [tuple(value.split("/")) for value in args.attempted]
+            result = select_pose_candidates(
+                report, tabletop_pose_stem=args.pose_stem,
+                attempted=attempted, covered_scenes=args.covered_scene,
+            )
+        except (FileNotFoundError, KeyError, ValueError, TypeError) as exc:
+            parser.error(str(exc))
+        print(json.dumps(result, indent=2))
+        return 0 if result["status"] == "candidates_available" else 2
     raise AssertionError(f"unhandled command: {args.command}")
 
 

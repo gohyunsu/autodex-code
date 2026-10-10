@@ -59,6 +59,15 @@ The first independent helpers are in `precision_insertion/`:
   minimum surface distance, excludes the Franka arm and all trajectories,
   and records source hashes. This is grasp-level **endpoint** evidence only;
   simulated grasp stability is still a separate v8/MuJoCo gate.
+- `candidates.py` scans the selected shared root's Inspire v8 candidate tree,
+  reads matching scene `meta.pose_idx` and tabletop assets, requires full-key
+  simulation evidence, and applies `endpoint.py` to surviving grasps. The
+  catalogue distinguishes a complete finite scan from missing or truncated
+  input. Per-trial selection matches the observed tabletop pose, excludes
+  session-attempted grasps, optionally ranks by v8 coverage, and rejects
+  changed source files. AutoDex's `load_candidate` is reused with an explicit
+  root and whitelist to form a planner `candidate_override`; this does not
+  extend AutoDex's lift-only planner to transfer or insertion.
 - `outcome.py` defines a VLM-led, sensor-vetoed tri-state task label. A
   multi-view `normal_appearance` assessment is required for `true`, together with
   independently cross-checked **key** depth, commissioned alignment limits,
@@ -145,6 +154,39 @@ existing path is not overwritten). The current v8 candidate `table/0/78`
 fails: its key fits the square socket nominally with about 1.5 mm CAD gap,
 but three Inspire visual links intersect the socket. This screen does not
 validate the path to that endpoint, contact dynamics, or hardware readiness.
+
+Screen the **whole currently installed v8 pool** into a new, separate
+catalogue (the example clearance remains uncommissioned):
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/run_pipeline.py screen-catalog \
+  --shared-root /home/hyunsu/shared_data --mode square --gap-mm 1.5 \
+  --min-hand-clearance-mm 0.2 \
+  --output /home/hyunsu/shared_data/AutoDex/precision_insertion/endpoint_catalogs/square_1p5mm_20261010.json
+
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/run_pipeline.py select-catalog \
+  --catalog /home/hyunsu/shared_data/AutoDex/precision_insertion/endpoint_catalogs/square_1p5mm_20261010.json \
+  --pose-stem 000
+```
+
+`screen-catalog` writes exclusively; a rerun needs a new output name.
+`--max-candidates N` is a pilot scan and always marked incomplete. The local
+1.5 mm scan currently finds one candidate, `table/0/78`: MuJoCo grasp evidence
+passes and nominal key/socket CAD fit has about 1.5 mm gap, but the Inspire
+base, index, and middle links intersect the socket at 20 mm. Thus **0 of this
+finite 1-candidate pool** are endpoint eligible; this does not prove other
+grasps or tabletop poses impossible. `select-catalog` exits 2 for no eligible
+grasp or an incomplete/stale catalogue. It does not execute reorientation.
+The example catalogue is in local `shared_data`, **not** the read-only
+`/mnt/paradex2` NAS mount.
+The same scan across all four square gaps yields one `table/0/78` per gap
+and zero endpoint-eligible grasps, with the same three Inspire-link
+intersections. The cylinder 20 mm-gap catalogue is incomplete because its
+runtime v8 grasp directory has no candidate files. A compact index of all
+five local reports and two staging-grasp checks is at
+`~/shared_data/AutoDex/precision_insertion/endpoint_catalogs/README.md`.
 
 Run the current offline tests from the repository root:
 
