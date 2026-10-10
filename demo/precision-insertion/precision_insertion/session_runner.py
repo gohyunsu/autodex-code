@@ -19,6 +19,7 @@ from typing import Mapping
 
 import numpy as np
 
+from .assets import AssetPaths
 from .calibration import SessionCalibration
 from .candidates import select_pose_candidates, validate_catalog_session
 from .config import TaskMode
@@ -26,6 +27,7 @@ from .key_perception import (
     KeyPoseObservation, verify_key_capture_artifacts,
 )
 from .geometry import validate_se3
+from .endpoint import _load_mesh
 from .live_robot_state import LiveRobotState
 from .path_audit import PathAuditLimits
 from .pose_selection import classify_key_tabletop_pose
@@ -732,6 +734,8 @@ class SessionRunner:
     ) -> AttemptRecord:
         if stage == "reorient_success":
             raise ValueError("use observe_repose_landing for the target-pose label")
+        if stage == "reset_success" and status is True:
+            raise ValueError("use observe_reset_landing for verified reset success")
         if self._attempt is not None and self._attempt.candidate_id is None:
             raise ValueError("repose and insertion attempt labels must stay separate")
         if stage == "preinsert_reached" and status is True:
@@ -755,6 +759,132 @@ class SessionRunner:
         return self._record(lambda row: row.record_stage(
             stage, status, timestamp_s=timestamp_s,
             evidence_refs=evidence_refs))
+
+    def observe_reset_landing(
+        self, *, key_observation: KeyPoseObservation,
+        key_evidence_dir: Path, recovery_log_path: Path,
+        timestamp_s: float, max_pose_error_deg: float,
+        max_return_center_shift_m: float, support_tolerance_m: float,
+        minimum_rest_socket_clearance_m: float,
+        minimum_board_edge_clearance_m: float,
+    ) -> AttemptRecord:
+        """Verify a supervised return from a new supported tabletop key pose.
+
+        This does not extract the key or execute reset motion. In particular,
+        a successful insertion still needs an externally logged supervised
+        extraction before this method can make another trial eligible.
+        """
+        if (self._attempt is None or self._attempt.candidate_id is None or
+                self._attempt_dir is None or self._preflight is None or
+                not self._attempt.events or
+                any(event["stage"] == "reset_success"
+                    for event in self._attempt.events) or
+                not isinstance(key_observation, KeyPoseObservation) or
+                key_observation.phase != "tabletop"):
+            raise ValueError("no insertion attempt awaits a tabletop reset check")
+        maximum_shift = float(max_return_center_shift_m)
+        if not math.isfinite(maximum_shift) or maximum_shift <= 0:
+            raise ValueError("return center-shift limit must be positive")
+        recovery_file = Path(recovery_log_path).expanduser().resolve()
+        recovery_bytes = recovery_file.read_bytes()
+        recovery = json.loads(recovery_bytes)
+        if not isinstance(recovery, dict):
+            raise ValueError("supervised recovery log must be a JSON object")
+        try:
+            completed = float(recovery.get("completed_at_s", float("nan")))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("invalid supervised recovery completion time") from exc
+        if (recovery.get("schema") !=
+                "precision_insertion_supervised_reset_v1" or
+                recovery.get("attempt_id") != self._attempt.attempt_id or
+                recovery.get("method") != "supervised_manual_return" or
+                not isinstance(recovery.get("reviewed_by"), str) or
+                not recovery["reviewed_by"].strip() or
+                recovery.get("socket_clear") is not True or
+                recovery.get("hand_open") is not True or
+                not math.isfinite(completed) or
+                completed <= self._attempt.events[-1]["timestamp_s"] or
+                (self._attempt.labels["insertion_success"] is not None and
+                 recovery.get("key_removed_from_socket") is not True)):
+            raise ValueError("reset needs a later supervised recovery log")
+        observation_time = float(timestamp_s)
+        if (not math.isfinite(observation_time) or
+                key_observation.capture_id == self._capture_id or
+                key_observation.acquisition_interval_s[0] <= completed or
+                key_observation.acquisition_interval_s[0] <=
+                self._attempt.events[-1]["timestamp_s"] or
+                observation_time < key_observation.acquisition_interval_s[1]):
+            raise ValueError("reset landing needs fresh frames after recovery")
+        evidence_dir = Path(key_evidence_dir).expanduser().resolve()
+        manifest = verify_key_capture_artifacts(evidence_dir)
+        saved = json.loads((evidence_dir / "key_observation.json")
+                           .read_text(encoding="utf-8"))
+        if (saved != key_observation.to_record() or
+                manifest["capture_id"] != key_observation.capture_id or
+                manifest["request_id"] != key_observation.request_id):
+            raise ValueError("reset landing differs from saved key frames")
+        if (_digest(self.calibration.record) != self.session_sha256 or
+                _digest(self.catalog) != self.catalog_sha256):
+            raise ValueError("frozen session or endpoint catalogue changed")
+        c2r = validate_se3(self.calibration.record.get("c2r"),
+                           name="session C2R")
+        original = validate_se3(
+            np.linalg.inv(c2r) @ self._preflight.key_pose_world,
+            name="trial-start T_robot_key")
+        landed = validate_se3(
+            np.linalg.inv(c2r) @ key_observation.pose_world,
+            name="reset-landed T_robot_key")
+        classification = classify_key_tabletop_pose(
+            mode=self.mode, shared_root=self.shared_root,
+            pose_robot_key=landed,
+            max_rotation_error_deg=max_pose_error_deg)
+        support = validate_repose_rest_target(
+            shared_root=self.shared_root, mode=self.mode,
+            calibration=self.calibration, T_robot_key_rest=landed,
+            support_tolerance_m=support_tolerance_m,
+            minimum_rest_socket_clearance_m=(
+                minimum_rest_socket_clearance_m),
+            minimum_board_edge_clearance_m=minimum_board_edge_clearance_m)
+        mesh = _load_mesh(AssetPaths(self.shared_root, self.mode).raw_mesh(
+            self.mode.key_object))
+        center_local = np.asarray(mesh.bounds, dtype=np.float64).mean(axis=0)
+        if center_local.shape != (3,) or not np.all(np.isfinite(center_local)):
+            raise ValueError("key CAD has no finite physical center")
+        original_xy = (original[:3, :3] @ center_local + original[:3, 3])[:2]
+        landed_xy = (landed[:3, :3] @ center_local + landed[:3, 3])[:2]
+        shift = float(np.linalg.norm(landed_xy - original_xy))
+        success = (classification["stem"] ==
+                   self._preflight.pose_class["stem"] and
+                   shift <= maximum_shift)
+        report_path = self._attempt_dir / "reset_landing.json"
+        self._write_exclusive(report_path, {
+            "schema": "precision_insertion_reset_landing_v1",
+            "attempt_id": self._attempt.attempt_id,
+            "key_capture_id": key_observation.capture_id,
+            "key_evidence_dir": str(evidence_dir),
+            "key_evidence_manifest_sha256": hashlib.sha256(
+                (evidence_dir / "evidence_manifest.json").read_bytes()).hexdigest(),
+            "recovery_log": str(recovery_file),
+            "recovery_log_sha256": hashlib.sha256(
+                recovery_bytes).hexdigest(),
+            "target_pose_stem": self._preflight.pose_class["stem"],
+            "observed_pose_class": classification,
+            "observed_support": support,
+            "center_xy_displacement_m": shift,
+            "maximum_center_xy_displacement_m": maximum_shift,
+            "reset_success": success,
+            "session_calibration_sha256": self.session_sha256,
+            "catalog_sha256": self.catalog_sha256,
+            "scope": "observed_tabletop_return_after_supervised_recovery_not_automatic_extraction",
+            "robot_ready": False,
+        })
+        return self._record(lambda row: row.record_stage(
+            "reset_success", success, timestamp_s=timestamp_s,
+            evidence_refs={
+                "key_pose": str(evidence_dir / "key_observation.json"),
+                "reset_assessment": str(report_path),
+                "recovery_log": str(recovery_file),
+            }))
 
     def observe_repose_landing(
         self, *, key_observation: KeyPoseObservation,

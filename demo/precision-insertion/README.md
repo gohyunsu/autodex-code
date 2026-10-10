@@ -72,7 +72,15 @@ that session and catalogue. For each new key observation:
    task outcome. A missed grasp excludes that candidate on the next *fresh*
    key observation. Planning-only rejects are skipped only when continuing
    the same budget-limited camera capture; a new pose/state may make them
-   viable.
+   viable. Do not call `observe_stage("reset_success", True, ...)` with a
+   path string: it is rejected. For a supervised manual return, save a
+   recovery log and a **new** admitted tabletop key capture, then call
+   `observe_reset_landing`. It checks same tabletop class, a commissioned
+   maximum XY center shift from the trial-start pose, measured table support,
+   board footprint and socket clearance before recording success or failure.
+   After a successful insertion the log must explicitly state that the key
+   was removed from the socket. This is observed/manual recovery, not an
+   automatic extraction or reset motion.
 4. After an observed insertion failure and an externally logged guarded
    withdrawal, call `prepare_observed_xy_retry` with a **held-preinsert** key
    capture, the exact same full-frame VLM images, measured Franka/Inspire
@@ -99,6 +107,15 @@ that session and catalogue. For each new key observation:
    `reorient_success`. A wrong class is failure; missing/ambiguous support
    evidence keeps the outcome unknown for review. No result is inferred from
    the reset plan alone.
+
+A supervised reset log is JSON with schema
+`precision_insertion_supervised_reset_v1`, the exact `attempt_id`,
+`method: "supervised_manual_return"`, a nonempty `reviewed_by`, a
+`completed_at_s` later than the attempt's last event, and boolean
+`socket_clear`/`hand_open` values of `true`. If insertion was attempted,
+`key_removed_from_socket` must also be `true`. These are operator assertions,
+not sensor proof; `observe_reset_landing` independently checks the returned
+key's fresh multi-view pose and fixed-socket/table geometry.
 
 The supervisor writes a new `session_run.json`, immutable copies of the
 frozen calibration and endpoint catalogue, numbered

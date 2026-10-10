@@ -386,7 +386,7 @@ Store each milestone independently as `true`, `false`, or `null` (unjudgeable):
 | `insertion_success` | Fused task verdict: multi-view VLM classifies normal/partial/jammed/unknown insertion using before/after frames and CAD overlays; independently supported key-relative-to-socket depth reaches at least 20 mm with acceptable alignment and no safety abort. Contradictory or occluded evidence is `null`, not a VLM-only success. |
 | `release_success` | Optional: after 20 mm verification, the hand opens without dislodging the supported key; observed independently. |
 | `retreat_success` | Optional: the empty hand exits along the socket axis and reaches a collision-free clear pose. |
-| `reset_success` | A safe verified return or controlled recovery makes the next trial possible. |
+| `reset_success` | A supervised recovery log plus a newer multi-view tabletop pose confirms the same pose class, bounded XY return displacement, measured table support, board footprint and socket clearance. It is not an automatic extraction claim. |
 | `reorient_success` | A fresh tabletop estimate confirms the requested new pose after a validated transition. |
 
 Do not collapse these fields to one `success`. Persist the phase reached,
@@ -550,6 +550,14 @@ need different plans and labels.
   validated extraction exists**. Extraction is lower priority; initially end
   the session or use an explicitly supervised manual reset. A "reset every
   trial" guarantee cannot be claimed without this step.
+- `SessionRunner.observe_reset_landing` is the evidence-only manual-reset
+  path. It requires a later operator-reviewed recovery record and an admitted
+  new key capture; the direct `reset_success=True` stage setter is rejected.
+  After any insertion attempt the recovery record must assert the key was
+  removed from the socket. A wrong tabletop class or excessive center shift
+  records reset failure; ambiguous support/footprint/socket evidence leaves
+  the outcome unlabelled for review. A fresh key capture is still required
+  before the next physical grasp.
 - If no candidate passes for the current tabletop pose, choose a target pose
   that has an insertion-ready scenario and a validated directed `i -> j`
   transition. Generate the matching v8 pair scene and reset grasp seeds,
