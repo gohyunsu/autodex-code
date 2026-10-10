@@ -187,11 +187,18 @@ The first independent helpers are in `precision_insertion/`:
 - `key_perception.admit_key_capture()` reuses the existing AutoDex per-view
   SAM/FoundPose quality gate, rejects disagreeing multi-view key poses, and
   calls unchanged `InitOrchestrator.refine_from_payloads` in IoU/silhouette
-  mode. For the D∞ cylinder, it compares physical centers and unoriented
-  axes; the square key retains full orientation. It returns the selected
+  mode. It checks the current camera matrices against the **frozen session
+  camera snapshot**, projects the session-frozen exact socket collision mesh
+  into each view, and excludes a view when its proposed key mask covers too
+  much of that projected socket. The overlap fraction and pixel dilation
+  are explicit commissioning limits. For the D∞ cylinder, it compares
+  physical centers and unoriented axes; the square key retains full
+  orientation. It returns the selected
   key pose and the uncertainty-expanded interval of **all** accepted camera
   frames. This is not proof that a plausible segmentation chose the right
-  object or that hand-eye calibration is sub-millimetre accurate.
+  object or that hand-eye calibration is sub-millimetre accurate. The socket
+  projection is a conservative convex hull: a genuine key close to/behind
+  the socket may be rejected, so this is a veto, not a key segmentor.
   `write_key_capture_artifacts(capture, observation, new_dir)` stores the
   same-request images, masks, poses, frame provenance and selected pose in
   an exclusive per-trial evidence bundle;

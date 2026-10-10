@@ -98,9 +98,13 @@ record also keeps the earliest/latest bounds across **all** admitted views.
 `plan_admitted_key_trial()` requires the robot-state timestamp to be close to
 both ends of that interval before invoking the existing candidate/preflight
 logic. Save the raw per-trial bundle with `write_key_capture_artifacts()`.
-This does not by itself prove that SAM segmented the loose key rather than
-the fixed socket; key-specific prompts, fixture exclusion/ROI checks and
-human-reviewed bring-up examples remain necessary.
+The key gate compares current intrinsics/extrinsics to the session's saved
+camera snapshot, then projects the frozen socket mesh into each view and
+rejects a key mask with excessive socket-hull overlap. This is a conservative
+veto, not a pixel-accurate segmentation proof: a key behind/adjacent to the
+socket may be rejected, and a calibration error can shift the projected ROI.
+Set its overlap/dilation limits from annotated AutoDex-rig images, retain
+key-specific prompts, and review bring-up examples before robot use.
 
 This contract catches accidental cross-frame mixing; it is not a signature
 or an independent certification of the producer. A physical bring-up still

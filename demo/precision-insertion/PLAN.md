@@ -283,9 +283,12 @@ does not prove cross-camera synchronization.
    provides `collect_key_capture()` and `admit_key_capture()` for bound
    same-request frames, per-view quality and symmetry-aware agreement, then
    `plan_admitted_key_trial()` for whole-capture/robot-state alignment. These
-   remain offline contracts until the capture-PC frame producer is deployed;
-   a mask that consistently selects the fixed socket still needs an explicit
-   fixture-exclusion/ROI check during commissioning.
+   remain offline contracts until the capture-PC frame producer is deployed.
+   The demo now stores the session camera matrices and projects the frozen
+   socket collision mesh to veto key masks covering the fixed socket. This
+   conservative convex-hull ROI must be commissioned for camera accuracy and
+   can reject a legitimate key occluded by the socket; it is not a semantic
+   guarantee that SAM picked the key.
 5. `SELECT_AND_PREFLIGHT`: select only grasp-level endpoint-eligible
    candidates matching the observed pose and geometry. From the *live* robot,
    key and frozen socket poses, plan collision-checked pickup/lift and
@@ -600,6 +603,7 @@ demo/precision-insertion/
     live_capture.py               # board/socket/key adapters; bound frame metadata still required
     frame_provenance.py           # request/frame/pixel/acquisition-time contract
     key_perception.py             # fresh key per-view quality, consensus, AutoDex IoU refinement
+    socket_exclusion.py           # frozen-socket projection and key-mask veto
     calibration.py                # ChArUco/socket measurement and frozen scene
     perception_evidence.py        # per-view FoundPose quality and true capture-time gate
     symmetry.py                   # local square/cylinder pose handling

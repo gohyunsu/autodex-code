@@ -18,11 +18,15 @@ import cv2
 import numpy as np
 
 from .config import TaskMode
+from .calibration import validate_session_camera_calibration
 from .frame_provenance import bounded_capture_skew_s, verify_frame_provenance
 from .geometry import pose_angle_deg, validate_se3
 from .live_capture import KeyCaptureInput
 from .perception_evidence import SocketViewLimits, admit_socket_capture
 from .session_bootstrap import _safe_id, _write_json, _write_png
+from .socket_exclusion import (
+    key_mask_socket_overlap_fraction, project_frozen_socket_exclusion,
+)
 from .symmetry import load_axial_symmetry
 
 
@@ -109,10 +113,12 @@ def _pose_residual(
 
 def admit_key_capture(
     *, capture: KeyCaptureInput, init_orchestrator, mode: TaskMode,
-    shared_root: Path, calibrated_camera_ids: set[str],
+    shared_root: Path, calibration, calibrated_camera_ids: set[str],
     view_limits: SocketViewLimits,
     maximum_multiview_center_error_mm: float,
     maximum_multiview_angle_error_deg: float,
+    maximum_socket_mask_overlap_fraction: float,
+    socket_projection_dilation_px: int,
     silhouette_iterations: int = 100,
     silhouette_loss_threshold: float = 0.003,
 ) -> KeyPoseObservation:
@@ -133,10 +139,16 @@ def admit_key_capture(
             set(getattr(init_orchestrator, "extrinsics", {})) !=
             calibrated_camera_ids):
         raise ValueError("key camera IDs differ from session calibration")
+    validate_session_camera_calibration(
+        calibration, intrinsics_undist=init_orchestrator.intrinsics_undist,
+        extrinsics_full=init_orchestrator.extrinsics,
+        calibrated_camera_ids=calibrated_camera_ids)
     if (not math.isfinite(maximum_multiview_center_error_mm) or
             maximum_multiview_center_error_mm <= 0 or
             not math.isfinite(maximum_multiview_angle_error_deg) or
             maximum_multiview_angle_error_deg <= 0 or
+            not math.isfinite(maximum_socket_mask_overlap_fraction) or
+            not 0 <= maximum_socket_mask_overlap_fraction < 1 or
             type(silhouette_iterations) is not int or
             silhouette_iterations < 0 or
             not math.isfinite(silhouette_loss_threshold) or
@@ -165,7 +177,29 @@ def admit_key_capture(
         poses=capture.poses, frame_timestamps_s=capture.frame_timestamps_s,
         frame_timestamp_source=capture.frame_timestamp_source,
         calibrated_camera_ids=calibrated_camera_ids, limits=view_limits)
-    admitted_ids = [row.camera_id for row in admitted.observations]
+    exclusion = project_frozen_socket_exclusion(
+        mode=mode, shared_root=shared_root, calibration=calibration,
+        images_bgr=capture.images_bgr,
+        intrinsics_undist=init_orchestrator.intrinsics_undist,
+        extrinsics_full=init_orchestrator.extrinsics,
+        dilation_px=socket_projection_dilation_px)
+    per_view = {serial: dict(row) for serial, row in admitted.per_view.items()}
+    admitted_ids = []
+    for row in admitted.observations:
+        serial = row.camera_id
+        overlap = key_mask_socket_overlap_fraction(
+            capture.masks[serial]["mask"], exclusion.masks[serial])
+        per_view[serial]["key_mask_socket_overlap_fraction"] = overlap
+        if overlap > maximum_socket_mask_overlap_fraction:
+            per_view[serial]["accepted"] = False
+            per_view[serial]["reasons"] = [
+                *per_view[serial]["reasons"],
+                "key_mask_overlaps_frozen_socket_projection"]
+        else:
+            admitted_ids.append(serial)
+    if len(admitted_ids) < view_limits.minimum_accepted_views:
+        raise ValueError(
+            "too few key views remain after fixed-socket mask exclusion")
     if mode.family == "cylinder":
         center, axis = _cylinder_symmetry(mode, shared_root)
     elif mode.family == "square":
@@ -173,7 +207,7 @@ def admit_key_capture(
     else:
         raise ValueError("unknown precision key family")
     poses = {row.camera_id: validate_se3(row.pose_world)
-             for row in admitted.observations}
+             for row in admitted.observations if row.camera_id in admitted_ids}
     max_center = 0.0
     max_angle = 0.0
     for index, camera in enumerate(admitted_ids):
@@ -208,10 +242,10 @@ def admit_key_capture(
         if (distance > maximum_multiview_center_error_mm or
                 angle > maximum_multiview_angle_error_deg):
             raise ValueError("refined key pose conflicts with admitted views")
-    lower = min(row["timestamp_s"] - row["max_error_s"]
-                for row in verified.values())
-    upper = max(row["timestamp_s"] + row["max_error_s"]
-                for row in verified.values())
+    lower = min(verified[serial]["timestamp_s"] -
+                verified[serial]["max_error_s"] for serial in admitted_ids)
+    upper = max(verified[serial]["timestamp_s"] +
+                verified[serial]["max_error_s"] for serial in admitted_ids)
     selection = {
         "method": "AutoDex_refine_from_payloads_iou",
         "best_serial": selected,
@@ -223,13 +257,16 @@ def admit_key_capture(
         capture.capture_id, capture.request_id, mode.key_object, mode.family,
         refined, selected,
         verified[selected]["timestamp_s"], (lower, upper), verified,
-        admitted.per_view,
+        per_view,
         {"accepted_views": admitted_ids,
          "max_center_residual_mm": max_center,
          "max_angle_residual_deg": max_angle,
          "center_limit_mm": float(maximum_multiview_center_error_mm),
          "angle_limit_deg": float(maximum_multiview_angle_error_deg),
-         "cylinder_symmetry_quotient": mode.family == "cylinder"},
+         "cylinder_symmetry_quotient": mode.family == "cylinder",
+         "maximum_socket_mask_overlap_fraction": (
+             float(maximum_socket_mask_overlap_fraction)),
+         "socket_exclusion": exclusion.to_record()},
         selection, capture.capture_dir)
 
 
@@ -265,11 +302,17 @@ def write_key_capture_artifacts(
             {serial: row["timestamp_s"] for serial, row in verified.items()} or
             observation.selected_camera_id not in verified):
         raise ValueError("key observation and frame acquisition differ")
+    used_ids = observation.consistency.get("accepted_views")
+    if (not isinstance(used_ids, list) or len(used_ids) < 2 or
+            len(set(used_ids)) != len(used_ids) or
+            not set(used_ids) <= set(verified) or
+            observation.selected_camera_id not in used_ids):
+        raise ValueError("key observation has no valid admitted view set")
     expected_interval = (
-        min(row["timestamp_s"] - row["max_error_s"]
-            for row in verified.values()),
-        max(row["timestamp_s"] + row["max_error_s"]
-            for row in verified.values()),
+        min(verified[serial]["timestamp_s"] -
+            verified[serial]["max_error_s"] for serial in used_ids),
+        max(verified[serial]["timestamp_s"] +
+            verified[serial]["max_error_s"] for serial in used_ids),
     )
     if (observation.selected_acquisition_timestamp_s !=
             verified[observation.selected_camera_id]["timestamp_s"] or
@@ -380,11 +423,16 @@ def verify_key_capture_artifacts(output_dir: Path) -> dict:
         request_id=manifest["request_id"], images_bgr=images,
         frame_ids=frame_ids)
     selected = report["selected_camera_id"]
+    used_ids = report.get("consistency", {}).get("accepted_views")
+    if (not isinstance(used_ids, list) or len(used_ids) < 2 or
+            len(set(used_ids)) != len(used_ids) or
+            not set(used_ids) <= set(verified) or selected not in used_ids):
+        raise ValueError("saved key admission lacks valid camera IDs")
     expected_interval = [
-        min(row["timestamp_s"] - row["max_error_s"]
-            for row in verified.values()),
-        max(row["timestamp_s"] + row["max_error_s"]
-            for row in verified.values()),
+        min(verified[serial]["timestamp_s"] -
+            verified[serial]["max_error_s"] for serial in used_ids),
+        max(verified[serial]["timestamp_s"] +
+            verified[serial]["max_error_s"] for serial in used_ids),
     ]
     if (report.get("selected_acquisition_timestamp_s") !=
             verified[selected]["timestamp_s"] or

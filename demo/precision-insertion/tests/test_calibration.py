@@ -110,6 +110,9 @@ def test_calibration_freezes_robot_pose_and_adds_socket_without_mutation(
     assert all(row["timestamp_source"] == "camera_acquisition"
                for row in result.record["socket_observations"])
     assert len(result.record["socket_collision_mesh_sha256"]) == 64
+    assert len(result.record["camera_calibration_sha256"]) == 64
+    assert set(result.record["camera_calibration"]["extrinsics_full"]) == {
+        "cam_a", "cam_b"}
     assert result.record["robot_ready"] is False
     saved = write_session_calibration(result, tmp_path / "run" / "calibration.json")
     assert json.loads(saved.read_text(encoding="utf-8")) == result.record

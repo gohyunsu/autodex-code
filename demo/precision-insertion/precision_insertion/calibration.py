@@ -43,6 +43,51 @@ class SessionCalibration:
     record: dict
 
 
+def validate_session_camera_calibration(
+    calibration: SessionCalibration, *,
+    intrinsics_undist: Mapping[str, np.ndarray],
+    extrinsics_full: Mapping[str, np.ndarray],
+    calibrated_camera_ids: set[str],
+) -> None:
+    """Reject a key/retry camera rig different from the frozen session rig.
+
+    Older offline records without a camera snapshot remain loadable but cannot
+    satisfy this live-perception gate. A digest detects changed saved bytes;
+    it does not certify physical camera stability or hand-eye accuracy.
+    """
+    record = calibration.record
+    snapshot = record.get("camera_calibration")
+    if (not isinstance(snapshot, dict) or
+            record.get("camera_calibration_sha256") !=
+            _canonical_sha256(snapshot)):
+        raise ValueError("session lacks a valid frozen camera calibration")
+    stored_intrinsics = snapshot.get("intrinsics_full")
+    stored_extrinsics = snapshot.get("extrinsics_full")
+    if (not isinstance(stored_intrinsics, dict) or
+            not isinstance(stored_extrinsics, dict) or
+            set(stored_intrinsics) != calibrated_camera_ids or
+            set(stored_extrinsics) != calibrated_camera_ids or
+            set(intrinsics_undist) != calibrated_camera_ids or
+            set(extrinsics_full) != calibrated_camera_ids):
+        raise ValueError("live camera IDs differ from frozen session calibration")
+    for serial in calibrated_camera_ids:
+        if not isinstance(stored_intrinsics[serial], Mapping):
+            raise ValueError(f"invalid saved camera intrinsics: {serial}")
+        stored_K = np.asarray(
+            stored_intrinsics[serial].get("K_undist"), dtype=float)
+        live_K = np.asarray(intrinsics_undist[serial], dtype=float)
+        stored_E = validate_se3(stored_extrinsics[serial],
+                                name=f"saved {serial} extrinsic")
+        live_E = validate_se3(extrinsics_full[serial],
+                              name=f"live {serial} extrinsic")
+        if (stored_K.shape != (3, 3) or live_K.shape != (3, 3) or
+                not np.all(np.isfinite(stored_K)) or
+                not np.all(np.isfinite(live_K)) or
+                not np.allclose(stored_K, live_K, rtol=0, atol=1e-10) or
+                not np.allclose(stored_E, live_E, rtol=0, atol=1e-10)):
+            raise ValueError(f"live camera calibration changed: {serial}")
+
+
 def _json_native(value):
     """Snapshot a cuRobo scene without stringifying unknown Python objects."""
     if isinstance(value, Mapping):
@@ -106,6 +151,13 @@ def load_session_calibration(
         raise ValueError("saved session has no frozen collision world snapshot")
     if record.get("collision_scene_sha256") != _canonical_sha256(scene):
         raise ValueError("saved collision world descriptor hash changed")
+    camera_calibration = record.get("camera_calibration")
+    camera_calibration_hash = record.get("camera_calibration_sha256")
+    if camera_calibration is not None or camera_calibration_hash is not None:
+        if (not isinstance(camera_calibration, dict) or
+                camera_calibration_hash != _canonical_sha256(
+                    camera_calibration)):
+            raise ValueError("saved camera calibration changed or is incomplete")
     board = record.get("board")
     if not isinstance(board, dict):
         raise ValueError("saved ChArUco board measurement is missing")
@@ -311,6 +363,10 @@ def calibrate_session(
         },
     })
     frozen_scene = _json_native(scene)
+    camera_calibration = {
+        "intrinsics_full": _json_native(intrinsics_full),
+        "extrinsics_full": _json_native(extrinsics_full),
+    }
     fixed_mesh_hashes = {}
     for name, entry in frozen_scene["mesh"].items():
         path = Path(entry["file_path"]).expanduser().resolve()
@@ -335,6 +391,8 @@ def calibrate_session(
         "socket_collision_mesh_sha256": _file_sha256(mesh),
         "collision_scene": frozen_scene,
         "collision_scene_sha256": _canonical_sha256(frozen_scene),
+        "camera_calibration": camera_calibration,
+        "camera_calibration_sha256": _canonical_sha256(camera_calibration),
         "fixed_mesh_sha256": fixed_mesh_hashes,
         "c2r": c2r_matrix.tolist(),
         "scope": "read_only_session_calibration_not_robot_authorization",
