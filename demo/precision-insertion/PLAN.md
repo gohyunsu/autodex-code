@@ -435,6 +435,7 @@ demo/precision-insertion/
     candidates.py                 # pose-conditioned scenario selection
     planner.py                    # full-chain preflight and XY replanning
     execution.py                  # Franka/Inspire and guarded stroke adapter
+    xy_voting.py                  # read-only multi-view XY ID consensus
     observer.py                   # multi-view VLM and sensor evidence
     recovery.py                   # retreat, repose, reorient, stop
     records.py                    # tri-state results and immutable provenance

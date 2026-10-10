@@ -35,6 +35,23 @@ The first independent helpers are in `precision_insertion/`:
   not by itself authorize key/socket contact or a robot insertion.
 - `config.py` resolves explicit square/cylinder key and socket IDs and the
   20 mm verification target; `assets.py` performs a read-only v8 input audit.
+- `xy_voting.py` accepts already geometry-screened **absolute socket-frame XY
+  offsets** and synchronized per-view VLM choices. It projects candidate
+  anchors for overlays and returns `propose`, `abstain`, `stop`, or
+  `no_correction` with camera provenance. It rejects ties, single-view
+  decisions, stale/asynchronous frames, a possible slip, and step/total
+  budget violations; it never averages candidate positions. A `propose`
+  result is not motion authorization or evidence of insertion success.
+
+The XY voting module is a pure offline contract, not a VLM API integration.
+Its caller must first validate the candidate offsets against the exact
+key/socket/hand geometry, match image intrinsics to the undistorted/resized
+AutoDex camera frames, and verify the current grasp and calibration. After a
+choice, the live planner must still check the Franka/attached-key path and
+the guarded insertion controller must independently enforce contact limits.
+The older `autodex.tasks.precision_insertion.decide_retry` proposes a
+continuous pose-residual correction; it is not the bounded candidate-ID vote
+policy and is not imported as this demo's control loop.
 
 Run the read-only asset audit from the repository root, for example:
 
