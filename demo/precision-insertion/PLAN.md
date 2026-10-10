@@ -672,6 +672,8 @@ demo/precision-insertion/
     xy_voting.py                  # read-only multi-view XY ID consensus
     xy_overlay.py                 # pixel-resolvability check and calibrated ID crops
     xy_retry.py                   # offline endpoint/overlay/VLM consensus proposal
+    grounded_alignment.py         # read-only multiview tip/axis XY diagnostic
+    grounding_eval.py             # independent held-key pose comparison
     retry_preflight.py            # fresh withdrawn-state retry planning only
     retry_session.py              # same-frame failed-trial/VLM/live-state evidence gate
     records.py                    # separate append-only observed task labels
@@ -680,6 +682,7 @@ demo/precision-insertion/
     outcome.py                    # VLM-led tri-state insertion result fusion
     observer.py                   # read-only ZeroDex-backed VLM prompts, parsing, per-view votes
   tests/                          # offline contracts and replay fixtures
+  evaluate_grounded_alignment.py  # offline held-out metric evaluation CLI
 
 Planned below the same demo directory, but **not implemented**:
   live_session_runner.py          # commissioned camera/robot orchestration

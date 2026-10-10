@@ -174,6 +174,8 @@ class GroundedXYDiagnostic:
     candidate_id: str
     session_calibration_sha256: str
     camera_calibration_sha256: str
+    task_geometry_sha256: str
+    frame_request_id: int
     withdrawal_evidence_path: Path
     withdrawal_evidence_sha256: str
     postlift_preflight_path: Path
@@ -191,6 +193,8 @@ class GroundedXYDiagnostic:
             "candidate_id": self.candidate_id,
             "session_calibration_sha256": self.session_calibration_sha256,
             "camera_calibration_sha256": self.camera_calibration_sha256,
+            "task_geometry_sha256": self.task_geometry_sha256,
+            "frame_request_id": self.frame_request_id,
             "withdrawal_evidence_path": str(self.withdrawal_evidence_path),
             "withdrawal_evidence_sha256": self.withdrawal_evidence_sha256,
             "postlift_preflight_path": str(self.postlift_preflight_path),
@@ -651,8 +655,9 @@ def assess_grounded_xy_diagnostic(
             withdrawal_evidence_path=withdrawal_evidence_path,
             postlift_preflight_report_path=postlift_preflight_report_path,
             decision_timestamp_s=decision_timestamp_s, limits=limits))
-    geometry = json.loads(AssetPaths(root, mode).task_geometry.read_text(
-        encoding="utf-8"))
+    geometry_path = AssetPaths(root, mode).task_geometry
+    geometry_bytes = geometry_path.read_bytes()
+    geometry = json.loads(geometry_bytes)
     tip_z = float(geometry["key_frame"]["tip_z_m"])
     if mode.family != "cylinder":
         if axis_reference_key_z_m is None:
@@ -713,6 +718,7 @@ def assess_grounded_xy_diagnostic(
         alignment["status"], attempt.attempt_id, attempt.candidate_id,
         attempt.session_calibration_sha256,
         calibration.record["camera_calibration_sha256"],
+        hashlib.sha256(geometry_bytes).hexdigest(), frame_request_id,
         withdrawal_file, hashlib.sha256(withdrawal_file.read_bytes()).hexdigest(),
         postlift_file, hashlib.sha256(postlift_file.read_bytes()).hexdigest(),
         verified, joint_sample, alignment, tuple(observations))

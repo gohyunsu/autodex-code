@@ -24,6 +24,7 @@ from typing import Sequence
 import numpy as np
 from PIL import Image
 from scipy.optimize import least_squares
+from scipy.stats import chi2
 
 from .geometry import validate_se3
 from .observer import ImageVLM, VLMObservation, _backend_model
@@ -292,7 +293,9 @@ def estimate_grounded_alignment(
     if (not np.all(np.isfinite(cov_xy)) or
             np.linalg.eigvalsh(cov_xy).min() <= 0):
         return _abstain("invalid_metric_uncertainty")
-    uncertainty_95 = 1.96 * math.sqrt(float(np.linalg.eigvalsh(cov_xy).max()))
+    # 2D radial 95% confidence ellipse, not the 1D 1.96-sigma interval.
+    uncertainty_95 = math.sqrt(float(chi2.ppf(0.95, df=2))) * math.sqrt(
+        float(np.linalg.eigvalsh(cov_xy).max()))
     if uncertainty_95 > limits.max_lateral_uncertainty_95_m:
         return _abstain("lateral_uncertainty_exceeds_budget",
                         lateral_uncertainty_95_m=uncertainty_95)
@@ -586,7 +589,8 @@ def estimate_grounded_line_alignment(
     if (not np.all(np.isfinite(cov_xy)) or
             np.linalg.eigvalsh(cov_xy).min() <= 0):
         return _abstain("invalid_metric_uncertainty")
-    uncertainty_95 = 1.96 * math.sqrt(float(np.linalg.eigvalsh(cov_xy).max()))
+    uncertainty_95 = math.sqrt(float(chi2.ppf(0.95, df=2))) * math.sqrt(
+        float(np.linalg.eigvalsh(cov_xy).max()))
     if uncertainty_95 > limits.max_lateral_uncertainty_95_m:
         return _abstain("lateral_uncertainty_exceeds_budget",
                         lateral_uncertainty_95_m=uncertainty_95)

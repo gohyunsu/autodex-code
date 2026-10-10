@@ -64,6 +64,32 @@ collision screening with the measured held relation, live cuRobo path
 planning and guarded force/contact control. The present point/line report
 cannot be passed to `record_retry` and has no robot actuation route.
 
+Use `evaluate_grounded_alignment.py` to compare saved diagnostics against
+**independently measured**, same-capture held-key poses. Its input manifest
+has schema `precision_insertion_grounded_eval_manifest_v1`, commissioned
+`max_reference_capture_skew_s`,
+`max_truth_translation_uncertainty_95_m`,
+`max_truth_axis_uncertainty_95_deg`, and a nonempty `samples` list. Each sample
+names a saved `diagnostic_report` and an `independent_pose` JSON (paths relative
+to the manifest). The latter uses schema
+`precision_insertion_independent_key_pose_v1`; it records the same
+attempt/candidate/request/session/geometry IDs, `capture_time_s`,
+`tip_socket_m`, downward unit `insertion_axis_socket`, 95% pose uncertainty,
+and hashed absolute `source_files` from external optical metrology or an
+independent fiducial tracker. A nominal wrist pose or the VLM's own estimate
+is **not** acceptable ground truth. Example invocation:
+
+```bash
+python demo/precision-insertion/evaluate_grounded_alignment.py \
+  --manifest /path/to/heldout/manifest.json \
+  --output /path/to/heldout/new_report.json
+```
+
+The exclusive output reports abstentions, lateral/axis errors, empirical
+95%-radius coverage and whether the advised 1 mm step truly improved or
+worsened alignment. It always reports `robot_ready=false`; source-file hashes
+and a method label cannot themselves certify the metrology's calibration.
+
 The mathematical pattern follows ZeroDex's multi-view point grounding and
 triangulation, but not its rounded projection/20-pixel RANSAC defaults, which
 are unsuitable as unvalidated millimetre tolerances. 3D feature-based
@@ -528,28 +554,17 @@ The first independent helpers are in `precision_insertion/`:
   saving the VLM direction. The session runner cannot promote this result
   into `record_retry`.
 
-- Point-grounded alignment experiment (planned, not implemented): the current
-  VLM votes over preprojected 1 mm socket-frame targets. A more direct
-  comparison is worth measuring: on **raw, full-resolution** synchronized
-  views, ask the VLM which visible key end is the insertion end and where its
-  end-cap center and a second axis-defining feature lie. Require an explicit
-  occlusion/uncertainty answer; the overlay is a *separate predicted
-  hypothesis*, never ground-truth pixels. The socket centerline comes from
-  the frozen session calibration, not a new VLM guess. Restore any crop/resize
-  coordinates to the original undistorted pixels, triangulate corresponding
-  visible key features with calibrated cameras, and reject inconsistent
-  reprojections or insufficient camera parallax. A cylinder cap center is
-  often an inferred point rather than an actual visual feature, so the
-  preferred final estimator is a local multi-view CAD/silhouette fit around
-  the wrist-and-grasp prior, with VLM points used as semantic initialization
-  and visibility evidence. Compute the key-axis residual at both socket entry
-  and 20 mm depth; one XY translation cannot repair axis tilt, slip or
-  square-key yaw. Convert a well-supported residual to at most one 1 mm
-  cardinal *proposal*, then reobserve after a guarded attempt. Before
-  promoting this path, measure point/CAD-fit error on held-out real camera
-  frames and check that the 1 mm movement is separable from localization and
-  calibration uncertainty. If not, abstain or retain the closed-set
-  contact-search route.
+- Point/axis-grounded alignment is implemented as a **read-only cylinder
+  diagnostic** in `grounded_alignment.py` and `retry_session.py`, described
+  above. It uses raw synchronized views, a frozen socket coordinate system,
+  triangulated tip and multi-view projected shaft lines. It rejects poor
+  parallax, reprojection, axis tilt, uncertainty or a 1 mm step that cannot
+  confidently improve the lateral residual. Square-key yaw still lacks a
+  non-collinear feature, so square mode abstains. The independent held-out
+  evaluator is implemented, but no real AutoDex-camera error dataset or
+  externally measured held-key pose has been supplied. CAD silhouette/depth
+  refinement and guarded robot execution remain future work; the diagnostic
+  is not a motion permit.
 - `endpoint.py` evaluates one fixed-grasp candidate using the full metric CAD
   key, exact socket collision mesh, and every Inspire visual link at the
   centered 20 mm insertion pose. It combines Coal triangle-surface collision
