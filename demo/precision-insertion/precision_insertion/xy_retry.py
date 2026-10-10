@@ -1,8 +1,9 @@
-"""Combine exact XY endpoint gates, camera projections and ZeroDex votes.
+"""Combine XY hand/endpoint gates, camera projections and ZeroDex votes.
 
-This prepares a *proposal* after a failed insertion and a completed guarded
-withdrawal. It never drives the robot. A proposed offset still needs fresh
-live Franka/held-key path planning and commissioned contact control.
+An observed held-key relation can yield a proposal for live preflight. When
+the squeeze has left the held-key relation unobservable, only a diagnostic
+direction is returned: the nominal key/socket CAD fit cannot veto or certify
+an actual 1 mm correction. Neither branch drives the robot.
 """
 
 from __future__ import annotations
@@ -66,7 +67,7 @@ def assess_xy_retry(
     *, shared_root: Path, mode: TaskMode, calibration, catalog: dict,
     candidate_key: tuple[str, str, str], tabletop_pose_stem: str,
     current_offset_socket_m: tuple[float, float],
-    observed_T_key_hand: np.ndarray,
+    observed_T_key_hand: np.ndarray | None,
     held_hand_q_measured: np.ndarray,
     observed_key_hand_source: str,
     max_grasp_translation_drift_m: float,
@@ -150,8 +151,14 @@ def assess_xy_retry(
                if tuple(row["key"]) == tuple(candidate_key)]
     if len(matches) != 1:
         raise ValueError("retry grasp is not endpoint eligible for this tabletop")
-    if observed_key_hand_source != "multiview_key_pose_plus_live_wrist":
-        raise ValueError("retry requires independently observed key/hand relation")
+    source_is_observed = (
+        observed_key_hand_source == "multiview_key_pose_plus_live_wrist")
+    source_is_nominal = (
+        observed_key_hand_source == "v8_nominal_unobserved_key")
+    if not (source_is_observed or source_is_nominal):
+        raise ValueError("unknown retry key/hand relation source")
+    if source_is_observed != (observed_T_key_hand is not None):
+        raise ValueError("observed relation source needs an observed pose only")
     hand_q = np.asarray(held_hand_q_measured, dtype=np.float64)
     if hand_q.shape != (6,) or not np.all(np.isfinite(hand_q)):
         raise ValueError("retry needs six measured Inspire held joints")
@@ -161,16 +168,18 @@ def assess_xy_retry(
             max_grasp_rotation_drift_deg <= 0):
         raise ValueError("grasp-relation drift limits must be commissioned")
     candidate_dir = Path(matches[0]["candidate_dir"])
-    observed_relation = validate_se3(
-        observed_T_key_hand, name="observed post-lift T_key_hand")
     nominal_relation = validate_se3(np.load(
         candidate_dir / "wrist_se3.npy", allow_pickle=False),
         name="candidate T_key_hand")
+    relation = (validate_se3(
+        observed_T_key_hand, name="observed post-lift T_key_hand")
+        if source_is_observed else nominal_relation)
     translation_drift = float(np.linalg.norm(
-        observed_relation[:3, 3] - nominal_relation[:3, 3]))
-    rotation_drift = pose_angle_deg(observed_relation, nominal_relation)
-    if (translation_drift > max_grasp_translation_drift_m or
-            rotation_drift > max_grasp_rotation_drift_deg):
+        relation[:3, 3] - nominal_relation[:3, 3]))
+    rotation_drift = pose_angle_deg(relation, nominal_relation)
+    if (source_is_observed and
+            (translation_drift > max_grasp_translation_drift_m or
+             rotation_drift > max_grasp_rotation_drift_deg)):
         return XYRetryAssessment(
             "stop", None, None, (), None,
             "observed_key_hand_relation_drift_exceeds_commissioned_limit",
@@ -181,19 +190,45 @@ def assess_xy_retry(
         current_offset_socket_m=current_offset_socket_m,
         max_total_offset_m=max_total_offset_m,
         minimum_hand_clearance_m=catalog["minimum_hand_clearance_m"],
-        T_key_hand_override=observed_relation,
+        T_key_hand_override=relation,
         held_hand_q_measured=hand_q,
+        relation_source=observed_key_hand_source,
         screen=screen)
     screen_report["observed_key_hand_source"] = observed_key_hand_source
     screen_report["held_hand_q_measured"] = hand_q.tolist()
-    screen_report["observed_relation_translation_drift_m"] = translation_drift
-    screen_report["observed_relation_rotation_drift_deg"] = rotation_drift
+    screen_report["observed_relation_translation_drift_m"] = (
+        translation_drift if source_is_observed else None)
+    screen_report["observed_relation_rotation_drift_deg"] = (
+        rotation_drift if source_is_observed else None)
+    if source_is_nominal:
+        # The planned key/socket intersection is *not* a veto on a direction:
+        # squeeze may have translated the real key relative to this nominal
+        # hand target. Only the commanded hand/socket clearance can be tested
+        # without measuring the held key. This is a visual hypothesis, never
+        # a 20 mm insertion preflight or a motion permit.
+        if any("hand_socket_clear_at_20mm" not in row
+               for row in screen_report["rows"]
+               if row["within_total_offset_budget"]):
+            raise ValueError("nominal retry needs explicit hand/socket verdicts")
+        accepted = [row for row in screen_report["rows"]
+                    if row.get("hand_socket_clear_at_20mm") is True]
+        screen_report["choice_basis"] = "nominal_hand_socket_clearance_only"
+        screen_report["key_socket_fit_unverified"] = True
+    else:
+        accepted = [row for row in screen_report["rows"]
+                    if row["endpoint_pass"]]
+        screen_report["choice_basis"] = "observed_key_and_hand_endpoint_fit"
+        screen_report["key_socket_fit_unverified"] = False
     choices = tuple(XYChoice(row["choice_id"], tuple(row["xy_offset_socket_m"]))
-                    for row in screen_report["rows"] if row["endpoint_pass"])
+                    for row in accepted)
+    screen_report["vlm_advisory_choice_ids"] = [
+        choice.choice_id for choice in choices]
     if not choices or all(choice.choice_id == "hold" for choice in choices):
         return XYRetryAssessment(
             "no_safe_direction", screen_report, None, (), None,
-            "no alternative 1 mm target passed exact endpoint geometry",
+            ("no alternative 1 mm target passed nominal hand/socket clearance"
+             if source_is_nominal else
+             "no alternative 1 mm target passed exact endpoint geometry"),
             frame_binding)
     camera_ids = {frame.camera_id for frame in frames}
     if (camera_ids - set(intrinsics_full) or camera_ids - set(extrinsics_full)):
@@ -234,7 +269,8 @@ def assess_xy_retry(
         decision_timestamp_s=decision_timestamp_s,
         max_frame_age_s=max_frame_age_s)
     return XYRetryAssessment(
-        "proposal_requires_live_preflight" if decision.status == "propose"
+        ("diagnostic_xy_hypothesis_only" if source_is_nominal else
+         "proposal_requires_live_preflight") if decision.status == "propose"
         else "visual_abstain_or_stop",
         screen_report, overlays, tuple(observations), decision,
         decision.reason, frame_binding)

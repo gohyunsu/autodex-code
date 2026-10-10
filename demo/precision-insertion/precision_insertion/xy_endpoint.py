@@ -25,15 +25,16 @@ def screen_axis_1mm_endpoint_choices(
     max_total_offset_m: float, minimum_hand_clearance_m: float,
     T_key_hand_override: np.ndarray | None = None,
     held_hand_q_measured: np.ndarray | None = None,
+    relation_source: str = "multiview_key_pose_plus_live_wrist",
     screen: Callable = screen_grasp_endpoint,
 ) -> dict:
     """Test hold and four cardinal 1 mm absolute targets at 20 mm depth.
 
-    The collision test treats key/socket intersection as a failed CAD fit and
-    checks the posed Inspire hand against the exact socket mesh. Individual
-    offsets are kept in the report even when rejected, so a VLM caller can
-    offer *only* ``endpoint_pass`` rows after an additional live path check.
-    A VLM vote cannot override a rejected row.
+    The collision test reports both key/socket CAD fit and posed Inspire
+    hand/socket clearance. With an observed key relation, a VLM caller offers
+    only ``endpoint_pass`` rows. With an unobserved squeeze shift, a caller may
+    expose hand-clear rows for *diagnostic* votes, but must not interpret them
+    as 20 mm insertion-feasible targets or robot-motion authorization.
     """
     if not math.isfinite(max_total_offset_m) or max_total_offset_m <= 0:
         raise ValueError("max_total_offset_m must be positive and finite")
@@ -42,7 +43,13 @@ def screen_axis_1mm_endpoint_choices(
         raise ValueError("minimum_hand_clearance_m must be positive and finite")
     if T_key_hand_override is not None:
         T_key_hand_override = validate_se3(
-            T_key_hand_override, name="observed T_key_hand")
+            T_key_hand_override, name="held T_key_hand hypothesis")
+    if (not isinstance(relation_source, str) or
+            relation_source not in {
+                "multiview_key_pose_plus_live_wrist",
+                "v8_nominal_unobserved_key",
+            }):
+        raise ValueError("unknown held-relation source")
     if held_hand_q_measured is not None:
         held_hand_q_measured = np.asarray(held_hand_q_measured, dtype=np.float64)
         if (T_key_hand_override is None or
@@ -70,8 +77,7 @@ def screen_axis_1mm_endpoint_choices(
             if held_hand_q_measured is not None:
                 kwargs["hand_poses_override"] = {
                     "measured_held": held_hand_q_measured}
-                kwargs["override_source"] = (
-                    "multiview_key_pose_plus_live_wrist")
+                kwargs["override_source"] = relation_source
             report = screen(
                 shared_root=shared_root, mode=mode,
                 candidate_dir=candidate_dir,
@@ -83,6 +89,11 @@ def screen_axis_1mm_endpoint_choices(
                     report.get("verification_depth_m") != mode.target_depth_m):
                 raise ValueError("endpoint screen returned a different target")
             row["endpoint_pass"] = bool(report["endpoint_pass"])
+            if "hand_socket_clear_at_20mm" in report:
+                if type(report["hand_socket_clear_at_20mm"]) is not bool:
+                    raise ValueError("endpoint hand/socket verdict must be boolean")
+                row["hand_socket_clear_at_20mm"] = report[
+                    "hand_socket_clear_at_20mm"]
             row["endpoint_report"] = report
         else:
             row["reason"] = "total_offset_budget_exceeded"
@@ -101,7 +112,7 @@ def screen_axis_1mm_endpoint_choices(
         "minimum_hand_clearance_m": minimum_hand_clearance_m,
         "T_key_hand_source": (
             "v8_candidate" if T_key_hand_override is None
-            else "observed_postlift_override"),
+            else relation_source),
         "hand_pose_source": (
             "v8_nominal" if held_hand_q_measured is None
             else "measured_inspire_feedback"),

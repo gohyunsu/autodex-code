@@ -17,7 +17,9 @@ AutoDex key/socket camera images were used to check masks, axes, and open-rim
 direction. They have not been promoted into canonical runtime
 `foundpose_assets`. No grasp-specific *physical* key–hand calibration record
 was found in that handoff. Consequently the current retry route still needs
-an observed held-key pose, and the occlusion-tolerant calibrated route is not
+an observed held-key pose **to reach live retry preflight**. A separate
+nominal-key diagnostic can ask the VLM for a direction without that pose, but
+cannot authorize a retry. The occlusion-tolerant calibrated route is not
 eligible for robot execution. File presence and synthetic-template counts do
 not establish live perception accuracy.
 
@@ -319,9 +321,12 @@ The first independent helpers are in `precision_insertion/`:
   budget violations; it never averages candidate positions. The current VLM
   retry policy proposes only `hold` or one **1 mm** socket-frame axial step
   (`+X`, `-X`, `+Y`, `-Y`); diagonal and fractional-step votes are rejected.
-  These are raw hypotheses: exact key/socket/hand endpoint geometry must
-  screen them before they are offered to a VLM; the selected live path must
-  be checked again before any robot movement. A `propose`
+  In the observed-key route, exact key/socket/hand endpoint geometry screens
+  them before VLM voting. In the unobserved-key diagnostic route, the key's
+  nominal CAD collision is **not** a sound veto on squeeze-induced XY error:
+  only the commanded hand/socket endpoint is checked and the VLM may give a
+  direction, with no live preflight or motion permit. The selected live path
+  and guarded contact still need separate checks before robot movement. A `propose`
   result is not motion authorization or evidence of insertion success.
 - `xy_overlay.py` projects the already screened 1 mm candidate centers into
   calibrated AutoDex views and produces matching raw/annotated 16:9 crops.
@@ -409,6 +414,20 @@ The first independent helpers are in `precision_insertion/`:
   command or a claim of insertion success. For a gap smaller than 1 mm, all
   1 mm endpoint offsets may be geometrically impossible; that correctly
   produces `no_safe_direction`, not an override from the VLM.
+  `assess_xy_retry(..., observed_T_key_hand=None,
+  observed_key_hand_source="v8_nominal_unobserved_key")` is a **diagnostic
+  alternative** for the squeeze-offset hypothesis. It still requires a
+  verified failed insertion, completed guarded withdrawal, held-grasp status,
+  measured Inspire joints, current catalogue, fresh camera frames and frozen
+  camera calibration. Each candidate must explicitly clear the nominal
+  **hand/socket** endpoint, but the nominal key/socket intersection is only
+  reported, not used to reject a direction: the actual squeezed key pose is
+  unknown. A two-view VLM choice returns
+  `diagnostic_xy_hypothesis_only`, never
+  `proposal_requires_live_preflight`. The session runner deliberately has no
+  route that promotes this unknown-key advice to `record_retry` or robot
+  execution. A physical trial needs commissioned uncertainty bounds,
+  full-path hand clearance, contact limits and observed 20 mm depth.
 - `retry_session.py` binds the preceding failed insertion, caller-logged
   withdrawal, admitted held-key FoundPose, unchanged full-frame VLM pixels,
   measured 13-joint robot feedback and frozen camera calibration. It derives

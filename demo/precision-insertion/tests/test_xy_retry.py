@@ -147,6 +147,71 @@ def test_vlm_multiview_choice_is_only_a_replan_proposal(tmp_path):
         "measured_inspire_feedback")
 
 
+def test_unobserved_squeeze_offset_yields_direction_only_not_motion(tmp_path):
+    args = _setup(tmp_path)
+    args["observed_T_key_hand"] = None
+    args["observed_key_hand_source"] = "v8_nominal_unobserved_key"
+    checked = []
+
+    def nominal_hand_screen(**kwargs):
+        assert kwargs["override_source"] == "v8_nominal_unobserved_key"
+        assert kwargs["hand_poses_override"]["measured_held"] == (
+            pytest.approx(np.full(6, 0.2)))
+        checked.append(kwargs["xy_offset_socket_m"])
+        return {
+            "endpoint_pass": False,  # The *nominal* key collides at every XY.
+            "hand_socket_clear_at_20mm": True,
+            "xy_offset_socket_m": list(kwargs["xy_offset_socket_m"]),
+            "verification_depth_m": args["mode"].target_depth_m,
+        }
+
+    args["screen"] = nominal_hand_screen
+    result = assess_xy_retry(**args)
+    assert len(checked) == 5
+    assert result.status == "diagnostic_xy_hypothesis_only"
+    assert result.decision.offset_socket_m == pytest.approx((0.001, 0.0))
+    assert result.endpoint_screen["endpoint_clear_choice_ids"] == []
+    assert "x_plus_1mm" in result.endpoint_screen["vlm_advisory_choice_ids"]
+    assert result.endpoint_screen["choice_basis"] == (
+        "nominal_hand_socket_clearance_only")
+    assert result.endpoint_screen["key_socket_fit_unverified"] is True
+    assert result.endpoint_screen["observed_relation_translation_drift_m"] is None
+    assert result.to_record()["robot_ready"] is False
+
+
+def test_unobserved_route_requires_explicit_hand_clearance(tmp_path):
+    args = _setup(tmp_path)
+    args["observed_T_key_hand"] = None
+    args["observed_key_hand_source"] = "v8_nominal_unobserved_key"
+    with pytest.raises(ValueError, match="explicit hand/socket verdicts"):
+        assess_xy_retry(**args)
+    assert args["backend"].calls == 0
+
+    args = _setup(tmp_path / "unsafe")
+    args["observed_T_key_hand"] = None
+    args["observed_key_hand_source"] = "v8_nominal_unobserved_key"
+
+    def blocked_hand(**kwargs):
+        return {
+            "endpoint_pass": False,
+            "hand_socket_clear_at_20mm": False,
+            "xy_offset_socket_m": list(kwargs["xy_offset_socket_m"]),
+            "verification_depth_m": args["mode"].target_depth_m,
+        }
+
+    args["screen"] = blocked_hand
+    result = assess_xy_retry(**args)
+    assert result.status == "no_safe_direction"
+    assert args["backend"].calls == 0
+
+
+def test_nominal_source_cannot_claim_observed_key_pose(tmp_path):
+    args = _setup(tmp_path)
+    args["observed_key_hand_source"] = "v8_nominal_unobserved_key"
+    with pytest.raises(ValueError, match="observed pose only"):
+        assess_xy_retry(**args)
+
+
 def test_retry_rejects_changed_or_missing_frozen_camera_calibration(tmp_path):
     args = _setup(tmp_path)
     args["intrinsics_full"]["a"]["K_undist"][0][0] += 1
