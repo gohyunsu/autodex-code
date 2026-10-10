@@ -86,6 +86,7 @@ if TYPE_CHECKING:
     from .postshift_arrival_checkpoint import PostShiftArrivalCheckpoint
     from .postshift_arrival_replan import PostShiftArrivalReplan
 from .repose_artifacts import write_repose_preflight_artifacts
+from .repose_execution_evidence import verify_repose_execution_evidence
 from .repose_preflight import validate_repose_rest_target
 from .repose_transition import (
     ReposeTransitionPreflight, preflight_v8_repose_transition,
@@ -757,6 +758,7 @@ class SessionRunner:
                     self._capture_interval_end_s,
                     self._repose_preflight.start_q_acquisition_timestamp_s)):
             raise ValueError("repose cannot start before key/state acquisition")
+        report_hash = self._verify_repose_preflight_binding()
         attempt = begin_attempt(
             attempt_id=attempt_id, mode=self.mode,
             session_record=self.calibration.record, candidate_id=None,
@@ -769,8 +771,7 @@ class SessionRunner:
             "from_pose_stem": self._repose_preflight.from_pose_stem,
             "to_pose_stem": self._repose_preflight.to_pose_stem,
             "repose_report": str(self._repose_report_path),
-            "repose_report_sha256": hashlib.sha256(
-                self._repose_report_path.read_bytes()).hexdigest(),
+            "repose_report_sha256": report_hash,
             "session_calibration_sha256": self.session_sha256,
             "robot_ready": False,
         })
@@ -802,6 +803,39 @@ class SessionRunner:
         self._attempt_index = 0
         self._retry_assessment_index = 0
         return deepcopy(attempt)
+
+    def _verify_repose_preflight_binding(self) -> str:
+        """Reject changed reset preflight or key capture before using it."""
+        if (self._repose_preflight is None or
+                self._repose_report_path is None or
+                self._key_evidence_dir is None or
+                self._key_evidence_manifest_sha256 is None):
+            raise ValueError("repose lacks its frozen key/preflight evidence")
+        report_path = self._repose_report_path.resolve()
+        binding = json.loads((report_path.parent /
+                              "key_evidence_binding.json").read_text(
+                                  encoding="utf-8"))
+        verify_key_capture_artifacts(self._key_evidence_dir)
+        manifest_path = self._key_evidence_dir / "evidence_manifest.json"
+        report_hash = hashlib.sha256(report_path.read_bytes()).hexdigest()
+        if (binding.get("schema") !=
+                "precision_insertion_repose_key_binding_v1" or
+                binding.get("key_capture_id") !=
+                self._repose_preflight.observation_id or
+                binding.get("key_evidence_dir") !=
+                str(self._key_evidence_dir) or
+                binding.get("key_evidence_manifest_sha256") !=
+                self._key_evidence_manifest_sha256 or
+                hashlib.sha256(manifest_path.read_bytes()).hexdigest() !=
+                self._key_evidence_manifest_sha256 or
+                binding.get("repose_report_sha256") != report_hash or
+                binding.get("session_calibration_sha256") !=
+                self.session_sha256 or
+                binding.get("catalog_sha256") != self.catalog_sha256 or
+                _digest(self.calibration.record) != self.session_sha256 or
+                _digest(self.catalog) != self.catalog_sha256):
+            raise ValueError("frozen repose preflight/key evidence changed")
+        return report_hash
 
     def begin_selected_attempt(
         self, *, attempt_id: str, started_at_s: float,
@@ -1708,8 +1742,9 @@ class SessionRunner:
         """Label repose only from a new supported, in-board key observation.
 
         A missing or ambiguous observation raises and keeps the label unknown.
-        The release file/time are caller assertions until a commissioned
-        executor supplies them. This is not proof of physical repeatability.
+        The release/exit log must be bound to this exact saved preflight and
+        independently hashed controller records. Those records remain external
+        assertions, not proof of physical repeatability.
         """
         if (self._attempt is None or self._attempt.candidate_id is not None or
                 self._repose_preflight is None or
@@ -1721,11 +1756,33 @@ class SessionRunner:
             raise ValueError("repose landing needs a tabletop key observation")
         release_time = float(release_completed_at_s)
         release_file = Path(release_evidence_path).expanduser().resolve()
+        if self._repose_report_path is None or self._attempt_dir is None:
+            raise ValueError("repose landing lacks its saved selected preflight")
+        binding = json.loads((self._attempt_dir /
+                              "repose_preflight_binding.json").read_text(
+                                  encoding="utf-8"))
+        report_hash = self._verify_repose_preflight_binding()
+        if (binding.get("repose_report") != str(self._repose_report_path) or
+                binding.get("repose_report_sha256") != report_hash or
+                binding.get("session_calibration_sha256") !=
+                self.session_sha256 or
+                self._repose_preflight.selected_seed is None):
+            raise ValueError("repose attempt/preflight binding changed")
+        execution = verify_repose_execution_evidence(
+            path=release_file, attempt_id=self._attempt.attempt_id,
+            attempt_started_at_s=self._attempt.started_at_s,
+            preflight_report_path=self._repose_report_path,
+            preflight_report_sha256=report_hash,
+            session_calibration_sha256=self.session_sha256,
+            selected_seed=self._repose_preflight.selected_seed)
         if (not math.isfinite(release_time) or
                 release_time < self._attempt.started_at_s or
-                not release_file.is_file() or
-                key_observation.acquisition_interval_s[0] <= release_time):
-            raise ValueError("landing frames need a prior logged physical release")
+                abs(release_time -
+                    execution["release_completed_at_s"]) > 1e-6 or
+                key_observation.acquisition_interval_s[0] <=
+                execution["exit_completed_at_s"]):
+            raise ValueError(
+                "landing frames need a prior completed release and exit")
         evidence_dir = Path(key_evidence_dir).expanduser().resolve()
         manifest = verify_key_capture_artifacts(evidence_dir)
         saved_observation = json.loads((evidence_dir / "key_observation.json")
@@ -1764,8 +1821,9 @@ class SessionRunner:
                 (evidence_dir / "evidence_manifest.json").read_bytes()).hexdigest(),
             "release_completed_at_s": release_time,
             "release_evidence_path": str(release_file),
-            "release_evidence_sha256": hashlib.sha256(
-                release_file.read_bytes()).hexdigest(),
+            "release_evidence_sha256": execution["sha256"],
+            "release_exit_completed_at_s": execution["exit_completed_at_s"],
+            "release_source_records": execution["source_records"],
             "target_pose_stem": self._repose_preflight.to_pose_stem,
             "observed_pose_class": classification,
             "observed_support": support,

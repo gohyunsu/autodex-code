@@ -505,8 +505,9 @@ that session and catalogue. For each new key observation:
    files and paths. Only a complete nominal pickup/held/release/retreat plan
    can produce `repose_execution_gate_required`; a held path with no release
    remains planning-only. `begin_repose_attempt` starts a separate, unlabeled
-   record. After physical execution, `observe_repose_landing` needs a logged
-   release-completion time and a **newer** saved multi-view key capture: it
+   record. After physical execution, `observe_repose_landing` needs an
+   [exact-plan-bound release/exit record](REPOSE_EXECUTION_EVIDENCE.md) and a
+   **newer** saved multi-view key capture: it
    checks the target tabletop class, measured
    table support, ChArUco footprint and socket clearance before recording
    `reorient_success`. A wrong class is failure; missing/ambiguous support

@@ -1172,8 +1172,24 @@ def test_pose_exhaustion_routes_to_separate_repose_and_observed_landing(
         assert all(path.is_file() for path in source_files.values())
         assert "fixture_socket" in trial_scene["mesh"]
         output_dir.mkdir(parents=True, exist_ok=False)
-        (output_dir / "report.json").write_text(
-            json.dumps({"status": result.status}), encoding="utf-8")
+        scene = output_dir / "trial_scene.json"
+        scene.write_text(json.dumps(trial_scene), encoding="utf-8")
+        trajectories = output_dir / "planned_trajectories.npz"
+        np.savez_compressed(trajectories, pickup_approach=np.zeros((2, 13)))
+        sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+        (output_dir / "report.json").write_text(json.dumps({
+            "status": result.status, "robot_ready": False,
+            "selected_seed": result.selected_seed,
+            "artifacts": {
+                "trial_scene": scene.name,
+                "trial_scene_sha256": sha(scene),
+                "planned_trajectories": trajectories.name,
+                "planned_trajectories_sha256": sha(trajectories),
+                "input_files": {
+                    name: {"path": str(path.resolve()), "sha256": sha(path)}
+                    for name, path in source_files.items()},
+            },
+        }), encoding="utf-8")
     monkeypatch.setattr(session_runner, "preflight_v8_repose_transition",
                         fake_reset)
     monkeypatch.setattr(session_runner, "write_repose_preflight_artifacts",
@@ -1196,6 +1212,12 @@ def test_pose_exhaustion_routes_to_separate_repose_and_observed_landing(
         runner.preflight_repose(**{**kwargs, "to_pose_stem": "002"})
     runner.preflight_repose(**kwargs)
     assert runner.current_decision().action == "repose_execution_gate_required"
+    frozen_report = runner._repose_report_path
+    saved_report = frozen_report.read_bytes()
+    frozen_report.write_bytes(saved_report + b" ")
+    with pytest.raises(ValueError, match="frozen repose preflight"):
+        runner.begin_repose_attempt(attempt_id="repose_1", started_at_s=10.2)
+    frozen_report.write_bytes(saved_report)
     runner.begin_repose_attempt(attempt_id="repose_1", started_at_s=10.2)
     assert runner.current_decision().action == "await_repose_observation"
     with pytest.raises(ValueError, match="labels must stay separate"):
@@ -1221,7 +1243,50 @@ def test_pose_exhaustion_routes_to_separate_repose_and_observed_landing(
     landing = _observation("landed_key", 10.6)
     release_log = tmp_path / "repose_release.json"
     release_log.write_text('{"released": true}\n', encoding="utf-8")
-    with pytest.raises(ValueError, match="prior logged physical release"):
+    with pytest.raises(ValueError, match="not bound to this safe directed plan"):
+        runner.observe_repose_landing(
+            key_observation=landing,
+            key_evidence_dir=_save_evidence(runner, landing),
+            timestamp_s=10.7, release_completed_at_s=10.4,
+            release_evidence_path=release_log,
+            max_pose_error_deg=5.0, support_tolerance_m=0.003,
+            minimum_rest_socket_clearance_m=0.01,
+            minimum_board_edge_clearance_m=0.01)
+    sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+    report = runner._repose_report_path
+    report_data = json.loads(report.read_text(encoding="utf-8"))
+    sources = {}
+    for name in ("trajectory_feedback", "safety", "grasp_state",
+                 "hand_feedback"):
+        source = tmp_path / f"repose_{name}.json"
+        source.write_text(json.dumps({"producer": name}), encoding="utf-8")
+        sources[name] = {"path": str(source), "sha256": sha(source)}
+    phase_names = (
+        "pickup_squeeze", "held_lift", "held_transfer", "held_descent",
+        "release_open", "post_release_lift", "post_release_retract")
+    boundaries = (10.21, 10.24, 10.28, 10.32, 10.36, 10.40, 10.45, 10.50)
+    phases = []
+    for index, name in enumerate(phase_names):
+        row = {"name": name, "started_at_s": boundaries[index],
+               "completed_at_s": boundaries[index + 1],
+               "complete": True, "safety_abort": False}
+        if name in {"held_lift", "held_transfer", "held_descent"}:
+            row["grasp_held"] = True
+        if name == "release_open":
+            row["hand_open_feedback"] = True
+        phases.append(row)
+    release_log.write_text(json.dumps({
+        "schema": "precision_insertion_repose_execution_evidence_v1",
+        "source": "commissioned_external_controller",
+        "attempt_id": "repose_1", "preflight_report_sha256": sha(report),
+        "planned_trajectories_sha256": report_data["artifacts"][
+            "planned_trajectories_sha256"],
+        "session_calibration_sha256": runner.session_sha256,
+        "selected_seed": {"seed_id": "7"},
+        "safety_abort": False, "grip_loss_before_release": False,
+        "phases": phases, "source_records": sources,
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="prior completed release and exit"):
         runner.observe_repose_landing(
             key_observation=landing,
             key_evidence_dir=_save_evidence(runner, landing),
@@ -1233,7 +1298,7 @@ def test_pose_exhaustion_routes_to_separate_repose_and_observed_landing(
     landing_kwargs = dict(
         key_observation=landing,
         key_evidence_dir=_save_evidence(runner, landing),
-        timestamp_s=10.7, release_completed_at_s=10.5,
+        timestamp_s=10.7, release_completed_at_s=10.4,
         release_evidence_path=release_log, max_pose_error_deg=5.0,
         support_tolerance_m=0.003,
         minimum_rest_socket_clearance_m=0.01,
