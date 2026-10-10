@@ -113,3 +113,26 @@ not evidence of real grasp retention, calibrated geometry, closed-loop contact
 control, or physical insertion. The 20 mm radial gap is a very loose
 bring-up condition; smaller gaps still need their own complete preflights
 and physical calibration. No synthetic report is a motor permit.
+
+## Cylinder 1 mm radial-gap nominal check
+
+The same offline diagnostic was also run for the **1 mm radial-gap** socket,
+using its complete endpoint catalogue, tabletop pose `000`, the same
+hypothetical key/socket XY positions, 40 mm table and stock FR3/Inspire home
+state. With the explicitly experimental native locked-hand planner, candidate
+`table/0/194` passed pickup, held lift, transfer and sampled 20 mm axial
+descent after an earlier candidate failed pickup. The [saved report](/tmp/precision-synthetic-cylinder01-pose000-native-20261011/report.json)
+records 211 pickup, 501 lift, 82 transfer and 621 axial samples. Its sampled
+audit found no collision and a **0.915 mm minimum key/socket surface
+distance**. Rigid-model FK at the endpoint gave **20.0035 mm nominal depth**
+past the socket entry and **6.12 µm lateral residual** from the socket axis.
+`verify-saved-preflight` independently checked the saved trajectory hashes,
+candidate, stage continuity and maximum held-hand drift of **4.77e-8 rad**;
+it did not repeat the collision audit.
+
+This is an idealized, nominal-geometry pass, **not** a 1 mm physical insertion
+result. The 0.915 mm sampled clearance can be consumed by fixture/hand-eye
+calibration, print tolerances, camera localization, squeeze-induced key pose
+error and robot tracking. No measured uncertainty bound or contact-force
+validation is available. The test also does not establish continuous
+swept-volume safety between samples or commission the experimental planner.
