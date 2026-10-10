@@ -116,11 +116,13 @@ recheck those sources again immediately before motion. The unchanged
 `FrankaExecutor.follow_joint_trajectory` is **not** a guarded insertion
 controller: its generic path does not require contact abort and can attempt
 an endpoint landing after a stalled or timed-out stream. Do not replay the
-saved axial path with that API as a contact insertion command. The real
-15 mm radial-gap cylinder
-asset audit on this host currently finds zero v8 grasp candidates and no
-key/socket FoundPose representations, so a real cylinder replay is not yet
-possible here.
+saved axial path with that API as a contact insertion command. The current
+15 mm radial-gap catalogue has 12 **offline simulated** v8 candidates that
+pass its nominal 20 mm endpoint screen. Their 4.4–38.5 mm achieved
+hand-relative center drift has no commissioned acceptance limit, and the
+key/socket FoundPose representations remain in NAS `pending_foundpose/`
+awaiting real-image pose/mask QA. These are not physical or robot-ready
+grasps; a real cylinder replay is still not possible here.
 
 For a commissioned session, reuse the *same* runner and saved checkpoint:
 
