@@ -25,6 +25,7 @@ from .pose_selection import classify_key_tabletop_pose
 from .repose_preflight import (
     ReposeHeldPreflight, build_v8_repose_rest_pose, plan_repose_held_chain,
 )
+from .curobo_compat import install_curobo_planner_compat
 from .repose_release import ReposeReleasePreflight, plan_repose_release_exit
 from .reset_candidates import load_v8_reset_seeds
 from .world import build_held_scene_from_trial, validated_frozen_socket_pose
@@ -189,6 +190,10 @@ def preflight_v8_repose_transition(
         return result("no_verified_reset_seed", rest=rest)
     count = seeds["n_total"] if max_seed_attempts is None else min(
         seeds["n_total"], max_seed_attempts)
+    # The v8 reset pickup uses the same unchanged AutoDex/cuRobo planner as
+    # insertion pickup. Install the same source-guarded process-local fixes
+    # before its first motion-world initialization, not only for trial grasps.
+    install_curobo_planner_compat()
     attempts = []
     for i in range(count):
         info = seeds["scene_info"][i]

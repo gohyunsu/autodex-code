@@ -301,6 +301,10 @@ def test_v8_reset_seed_is_screened_then_planned_in_frozen_socket_world(
     calibration, scene, pickup, _, limits = _fixture(tmp_path, monkeypatch)
     planner = _Planner()
     planner.pickup_plan = pickup
+    compat_calls = []
+    monkeypatch.setattr(
+        "precision_insertion.repose_transition.install_curobo_planner_compat",
+        lambda: compat_calls.append("installed"))
     monkeypatch.setattr(
         "precision_insertion.repose_transition.select_pose_candidates",
         lambda *_, **__: {"status": "candidates_available",
@@ -322,6 +326,7 @@ def test_v8_reset_seed_is_screened_then_planned_in_frozen_socket_world(
         })
     result = _transition(tmp_path, calibration, scene, limits, planner)
     assert result.status == "held_reset_path_available_release_unplanned"
+    assert compat_calls == ["installed"]
     assert result.selected_seed["seed_id"] == "191"
     assert result.to_record()["robot_ready"] is False
     assert [call[0] for call in planner.calls] == [

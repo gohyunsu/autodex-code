@@ -457,7 +457,9 @@ that session and catalogue. For each new key observation:
    table support, ChArUco footprint and socket clearance before recording
    `reorient_success`. A wrong class is failure; missing/ambiguous support
    evidence keeps the outcome unknown for review. No result is inferred from
-   the reset plan alone.
+   the reset plan alone. The [synthetic v8 reset diagnostic](SYNTHETIC_REPOSE_VALIDATION.md)
+   exercises the staged candidate through the same planner without promoting
+   it to a runtime reset asset.
 
 A supervised reset log is JSON with schema
 `precision_insertion_supervised_reset_v1`, the exact `attempt_id`,
