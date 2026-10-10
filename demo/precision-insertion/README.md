@@ -1255,7 +1255,11 @@ silently resize **or** that the installed Qwen image processor would resize
 to its patch grid or pixel-area limits. For the cached Qwen3-VL-2B processor,
 both dimensions must be multiples of 32 and the area within its configured
 limits: 640×480 is unchanged, whereas 1280×720 becomes 1280×704 internally
-and is rejected for metric grounding. Unknown local processor geometry also
+and is rejected for metric grounding. The latest inspected AutoDex NAS camera
+calibration records 2048×1536, which passed a single-view local-model smoke
+test with `max_input_size=(2048, 1536)`; this is not a multi-view accuracy
+result or a guarantee that the next live session uses that calibration.
+Unknown local processor geometry also
 fails closed. The point-grounding path also requires an explicit verified
 native-pixel backend contract: an undeclared adapter or the current Gemini
 adapter cannot produce metric coordinates because its internal image

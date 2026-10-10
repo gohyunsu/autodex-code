@@ -310,7 +310,7 @@ def test_local_backend_reuses_loaded_vlm():
 def test_local_metric_pixels_reject_qwen_internal_resize():
     class StubModel:
         family = "qwen"
-        max_input_size = (1280, 720)
+        max_input_size = (2048, 1536)
         processor = SimpleNamespace(image_processor=SimpleNamespace(
             patch_size=16, merge_size=2,
             size={"shortest_edge": 65536,
@@ -321,6 +321,7 @@ def test_local_metric_pixels_reject_qwen_internal_resize():
 
     native = ZeroDexLocalBackend(StubModel())
     assert native.infer([Image.new("RGB", (640, 480))], "pixel") == "{}"
+    assert native.infer([Image.new("RGB", (2048, 1536))], "pixel") == "{}"
     with pytest.raises(ValueError, match="processor would resize"):
         native.infer([Image.new("RGB", (1280, 720))], "pixel")
     semantic = ZeroDexLocalBackend(

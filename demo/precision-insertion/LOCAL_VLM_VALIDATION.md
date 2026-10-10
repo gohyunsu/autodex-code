@@ -111,6 +111,18 @@ coordinates. Semantic lift/insertion classification may still resize. This
 geometry gate prevents an unrecorded coordinate transform; it does **not**
 validate whether the VLM can localize a tip to the needed pixel accuracy.
 
+The newest local NAS `cam_param` snapshot inspected on 2026-10-11
+(`20260921_213318/intrinsics.json`) records 2048×1536 for its cameras. The
+stock AutoDex `run_auto.py` defaults to the newest `~/shared_data/cam_param`
+directory unless `--calib_dir` overrides it. Both dimensions are multiples
+of 32, and the cached Qwen processor returned a 96×128 patch grid, exactly
+1536×2048 pixels. A **single blank 2048×1536 image** passed the local backend's
+native-pixel guard and completed Qwen3-VL-2B inference on the RTX 3090 with
+the reply `blank`. This verifies full-size image transport/model memory for
+one view, not the currently mounted camera selection, multiple-view latency,
+or any key-tip localization accuracy. Actual session intrinsics and capture
+dimensions must still be checked together at startup.
+
 Collect time-synchronized, phase-paired **raw AutoDex camera images** with
 independent lift and insertion labels. Evaluate false-positive `held`, jam,
 and insertion-appearance rates against those labels, including occlusion and
