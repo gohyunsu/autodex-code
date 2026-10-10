@@ -470,6 +470,48 @@ has approximately **36°** symmetry-reduced axis tilt. A MuJoCo gravity pass
 is thus not evidence of a rigid key/hand transform. Using *illustrative,
 uncommissioned* 3 mm center-drift and 8° tilt limits, only `0_1/191` survives
 the loader; those values do not approve robot execution.
+For the previously used *project diagnostic* BODex thresholds (maximum
+`grasp_error ≤ 0.2`, mean absolute `dist_error ≤ 10 mm`), `0_1/191` records
+about 0.081 and 8.9 mm, whereas `1_0/631` records about 0.361 and 4.7 mm.
+Thus only the first also passes that diagnostic. These numbers are reported
+separately: the original AutoDex sim filter does **not** enforce them, and
+native BODex `success` remains false for both.
+
+To reproduce the expanded run, use fresh output names in all four steps:
+
+```bash
+PYTHONPATH=demo/precision-insertion/compat \
+  ~/miniconda3/envs/autodex_bodex/bin/python \
+  src/grasp_generation/BODex/generate.py \
+  -c sim_inspire/precision_insertion.yml -w 2 \
+  --obj_list_file demo/precision-insertion/configs/cylinder_grip_proxy.txt \
+  --obj_root_dir /home/hyunsu/shared_data/object_processing \
+  --scene_type reorient_12 --seed_num 1000 --seed 11010 \
+  --exp_name NEW_RESET_PROXY_1000 \
+  --output_dir /home/hyunsu/shared_data/AutoDex/bodex_raw/inspire/NEW_RESET_PROXY_1000
+
+PYTHONPATH=demo/precision-insertion \
+  ~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/stage_cylinder_reorient_proposals.py \
+  --raw-root /home/hyunsu/shared_data/AutoDex/bodex_raw/inspire/NEW_RESET_PROXY_1000 \
+  --stage-root /home/hyunsu/shared_data/AutoDex/bodex_raw/inspire/NEW_RESET_FULLKEY_1000 \
+  --shared-root /home/hyunsu/shared_data --expected-per-cell 1000
+
+PYTHONPATH=demo/precision-insertion/compat \
+  ~/miniconda3/envs/autodex_bodex/bin/python -c \
+  'from src.grasp_generation.sim_filter.run_sim_filter import run_sim_filter; print(run_sim_filter("inspire", "v8", "precision_key_cylinder_r15_h80", "/home/hyunsu/shared_data/AutoDex/bodex_raw/inspire/NEW_RESET_FULLKEY_1000", "/home/hyunsu/shared_data/AutoDex/precision_insertion/NEW_RESET_STOCK_PASS_1000", obj_root_dir="/home/hyunsu/shared_data/object_processing"))'
+
+PYTHONPATH=demo/precision-insertion \
+  ~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/audit_cylinder_reorient_pilot.py \
+  --stage-root /home/hyunsu/shared_data/AutoDex/bodex_raw/inspire/NEW_RESET_FULLKEY_1000 \
+  --output /home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/NEW_RESET_FILTER_AUDIT.json
+```
+
+The stock filter catches some internal collision errors and caches failures;
+check the complete audit before interpreting its process exit code. Its
+MuJoCo pass output alone is not a runtime reset pool. The subsequent local
+promotion command uses the new stage, stock-pass root and audit together.
 
 `~/shared_data/AutoDex/candidates/inspire/reset_12` is a symlink to the
 read-only `/mnt/paradex2` NFS mount on this machine. The expanded passing
@@ -486,6 +528,14 @@ The [handoff v4 audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/cyli
 uses `run_pipeline.py audit-reorient --candidate-root` to count the two
 evidence-bound seeds separately from the canonical NAS audit, which still
 counts zero.
+The 999 KB [local handoff bundle](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_handoff_bundle_20261010.tar.gz)
+contains both candidates, audit reports, v8 key scenes, key and six cylinder
+socket object-processing assets, fixture geometries, and a handoff README.
+Its SHA-256 is
+`6b83a94026074f925c57567dd754771e01cbfda16491d2e8a10ba647894acc98`.
+The archive has **not** been copied to NAS. Scene JSONs embed this host's
+absolute mesh/URDF paths; a different AutoDex-host shared root requires
+scene regeneration and fresh evidence validation, not a blind path edit.
 Even after installation on a writable AutoDex host, both seeds still need
 socket-aware full-chain Franka planning and physical validation.
 
