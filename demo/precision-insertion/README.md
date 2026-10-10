@@ -178,9 +178,11 @@ then records a pending continuous <=1 mm XY retry without moving the robot.
 A fresh measured, stationary state can then be bound through
 `SessionRunner.prepare_retry_axial_handoff(...)` to the pending event and
 the **new axial-only archive**; its exclusive packet is read-only and does
-not authorize contact. A separately commissioned retry contact executor and
-physical key-depth admission are still needed before retry success can be
-labeled. See
+not authorize contact. The opt-in `execute_bound_retry_guarded_insertion(...)`
+boundary can use a separately commissioned contact controller after fresh
+feedback, watchdog/contact reviews and an explicit live interlock. No such
+controller is bundled, and physical key-depth admission is still needed
+before retry success can be labeled. See
 [POSTSHIFT_HANDOFF.md](POSTSHIFT_HANDOFF.md) for the call contract.
 Its `verify_retry_guarded_metric(...)` additionally defines the external
 contact-record schema and replays the exact retry handoff/trace/source chain;

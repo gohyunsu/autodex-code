@@ -126,8 +126,8 @@ tip/axis-derived yaw gauge. It explicitly marks the old axial path
 non-reusable and `axial_contact_authorized=false`.
 
 All error bounds above must come from physical commissioning. This remains
-a read-only preflight with synthetic-unit-test coverage, not a retry-specific
-guarded contact controller or a physical 20 mm success observation. Do not
+a read-only preflight with synthetic-unit-test coverage, not a contact
+command or a physical 20 mm success observation. Do not
 feed either old or newly planned axial path to the stock trajectory follower
 as a contact insertion command.
 
@@ -188,13 +188,13 @@ without querying the VLM or moving the robot.
 
 The packet deliberately says `robot_ready=false` and
 `read_only_grounded_retry_axial_packet_not_contact_permission`. Its saved
-joint sample becomes stale; a future contact executor must recheck fresh
+joint sample becomes stale; the contact boundary must recheck fresh
 feedback, a command-time deadline, force/depth limits, watchdog and interlock
 before *any* stroke. The first-attempt guarded executor and v2 insertion
-checkpoint still reject this retry source. A retry-specific contact executor,
-fresh post-contact observations and physical key-depth verifier remain to be
-commissioned and integrated. Neither a passing packet nor a VLM label is
-evidence that the key entered 20 mm.
+checkpoint still reject this retry source. Fresh post-contact observations
+and physical key-depth admission remain to be commissioned and integrated.
+Neither a passing packet nor a VLM label is evidence that the key entered
+20 mm.
 
 ## Retry contact metric contract (read-only)
 
@@ -227,6 +227,47 @@ metric, started, completed = verify_retry_guarded_metric(
 Import this from `precision_insertion.retry_guarded_metric`. The verifier
 checks file hashes, capture/source identity, event timing, trace replay and
 the new path binding. It does **not** authenticate the external sensor or
-admit its claimed key-depth interval as a task-success measurement. There
-is not yet a robot-contact adapter for this retry schema; this contract is
-for producer integration and offline replay, not permission to execute.
+admit its claimed key-depth interval as a task-success measurement.
+
+## Opt-in retry contact boundary
+
+`execute_bound_retry_guarded_insertion(...)` accepts the same independently
+commissioned `follow_guarded_insertion` adapter contract as the first stroke,
+but requires the **new** retry packet, pending continuous XY event and fresh
+stationary robot feedback. It reuses watchdog and contact-controller
+commissioning checks; it defaults to `enable_robot_motion=False` and will
+not request motion without an explicit live interlock. The adapter must
+enforce its own robot-side watchdog, force/contact and grasp-loss stops.
+No production adapter or reviewed commissioning record is bundled here.
+
+```python
+from precision_insertion.retry_guarded_execution import (
+    execute_bound_retry_guarded_insertion,
+)
+
+execution = execute_bound_retry_guarded_insertion(
+    runner=runner, expected=replan, previous=postshift_preflight,
+    arrival=arrival_checkpoint, checkpoint=postshift_checkpoint,
+    shift_plan=completed_shift_plan, handoff_report_path=retry_packet,
+    adapter=commissioned_contact_adapter,
+    pre_state=fresh_robot_state, read_post_state=read_fresh_robot_state,
+    limits=commissioned_execution_limits,
+    contact_limits=commissioned_contact_limits,
+    max_handoff_age_s=commissioned_handoff_age,
+    watchdog_commissioning_path=reviewed_watchdog_record,
+    contact_commissioning_path=reviewed_contact_record,
+    motion_interlock=operator_and_robot_interlock,
+    enable_robot_motion=True,
+)
+```
+
+This writes `retry_guarded_executions/NNN/started.json` before calling the
+adapter and either an `execution.json` or a latched `failure.json`. A
+controller/metric/feedback error requests `stop_and_acknowledge()` and
+requires supervised recovery. `verify_retry_guarded_execution(...)` replays
+the saved path, state, timeline, controller output, metric sources and
+commissioning references without a robot call. Even a complete external
+stroke does **not** change `insertion_success`: a new final/abort camera
+capture, VLM verdict and separately admitted physical key-depth estimate
+are still required. Synthetic fake-adapter tests are not a contact
+commissioning test.
