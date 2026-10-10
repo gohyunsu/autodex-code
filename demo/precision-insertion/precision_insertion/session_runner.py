@@ -31,9 +31,14 @@ from .lift_checkpoint import (
     write_lift_checkpoint,
 )
 from .geometry import validate_se3
+from .insertion_checkpoint import (
+    assess_insertion_checkpoint, verify_insertion_checkpoint,
+    write_insertion_checkpoint,
+)
 from .endpoint import _load_mesh
 from .live_robot_state import LiveRobotState
 from .observer import ImageVLM
+from .outcome import InsertionEvidence
 from .path_audit import PathAuditLimits
 from .pose_selection import classify_key_tabletop_pose
 from .postlift_preflight import (
@@ -134,6 +139,7 @@ class SessionRunner:
         self._lift_execution_sha256: str | None = None
         self._lift_assessment_index = 0
         self._lift_assessed_capture_ids: set[str] = set()
+        self._insertion_assessment_index = 0
         self._retry_assessment_index = 0
         self._write_exclusive(
             target / "frozen_session_calibration.json", calibration.record)
@@ -343,6 +349,7 @@ class SessionRunner:
         self._lift_execution_sha256 = None
         self._lift_assessment_index = 0
         self._lift_assessed_capture_ids.clear()
+        self._insertion_assessment_index = 0
         self._capture_id = key_observation.capture_id
         self._capture_timestamp_s = float(
             key_observation.selected_acquisition_timestamp_s)
@@ -1158,10 +1165,141 @@ class SessionRunner:
 
     def observe_insertion(
         self, evidence, *, timestamp_s: float,
-        evidence_refs: Mapping[str, str],
+        evidence_refs: Mapping[str, str], checkpoint_path: Path,
     ) -> AttemptRecord:
+        """Record only an insertion result backed by this attempt's saved VLM."""
+        path = Path(checkpoint_path).expanduser().resolve()
+        report = verify_insertion_checkpoint(path)
+        sources = json.loads(Path(report["metric_record_path"]).read_text(
+            encoding="utf-8"))["source_records"]
+        expected_refs = {
+            "vlm_observation": str(path),
+            "vlm_observation_sha256": hashlib.sha256(
+                path.read_bytes()).hexdigest(),
+            "guarded_execution": report["metric_record_path"],
+            **{name: sources[name]["path"] for name in (
+                "key_depth", "alignment", "force_trace", "grasp_state")},
+        }
+        if (self._attempt is None or
+                report["attempt_id"] != self._attempt.attempt_id or
+                report["candidate_id"] != self._attempt.candidate_id or
+                report["session_calibration_sha256"] != self.session_sha256 or
+                report["target_depth_m"] != self.mode.target_depth_m or
+                report["decision_timestamp_s"] != float(timestamp_s) or
+                not isinstance(evidence, InsertionEvidence) or
+                json.loads(json.dumps(evidence.__dict__)) !=
+                report["evidence"] or
+                not isinstance(evidence_refs, Mapping) or
+                any(evidence_refs.get(name) != value
+                    for name, value in expected_refs.items())):
+            raise ValueError("insertion label needs this attempt's bound checkpoint")
+        preinsert_events = [event for event in self._attempt.events
+                            if event["stage"] == "preinsert_reached" and
+                            event["value"] is True]
+        retry_events = [event for event in self._attempt.events
+                        if event["stage"] == "xy_retry"]
+        if len(preinsert_events) != 1:
+            raise ValueError("insertion checkpoint has no observed pre-insertion hold")
+        if not retry_events:
+            before_root = Path(report["preinsert_bundle"])
+            reference = (
+                "key_socket_pose", before_root / "key_observation.json"
+            ) if report["preinsert_capture_kind"] == "held_key_pose" else (
+                "preinsert_image", before_root / "manifest.json")
+            if preinsert_events[0]["evidence_refs"].get(
+                    reference[0]) != str(reference[1]):
+                raise ValueError("insertion checkpoint used another pre-insertion image")
+        if retry_events and (
+                report["preinsert_reached_at_s"] !=
+                retry_events[-1]["timestamp_s"]):
+            raise ValueError("retry insertion checkpoint predates the XY choice")
         return self._record(lambda row: row.record_insertion_evidence(
             evidence, timestamp_s=timestamp_s, evidence_refs=evidence_refs))
+
+    def prepare_observed_insertion_label(
+        self, *, preinsert_bundle: Path, final_bundle: Path,
+        metric_record_path: Path, backend: ImageVLM,
+        decision_timestamp_s: float, max_phase_skew_s: float,
+        max_preinsert_age_s: float, max_final_observation_gap_s: float,
+        minimum_visual_views: int = 2,
+    ) -> dict:
+        """Persist paired VLM frames and external metric sources, then label.
+
+        This is a read-only observation path. Guarded motion, calibrated key
+        depth and force samples must come from separately commissioned producers.
+        Unknown visual/metric evidence is recorded as unknown, not success.
+        """
+        if (self._attempt is None or self._attempt_dir is None or
+                self._attempt.candidate_id is None or
+                self.current_decision().action not in {
+                    "await_guarded_insertion_and_observation",
+                    "await_retry_execution_and_observation"}):
+            raise ValueError("no held-key insertion attempt awaits observation")
+        preinsert_events = [event for event in self._attempt.events
+                            if event["stage"] == "preinsert_reached" and
+                            event["value"] is True]
+        if len(preinsert_events) != 1:
+            raise ValueError("insertion needs one observed pre-insertion hold")
+        before_root = Path(preinsert_bundle).expanduser().resolve()
+        is_key_capture = (before_root / "evidence_manifest.json").is_file()
+        before_file = (before_root / "key_observation.json" if is_key_capture
+                       else before_root / "manifest.json")
+        before_record = json.loads(before_file.read_text(encoding="utf-8"))
+        if is_key_capture and (
+                before_record.get("key_object") != self.mode.key_object or
+                before_record.get("family") != self.mode.family):
+            raise ValueError("pre-insertion capture is for another key")
+        retry_events = [event for event in self._attempt.events
+                        if event["stage"] == "xy_retry"]
+        if retry_events:
+            latest_retry = retry_events[-1]["timestamp_s"]
+            before_lower = min(
+                row["timestamp_s"] - row["max_error_s"]
+                for row in before_record["frame_evidence"].values())
+            if before_lower <= latest_retry:
+                raise ValueError("retry needs a fresh post-choice held-key frame")
+        elif (preinsert_events[0]["evidence_refs"].get(
+                "key_socket_pose" if is_key_capture else "preinsert_image") !=
+              str(before_file)):
+            raise ValueError("pre-insertion VLM image differs from arrival observation")
+        reached_at = max(preinsert_events[0]["timestamp_s"],
+                         retry_events[-1]["timestamp_s"] if retry_events else
+                         preinsert_events[0]["timestamp_s"])
+        report = assess_insertion_checkpoint(
+            attempt_id=self._attempt.attempt_id,
+            candidate_id=self._attempt.candidate_id,
+            target_depth_m=self.mode.target_depth_m,
+            session_calibration_sha256=self.session_sha256,
+            preinsert_bundle=before_root, final_bundle=final_bundle,
+            metric_record_path=metric_record_path,
+            preinsert_reached_at_s=reached_at,
+            decision_timestamp_s=decision_timestamp_s, backend=backend,
+            max_phase_skew_s=max_phase_skew_s,
+            max_preinsert_age_s=max_preinsert_age_s,
+            max_final_observation_gap_s=max_final_observation_gap_s,
+            minimum_visual_views=minimum_visual_views)
+        output = (self._attempt_dir / "insertion_assessments" /
+                  f"{self._insertion_assessment_index:03d}")
+        path = write_insertion_checkpoint(report, output)
+        verify_insertion_checkpoint(path)
+        metric = json.loads(Path(metric_record_path).read_text(encoding="utf-8"))
+        sources = metric["source_records"]
+        refs = {
+            "vlm_observation": str(path),
+            "vlm_observation_sha256": hashlib.sha256(
+                path.read_bytes()).hexdigest(),
+            "key_depth": sources["key_depth"]["path"],
+            "alignment": sources["alignment"]["path"],
+            "force_trace": sources["force_trace"]["path"],
+            "grasp_state": sources["grasp_state"]["path"],
+            "guarded_execution": str(Path(metric_record_path).resolve()),
+        }
+        self.observe_insertion(
+            InsertionEvidence(**report["evidence"]),
+            timestamp_s=decision_timestamp_s, evidence_refs=refs,
+            checkpoint_path=path)
+        self._insertion_assessment_index += 1
+        return report
 
     def record_retry(
         self, assessment: XYRetryAssessment,

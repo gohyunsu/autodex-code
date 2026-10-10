@@ -75,8 +75,21 @@ that session and catalogue. For each new key observation:
    or motion permit.
    Following separately controlled transfer, `preinsert_reached=True`
    requires this exact unchanged passing report plus independent trajectory,
-   key/socket pose, and grip evidence. Use `observe_insertion` for the 20 mm
-   task outcome. A missed grasp excludes that candidate on the next *fresh*
+   key/socket pose, and grip evidence. For the 20 mm outcome,
+   collect a later raw full-frame multi-camera capture even if FoundPose fails,
+   save it with `write_final_insertion_capture`, and call
+   `prepare_observed_insertion_label` with that final bundle, a
+   guarded-execution metric record, and a ZeroDex-compatible VLM. The before
+   image can be either a saved `held_preinsert` FoundPose bundle or a raw
+   same-request capture saved with `write_preinsert_raw_capture`. For a raw
+   before image, put its `manifest.json` in the `preinsert_reached` event's
+   `preinsert_image` ref; `key_socket_pose` remains a separate kinematic/pose
+   evidence ref. For a pose-bound before image, `key_socket_pose` points to
+   its `key_observation.json`.
+   This hashes the raw frames, prompt/response and numeric source records
+   before recording `insertion_success`. Direct `observe_insertion` now
+   requires that same verified checkpoint; arbitrary path strings cannot
+   create a session task label. A missed grasp excludes that candidate on the next *fresh*
    key observation. Planning-only rejects are skipped only when continuing
    the same budget-limited camera capture; a new pose/state may make them
    viable. Do not call `observe_stage("reset_success", True, ...)` with a
@@ -134,6 +147,33 @@ decision time is retained in the report. This is still an external execution
 assertion, not a robot-control interface. A clear miss with no admitted
 held-key FoundPose cannot yet use this positive-evidence pathway; its
 raw-frame failure observation needs a separate binding.
+
+The guarded-insertion adapter must provide a JSON record with schema
+`precision_insertion_guarded_execution_v1`, matching `attempt_id` and
+`candidate_id`, physical `started_at_s` and `completed_at_s`, and a
+`measurement` object containing exactly `key_depth_interval_m` (lower/upper
+conservative **key** depth or `null`), `key_depth_source`,
+`alignment_within_limits`, `safety_abort`, and `grasp_held`. Its
+`source_records` must contain `key_depth`, `alignment`, `force_trace`, and
+`grasp_state`, each as `{ "path": "/absolute/path", "sha256": "..." }`.
+The check hashes these files but cannot establish that their contents came
+from calibrated sensors; the robot-side producer, its timing and uncertainty
+model still require commissioning. `FinalInsertionCapture` carries raw frames
+for either before or after phase; matching camera request/frame IDs, raw BGR
+full frames and camera-acquisition metadata are required;
+the stock AutoDex daemons do not currently supply this complete provenance.
+Only camera views present in both captures are compared, and a positive
+visual class needs at least two supporting views. Hidden/ambiguous images do
+not prove insertion. A command stroke alone is not an allowed key-depth
+source. The output remains read-only and cannot start guarded contact.
+The current *upstream* `prepare_postlift_transfer` still insists on a fresh
+held-key FoundPose relation before transfer. The raw insertion checkpoint
+does **not** remove that gate, nor the held-key FoundPose requirement in
+`prepare_observed_xy_retry`. Hand occlusion makes both feasibility risks;
+do not silently substitute the BODex nominal relation. MuJoCo's achieved
+squeeze relation is a better simulation prior, but hardware drift and camera
+visibility need grasp-specific calibration or another bounded relation
+estimate before a physical transfer is authorized.
 
 The supervisor writes a new `session_run.json`, immutable copies of the
 frozen calibration and endpoint catalogue, numbered
@@ -933,6 +973,16 @@ evidence paths and images. These are **offline endpoint illustrations only**:
 there is no Franka arm pose, full path/contact validation, or robot insertion
 success. The 1 µm numerical hand clearance used in this run is not a safe
 physical margin. Do not call these runtime-ready grasp candidates.
+In particular, these stills combine the initial fixed key–hand transform with
+the *commanded* squeeze/hold joint pose, not MuJoCo's jointly achieved key and
+finger pose. The saved `sim_traj.json` does contain both actual post-squeeze
+poses. `grasp_fidelity.achieved_hand_state` extracts their matched
+`T_key_hand` and Inspire joints, and `screen_cylinder_achieved_endpoints.py`
+already rechecks that pair against every socket at 20 mm. A faithful achieved
+still must export **both** values from the same trajectory index before
+rendering; changing only the finger angles repeats the visual penetration
+artifact. Even such a still is a counterfactual rigid placement at the socket,
+not a simulated transfer/insertion or a measured physical grasp.
 
 ### Replay a saved session and fresh key observation without robot motion
 

@@ -403,9 +403,21 @@ the measured hand state and the VLM prompt/raw answer; `SessionRunner` permits
 a positive grasp label only from that verified checkpoint. This positive
 path requires an admitted post-lift FoundPose, so an obvious miss with no
 held-key observation still needs a separate raw-frame negative-evidence
-path. Insertion visual images and model answers are not yet automatically
-hash-bound to the session's task verdict; complete that checkpoint before
-calling insertion labels live VLM-derived outcomes.
+path. `insertion_checkpoint.py` now adds a read-only path that binds either an
+admitted pre-insertion key capture or raw pre-insertion camera frames to a
+later raw same-camera capture, saved
+prompt/raw VLM answer and hashed external depth/alignment/force/grip sources.
+`SessionRunner.prepare_observed_insertion_label` records the fused task label
+only after that checkpoint verifies. Direct `SessionRunner.observe_insertion`
+also requires this attempt's verified checkpoint; the lower-level
+`AttemptRecord` remains useful for offline diagnostic fixtures.
+Neither path certifies the external sensor/controller producer or executes
+guarded contact; commissioning and physical validation remain missing.
+The upstream post-lift transfer path still requires new held-key FoundPose;
+hand occlusion may make this impractical. Replace that dependency only after
+commissioning a grasp-specific key–hand relation with uncertainty and a
+fail-closed endpoint/path margin. MuJoCo achieved squeeze pose is a simulation
+prior, not a measured physical grasp transform.
 Candidate grasp statistics update from `grasp_success`; insertion retry
 statistics update from `insertion_success` and failure cause. Unknown is not
 success and must not erase a known earlier milestone. Use a controlled failure

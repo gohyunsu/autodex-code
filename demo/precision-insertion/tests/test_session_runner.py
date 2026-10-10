@@ -474,14 +474,14 @@ def test_verified_insertion_cannot_start_new_trial_until_reset_observed(
                        "key_socket_pose": "pose/hold.json",
                        "grasp_state": "pose/grip.json",
                        "postlift_preflight": postlift_report})
-    runner.observe_insertion(
+    runner._record(lambda row: row.record_insertion_evidence(
         InsertionEvidence("normal_appearance", (0.0201, 0.021),
                           "key_pose_multiview", True, False, True),
         timestamp_s=10.5,
         evidence_refs={"vlm_observation": "vlm/insert.json",
                        "key_depth": "pose/depth.json",
                        "alignment": "pose/axis.json",
-                       "force_trace": "wrench/trace.json"})
+                       "force_trace": "wrench/trace.json"}))
     assert runner.current_decision().action == "hold_for_supervised_completion"
     with pytest.raises(ValueError, match="no verified return"):
         _plan(runner, _observation("key_2", 11.0))
@@ -594,14 +594,14 @@ def test_retry_requires_matching_two_view_vote_and_live_replan(
                        "key_socket_pose": "pose/hold.json",
                        "grasp_state": "pose/grip.json",
                        "postlift_preflight": postlift_report})
-    runner.observe_insertion(
+    runner._record(lambda row: row.record_insertion_evidence(
         InsertionEvidence("partial", (0.005, 0.008),
                           "key_pose_multiview", True, False, True),
         timestamp_s=10.5,
         evidence_refs={"vlm_observation": "vlm/insert.json",
                        "key_depth": "pose/depth.json",
                        "alignment": "pose/axis.json",
-                       "force_trace": "wrench/trace.json"})
+                       "force_trace": "wrench/trace.json"}))
     assert runner.current_decision().action == "guarded_withdrawal_then_xy_assessment"
     choice = ChoiceDecision(
         "propose", "two_view_consensus", "x_plus_1mm", (0.001, 0.0),
