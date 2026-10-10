@@ -674,6 +674,7 @@ demo/precision-insertion/
     xy_retry.py                   # offline endpoint/overlay/VLM consensus proposal
     grounded_alignment.py         # read-only multiview tip/axis XY diagnostic
     grounding_eval.py             # independent held-key pose comparison
+    camera_transport.py           # demo-local fid/pixel-hash PUB adapters
     retry_preflight.py            # fresh withdrawn-state retry planning only
     retry_session.py              # same-frame failed-trial/VLM/live-state evidence gate
     records.py                    # separate append-only observed task labels
@@ -683,6 +684,7 @@ demo/precision-insertion/
     observer.py                   # read-only ZeroDex-backed VLM prompts, parsing, per-view votes
   tests/                          # offline contracts and replay fixtures
   evaluate_grounded_alignment.py  # offline held-out metric evaluation CLI
+  precision_init_daemon.py         # capture-PC FoundPose metadata variant
 
 Planned below the same demo directory, but **not implemented**:
   live_session_runner.py          # commissioned camera/robot orchestration

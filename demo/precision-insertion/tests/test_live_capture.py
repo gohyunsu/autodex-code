@@ -67,10 +67,15 @@ class FoundPoseStub:
         mask[6:15, 8:20] = True
         return (
             {serial: {"mask": mask.copy(), "ts": 200.0,
-                      "frame_id": FRAME_IDS[serial]} for serial in CAMERAS},
+                      "frame_id": FRAME_IDS[serial],
+                      "image_sha256": image_sha256(IMAGE),
+                      "image_space": "autodex_undistorted_full_frame"}
+             for serial in CAMERAS},
             {serial: {"ok": True, "pose_world": np.eye(4),
                       "quality": 0.8, "inliers": 20, "mask_pixels": 108,
-                      "ts": 210.0, "frame_id": FRAME_IDS[serial]}
+                      "ts": 210.0, "frame_id": FRAME_IDS[serial],
+                      "image_sha256": image_sha256(IMAGE),
+                      "image_space": "autodex_undistorted_full_frame"}
              for serial in CAMERAS},
             {"request_id": kwargs["request_id"]},
         )
@@ -118,6 +123,22 @@ def test_socket_uses_same_request_saved_frames_and_foundpose(tmp_path):
             capture_root=tmp_path, calibrated_camera_ids=CAMERAS,
             acquisition_metadata_for_request=_provider, timeout_s=2.0,
             request_id_factory=lambda: 43)
+
+
+def test_socket_rejects_mask_pose_hash_from_another_camera_frame(tmp_path):
+    class WrongSource(FoundPoseStub):
+        def collect_payloads(self, **kwargs):
+            masks, poses, timing = super().collect_payloads(**kwargs)
+            masks["cam_b"]["image_sha256"] = "0" * 64
+            return masks, poses, timing
+
+    with pytest.raises(ValueError, match="source pixels differ"):
+        collect_socket_capture(
+            init_orchestrator=WrongSource(), socket_object="socket_model",
+            capture_id="socket_wrong_source", socket_prompt="red socket",
+            capture_root=tmp_path, calibrated_camera_ids=CAMERAS,
+            acquisition_metadata_for_request=_provider, timeout_s=2.0,
+            request_id_factory=lambda: 55)
 
 
 def test_socket_rejects_missing_same_request_image(tmp_path):

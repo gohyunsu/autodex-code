@@ -21,7 +21,7 @@ from typing import Callable, Mapping
 import cv2
 import numpy as np
 
-from .frame_provenance import verify_frame_provenance
+from .frame_provenance import image_sha256, verify_frame_provenance
 from .session_bootstrap import SocketCaptureInput
 
 
@@ -192,10 +192,18 @@ def collect_socket_capture(
         capture_dir, payload_ids, image_write_timeout_s)
     frame_ids = {}
     for serial in images:
-        mask_fid = masks.get(serial, {}).get("frame_id")
-        pose_fid = poses.get(serial, {}).get("frame_id")
+        mask = masks.get(serial, {})
+        pose = poses.get(serial, {})
+        mask_fid = mask.get("frame_id")
+        pose_fid = pose.get("frame_id")
         if mask_fid != pose_fid:
             raise ValueError(f"SAM/FoundPose frame ID mismatch for {serial}")
+        digest = image_sha256(images[serial])
+        if any(row.get("image_sha256") != digest or
+               row.get("image_space") != "autodex_undistorted_full_frame"
+               for row in (mask, pose)):
+            raise ValueError(
+                f"SAM/FoundPose source pixels differ from saved frame: {serial}")
         frame_ids[serial] = mask_fid
     evidence = verify_frame_provenance(
         acquisition_metadata_for_request(request_id), request_id=request_id,

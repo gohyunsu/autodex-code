@@ -5,6 +5,54 @@ capture time or identity is unknown. The demo-local `live_capture.py` now
 rejects the unchanged AutoDex snapshot/init outputs **by design**. This is a
 deployment requirement, not a claim that the camera rig is already timed.
 
+## Demo-only transport now implemented (still not a timestamp solution)
+
+`precision_insertion/camera_transport.py` supplies two narrow adapters while
+reusing the stock camera capture and FoundPose inference code:
+
+- `SnapshotMetadataTap` subscribes to the same stock snapshot PUB stream and
+  records its `fid` plus a JPEG hash. `ProvenanceSnapshotAdapter` lets the
+  unchanged `SnapshotOrchestrator` dispatch/collect, but returns a frame ID
+  only if its decoded JPEG exactly matches the tap's same-request JPEG.
+  A missing tap message rejects that capture; no later image is substituted.
+- `precision_init_daemon.py` is a **capture-PC replacement for the stock
+  init daemon**, not a modification of it. It subclasses the existing
+  SAM3/FoundPose pipeline, records the SHM `(frame ID, image)` used by the
+  request, hashes the exact undistorted pixels and adds `fid`/pixel hash to
+  both existing mask and pose PUB metadata. On the robot PC,
+  `PrecisionInitOrchestrator(stock_init_orchestrator)` preserves these extra
+  fields in the stock buffers. `collect_socket_capture` and
+  `collect_key_capture` require both payload hashes and IDs to match their
+  same-request saved PNG. Only one daemon may bind ports 6893/5006/5007 on a
+  capture PC; do **not** start stock and precision daemons together.
+
+Example robot-PC construction, before starting any capture:
+
+```python
+stock_snap = SnapshotOrchestrator(pc_list, capture_ips)
+tap = SnapshotMetadataTap(capture_ips)
+board_snap = ProvenanceSnapshotAdapter(stock_snap, tap.buffer)
+stock_init = InitOrchestrator(pc_list, capture_ips)
+init = PrecisionInitOrchestrator(stock_init)
+# Pass board_snap to collect_board_snapshot() and init to
+# collect_socket_capture()/collect_key_capture(). Close tap and stock
+# orchestrators when the session ends.
+```
+
+The example names are imports from the unchanged AutoDex orchestrators and
+the demo-local `camera_transport` module. The metadata tap's PUB connection
+is not a guaranteed barrier: if it misses an initial message, the capture
+fails closed and must be repeated. These adapters have synthetic transport
+tests, **not** an AutoDex-camera-PC deployment test.
+
+The remaining required producer is an independently commissioned
+`acquisition_metadata_for_request(request_id)` that maps each sensor `fid`
+to Unix-UTC **exposure** time with a worst-case error and exact decoded-pixel
+hash. The stock snapshot's `ts` and the init daemon's `ts` are publication
+times and cannot fill that field. Until this provider is built and measured,
+`collect_board_snapshot`/`collect_socket_capture` correctly reject live
+sessions, even with the new frame-ID transport.
+
 ## What the existing AutoDex path actually provides
 
 - `src/execution/daemon/snapshot_daemon.py` reads `(image, frame_id)` from

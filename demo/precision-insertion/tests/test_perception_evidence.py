@@ -102,6 +102,11 @@ def test_combined_collector_requires_exact_saved_frame_evidence(tmp_path):
         masks[serial]["frame_id"] = frame_ids[serial]
         poses[serial]["frame_id"] = frame_ids[serial]
     image = np.zeros((24, 32, 3), dtype=np.uint8)
+    for serial in frame_ids:
+        masks[serial]["image_sha256"] = image_sha256(image)
+        poses[serial]["image_sha256"] = image_sha256(image)
+        masks[serial]["image_space"] = "autodex_undistorted_full_frame"
+        poses[serial]["image_space"] = "autodex_undistorted_full_frame"
 
     class OriginalCollectorStub:
         obj_name = "precision_socket_unified"
