@@ -1417,6 +1417,53 @@ insertable pose is established*. These are local handoff reports, not
 canonical NAS reset seeds, and do not include fixture-aware Franka plans.
 The very low `003→004` squeeze-contact count (17/1,000) motivates inspecting
 proposal placement and scene geometry before merely increasing sampling.
+
+### Square reorient proposal-policy checks (offline only)
+
+The preceding 30° wrench cone came from the insertion proposal config, not
+from AutoDex's 12 cm reorient proposal setting. Holding the key mesh, scene,
+stock filter and 1,000-proposal budget fixed, a 180° cone gave the following
+independent local batches. `003→004` remains particularly difficult; the
+extra squeeze contacts do not establish a reset path.
+
+| Cell and setting | Scene-clear | Squeeze contact | MuJoCo stable | Provisional 3 mm / 5° key–hand fidelity |
+| --- | ---: | ---: | ---: | ---: |
+| `000→004`, 50 mm seed inflation, 30°, seed 11011 | 843 | 251 | 7 | 0 |
+| `000→004`, 50 mm seed inflation, 180°, seed 11011 | 852 | 291 | 10 | 1 |
+| `000→004`, 50 mm seed inflation, 180°, seed 11013 | 859 | 279 | 6 | 0 |
+| `003→004`, 50 mm seed inflation, 30°, seed 11012 | 750 | 17 | 0 | 0 |
+| `003→004`, 50 mm seed inflation, 180°, seed 11012 | 745 | 25 | 1 | 0 |
+| `000→004`, 10 mm seed inflation, 180°, seed 11011 | 780 | 191 | 0 | 0 |
+
+The 10 mm row changes only BODex's *proposal-surface sampling distance* via
+[`square_reorient_gamma180_inflate10mm.yml`](configs/square_reorient_gamma180_inflate10mm.yml),
+not the final contact tolerance or stock simulation criteria. It is a
+negative ablation, not a replacement config. The raw/filter outputs and
+non-runtime [handoff manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/reorient_inflate10_gamma180_handoff_0_4_1000_20261011/manifest.json)
+are kept separate from canonical candidates. All 1,000 10 mm proposals were
+written, and the unchanged AutoDex collision, squeeze-contact and MuJoCo
+filters reported 780/191/0 respectively. BODex's native `success` was zero
+for this batch, as it was for the original; the staged MuJoCo count is a
+separate criterion.
+
+The single 180° `000→004` seed satisfying the **illustrative, uncommissioned**
+pose-fidelity bound is seed `184` in the [local gamma180 handoff](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/reorient_gamma180_handoff_0_4_1000_20261011/manifest.json).
+Its MuJoCo end-of-gravity key–hand center drift is 0.20 mm and full rotation
+change is 4.56°. However, its maximum BODex `grasp_error` is 0.2095, just
+above the separate project diagnostic threshold of 0.2. The stock AutoDex
+MuJoCo filter does **not** apply that diagnostic threshold; neither a stock
+pass nor an illustrative fidelity pass means this seed is physically reset-
+ready. It still lacks a commissioned fidelity bound, fixture-aware Franka
+path and real-robot test. Do not install these handoffs into the canonical
+runtime reset tree.
+
+The 10 mm ablation is reproducible by replacing `-c` in the BODex command
+above with the absolute path to the demo-only YAML, adding
+`--task_gamma 180`, and using fresh `--exp_name`, raw, filter and handoff
+output roots. `square_reorient_3_to_4.json` restricts the corresponding
+180° comparison to `003→004`. Never reuse an existing output root for a
+different generator setting.
+
 To repeat only these remaining cells, use the preceding BODex and stock-filter
 commands with `--scene_filter_file
 demo/precision-insertion/configs/square_reorient_remaining_to_4.json`,
