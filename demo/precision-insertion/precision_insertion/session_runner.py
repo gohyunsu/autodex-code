@@ -14,6 +14,7 @@ import json
 import math
 from pathlib import Path
 import re
+import time
 from typing import Mapping
 
 import numpy as np
@@ -27,6 +28,10 @@ from .key_perception import (
 from .geometry import validate_se3
 from .pose_selection import classify_key_tabletop_pose
 from .records import AttemptRecord, begin_attempt
+from .retry_session import (
+    RetrySessionLimits, RetrySessionResult,
+    assess_and_plan_observed_xy_retry, write_retry_session_artifacts,
+)
 from .repose_artifacts import write_repose_preflight_artifacts
 from .repose_preflight import validate_repose_rest_target
 from .repose_transition import (
@@ -105,6 +110,7 @@ class SessionRunner:
         self._preflight_index = 0
         self._attempt_index = 0
         self._attempt_dir: Path | None = None
+        self._retry_assessment_index = 0
         self._write_exclusive(
             target / "frozen_session_calibration.json", calibration.record)
         self._write_exclusive(target / "endpoint_catalog.json", catalog)
@@ -473,6 +479,7 @@ class SessionRunner:
         self._attempt = attempt
         self._attempt_dir = attempt_dir
         self._attempt_index = 0
+        self._retry_assessment_index = 0
         return deepcopy(attempt)
 
     def begin_selected_attempt(
@@ -516,6 +523,7 @@ class SessionRunner:
         self._attempt = attempt
         self._attempt_dir = attempt_dir
         self._attempt_index = 0
+        self._retry_assessment_index = 0
         return deepcopy(attempt)
 
     def _record(self, mutation) -> AttemptRecord:
@@ -658,6 +666,62 @@ class SessionRunner:
         return self._record(lambda row: row.record_retry(
             assessment.decision, timestamp_s=timestamp_s,
             evidence_refs=evidence_refs))
+
+    def prepare_observed_xy_retry(
+        self, *, planner, held_key_observation: KeyPoseObservation,
+        held_key_evidence_dir: Path, joint_sample, frames,
+        intrinsics_full: Mapping, extrinsics_full: Mapping,
+        frame_request_id: int, frame_ids: Mapping[str, int],
+        acquisition_metadata: Mapping, backend,
+        withdrawal_completed_at_s: float,
+        withdrawal_evidence_path: Path,
+        postlift_preflight_report_path: Path,
+        decision_timestamp_s: float,
+        limits: RetrySessionLimits,
+    ) -> RetrySessionResult:
+        """Persist a same-frame VLM assessment and fresh held-state replan.
+
+        This consumes a caller-logged guarded withdrawal and never sends a
+        robot command. Only a passing result records a pending 1 mm retry.
+        """
+        if (self.current_decision().action !=
+                "guarded_withdrawal_then_xy_assessment" or
+                self._attempt is None or self._preflight is None or
+                self._attempt_dir is None):
+            raise ValueError("retry requires an observed failed insertion")
+        result = assess_and_plan_observed_xy_retry(
+            planner=planner, mode=self.mode, shared_root=self.shared_root,
+            calibration=self.calibration, catalog=self.catalog,
+            trial=self._preflight, attempt=self._attempt,
+            held_key_observation=held_key_observation,
+            held_key_evidence_dir=held_key_evidence_dir,
+            joint_sample=joint_sample, frames=frames,
+            intrinsics_full=intrinsics_full,
+            extrinsics_full=extrinsics_full,
+            frame_request_id=frame_request_id, frame_ids=frame_ids,
+            acquisition_metadata=acquisition_metadata, backend=backend,
+            withdrawal_completed_at_s=withdrawal_completed_at_s,
+            withdrawal_evidence_path=withdrawal_evidence_path,
+            postlift_preflight_report_path=postlift_preflight_report_path,
+            decision_timestamp_s=decision_timestamp_s, limits=limits)
+        output = (self._attempt_dir / "xy_retry_assessments" /
+                  f"{self._retry_assessment_index:03d}")
+        write_retry_session_artifacts(result, frames, output)
+        self._retry_assessment_index += 1
+        if result.status == "ready_to_record_pending_retry":
+            assert result.assessment is not None and result.preflight is not None
+            completed_at_s = time.time()
+            if completed_at_s < decision_timestamp_s:
+                raise ValueError("retry planning completion predates VLM decision")
+            self.record_retry(
+                result.assessment, result.preflight,
+                timestamp_s=completed_at_s,
+                evidence_refs={
+                    "axial_withdrawal": str(result.withdrawal_evidence_path),
+                    "live_preflight": str(output / "preflight" / "report.json"),
+                    "xy_vlm_vote": str(output / "report.json"),
+                })
+        return result
 
     def record_failure(
         self, code: str, *, timestamp_s: float,

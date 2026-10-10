@@ -59,10 +59,17 @@ that session and catalogue. For each new key observation:
    phase. A missed grasp excludes that candidate on the next *fresh* key
    observation. Planning-only rejects are skipped only when continuing the
    same budget-limited camera capture; a new pose/state may make them viable.
-4. For a 1 mm retry, `record_retry` accepts only a two-view
-   `XYRetryAssessment` joined to a passing fresh-state `XYRetryPreflight` for
-   the same grasp and offset, plus references to completed guarded withdrawal,
-   vote and preflight evidence. It records a pending retry, never commands it.
+4. After an observed insertion failure and an externally logged guarded
+   withdrawal, call `prepare_observed_xy_retry` with a **held-preinsert** key
+   capture, the exact same full-frame VLM images, measured Franka/Inspire
+   state and explicit commissioning limits. It derives the key–hand relation,
+   screens 1 mm offsets with the measured finger joints, votes across views,
+   replans from the withdrawn live state and saves source images/overlays.
+   Pass the exact saved **passing post-lift preflight report** referenced by
+   the observed pre-insertion stage: its held relation, current wrist FK and
+   the held-key admission prior must agree before the VLM is consulted.
+   Only a passing result calls `record_retry` to log a pending retry; neither
+   method sends the robot an XY command.
 5. If the pose's candidate pool is exhausted, `current_decision()` returns
    `preflight_repose`. Call `preflight_repose` with the **same saved key capture**,
    synchronized measured joints, a listed target tabletop stem, directed v8
@@ -178,6 +185,18 @@ The first independent helpers are in `precision_insertion/`:
   command or a claim of insertion success. For a gap smaller than 1 mm, all
   1 mm endpoint offsets may be geometrically impossible; that correctly
   produces `no_safe_direction`, not an override from the VLM.
+- `retry_session.py` binds the preceding failed insertion, caller-logged
+  withdrawal, admitted held-key FoundPose, unchanged full-frame VLM pixels,
+  measured 13-joint robot feedback and frozen camera calibration. It derives
+  the held relation modulo object symmetry, calls `xy_retry.py`, then reuses
+  `retry_preflight.py` for the selected target. A no-direction, abstain, slip,
+  stale frame, changed hand or failed path leaves the retry unrecorded; the
+  assessment is saved for diagnosis. Withdrawal logs are still caller
+  assertions until the guarded executor supplies them. The required JSON
+  contract is `precision_insertion_guarded_withdrawal_v1` with matching
+  attempt/candidate IDs, `completed_at_s`,
+  `status=withdrawn_to_preinsert_hold`, `key_still_held=true`,
+  `safety_abort=false`, and `source=commissioned_guarded_controller`.
 - `endpoint.py` evaluates one fixed-grasp candidate using the full metric CAD
   key, exact socket collision mesh, and every Inspire visual link at the
   centered 20 mm insertion pose. It combines Coal triangle-surface collision

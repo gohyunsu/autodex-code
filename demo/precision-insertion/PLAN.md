@@ -626,6 +626,7 @@ demo/precision-insertion/
     xy_overlay.py                 # pixel-resolvability check and calibrated ID crops
     xy_retry.py                   # offline endpoint/overlay/VLM consensus proposal
     retry_preflight.py            # fresh withdrawn-state retry planning only
+    retry_session.py              # same-frame failed-trial/VLM/live-state evidence gate
     records.py                    # separate append-only observed task labels
     session_policy.py             # fail-closed next evidence gate, no motor commands
     session_runner.py             # evidence-only session/preflight/label supervisor

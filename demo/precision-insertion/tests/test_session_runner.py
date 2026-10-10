@@ -262,9 +262,50 @@ def test_retry_requires_matching_two_view_vote_and_live_replan(
     with pytest.raises(ValueError, match="does not match"):
         runner.record_retry(assessment, retry_plan(KEY_B), timestamp_s=10.7,
                             evidence_refs=refs)
-    runner.record_retry(assessment, retry_plan(KEY_A), timestamp_s=10.7,
-                        evidence_refs=refs)
+    withdrawal = tmp_path / "withdrawal.json"
+    withdrawal.write_text('{"withdrawn": true}\n', encoding="utf-8")
+    prepared = SimpleNamespace(
+        status="ready_to_record_pending_retry", assessment=assessment,
+        preflight=retry_plan(KEY_A), withdrawal_evidence_path=withdrawal)
+    abstained = SimpleNamespace(
+        status="visual_abstain", assessment=None, preflight=None,
+        withdrawal_evidence_path=withdrawal)
+    outcomes = [abstained, prepared]
+    def fake_prepare(**kwargs):
+        assert kwargs["attempt"].candidate_id == "table/0/3"
+        assert kwargs["trial"].selected_candidate_key == KEY_A
+        return outcomes.pop(0)
+    def save_retry(_result, _frames, output):
+        output.mkdir(parents=True, exist_ok=False)
+        (output / "preflight").mkdir()
+        (output / "preflight/report.json").write_text("{}", encoding="utf-8")
+        (output / "report.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(session_runner, "assess_and_plan_observed_xy_retry",
+                        fake_prepare)
+    monkeypatch.setattr(session_runner, "write_retry_session_artifacts",
+                        save_retry)
+    monkeypatch.setattr(session_runner.time, "time", lambda: 10.8)
+    retry_inputs = dict(
+        planner=object(), held_key_observation=_observation("held", 10.6),
+        held_key_evidence_dir=tmp_path, joint_sample=object(), frames=(),
+        intrinsics_full={}, extrinsics_full={}, frame_request_id=1,
+        frame_ids={}, acquisition_metadata={}, backend=object(),
+        withdrawal_completed_at_s=10.6,
+        withdrawal_evidence_path=withdrawal,
+        postlift_preflight_report_path=tmp_path / "postlift.json",
+        decision_timestamp_s=10.7, limits=object())
+    runner.prepare_observed_xy_retry(**retry_inputs)
+    assert runner.current_decision().action == (
+        "guarded_withdrawal_then_xy_assessment")
+    assert runner.active_attempt.events[-1]["stage"] == "insertion_success"
+    runner.prepare_observed_xy_retry(**retry_inputs)
     assert runner.current_decision().action == "await_retry_execution_and_observation"
+    assert (tmp_path / "session/attempts/attempt_1/state_004.json").is_file()
+    assert (tmp_path / "session/attempts/attempt_1/"
+            "xy_retry_assessments/000/report.json").is_file()
+    assert (tmp_path / "session/attempts/attempt_1/"
+            "xy_retry_assessments/001/report.json").is_file()
+    assert runner.active_attempt.events[-1]["timestamp_s"] == 10.8
 
 
 @pytest.mark.parametrize(
