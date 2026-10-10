@@ -857,8 +857,8 @@ the current local square v8 pool has no 20 mm endpoint-eligible candidate,
 and the cylinder runtime pool is still missing. The nominal squeeze pose is
 not a measurement; before physical transfer, re-observe the held key and
 validate the hand–key relation against the planned one. A guarded contact
-controller, true acquisition-timestamped camera adapter, and reset/repose
-execution remain to be implemented.
+controller, true acquisition-timestamped camera adapter, measured-state
+lift/transfer execution, and reset/repose execution remain to be implemented.
 
 After the physical lift, use the session runner's
 `postlift_candidate_pose_prior(...)` and `admit_postlift_key_capture(...)`
@@ -870,9 +870,17 @@ before assigning a grasp-success label. Only after a separate observed
 under `attempts/<id>/postlift_preflights/<index>/` with a hash-bound key
 capture. Only `sampled_postlift_preflight_pass` can proceed to a separately
 guarded transfer gate. This in-memory API is not yet a CLI because no live
-acquisition adapter or safe robot executor has been commissioned. The old
+acquisition adapter or full-task robot executor has been commissioned. The old
 nominal preflight remains a candidate-selection estimate, not the motion
 plan to replay after squeeze.
+
+The demo-only [pickup execution boundary](PICKUP_EXECUTION.md) now wraps the
+unchanged `FrankaExecutor.execute(..., skip_lift=True,
+start_from_current=True)`. It verifies the bound saved v8 approach, a fresh
+measured 13-DOF start, an explicit live interlock, and post-squeeze feedback;
+its default refuses motion. It commands **no lift, transfer or insertion** and
+does not set `grasp_success`. It has fake-executor tests only and is not a
+commissioned live-robot launch path.
 
 Do not feed the nominal `plan_insertion_after_pickup`'s separately replanned
 `lift_trajectory` straight into the

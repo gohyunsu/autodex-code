@@ -126,12 +126,25 @@ def write_trial_preflight_artifacts(
                 plan.lift_trajectory, plan.transfer_trajectory,
                 plan.axial_trajectory)):
             raise ValueError("selected insertion plan has missing trajectories")
+        pickup = result.pickup_plan
+        if (not pickup.success or result.selected_candidate_key is None or
+                tuple(pickup.scene_info) != result.selected_candidate_key):
+            raise ValueError("selected pickup plan differs from selected v8 grasp")
+        pregrasp = np.asarray(pickup.pregrasp_pose, dtype=np.float64)
+        grasp = np.asarray(pickup.grasp_pose, dtype=np.float64)
+        wrist = np.asarray(pickup.wrist_se3, dtype=np.float64)
+        if (pregrasp.shape != (6,) or grasp.shape != (6,) or
+                wrist.shape != (4, 4) or
+                not all(np.all(np.isfinite(array)) for array in
+                        (pregrasp, grasp, wrist))):
+            raise ValueError("selected pickup hand/wrist command is invalid")
         filename = "planned_trajectories.npz"
         path = target / filename
         np.savez_compressed(
             path,
-            pickup_approach=np.asarray(result.pickup_plan.traj,
-                                       dtype=np.float64),
+            pickup_approach=np.asarray(pickup.traj, dtype=np.float64),
+            pickup_pregrasp=pregrasp, pickup_grasp=grasp,
+            pickup_wrist=wrist,
             held_lift=np.asarray(plan.lift_trajectory, dtype=np.float64),
             transfer=np.asarray(plan.transfer_trajectory, dtype=np.float64),
             axial=np.asarray(plan.axial_trajectory, dtype=np.float64),

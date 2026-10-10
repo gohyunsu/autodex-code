@@ -285,7 +285,11 @@ def test_trial_artifacts_are_new_and_do_not_claim_robot_readiness(
         1, np.zeros(6), "commanded_nominal", ())
     planned = replace(
         result, status="sampled_planning_pass", insertion_plan=plan,
-        pickup_plan=SimpleNamespace(traj=q))
+        selected_candidate_key=("table", "0", "3"),
+        pickup_plan=SimpleNamespace(
+            success=True, scene_info=("table", "0", "3"), traj=q,
+            pregrasp_pose=np.zeros(6), grasp_pose=np.ones(6) * .2,
+            wrist_se3=np.eye(4)))
     output = write_trial_preflight_artifacts(planned, tmp_path / "run_002")
     with np.load(output / "planned_trajectories.npz") as paths:
         assert paths["axial"].shape == (2, 13)

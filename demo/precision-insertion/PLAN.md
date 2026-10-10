@@ -765,6 +765,13 @@ timestamps and repeated-session socket measurements; several evaluator
 variants also use ROI/baseline assistance absent from the live key path.
 See [NAS_PERCEPTION_QA.md](NAS_PERCEPTION_QA.md) before asset promotion.
 
+The independent [pickup execution boundary](PICKUP_EXECUTION.md) can reuse the
+stock Franka approach/grasp/squeeze after a bound-plan, measured-start and
+external-interlock check. It is not an end-to-end launcher: squeeze completion
+does not prove lift success, and it deliberately never replays the nominal
+lift/transfer/axial trajectories. Those phases still need live-state planning,
+execution feedback and a commissioned guarded-contact controller.
+
 ## Implementation sequence and acceptance gates
 
 1. Verify the original-file diff against `main` is empty and keep it empty.
