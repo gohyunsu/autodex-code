@@ -182,6 +182,9 @@ not authorize contact. A separately commissioned retry contact executor and
 physical key-depth admission are still needed before retry success can be
 labeled. See
 [POSTSHIFT_HANDOFF.md](POSTSHIFT_HANDOFF.md) for the call contract.
+Its `verify_retry_guarded_metric(...)` additionally defines the external
+contact-record schema and replays the exact retry handoff/trace/source chain;
+it does not authenticate physical key penetration or run a robot controller.
 
 The underlying first-shift planning API used by this binder is
 `plan_lateral_hold_shift(planner, mode, shared_root, calibration, trial_scene,

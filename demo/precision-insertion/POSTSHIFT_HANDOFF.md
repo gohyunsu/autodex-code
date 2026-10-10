@@ -195,3 +195,38 @@ checkpoint still reject this retry source. A retry-specific contact executor,
 fresh post-contact observations and physical key-depth verifier remain to be
 commissioned and integrated. Neither a passing packet nor a VLM label is
 evidence that the key entered 20 mm.
+
+## Retry contact metric contract (read-only)
+
+An external, separately commissioned guarded controller must emit a
+`precision_insertion_guarded_retry_execution_v1` metric record. It references
+the **retry** handoff and its exact `planned_axial.npz` digest, stroke start/end
+times, five measurement fields (`key_depth_interval_m`,
+`key_depth_source`, `alignment_within_limits`, `safety_abort`,
+`grasp_held`), the exact contact limits and four hashed producer records:
+`key_depth`, `alignment`, `force_trace`, `grasp_state`. Its force trace must
+be replayable v2 and bind the same handoff/archive digests. Use the existing
+`precision_insertion_external_metric_claim_v1` format for the other three
+source claims; each claim references its own unchanged raw evidence bytes.
+
+```python
+metric, started, completed = verify_retry_guarded_metric(
+    retry_metric_path,
+    handoff_report_path=retry_packet,
+    expected=replan,
+    previous=postshift_preflight,
+    arrival=arrival_checkpoint,
+    checkpoint=postshift_checkpoint,
+    shift_plan=completed_shift_plan,
+    mode=runner.mode,
+    shared_root=runner.shared_root,
+    calibration=runner.calibration,
+)
+```
+
+Import this from `precision_insertion.retry_guarded_metric`. The verifier
+checks file hashes, capture/source identity, event timing, trace replay and
+the new path binding. It does **not** authenticate the external sensor or
+admit its claimed key-depth interval as a task-success measurement. There
+is not yet a robot-contact adapter for this retry schema; this contract is
+for producer integration and offline replay, not permission to execute.
