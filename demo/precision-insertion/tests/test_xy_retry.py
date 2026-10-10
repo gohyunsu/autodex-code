@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -59,6 +60,15 @@ def _setup(tmp_path, *, focal=4000):
     camera_pose = np.eye(4)
     camera_pose[2, 3] = 1
     extrinsic = {serial: camera_pose for serial in ("a", "b")}
+    camera_snapshot = {
+        "intrinsics_full": json.loads(json.dumps(intrinsic)),
+        "extrinsics_full": {serial: matrix.tolist()
+                            for serial, matrix in extrinsic.items()},
+    }
+    record["camera_calibration"] = camera_snapshot
+    record["camera_calibration_sha256"] = hashlib.sha256(json.dumps(
+        camera_snapshot, sort_keys=True, separators=(",", ":"),
+        allow_nan=False).encode("utf-8")).hexdigest()
     frames = [LabeledFrame(
         serial, "preinsert_hold", 100.0,
         Image.new("RGB", (1000, 800), (100, 110, 120)))
@@ -121,6 +131,17 @@ def test_vlm_multiview_choice_is_only_a_replan_proposal(tmp_path):
     assert result.to_record()["robot_ready"] is False
     assert result.to_record()["frame_binding"]["request_id"] == 15
     assert len(result.endpoint_screen["endpoint_clear_choice_ids"]) == 5
+
+
+def test_retry_rejects_changed_or_missing_frozen_camera_calibration(tmp_path):
+    args = _setup(tmp_path)
+    args["intrinsics_full"]["a"]["K_undist"][0][0] += 1
+    with pytest.raises(ValueError, match="camera calibration changed"):
+        assess_xy_retry(**args)
+    args = _setup(tmp_path / "other")
+    del args["calibration"].record["camera_calibration"]
+    with pytest.raises(ValueError, match="frozen camera calibration"):
+        assess_xy_retry(**args)
 
 
 def test_pixel_unresolvable_views_abstain_before_vlm(tmp_path):

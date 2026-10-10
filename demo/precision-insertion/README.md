@@ -129,6 +129,16 @@ The first independent helpers are in `precision_insertion/`:
   table and frozen socket, and rejects a changed socket mesh or pose. Cylinder
   tabletop snapping uses this demo's local-z symmetry adapter. These helpers
   do not capture images, plan the Franka path, or authorize insertion.
+- `key_perception.py` has separate tabletop and held-key admission. Tabletop
+  `admit_key_capture` rejects SAM masks that cover the frozen socket's camera
+  projection; this prevents selecting the socket as the key before grasping.
+  At pre-insertion hold, overlap is expected, so `admit_held_key_capture`
+  instead requires synchronized per-view FoundPose agreement, a sufficiently
+  good AutoDex silhouette IoU, and a tightly bounded key-pose prior from
+  **measured wrist feedback plus an already observed held relation**. The
+  prior source is an asserted caller contract until the live adapter binds
+  those inputs. Both phases retain exact frame evidence and the frozen camera
+  calibration. A held-key observation cannot start a new tabletop trial.
 - `config.py` resolves explicit square/cylinder key and socket IDs and the
   20 mm verification target; `assets.py` performs a read-only v8 input audit.
 - `xy_voting.py` accepts already geometry-screened **absolute socket-frame XY
@@ -161,7 +171,8 @@ The first independent helpers are in `precision_insertion/`:
   The multi-view retry now also binds every full-frame VLM image to its
   request/frame ID, decoded-pixel hash and bounded acquisition time. A missing
   capture-side provenance producer or excessive worst-case skew/age prevents
-  voting; `CAMERA_FRAME_HANDOFF.md` also applies to retry images.
+  voting. It also rejects a camera intrinsic/extrinsic different from the
+  session-frozen rig; `CAMERA_FRAME_HANDOFF.md` applies to retry images.
   It returns a **proposal requiring new live preflight**, never a Franka
   command or a claim of insertion success. For a gap smaller than 1 mm, all
   1 mm endpoint offsets may be geometrically impossible; that correctly

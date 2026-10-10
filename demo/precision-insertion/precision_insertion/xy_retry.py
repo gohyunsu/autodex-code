@@ -17,6 +17,7 @@ import numpy as np
 from PIL import Image
 
 from .assets import AssetPaths
+from .calibration import validate_session_camera_calibration
 from .candidates import select_pose_candidates, validate_catalog_session
 from .config import TaskMode
 from .endpoint import screen_grasp_endpoint
@@ -93,6 +94,12 @@ def assess_xy_retry(
             "hard_abort_grasp_lost_or_guarded_withdrawal_unconfirmed")
     if not frames or len({frame.camera_id for frame in frames}) != len(frames):
         raise ValueError("retry needs unique synchronized camera frames")
+    validate_session_camera_calibration(
+        calibration,
+        intrinsics_undist={camera_id: params["K_undist"]
+                           for camera_id, params in intrinsics_full.items()},
+        extrinsics_full=extrinsics_full,
+        calibrated_camera_ids=set(intrinsics_full))
     if type(frame_request_id) is not int or frame_request_id <= 0:
         raise ValueError("retry needs a positive camera request ID")
     if (not math.isfinite(decision_timestamp_s) or

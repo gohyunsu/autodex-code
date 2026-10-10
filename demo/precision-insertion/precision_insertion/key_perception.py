@@ -45,6 +45,7 @@ class KeyPoseObservation:
     consistency: dict
     selection: dict
     source_capture_dir: Path
+    phase: str = "tabletop"
 
     def to_record(self) -> dict:
         return {
@@ -53,6 +54,7 @@ class KeyPoseObservation:
             "request_id": self.request_id,
             "key_object": self.key_object,
             "family": self.family,
+            "phase": self.phase,
             "pose_world": self.pose_world.tolist(),
             "selected_camera_id": self.selected_camera_id,
             "selected_acquisition_timestamp_s": (
@@ -111,7 +113,7 @@ def _pose_residual(
     return float(distance * 1000.0), float(angle)
 
 
-def admit_key_capture(
+def _admit_key_capture_common(
     *, capture: KeyCaptureInput, init_orchestrator, mode: TaskMode,
     shared_root: Path, calibration, calibrated_camera_ids: set[str],
     view_limits: SocketViewLimits,
@@ -121,13 +123,46 @@ def admit_key_capture(
     socket_projection_dilation_px: int,
     silhouette_iterations: int = 100,
     silhouette_loss_threshold: float = 0.003,
+    held_pose_prior_world: np.ndarray | None = None,
+    held_pose_prior_timestamp_s: float | None = None,
+    held_pose_prior_source: str | None = None,
+    maximum_held_prior_center_error_mm: float | None = None,
+    maximum_held_prior_angle_error_deg: float | None = None,
+    maximum_held_prior_time_skew_s: float | None = None,
+    minimum_held_refinement_iou: float | None = None,
 ) -> KeyPoseObservation:
-    """Qualify a fresh key measurement before v8 pose/candidate selection.
+    """Shared per-view FoundPose gate for tabletop and held-key captures.
 
     Square poses use full rotation. The D-infinity cylinder compares physical
     centers and *unoriented* axes, so a yaw or identical-end frame flip is not
     mistaken for a new tabletop state. Limits are commissioning inputs.
     """
+    held_phase = held_pose_prior_world is not None
+    if not held_phase and any(value is not None for value in (
+            held_pose_prior_timestamp_s, held_pose_prior_source,
+            maximum_held_prior_center_error_mm,
+            maximum_held_prior_angle_error_deg,
+            maximum_held_prior_time_skew_s,
+            minimum_held_refinement_iou)):
+        raise ValueError("held-key prior fields require a held pose prior")
+    if held_phase:
+        prior = validate_se3(held_pose_prior_world,
+                             name="held key pose prior_world")
+        held_limits = (
+            held_pose_prior_timestamp_s,
+            maximum_held_prior_center_error_mm,
+            maximum_held_prior_angle_error_deg,
+            maximum_held_prior_time_skew_s,
+            minimum_held_refinement_iou)
+        if (held_pose_prior_source !=
+                "measured_wrist_plus_observed_held_relation" or
+                any(value is None or not math.isfinite(float(value))
+                    for value in held_limits) or
+                maximum_held_prior_center_error_mm <= 0 or
+                maximum_held_prior_angle_error_deg <= 0 or
+                maximum_held_prior_time_skew_s <= 0 or
+                not 0 < minimum_held_refinement_iou <= 1):
+            raise ValueError("held-key prior needs a timed measured-wrist source and limits")
     if not isinstance(capture, KeyCaptureInput):
         raise TypeError("fresh key capture must be KeyCaptureInput")
     if mode.key_object != getattr(init_orchestrator, "obj_name", None):
@@ -177,35 +212,67 @@ def admit_key_capture(
         poses=capture.poses, frame_timestamps_s=capture.frame_timestamps_s,
         frame_timestamp_source=capture.frame_timestamp_source,
         calibrated_camera_ids=calibrated_camera_ids, limits=view_limits)
-    exclusion = project_frozen_socket_exclusion(
-        mode=mode, shared_root=shared_root, calibration=calibration,
-        images_bgr=capture.images_bgr,
-        intrinsics_undist=init_orchestrator.intrinsics_undist,
-        extrinsics_full=init_orchestrator.extrinsics,
-        dilation_px=socket_projection_dilation_px)
-    per_view = {serial: dict(row) for serial, row in admitted.per_view.items()}
-    admitted_ids = []
-    for row in admitted.observations:
-        serial = row.camera_id
-        overlap = key_mask_socket_overlap_fraction(
-            capture.masks[serial]["mask"], exclusion.masks[serial])
-        per_view[serial]["key_mask_socket_overlap_fraction"] = overlap
-        if overlap > maximum_socket_mask_overlap_fraction:
-            per_view[serial]["accepted"] = False
-            per_view[serial]["reasons"] = [
-                *per_view[serial]["reasons"],
-                "key_mask_overlaps_frozen_socket_projection"]
-        else:
-            admitted_ids.append(serial)
-    if len(admitted_ids) < view_limits.minimum_accepted_views:
-        raise ValueError(
-            "too few key views remain after fixed-socket mask exclusion")
     if mode.family == "cylinder":
         center, axis = _cylinder_symmetry(mode, shared_root)
     elif mode.family == "square":
         center, axis = None, None
     else:
         raise ValueError("unknown precision key family")
+    per_view = {serial: dict(row) for serial, row in admitted.per_view.items()}
+    admitted_ids = []
+    exclusion = None
+    max_prior_center = 0.0
+    max_prior_angle = 0.0
+    if held_phase:
+        if max(abs(held_pose_prior_timestamp_s - (
+                verified[row.camera_id]["timestamp_s"] + signed_error))
+                for row in admitted.observations
+                for signed_error in (
+                    -verified[row.camera_id]["max_error_s"],
+                    verified[row.camera_id]["max_error_s"])) > (
+                    maximum_held_prior_time_skew_s):
+            raise ValueError("held-key motion prior is stale relative to camera views")
+        for row in admitted.observations:
+            serial = row.camera_id
+            distance, angle = _pose_residual(
+                prior, validate_se3(row.pose_world),
+                cylinder_center=center, cylinder_axis=axis)
+            per_view[serial]["held_prior_center_residual_mm"] = distance
+            per_view[serial]["held_prior_angle_residual_deg"] = angle
+            if (distance > maximum_held_prior_center_error_mm or
+                    angle > maximum_held_prior_angle_error_deg):
+                per_view[serial]["accepted"] = False
+                per_view[serial]["reasons"] = [
+                    *per_view[serial]["reasons"],
+                    "held_key_pose_disagrees_with_measured_wrist_prior"]
+            else:
+                admitted_ids.append(serial)
+            max_prior_center = max(max_prior_center, distance)
+            max_prior_angle = max(max_prior_angle, angle)
+    else:
+        exclusion = project_frozen_socket_exclusion(
+            mode=mode, shared_root=shared_root, calibration=calibration,
+            images_bgr=capture.images_bgr,
+            intrinsics_undist=init_orchestrator.intrinsics_undist,
+            extrinsics_full=init_orchestrator.extrinsics,
+            dilation_px=socket_projection_dilation_px)
+        for row in admitted.observations:
+            serial = row.camera_id
+            overlap = key_mask_socket_overlap_fraction(
+                capture.masks[serial]["mask"], exclusion.masks[serial])
+            per_view[serial]["key_mask_socket_overlap_fraction"] = overlap
+            if overlap > maximum_socket_mask_overlap_fraction:
+                per_view[serial]["accepted"] = False
+                per_view[serial]["reasons"] = [
+                    *per_view[serial]["reasons"],
+                    "key_mask_overlaps_frozen_socket_projection"]
+            else:
+                admitted_ids.append(serial)
+    if len(admitted_ids) < view_limits.minimum_accepted_views:
+        raise ValueError(
+            "too few key views remain after " + (
+                "held-wrist pose-prior gate" if held_phase else
+                "fixed-socket mask exclusion"))
     poses = {row.camera_id: validate_se3(row.pose_world)
              for row in admitted.observations if row.camera_id in admitted_ids}
     max_center = 0.0
@@ -232,6 +299,11 @@ def admit_key_capture(
     selected = diagnostics.get("best_serial")
     if selected not in admitted_ids:
         raise ValueError("AutoDex selected a non-admitted key camera")
+    if held_phase:
+        best_iou = diagnostics.get("best_iou")
+        if (best_iou is None or not math.isfinite(float(best_iou)) or
+                float(best_iou) < minimum_held_refinement_iou):
+            raise ValueError("held-key mask/silhouette IoU is below commissioned limit")
     refined = validate_se3(pose, name="refined key pose_world")
     for camera in admitted_ids:
         distance, angle = _pose_residual(
@@ -242,6 +314,14 @@ def admit_key_capture(
         if (distance > maximum_multiview_center_error_mm or
                 angle > maximum_multiview_angle_error_deg):
             raise ValueError("refined key pose conflicts with admitted views")
+    if held_phase:
+        distance, angle = _pose_residual(
+            prior, refined, cylinder_center=center, cylinder_axis=axis)
+        max_prior_center = max(max_prior_center, distance)
+        max_prior_angle = max(max_prior_angle, angle)
+        if (distance > maximum_held_prior_center_error_mm or
+                angle > maximum_held_prior_angle_error_deg):
+            raise ValueError("refined held key pose conflicts with measured wrist prior")
     lower = min(verified[serial]["timestamp_s"] -
                 verified[serial]["max_error_s"] for serial in admitted_ids)
     upper = max(verified[serial]["timestamp_s"] +
@@ -265,9 +345,102 @@ def admit_key_capture(
          "angle_limit_deg": float(maximum_multiview_angle_error_deg),
          "cylinder_symmetry_quotient": mode.family == "cylinder",
          "maximum_socket_mask_overlap_fraction": (
-             float(maximum_socket_mask_overlap_fraction)),
-         "socket_exclusion": exclusion.to_record()},
-        selection, capture.capture_dir)
+             None if held_phase else float(maximum_socket_mask_overlap_fraction)),
+         "socket_exclusion": (
+             None if exclusion is None else exclusion.to_record()),
+         "held_pose_prior": (None if not held_phase else {
+             "source": held_pose_prior_source,
+             "timestamp_s": float(held_pose_prior_timestamp_s),
+             "pose_world": prior.tolist(),
+             "maximum_center_error_mm": float(
+                 maximum_held_prior_center_error_mm),
+             "maximum_angle_error_deg": float(
+                 maximum_held_prior_angle_error_deg),
+             "maximum_time_skew_s": float(
+                 maximum_held_prior_time_skew_s),
+             "minimum_refinement_iou": float(minimum_held_refinement_iou),
+             "max_center_residual_mm": max_prior_center,
+             "max_angle_residual_deg": max_prior_angle,
+         })},
+        selection, capture.capture_dir,
+        phase="held_preinsert" if held_phase else "tabletop")
+
+
+def admit_key_capture(
+    *, capture: KeyCaptureInput, init_orchestrator, mode: TaskMode,
+    shared_root: Path, calibration, calibrated_camera_ids: set[str],
+    view_limits: SocketViewLimits,
+    maximum_multiview_center_error_mm: float,
+    maximum_multiview_angle_error_deg: float,
+    maximum_socket_mask_overlap_fraction: float,
+    socket_projection_dilation_px: int,
+    silhouette_iterations: int = 100,
+    silhouette_loss_threshold: float = 0.003,
+) -> KeyPoseObservation:
+    """Admit a tabletop key; reject masks containing the frozen socket."""
+    return _admit_key_capture_common(
+        capture=capture, init_orchestrator=init_orchestrator, mode=mode,
+        shared_root=shared_root, calibration=calibration,
+        calibrated_camera_ids=calibrated_camera_ids,
+        view_limits=view_limits,
+        maximum_multiview_center_error_mm=(
+            maximum_multiview_center_error_mm),
+        maximum_multiview_angle_error_deg=(
+            maximum_multiview_angle_error_deg),
+        maximum_socket_mask_overlap_fraction=(
+            maximum_socket_mask_overlap_fraction),
+        socket_projection_dilation_px=socket_projection_dilation_px,
+        silhouette_iterations=silhouette_iterations,
+        silhouette_loss_threshold=silhouette_loss_threshold)
+
+
+def admit_held_key_capture(
+    *, capture: KeyCaptureInput, init_orchestrator, mode: TaskMode,
+    shared_root: Path, calibration, calibrated_camera_ids: set[str],
+    view_limits: SocketViewLimits,
+    maximum_multiview_center_error_mm: float,
+    maximum_multiview_angle_error_deg: float,
+    held_pose_prior_world: np.ndarray,
+    held_pose_prior_timestamp_s: float,
+    held_pose_prior_source: str,
+    maximum_held_prior_center_error_mm: float,
+    maximum_held_prior_angle_error_deg: float,
+    maximum_held_prior_time_skew_s: float,
+    minimum_held_refinement_iou: float,
+    silhouette_iterations: int = 100,
+    silhouette_loss_threshold: float = 0.003,
+) -> KeyPoseObservation:
+    """Admit a held key near the socket using an independent wrist pose prior.
+
+    Socket-mask overlap is expected at pre-insertion hold. Per-view FoundPose,
+    multi-view agreement, refinement IoU and a bounded *measured-wrist* prior
+    replace that tabletop-only veto. A caller must derive the prior from live
+    wrist feedback plus an already observed key/hand relation; this function
+    verifies the declared source and timing but cannot prove its provenance.
+    """
+    return _admit_key_capture_common(
+        capture=capture, init_orchestrator=init_orchestrator, mode=mode,
+        shared_root=shared_root, calibration=calibration,
+        calibrated_camera_ids=calibrated_camera_ids,
+        view_limits=view_limits,
+        maximum_multiview_center_error_mm=(
+            maximum_multiview_center_error_mm),
+        maximum_multiview_angle_error_deg=(
+            maximum_multiview_angle_error_deg),
+        maximum_socket_mask_overlap_fraction=0.0,
+        socket_projection_dilation_px=0,
+        silhouette_iterations=silhouette_iterations,
+        silhouette_loss_threshold=silhouette_loss_threshold,
+        held_pose_prior_world=held_pose_prior_world,
+        held_pose_prior_timestamp_s=held_pose_prior_timestamp_s,
+        held_pose_prior_source=held_pose_prior_source,
+        maximum_held_prior_center_error_mm=(
+            maximum_held_prior_center_error_mm),
+        maximum_held_prior_angle_error_deg=(
+            maximum_held_prior_angle_error_deg),
+        maximum_held_prior_time_skew_s=(
+            maximum_held_prior_time_skew_s),
+        minimum_held_refinement_iou=minimum_held_refinement_iou)
 
 
 def write_key_capture_artifacts(
@@ -392,6 +565,13 @@ def verify_key_capture_artifacts(output_dir: Path) -> dict:
     payloads = json.loads((root / "payloads.json").read_text(encoding="utf-8"))
     report = json.loads((root / "key_observation.json").read_text(
         encoding="utf-8"))
+    phase = report.get("phase", "tabletop")
+    if phase not in {"tabletop", "held_preinsert"}:
+        raise ValueError("saved key observation has an unknown capture phase")
+    if phase == "held_preinsert" and (
+            report.get("consistency", {}).get("held_pose_prior") is None or
+            report.get("consistency", {}).get("socket_exclusion") is not None):
+        raise ValueError("held key evidence lacks its measured-wrist prior gate")
     if (payloads.get("capture_id") != manifest.get("capture_id") or
             payloads.get("request_id") != manifest.get("request_id") or
             report.get("capture_id") != manifest.get("capture_id") or

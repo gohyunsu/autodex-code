@@ -178,6 +178,8 @@ class SessionRunner:
                     f"previous attempt has no verified return to key observation: {action}")
         if not isinstance(observation, KeyPoseObservation):
             raise TypeError("next trial needs an admitted multi-view key pose")
+        if observation.phase != "tabletop":
+            raise ValueError("new tabletop trial cannot use a held-key observation")
         timestamp = float(observation.selected_acquisition_timestamp_s)
         if not math.isfinite(timestamp):
             raise ValueError("key exposure timestamp must be finite")
@@ -561,6 +563,8 @@ class SessionRunner:
             raise ValueError("no pending directed repose landing to observe")
         if not isinstance(key_observation, KeyPoseObservation):
             raise TypeError("landing needs an admitted fresh multi-view key pose")
+        if key_observation.phase != "tabletop":
+            raise ValueError("repose landing needs a tabletop key observation")
         release_time = float(release_completed_at_s)
         release_file = Path(release_evidence_path).expanduser().resolve()
         if (not math.isfinite(release_time) or
