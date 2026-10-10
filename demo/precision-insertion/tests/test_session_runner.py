@@ -343,6 +343,66 @@ def test_postshift_handoff_session_uses_only_its_saved_plan(
             **args, "preflight_report_path": tmp_path / "outside.json"})
 
 
+def test_postshift_arrival_session_requires_new_transfer_capture(
+        monkeypatch, tmp_path):
+    from precision_insertion import postshift_arrival_checkpoint as arrival
+
+    runner = _runner(monkeypatch, tmp_path)
+    runner._attempt = SimpleNamespace(
+        attempt_id="attempt_1", candidate_id="table/0/3")
+    runner._attempt_dir = runner.output_dir / "attempts" / "attempt_1"
+    runner._attempt_dir.mkdir(parents=True)
+    monkeypatch.setattr(runner, "current_decision", lambda: SimpleNamespace(
+        action="guarded_withdrawal_then_xy_assessment"))
+    monkeypatch.setattr(runner, "verify_current_preflight_evidence",
+                        lambda: {})
+    handoff = (runner._attempt_dir / "postshift_path_handoffs" /
+               "000/report.json").resolve()
+    handoff.parent.mkdir(parents=True)
+    handoff.write_text("{}", encoding="utf-8")
+    runner._postshift_saved_handoffs.add(handoff)
+    transfer = (runner._attempt_dir / "postshift_transfer_executions" /
+                "000/execution.json").resolve()
+    capture = tmp_path / "new_retry_capture"
+    result = object()
+    calls = []
+    monkeypatch.setattr(arrival, "assess_postshift_arrival",
+                        lambda **kwargs: calls.append(kwargs) or result)
+
+    def write(_result, output):
+        output.mkdir(parents=True, exist_ok=False)
+        path = output / "report.json"
+        path.write_text("{}", encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(arrival, "write_postshift_arrival_checkpoint", write)
+    monkeypatch.setattr(arrival, "verify_postshift_arrival_checkpoint",
+                        lambda *_args, **_kwargs: {})
+    args = dict(
+        preflight=SimpleNamespace(
+            attempt_id="attempt_1", candidate_id="table/0/3"),
+        checkpoint=object(), shift_plan=object(),
+        handoff_report_path=handoff, transfer_execution_path=transfer,
+        capture_dir=capture, joint_sample=object(),
+        decision_timestamp_s=101., planner=object(),
+        intrinsics_full={}, extrinsics_full={}, backend=object(),
+        alignment_limits=object(), max_capture_skew_s=.01,
+        max_execution_observation_gap_s=.2, max_frame_age_s=.2,
+        max_joint_frame_skew_s=.02, max_arm_hand_skew_s=.02,
+        max_hand_command_error_raw=10., max_arm_velocity_rad_s=.01,
+        max_joint_goal_error_rad=.01,
+        max_goal_translation_error_m=.005,
+        max_goal_rotation_error_deg=1.,
+        max_visual_lateral_error_m=.001,
+        max_visual_axis_tilt_deg=1.,
+        max_grounded_tip_error_m=.001)
+    assert runner.assess_postshift_transfer_arrival(**args) is result
+    assert calls[0]["capture_dir"] == capture.resolve()
+    assert runner._postshift_arrival_index == 1
+    with pytest.raises(ValueError, match="not a new session event"):
+        runner.assess_postshift_transfer_arrival(**args)
+
+
 def test_attempt_rejects_changed_preflight_report_and_binding(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)

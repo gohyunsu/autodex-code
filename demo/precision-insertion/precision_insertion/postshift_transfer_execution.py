@@ -14,7 +14,7 @@ import json
 import math
 from pathlib import Path
 import time
-from typing import Callable
+from typing import Callable, TYPE_CHECKING
 
 import numpy as np
 
@@ -29,8 +29,9 @@ from .postshift_checkpoint import PostShiftCheckpoint
 from .postshift_insertion import PostShiftInsertionPreflight
 from .postshift_path_handoff import verify_postshift_path_handoff
 from .guarded_axial_handoff import _state_from_record
-from .session_runner import SessionRunner
-from .transfer_execution import _source_records
+
+if TYPE_CHECKING:
+    from .session_runner import SessionRunner
 
 
 def _sha(path: Path) -> str:
@@ -39,6 +40,13 @@ def _sha(path: Path) -> str:
 
 def _wall_time() -> float:
     return time.time()
+
+
+def _source_records(result: dict) -> dict:
+    # Reuse the original transfer producer-record contract after the session
+    # module has finished importing this retry boundary.
+    from .transfer_execution import _source_records as verify_sources
+    return verify_sources(result)
 
 
 def execute_bound_postshift_transfer(
@@ -56,6 +64,8 @@ def execute_bound_postshift_transfer(
     timeout, force/contact stop, grasp-loss stop and terminal hold. This Python
     boundary cannot protect motion if the Python process dies.
     """
+    from .session_runner import SessionRunner
+
     limits.validate()
     if (type(max_handoff_age_s) not in (int, float) or
             not math.isfinite(max_handoff_age_s) or max_handoff_age_s <= 0 or

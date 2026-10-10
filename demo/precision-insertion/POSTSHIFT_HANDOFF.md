@@ -28,7 +28,7 @@ the 20 mm axial target. `transfer_required` is true when the saved transfer
 changes joints. The axial path starts at the **end of the transfer**, not
 at the shifted hold. A future executor must verify this packet again at
 command time, execute and verify the transfer first if required, acquire a
-new measured arrival/visual observation, and only then create a separate
+new measured arrival/visual observation after that motion, and only then create a separate
 contact-controller handoff. Reusing the first centered-path guarded handoff
 or playing the axial path directly from the shifted hold is invalid.
 
@@ -65,5 +65,26 @@ The success log is saved at
 `verify_postshift_transfer_execution(...)`. It records controller completion
 and terminal feedback only. A controller error latches `failure.json` and
 requires supervised recovery. Neither log sets `preinsert_reached` or
-`insertion_success`: a new camera/robot observation at the transfer endpoint
-is still required before any guarded 20 mm retry.
+`insertion_success`.
+
+After the transfer, save a new same-request, undistorted AutoDex capture via
+`write_raw_camera_capture(..., phase="preinsert")`. Its request and per-view
+frame IDs must advance beyond the earlier post-lateral-hold capture, and its
+exposure bounds must follow the completed transfer. Then call
+`SessionRunner.assess_postshift_transfer_arrival(...)` with the same passing
+replan/checkpoint/shift, the handoff and transfer log, fresh stationary
+Franka/Inspire feedback, the frozen camera rig, a selected VLM backend, and
+commissioned timing/visual-error limits. It triangulates the cylinder tip
+and projected axis again and checks observed tip/axis against the measured
+hand and frozen socket. The report is saved in
+`postshift_arrival_checkpoints/NNN/report.json`; possible statuses include
+`visual_alignment_within_budget`, `residual_requires_new_shift`,
+`held_relation_inconsistent`, and `visual_abstain`. Its
+`axial_retry_allowed=false` even on visual alignment: fresh visual evidence
+is necessary, but does not substitute for a guarded-contact handoff,
+independent force/depth evidence, or physical success validation.
+An estimator response of `continuous_xy_correction_not_confident` may also
+be accepted as aligned **only** when it contains independently triangulated
+tip/axis inliers and their observed rim/depth residuals plus uncertainty fit
+the commissioned budget: an already centered key need not have a beneficial
+next XY step.

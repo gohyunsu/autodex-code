@@ -15,7 +15,7 @@ import math
 from pathlib import Path
 import re
 import time
-from typing import Mapping
+from typing import Mapping, TYPE_CHECKING
 
 import numpy as np
 
@@ -82,6 +82,8 @@ from .postshift_path_handoff import (
     prepare_postshift_path_handoff as write_postshift_path_handoff,
     verify_postshift_path_handoff,
 )
+if TYPE_CHECKING:
+    from .postshift_arrival_checkpoint import PostShiftArrivalCheckpoint
 from .repose_artifacts import write_repose_preflight_artifacts
 from .repose_preflight import validate_repose_rest_target
 from .repose_transition import (
@@ -199,6 +201,9 @@ class SessionRunner:
         self._postshift_20mm_index = 0
         self._postshift_handoff_used_reports: set[Path] = set()
         self._postshift_handoff_index = 0
+        self._postshift_saved_handoffs: set[Path] = set()
+        self._postshift_arrival_used_capture_dirs: set[Path] = set()
+        self._postshift_arrival_index = 0
         self._write_exclusive(
             target / "frozen_session_calibration.json", calibration.record)
         self._write_exclusive(target / "endpoint_catalog.json", catalog)
@@ -2301,7 +2306,86 @@ class SessionRunner:
             shared_root=self.shared_root, calibration=self.calibration)
         self._postshift_handoff_used_reports.add(source)
         self._postshift_handoff_index += 1
+        self._postshift_saved_handoffs.add(path.resolve())
         return path
+
+    def assess_postshift_transfer_arrival(
+        self, *, preflight: PostShiftInsertionPreflight,
+        checkpoint: PostShiftCheckpoint,
+        shift_plan: GroundedLateralPreflight,
+        handoff_report_path: Path, transfer_execution_path: Path,
+        capture_dir: Path, joint_sample: LiveRobotState,
+        decision_timestamp_s: float, planner,
+        intrinsics_full: Mapping, extrinsics_full: Mapping,
+        backend: ImageVLM, alignment_limits: AlignmentLimits,
+        max_capture_skew_s: float,
+        max_execution_observation_gap_s: float,
+        max_frame_age_s: float, max_joint_frame_skew_s: float,
+        max_arm_hand_skew_s: float,
+        max_hand_command_error_raw: float,
+        max_arm_velocity_rad_s: float,
+        max_joint_goal_error_rad: float,
+        max_goal_translation_error_m: float,
+        max_goal_rotation_error_deg: float,
+        max_visual_lateral_error_m: float,
+        max_visual_axis_tilt_deg: float,
+        max_grounded_tip_error_m: float,
+    ) -> PostShiftArrivalCheckpoint:
+        """Save new metric camera/joint evidence after retry transfer."""
+        from .postshift_arrival_checkpoint import (
+            assess_postshift_arrival, verify_postshift_arrival_checkpoint,
+            write_postshift_arrival_checkpoint,
+        )
+        if (self.current_decision().action !=
+                "guarded_withdrawal_then_xy_assessment" or
+                self._attempt is None or self._attempt_dir is None or
+                preflight.attempt_id != self._attempt.attempt_id or
+                preflight.candidate_id != self._attempt.candidate_id):
+            raise ValueError("post-shift arrival needs this failed held attempt")
+        handoff = Path(handoff_report_path).expanduser().resolve()
+        capture = Path(capture_dir).expanduser().resolve()
+        transfer = Path(transfer_execution_path).expanduser().resolve()
+        if (handoff not in self._postshift_saved_handoffs or
+                capture in self._postshift_arrival_used_capture_dirs or
+                capture in self._postshift_used_capture_dirs or
+                transfer.parent.parent !=
+                    (self._attempt_dir / "postshift_transfer_executions").resolve() or
+                transfer.parent.name != handoff.parent.name):
+            raise ValueError("post-shift arrival source is not a new session event")
+        self.verify_current_preflight_evidence()
+        result = assess_postshift_arrival(
+            preflight=preflight, checkpoint=checkpoint,
+            shift_plan=shift_plan, handoff_report_path=handoff,
+            transfer_execution_path=transfer, capture_dir=capture,
+            joint_sample=joint_sample, decision_timestamp_s=decision_timestamp_s,
+            planner=planner, mode=self.mode, shared_root=self.shared_root,
+            calibration=self.calibration,
+            intrinsics_full=intrinsics_full,
+            extrinsics_full=extrinsics_full, backend=backend,
+            alignment_limits=alignment_limits,
+            max_capture_skew_s=max_capture_skew_s,
+            max_execution_observation_gap_s=max_execution_observation_gap_s,
+            max_frame_age_s=max_frame_age_s,
+            max_joint_frame_skew_s=max_joint_frame_skew_s,
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s,
+            max_joint_goal_error_rad=max_joint_goal_error_rad,
+            max_goal_translation_error_m=max_goal_translation_error_m,
+            max_goal_rotation_error_deg=max_goal_rotation_error_deg,
+            max_visual_lateral_error_m=max_visual_lateral_error_m,
+            max_visual_axis_tilt_deg=max_visual_axis_tilt_deg,
+            max_grounded_tip_error_m=max_grounded_tip_error_m)
+        output = (self._attempt_dir / "postshift_arrival_checkpoints" /
+                  f"{self._postshift_arrival_index:03d}")
+        path = write_postshift_arrival_checkpoint(result, output)
+        verify_postshift_arrival_checkpoint(
+            result, path, preflight=preflight, checkpoint=checkpoint,
+            shift_plan=shift_plan, mode=self.mode,
+            shared_root=self.shared_root, calibration=self.calibration)
+        self._postshift_arrival_used_capture_dirs.add(capture)
+        self._postshift_arrival_index += 1
+        return result
 
     def record_failure(
         self, code: str, *, timestamp_s: float,

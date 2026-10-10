@@ -156,9 +156,13 @@ gate. The existing centered-path `execute_bound_guarded_insertion` must not
 be used for this retry. The opt-in
 `execute_bound_postshift_transfer(...)` can now run **only the non-contact
 transfer** through an injected, independently commissioned controller and
-save a replayable execution log. No controller is bundled. A fresh arrival
-observation, separate guarded contact executor and physical key-depth
-admission are still needed before retry success can be labeled. See
+save a replayable execution log. No controller is bundled. The new
+`SessionRunner.assess_postshift_transfer_arrival(...)` requires fresh raw
+AutoDex views and measured joints *after* that transfer, re-grounds the
+cylinder tip/axis against the frozen socket, and saves a read-only arrival
+status. Even visual alignment does not authorize axial contact. A separate
+guarded contact executor and physical key-depth admission are still needed
+before retry success can be labeled. See
 [POSTSHIFT_HANDOFF.md](POSTSHIFT_HANDOFF.md) for the call contract.
 
 The underlying first-shift planning API used by this binder is

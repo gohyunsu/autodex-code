@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -15,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion import postshift_path_handoff as handoff  # noqa: E402
 from precision_insertion import postshift_insertion  # noqa: E402
+from precision_insertion.assets import AssetPaths  # noqa: E402
 from test_postshift_insertion import _setup  # noqa: E402
 
 
@@ -43,7 +45,11 @@ def _case(tmp_path, monkeypatch):
         "insertion_axis_robot": [0., 0., -1.],
         "preinsert_clearance_m": .01,
     }
-    targets = SimpleNamespace(to_record=lambda: target_record)
+    geometry = AssetPaths(tmp_path, mode).task_geometry
+    targets = SimpleNamespace(
+        to_record=lambda: target_record,
+        T_robot_hand_preinsert=pre,
+        task_geometry_sha256=hashlib.sha256(geometry.read_bytes()).hexdigest())
     planning = replace(
         result.planning,
         transfer_trajectory=np.stack([start, hold]),
