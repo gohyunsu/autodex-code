@@ -314,6 +314,27 @@ The first independent helpers are in `precision_insertion/`:
   display enlargement. If fewer than two cameras resolve the offsets, the
   VLM is not called. Cropping does not create missing visual information;
   current overlays are center anchors, not rendered CAD silhouettes.
+- `held_scene_overlay.py` is a separate **read-only diagnostic adapter** for
+  the proposed raw-versus-predicted-mesh VLM input. Given synchronized measured
+  13-joint feedback, the session-frozen `T_robot_socket`, an explicitly sourced
+  `T_key_hand` hypothesis, undistorted raw BGR frames, matching intrinsics and
+  `T_camera_robot`, it assembles the existing FR3/Inspire URDF visual meshes
+  plus the key/socket OBJ meshes. It reuses AutoDex's
+  `src.visualization.overlay_robot_video.RobotOverlayRenderer` for translucent
+  multi-view overlays; stock execution code is unchanged. The key projection
+  is `T_robot_hand(measured FK) @ inverse(T_key_hand hypothesis)`, **not** a
+  fresh observation of a hidden key. Feed both untouched raw and overlay images
+  to an observer; never infer a millimetre offset or insertion success from the
+  overlay alone. The renderer depth-tests the synthetic meshes against each
+  other but has **no measured scene depth**, so real table/hand/object
+  occlusions may be drawn incorrectly. The caller must establish same-session
+  image/calibration provenance and the physical validity of the held relation.
+  `v8_nominal_diagnostic` and `mujoco_achieved_diagnostic` are illustration
+  sources, not calibrated transfer estimates. `verified_physical_grasp_calibration`
+  is only a source label here, not a proof that uncertainty is acceptable.
+  Local CPU tests cover assembly and adapter validation with a fake renderer;
+  actual GPU rendering and optical alignment still require the AutoDex PC,
+  its nvdiffrast/ParaDex dependencies, and calibrated live frames.
 - `xy_retry.py` combines the existing v8 pose/endpoint catalogue gate, fresh
   20 mm geometry screens, camera projections, per-view ZeroDex-style VLM
   choices and strict multi-view consensus. It runs only after an observed
