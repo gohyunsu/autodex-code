@@ -35,6 +35,10 @@ from .lift_checkpoint import (
     verify_lift_checkpoint, write_lift_checkpoint,
 )
 from .geometry import validate_se3
+from .guarded_axial_handoff import (
+    prepare_guarded_axial_handoff as write_guarded_axial_handoff,
+    verify_guarded_axial_handoff,
+)
 from .insertion_checkpoint import (
     assess_insertion_checkpoint, verify_insertion_checkpoint,
     write_insertion_checkpoint,
@@ -172,6 +176,7 @@ class SessionRunner:
         self._preinsert_assessment_index = 0
         self._preinsert_frame_signatures: set[tuple] = set()
         self._preinsert_latest_exposure_s = -math.inf
+        self._guarded_axial_index = 0
         self._lift_checkpoint: LiftCheckpoint | None = None
         self._lift_report_path: Path | None = None
         self._lift_report_sha256: str | None = None
@@ -1399,6 +1404,54 @@ class SessionRunner:
         self._preinsert_frame_signatures.add(signature)
         self._preinsert_latest_exposure_s = last_exposure
         return result
+
+    def prepare_guarded_axial_handoff(
+        self, *, measured_start: LiveRobotState,
+        decision_timestamp_s: float, max_state_age_s: float,
+        max_start_joint_error_rad: float, max_arm_hand_skew_s: float,
+        max_hand_command_error_raw: float,
+        max_arm_velocity_rad_s: float,
+    ) -> Path:
+        """Bind the observed hold to its saved 20 mm plan; do not move motors."""
+        if (self.current_decision().action !=
+                "await_guarded_insertion_and_observation" or
+                self._attempt is None or self._attempt_dir is None or
+                self._attempt.labels["grasp_success"] is not True or
+                self._attempt.labels["preinsert_reached"] is not True or
+                self._attempt.labels["insertion_success"] is not None or
+                self._postlift_report_path is None or
+                self._preinsert_report_path is None or
+                self._postlift_report_sha256 != hashlib.sha256(
+                    self._postlift_report_path.read_bytes()).hexdigest() or
+                self._preinsert_report_sha256 != hashlib.sha256(
+                    self._preinsert_report_path.read_bytes()).hexdigest()):
+            raise ValueError("guarded axial handoff needs the observed hold")
+        arrival = [event for event in self._attempt.events
+                   if event["stage"] == "preinsert_reached" and
+                   event["value"] is True]
+        if (len(arrival) != 1 or
+                arrival[0]["evidence_refs"].get("preinsert_checkpoint") !=
+                str(self._preinsert_report_path)):
+            raise ValueError("observed hold does not use this preinsert checkpoint")
+        output = (self._attempt_dir / "guarded_axial_handoffs" /
+                  f"{self._guarded_axial_index:03d}")
+        report = write_guarded_axial_handoff(
+            postlift_report_path=self._postlift_report_path,
+            preinsert_report_path=self._preinsert_report_path,
+            mode=self.mode, attempt_id=self._attempt.attempt_id,
+            candidate_id=self._attempt.candidate_id,
+            session_calibration_sha256=self.session_sha256,
+            measured_start=measured_start,
+            decision_timestamp_s=decision_timestamp_s,
+            max_state_age_s=max_state_age_s,
+            max_start_joint_error_rad=max_start_joint_error_rad,
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s,
+            output_dir=output)
+        verify_guarded_axial_handoff(report)
+        self._guarded_axial_index += 1
+        return report
 
     def observe_stage(
         self, stage: str, status: bool | None, *, timestamp_s: float,

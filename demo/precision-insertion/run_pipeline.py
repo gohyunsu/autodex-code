@@ -30,6 +30,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     verify_saved.add_argument("--report", type=Path, required=True,
                               help="saved trial preflight report.json")
+    verify_axial = command.add_parser(
+        "verify-guarded-axial-handoff",
+        help="read-only replay of an observed-hold/20 mm axial packet",
+    )
+    verify_axial.add_argument("--report", type=Path, required=True)
     audit = command.add_parser("audit", help="read-only v8 asset readiness report")
     audit.add_argument("--shared-root", type=Path, required=True)
     audit.add_argument("--mode", choices=("square", "cylinder"), required=True)
@@ -223,6 +228,26 @@ def main(argv: list[str] | None = None) -> int:
                 OSError) as exc:
             parser.error(str(exc))
         print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "verify-guarded-axial-handoff":
+        from precision_insertion.guarded_axial_handoff import (
+            verify_guarded_axial_handoff,
+        )
+
+        try:
+            report = verify_guarded_axial_handoff(args.report)
+        except (FileNotFoundError, KeyError, TypeError, ValueError,
+                OSError) as exc:
+            parser.error(str(exc))
+        print(json.dumps({
+            "report": str(args.report.expanduser().resolve()),
+            "attempt_id": report["attempt_id"],
+            "candidate_id": report["candidate_id"],
+            "axial_sample_count": report["axial_sample_count"],
+            "target_depth_m": report["target_depth_m"],
+            "robot_ready": False,
+        }, indent=2))
         return 0
 
     if args.command == "audit":

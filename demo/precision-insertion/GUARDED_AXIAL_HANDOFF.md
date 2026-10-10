@@ -1,0 +1,56 @@
+# Observed-hold → guarded 20 mm axial handoff
+
+`guarded_axial_handoff.py` binds a **positive, verified** pre-insertion hold
+checkpoint to the exact axial trajectory already saved by the demo's observed
+post-lift AutoDex/cuRobo preflight. It is an evidence packet, not a controller.
+It supports the first centered insertion attempt; a VLM-adjusted retry needs
+its own new post-shift 20 mm path and a separate handoff.
+
+The packet checks the same attempt/candidate/frozen session in the post-lift
+and pre-insertion reports, a sampled-clear 20 mm path audit and every successful
+axial waypoint query. It checks the saved transfer-to-axial joint continuity,
+constant measured Inspire grasp, a new stationary FR3/Inspire sample at the
+observed hold, and the CAD target's `(preinsert clearance + 20 mm)` displacement
+along the socket axis. Source reports and trajectory archive are hashed. A
+subsequent verifier reopens them and repeats the checks; changed bytes fail.
+
+Call this only after `preinsert_reached=True` has been recorded from
+`prepare_observed_preinsert_label` and `observe_stage`. The session method
+requires that recorded positive event to cite the exact checkpoint, then
+passes its frozen source paths and a **new** robot feedback sample to the
+lower-level packet builder:
+
+```python
+from precision_insertion.guarded_axial_handoff import verify_guarded_axial_handoff
+
+report_path = runner.prepare_guarded_axial_handoff(
+    measured_start=fresh_fr3_inspire_feedback,
+    decision_timestamp_s=decision_time_on_robot_clock,
+    max_state_age_s=commissioned_feedback_age_s,
+    max_start_joint_error_rad=commissioned_start_joint_error_rad,
+    max_arm_hand_skew_s=commissioned_arm_hand_skew_s,
+    max_hand_command_error_raw=commissioned_hand_tracking_error_raw,
+    max_arm_velocity_rad_s=commissioned_stationary_arm_velocity_rad_s,
+)
+packet = verify_guarded_axial_handoff(report_path)
+```
+
+The saved packet can also be independently checked on the AutoDex PC:
+
+```bash
+python demo/precision-insertion/run_pipeline.py \
+  verify-guarded-axial-handoff --report /path/to/report.json
+```
+
+The output has `robot_ready: false` and contains no motion call. A real
+controller still needs a robot-side dead-man/watchdog, force/torque and grip
+monitoring in the socket frame, a guarded trajectory follower, stop
+acknowledgement, per-sample trace production, continuous/swept safety checks,
+and commissioning of all numeric limits. Even successfully following these
+joints establishes only a **nominal wrist stroke**. The task label still
+requires post-stroke raw camera/VLM evidence and independently verified
+physical **key** depth; a wrist endpoint is not 20 mm key penetration.
+
+The canonical v8 candidate, object-processing and fixed socket assets remain
+under the selected `shared_root`. This module and its tests live only under
+`demo/precision-insertion`; stock AutoDex execution files are untouched.

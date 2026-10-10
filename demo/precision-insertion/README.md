@@ -520,6 +520,12 @@ Only camera views present in both captures are compared, and a positive
 visual class needs at least two supporting views. Hidden/ambiguous images do
 not prove insertion. A command stroke alone is not an allowed key-depth
 source. The output remains read-only and cannot start guarded contact.
+After a verified positive pre-insertion hold, the read-only
+[`guarded_axial_handoff.py`](GUARDED_AXIAL_HANDOFF.md) binds that checkpoint,
+the exact observed post-lift 20 mm axial path and a fresh measured
+FR3/Inspire start state into one replayable packet. It does **not** command
+the arm or prove that the key penetrated the socket; a commissioned guarded
+controller and post-stroke evidence remain separate.
 The demo now also has a pure, **non-actuating**
 [`GuardedContactMonitor`](precision_insertion/guarded_contact.py) for the
 planned 20 mm stroke. With separately commissioned limits and acquisition-
