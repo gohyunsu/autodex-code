@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-input-width", type=int, default=640,
                         help="semantic-label resize ceiling only; not metric grounding")
     parser.add_argument("--max-input-height", type=int, default=640)
-    parser.add_argument("--max-new-tokens", type=int, default=256)
+    parser.add_argument("--max-new-tokens", type=int, default=512)
     args = parser.parse_args(argv)
     if args.backend == "gemini" and not args.allow_external_images:
         parser.error("Gemini needs explicit --allow-external-images consent")

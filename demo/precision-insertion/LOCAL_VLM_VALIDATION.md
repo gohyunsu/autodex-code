@@ -28,6 +28,17 @@ on saved image pairs only. No stock AutoDex execution files were changed.
   valid camera IDs. Incorrect/absent evidence IDs still fail closed.
 - All demo tests: `278 passed` on the AutoDex Python environment.
 
+## Follow-up GPU check (2026-10-11)
+
+The downloaded Qwen3-VL-2B model still loads on the RTX 3090. In a saved-render
+lift probe, a 256-token response repeated its explanation, ended before closing
+the JSON, and was correctly mapped to `unobservable` with a parse error. A
+separate saved-render probe with 512 output tokens returned parseable JSON. The
+saved-image probe and benchmark now default to 512 tokens, matching the backend
+default. Neither render pair is synchronized robot evidence, so this check
+establishes execution and parsing only, not label accuracy. Even at 512 tokens,
+malformed responses may occur and must remain fail-closed.
+
 ## Remaining validation before live use
 
 Collect time-synchronized, phase-paired **raw AutoDex camera images** with
