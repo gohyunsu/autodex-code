@@ -165,6 +165,7 @@ def test_measured_q_replans_lift_and_full_chain(tmp_path, monkeypatch):
     result = lift.plan_measured_lift_chain(**args)
     assert result.status == "sampled_measured_chain_pass"
     assert result.to_record()["robot_ready"] is False
+    assert result.to_record()["cartesian_planner_mode"] == "default"
     assert result.relation_source.startswith("nominal_BODex")
     np.testing.assert_allclose(args["planner"].starts[0],
                                args["joint_sample"].full_q, atol=1e-7)
@@ -196,6 +197,27 @@ def test_bad_squeeze_evidence_blocks_planner(tmp_path, monkeypatch, defect):
         lift.plan_measured_lift_chain(**args)
     assert not args["planner"].starts
     assert not planned_calls
+
+
+def test_post_squeeze_replan_requires_the_bound_cartesian_mode(
+        tmp_path, monkeypatch):
+    args, planned_calls, _log, _marker = _fixture(tmp_path, monkeypatch)
+    args["planner"]._native_pose_constraints_enabled = True
+    with pytest.raises(ValueError, match="planner mode differs"):
+        lift.plan_measured_lift_chain(**args)
+    assert not args["planner"].starts
+    assert not planned_calls
+
+    args["runner"]._preflight.cartesian_planner_mode = (
+        "native-locked-experimental")
+    trial_file = args["runner"]._preflight_report_path
+    saved = json.loads(trial_file.read_text())
+    saved["cartesian_planner_mode"] = "native-locked-experimental"
+    trial_file.write_text(json.dumps(saved), encoding="utf-8")
+    result = lift.plan_measured_lift_chain(**args)
+    assert result.status == "sampled_measured_chain_pass"
+    assert result.to_record()["cartesian_planner_mode"] == (
+        "native-locked-experimental")
 
 
 def test_endpoint_and_uncertainty_margins_fail_closed(tmp_path, monkeypatch):

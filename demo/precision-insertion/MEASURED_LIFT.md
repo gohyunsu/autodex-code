@@ -18,7 +18,10 @@ sample fresh stationary FR3/Inspire feedback and call
 4. Calls the unchanged `GraspPlanner.plan_lift_preflight` from those measured
    joints, then the demo's existing `plan_held_transfer_and_axial` for lift →
    pre-insertion hold → centered 20 mm insertion. Its sampled full-key/hand
-   audit includes the frozen board, table and socket world.
+   audit includes the frozen board, table and socket world. The actual
+   Cartesian planner mode must match the bound initial preflight and is
+   recorded again; an implicit switch between default and experimental
+   locked-hand modes is rejected before the replan.
 5. Requires explicit `SurfaceDeviationBounds` covering future key/hand
    surface error relative to the fixture. If nominal clearance cannot absorb
    these commissioned bounds, the result is rejected.
@@ -72,3 +75,12 @@ write a fresh `precision_insertion_lift_execution_v1` log. Only then can the
 existing paired-camera VLM lift checkpoint label `grasp_success`. The same
 execution discipline is needed for transfer; the 20 mm contact stroke needs
 a dedicated guarded controller, not free-space trajectory playback.
+
+The checked-out ParaDex `franka_daemon.cpp::handle_set_joint_velocity` parses
+`duration_ms` but does not use it to expire a streaming velocity command.
+Consequently a Python-side timeout alone is **not** a dead-man safeguard:
+if its process stalls or dies, the last target can remain active. Before any
+demo-local follower commands hardware, commission an independent stop/watchdog
+at the robot-control layer (and verify it on the actual robot PC), together
+with an E-stop and guarded force/torque abort. These are physical execution
+prerequisites, not settings that a saved trajectory or mock test can satisfy.

@@ -18,10 +18,12 @@ import time
 import numpy as np
 
 from .candidates import select_pose_candidates
+from .curobo_compat import install_curobo_planner_compat
 from .endpoint import screen_grasp_endpoint
 from .geometry import validate_se3
 from .live_robot_state import LiveRobotState
 from .path_audit import PathAuditLimits
+from .planner_mode import cartesian_mode_from_planner
 from .preflight import (
     InsertionPreflight, _goal_met, _path, plan_held_transfer_and_axial,
 )
@@ -56,6 +58,7 @@ class MeasuredLiftChain:
     targets: InsertionTargets | None
     planning: InsertionPreflight | None
     uncertainty_margin: dict | None
+    cartesian_planner_mode: str = "default"
 
     def to_record(self) -> dict:
         return {
@@ -74,6 +77,7 @@ class MeasuredLiftChain:
             "targets": None if self.targets is None else self.targets.to_record(),
             "planning": None if self.planning is None else self.planning.to_record(),
             "uncertainty_margin": self.uncertainty_margin,
+            "cartesian_planner_mode": self.cartesian_planner_mode,
             "scope": "measured_start_sampled_chain_not_motion_or_grasp_success",
             "robot_ready": False,
         }
@@ -149,6 +153,11 @@ def plan_measured_lift_chain(
     if report_file is None:
         raise ValueError("selected trial report is missing")
     saved_plan = json.loads(report_file.read_text(encoding="utf-8"))
+    planner_mode = cartesian_mode_from_planner(planner)
+    if (planner_mode != getattr(trial, "cartesian_planner_mode", "default") or
+            saved_plan.get("cartesian_planner_mode", "default") != planner_mode):
+        raise ValueError(
+            "post-squeeze planner mode differs from the bound initial preflight")
     if (log.get("planned_trajectories_sha256") !=
             saved_plan.get("artifacts", {}).get(
                 "planned_trajectories_sha256")):
@@ -226,10 +235,13 @@ def plan_measured_lift_chain(
             log_file, _sha(log_file), runner.session_sha256,
             verified["report_sha256"], joint_sample, relation,
             "nominal_BODex_relation_with_commissioned_surface_error_bound",
-            endpoint, targets, planning, margin)
+            endpoint, targets, planning, margin, planner_mode)
 
     if endpoint.get("endpoint_pass") is not True:
         return result("measured_squeeze_endpoint_rejected")
+    # This can run in a new process after pickup, not just in the process
+    # where the initial candidate loop installed its cuRobo compatibility.
+    install_curobo_planner_compat()
     targets = build_rigid_insertion_targets(
         mode=runner.mode, shared_root=runner.shared_root,
         calibration=runner.calibration, T_key_hand=relation)
