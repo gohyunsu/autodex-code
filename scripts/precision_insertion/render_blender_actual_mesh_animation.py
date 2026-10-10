@@ -27,7 +27,8 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--fps", type=int, default=20)
     parser.add_argument(
         "--view",
-        choices=("task", "key-socket", "reorient", "overview"),
+        choices=("task", "key-socket", "reorient", "overview",
+                 "endpoint-oblique", "endpoint-side"),
         default="task",
         help=(
             "task shows the workspace from the socket side; key-socket uses "
@@ -154,6 +155,14 @@ def main() -> int:
         camera.location = (0.94, 0.58, 0.48)
         camera.data.lens = 55.0
         _look_at(camera, Vector((0.425, 0.02, 0.14)))
+    elif args.view == "endpoint-oblique":
+        camera.location = (0.78, -0.39, 0.27)
+        camera.data.lens = 36.0
+        _look_at(camera, Vector((0.45, -0.10, 0.14)))
+    elif args.view == "endpoint-side":
+        camera.location = (0.80, 0.08, 0.17)
+        camera.data.lens = 36.0
+        _look_at(camera, Vector((0.45, -0.10, 0.14)))
     elif args.view == "reorient":
         camera.location = (0.98, -0.72, 0.63)
         camera.data.lens = 52.0

@@ -359,6 +359,72 @@ endpoint-geometry-pass raw seed. Each seed folder contains actual CAD/URDF
 meshes and a transform bundle; render it from `key-socket` and `task` views.
 The root `manifest.json` records the evidence scope and runtime eligibility.
 
+### Images for fully offline-filtered v8 grasps
+
+Use `render_eligible_grasp_endpoints.py` **only after** a complete, current
+`screen-catalog` run. The input must be the *same key/socket mode* that will be
+shown. Every eligible grasp is rechecked against current v8/MuJoCo evidence
+and the exact 20 mm CAD/Inspire endpoint before any image is made. It produces
+four 16:9 PNGs per grasp: oblique and side views for both the MuJoCo squeeze
+and the nominal AutoDex controller hold. The key–hand transform stays fixed;
+the images use actual key/socket triangle meshes and evaluated Inspire URDF
+visual links. They do **not** depict a Franka arm pose, prove continuous
+insertion, or claim a physical task success.
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/render_eligible_grasp_endpoints.py \
+  --catalog ~/shared_data/AutoDex/precision_insertion/endpoint_catalogs/square_1p5mm_NEW_SCAN.json \
+  --output-root ~/shared_data/AutoDex/precision_insertion/visualizations/verified_v8_20mm_NEW_RUN/square_1p5mm
+```
+
+Use a **new** output root for every run; previous artifacts are never
+overwritten. The layout is `pose_<stem>/<type>_<scene>_<grasp>/<hold>/`
+with `endpoint-oblique.png`, `endpoint-side.png`, the source 3D transform
+bundle, and a fresh endpoint screen report. `manifest.json` records the
+catalogue hash, counts, scope, and relative image paths. If a complete scan
+has zero eligible grasps, the command writes only a zero-count manifest and
+exits with code 2. If the catalogue is incomplete or stale, it rejects it
+without making an image. The 2026-10-10 local square scans each have one v8
+candidate and **zero** eligible; the cylindrical v8 pool has zero candidates
+and its catalogue is incomplete. The older `cylindrical_endpoint_diagnostics`
+images are separate raw reorientation-seed illustrations, **not** results of
+this verified renderer and not valid insertion-grasp success examples.
+
+### Replay a saved session and fresh key observation without robot motion
+
+`preflight-trial` loads the frozen ChArUco/socket collision-world snapshot,
+checks the selected key/socket catalogue, classifies one freshly measured key
+tabletop pose, then tries eligible grasps in v8 order. It reuses the original
+AutoDex pickup planner and adds demo-local lift, transfer and 20 mm axial
+planning plus sampled held-key/hand collision checks. It takes measured
+13-DOF start joints and acquisition timestamps from saved inputs. The limits
+JSON must contain the eight positive `PathAuditLimits` fields in
+`precision_insertion/path_audit.py`; these are **commissioning inputs**, not
+universal defaults. The named session must include a saved collision-world
+snapshot and hashes from `write_session_calibration`.
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/run_pipeline.py preflight-trial \
+  --shared-root ~/shared_data --mode square --gap-mm 1.5 \
+  --session /path/to/session_calibration.json \
+  --catalog /path/to/complete_current_endpoint_catalog.json \
+  --key-pose-world-npy /path/to/fresh_key_pose_4x4.npy \
+  --key-observation-id capture_001 --key-capture-time-s 100.0 \
+  --live-start-q-npy /path/to/measured_start_q_13.npy \
+  --start-q-time-s 100.0 --max-key-state-skew-s 0.1 \
+  --limits-json /path/to/commissioned_path_audit_limits.json \
+  --max-pose-error-deg 10 --axial-waypoint-step-mm 5 \
+  --output-dir /path/to/new_trial_report_directory
+```
+
+The numeric limits in the example are **illustrative only**. The exclusive
+output contains `report.json`, `trial_scene.json`, and, if a full plan is
+found, `planned_trajectories.npz`; all are offline evidence and have
+`robot_ready: false`. A pose with no candidate may return
+`repose_required_unplanned`, not an executable reorientation trajectory.
+
 Run the current offline tests from the repository root:
 
 ```bash
