@@ -26,7 +26,7 @@ from .frame_provenance import image_sha256, verify_frame_provenance
 from .geometry import validate_se3
 from .grounded_alignment import (
     AlignmentLimits, estimate_grounded_alignment,
-    estimate_grounded_line_alignment, observe_grounded_key_axis,
+    estimate_grounded_line_alignment,
     observe_grounded_cylinder_axis,
 )
 from .held_relation import HeldRelation, resolve_postlift_held_relation
@@ -678,7 +678,16 @@ def assess_grounded_xy_diagnostic(
             T_world_robot=c2r, T_robot_socket=socket),
         np.asarray(intrinsics_full[frame.camera_id]["K_undist"], dtype=float),
     ) for frame in frames]
-    if mode.family == "cylinder":
+    if mode.yaw_relevant:
+        # Two collinear points/one axial line leave square-key yaw
+        # unobservable. Do not spend an API call on a guaranteed abstention.
+        observations = ()
+        alignment = estimate_grounded_alignment(
+            [], landmark_spacing_m=tip_z - reference_z,
+            socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
+            verification_depth_m=mode.target_depth_m,
+            limits=alignment_limits, yaw_relevant=True)
+    else:
         grounded, observations = observe_grounded_cylinder_axis(
             backend, calibrated)
         alignment = estimate_grounded_line_alignment(
@@ -686,14 +695,6 @@ def assess_grounded_xy_diagnostic(
             socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
             verification_depth_m=mode.target_depth_m,
             limits=alignment_limits)
-    else:
-        grounded, observations = observe_grounded_key_axis(
-            backend, calibrated)
-        alignment = estimate_grounded_alignment(
-            grounded, landmark_spacing_m=tip_z - reference_z,
-            socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
-            verification_depth_m=mode.target_depth_m,
-            limits=alignment_limits, yaw_relevant=mode.yaw_relevant)
     step = alignment["step_socket_m"]
     if step is not None:
         proposed = np.asarray(attempt.xy_offset_socket_m) + np.asarray(step)

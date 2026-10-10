@@ -351,6 +351,7 @@ def test_grounded_diagnostic_binds_failure_and_never_records_retry(
     assert result.status == "abstain"  # backend did not label landmarks
     assert result.alignment["reason"] == (
         "two_collinear_landmarks_cannot_estimate_square_key_yaw")
+    assert kwargs["backend"].calls == 0
     assert result.to_record()["preflight"] is None
     assert kwargs["attempt"]._pending_retry is False
     output = write_retry_session_artifacts(
