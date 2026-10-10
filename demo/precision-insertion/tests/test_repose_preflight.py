@@ -55,6 +55,7 @@ class _Planner:
     def __init__(self):
         self.calls = []
         self.reject_transfer = False
+        self.reject_descent = False
         self.reject_postrelease = False
         self.pickup_plan = None
 
@@ -93,6 +94,14 @@ class _Planner:
         stage = ("post_release_lift" if "released_rest_key" in scene_cfg["mesh"]
                  else "descent")
         self.calls.append((stage, sorted(scene_cfg["mesh"])))
+        if stage == "descent" and self.reject_descent:
+            return SimpleNamespace(
+                success=False, trajectory=None,
+                failure_code="jacobian_segment_robot_collision",
+                failure_detail=(
+                    "jacobian_segment_robot_collision:"
+                    "MotionGenStatus.INVALID_START_STATE_WORLD_COLLISION"),
+                step_records=[{"step": 17, "target_z_m": 0.125}])
         if stage == "post_release_lift" and self.reject_postrelease:
             return SimpleNamespace(success=False, trajectory=None,
                                    failure_code="test_rejected")
@@ -332,6 +341,14 @@ def test_v8_reset_seed_is_screened_then_planned_in_frozen_socket_world(
     assert [call[0] for call in planner.calls] == [
         "start", "pickup", "lift", "transfer", "descent"]
     assert planner.calls[3] == ("transfer", ["fixture_socket"])
+    planner.reject_descent = True
+    rejected = _transition(tmp_path, calibration, scene, limits, planner)
+    assert rejected.status == "no_held_reset_path"
+    descent_query = rejected.attempted_seeds[0]["held_planner_queries"][-1]
+    assert descent_query["failure_detail"].endswith(
+        "INVALID_START_STATE_WORLD_COLLISION")
+    assert descent_query["failed_step"] == 17
+    assert descent_query["failed_target_z_m"] == 0.125
 
 
 def test_repose_does_not_plan_if_target_has_no_insertable_grasp(

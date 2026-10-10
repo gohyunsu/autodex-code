@@ -62,6 +62,14 @@ The finished diagnostic was rerun at the first site in
 [`r4`](/tmp/precision-synthetic-repose-cylinder01-0to1-r4-20261011/report.json):
 it reproduced the same rejection, returned exit code 2, and saved hashes
 for all files in the attempted reset seed alongside its synthetic inputs.
+An instrumented [repeat](/tmp/precision-synthetic-repose-cylinder01-0to1-r5-20261011/report.json)
+identified the failed descent as a **world-collision check**, not self
+collision: `MotionGenStatus.INVALID_START_STATE_WORLD_COLLISION` at Jacobian
+waypoint 17 (requested wrist Z approximately 0.125 m in this hypothetical
+scene). The status does not identify which obstacle or robot link was involved;
+neither the table nor socket may be removed from the real preflight on this
+basis. A measured scene and targeted collision-pair inspection are needed
+before changing the release policy.
 
 Therefore seed `191` is **not a validated reset path**, despite its prior
 MuJoCo grasp-stability result. The staged seed stays outside the canonical

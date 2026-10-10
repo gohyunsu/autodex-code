@@ -307,6 +307,13 @@ def plan_repose_held_chain(
         "stage": "held_descent", "planner_api": "plan_vertical_stroke",
         "success": bool(stroke.success),
         "failure_code": getattr(stroke, "failure_code", None),
+        "failure_detail": getattr(stroke, "failure_detail", None),
+        "failed_step": (
+            None if stroke.success or not getattr(stroke, "step_records", None)
+            else stroke.step_records[-1].get("step")),
+        "failed_target_z_m": (
+            None if stroke.success or not getattr(stroke, "step_records", None)
+            else stroke.step_records[-1].get("target_z_m")),
     })
     if not stroke.success or stroke.trajectory is None:
         return result("held_descent_unreachable", lift=lift,
