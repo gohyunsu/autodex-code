@@ -16,13 +16,22 @@ from pathlib import Path
 import re
 from typing import Mapping
 
+import numpy as np
+
 from .calibration import SessionCalibration
 from .candidates import validate_catalog_session
 from .config import TaskMode
 from .key_perception import (
     KeyPoseObservation, verify_key_capture_artifacts,
 )
+from .geometry import validate_se3
+from .pose_selection import classify_key_tabletop_pose
 from .records import AttemptRecord, begin_attempt
+from .repose_artifacts import write_repose_preflight_artifacts
+from .repose_preflight import validate_repose_rest_target
+from .repose_transition import (
+    ReposeTransitionPreflight, preflight_v8_repose_transition,
+)
 from .retry_preflight import XYRetryPreflight
 from .session_policy import (
     SessionDecision, decide_after_attempt, decide_after_trial_preflight,
@@ -79,6 +88,12 @@ class SessionRunner:
         self.catalog_sha256 = _digest(catalog)
         self._preflight: TrialPreflight | None = None
         self._preflight_report_path: Path | None = None
+        self._repose_preflight: ReposeTransitionPreflight | None = None
+        self._repose_report_path: Path | None = None
+        self._repose_index = 0
+        self._same_capture_reset_rejects: set[tuple[int, str, str]] = set()
+        self._key_evidence_dir: Path | None = None
+        self._key_evidence_manifest_sha256: str | None = None
         self._attempt: AttemptRecord | None = None
         self._attempted: set[tuple[str, str, str]] = set()
         self._same_capture_planning_rejects: set[tuple[str, str, str]] = set()
@@ -125,6 +140,30 @@ class SessionRunner:
         if self._attempt is not None:
             return decide_after_attempt(
                 self._attempt, max_xy_retries=self.max_xy_retries)
+        if self._repose_preflight is not None:
+            status = self._repose_preflight.status
+            if status == "nominal_reset_preflight_pass_drop_unobserved":
+                return SessionDecision(
+                    "repose_execution_gate_required",
+                    "nominal_repose_pick_place_only_landing_unobserved", None,
+                    ("commissioned_robot_and_force_limits",
+                     "fresh_key_and_joint_observation",
+                     "measured_post_lift_key_hand_relation",
+                     "observed_release_and_landing_pose"))
+            if status == "reset_seed_budget_exhausted":
+                return SessionDecision(
+                    "continue_repose_seed_preflight",
+                    "pilot_prefix_is_not_reset_seed_exhaustion", None)
+            if status == "held_reset_path_available_release_unplanned":
+                return SessionDecision(
+                    "preflight_repose_release",
+                    "held_path_has_no_opening_or_retreat_preflight", None)
+            if status in {"no_verified_reset_seed", "no_held_reset_path",
+                          "no_nominal_reset_path"}:
+                return SessionDecision(
+                    "preflight_alternative_repose_cell", status, None)
+            return SessionDecision(
+                "stop_for_review", status, None)
         if self._preflight is not None:
             return decide_after_trial_preflight(self._preflight.to_record())
         return SessionDecision("capture_fresh_key", "frozen_socket_session_ready",
@@ -233,6 +272,12 @@ class SessionRunner:
         self._preflight_index += 1
         self._preflight = result
         self._preflight_report_path = report_path
+        self._repose_preflight = None
+        self._repose_report_path = None
+        self._same_capture_reset_rejects.clear()
+        self._key_evidence_dir = evidence_dir
+        self._key_evidence_manifest_sha256 = hashlib.sha256(
+            (evidence_dir / "evidence_manifest.json").read_bytes()).hexdigest()
         self._attempt = None
         self._attempt_dir = None
         self._capture_id = key_observation.capture_id
@@ -248,6 +293,185 @@ class SessionRunner:
             if key != result.selected_candidate_key:
                 self._same_capture_planning_rejects.add(key)
         return result
+
+    def preflight_repose(
+        self, *, planner, key_observation: KeyPoseObservation,
+        to_pose_stem: str, height_cm: int,
+        release_xy_robot_m: tuple[float, float], live_start_q,
+        start_q_acquisition_timestamp_s: float, max_state_skew_s: float,
+        max_pose_error_deg: float, max_center_in_hand_drift_m: float,
+        max_symmetry_axis_tilt_deg: float,
+        minimum_rest_socket_clearance_m: float,
+        minimum_board_edge_clearance_m: float, limits,
+        reset_candidate_root: Path | None = None,
+        max_seed_attempts: int | None = None,
+        retreat_goal_arm_q=None,
+        minimum_release_key_clearance_m: float | None = None,
+    ) -> ReposeTransitionPreflight:
+        """Connect a pose-exhausted trial to the existing directed v8 reset.
+
+        The same saved key exposure may be reused only because no grasp or
+        robot motion has occurred since the preceding insertion preflight.
+        A result remains a nominal plan: landing must be observed separately.
+        """
+        if self.current_decision().action not in {
+                "preflight_repose", "continue_repose_seed_preflight",
+                "preflight_repose_release",
+                "preflight_alternative_repose_cell"}:
+            raise ValueError("repose requires observed current-pose candidate exhaustion")
+        if self._preflight is None or self._key_evidence_dir is None or (
+                self._key_evidence_manifest_sha256 is None):
+            raise ValueError("repose lacks a bound fresh-key trial")
+        if (not isinstance(key_observation, KeyPoseObservation) or
+                key_observation.capture_id != self._capture_id or
+                _digest(key_observation.to_record()) !=
+                self._capture_observation_sha256):
+            raise ValueError("repose key pose differs from exhausted trial")
+        if to_pose_stem not in self._preflight.repose_target_stems:
+            raise ValueError("repose target has no eligible insertion grasp")
+        key_observation.require_state_alignment(
+            state_timestamp_s=start_q_acquisition_timestamp_s,
+            maximum_skew_s=max_state_skew_s)
+        verify_key_capture_artifacts(self._key_evidence_dir)
+        if hashlib.sha256(
+                (self._key_evidence_dir / "evidence_manifest.json")
+                .read_bytes()).hexdigest() != self._key_evidence_manifest_sha256:
+            raise ValueError("saved key capture changed after trial preflight")
+        if (_digest(self.calibration.record) != self.session_sha256 or
+                _digest(self.catalog) != self.catalog_sha256):
+            raise ValueError("frozen session or endpoint catalogue changed")
+        limits.validate()
+        result = preflight_v8_repose_transition(
+            planner=planner, shared_root=self.shared_root, mode=self.mode,
+            calibration=self.calibration, trial_scene=self._preflight.trial_scene,
+            catalog=self.catalog,
+            from_pose_stem=self._preflight.pose_class["stem"],
+            to_pose_stem=to_pose_stem, height_cm=height_cm,
+            release_xy_robot_m=release_xy_robot_m,
+            live_start_q=live_start_q,
+            observation_id=key_observation.capture_id,
+            key_capture_timestamp_s=(
+                key_observation.selected_acquisition_timestamp_s),
+            start_q_acquisition_timestamp_s=start_q_acquisition_timestamp_s,
+            max_state_skew_s=max_state_skew_s,
+            max_pose_error_deg=max_pose_error_deg,
+            max_center_in_hand_drift_m=max_center_in_hand_drift_m,
+            max_symmetry_axis_tilt_deg=max_symmetry_axis_tilt_deg,
+            minimum_rest_socket_clearance_m=minimum_rest_socket_clearance_m,
+            minimum_board_edge_clearance_m=minimum_board_edge_clearance_m,
+            limits=limits, attempted_insertion=self.attempted_candidates,
+            covered_scenes=(),
+            attempted_reset_ids=tuple(sorted(
+                seed_id for row_height, row_target, seed_id in
+                self._same_capture_reset_rejects
+                if row_height == height_cm and row_target == to_pose_stem)),
+            reset_candidate_root=reset_candidate_root,
+            max_seed_attempts=max_seed_attempts,
+            retreat_goal_arm_q=retreat_goal_arm_q,
+            minimum_release_key_clearance_m=(
+                minimum_release_key_clearance_m))
+        if (result.observation_id != key_observation.capture_id or
+                result.from_pose_stem != self._preflight.pose_class["stem"] or
+                result.to_pose_stem != to_pose_stem or
+                result.height_cm != height_cm):
+            raise ValueError("directed reset result does not match the frozen trial")
+        if result.status == "nominal_reset_preflight_pass_drop_unobserved" and (
+                result.selected_seed is None or
+                result.pickup_plan is None or
+                result.held_plan is None or
+                result.held_plan.status !=
+                "sampled_held_path_pass_release_unplanned" or
+                result.release_plan is None or
+                result.release_plan.status !=
+                "nominal_release_exit_path_pass_drop_unobserved"):
+            raise ValueError("nominal reset pass lacks pickup/held/release paths")
+        index = self._repose_index
+        inputs = self.output_dir / "repose_inputs" / f"{index:04d}"
+        inputs.mkdir(parents=True, exist_ok=False)
+        key_pose_file = inputs / "key_pose_world.npy"
+        state_file = inputs / "live_start_q.npy"
+        np.save(key_pose_file, key_observation.pose_world)
+        np.save(state_file, np.asarray(live_start_q, dtype=np.float64))
+        limits_file = inputs / "limits.json"
+        self._write_exclusive(limits_file, vars(limits).copy())
+        output = self.output_dir / "repose_preflights" / f"{index:04d}"
+        write_repose_preflight_artifacts(
+            result=result, trial_scene=self._preflight.trial_scene,
+            output_dir=output,
+            source_files={
+                "session": self.output_dir / "frozen_session_calibration.json",
+                "catalog": self.output_dir / "endpoint_catalog.json",
+                "key_pose_world": key_pose_file,
+                "live_start_q": state_file,
+                "limits": limits_file,
+            })
+        report_path = output / "report.json"
+        if not report_path.is_file():
+            raise ValueError("directed reset preflight artifact lacks its report")
+        self._write_exclusive(output / "key_evidence_binding.json", {
+            "schema": "precision_insertion_repose_key_binding_v1",
+            "key_capture_id": key_observation.capture_id,
+            "key_evidence_dir": str(self._key_evidence_dir),
+            "key_evidence_manifest_sha256": self._key_evidence_manifest_sha256,
+            "repose_report_sha256": hashlib.sha256(
+                report_path.read_bytes()).hexdigest(),
+            "session_calibration_sha256": self.session_sha256,
+            "catalog_sha256": self.catalog_sha256,
+            "robot_ready": False,
+        })
+        self._repose_index += 1
+        self._repose_preflight = result
+        self._repose_report_path = report_path
+        for row in result.attempted_seeds:
+            seed_id = row.get("seed_id")
+            if isinstance(seed_id, str) and seed_id != (
+                    None if result.selected_seed is None
+                    else result.selected_seed.get("seed_id")):
+                self._same_capture_reset_rejects.add(
+                    (height_cm, to_pose_stem, seed_id))
+        return result
+
+    def begin_repose_attempt(
+        self, *, attempt_id: str, started_at_s: float,
+    ) -> AttemptRecord:
+        """Open a separate observed reorientation attempt, without moving."""
+        if (not isinstance(attempt_id, str) or
+                not _SAFE_ID.fullmatch(attempt_id) or
+                attempt_id in self._used_attempt_ids):
+            raise ValueError("repose attempt ID must be new and file-safe")
+        if (self._attempt is not None or self._repose_preflight is None or
+                self._repose_report_path is None or
+                self.current_decision().action !=
+                "repose_execution_gate_required"):
+            raise ValueError("no complete nominal reset release/exit preflight")
+        if (not math.isfinite(float(started_at_s)) or
+                float(started_at_s) < max(
+                    self._capture_interval_end_s,
+                    self._repose_preflight.start_q_acquisition_timestamp_s)):
+            raise ValueError("repose cannot start before key/state acquisition")
+        attempt = begin_attempt(
+            attempt_id=attempt_id, mode=self.mode,
+            session_record=self.calibration.record, candidate_id=None,
+            tabletop_pose_stem=self._repose_preflight.from_pose_stem,
+            xy_offset_socket_m=(0.0, 0.0), started_at_s=started_at_s)
+        attempt_dir = self.output_dir / "attempts" / attempt_id
+        attempt_dir.mkdir(parents=True, exist_ok=False)
+        self._write_exclusive(attempt_dir / "repose_preflight_binding.json", {
+            "schema": "precision_insertion_repose_attempt_binding_v1",
+            "from_pose_stem": self._repose_preflight.from_pose_stem,
+            "to_pose_stem": self._repose_preflight.to_pose_stem,
+            "repose_report": str(self._repose_report_path),
+            "repose_report_sha256": hashlib.sha256(
+                self._repose_report_path.read_bytes()).hexdigest(),
+            "session_calibration_sha256": self.session_sha256,
+            "robot_ready": False,
+        })
+        attempt.write_new(attempt_dir / "state_000.json")
+        self._used_attempt_ids.add(attempt_id)
+        self._attempt = attempt
+        self._attempt_dir = attempt_dir
+        self._attempt_index = 0
+        return deepcopy(attempt)
 
     def begin_selected_attempt(
         self, *, attempt_id: str, started_at_s: float,
@@ -301,8 +525,7 @@ class SessionRunner:
         updated.write_new(self._attempt_dir / f"state_{index:03d}.json")
         self._attempt = updated
         self._attempt_index = index
-        if updated.events:
-            assert updated.candidate_id is not None
+        if updated.events and updated.candidate_id is not None:
             self._attempted.add(tuple(updated.candidate_id.split("/")))
         return deepcopy(updated)
 
@@ -310,9 +533,94 @@ class SessionRunner:
         self, stage: str, status: bool | None, *, timestamp_s: float,
         evidence_refs: Mapping[str, str],
     ) -> AttemptRecord:
+        if stage == "reorient_success":
+            raise ValueError("use observe_repose_landing for the target-pose label")
+        if self._attempt is not None and self._attempt.candidate_id is None:
+            raise ValueError("repose and insertion attempt labels must stay separate")
         return self._record(lambda row: row.record_stage(
             stage, status, timestamp_s=timestamp_s,
             evidence_refs=evidence_refs))
+
+    def observe_repose_landing(
+        self, *, key_observation: KeyPoseObservation,
+        key_evidence_dir: Path, timestamp_s: float,
+        release_completed_at_s: float, release_evidence_path: Path,
+        max_pose_error_deg: float, support_tolerance_m: float,
+        minimum_rest_socket_clearance_m: float,
+        minimum_board_edge_clearance_m: float,
+    ) -> AttemptRecord:
+        """Label repose only from a new supported, in-board key observation.
+
+        A missing or ambiguous observation raises and keeps the label unknown.
+        The release file/time are caller assertions until a commissioned
+        executor supplies them. This is not proof of physical repeatability.
+        """
+        if (self._attempt is None or self._attempt.candidate_id is not None or
+                self._repose_preflight is None or
+                self.current_decision().action != "await_repose_observation"):
+            raise ValueError("no pending directed repose landing to observe")
+        if not isinstance(key_observation, KeyPoseObservation):
+            raise TypeError("landing needs an admitted fresh multi-view key pose")
+        release_time = float(release_completed_at_s)
+        release_file = Path(release_evidence_path).expanduser().resolve()
+        if (not math.isfinite(release_time) or
+                release_time < self._attempt.started_at_s or
+                not release_file.is_file() or
+                key_observation.acquisition_interval_s[0] <= release_time):
+            raise ValueError("landing frames need a prior logged physical release")
+        evidence_dir = Path(key_evidence_dir).expanduser().resolve()
+        manifest = verify_key_capture_artifacts(evidence_dir)
+        saved_observation = json.loads((evidence_dir / "key_observation.json")
+                                       .read_text(encoding="utf-8"))
+        if (saved_observation != key_observation.to_record() or
+                manifest["capture_id"] != key_observation.capture_id or
+                key_observation.capture_id == self._capture_id or
+                key_observation.acquisition_interval_s[0] <=
+                self._attempt.started_at_s or
+                float(timestamp_s) < key_observation.acquisition_interval_s[1]):
+            raise ValueError("landing evidence predates repose or differs from saved frames")
+        c2r = validate_se3(self.calibration.record.get("c2r"),
+                           name="session C2R")
+        T_robot_key = validate_se3(
+            np.linalg.inv(c2r) @ key_observation.pose_world,
+            name="observed landed T_robot_key")
+        classification = classify_key_tabletop_pose(
+            mode=self.mode, shared_root=self.shared_root,
+            pose_robot_key=T_robot_key,
+            max_rotation_error_deg=max_pose_error_deg)
+        support = validate_repose_rest_target(
+            shared_root=self.shared_root, mode=self.mode,
+            calibration=self.calibration, T_robot_key_rest=T_robot_key,
+            support_tolerance_m=support_tolerance_m,
+            minimum_rest_socket_clearance_m=(
+                minimum_rest_socket_clearance_m),
+            minimum_board_edge_clearance_m=minimum_board_edge_clearance_m)
+        success = classification["stem"] == self._repose_preflight.to_pose_stem
+        assert self._attempt_dir is not None
+        report_path = self._attempt_dir / "repose_landing.json"
+        self._write_exclusive(report_path, {
+            "schema": "precision_insertion_repose_landing_v1",
+            "capture_id": key_observation.capture_id,
+            "key_evidence_dir": str(evidence_dir),
+            "key_evidence_manifest_sha256": hashlib.sha256(
+                (evidence_dir / "evidence_manifest.json").read_bytes()).hexdigest(),
+            "release_completed_at_s": release_time,
+            "release_evidence_path": str(release_file),
+            "release_evidence_sha256": hashlib.sha256(
+                release_file.read_bytes()).hexdigest(),
+            "target_pose_stem": self._repose_preflight.to_pose_stem,
+            "observed_pose_class": classification,
+            "observed_support": support,
+            "reorient_success": success,
+            "robot_ready": False,
+        })
+        return self._record(lambda row: row.record_stage(
+            "reorient_success", success, timestamp_s=timestamp_s,
+            evidence_refs={
+                "key_pose": str(evidence_dir / "key_observation.json"),
+                "tabletop_classification": str(report_path),
+                "release_execution": str(release_file),
+            }))
 
     def observe_insertion(
         self, evidence, *, timestamp_s: float,

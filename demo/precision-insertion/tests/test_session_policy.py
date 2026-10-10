@@ -217,3 +217,23 @@ def test_unmatched_failure_codes_cannot_resolve_to_a_motion_phase():
         evidence_refs={"camera": "images/slip.json"})
     assert decide_after_attempt(
         slipped, max_xy_retries=2).action == "stop_for_review"
+
+
+def test_repose_has_separate_observed_landing_label():
+    repose = begin_attempt(
+        attempt_id="repose_1", mode=MODE, session_record=SESSION,
+        candidate_id=None, tabletop_pose_stem="000",
+        xy_offset_socket_m=(0.0, 0.0), started_at_s=1.0)
+    assert decide_after_attempt(repose, max_xy_retries=0).action == (
+        "await_repose_observation")
+    repose.record_stage(
+        "reorient_success", True, timestamp_s=2.0,
+        evidence_refs={"key_pose": "pose/landed.json"})
+    assert decide_after_attempt(repose, max_xy_retries=0).action == (
+        "reobserve_key_and_preflight")
+    bad = _attempt()
+    bad.record_stage(
+        "reorient_success", True, timestamp_s=2.0,
+        evidence_refs={"key_pose": "pose/landed.json"})
+    assert decide_after_attempt(bad, max_xy_retries=0).reason == (
+        "repose_label_on_insertion_attempt")

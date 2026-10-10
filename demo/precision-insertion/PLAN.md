@@ -652,6 +652,15 @@ resolve the explicit root and pass exact candidates to `GraspPlanner.plan()`
 through `candidate_override`, or provide an equivalent verified adapter.
 Changing a global path constant in the shared AutoDex package is not allowed.
 
+The evidence-only `session_runner.py` now carries candidate exhaustion into
+the existing directed v8 repose preflight and records repose as a separate
+attempt. A reset plan never yields `reorient_success`; a new admitted key
+capture must classify in the requested tabletop stem and pass measured table,
+board-footprint and socket-clearance checks after a caller-logged release.
+The release log is still an external assertion until a commissioned executor
+produces and validates it. The live camera/robot loop and guarded controller
+remain unimplemented.
+
 ## Current asset evidence and missing gates
 
 In the local `~/shared_data` snapshot, metric v8 key/socket meshes and

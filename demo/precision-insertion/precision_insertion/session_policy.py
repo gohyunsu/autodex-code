@@ -113,6 +113,14 @@ def decide_after_attempt(
     }.get(attempt.failure_code)
     if failure_stage is not None and labels[failure_stage] is not False:
         return result("stop_for_review", "failure_code_lacks_matching_observed_stage")
+    if labels["reorient_success"] is not None and candidate_id is not None:
+        return result("stop_for_review", "repose_label_on_insertion_attempt")
+    if labels["reorient_success"] is False:
+        return result("stop_for_review", "repose_landing_unverified")
+    if labels["reorient_success"] is True:
+        return result(
+            "reobserve_key_and_preflight", "repose_landing_observed",
+            "fresh_key_pose", "fresh_robot_state")
     if labels["reset_success"] is True:
         return result(
             "reobserve_key_and_preflight", "reset_observed",
@@ -169,4 +177,10 @@ def decide_after_attempt(
             "observed_key_hand_endpoint_and_held_path_preflight")
     if any(event["stage"] == "grasp_success" for event in attempt.events):
         return result("stop_for_review", "grasp_verdict_unknown")
+    if candidate_id is None:
+        if any(event["stage"] == "reorient_success" for event in attempt.events):
+            return result("stop_for_review", "repose_verdict_unknown")
+        return result(
+            "await_repose_observation", "no_repose_outcome_recorded",
+            "observed_landed_key_pose", "tabletop_classification")
     return result("await_lift_observation", "no_physical_stage_recorded")

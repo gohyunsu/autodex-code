@@ -63,10 +63,26 @@ that session and catalogue. For each new key observation:
    `XYRetryAssessment` joined to a passing fresh-state `XYRetryPreflight` for
    the same grasp and offset, plus references to completed guarded withdrawal,
    vote and preflight evidence. It records a pending retry, never commands it.
+5. If the pose's candidate pool is exhausted, `current_decision()` returns
+   `preflight_repose`. Call `preflight_repose` with the **same saved key capture**,
+   synchronized measured joints, a listed target tabletop stem, directed v8
+   reset height/seed assets, explicit release XY and commissioned geometric
+   limits. This reuses `preflight_v8_repose_transition` and stores its input
+   files and paths. Only a complete nominal pickup/held/release/retreat plan
+   can produce `repose_execution_gate_required`; a held path with no release
+   remains planning-only. `begin_repose_attempt` starts a separate, unlabeled
+   record. After physical execution, `observe_repose_landing` needs a logged
+   release-completion time and a **newer** saved multi-view key capture: it
+   checks the target tabletop class, measured
+   table support, ChArUco footprint and socket clearance before recording
+   `reorient_success`. A wrong class is failure; missing/ambiguous support
+   evidence keeps the outcome unknown for review. No result is inferred from
+   the reset plan alone.
 
 The supervisor writes a new `session_run.json`, immutable copies of the
 frozen calibration and endpoint catalogue, numbered
 `trial_preflights/<n>/` reports with hashed key-evidence bindings, and
+`repose_preflights/<n>/` reports and
 `attempts/<id>/state_<n>.json` immutable label snapshots. A failed process
 does not overwrite earlier evidence; there is not yet an automatic resume
 loader. Passing a file path as an evidence reference asserts that the caller
