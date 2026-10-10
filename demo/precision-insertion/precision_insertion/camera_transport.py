@@ -183,15 +183,52 @@ class SnapshotMetadataBuffer:
             self._records.pop(request_id, None)
 
 
+class FrameIdentityRegistry:
+    """Request-bound sensor frame IDs and hashes, without any time claims."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._rows: dict[int, dict[str, dict]] = {}
+
+    def register(self, request_id: int, identities: Mapping[str, Mapping]) -> None:
+        if type(request_id) is not int or request_id <= 0 or not identities:
+            raise ValueError("frame identity needs a positive request and cameras")
+        checked = {}
+        for serial, row in identities.items():
+            fid, digest = row.get("frame_id"), row.get("image_sha256")
+            if (not isinstance(serial, str) or not serial or
+                    type(fid) is not int or fid <= 0 or
+                    not isinstance(digest, str) or len(digest) != 64 or
+                    any(ch not in "0123456789abcdef" for ch in digest)):
+                raise ValueError("frame identity needs sensor ID and pixel hash")
+            checked[serial] = {"frame_id": fid, "image_sha256": digest}
+        with self._lock:
+            previous = self._rows.get(request_id)
+            if previous is not None and previous != checked:
+                raise ValueError("camera identities changed within request")
+            self._rows[request_id] = checked
+
+    def get(self, request_id: int) -> dict[str, dict]:
+        with self._lock:
+            return {serial: dict(row) for serial, row in
+                    self._rows.get(request_id, {}).items()}
+
+    def drop(self, request_id: int) -> None:
+        with self._lock:
+            self._rows.pop(request_id, None)
+
+
 class ProvenanceSnapshotAdapter:
     """Use unchanged AutoDex snap dispatch plus a matching metadata tap."""
 
     def __init__(self, snapshot_orchestrator, metadata_buffer,
+                 identity_registry: FrameIdentityRegistry | None = None,
                  *, poll_s: float = 0.01):
         if not math.isfinite(poll_s) or poll_s <= 0:
             raise ValueError("snapshot metadata poll interval must be positive")
         self.snapshot = snapshot_orchestrator
         self.metadata = metadata_buffer
+        self.identity_registry = identity_registry
         self.poll_s = poll_s
 
     def snap(self, **kwargs):
@@ -225,6 +262,11 @@ class ProvenanceSnapshotAdapter:
             if decoded is None or not np.array_equal(decoded, image):
                 raise ValueError("snapshot decoded pixels differ from matched JPEG")
             enriched[serial] = {**entry, "frame_id": metadata[serial]["frame_id"]}
+        if self.identity_registry is not None:
+            self.identity_registry.register(request_id, {
+                serial: {"frame_id": entry["frame_id"],
+                         "image_sha256": image_sha256(entry["image"])}
+                for serial, entry in enriched.items()})
         self.metadata.drop(request_id)
         return enriched, timing
 
@@ -263,8 +305,10 @@ class PrecisionInitOrchestrator:
     daemons lack the fields and will be rejected by the strict decoders.
     """
 
-    def __init__(self, stock_orchestrator):
+    def __init__(self, stock_orchestrator,
+                 identity_registry: FrameIdentityRegistry | None = None):
         self.stock = stock_orchestrator
+        self.identity_registry = identity_registry
         mask_thread = getattr(stock_orchestrator, "_mask_thread", None)
         pose_thread = getattr(stock_orchestrator, "_pose_thread", None)
         if (mask_thread is None or pose_thread is None or
@@ -284,3 +328,20 @@ class PrecisionInitOrchestrator:
     def _on_pose(self, item, blob):
         request_id, serial, row = decode_precision_pose(item, blob)
         self.stock.pose_buf.put(request_id, serial, row)
+
+    def collect_payloads(self, *args, **kwargs):
+        masks, poses, timing = self.stock.collect_payloads(*args, **kwargs)
+        if not isinstance(timing, Mapping) or type(timing.get("request_id")) is not int:
+            raise ValueError("FoundPose collection has no request identity")
+        request_id = timing["request_id"]
+        if (set(masks) != set(poses) or not masks or
+                any(masks[s].get("frame_id") != poses[s].get("frame_id") or
+                    masks[s].get("image_sha256") != poses[s].get("image_sha256")
+                    for s in masks)):
+            raise ValueError("FoundPose mask and pose do not share camera frames")
+        if self.identity_registry is not None:
+            self.identity_registry.register(request_id, {
+                s: {"frame_id": masks[s]["frame_id"],
+                    "image_sha256": masks[s]["image_sha256"]}
+                for s in masks})
+        return masks, poses, timing

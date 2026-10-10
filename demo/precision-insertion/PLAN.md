@@ -675,6 +675,7 @@ demo/precision-insertion/
     grounded_alignment.py         # read-only multiview tip/axis XY diagnostic
     grounding_eval.py             # independent held-key pose comparison
     camera_transport.py           # demo-local fid/pixel-hash PUB adapters
+    camera_time.py                # independent fid-to-exposure UTC calibration gate
     retry_preflight.py            # fresh withdrawn-state retry planning only
     retry_session.py              # same-frame failed-trial/VLM/live-state evidence gate
     records.py                    # separate append-only observed task labels

@@ -29,14 +29,22 @@ reusing the stock camera capture and FoundPose inference code:
 Example robot-PC construction, before starting any capture:
 
 ```python
+identities = FrameIdentityRegistry()
 stock_snap = SnapshotOrchestrator(pc_list, capture_ips)
 tap = SnapshotMetadataTap(capture_ips)
-board_snap = ProvenanceSnapshotAdapter(stock_snap, tap.buffer)
+board_snap = ProvenanceSnapshotAdapter(stock_snap, tap.buffer, identities)
 stock_init = InitOrchestrator(pc_list, capture_ips)
-init = PrecisionInitOrchestrator(stock_init)
+init = PrecisionInitOrchestrator(stock_init, identities)
+calibrations = {
+    serial: CameraTimeCalibration.load(path)
+    for serial, path in per_camera_calibration_paths.items()
+}
+acquisition_metadata_for_request = AcquisitionTimeProvider(
+    identities, calibrations)
 # Pass board_snap to collect_board_snapshot() and init to
-# collect_socket_capture()/collect_key_capture(). Close tap and stock
-# orchestrators when the session ends.
+# collect_socket_capture()/collect_key_capture(), using the provider as
+# acquisition_metadata_for_request. Close tap and stock orchestrators when
+# the session ends.
 ```
 
 The example names are imports from the unchanged AutoDex orchestrators and
@@ -45,13 +53,35 @@ is not a guaranteed barrier: if it misses an initial message, the capture
 fails closed and must be repeated. These adapters have synthetic transport
 tests, **not** an AutoDex-camera-PC deployment test.
 
-The remaining required producer is an independently commissioned
-`acquisition_metadata_for_request(request_id)` that maps each sensor `fid`
-to Unix-UTC **exposure** time with a worst-case error and exact decoded-pixel
-hash. The stock snapshot's `ts` and the init daemon's `ts` are publication
-times and cannot fill that field. Until this provider is built and measured,
-`collect_board_snapshot`/`collect_socket_capture` correctly reject live
-sessions, even with the new frame-ID transport.
+`camera_time.py` supplies the **interface and validation** for
+`acquisition_metadata_for_request(request_id)`. It is not a calibration
+measurement. For each imaging camera, a
+`precision_insertion_camera_time_calibration_v1` JSON needs:
+
+- `calibration_id`, `camera_serial`, `source_method` equal to
+  `same_imaging_camera_exposure_chunk_utc` or
+  `independent_per_camera_trigger_metrology`, and hashed absolute
+  `source_files` containing the external measurements;
+- at least three `fit_samples` and three disjoint `validation_samples`,
+  each with `frame_id`, `exposure_utc_s`, and its `max_error_s`;
+- `clock_offset_error_s`, `drift_error_s_per_frame`,
+  `max_total_error_s`, `max_extrapolation_frames`, and
+  `valid_until_utc_s` measured for this rig.
+
+The loader fits the frame-ID period, checks the held-out residuals, derives a
+conservative error bound including source error, clock offset and bounded
+future drift, rejects fits beyond the independently commissioned error limit,
+and refuses frames beyond its validity window or a calibration past its UTC
+expiration. The registry
+joins that time to the *same* request's exact image hash and frame ID. Do not
+create this JSON from snapshot/FoundPose publication `ts`, `pc_time` after
+`GetNextImage`, or the **separate** timestamp-monitor camera's frame IDs.
+ParaDex enables image timestamp chunk data, but its current `get_image()`
+returns only `pc_time` and `frameID`; the chunk exposure timestamp is not
+presently carried into SHM. Reading/validating that timestamp per imaging
+camera (or instrumenting an external trigger) and measuring its UTC clock
+conversion is the next capture-PC commissioning task. No real calibration
+record is included, so the adapter cannot make the current rig robot-ready.
 
 ## What the existing AutoDex path actually provides
 

@@ -11,7 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.camera_transport import (  # noqa: E402
-    PrecisionInitOrchestrator, ProvenancePublisher,
+    FrameIdentityRegistry, PrecisionInitOrchestrator, ProvenancePublisher,
     ProvenanceSnapshotAdapter, RecordingReader,
     SnapshotMetadataBuffer, decode_precision_mask, decode_precision_pose,
     install_init_provenance,
@@ -110,18 +110,20 @@ def test_board_metadata_tap_matches_exact_jpeg_not_later_frame():
                            cv2.IMREAD_COLOR)
     metadata = SnapshotMetadataBuffer()
     metadata.put({"req_id": 42, "serial": "cam", "fid": 11}, jpeg)
+    identities = FrameIdentityRegistry()
 
     class _Snapshot:
         def snap(self, **kwargs):
             return {"cam": {"jpeg": jpeg, "image": decoded}}, {
                 "request_id": kwargs["request_id"]}
 
-    adapter = ProvenanceSnapshotAdapter(_Snapshot(), metadata)
+    adapter = ProvenanceSnapshotAdapter(_Snapshot(), metadata, identities)
     payload, timing = adapter.snap(decode=True, request_id=42,
                                    timeout_s=.1)
     assert payload["cam"]["frame_id"] == 11
     assert timing["request_id"] == 42
     assert metadata.get(42) == {}
+    assert identities.get(42)["cam"]["image_sha256"] == image_sha256(decoded)
     metadata.put({"req_id": 43, "serial": "cam", "fid": 12}, b"other JPEG")
     with pytest.raises(ValueError, match="differs from frame-ID metadata"):
         adapter.snap(decode=True, request_id=43, timeout_s=.1)
@@ -139,7 +141,8 @@ def test_robot_orchestrator_callback_keeps_fid_and_hash():
         _mask_thread=SimpleNamespace(on_message=None),
         _pose_thread=SimpleNamespace(on_message=None),
         mask_buf=_Buffer(), pose_buf=_Buffer(), obj_name="key")
-    wrapper = PrecisionInitOrchestrator(stock)
+    identities = FrameIdentityRegistry()
+    wrapper = PrecisionInitOrchestrator(stock, identities)
     mask = np.zeros((4, 5), dtype=np.uint8)
     ok, png = cv2.imencode(".png", mask)
     assert ok
@@ -151,3 +154,9 @@ def test_robot_orchestrator_callback_keeps_fid_and_hash():
     assert wrapper.obj_name == "key"
     assert stock.mask_buf.values[(7, "cam")]["frame_id"] == 12
     assert stock.pose_buf.values[(7, "cam")]["image_sha256"] == "f" * 64
+    stock.collect_payloads = lambda **_kwargs: (
+        {"cam": stock.mask_buf.values[(7, "cam")]},
+        {"cam": stock.pose_buf.values[(7, "cam")]},
+        {"request_id": 7})
+    wrapper.collect_payloads()
+    assert identities.get(7)["cam"]["frame_id"] == 12
