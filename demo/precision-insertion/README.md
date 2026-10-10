@@ -1072,8 +1072,9 @@ pool has 12 nominally eligible grasps, but no physical relation is certified.
 The nominal squeeze pose is
 not a measurement; before physical transfer, re-observe the held key and
 validate the hand–key relation against the planned one. A guarded contact
-controller, true acquisition-timestamped camera adapter, measured-state
-lift/transfer execution, and reset/repose execution remain to be implemented.
+controller, true acquisition-timestamped camera adapter, commissioned
+measured-state lift/transfer execution, and reset/repose execution remain
+missing.
 
 After the physical lift, use the session runner's
 `postlift_candidate_pose_prior(...)` and `admit_postlift_key_capture(...)`
@@ -1108,12 +1109,21 @@ achieved FR3/Inspire state. It additionally needs a commissioned bound on
 key/hand surface error. This is still a saved plan, **not** a lift command;
 the stock lift follower cannot be used as a fail-closed contact/reflex monitor.
 
+The separate [measured lift execution boundary](LIFT_EXECUTION.md) can pass
+that exact saved lift to an injected, independently safeguarded adapter only
+after a reviewed watchdog-binary record, fresh matching robot feedback,
+explicit motion opt-in and interlock. It defaults to no motion, has only
+fake-adapter tests, and no commissioned adapter exists yet. Its successful
+execution record is input to the later paired-camera lift checkpoint, never
+itself a grasp-success label.
+
 Do not feed the nominal `plan_insertion_after_pickup`'s separately replanned
 `lift_trajectory` straight into the
 unchanged `FrankaExecutor.execute(lift_traj_override=...)`: its start-state
 gate still refers to the original pickup `lift_preflight` modeled at grasp
-joint values. A demo-local execution adapter must compare live arm/hand state
-with the **same** held-lift plan before replay, or replan from live state.
+joint values. The demo-local measured lift boundary compares live arm/hand
+state with the **same** held-lift plan before invoking its external controller;
+it does not make the stock follower safe.
 
 For a **saved-image, read-only** observer replay, choose a backend explicitly.
 The local option reuses ZeroDex's `main.vlm_base.BaseVLM`; it does not use a
