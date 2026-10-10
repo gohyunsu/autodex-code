@@ -29,7 +29,13 @@ reported no key/hand collisions with the frozen table/socket world, and
 maximum hand-joint drift from commanded hold was `3.6e-8 rad` over 855 lift,
 94 transfer, and 621 axial samples. Ten Cartesian axial goals were planned
 over the preinsert-to-20 mm motion. These are **sampled numerical** checks;
-they do not prove swept-volume safety between samples, squeeze stability,
+an independent FK calculation from the saved final 13-joint state and the
+Franka/Inspire URDF gave **19.9979 mm nominal depth beyond socket entry**,
+2.13 µm lateral deviation from the planned axis, and 2.98 µm translation
+residual to the 20 mm hand goal. New preflight reports also persist those
+rigid-model endpoint metrics rather than relying on a single pass/fail bit.
+They assume the key remains fixed in the hand after squeeze. They do not
+prove swept-volume safety between samples, squeeze stability,
 rigid key retention, force/contact safety, camera/hand-eye accuracy, or a
 physical insertion. The native locked-hand AutoDex route is explicitly
 experimental and requires independent hardware-stack validation. No live

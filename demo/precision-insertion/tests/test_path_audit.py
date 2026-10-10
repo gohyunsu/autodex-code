@@ -140,6 +140,11 @@ def test_sampled_path_checks_full_held_key_and_hand_without_authorizing_robot(
     assert result["sampled_clear"] is True
     assert result["robot_ready"] is False
     assert result["sample_counts"] == {"transfer": 11, "descent": 6}
+    endpoint = result["nominal_endpoint_metrics"]
+    assert endpoint["rigid_model_depth_past_entry_m"] == pytest.approx(0.020)
+    assert endpoint["nominal_target_depth_m"] == pytest.approx(0.020)
+    assert endpoint["lateral_from_socket_axis_m"] == pytest.approx(0.0)
+    assert endpoint["hand_target_translation_error_m"] == pytest.approx(0.0)
     assert "key->mesh/fixture_socket" in result["minimum_surface_distances_m"]
     assert "hand/hand->cuboid/table" in result["minimum_surface_distances_m"]
     assert len(result["input_sha256"]["key_mesh"]) == 64

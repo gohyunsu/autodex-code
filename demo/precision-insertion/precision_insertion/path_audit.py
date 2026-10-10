@@ -278,6 +278,30 @@ def audit_held_joint_paths(
                         limits):
         raise ValueError("descent does not reach 20 mm hand target")
 
+    # These are rigid key/hand model metrics, not a measurement of the key
+    # after physical squeeze. Persist them separately from the Boolean audit
+    # so a loose commissioned goal tolerance cannot masquerade as exactly
+    # 20 mm of achieved insertion.
+    final_hand = wrist["descent"][-1]
+    final_delta = final_hand[:3, 3] - targets.T_robot_hand_preinsert[:3, 3]
+    final_axial_progress = float(np.dot(
+        final_delta, targets.insertion_axis_robot))
+    final_lateral = float(np.linalg.norm(
+        final_delta - final_axial_progress * targets.insertion_axis_robot))
+    endpoint_metrics = {
+        "axial_progress_from_preinsert_m": final_axial_progress,
+        "rigid_model_depth_past_entry_m": (
+            final_axial_progress - targets.preinsert_clearance_m),
+        "nominal_target_depth_m": mode.target_depth_m,
+        "lateral_from_socket_axis_m": final_lateral,
+        "hand_target_translation_error_m": float(np.linalg.norm(
+            final_hand[:3, 3] -
+            targets.T_robot_hand_verification[:3, 3])),
+        "hand_target_rotation_error_deg": pose_angle_deg(
+            final_hand, targets.T_robot_hand_verification),
+        "scope": "rigid_model_fk_not_measured_key_or_physical_insertion",
+    }
+
     failures: list[dict] = []
     axis = targets.insertion_axis_robot
     origin = targets.T_robot_hand_preinsert[:3, 3]
@@ -348,6 +372,7 @@ def audit_held_joint_paths(
         "scope": "sampled_full_key_and_inspire_links_vs_frozen_world",
         "mode": {"family": mode.family, "gap_mm": mode.gap_mm},
         "sample_counts": {name: len(path) for name, path in stages.items()},
+        "nominal_endpoint_metrics": endpoint_metrics,
         "limits": vars(limits).copy(),
         "sampled_clear": not failures,
         "failures": failures,
