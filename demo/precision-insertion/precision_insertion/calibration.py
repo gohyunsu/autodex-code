@@ -42,6 +42,35 @@ class SessionCalibration:
     record: dict
 
 
+def _json_native(value):
+    """Snapshot a cuRobo scene without stringifying unknown Python objects."""
+    if isinstance(value, Mapping):
+        if not all(isinstance(key, str) for key in value):
+            raise TypeError("collision scene keys must be strings")
+        return {key: _json_native(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_native(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return _json_native(value.tolist())
+    if isinstance(value, np.generic):
+        return _json_native(value.item())
+    if isinstance(value, Path):
+        return str(value.expanduser().resolve())
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("collision scene contains a non-finite number")
+        return value
+    if type(value) in (str, int, bool) or value is None:
+        return value
+    raise TypeError(f"collision scene contains unsupported {type(value).__name__}")
+
+
+def _canonical_sha256(value: dict) -> str:
+    return hashlib.sha256(json.dumps(
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")).hexdigest()
+
+
 def write_session_calibration(calibration: SessionCalibration, path: Path) -> Path:
     """Save the versioned evidence record without replacing a prior session.
 
@@ -54,6 +83,56 @@ def write_session_calibration(calibration: SessionCalibration, path: Path) -> Pa
     with target.open("x", encoding="utf-8") as stream:
         stream.write(payload)
     return target
+
+
+def load_session_calibration(
+    path: Path, *, mode: TaskMode, shared_root: Path,
+) -> SessionCalibration:
+    """Reconstruct and revalidate a saved frozen world for offline replay.
+
+    Older records without a collision-world snapshot cannot be replayed:
+    rebuilding from a current default scene would silently change obstacles.
+    This is read-only and does not establish live physical fixture stability.
+    """
+    source = Path(path).expanduser().resolve()
+    record = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(record, dict) or record.get("schema") != (
+            "precision_insertion_session_calibration_v1"):
+        raise ValueError("unknown session calibration record schema")
+    scene = record.get("collision_scene")
+    if not isinstance(scene, dict) or not isinstance(scene.get("mesh"), dict) or (
+            not isinstance(scene.get("cuboid"), dict)):
+        raise ValueError("saved session has no frozen collision world snapshot")
+    if record.get("collision_scene_sha256") != _canonical_sha256(scene):
+        raise ValueError("saved collision world descriptor hash changed")
+    board = record.get("board")
+    if not isinstance(board, dict):
+        raise ValueError("saved ChArUco board measurement is missing")
+    from autodex.utils.tabletop_geometry import table_cuboid
+
+    if scene["cuboid"].get("table") != table_cuboid(board):
+        raise ValueError("saved table cuboid differs from ChArUco board")
+    hashes = record.get("fixed_mesh_sha256")
+    if not isinstance(hashes, dict) or set(hashes) != set(scene["mesh"]):
+        raise ValueError("saved fixed mesh hashes are missing")
+    for name, entry in scene["mesh"].items():
+        if not isinstance(entry, dict) or not isinstance(entry.get("file_path"), str):
+            raise ValueError(f"saved fixed mesh {name} has no file path")
+        mesh_path = Path(entry["file_path"]).expanduser().resolve()
+        if not mesh_path.is_file() or _file_sha256(mesh_path) != hashes[name]:
+            raise ValueError(f"saved fixed mesh {name} changed or is missing")
+    validate_se3(record.get("c2r"), name="saved C2R")
+    socket_pose = validate_se3(record.get("socket_pose_robot"),
+                               name="saved socket pose")
+    diagnostics = record.get("socket_diagnostics")
+    if not isinstance(diagnostics, dict) or diagnostics.get("accepted") is not True:
+        raise ValueError("saved socket calibration was not accepted")
+    session = SessionCalibration(board, socket_pose, diagnostics, scene, record)
+    from .world import validated_frozen_socket_pose
+
+    validated_frozen_socket_pose(
+        mode=mode, shared_root=shared_root, calibration=session)
+    return session
 
 
 def _finite_time(value: float, name: str) -> float:
@@ -217,6 +296,13 @@ def calibrate_session(
             "collision_mesh": mesh,
         },
     })
+    frozen_scene = _json_native(scene)
+    fixed_mesh_hashes = {}
+    for name, entry in frozen_scene["mesh"].items():
+        path = Path(entry["file_path"]).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"fixed collision mesh missing: {path}")
+        fixed_mesh_hashes[name] = _file_sha256(path)
     record = {
         "schema": "precision_insertion_session_calibration_v1",
         "mode": {
@@ -232,6 +318,9 @@ def calibrate_session(
         "socket_diagnostics": diagnostics,
         "socket_collision_mesh": str(mesh),
         "socket_collision_mesh_sha256": _file_sha256(mesh),
+        "collision_scene": frozen_scene,
+        "collision_scene_sha256": _canonical_sha256(frozen_scene),
+        "fixed_mesh_sha256": fixed_mesh_hashes,
         "c2r": c2r_matrix.tolist(),
         "scope": "read_only_session_calibration_not_robot_authorization",
         "robot_ready": False,

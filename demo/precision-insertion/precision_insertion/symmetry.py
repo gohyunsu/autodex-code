@@ -70,6 +70,20 @@ def snap_axisymmetric_tabletop_pose(
     a C∞ socket cannot. Large axis disagreement is rejected rather than
     silently converted into a different tabletop pose.
     """
+    snapped, _, _ = match_axisymmetric_tabletop_pose(
+        pose_robot, object_root=object_root, object_name=object_name,
+        max_axis_error_deg=max_axis_error_deg)
+    return snapped
+
+
+def match_axisymmetric_tabletop_pose(
+    pose_robot: np.ndarray,
+    *,
+    object_root: Path,
+    object_name: str,
+    max_axis_error_deg: float = 20.0,
+) -> tuple[np.ndarray, str, float]:
+    """Return snapped D∞ key pose, selected v8 stem and axis residual."""
     pose = validate_se3(pose_robot)
     if not np.isfinite(max_axis_error_deg) or not 0 < max_axis_error_deg < 180:
         raise ValueError("max_axis_error_deg must be in (0, 180)")
@@ -82,6 +96,7 @@ def snap_axisymmetric_tabletop_pose(
 
     estimated_axis = pose[:3, :3] @ symmetry.axis_local
     best_rotation = None
+    best_stem = None
     best_error = float("inf")
     for path in tabletop_files:
         tabletop = validate_se3(np.load(path), name=f"tabletop {path.name}")
@@ -106,6 +121,7 @@ def snap_axisymmetric_tabletop_pose(
         if error < best_error:
             best_error = error
             best_rotation = rotation
+            best_stem = path.stem
 
     if best_rotation is None or best_error > max_axis_error_deg:
         raise ValueError(
@@ -113,4 +129,4 @@ def snap_axisymmetric_tabletop_pose(
             f"(error {best_error:.2f} deg)")
     result = pose.copy()
     result[:3, :3] = best_rotation
-    return result
+    return result, best_stem, best_error

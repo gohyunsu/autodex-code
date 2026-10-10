@@ -2,7 +2,7 @@
 """Independent precision-insertion entry point; no robot connection.
 
 Robot execution will be added only after the live-path preflight and guarded
-controller are commissioned. The endpoint screen excludes arm trajectories.
+controller are commissioned. The saved-trial planner never sends commands.
 """
 
 from __future__ import annotations
@@ -70,6 +70,38 @@ def main(argv: list[str] | None = None) -> int:
     select.add_argument("--attempted", action="append", default=[],
                         metavar="TYPE/SID/GID")
     select.add_argument("--covered-scene", type=int, action="append", default=[])
+    trial = command.add_parser(
+        "preflight-trial",
+        help="offline replay of one saved key observation through v8 planning",
+    )
+    trial.add_argument("--shared-root", type=Path, required=True)
+    trial.add_argument("--mode", choices=("square", "cylinder"), required=True)
+    trial.add_argument("--gap-mm", type=float, required=True)
+    trial.add_argument("--session", type=Path, required=True,
+                       help="saved session calibration with frozen scene snapshot")
+    trial.add_argument("--catalog", type=Path, required=True,
+                       help="complete endpoint catalogue for this socket")
+    trial.add_argument("--key-pose-world-npy", type=Path, required=True,
+                       help="fresh FoundPose 4x4 pose in calibrated world frame")
+    trial.add_argument("--key-observation-id", required=True)
+    trial.add_argument("--key-capture-time-s", type=float, required=True,
+                       help="actual image-acquisition timestamp, same clock as session")
+    trial.add_argument("--live-start-q-npy", type=Path, required=True,
+                       help="saved measured 13-DOF FR3/Inspire start joints")
+    trial.add_argument("--start-q-time-s", type=float, required=True,
+                       help="joint sample timestamp on the key exposure clock")
+    trial.add_argument("--max-key-state-skew-s", type=float, required=True)
+    trial.add_argument("--limits-json", type=Path, required=True,
+                       help="commissioned PathAuditLimits fields")
+    trial.add_argument("--max-pose-error-deg", type=float, required=True)
+    trial.add_argument("--axial-waypoint-step-mm", type=float, required=True)
+    trial.add_argument("--attempted", action="append", default=[],
+                       metavar="TYPE/SID/GID")
+    trial.add_argument("--covered-scene", type=int, action="append", default=[])
+    trial.add_argument("--max-candidate-attempts", type=int,
+                       help="pilot prefix; never report pose exhaustion")
+    trial.add_argument("--output-dir", type=Path, required=True,
+                       help="new report directory; refuses to overwrite")
     args = parser.parse_args(argv)
 
     if args.command == "audit":
@@ -175,6 +207,62 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(str(exc))
         print(json.dumps(result, indent=2))
         return 0 if result["status"] == "candidates_available" else 2
+    if args.command == "preflight-trial":
+        if args.output_dir.expanduser().resolve().exists():
+            parser.error("preflight output directory already exists")
+        from precision_insertion.calibration import load_session_calibration
+        from precision_insertion.path_audit import PathAuditLimits
+        from precision_insertion.trial_preflight import (
+            plan_fresh_key_trial, write_trial_preflight_artifacts,
+        )
+        import numpy as np
+
+        try:
+            mode = select_mode(args.mode, args.gap_mm)
+            session = load_session_calibration(
+                args.session, mode=mode, shared_root=args.shared_root)
+            catalog_data = json.loads(args.catalog.read_text(encoding="utf-8"))
+            limits_data = json.loads(args.limits_json.read_text(encoding="utf-8"))
+            if not isinstance(catalog_data, dict) or not isinstance(
+                    limits_data, dict):
+                raise ValueError("catalog and limits files must be JSON objects")
+            limits = PathAuditLimits(**limits_data)
+            limits.validate()
+            key_pose = np.load(args.key_pose_world_npy, allow_pickle=False)
+            start_q = np.load(args.live_start_q_npy, allow_pickle=False)
+            attempted = tuple(tuple(item.split("/")) for item in args.attempted)
+            if any(len(item) != 3 or not all(item) for item in attempted):
+                raise ValueError("attempted keys must be TYPE/SID/GID")
+            from autodex.planner import GraspPlanner
+
+            planner = GraspPlanner(hand="fr3_inspire")
+            result = plan_fresh_key_trial(
+                planner=planner, mode=mode, shared_root=args.shared_root,
+                calibration=session, catalog=catalog_data,
+                key_pose_world=key_pose,
+                key_observation_id=args.key_observation_id,
+                key_capture_timestamp_s=args.key_capture_time_s,
+                live_start_q=start_q,
+                start_q_acquisition_timestamp_s=args.start_q_time_s,
+                max_key_state_skew_s=args.max_key_state_skew_s,
+                limits=limits,
+                max_pose_error_deg=args.max_pose_error_deg,
+                axial_waypoint_step_m=args.axial_waypoint_step_mm / 1000.0,
+                attempted=attempted,
+                covered_scenes=tuple(args.covered_scene),
+                max_candidate_attempts=args.max_candidate_attempts,
+            )
+            output = write_trial_preflight_artifacts(result, args.output_dir)
+        except (FileNotFoundError, KeyError, TypeError, ValueError) as exc:
+            parser.error(str(exc))
+        print(json.dumps({
+            "status": result.status,
+            "attempted_candidates": len(result.attempted_candidates),
+            "repose_target_stems": result.repose_target_stems,
+            "report": str(output / "report.json"),
+            "robot_ready": False,
+        }, indent=2))
+        return 0 if result.status == "sampled_planning_pass" else 2
     raise AssertionError(f"unhandled command: {args.command}")
 
 

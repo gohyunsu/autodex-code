@@ -14,8 +14,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.calibration import (  # noqa: E402
-    SocketObservation, calibrate_session, write_session_calibration,
+    SocketObservation, calibrate_session, load_session_calibration,
+    write_session_calibration,
 )
+from precision_insertion.assets import AssetPaths  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
 
 
@@ -168,3 +170,49 @@ def test_cylinder_ignores_yaw_but_not_open_rim_flip(tmp_path, board_measurement)
     flipped[3] = replace(flipped[3], pose_world=pose)
     with pytest.raises(ValueError, match="not repeatable"):
         calibrate_session(**{**args, "socket_observations": flipped})
+
+
+def test_saved_session_replays_only_its_frozen_table_socket_and_mesh_bytes(
+    tmp_path, board_measurement,
+):
+    args = _arguments(tmp_path)
+    paths = AssetPaths(tmp_path, args["mode"])
+    paths.socket_collision_mesh.parent.mkdir(parents=True)
+    paths.socket_collision_mesh.write_bytes(args["socket_collision_mesh"].read_bytes())
+    args["socket_collision_mesh"] = paths.socket_collision_mesh
+    session = calibrate_session(**args)
+    saved = write_session_calibration(session, tmp_path / "calibration.json")
+    restored = load_session_calibration(
+        saved, mode=args["mode"], shared_root=tmp_path)
+    np.testing.assert_allclose(restored.socket_pose_robot,
+                               session.socket_pose_robot)
+    assert restored.collision_scene == session.collision_scene
+    assert restored.record["fixed_mesh_sha256"]["fixture_socket"] == (
+        restored.record["socket_collision_mesh_sha256"])
+    paths.socket_collision_mesh.write_text("modified geometry", encoding="utf-8")
+    with pytest.raises(ValueError, match="changed or is missing"):
+        load_session_calibration(saved, mode=args["mode"], shared_root=tmp_path)
+
+
+def test_saved_session_rejects_missing_or_modified_world_snapshot(
+    tmp_path, board_measurement,
+):
+    args = _arguments(tmp_path)
+    paths = AssetPaths(tmp_path, args["mode"])
+    paths.socket_collision_mesh.parent.mkdir(parents=True)
+    paths.socket_collision_mesh.write_bytes(args["socket_collision_mesh"].read_bytes())
+    args["socket_collision_mesh"] = paths.socket_collision_mesh
+    session = calibrate_session(**args)
+    saved = write_session_calibration(session, tmp_path / "calibration.json")
+    record = json.loads(saved.read_text(encoding="utf-8"))
+    del record["collision_scene"]
+    old = tmp_path / "old.json"
+    old.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match="no frozen collision world"):
+        load_session_calibration(old, mode=args["mode"], shared_root=tmp_path)
+    record = json.loads(saved.read_text(encoding="utf-8"))
+    record["collision_scene"]["cuboid"]["table"]["pose"][2] += 0.01
+    tampered = tmp_path / "tampered.json"
+    tampered.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match="descriptor hash changed"):
+        load_session_calibration(tampered, mode=args["mode"], shared_root=tmp_path)
