@@ -882,6 +882,13 @@ its default refuses motion. It commands **no lift, transfer or insertion** and
 does not set `grasp_success`. It has fake-executor tests only and is not a
 commissioned live-robot launch path.
 
+After a measured squeeze, [the measured-lift replan](MEASURED_LIFT.md)
+re-screens the 20 mm endpoint with achieved finger joints and uses existing
+v8 cuRobo planning plus the demo's full held-key/hand path audit from the
+achieved FR3/Inspire state. It additionally needs a commissioned bound on
+key/hand surface error. This is still a saved plan, **not** a lift command;
+the stock lift follower cannot be used as a fail-closed contact/reflex monitor.
+
 Do not feed the nominal `plan_insertion_after_pickup`'s separately replanned
 `lift_trajectory` straight into the
 unchanged `FrankaExecutor.execute(lift_traj_override=...)`: its start-state

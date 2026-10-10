@@ -771,6 +771,12 @@ external-interlock check. It is not an end-to-end launcher: squeeze completion
 does not prove lift success, and it deliberately never replays the nominal
 lift/transfer/axial trajectories. Those phases still need live-state planning,
 execution feedback and a commissioned guarded-contact controller.
+The [measured-lift replan](MEASURED_LIFT.md) now covers the next read-only
+stage: achieved squeeze joints → exact 20 mm endpoint → v8 lift → held
+transfer/axial path → sampled key/hand/world audit → explicit surface-error
+margin. It does not yet actuate lift. The stock free-space follower has
+non-aborting reflex and timeout/stall landing behaviors that require a
+separate, monitored demo controller before physical replay.
 
 ## Implementation sequence and acceptance gates
 

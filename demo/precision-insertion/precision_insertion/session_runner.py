@@ -71,6 +71,7 @@ from .trial_preflight import (
     TrialPreflight, plan_admitted_key_trial, write_trial_preflight_artifacts,
 )
 from .xy_retry import XYRetryAssessment
+from .uncertainty_margin import SurfaceDeviationBounds
 
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -144,6 +145,10 @@ class SessionRunner:
         self._postlift_report_path: Path | None = None
         self._postlift_report_sha256: str | None = None
         self._postlift_index = 0
+        self._measured_lift_preflight = None
+        self._measured_lift_report_path: Path | None = None
+        self._measured_lift_report_sha256: str | None = None
+        self._measured_lift_index = 0
         self._preinsert_checkpoint: PreinsertCheckpoint | None = None
         self._preinsert_report_path: Path | None = None
         self._preinsert_report_sha256: str | None = None
@@ -411,6 +416,10 @@ class SessionRunner:
         self._postlift_report_path = None
         self._postlift_report_sha256 = None
         self._postlift_index = 0
+        self._measured_lift_preflight = None
+        self._measured_lift_report_path = None
+        self._measured_lift_report_sha256 = None
+        self._measured_lift_index = 0
         self._preinsert_checkpoint = None
         self._preinsert_report_path = None
         self._preinsert_report_sha256 = None
@@ -705,6 +714,10 @@ class SessionRunner:
         self._postlift_report_path = None
         self._postlift_report_sha256 = None
         self._postlift_index = 0
+        self._measured_lift_preflight = None
+        self._measured_lift_report_path = None
+        self._measured_lift_report_sha256 = None
+        self._measured_lift_index = 0
         self._preinsert_checkpoint = None
         self._preinsert_report_path = None
         self._preinsert_report_sha256 = None
@@ -769,6 +782,10 @@ class SessionRunner:
         self._postlift_report_path = None
         self._postlift_report_sha256 = None
         self._postlift_index = 0
+        self._measured_lift_preflight = None
+        self._measured_lift_report_path = None
+        self._measured_lift_report_sha256 = None
+        self._measured_lift_index = 0
         self._preinsert_checkpoint = None
         self._preinsert_report_path = None
         self._preinsert_report_sha256 = None
@@ -866,6 +883,55 @@ class SessionRunner:
             self.observe_stage(
                 "grasp_success", result.grasp_success,
                 timestamp_s=completed, evidence_refs=refs)
+        return result
+
+    def prepare_measured_lift_chain(
+        self, *, planner, pickup_execution_log: Path,
+        joint_sample: LiveRobotState, bounds: SurfaceDeviationBounds,
+        limits: PathAuditLimits, max_state_age_s: float,
+        max_post_squeeze_arm_drift_rad: float,
+        max_post_squeeze_hand_drift_raw: float,
+        max_arm_hand_skew_s: float,
+        max_hand_command_error_raw: float,
+        max_arm_velocity_rad_s: float,
+        axial_waypoint_step_m: float,
+    ):
+        """Save one full-chain replan from measured squeeze, without motion.
+
+        A passing result remains a geometric hypothesis until a commissioned
+        held-lift controller executes it and cameras assess the key after lift.
+        """
+        from .measured_lift_preflight import (
+            plan_measured_lift_chain, verify_measured_lift_chain,
+            write_measured_lift_chain,
+        )
+
+        if (self._attempt_dir is None or
+                (self._measured_lift_preflight is not None and
+                 self._measured_lift_preflight.status ==
+                 "sampled_measured_chain_pass")):
+            raise ValueError("measured lift is absent or already preflighted")
+        result = plan_measured_lift_chain(
+            runner=self, planner=planner,
+            pickup_execution_log=pickup_execution_log,
+            joint_sample=joint_sample, bounds=bounds, limits=limits,
+            max_state_age_s=max_state_age_s,
+            max_post_squeeze_arm_drift_rad=max_post_squeeze_arm_drift_rad,
+            max_post_squeeze_hand_drift_raw=max_post_squeeze_hand_drift_raw,
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s,
+            axial_waypoint_step_m=axial_waypoint_step_m)
+        output = (self._attempt_dir / "measured_lift_preflights" /
+                  f"{self._measured_lift_index:03d}")
+        write_measured_lift_chain(result, output)
+        report = output / "report.json"
+        verify_measured_lift_chain(report, expected=result)
+        self._measured_lift_preflight = result
+        self._measured_lift_report_path = report
+        self._measured_lift_report_sha256 = hashlib.sha256(
+            report.read_bytes()).hexdigest()
+        self._measured_lift_index += 1
         return result
 
     def prepare_observed_lift_label(
