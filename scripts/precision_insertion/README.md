@@ -1,5 +1,12 @@
 # Precision-insertion asset workflow
 
+The new **square/cylinder dual-mode** asset inventory, offline scenario
+selection, VLM observation, bounded retry policy, execution-sequence
+comparison, and exact usage are in
+[`docs/precision_insertion_modes.md`](../../docs/precision_insertion_modes.md).
+Robot insertion is not yet implemented; `run_pipeline.py` still executes
+the original AutoDex grasp/lift/place path.
+
 This directory builds the assets for the staged unified-socket experiment:
 
 | gap | experiment stage |
