@@ -1,9 +1,9 @@
 # Square 1.5 mm v8 handoff (offline assets only)
 
 The local bundle is
-`~/shared_data/AutoDex/precision_insertion/handoff/square_tabletop_v8_20261011_7f15220.tar.gz`.
+`~/shared_data/AutoDex/precision_insertion/handoff/square_tabletop_v8_20261011_8cb11ae.tar.gz`.
 Its SHA-256 is
-`33add5bf8b84e11342f27ed5d952fcb92a6151ca4ea733b892c11eae841a1eb0`.
+`b47e8c8315d7879d4aabe282f461941108596279dcddf9b1c633faa564ad2ed9`.
 It contains 130 hashed files (361 KB compressed): full-key and unified-socket
 object-processing assets, the five v8 tabletop scene JSONs, the square
 fixture, eight v8 grasp directories, and audit-only source catalog/fidelity
@@ -19,7 +19,7 @@ bytes agree. Verify any copied or extracted directory before installation:
 ```bash
 ~/miniconda3/envs/autodex_bodex/bin/python \
   demo/precision-insertion/export_square_tabletop_handoff.py \
-  --verify-root /path/to/square_tabletop_v8_20261011_7f15220
+  --verify-root /path/to/square_tabletop_v8_20261011_8cb11ae
 ```
 
 Extract into a **staging directory**, never directly over an existing
