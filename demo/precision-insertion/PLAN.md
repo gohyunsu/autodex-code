@@ -700,6 +700,7 @@ demo/precision-insertion/
     camera_transport.py           # demo-local fid/pixel-hash PUB adapters
     camera_time.py                # independent fid-to-exposure UTC calibration gate
     live_session_start.py         # board -> repeated socket -> frozen world, no motion
+    live_session_runner.py        # verify saved session + current v8 pool; open evidence-only run
     live_key_trial.py             # fresh key -> observed state -> v8 trial preflight
     retry_preflight.py            # fresh withdrawn-state retry planning only
     retry_session.py              # same-frame failed-trial/VLM/live-state evidence gate
@@ -713,12 +714,14 @@ demo/precision-insertion/
   precision_init_daemon.py         # capture-PC FoundPose metadata variant
 
 Planned below the same demo directory, but **not implemented**:
-  live_session_runner.py          # continuous commissioned camera/robot loop
+  continuous_live_loop.py         # commissioned camera/robot trial loop
   guarded_execution.py            # bounded Franka/Inspire contact and aborts
   recovery.py                     # safe return/repose/reorient/extraction policy
 ```
 
-The current CLI has no motor-command mode. A future robot mode must require
+The independent `run_auto.py` currently only opens an acquisition-bound,
+frozen session into `SessionRunner`; it does not capture cameras or command
+motors. A future robot mode must require
 explicit `--shared-root`, `--mode`, `--gap-mm`, output root and commissioned
 limits, and must remain fail-closed until validated. Read key/socket objects under
 `<shared-root>/object_processing/<object_id>` and v8 candidates under

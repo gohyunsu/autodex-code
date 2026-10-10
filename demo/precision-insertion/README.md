@@ -1876,6 +1876,31 @@ started = start_precision_session(
 # started.evidence_dir/session_calibration.json freezes the measured world.
 ```
 
+Once that startup evidence and a current **complete** endpoint catalog exist
+on the same AutoDex PC, the demo's independent `run_auto.py` can open an
+evidence-only trial ledger. It checks both canonical key/socket FoundPose
+files, the saved acquisition-bound board/socket frames, the frozen collision
+world, each pose-indexed v8 catalog row and its source hashes **before**
+creating the output directory. It never moves Franka/Inspire:
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/run_auto.py \
+  --shared-root /path/to/shared_data \
+  --mode square --gap-mm 1.5 \
+  --session-evidence /path/to/new_session_evidence \
+  --endpoint-catalog /path/to/current_recipient_catalog.json \
+  --output-dir /path/to/new_trial_run \
+  --max-xy-retries 2
+```
+
+The output contains frozen session/catalog snapshots and
+`source_evidence_binding.json` with exact source hashes. The printed next
+decision is initially `capture_fresh_key`. A present PTH is not a QA-approved
+pose estimator, and a positive endpoint catalog is not motion authorization;
+the live camera/robot trial loop and guarded contact controller remain to be
+commissioned.
+
 `board_snap` and `init` are the metadata-preserving adapters described in
 [CAMERA_FRAME_HANDOFF.md](CAMERA_FRAME_HANDOFF.md); all `commissioned_*`
 variables need measured values from the AutoDex rig. A later NAS addendum now
