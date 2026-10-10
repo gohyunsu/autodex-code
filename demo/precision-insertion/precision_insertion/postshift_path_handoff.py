@@ -130,7 +130,13 @@ def _build_record(
                             (clearance + mode.target_depth_m) * axis,
                             atol=1e-8, rtol=0)):
         raise ValueError("post-shift axial targets do not describe 20 mm")
+    if saved.get("planned_trajectories") != "planned_trajectories.npz":
+        raise ValueError("post-shift planned path archive is absent")
     archive = (report_path.parent / saved["planned_trajectories"]).resolve()
+    if (not archive.is_relative_to(report_path.parent) or
+            not archive.is_file() or
+            _sha(archive) != saved.get("planned_trajectories_sha256")):
+        raise ValueError("post-shift trajectory bytes changed")
     with np.load(archive, allow_pickle=False) as data:
         transfer = np.asarray(data["transfer"], dtype=np.float64)
         axial = np.asarray(data["axial"], dtype=np.float64)

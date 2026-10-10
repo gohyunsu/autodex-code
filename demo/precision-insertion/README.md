@@ -153,8 +153,11 @@ hashed archive, both path endpoints, and `transfer_required`. The verifier
 replays the checkpoint/CAD/plan source checks and the 20 mm target geometry.
 This is a **read-only evidence packet**, not a transfer or contact execution
 gate. The existing centered-path `execute_bound_guarded_insertion` must not
-be used for this retry. A separately commissioned post-shift transfer,
-fresh arrival observation, guarded contact executor and physical key-depth
+be used for this retry. The opt-in
+`execute_bound_postshift_transfer(...)` can now run **only the non-contact
+transfer** through an injected, independently commissioned controller and
+save a replayable execution log. No controller is bundled. A fresh arrival
+observation, separate guarded contact executor and physical key-depth
 admission are still needed before retry success can be labeled. See
 [POSTSHIFT_HANDOFF.md](POSTSHIFT_HANDOFF.md) for the call contract.
 
