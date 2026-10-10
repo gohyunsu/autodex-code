@@ -213,6 +213,7 @@ def build_endpoint_catalog(
 def select_pose_candidates(
     catalog: dict,
     *,
+    expected_mode: TaskMode,
     tabletop_pose_stem: str,
     attempted: Iterable[tuple[str, str, str]] = (),
     covered_scenes: Iterable[int] = (),
@@ -224,16 +225,20 @@ def select_pose_candidates(
     evidence. A successful insertion (not merely a lift) should advance
     task-level covered scenes in the caller's private trial record.
     """
+    identity = catalog["mode"]
+    mode = select_mode(expected_mode.family, expected_mode.gap_mm)
+    if mode != expected_mode:
+        raise ValueError("expected mode does not match configured v8 objects")
+    if identity != {
+        "family": mode.family, "gap_mm": mode.gap_mm,
+        "key_object": mode.key_object, "socket_object": mode.socket_object,
+        "target_depth_m": mode.target_depth_m,
+    }:
+        raise ValueError("catalog key/socket/depth does not match selected mode")
     if not catalog.get("complete_scan"):
         return {"status": "catalog_incomplete", "candidates": [],
                 "reason": "full endpoint screen or source pool is missing"}
     root = Path(catalog["shared_root"])
-    identity = catalog["mode"]
-    mode = select_mode(identity["family"], identity["gap_mm"])
-    if (identity["key_object"] != mode.key_object or
-            identity["socket_object"] != mode.socket_object or
-            identity["target_depth_m"] != mode.target_depth_m):
-        raise ValueError("catalog mode identity does not match configured v8 objects")
     paths = AssetPaths(root, mode)
     if Path(catalog["candidate_root"]).resolve() != paths.candidate_dir.resolve():
         raise ValueError("catalog candidate root does not match shared root")
@@ -320,8 +325,39 @@ def select_pose_candidates(
     }
 
 
+def validate_catalog_session(
+    catalog: dict, *, mode: TaskMode, session_record: dict,
+) -> None:
+    """Bind a motion-bound candidate list to this measured socket session.
+
+    This checks the declared fixture identity and CAD bytes, not the physical
+    socket size: a fixture label or operator check must establish that separately.
+    """
+    if session_record.get("schema") != "precision_insertion_session_calibration_v1":
+        raise ValueError("session calibration record has an unknown schema")
+    expected_session_mode = {
+        "family": mode.family, "gap_mm": mode.gap_mm,
+        "key_object": mode.key_object, "socket_object": mode.socket_object,
+    }
+    if session_record.get("mode") != expected_session_mode:
+        raise ValueError("session socket/key does not match selected mode")
+    identity = catalog.get("mode", {})
+    if identity != {**expected_session_mode, "target_depth_m": mode.target_depth_m}:
+        raise ValueError("catalog socket/key/depth does not match measured session")
+    socket = AssetPaths(Path(catalog["shared_root"]), mode).socket_collision_mesh
+    if not socket.is_file():
+        raise FileNotFoundError(f"session socket mesh is missing: {socket}")
+    if (Path(session_record.get("socket_collision_mesh", "")).resolve()
+            != socket.resolve() or
+            session_record.get("socket_collision_mesh_sha256") != _sha256(socket)):
+        raise ValueError("session socket mesh path/hash does not match catalog fixture")
+    validate_se3(np.asarray(session_record.get("socket_pose_robot")),
+                 name="session T_robot_socket")
+
+
 def planner_candidate_override(
     *, catalog: dict, selected: list[dict],
+    mode: TaskMode, session_record: dict,
     pose_robot_key: np.ndarray, tabletop_pose_stem: str,
 ) -> tuple:
     """Reuse AutoDex's v8 transform/NPY loader with an explicit whitelist.
@@ -334,9 +370,10 @@ def planner_candidate_override(
         raise ValueError("at least one selected candidate is required")
     if not catalog.get("complete_scan"):
         raise ValueError("cannot load an incomplete endpoint catalog")
+    validate_catalog_session(catalog, mode=mode, session_record=session_record)
     pose = validate_se3(pose_robot_key, name="T_robot_key")
     current = select_pose_candidates(
-        catalog, tabletop_pose_stem=tabletop_pose_stem)
+        catalog, expected_mode=mode, tabletop_pose_stem=tabletop_pose_stem)
     if current["status"] != "candidates_available":
         raise ValueError(f"catalog cannot supply live candidates: {current['status']}")
     root = Path(catalog["shared_root"])

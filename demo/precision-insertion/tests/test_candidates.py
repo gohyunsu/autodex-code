@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.assets import AssetPaths  # noqa: E402
 from precision_insertion.candidates import (  # noqa: E402
     build_endpoint_catalog, planner_candidate_override, select_pose_candidates,
+    validate_catalog_session,
 )
 from precision_insertion.config import select_mode  # noqa: E402
 
@@ -29,8 +30,21 @@ def _sha(path: Path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _candidate_fixture(tmp_path):
-    mode = select_mode("square", 1.5)
+def _session_record(mode, paths):
+    return {
+        "schema": "precision_insertion_session_calibration_v1",
+        "mode": {
+            "family": mode.family, "gap_mm": mode.gap_mm,
+            "key_object": mode.key_object, "socket_object": mode.socket_object,
+        },
+        "socket_collision_mesh": str(paths.socket_collision_mesh),
+        "socket_collision_mesh_sha256": _sha(paths.socket_collision_mesh),
+        "socket_pose_robot": np.eye(4).tolist(),
+    }
+
+
+def _candidate_fixture(tmp_path, mode=None):
+    mode = mode or select_mode("square", 1.5)
     paths = AssetPaths(tmp_path, mode)
     shared_files = [
         paths.key_planning_mesh, paths.raw_mesh(mode.key_object),
@@ -98,7 +112,8 @@ def test_catalog_selects_pose_and_reuses_v8_loader(tmp_path):
                         {"type": "table", "sid": "0", "gid": "1", "covers": [0, 1]},
                         {"type": "table", "sid": "1", "gid": "3", "covers": [2]},
                     ]})
-    selected = select_pose_candidates(catalog, tabletop_pose_stem="000")
+    selected = select_pose_candidates(
+        catalog, expected_mode=mode, tabletop_pose_stem="000")
     assert selected["status"] == "candidates_available"
     assert [row["key"] for row in selected["candidates"]] == [["table", "0", "1"]]
     assert selected["candidates"][0]["uncovered_scene_gain"] == 2
@@ -107,6 +122,7 @@ def test_catalog_selects_pose_and_reuses_v8_loader(tmp_path):
     T_robot_key[0, 3] = 0.4
     wrist, pregrasp, grasp, info, openposes = planner_candidate_override(
         catalog=catalog, selected=selected["candidates"],
+        mode=mode, session_record=_session_record(mode, paths),
         pose_robot_key=T_robot_key, tabletop_pose_stem="000")
     assert info == [("table", "0", "1")]
     assert wrist.shape == (1, 4, 4)
@@ -116,7 +132,8 @@ def test_catalog_selects_pose_and_reuses_v8_loader(tmp_path):
     assert openposes == [None]
 
     excluded = select_pose_candidates(
-        catalog, tabletop_pose_stem="000", attempted=[("table", "0", "1")])
+        catalog, expected_mode=mode, tabletop_pose_stem="000",
+        attempted=[("table", "0", "1")])
     assert excluded["status"] == "no_eligible_in_screened_pool"
     assert "not impossibility proof" in excluded["reason"]
 
@@ -127,7 +144,8 @@ def test_catalog_detects_changed_scene_and_evidence(tmp_path):
         shared_root=tmp_path, mode=mode,
         minimum_hand_clearance_m=0.0002, screen=screen)
     (candidates[0] / "sim_eval.json").write_text('{"success": false}')
-    result = select_pose_candidates(catalog, tabletop_pose_stem="000")
+    result = select_pose_candidates(
+        catalog, expected_mode=mode, tabletop_pose_stem="000")
     assert result["status"] == "catalog_stale"
     assert "grasp evidence changed" in result["reason"]
 
@@ -138,7 +156,8 @@ def test_pilot_or_bad_scene_cannot_become_complete_catalog(tmp_path, monkeypatch
         shared_root=tmp_path, mode=mode,
         minimum_hand_clearance_m=0.0002, max_candidates=1, screen=screen)
     assert pilot["complete_scan"] is False
-    assert select_pose_candidates(pilot, tabletop_pose_stem="000")["status"] == (
+    assert select_pose_candidates(
+        pilot, expected_mode=mode, tabletop_pose_stem="000")["status"] == (
         "catalog_incomplete")
     even_full_prefix = build_endpoint_catalog(
         shared_root=tmp_path, mode=mode,
@@ -169,8 +188,76 @@ def test_changed_candidate_pool_and_unapproved_override_rejected(tmp_path):
             catalog=catalog,
             selected=[{"key": ["table", "0", "2"],
                        "candidate_dir": str(candidates[1])}],
+            mode=mode, session_record=_session_record(mode, paths),
             pose_robot_key=np.eye(4), tabletop_pose_stem="000")
     new_dir = paths.candidate_dir / "table" / "1" / "4"
     new_dir.mkdir()
-    changed = select_pose_candidates(catalog, tabletop_pose_stem="000")
+    changed = select_pose_candidates(
+        catalog, expected_mode=mode, tabletop_pose_stem="000")
     assert changed["status"] == "catalog_stale"
+
+
+def test_cylinder_grasps_shared_but_socket_catalogs_are_not_interchangeable(
+    tmp_path,
+):
+    easy = select_mode("cylinder", 20)
+    tight = select_mode("cylinder", 1)
+    _, easy_paths, candidates, _ = _candidate_fixture(tmp_path, easy)
+    tight_paths = AssetPaths(tmp_path, tight)
+    for path in (tight_paths.socket_collision_mesh, tight_paths.task_geometry):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("tight fixture test", encoding="utf-8")
+    assert easy_paths.candidate_dir == tight_paths.candidate_dir
+
+    def screen(*, mode, candidate_dir, **_kwargs):
+        paths = AssetPaths(tmp_path, mode)
+        files = {
+            "key_mesh": paths.raw_mesh(mode.key_object),
+            "socket_mesh": paths.socket_collision_mesh,
+            "task_geometry": paths.task_geometry,
+            "robot_urdf": paths.robot_urdf,
+            "wrist_se3": candidate_dir / "wrist_se3.npy",
+            "grasp_pose": candidate_dir / "grasp_pose.npy",
+        }
+        return {
+            "endpoint_pass": (candidate_dir.name == "1"
+                              if mode == easy else candidate_dir.name == "3"),
+            "input_sha256": {key: _sha(path) for key, path in files.items()},
+        }
+
+    easy_catalog = build_endpoint_catalog(
+        shared_root=tmp_path, mode=easy,
+        minimum_hand_clearance_m=0.0002, screen=screen)
+    tight_catalog = build_endpoint_catalog(
+        shared_root=tmp_path, mode=tight,
+        minimum_hand_clearance_m=0.0002, screen=screen)
+    assert easy_catalog["candidate_root"] == tight_catalog["candidate_root"]
+    assert easy_catalog["mode"]["socket_object"] != tight_catalog["mode"]["socket_object"]
+    assert [row["key"] for row in select_pose_candidates(
+        easy_catalog, expected_mode=easy,
+        tabletop_pose_stem="000")["candidates"]] == [["table", "0", "1"]]
+    assert select_pose_candidates(
+        tight_catalog, expected_mode=tight,
+        tabletop_pose_stem="000")["status"] == "no_eligible_in_screened_pool"
+    assert [row["key"] for row in select_pose_candidates(
+        tight_catalog, expected_mode=tight,
+        tabletop_pose_stem="001")["candidates"]] == [["table", "1", "3"]]
+    with pytest.raises(ValueError, match="does not match selected mode"):
+        select_pose_candidates(
+            easy_catalog, expected_mode=tight, tabletop_pose_stem="000")
+    with pytest.raises(ValueError, match="does not match measured session"):
+        planner_candidate_override(
+            catalog=easy_catalog,
+            selected=[{"key": ["table", "0", "1"],
+                       "candidate_dir": str(candidates[0])}],
+            mode=tight, session_record=_session_record(tight, tight_paths),
+            pose_robot_key=np.eye(4), tabletop_pose_stem="000")
+    with pytest.raises(ValueError, match="session socket/key"):
+        validate_catalog_session(
+            tight_catalog, mode=tight,
+            session_record=_session_record(easy, easy_paths))
+    stale_session = _session_record(tight, tight_paths)
+    stale_session["socket_collision_mesh_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="mesh path/hash"):
+        validate_catalog_session(
+            tight_catalog, mode=tight, session_record=stale_session)

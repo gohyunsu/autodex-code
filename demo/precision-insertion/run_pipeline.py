@@ -50,6 +50,8 @@ def main(argv: list[str] | None = None) -> int:
         "select-catalog", help="read-only pose-conditioned offline candidate list",
     )
     select.add_argument("--catalog", type=Path, required=True)
+    select.add_argument("--mode", choices=("square", "cylinder"), required=True)
+    select.add_argument("--gap-mm", type=float, required=True)
     select.add_argument("--pose-stem", required=True)
     select.add_argument("--attempted", action="append", default=[],
                         metavar="TYPE/SID/GID")
@@ -114,10 +116,11 @@ def main(argv: list[str] | None = None) -> int:
         from precision_insertion.candidates import select_pose_candidates
 
         try:
+            mode = select_mode(args.mode, args.gap_mm)
             report = json.loads(args.catalog.read_text(encoding="utf-8"))
             attempted = [tuple(value.split("/")) for value in args.attempted]
             result = select_pose_candidates(
-                report, tabletop_pose_stem=args.pose_stem,
+                report, expected_mode=mode, tabletop_pose_stem=args.pose_stem,
                 attempted=attempted, covered_scenes=args.covered_scene,
             )
         except (FileNotFoundError, KeyError, ValueError, TypeError) as exc:
