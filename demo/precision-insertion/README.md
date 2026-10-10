@@ -937,6 +937,10 @@ result = observe_lift(backend, [
 print(result.to_record())  # review only; not a robot command
 ```
 
+To measure local/API model errors rather than relying on one illustrative
+render, use the independent-annotation dataset replay in
+[`VLM_BENCHMARK.md`](VLM_BENCHMARK.md).
+
 `before_pil` and `after_pil` must be supplied from the same saved trial; the
 timestamps above are placeholders. Semantic labels can use ZeroDex's
 aspect-preserving resize. **Metric point/axis grounding cannot:** create a
