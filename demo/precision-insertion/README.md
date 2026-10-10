@@ -489,6 +489,12 @@ session, timing and `safety_abort`. The checkpoint target remains exactly
 whether those samples came from calibrated sensors; the robot-side producer,
 its timing and uncertainty model still require commissioning. The other
 three source files are hashed but not yet semantically verified.
+An optional [exposed-length depth diagnostic](EXPOSED_DEPTH.md) now asks
+the VLM for a visible key rear-centre/axis rather than its hidden tip and
+calculates a worst-case CAD depth interval from calibrated multi-view
+geometry. It is **not** yet admitted as one of those physical key-depth
+source files: real landmark and calibration error bounds, final-frame
+provenance and source verification remain necessary.
 `FinalInsertionCapture` carries raw frames
 for either before or after phase; matching camera request/frame IDs, raw BGR
 full frames and camera-acquisition metadata are required;

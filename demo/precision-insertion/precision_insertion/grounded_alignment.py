@@ -650,10 +650,11 @@ def estimate_grounded_line_alignment(
     }
 
 
-def observe_grounded_cylinder_axis(
-    backend: ImageVLM, frames: Sequence[CalibratedXYFrame],
+def _observe_grounded_axis_line(
+    backend: ImageVLM, frames: Sequence[CalibratedXYFrame], *,
+    point_field: str, point_description: str, phase: str, stage: str,
 ) -> tuple[list[GroundedLineView], list[VLMObservation]]:
-    """Ask for a tip centre and a visible shaft centreline, raw images only."""
+    """Shared original-pixel parser for a visible key point and axis line."""
     views, records = [], []
     if getattr(backend, "native_pixel_coordinates", True) is not True:
         raise ValueError("metric grounding forbids local VLM image resizing")
@@ -666,14 +667,15 @@ def observe_grounded_cylinder_axis(
         prompt = (
             f"Camera {frame.camera_id}. ORIGINAL UNDISTORTED image "
             f"{width}x{height} pixels. From visible raw key pixels only, "
-            "mark the insertion-tip centre and TWO separated points along "
-            "the image-projected centreline of the visible straight cylinder "
+            f"mark {point_description} and TWO separated points along "
+            "the image-projected centreline of the visible straight key "
             "shaft. The line points need not mark the same physical shaft "
-            "locations in other cameras. If the tip or straight shaft is "
+            "locations in other cameras. If the requested centre or shaft is "
             "occluded, ambiguous, or indistinguishable from the hand/socket, "
             "return null for it. Never extrapolate a hidden line from a "
             "robot/CAD overlay. Return JSON only: "
-            '{"tip_px":[x,y]|null,"axis_line_px":[[x1,y1],[x2,y2]]|null,'
+            f'{{"{point_field}":[x,y]|null,'
+            '"axis_line_px":[[x1,y1],[x2,y2]]|null,'
             '"evidence":"visible image features only"}. '
             "Coordinates are original-image pixels, origin top-left."
         )
@@ -685,12 +687,12 @@ def observe_grounded_cylinder_axis(
         try:
             parsed = _parse_object(answer)
             if not isinstance(parsed, dict) or set(parsed) != {
-                    "tip_px", "axis_line_px", "evidence"} or not isinstance(
+                    point_field, "axis_line_px", "evidence"} or not isinstance(
                         parsed["evidence"], str):
                 raise ValueError("invalid grounded line JSON")
             points = []
-            if parsed["tip_px"] is not None:
-                points.append(parsed["tip_px"])
+            if parsed[point_field] is not None:
+                points.append(parsed[point_field])
             if parsed["axis_line_px"] is not None:
                 if (not isinstance(parsed["axis_line_px"], list) or
                         len(parsed["axis_line_px"]) != 2):
@@ -704,15 +706,45 @@ def observe_grounded_cylinder_axis(
                     raise ValueError("line landmark outside original pixels")
             error = None
         except ValueError as exc:
-            parsed = {"tip_px": None, "axis_line_px": None, "evidence": ""}
+            parsed = {point_field: None, "axis_line_px": None, "evidence": ""}
             error = str(exc)
         segment = parsed["axis_line_px"]
         views.append(GroundedLineView(
-            frame, None if parsed["tip_px"] is None else tuple(parsed["tip_px"]),
+            frame, None if parsed[point_field] is None else
+            tuple(parsed[point_field]),
             None if segment is None else (tuple(segment[0]), tuple(segment[1])),
             parsed["evidence"]))
         records.append(VLMObservation(
-            "cylinder_tip_axis_line_grounding", parsed, answer, prompt,
-            (f"raw_preinsert_hold/{frame.camera_id}@{frame.timestamp_s:.6f}",),
+            stage, parsed, answer, prompt,
+            (f"{phase}/{frame.camera_id}@{frame.timestamp_s:.6f}",),
             error, _backend_model(backend), latency))
     return views, records
+
+
+def observe_grounded_cylinder_axis(
+    backend: ImageVLM, frames: Sequence[CalibratedXYFrame],
+) -> tuple[list[GroundedLineView], list[VLMObservation]]:
+    """Ask for the insertion tip and visible axis before insertion."""
+    return _observe_grounded_axis_line(
+        backend, frames, point_field="tip_px",
+        point_description="the insertion-tip centre",
+        phase="raw_preinsert_hold",
+        stage="cylinder_tip_axis_line_grounding")
+
+
+def observe_exposed_key_rear_axis(
+    backend: ImageVLM, frames: Sequence[CalibratedXYFrame],
+) -> tuple[list[GroundedLineView], list[VLMObservation]]:
+    """Ask for visible *rear* centre/axis after contact; hidden means null.
+
+    The caller must provide raw final-hold images from the frozen camera
+    calibration. This intentionally uses the same line-geometry data type as
+    preinsert grounding, but the point is the opposite, exposed key end.
+    """
+    return _observe_grounded_axis_line(
+        backend, frames, point_field="rear_px",
+        point_description=(
+            "the centre of the exposed REAR end face of the key (the end "
+            "opposite the socket, not its hidden insertion tip)"),
+        phase="raw_final_or_abort",
+        stage="exposed_rear_axis_line_grounding")
