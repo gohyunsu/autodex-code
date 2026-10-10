@@ -14,8 +14,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.reorient_assets import audit_v8_reorient_assets  # noqa: E402
-from precision_insertion.reset_candidates import load_v8_reset_seeds  # noqa: E402
+from precision_insertion.reset_candidates import (  # noqa: E402
+    load_v8_reset_seeds, verify_v8_reset_seed,
+)
+from calibrate_reset_grasp import build_reset_grasp_calibration  # noqa: E402
 from stage_square_reorient_passes import stage_passes  # noqa: E402
+from test_physical_grasp_calibration import _sample  # noqa: E402
 
 
 MODE = select_mode("square", 1.5)
@@ -147,3 +151,64 @@ def test_square_reset_stage_rejects_changed_stock_copy_before_writes(tmp_path):
             stock_candidate_root=stock, cell=CELL, expected_seed_count=2,
             output_root=output)
     assert not output.exists()
+
+
+def test_reset_physical_calibration_reuses_v8_seed_and_real_sample_contract(
+        tmp_path):
+    raw, stock = _fixture(tmp_path)
+    handoff = tmp_path / "handoff"
+    stage_passes(
+        shared_root=tmp_path, gap_mm=1.5, raw_root=raw,
+        stock_candidate_root=stock, cell=CELL, expected_seed_count=2,
+        output_root=handoff)
+    candidate_root = handoff / "reset_12"
+    selected = verify_v8_reset_seed(
+        shared_root=tmp_path, mode=MODE, height_cm=12,
+        from_pose_stem="000", to_pose_stem="001", seed_id="0",
+        candidate_root=candidate_root)
+    assert selected["candidate_key"] == ("reset", "0_1", "0")
+    assert selected["robot_ready"] is False
+    assert selected["fidelity"]["end_squeeze"][
+        "full_relative_rotation_deg"] == pytest.approx(10.)
+    with pytest.raises(ValueError, match="exact reset height"):
+        verify_v8_reset_seed(
+            shared_root=tmp_path, mode=MODE, height_cm=12,
+            from_pose_stem=0, to_pose_stem=1, seed_id="0",
+            candidate_root=handoff)
+    samples = [_sample(tmp_path, index, selected["candidate_key"])
+               for index in range(5)]
+    paths = [Path(sample["evidence_path"]) for sample in samples]
+    output = tmp_path / "physical_reset_calibration"
+    built = build_reset_grasp_calibration(
+        shared_root=tmp_path, family="square", gap_mm=1.5,
+        candidate_root=candidate_root, height_cm=12,
+        from_pose_stem="000", to_pose_stem="001", seed_id="0",
+        sample_paths=paths, minimum_independent_trials=5,
+        max_nominal_translation_drift_m=.003,
+        max_nominal_rotation_drift_deg=15., output_dir=output)
+    assert built == output
+    summary = json.loads((built / "physical_grasp_calibration.json")
+                         .read_text(encoding="utf-8"))
+    binding = json.loads((built / "binding.json").read_text(
+        encoding="utf-8"))
+    assert summary["candidate_key"] == ["reset", "0_1", "0"]
+    assert summary["sample_count"] == 5
+    assert binding["robot_ready"] is False
+    with pytest.raises(FileExistsError):
+        build_reset_grasp_calibration(
+            shared_root=tmp_path, family="square", gap_mm=1.5,
+            candidate_root=candidate_root, height_cm=12,
+            from_pose_stem="000", to_pose_stem="001", seed_id="0",
+            sample_paths=paths, minimum_independent_trials=5,
+            max_nominal_translation_drift_m=.003,
+            max_nominal_rotation_drift_deg=15., output_dir=output)
+    with pytest.raises(ValueError, match="cannot be reused"):
+        build_reset_grasp_calibration(
+            shared_root=tmp_path, family="square", gap_mm=1.5,
+            candidate_root=candidate_root, height_cm=12,
+            from_pose_stem="000", to_pose_stem="001", seed_id="0",
+            sample_paths=[paths[0]] * 5, minimum_independent_trials=5,
+            max_nominal_translation_drift_m=.003,
+            max_nominal_rotation_drift_deg=15.,
+            output_dir=tmp_path / "must_not_exist")
+    assert not (tmp_path / "must_not_exist").exists()

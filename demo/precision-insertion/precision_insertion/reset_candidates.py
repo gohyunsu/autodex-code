@@ -163,6 +163,53 @@ def _candidate_arrays(seed: Path, *, mode: TaskMode, cell: str,
     return wrist, hands[0], hands[1], openposes[0], openposes[1], fidelity
 
 
+def verify_v8_reset_seed(
+    *, shared_root: Path, mode: TaskMode, height_cm: int,
+    from_pose_stem: int | str, to_pose_stem: int | str,
+    seed_id: int | str, candidate_root: Path | None = None,
+) -> dict:
+    """Verify one exact full-key reset seed without applying a fidelity limit.
+
+    This is for *offline physical calibration* of a selected grasp, including
+    seeds that a later commissioned fidelity gate may reject. It does not
+    declare the seed suitable for reorientation or robot motion.
+    """
+    root, object_dir = _paths(shared_root, mode)
+    ids = _tabletop_ids(object_dir)
+    i = _stem(from_pose_stem, ids, "from pose")
+    j = _stem(to_pose_stem, ids, "to pose")
+    if i == j:
+        raise ValueError("reset calibration needs a directed pose cell")
+    if type(height_cm) is not int or height_cm not in RESET_RELEASE_HEIGHTS_CM:
+        raise ValueError("unsupported v8 reset release height")
+    seed_name = str(seed_id)
+    if (not seed_name.isdigit() or seed_name != str(int(seed_name))):
+        raise ValueError("reset seed ID must be a canonical numeric directory")
+    base = (root / "AutoDex/candidates/inspire" / f"reset_{height_cm}"
+            if candidate_root is None else
+            Path(candidate_root).expanduser().resolve())
+    if base.name != f"reset_{height_cm}":
+        raise ValueError("reset candidate root must be the exact reset height")
+    cell = f"{i}_{j}"
+    seed = (base / mode.key_object / f"reorient_{height_cm}" /
+            cell / seed_name)
+    if not seed.is_dir():
+        raise FileNotFoundError(f"full-key reset seed is missing: {seed}")
+    scenes = _valid_scene_pair(root, object_dir, mode, height_cm, i, j)
+    wrist, pregrasp, grasp, _, _, fidelity = _candidate_arrays(
+        seed, mode=mode, cell=cell, h_cm=height_cm, scenes=scenes)
+    return {
+        "candidate_dir": seed.resolve(),
+        "candidate_key": ("reset", cell, seed_name),
+        "T_key_hand": wrist,
+        "pregrasp": pregrasp,
+        "grasp": grasp,
+        "fidelity": fidelity,
+        "source_evidence_sha256": _sha256(seed / "source_evidence.json"),
+        "robot_ready": False,
+    }
+
+
 def load_v8_reset_seeds(
     *, shared_root: Path, mode: TaskMode, height_cm: int,
     from_pose_stem: int | str, to_pose_stem: int | str,

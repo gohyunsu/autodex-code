@@ -524,6 +524,9 @@ that session and catalogue. For each new key observation:
    are rejected. This is a planner primitive, not a source-bound physical
    reset executor; a commissioned grasp-specific key/hand relation and
    future-trial error bound are still needed before physical transfer.
+   The [reset grasp calibration CLI](RESET_GRASP_CALIBRATION.md) now provides
+   a source-bound path to create that grasp-specific physical relation from
+   independent real pickups; there are no real calibration samples yet.
 
 A supervised reset log is JSON with schema
 `precision_insertion_supervised_reset_v1`, the exact `attempt_id`,
