@@ -13,7 +13,10 @@ receives consecutive measured samples and returns one of:
 The policy contains no ParaDex/Franka connection. It is not called by the
 current `run_pipeline.py` as a motor controller and does not write the
 `precision_insertion_guarded_execution_v1` record. That record still needs a
-commissioned external execution producer.
+commissioned external execution producer. The demo's `guarded_trace.py` can
+replay and save the policy's sample-by-sample decisions; the insertion
+checkpoint now requires this verified trace as its `force_trace` source and
+rejects a contradictory `safety_abort` metric before querying the VLM.
 
 ## Input contract
 
@@ -58,6 +61,20 @@ for sample, decision_time_s in saved_samples:
         break
 ```
 
+To save the trace after an externally guarded stroke, pass the same ordered
+`(GuardedContactSample, decision_time_s)` events to
+`replay_guarded_contact_trace(attempt_id=..., candidate_id=...,
+session_calibration_sha256=..., family=..., limits=...,
+started_at_s=..., events=...)` and write the returned
+record with `write_guarded_contact_trace(record, path)`. Its last event must
+be a nominal 20 mm hold or a latched abort. The guarded-execution metric
+record must reference that file by absolute path and SHA-256; its attempt,
+candidate, frozen session digest, start time, completion time and
+`safety_abort` value must agree
+with the replay. Source bytes and decisions are checked, **not** sample
+authenticity or force calibration. The separate key-depth, alignment and
+grasp-state evidence still require commissioned producers.
+
 `check_sample_deadline(now_s=...)` detects a missing sample only while this
 Python process is running. The checked-out ParaDex velocity-stream daemon
 parses but does not enforce `duration_ms`; Python process failure could leave
@@ -71,4 +88,4 @@ multiview VLM comparison with an independent conservative **physical key**
 depth interval, alignment assertion, force trace and grasp-state evidence.
 Its success label remains unknown if those sources are absent. An abort from
 this monitor must be reflected in the external guarded-execution record; the
-current module does not fabricate that record from wrist progress.
+trace does not fabricate physical key depth from wrist progress.

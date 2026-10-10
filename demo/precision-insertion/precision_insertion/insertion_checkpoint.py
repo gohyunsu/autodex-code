@@ -18,6 +18,7 @@ import cv2
 from PIL import Image
 
 from .frame_provenance import bounded_capture_skew_s, image_sha256
+from .guarded_trace import verify_guarded_contact_trace
 from .key_perception import verify_key_capture_artifacts
 from .observer import ImageVLM, LabeledFrame, observe_insertion_visual
 from .outcome import InsertionEvidence, judge_insertion
@@ -55,12 +56,17 @@ def verify_final_insertion_capture(output_dir: Path) -> dict:
     return verify_raw_camera_capture(output_dir, phase="final_or_abort")
 
 
-def _metric_record(path: Path, *, attempt_id: str, candidate_id: str) -> tuple[dict, float, float]:
+def _metric_record(
+    path: Path, *, attempt_id: str, candidate_id: str,
+    session_calibration_sha256: str,
+) -> tuple[dict, float, float]:
     metric = json.loads(path.read_text(encoding="utf-8"))
     if (not isinstance(metric, dict) or
             metric.get("schema") != "precision_insertion_guarded_execution_v1" or
             metric.get("attempt_id") != attempt_id or
             metric.get("candidate_id") != candidate_id or
+            metric.get("session_calibration_sha256") !=
+            session_calibration_sha256 or
             not isinstance(metric.get("measurement"), dict)):
         raise ValueError("guarded execution metrics differ from this attempt")
     try:
@@ -92,6 +98,16 @@ def _metric_record(path: Path, *, attempt_id: str, candidate_id: str) -> tuple[d
         if (not source_path.is_absolute() or not source_path.is_file() or
                 _sha(source_path) != source["sha256"]):
             raise ValueError(f"guarded metric source changed: {name}")
+    trace = verify_guarded_contact_trace(
+        Path(source_records["force_trace"]["path"]))
+    if (trace["attempt_id"] != attempt_id or
+            trace["candidate_id"] != candidate_id or
+            trace["session_calibration_sha256"] !=
+            session_calibration_sha256 or
+            trace["started_at_s"] != started or
+            trace["terminal_decision_time_s"] > completed or
+            metric["measurement"]["safety_abort"] is not trace["safety_abort"]):
+        raise ValueError("guarded metric conflicts with replayed contact trace")
     return metric, started, completed
 
 
@@ -152,6 +168,8 @@ def assess_insertion_checkpoint(
         raise ValueError("insertion needs a frozen session calibration digest")
     limits = (target_depth_m, max_phase_skew_s, max_preinsert_age_s,
               max_final_observation_gap_s)
+    if not math.isclose(target_depth_m, .020, rel_tol=0, abs_tol=1e-9):
+        raise ValueError("insertion checkpoint target must be 20 mm")
     if (not all(math.isfinite(float(x)) and float(x) > 0 for x in limits) or
             type(minimum_visual_views) is not int or minimum_visual_views < 2 or
             not all(math.isfinite(float(x)) for x in (
@@ -164,7 +182,8 @@ def assess_insertion_checkpoint(
         before_root)
     after = verify_final_insertion_capture(after_root)
     metric, started, completed = _metric_record(
-        metric_path, attempt_id=attempt_id, candidate_id=candidate_id)
+        metric_path, attempt_id=attempt_id, candidate_id=candidate_id,
+        session_calibration_sha256=session_calibration_sha256)
     cameras = sorted(before_cameras & set(after["frame_evidence"]))
     if len(cameras) < minimum_visual_views:
         raise ValueError("insertion checkpoint lacks paired camera views")
@@ -278,7 +297,8 @@ def verify_insertion_checkpoint(report_path: Path) -> dict:
         raise ValueError("insertion metric record changed")
     metric, started, completed = _metric_record(
         metric_path, attempt_id=report["attempt_id"],
-        candidate_id=report["candidate_id"])
+        candidate_id=report["candidate_id"],
+        session_calibration_sha256=digest)
     if (started != report["guarded_started_at_s"] or
             completed != report["guarded_completed_at_s"]):
         raise ValueError("insertion execution time changed")
@@ -286,6 +306,9 @@ def verify_insertion_checkpoint(report_path: Path) -> dict:
                  "max_final_observation_gap_s", "target_depth_m"):
         if not math.isfinite(float(report[name])) or float(report[name]) <= 0:
             raise ValueError("invalid insertion checkpoint limits")
+    if not math.isclose(float(report["target_depth_m"]), .020,
+                        rel_tol=0, abs_tol=1e-9):
+        raise ValueError("insertion checkpoint target is not 20 mm")
     expected_order = []
     grouped = {"preinsert": set(), "final_or_abort": set()}
     for row in report["frames"]:

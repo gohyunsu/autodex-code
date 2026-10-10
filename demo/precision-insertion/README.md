@@ -475,15 +475,21 @@ raw-frame failure observation needs a separate binding.
 
 The guarded-insertion adapter must provide a JSON record with schema
 `precision_insertion_guarded_execution_v1`, matching `attempt_id` and
-`candidate_id`, physical `started_at_s` and `completed_at_s`, and a
+`candidate_id` and the frozen `session_calibration_sha256`, physical
+`started_at_s` and `completed_at_s`, and a
 `measurement` object containing exactly `key_depth_interval_m` (lower/upper
 conservative **key** depth or `null`), `key_depth_source`,
 `alignment_within_limits`, `safety_abort`, and `grasp_held`. Its
 `source_records` must contain `key_depth`, `alignment`, `force_trace`, and
 `grasp_state`, each as `{ "path": "/absolute/path", "sha256": "..." }`.
-The check hashes these files but cannot establish that their contents came
-from calibrated sensors; the robot-side producer, its timing and uncertainty
-model still require commissioning. `FinalInsertionCapture` carries raw frames
+The `force_trace` must now be a replayable `guarded_contact_trace_v1` from
+the demo's sample policy, consistent with the metric's attempt, frozen
+session, timing and `safety_abort`. The checkpoint target remains exactly
+20 mm. This checks internal sample/decision consistency, but **not**
+whether those samples came from calibrated sensors; the robot-side producer,
+its timing and uncertainty model still require commissioning. The other
+three source files are hashed but not yet semantically verified.
+`FinalInsertionCapture` carries raw frames
 for either before or after phase; matching camera request/frame IDs, raw BGR
 full frames and camera-acquisition metadata are required;
 the stock AutoDex daemons do not currently supply this complete provenance.
@@ -502,7 +508,9 @@ jumps or overshoot. At the nominal 20 mm wrist/FK endpoint it returns
 does not measure the key after squeeze. The saved VLM checkpoint still needs
 an independently bounded physical key-depth source. This monitor does not
 transform the FR3 wrench, verify sensor calibration, stop the robot, or
-generate the `guarded_execution_v1` metric record. Its Python-side sample
+generate the `guarded_execution_v1` metric record. A separate
+[`guarded_trace.py`](precision_insertion/guarded_trace.py) serializes and
+replays the sample decisions used in that record. Its Python-side sample
 deadline is not an independent daemon dead-man; the checked-out ParaDex
 velocity stream has no verified command-expiry watchdog. An actuator must
 meet that robot-side safety prerequisite before interpreting any `continue`

@@ -16,6 +16,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.frame_provenance import image_sha256  # noqa: E402
+from precision_insertion.guarded_contact import (  # noqa: E402
+    GuardedContactLimits, GuardedContactSample,
+)
+from precision_insertion.guarded_trace import (  # noqa: E402
+    replay_guarded_contact_trace, write_guarded_contact_trace,
+)
 from precision_insertion.insertion_checkpoint import (  # noqa: E402
     FinalInsertionCapture, assess_insertion_checkpoint,
     verify_final_insertion_capture, verify_insertion_checkpoint,
@@ -28,6 +34,7 @@ from precision_insertion.key_perception import (  # noqa: E402
 from precision_insertion.perception_evidence import SocketViewLimits  # noqa: E402
 from precision_insertion.records import begin_attempt  # noqa: E402
 from precision_insertion import session_runner  # noqa: E402
+from precision_insertion.trial_preflight import _canonical_sha256  # noqa: E402
 from test_key_perception import (  # noqa: E402
     CAMERAS, SelectorStub, _capture, _session,
 )
@@ -45,7 +52,8 @@ class FakeBackend:
         return json.dumps(self.answer)
 
 
-def _setup(tmp_path, *, answer=None, metric_overrides=None):
+def _setup(tmp_path, *, answer=None, metric_overrides=None,
+           session_calibration_sha256="0" * 64):
     mode = select_mode("square", 1.5)
     pose = np.eye(4)
     base = _capture({camera: pose for camera in CAMERAS}, tmp_path)
@@ -90,6 +98,7 @@ def _setup(tmp_path, *, answer=None, metric_overrides=None):
     metric = {
         "schema": "precision_insertion_guarded_execution_v1",
         "attempt_id": "trial_1", "candidate_id": "table/0/3",
+        "session_calibration_sha256": session_calibration_sha256,
         "started_at_s": 102.5, "completed_at_s": 102.8,
         "measurement": {
             "key_depth_interval_m": [0.0201, 0.021],
@@ -99,7 +108,7 @@ def _setup(tmp_path, *, answer=None, metric_overrides=None):
         },
         "source_records": {},
     }
-    for name in ("key_depth", "alignment", "force_trace", "grasp_state"):
+    for name in ("key_depth", "alignment", "grasp_state"):
         path = tmp_path / f"{name}.json"
         path.write_text(json.dumps({"source": name, "sample": 1}),
                         encoding="utf-8")
@@ -107,6 +116,34 @@ def _setup(tmp_path, *, answer=None, metric_overrides=None):
             "path": str(path),
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         }
+    limits = GuardedContactLimits(
+        target_depth_m=.020, max_axial_force_n=10.,
+        max_lateral_force_n=5., max_torque_nm=.5,
+        max_lateral_error_m=.002, max_axis_tilt_deg=4.,
+        max_yaw_error_deg=5., max_sample_age_s=.05,
+        max_sample_gap_s=.1, max_duration_s=.5,
+        max_depth_step_m=.005, max_depth_regression_m=.0001,
+        max_depth_overshoot_m=.0005)
+    events = [(
+        GuardedContactSample(
+            timestamp_s=102.51 + .05 * i,
+            nominal_depth_m=.004 * i,
+            force_socket_n=(0., 0., 1.),
+            moment_socket_nm=(0., 0., .01),
+            lateral_error_m=.0005, axis_tilt_deg=1., yaw_error_deg=1.,
+            hand_command_tracked=True),
+        102.52 + .05 * i)
+        for i in range(6)]
+    trace = replay_guarded_contact_trace(
+        attempt_id="trial_1", candidate_id="table/0/3", family="square",
+        session_calibration_sha256=session_calibration_sha256,
+        limits=limits, started_at_s=102.5, events=events)
+    trace_path = write_guarded_contact_trace(
+        trace, tmp_path / "force_trace.json")
+    metric["source_records"]["force_trace"] = {
+        "path": str(trace_path),
+        "sha256": hashlib.sha256(trace_path.read_bytes()).hexdigest(),
+    }
     metric["measurement"].update(metric_overrides or {})
     metric_path = tmp_path / "guarded_execution.json"
     metric_path.write_text(json.dumps(metric), encoding="utf-8")
@@ -117,7 +154,7 @@ def _setup(tmp_path, *, answer=None, metric_overrides=None):
     args = dict(
         attempt_id="trial_1", candidate_id="table/0/3",
         target_depth_m=0.02,
-        session_calibration_sha256="0" * 64,
+        session_calibration_sha256=session_calibration_sha256,
         preinsert_bundle=preinsert, final_bundle=final,
         metric_record_path=metric_path,
         preinsert_reached_at_s=101.9, decision_timestamp_s=103.1,
@@ -184,6 +221,62 @@ def test_changed_force_trace_blocks_vlm_and_result(tmp_path):
     assert backend.calls == []
 
 
+def test_guarded_metric_cannot_claim_no_abort_against_replayed_trace(tmp_path):
+    args, backend = _setup(tmp_path)
+    metric_path = args["metric_record_path"]
+    metric = json.loads(metric_path.read_text())
+    metric["measurement"]["safety_abort"] = True
+    metric_path.write_text(json.dumps(metric), encoding="utf-8")
+    with pytest.raises(ValueError, match="conflicts with replayed contact trace"):
+        assess_insertion_checkpoint(**args)
+    assert backend.calls == []
+
+
+def test_guarded_metric_cannot_accept_a_fake_trace_summary(tmp_path):
+    args, backend = _setup(tmp_path)
+    metric_path = args["metric_record_path"]
+    metric = json.loads(metric_path.read_text())
+    source = metric["source_records"]["force_trace"]
+    path = Path(source["path"])
+    trace = json.loads(path.read_text())
+    trace["safety_abort"] = True
+    path.write_text(json.dumps(trace), encoding="utf-8")
+    source["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    metric_path.write_text(json.dumps(metric), encoding="utf-8")
+    with pytest.raises(ValueError, match="differs from replay"):
+        assess_insertion_checkpoint(**args)
+    assert backend.calls == []
+
+
+def test_guarded_metric_is_bound_to_session_and_20mm_target(tmp_path):
+    args, backend = _setup(tmp_path)
+    with pytest.raises(ValueError, match="20 mm"):
+        assess_insertion_checkpoint(**{**args, "target_depth_m": .010})
+    metric_path = args["metric_record_path"]
+    metric = json.loads(metric_path.read_text())
+    metric["session_calibration_sha256"] = "f" * 64
+    metric_path.write_text(json.dumps(metric), encoding="utf-8")
+    with pytest.raises(ValueError, match="differ from this attempt"):
+        assess_insertion_checkpoint(**args)
+    assert backend.calls == []
+
+
+def test_guarded_trace_cannot_be_reused_from_another_session(tmp_path):
+    args, backend = _setup(tmp_path)
+    metric_path = args["metric_record_path"]
+    metric = json.loads(metric_path.read_text())
+    source = metric["source_records"]["force_trace"]
+    path = Path(source["path"])
+    trace = json.loads(path.read_text())
+    trace["session_calibration_sha256"] = "f" * 64
+    path.write_text(json.dumps(trace), encoding="utf-8")
+    source["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    metric_path.write_text(json.dumps(metric), encoding="utf-8")
+    with pytest.raises(ValueError, match="conflicts with replayed contact trace"):
+        assess_insertion_checkpoint(**args)
+    assert backend.calls == []
+
+
 def _raw_preinsert_bundle(args, tmp_path):
     images = {
         camera: cv2.imread(str(args["preinsert_bundle"] / "images" /
@@ -223,12 +316,14 @@ def test_raw_preinsert_images_need_no_postgrasp_foundpose(tmp_path):
 @pytest.mark.parametrize("raw_preinsert", [False, True])
 def test_session_runner_records_bound_insertion_label(
         monkeypatch, tmp_path, raw_preinsert):
-    args, backend = _setup(tmp_path)
-    if raw_preinsert:
-        args["preinsert_bundle"] = _raw_preinsert_bundle(args, tmp_path)
     mode = select_mode("square", 1.5)
     calibration = _session(tmp_path, mode, socket_x=0.0)
     calibration.record["schema"] = "precision_insertion_session_calibration_v1"
+    args, backend = _setup(
+        tmp_path,
+        session_calibration_sha256=_canonical_sha256(calibration.record))
+    if raw_preinsert:
+        args["preinsert_bundle"] = _raw_preinsert_bundle(args, tmp_path)
     monkeypatch.setattr(session_runner, "validate_catalog_session",
                         lambda *_args, **_kwargs: None)
     runner = session_runner.SessionRunner(
