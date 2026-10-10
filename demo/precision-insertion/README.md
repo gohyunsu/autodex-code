@@ -840,7 +840,10 @@ The first independent helpers are in `precision_insertion/`:
   camera snapshot**, projects the session-frozen exact socket collision mesh
   into each view, and excludes a view when its proposed key mask covers too
   much of that projected socket. The overlap fraction and pixel dilation
-  are explicit commissioning limits. For the D∞ cylinder, it compares
+  are explicit commissioning limits. A separately commissioned minimum
+  selected-mask/refined-CAD IoU is also required for tabletop keys; the stock
+  whole-image silhouette loss is weak evidence for a small object. For the D∞
+  cylinder, it compares
   physical centers and unoriented axes; the square key retains full
   orientation. It returns the selected
   key pose and the uncertainty-expanded interval of **all** accepted camera
@@ -1798,6 +1801,7 @@ prepared = prepare_next_live_key(
     maximum_multiview_angle_error_deg=commissioned_angle_deg,
     maximum_socket_mask_overlap_fraction=commissioned_socket_overlap,
     socket_projection_dilation_px=commissioned_socket_dilation_px,
+    minimum_refinement_iou=commissioned_key_iou,
     max_arm_hand_skew_s=commissioned_arm_hand_skew_s,
     max_hand_command_error_raw=commissioned_hand_error_raw,
     max_arm_velocity_rad_s=commissioned_hold_velocity_rad_s,

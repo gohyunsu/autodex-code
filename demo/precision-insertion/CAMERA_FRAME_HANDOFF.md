@@ -171,6 +171,10 @@ the existing AutoDex FoundPose orchestrator for the selected v8 **key**,
 `collect_key_capture()` uses the strict same-request PNG/mask/pose capture;
 `admit_key_capture()` checks two or more per-view masks/poses, multi-view
 physical-pose agreement and unchanged AutoDex IoU/silhouette refinement.
+It additionally requires the selected key-mask/refined-CAD IoU to exceed an
+explicit commissioned threshold; the stock whole-image silhouette loss alone
+can admit an incorrect mask for a small key. This is still not a pose-accuracy
+certificate or a guarantee that every admitted camera mask is correct.
 The resulting timestamp is the selected view's exposure time, but its
 record also keeps the earliest/latest bounds across **all** admitted views.
 `plan_admitted_key_trial()` requires the robot-state timestamp to be close to

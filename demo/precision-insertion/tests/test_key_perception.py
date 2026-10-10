@@ -131,7 +131,8 @@ def _admit(capture, mode, root, selector, *, socket_x=0.4):
         maximum_multiview_center_error_mm=2.0,
         maximum_multiview_angle_error_deg=5.0,
         maximum_socket_mask_overlap_fraction=0.1,
-        socket_projection_dilation_px=0)
+        socket_projection_dilation_px=0,
+        minimum_refinement_iou=0.5)
 
 
 def test_square_key_uses_agreeing_iou_selected_pose_and_full_capture_interval(
@@ -145,6 +146,7 @@ def test_square_key_uses_agreeing_iou_selected_pose_and_full_capture_interval(
     result = _admit(capture, mode, tmp_path, selector)
     assert selector.calls == 1
     assert result.selected_camera_id == "cam_a"
+    assert result.selection["minimum_refinement_iou"] == 0.5
     assert result.consistency["max_center_residual_mm"] == pytest.approx(1.0)
     assert result.acquisition_interval_s == pytest.approx((99.999, 100.006))
     assert result.to_record()["robot_ready"] is False
@@ -165,6 +167,23 @@ def test_square_key_uses_agreeing_iou_selected_pose_and_full_capture_interval(
     (bundle / "images" / "cam_a.png").write_bytes(b"changed")
     with pytest.raises(ValueError, match="key evidence changed"):
         verify_key_capture_artifacts(bundle)
+
+
+def test_tabletop_key_rejects_low_or_missing_refinement_iou(tmp_path):
+    mode = select_mode("square", 1.5)
+    poses = {serial: np.eye(4) for serial in CAMERAS}
+    capture = _capture(poses, tmp_path)
+    selector = SelectorStub(mode.key_object)
+    selector.refine_from_payloads = lambda *_args, **_kwargs: (
+        np.eye(4), {"best_serial": "cam_a", "best_iou": 0.2,
+                    "sil_loss": 0.0001})
+    with pytest.raises(ValueError, match="IoU is below commissioned limit"):
+        _admit(capture, mode, tmp_path, selector)
+    selector.refine_from_payloads = lambda *_args, **_kwargs: (
+        np.eye(4), {"best_serial": "cam_a", "best_iou": None,
+                    "sil_loss": 0.0001})
+    with pytest.raises(ValueError, match="IoU is below commissioned limit"):
+        _admit(capture, mode, tmp_path, selector)
 
 
 def test_rejects_mismatched_pixels_or_disagreeing_square_key_pose(tmp_path):
@@ -314,4 +333,5 @@ def test_key_rejects_camera_recalibration_after_socket_freeze(tmp_path):
             maximum_multiview_center_error_mm=2.0,
             maximum_multiview_angle_error_deg=5.0,
             maximum_socket_mask_overlap_fraction=0.1,
-            socket_projection_dilation_px=0)
+            socket_projection_dilation_px=0,
+            minimum_refinement_iou=0.5)

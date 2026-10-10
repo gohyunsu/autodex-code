@@ -3,15 +3,16 @@
 The NAS runtime addendum contains real AutoDex-rig images, not just CAD. The
 read-only audit snapshot at
 `/home/hyunsu/shared_data/AutoDex/precision_insertion/nas_perception_audit_20261010.json`
-checked the selected capture index on 2026-10-10. Run it again whenever the
-`.partial` perception evaluation changes:
+checked the selected capture index on 2026-10-10. The evaluation directory
+has since been finalized; the 2026-10-11 audit below supersedes that initial
+snapshot. Run it again whenever the evaluation changes:
 
 ```bash
 ~/miniconda3/envs/autodex_bodex/bin/python \
   demo/precision-insertion/audit_perception_handoff.py \
   --capture-index /mnt/paradex2/hyunsu/autodex_precision_insertion_runtime_addendum_20261010_652ac909/latest_capture_index.json \
   --candidate-index /mnt/paradex2/hyunsu/autodex_precision_insertion_runtime_addendum_20261010_652ac909/existing_foundpose_candidates.json \
-  --evaluation-root /mnt/paradex2/hyunsu/autodex_precision_insertion_perception_eval_20261010_652ac909.partial \
+  --evaluation-root /mnt/paradex2/hyunsu/autodex_precision_insertion_perception_eval_20261010_652ac909 \
   --output /path/to/new_audit_snapshot.json
 ```
 
@@ -55,6 +56,35 @@ request timing cannot replace that evidence for the session bootstrap. The
 shots also span different object placements and do not supply repeated
 same-session socket measurements. The 12 large `repre.pth` files remain under
 `pending_foundpose/`, not canonical `AutoDex/foundpose_assets/`.
+
+## Finalized evaluation re-audit (2026-10-11)
+
+The read-only report is
+`/home/hyunsu/shared_data/AutoDex/precision_insertion/nas_perception_audit_final_20261011.json`.
+It verified the hashes of all 700 selected JPEGs from 35 conditions and
+found no capture-integrity error. More method variants were completed after
+the initial snapshot, so the final report counts **61 evaluations, 56 numeric
+silhouette passes**:
+
+| Evaluator variant | Reports | Numeric silhouette pass |
+| --- | ---: | ---: |
+| Socket-only | 7 | 7 |
+| Cylinder key, direct SAM3 | 12 | 12 |
+| Key, registered-difference assisted | 27 | 23 |
+| Square key, ROI-assisted SAM3 | 15 | 14 |
+
+All selected object conditions now have at least one evaluation, but the
+five planned square 0.5 mm poses were not captured. Every selected shot
+still lacks a verified per-camera frame ID and exposure-time interval.
+Consequently `perception_promotion_ready=false` and
+`session_start_eligible=false`. The 56/61 figure is **not** a pose-accuracy
+rate: methods overlap on the same shots, the key is tiny in a full frame,
+and no independent metric key/socket ground truth was recorded. The
+demo-local tabletop key gate now requires a separately commissioned minimum
+selected-mask/refined-CAD IoU in addition to stock refinement and multi-view
+pose consistency. This veto does not make the assisted ROI method equivalent
+to the current live full-frame pipeline, nor does it certify sub-millimetre
+pose accuracy. None of the candidate PTHs has been promoted.
 
 Before promoting any object for a live session:
 

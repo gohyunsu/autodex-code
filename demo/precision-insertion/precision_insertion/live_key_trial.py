@@ -49,6 +49,7 @@ def prepare_next_live_key(
     maximum_multiview_angle_error_deg: float,
     maximum_socket_mask_overlap_fraction: float,
     socket_projection_dilation_px: int,
+    minimum_refinement_iou: float,
     max_arm_hand_skew_s: float,
     max_hand_command_error_raw: float,
     max_arm_velocity_rad_s: float,
@@ -109,6 +110,7 @@ def prepare_next_live_key(
              maximum_multiview_center_error_mm),
             ("maximum_multiview_angle_error_deg",
              maximum_multiview_angle_error_deg),
+            ("minimum_refinement_iou", minimum_refinement_iou),
             ("silhouette_loss_threshold", silhouette_loss_threshold),
             ("max_arm_hand_skew_s", max_arm_hand_skew_s),
             ("max_hand_command_error_raw", max_hand_command_error_raw),
@@ -118,7 +120,8 @@ def prepare_next_live_key(
         if (type(value) not in (int, float) or
                 not math.isfinite(value) or value <= 0):
             raise ValueError(f"{name} must be finite and positive")
-    if (not 0 <= maximum_socket_mask_overlap_fraction < 1 or
+    if (not 0 < minimum_refinement_iou <= 1 or
+            not 0 <= maximum_socket_mask_overlap_fraction < 1 or
             type(socket_projection_dilation_px) is not int or
             socket_projection_dilation_px < 0 or
             type(silhouette_iterations) is not int or
@@ -175,6 +178,7 @@ def prepare_next_live_key(
         maximum_socket_mask_overlap_fraction=(
             maximum_socket_mask_overlap_fraction),
         socket_projection_dilation_px=socket_projection_dilation_px,
+        minimum_refinement_iou=minimum_refinement_iou,
         silhouette_iterations=silhouette_iterations,
         silhouette_loss_threshold=silhouette_loss_threshold)
     if observation.phase != "tabletop":

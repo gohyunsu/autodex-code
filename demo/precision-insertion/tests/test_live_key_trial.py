@@ -89,6 +89,7 @@ def _setup(tmp_path, monkeypatch, *, state_timestamp=100.005):
     def admit(**kwargs):
         events.append("admit")
         assert kwargs["calibration"] is runner.calibration
+        assert kwargs["minimum_refinement_iou"] == 0.5
         return observation
 
     def write(_capture, _observation, output):
@@ -128,6 +129,7 @@ def _setup(tmp_path, monkeypatch, *, state_timestamp=100.005):
         "maximum_multiview_angle_error_deg": 5.,
         "maximum_socket_mask_overlap_fraction": .05,
         "socket_projection_dilation_px": 4,
+        "minimum_refinement_iou": .5,
         "max_arm_hand_skew_s": .02,
         "max_hand_command_error_raw": 20.,
         "max_arm_velocity_rad_s": .1,
@@ -198,5 +200,10 @@ def test_invalid_commissioning_threshold_blocks_before_camera(
     arguments, events, _repre = _setup(tmp_path, monkeypatch)
     arguments["axial_waypoint_step_m"] = .010
     with pytest.raises(ValueError, match="may not exceed 5 mm"):
+        trial.prepare_next_live_key(**arguments)
+    assert events == []
+    arguments["axial_waypoint_step_m"] = .002
+    arguments["minimum_refinement_iou"] = 1.01
+    with pytest.raises(ValueError, match="key mask, silhouette"):
         trial.prepare_next_live_key(**arguments)
     assert events == []

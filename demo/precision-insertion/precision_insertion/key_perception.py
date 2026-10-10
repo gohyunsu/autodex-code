@@ -130,6 +130,7 @@ def _admit_key_capture_common(
     maximum_held_prior_angle_error_deg: float | None = None,
     maximum_held_prior_time_skew_s: float | None = None,
     minimum_held_refinement_iou: float | None = None,
+    minimum_tabletop_refinement_iou: float | None = None,
 ) -> KeyPoseObservation:
     """Shared per-view FoundPose gate for tabletop and held-key captures.
 
@@ -146,6 +147,8 @@ def _admit_key_capture_common(
             minimum_held_refinement_iou)):
         raise ValueError("held-key prior fields require a held pose prior")
     if held_phase:
+        if minimum_tabletop_refinement_iou is not None:
+            raise ValueError("tabletop IoU limit cannot be used for a held key")
         prior = validate_se3(held_pose_prior_world,
                              name="held key pose prior_world")
         held_limits = (
@@ -164,6 +167,10 @@ def _admit_key_capture_common(
                 maximum_held_prior_time_skew_s <= 0 or
                 not 0 < minimum_held_refinement_iou <= 1):
             raise ValueError("held-key prior needs a timed measured-wrist source and limits")
+    elif (type(minimum_tabletop_refinement_iou) not in (int, float) or
+          not math.isfinite(minimum_tabletop_refinement_iou) or
+          not 0 < minimum_tabletop_refinement_iou <= 1):
+        raise ValueError("tabletop key needs a commissioned minimum refinement IoU")
     if not isinstance(capture, KeyCaptureInput):
         raise TypeError("fresh key capture must be KeyCaptureInput")
     if mode.key_object != getattr(init_orchestrator, "obj_name", None):
@@ -300,11 +307,13 @@ def _admit_key_capture_common(
     selected = diagnostics.get("best_serial")
     if selected not in admitted_ids:
         raise ValueError("AutoDex selected a non-admitted key camera")
-    if held_phase:
-        best_iou = diagnostics.get("best_iou")
-        if (best_iou is None or not math.isfinite(float(best_iou)) or
-                float(best_iou) < minimum_held_refinement_iou):
-            raise ValueError("held-key mask/silhouette IoU is below commissioned limit")
+    best_iou = diagnostics.get("best_iou")
+    minimum_iou = (minimum_held_refinement_iou if held_phase else
+                   minimum_tabletop_refinement_iou)
+    if (type(best_iou) not in (int, float) or
+            not math.isfinite(best_iou) or not 0 <= best_iou <= 1 or
+            best_iou < minimum_iou):
+        raise ValueError("key mask/silhouette IoU is below commissioned limit")
     refined = validate_se3(pose, name="refined key pose_world")
     for camera in admitted_ids:
         distance, angle = _pose_residual(
@@ -331,6 +340,7 @@ def _admit_key_capture_common(
         "method": "AutoDex_refine_from_payloads_iou",
         "best_serial": selected,
         "best_iou": diagnostics.get("best_iou"),
+        "minimum_refinement_iou": float(minimum_iou),
         "sil_loss": diagnostics.get("sil_loss"),
         "sil_skipped": diagnostics.get("sil_skipped", False),
     }
@@ -377,6 +387,7 @@ def admit_key_capture(
     maximum_multiview_angle_error_deg: float,
     maximum_socket_mask_overlap_fraction: float,
     socket_projection_dilation_px: int,
+    minimum_refinement_iou: float,
     silhouette_iterations: int = 100,
     silhouette_loss_threshold: float = 0.003,
 ) -> KeyPoseObservation:
@@ -393,6 +404,7 @@ def admit_key_capture(
         maximum_socket_mask_overlap_fraction=(
             maximum_socket_mask_overlap_fraction),
         socket_projection_dilation_px=socket_projection_dilation_px,
+        minimum_tabletop_refinement_iou=minimum_refinement_iou,
         silhouette_iterations=silhouette_iterations,
         silhouette_loss_threshold=silhouette_loss_threshold)
 
