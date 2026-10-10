@@ -15,9 +15,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.path_audit import PathAuditLimits  # noqa: E402
+from precision_insertion.key_perception import KeyPoseObservation  # noqa: E402
 from precision_insertion.preflight import InsertionPreflight  # noqa: E402
 from precision_insertion.trial_preflight import (  # noqa: E402
-    plan_fresh_key_trial, write_trial_preflight_artifacts,
+    plan_admitted_key_trial, plan_fresh_key_trial,
+    write_trial_preflight_artifacts,
 )
 
 
@@ -111,6 +113,38 @@ def _run(tmp_path, fixture, planner, **overrides):
     )
     arguments.update(overrides)
     return plan_fresh_key_trial(**arguments)
+
+
+def test_live_wrapper_checks_every_key_camera_time_before_planning(monkeypatch):
+    mode = select_mode("square", 1.5)
+    observation = KeyPoseObservation(
+        capture_id="key_1", request_id=31, key_object=mode.key_object,
+        family=mode.family, pose_world=np.eye(4),
+        selected_camera_id="cam_a", selected_acquisition_timestamp_s=100.0,
+        acquisition_interval_s=(99.999, 100.006), frame_evidence={},
+        per_view={}, consistency={}, selection={},
+        source_capture_dir=Path("/unused"))
+    received = {}
+
+    def fake_plan(**kwargs):
+        received.update(kwargs)
+        return "planned"
+
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.plan_fresh_key_trial", fake_plan)
+    with pytest.raises(ValueError, match="every key view"):
+        plan_admitted_key_trial(
+            key_observation=observation,
+            start_q_acquisition_timestamp_s=100.02,
+            max_key_state_skew_s=0.01, mode=mode)
+    assert not received
+    assert plan_admitted_key_trial(
+        key_observation=observation,
+        start_q_acquisition_timestamp_s=100.003,
+        max_key_state_skew_s=0.01, mode=mode) == "planned"
+    assert received["key_observation_id"] == "key_1"
+    assert received["key_capture_timestamp_s"] == 100.0
+    assert received["key_pose_world"] == pytest.approx(np.eye(4))
 
 
 def test_fresh_trial_tries_next_grasp_after_pickup_or_insertion_preflight_failure(

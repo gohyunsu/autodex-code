@@ -279,7 +279,13 @@ does not prove cross-camera synchronization.
 
 4. `PERCEIVE_KEY`: each trial captures fresh synchronized views, estimates
    `T_robot_key`, classifies its v8 tabletop pose, and checks segmentation,
-   visibility, timestamp, calibration, and pose uncertainty.
+   visibility, timestamp, calibration, and pose uncertainty. The demo now
+   provides `collect_key_capture()` and `admit_key_capture()` for bound
+   same-request frames, per-view quality and symmetry-aware agreement, then
+   `plan_admitted_key_trial()` for whole-capture/robot-state alignment. These
+   remain offline contracts until the capture-PC frame producer is deployed;
+   a mask that consistently selects the fixed socket still needs an explicit
+   fixture-exclusion/ROI check during commissioning.
 5. `SELECT_AND_PREFLIGHT`: select only grasp-level endpoint-eligible
    candidates matching the observed pose and geometry. From the *live* robot,
    key and frozen socket poses, plan collision-checked pickup/lift and
@@ -591,7 +597,9 @@ demo/precision-insertion/
     assets.py                     # v8/object_processing and evidence checks
     endpoint.py                   # grasp-only exact 20 mm hand/socket screen
     targets.py                    # frozen-socket, rigid key/hand hold and 20 mm goals
-    live_capture.py               # original AutoDex capture adapters; acquisition times still required
+    live_capture.py               # board/socket/key adapters; bound frame metadata still required
+    frame_provenance.py           # request/frame/pixel/acquisition-time contract
+    key_perception.py             # fresh key per-view quality, consensus, AutoDex IoU refinement
     calibration.py                # ChArUco/socket measurement and frozen scene
     perception_evidence.py        # per-view FoundPose quality and true capture-time gate
     symmetry.py                   # local square/cylinder pose handling

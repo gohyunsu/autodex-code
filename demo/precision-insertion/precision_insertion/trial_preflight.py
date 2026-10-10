@@ -24,6 +24,7 @@ from .candidates import (planner_candidate_override, select_pose_candidates,
 from .config import TaskMode
 from .endpoint import nominal_inspire_hold_poses
 from .geometry import validate_se3
+from .key_perception import KeyPoseObservation
 from .path_audit import PathAuditLimits
 from .pose_selection import classify_key_tabletop_pose
 from .preflight import InsertionPreflight, plan_insertion_after_pickup
@@ -354,3 +355,36 @@ def plan_fresh_key_trial(
         catalog_sha256=_canonical_sha256(catalog),
         repose_assessment=repose_assessment,
     )
+
+
+def plan_admitted_key_trial(
+    *, key_observation: KeyPoseObservation,
+    start_q_acquisition_timestamp_s: float,
+    max_key_state_skew_s: float,
+    **planning_kwargs,
+) -> TrialPreflight:
+    """Feed a bound, multi-view key measurement into the existing v8 trial.
+
+    The older ``plan_fresh_key_trial`` also serves saved offline replays and
+    accepts one asserted timestamp. A live caller should enter here so the
+    measured robot state is checked against the *entire* multi-camera time
+    interval, including each camera's stated timing uncertainty.
+    """
+    if not isinstance(key_observation, KeyPoseObservation):
+        raise TypeError("live trial needs an admitted KeyPoseObservation")
+    mode = planning_kwargs.get("mode")
+    if (not isinstance(mode, TaskMode) or
+            mode.key_object != key_observation.key_object or
+            mode.family != key_observation.family):
+        raise ValueError("observed key identity differs from selected task mode")
+    key_observation.require_state_alignment(
+        state_timestamp_s=start_q_acquisition_timestamp_s,
+        maximum_skew_s=max_key_state_skew_s)
+    return plan_fresh_key_trial(
+        key_pose_world=key_observation.pose_world,
+        key_observation_id=key_observation.capture_id,
+        key_capture_timestamp_s=(
+            key_observation.selected_acquisition_timestamp_s),
+        start_q_acquisition_timestamp_s=start_q_acquisition_timestamp_s,
+        max_key_state_skew_s=max_key_state_skew_s,
+        **planning_kwargs)

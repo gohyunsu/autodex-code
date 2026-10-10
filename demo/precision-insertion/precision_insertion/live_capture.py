@@ -39,6 +39,22 @@ class BoardSnapshotInput:
     frame_evidence: dict[str, dict]
 
 
+@dataclass(frozen=True)
+class KeyCaptureInput:
+    """One per-trial key FoundPose request with bound source frames."""
+
+    capture_id: str
+    request_id: int
+    prompt: str
+    images_bgr: dict[str, np.ndarray]
+    masks: dict[str, dict]
+    poses: dict[str, dict]
+    frame_timestamps_s: dict[str, float]
+    frame_timestamp_source: str
+    frame_evidence: dict[str, dict]
+    capture_dir: Path
+
+
 def _request_id(factory: RequestIdFactory) -> int:
     value = factory()
     if type(value) is not int or not 0 < value < 2**31:
@@ -188,3 +204,39 @@ def collect_socket_capture(
     return SocketCaptureInput(
         capture_id, request_id, socket_prompt, images, dict(masks),
         dict(poses), times, "camera_acquisition", evidence)
+
+
+def collect_key_capture(
+    *, init_orchestrator, key_object: str, capture_id: str,
+    key_prompt: str, capture_root: Path,
+    calibrated_camera_ids: set[str],
+    acquisition_metadata_for_request: AcquisitionProvider,
+    timeout_s: float, image_write_timeout_s: float = 5.0,
+    request_id_factory: RequestIdFactory | None = None,
+) -> KeyCaptureInput:
+    """Reuse the strict FoundPose capture boundary for a fresh trial key.
+
+    The orchestrator must have been explicitly re-initialized for this key
+    and its current v8 representation. This does not select or validate a
+    multiview key pose; see ``key_perception.admit_key_capture``.
+    """
+    if getattr(init_orchestrator, "obj_name", None) != key_object:
+        raise ValueError("FoundPose is not initialized for the selected key")
+    if (not isinstance(key_prompt, str) or not key_prompt.strip() or
+            key_prompt == "object"):
+        raise ValueError("a key-specific SAM prompt is required")
+    capture = collect_socket_capture(
+        init_orchestrator=init_orchestrator, socket_object=key_object,
+        capture_id=capture_id, socket_prompt=key_prompt,
+        capture_root=capture_root,
+        calibrated_camera_ids=calibrated_camera_ids,
+        acquisition_metadata_for_request=acquisition_metadata_for_request,
+        timeout_s=timeout_s, image_write_timeout_s=image_write_timeout_s,
+        request_id_factory=request_id_factory)
+    return KeyCaptureInput(
+        capture.capture_id, capture.request_id, capture.prompt,
+        dict(capture.images_bgr), dict(capture.masks), dict(capture.poses),
+        dict(capture.frame_timestamps_s), capture.frame_timestamp_source,
+        dict(capture.frame_evidence or {}),
+        Path(capture_root).expanduser().resolve() /
+        f"{capture_id}_request_{capture.request_id}")

@@ -178,6 +178,29 @@ The first independent helpers are in `precision_insertion/`:
   an advanced state and stamps robot-PC receipt time; Inspire time is a
   software read time. Their skew check does not prove hardware-level
   simultaneity or camera synchronization. Thresholds must be commissioned.
+- `live_capture.collect_key_capture()` reuses the socket capture's strict
+  same-request image/ID/hash/exposure-time gate after FoundPose has been
+  reinitialized for the selected key's v8 representation. Use a key-specific
+  SAM prompt; the loose key and fixed socket must not be conflated. Stock
+  camera daemons still lack the required provenance output, so this is an
+  adapter contract rather than a live runnable capture command.
+- `key_perception.admit_key_capture()` reuses the existing AutoDex per-view
+  SAM/FoundPose quality gate, rejects disagreeing multi-view key poses, and
+  calls unchanged `InitOrchestrator.refine_from_payloads` in IoU/silhouette
+  mode. For the D∞ cylinder, it compares physical centers and unoriented
+  axes; the square key retains full orientation. It returns the selected
+  key pose and the uncertainty-expanded interval of **all** accepted camera
+  frames. This is not proof that a plausible segmentation chose the right
+  object or that hand-eye calibration is sub-millimetre accurate.
+  `write_key_capture_artifacts(capture, observation, new_dir)` stores the
+  same-request images, masks, poses, frame provenance and selected pose in
+  an exclusive per-trial evidence bundle;
+  `verify_key_capture_artifacts(new_dir)` checks it before replay/handoff.
+- `trial_preflight.plan_admitted_key_trial()` first aligns the measured robot
+  state to that whole key-capture interval, then calls the existing
+  `plan_fresh_key_trial()` candidate filter and pickup-to-20 mm preflight.
+  The latter direct API remains available for explicitly marked saved
+  offline replays; use the admitted wrapper for a live capture.
 
 - `candidates.py` scans the selected shared root's Inspire v8 candidate tree,
   reads matching scene `meta.pose_idx` and tabletop assets, requires full-key
@@ -874,12 +897,14 @@ camera identity, and cross-camera *acquisition* skew before handing its
 prompt while the key is absent. Repeat at least twice; calibration then
 checks socket-pose repeatability and freezes the collision world. All
 thresholds are explicit commissioning inputs, not silently inferred from a
-VLM score. `collect_and_admit_socket_capture()` calls that original AutoDex
-collector directly and joins its `request_id` to an injected acquisition
-metadata provider; it refuses a mismatched request or the wrong initialized
-socket model. The provider contract is
-`{"request_id": int, "source": "camera_acquisition", "camera_times_s":
-{camera_id: timestamp_seconds}}` on one verified clock.
+VLM score. `collect_and_admit_socket_capture()` now reuses the stricter
+`collect_socket_capture()` adapter and requires an exclusive `capture_root`.
+It checks the saved same-request PNGs, sensor frame IDs on both SAM and
+FoundPose outputs, pixel hashes and bounded acquisition-time metadata before
+the per-view quality gate. The old `camera_times_s`-only side channel is no
+longer accepted. Unchanged AutoDex daemons do not expose all these fields;
+the demo-local capture-PC handoff in
+[CAMERA_FRAME_HANDOFF.md](CAMERA_FRAME_HANDOFF.md) must be commissioned first.
 
 `precision_insertion.session_bootstrap.bootstrap_session()` is the
 non-motion session assembly point. Supply the **raw distorted** empty-board
@@ -909,9 +934,8 @@ as synchronized. This is a **live integration blocker**, not a missing CAD
 asset or an invitation to pass one request ID as a timestamp. The offline
 planner and catalogue renderer remain usable without cameras.
 
-`precision_insertion.live_capture` now connects the unchanged AutoDex
-`SnapshotOrchestrator.snap(decode=True)` and initialized
-`InitOrchestrator.collect_payloads()` to the session inputs. Call
+`precision_insertion.live_capture` specifies the demo-local adapters that
+must wrap AutoDex's snapshot and initialized FoundPose collectors. Call
 `collect_board_snapshot()` first, then `collect_socket_capture()` at least
 twice while the socket is fixed and the key is absent, then pass the returned
 frames/payloads and timestamps to `bootstrap_session()`. Socket frames are
@@ -920,10 +944,11 @@ adapter waits for those asynchronous files and refuses missing images rather
 than taking a later snapshot. Use a unique capture root on a filesystem
 shared by the robot PC and capture PCs (for example, a common absolute NAS
 mount), and preserve those intermediate directories until the evidence bundle
-has been verified. The metadata callback must return verified camera
-acquisition times keyed by the same request ID. The current stock daemons do
-not themselves provide that callback, so these adapters are **not yet a live
-calibration command** and cannot authorize robot motion.
+has been verified. The metadata callback must return the exact request,
+frame IDs, image hashes and bounded exposure times. The unchanged stock
+orchestrators discard frame IDs, so they deliberately fail this gate until
+demo-specific metadata-preserving adapters are deployed. These helpers are
+**not yet a live calibration command** and cannot authorize robot motion.
 
 Run the current offline tests from the repository root:
 

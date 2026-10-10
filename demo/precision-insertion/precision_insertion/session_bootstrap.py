@@ -372,7 +372,7 @@ def verify_session_evidence_bundle(output_dir: Path) -> dict:
         if {serial: row["timestamp_s"] for serial, row in verified.items()} != (
                 payload.get("frame_timestamps_s")):
             raise ValueError("saved socket timing differs from frame evidence")
-    if manifest.get("all_frames_bound_to_acquisition_evidence") != (
+    if manifest.get("all_frames_bound_to_acquisition_evidence", False) != (
             board_evidence is not None and bound_sockets):
         raise ValueError("saved frame-binding flag conflicts with evidence")
     return manifest

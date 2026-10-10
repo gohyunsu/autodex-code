@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from pathlib import Path
 from typing import Callable, Mapping
 
 import numpy as np
@@ -190,40 +191,31 @@ def collect_and_admit_socket_capture(
     *, orchestrator, socket_object: str, capture_id: str, prompt: str,
     calibrated_camera_ids: set[str], limits: SocketViewLimits,
     acquisition_metadata_for_request: Callable[[int], Mapping],
-    timeout_s: float, save_capture_dir: str | None = None,
+    timeout_s: float, capture_root: Path,
+    request_id_factory: Callable[[], int] | None = None,
 ) -> tuple[SocketCaptureEvidence, dict]:
-    """Reuse the unchanged AutoDex collector with an external timing source.
+    """Capture same-frame socket evidence, then reuse the quality gate.
 
-    The provider is a demo-local camera acquisition/frame-ID side channel;
-    it must return ``{request_id, source, camera_times_s}``. Existing AutoDex
-    mask/pose ``ts`` fields do not satisfy this contract. The collector is
-    already live and initialized for the *socket*, not the trial key. This
-    function only asks cameras for evidence; it does not calibrate or move.
+    The old bare ``camera_times_s`` side channel is intentionally unsupported:
+    it could timestamp a different frame from the one SAM/FoundPose processed.
+    This function remains camera-only and does not calibrate or move a robot.
     """
-    if getattr(orchestrator, "obj_name", None) != socket_object:
-        raise ValueError("FoundPose orchestrator is not initialized for this socket")
-    if not isinstance(prompt, str) or not prompt.strip() or prompt == "object":
-        raise ValueError("a socket-specific segmentation prompt is required")
-    if not math.isfinite(timeout_s) or timeout_s <= 0:
-        raise ValueError("capture timeout must be positive")
-    if (set(getattr(orchestrator, "intrinsics_undist", {})) !=
-            calibrated_camera_ids or
-            set(getattr(orchestrator, "extrinsics", {})) !=
-            calibrated_camera_ids):
-        raise ValueError("orchestrator camera IDs differ from calibration")
-    masks, poses, timing = orchestrator.collect_payloads(
-        prompt=prompt, n_expected_serials=len(calibrated_camera_ids),
-        timeout_s=timeout_s, save_capture_dir=save_capture_dir)
-    if not isinstance(timing, Mapping) or "request_id" not in timing:
-        raise ValueError("AutoDex collector returned no request ID")
-    request_id = int(timing["request_id"])
-    metadata = acquisition_metadata_for_request(request_id)
-    if (not isinstance(metadata, Mapping) or
-            metadata.get("request_id") != request_id):
-        raise ValueError("acquisition metadata does not match FoundPose request")
+    from .live_capture import collect_socket_capture
+
+    capture = collect_socket_capture(
+        init_orchestrator=orchestrator, socket_object=socket_object,
+        capture_id=capture_id, socket_prompt=prompt,
+        capture_root=capture_root,
+        calibrated_camera_ids=calibrated_camera_ids,
+        acquisition_metadata_for_request=acquisition_metadata_for_request,
+        timeout_s=timeout_s, request_id_factory=request_id_factory)
     admitted = admit_socket_capture(
-        capture_id=capture_id, masks=masks, poses=poses,
-        frame_timestamps_s=metadata.get("camera_times_s"),
-        frame_timestamp_source=metadata.get("source"),
+        capture_id=capture_id, masks=capture.masks, poses=capture.poses,
+        frame_timestamps_s=capture.frame_timestamps_s,
+        frame_timestamp_source=capture.frame_timestamp_source,
         calibrated_camera_ids=calibrated_camera_ids, limits=limits)
-    return admitted, dict(timing)
+    return admitted, {
+        "request_id": capture.request_id,
+        "capture_id": capture.capture_id,
+        "frame_evidence": dict(capture.frame_evidence or {}),
+    }

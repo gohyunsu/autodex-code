@@ -88,6 +88,20 @@ projecting 1 mm choices or calling the VLM. Cropped overlays are derived only
 after this gate. If the acquisition time is too uncertain or old, the result
 is `visual_abstain`, not an XY motion command.
 
+It also applies to each new tabletop key observation. After reinitializing
+the existing AutoDex FoundPose orchestrator for the selected v8 **key**,
+`collect_key_capture()` uses the strict same-request PNG/mask/pose capture;
+`admit_key_capture()` checks two or more per-view masks/poses, multi-view
+physical-pose agreement and unchanged AutoDex IoU/silhouette refinement.
+The resulting timestamp is the selected view's exposure time, but its
+record also keeps the earliest/latest bounds across **all** admitted views.
+`plan_admitted_key_trial()` requires the robot-state timestamp to be close to
+both ends of that interval before invoking the existing candidate/preflight
+logic. Save the raw per-trial bundle with `write_key_capture_artifacts()`.
+This does not by itself prove that SAM segmented the loose key rather than
+the fixed socket; key-specific prompts, fixture exclusion/ROI checks and
+human-reviewed bring-up examples remain necessary.
+
 This contract catches accidental cross-frame mixing; it is not a signature
 or an independent certification of the producer. A physical bring-up still
 needs a measured timestamp-error budget, camera/robot calibration, socket
@@ -102,5 +116,6 @@ cd /home/hyunsu/autodex-code
 /home/hyunsu/miniconda3/envs/autodex_bodex/bin/python -m pytest -q \
   demo/precision-insertion/tests/test_live_capture.py \
   demo/precision-insertion/tests/test_session_bootstrap.py \
+  demo/precision-insertion/tests/test_key_perception.py \
   demo/precision-insertion/tests/test_xy_retry.py
 ```

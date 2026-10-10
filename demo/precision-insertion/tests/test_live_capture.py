@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.live_capture import (  # noqa: E402
-    collect_board_snapshot, collect_socket_capture,
+    collect_board_snapshot, collect_key_capture, collect_socket_capture,
 )
 from precision_insertion.frame_provenance import image_sha256  # noqa: E402
 
@@ -193,3 +193,30 @@ def test_rejects_old_stock_payload_without_frame_id(tmp_path):
             capture_root=tmp_path, calibrated_camera_ids=CAMERAS,
             acquisition_metadata_for_request=_provider, timeout_s=2.0,
             request_id_factory=lambda: 45)
+
+
+def test_key_capture_reuses_strict_foundpose_frame_binding(tmp_path):
+    class KeyFoundPoseStub(FoundPoseStub):
+        obj_name = "key_model"
+
+        def collect_payloads(self, **kwargs):
+            assert kwargs["prompt"] == "blue key on tabletop"
+            kwargs["prompt"] = "red socket"
+            return super().collect_payloads(**kwargs)
+
+    capture = collect_key_capture(
+        init_orchestrator=KeyFoundPoseStub(), key_object="key_model",
+        capture_id="key_001", key_prompt="blue key on tabletop",
+        capture_root=tmp_path, calibrated_camera_ids=CAMERAS,
+        acquisition_metadata_for_request=_provider, timeout_s=2.0,
+        request_id_factory=lambda: 46)
+    assert capture.request_id == 46
+    assert capture.frame_evidence["cam_a"]["frame_id"] == 7
+    assert set(capture.images_bgr) == CAMERAS
+    with pytest.raises(ValueError, match="selected key"):
+        collect_key_capture(
+            init_orchestrator=FoundPoseStub(), key_object="key_model",
+            capture_id="key_002", key_prompt="blue key on tabletop",
+            capture_root=tmp_path, calibrated_camera_ids=CAMERAS,
+            acquisition_metadata_for_request=_provider, timeout_s=2.0,
+            request_id_factory=lambda: 47)

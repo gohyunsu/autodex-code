@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+import cv2
 import numpy as np
 import pytest
 
@@ -13,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.perception_evidence import (  # noqa: E402
     SocketViewLimits, admit_socket_capture, collect_and_admit_socket_capture,
 )
+from precision_insertion.frame_provenance import image_sha256  # noqa: E402
 
 
 def _inputs():
@@ -93,8 +95,13 @@ def test_rejects_uncalibrated_camera_and_invalid_pose():
         _admit(masks, poses, times, limits)
 
 
-def test_reuses_original_collector_but_requires_matching_frame_metadata():
+def test_combined_collector_requires_exact_saved_frame_evidence(tmp_path):
     masks, poses, times, limits = _inputs()
+    frame_ids = {"camera_a": 11, "camera_b": 12}
+    for serial in frame_ids:
+        masks[serial]["frame_id"] = frame_ids[serial]
+        poses[serial]["frame_id"] = frame_ids[serial]
+    image = np.zeros((24, 32, 3), dtype=np.uint8)
 
     class OriginalCollectorStub:
         obj_name = "precision_socket_unified"
@@ -104,7 +111,24 @@ def test_reuses_original_collector_but_requires_matching_frame_metadata():
         def collect_payloads(self, **kwargs):
             assert kwargs["prompt"] == "red square socket"
             assert kwargs["n_expected_serials"] == 2
+            assert kwargs["request_id"] == 42
+            image_dir = Path(kwargs["save_capture_dir"]) / "images"
+            image_dir.mkdir(parents=True)
+            for serial in frame_ids:
+                assert cv2.imwrite(str(image_dir / f"{serial}.png"), image)
             return masks, poses, {"request_id": 42, "n_poses_recv": 2}
+
+    def metadata(request_id, *, source="camera_acquisition"):
+        return {
+            "request_id": request_id, "source": source,
+            "frames": {serial: {
+                "frame_id": frame_ids[serial],
+                "image_sha256": image_sha256(image),
+                "timestamp_s": times[serial], "max_error_s": 0.001,
+                "timestamp_method": "hardware_exposure",
+                "clock_domain": "unix_utc",
+            } for serial in frame_ids},
+        }
 
     kwargs = {
         "orchestrator": OriginalCollectorStub(),
@@ -112,28 +136,26 @@ def test_reuses_original_collector_but_requires_matching_frame_metadata():
         "capture_id": "socket_001", "prompt": "red square socket",
         "calibrated_camera_ids": {"camera_a", "camera_b"},
         "limits": limits, "timeout_s": 10.0,
+        "capture_root": tmp_path,
+        "request_id_factory": lambda: 42,
     }
     admitted, timing = collect_and_admit_socket_capture(
-        **kwargs, acquisition_metadata_for_request=lambda request_id: {
-            "request_id": request_id, "source": "camera_acquisition",
-            "camera_times_s": times,
-        })
+        **kwargs, acquisition_metadata_for_request=metadata)
     assert len(admitted.observations) == 2
     assert timing["request_id"] == 42
-    with pytest.raises(ValueError, match="does not match FoundPose request"):
+    assert timing["frame_evidence"]["camera_a"]["frame_id"] == 11
+    with pytest.raises(ValueError, match="wrong request ID"):
         collect_and_admit_socket_capture(
-            **kwargs, acquisition_metadata_for_request=lambda _request_id: {
-                "request_id": 41, "source": "camera_acquisition",
-                "camera_times_s": times,
-            })
-    with pytest.raises(ValueError, match="camera acquisition timestamps"):
+            **{**kwargs, "capture_id": "wrong_request"},
+            acquisition_metadata_for_request=lambda _request_id: metadata(41))
+    with pytest.raises(ValueError, match="camera acquisition-time metadata"):
         collect_and_admit_socket_capture(
-            **kwargs, acquisition_metadata_for_request=lambda request_id: {
-                "request_id": request_id, "source": "foundpose_publish",
-                "camera_times_s": times,
-            })
-    with pytest.raises(ValueError, match="not initialized for this socket"):
+            **{**kwargs, "capture_id": "publish_time"},
+            acquisition_metadata_for_request=lambda request_id: metadata(
+                request_id, source="foundpose_publish"))
+    with pytest.raises(ValueError, match="not initialized"):
         collect_and_admit_socket_capture(
-            **{**kwargs, "socket_object": "wrong_socket"},
+            **{**kwargs, "socket_object": "wrong_socket",
+               "capture_id": "wrong_socket"},
             acquisition_metadata_for_request=lambda _request_id: {},
         )

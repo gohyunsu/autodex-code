@@ -145,6 +145,13 @@ def test_writes_non_overwriting_raw_evidence_bundle(monkeypatch, tmp_path):
     assert payload["sam_prompt"] == "red cylindrical socket"
     assert payload["pose_payloads"]["cam_a"]["pose_world"] == np.eye(4).tolist()
     assert sb.verify_session_evidence_bundle(target)["robot_ready"] is False
+    legacy = dict(manifest)
+    legacy.pop("board_frame_evidence")
+    legacy.pop("all_frames_bound_to_acquisition_evidence")
+    (target / "evidence_manifest.json").write_text(
+        json.dumps(legacy), encoding="utf-8")
+    assert sb.verify_session_evidence_bundle(target).get(
+        "all_frames_bound_to_acquisition_evidence") is None
     with pytest.raises(FileExistsError):
         sb.write_session_bootstrap_artifacts(result, target)
     (target / "socket/socket_1/payloads.json").write_text("{}")
