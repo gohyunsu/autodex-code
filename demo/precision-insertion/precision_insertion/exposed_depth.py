@@ -205,6 +205,7 @@ def estimate_exposed_depth_for_mode(
     result = estimate_exposed_depth(
         views, socket_rim_z_m=float(rim),
         key_rear_to_tip_m=float(tip) - float(rear), limits=limits)
+    result["limits"] = asdict(limits)
     result["mode"] = {"family": mode.family, "gap_mm": mode.gap_mm,
                       "key_object": mode.key_object,
                       "socket_object": mode.socket_object}

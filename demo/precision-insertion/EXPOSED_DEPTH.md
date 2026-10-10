@@ -35,13 +35,21 @@ not silently fall back to a predicted key pose. Square-key yaw, contact
 forces and grasp retention are separate gates even if its axial depth is
 visible.
 
-This is **not yet** a `guarded_execution_v1` key-depth source: there is no
-commissioned final-camera producer/held-out landmark error study or saved
-source binding. To integrate it, build `CalibratedXYFrame` objects from the
-verified final/abort capture and frozen session camera/socket transforms,
-run `observe_exposed_key_rear_axis`, estimate the interval using approved
-`ExposedDepthLimits`, then save raw image hashes, prompts, responses,
-landmarks, calibration/CAD hashes, timestamps and the computed interval.
-The insertion checkpoint must verify that complete source before using it
-for a physical success label. Local VLM metric points require native-size
-images (`require_native_pixels=True`); resized coordinates are rejected.
+`assess_saved_exposed_depth` now performs the **read-only saved-image handoff**:
+it verifies a `final_or_abort` raw capture, checks its exposure interval
+against the supplied guarded-stroke completion, reloads the frozen session
+camera/socket frame, calls the VLM on full undistorted images, and saves the
+original text, parsed pixels, image/calibration/CAD hashes and interval.
+`verify_saved_exposed_depth` rechecks these files and replays the saved VLM
+text through the same parser and geometry without calling the model again.
+This is source consistency, **not** an independent physical measurement.
+
+The report deliberately sets `depth_source_admissible_for_task_label=false`.
+It is **not yet** a `guarded_execution_v1` key-depth source: the final camera
+producer and the worst-case landmark/camera/socket/CAD error bounds still
+need rig-specific, held-out commissioning. The guarded execution log also
+needs to bind its actual completion time and attempt ID to this report.
+Until those gates are established, `insertion_checkpoint.py` must not use
+the interval for a physical success label. Local VLM metric points require
+native-size images (`require_native_pixels=True`); resized coordinates are
+rejected.

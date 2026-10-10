@@ -492,9 +492,11 @@ three source files are hashed but not yet semantically verified.
 An optional [exposed-length depth diagnostic](EXPOSED_DEPTH.md) now asks
 the VLM for a visible key rear-centre/axis rather than its hidden tip and
 calculates a worst-case CAD depth interval from calibrated multi-view
-geometry. It is **not** yet admitted as one of those physical key-depth
-source files: real landmark and calibration error bounds, final-frame
-provenance and source verification remain necessary.
+geometry. `saved_exposed_depth.py` binds that diagnostic to verified
+final/abort camera frames, frozen calibration and saved VLM text, and can
+replay the arithmetic without requerying the model. It is **not** yet
+admitted as a physical key-depth source: real landmark/calibration error
+bounds and guarded-controller completion binding remain necessary.
 `FinalInsertionCapture` carries raw frames
 for either before or after phase; matching camera request/frame IDs, raw BGR
 full frames and camera-acquisition metadata are required;
