@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from autodex.utils.conversion import se32cart  # noqa: E402
 from precision_insertion.candidates import build_endpoint_catalog  # noqa: E402
 from precision_insertion.observer import LabeledFrame  # noqa: E402
+from precision_insertion.frame_provenance import image_sha256  # noqa: E402
 from precision_insertion.xy_retry import assess_xy_retry  # noqa: E402
 from test_candidates import _candidate_fixture, _session_record  # noqa: E402
 
@@ -62,6 +63,19 @@ def _setup(tmp_path, *, focal=4000):
         serial, "preinsert_hold", 100.0,
         Image.new("RGB", (1000, 800), (100, 110, 120)))
         for serial in ("a", "b")]
+    bgr = np.asarray(frames[0].image, dtype=np.uint8)[:, :, ::-1].copy()
+    frame_ids = {"a": 31, "b": 32}
+    acquisition_metadata = {
+        "request_id": 15, "source": "camera_acquisition",
+        "frames": {serial: {
+            "frame_id": frame_ids[serial],
+            "image_sha256": image_sha256(bgr),
+            "timestamp_s": 100.0,
+            "max_error_s": 0.001,
+            "timestamp_method": "hardware_exposure",
+            "clock_domain": "unix_utc",
+        } for serial in frame_ids},
+    }
 
     def xy_screen(**kwargs):
         return {
@@ -87,6 +101,8 @@ def _setup(tmp_path, *, focal=4000):
         "frames": frames, "intrinsics_full": intrinsic,
         "extrinsics_full": extrinsic,
         "frame_timestamp_source": "camera_acquisition",
+        "frame_request_id": 15, "frame_ids": frame_ids,
+        "acquisition_metadata": acquisition_metadata,
         "backend": FixedBackend(), "max_total_offset_m": 0.002,
         "minimum_anchor_separation_px": 3.0, "crop_width_px": 320,
         "decision_timestamp_s": 100.05, "max_frame_age_s": 0.2,
@@ -103,6 +119,7 @@ def test_vlm_multiview_choice_is_only_a_replan_proposal(tmp_path):
     assert result.decision.supporting_cameras == ("a", "b")
     assert args["backend"].calls == 2
     assert result.to_record()["robot_ready"] is False
+    assert result.to_record()["frame_binding"]["request_id"] == 15
     assert len(result.endpoint_screen["endpoint_clear_choice_ids"]) == 5
 
 
@@ -159,4 +176,18 @@ def test_observed_key_hand_drift_stops_retry_before_vlm(tmp_path):
     result = assess_xy_retry(**args)
     assert result.status == "stop"
     assert "relation_drift" in result.reason
+    assert args["backend"].calls == 0
+
+
+def test_retry_rejects_mismatched_frame_and_uncertain_timing(tmp_path):
+    args = _setup(tmp_path)
+    args["acquisition_metadata"]["frames"]["a"]["frame_id"] = 99
+    with pytest.raises(ValueError, match="frame ID mismatch"):
+        assess_xy_retry(**args)
+    assert args["backend"].calls == 0
+
+    args = _setup(tmp_path / "other")
+    args["acquisition_metadata"]["frames"]["a"]["max_error_s"] = 0.02
+    result = assess_xy_retry(**args)
+    assert result.status == "visual_abstain"
     assert args["backend"].calls == 0

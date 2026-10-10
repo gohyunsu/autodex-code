@@ -101,6 +101,10 @@ The first independent helpers are in `precision_insertion/`:
   limits, then screens the actual observed rigid relation at each XY target;
   a large drift stops the retry. Inspire finger configuration remains a
   nominal controller model, not measured finger feedback.
+  The multi-view retry now also binds every full-frame VLM image to its
+  request/frame ID, decoded-pixel hash and bounded acquisition time. A missing
+  capture-side provenance producer or excessive worst-case skew/age prevents
+  voting; `CAMERA_FRAME_HANDOFF.md` also applies to retry images.
   It returns a **proposal requiring new live preflight**, never a Franka
   command or a claim of insertion success. For a gap smaller than 1 mm, all
   1 mm endpoint offsets may be geometrically impossible; that correctly

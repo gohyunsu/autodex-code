@@ -80,6 +80,14 @@ the stated worst-case cross-camera skew as
 `max(timestamp + error) - min(timestamp - error)` against its configured
 session limit. Evidence files record each frame's hash, ID, time and method.
 
+The same contract applies after a failed insertion: `assess_xy_retry` takes
+the full-frame `LabeledFrame` images, their separately retained sensor frame
+IDs, request ID and camera-side metadata. It checks the exact BGR pixel
+digest, timestamp equality and worst-case cross-camera skew/age **before**
+projecting 1 mm choices or calling the VLM. Cropped overlays are derived only
+after this gate. If the acquisition time is too uncertain or old, the result
+is `visual_abstain`, not an XY motion command.
+
 This contract catches accidental cross-frame mixing; it is not a signature
 or an independent certification of the producer. A physical bring-up still
 needs a measured timestamp-error budget, camera/robot calibration, socket
@@ -93,5 +101,6 @@ Test the software gate without hardware:
 cd /home/hyunsu/autodex-code
 /home/hyunsu/miniconda3/envs/autodex_bodex/bin/python -m pytest -q \
   demo/precision-insertion/tests/test_live_capture.py \
-  demo/precision-insertion/tests/test_session_bootstrap.py
+  demo/precision-insertion/tests/test_session_bootstrap.py \
+  demo/precision-insertion/tests/test_xy_retry.py
 ```

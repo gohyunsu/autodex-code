@@ -11,14 +11,16 @@ from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 import numpy as np
+from PIL import Image
 
 from .assets import AssetPaths
 from .candidates import select_pose_candidates, validate_catalog_session
 from .config import TaskMode
 from .endpoint import screen_grasp_endpoint
+from .frame_provenance import bounded_capture_skew_s, verify_frame_provenance
 from .geometry import pose_angle_deg, validate_se3
 from .observer import ImageVLM, LabeledFrame, VLMObservation, observe_xy_views
 from .xy_endpoint import screen_axis_1mm_endpoint_choices
@@ -40,6 +42,7 @@ class XYRetryAssessment:
     vlm_observations: tuple[VLMObservation, ...]
     decision: ChoiceDecision | None
     reason: str
+    frame_binding: dict | None = None
 
     def to_record(self) -> dict:
         return {
@@ -52,6 +55,7 @@ class XYRetryAssessment:
                                  for item in self.vlm_observations],
             "choice_decision": None if self.decision is None
                                else self.decision.to_record(),
+            "frame_binding": self.frame_binding,
             "scope": "read_only_retry_assessment_not_robot_motion",
             "robot_ready": False,
         }
@@ -69,6 +73,8 @@ def assess_xy_retry(
     grasp_held: bool, hard_abort: bool,
     frames: Sequence[LabeledFrame], intrinsics_full: dict,
     extrinsics_full: dict, frame_timestamp_source: str,
+    frame_request_id: int, frame_ids: Mapping[str, int],
+    acquisition_metadata: Mapping,
     backend: ImageVLM, max_total_offset_m: float,
     minimum_anchor_separation_px: float, crop_width_px: int,
     decision_timestamp_s: float, max_frame_age_s: float,
@@ -85,6 +91,42 @@ def assess_xy_retry(
         return XYRetryAssessment(
             "stop", None, None, (), None,
             "hard_abort_grasp_lost_or_guarded_withdrawal_unconfirmed")
+    if not frames or len({frame.camera_id for frame in frames}) != len(frames):
+        raise ValueError("retry needs unique synchronized camera frames")
+    if type(frame_request_id) is not int or frame_request_id <= 0:
+        raise ValueError("retry needs a positive camera request ID")
+    if (not math.isfinite(decision_timestamp_s) or
+            not math.isfinite(max_capture_skew_s) or
+            max_capture_skew_s <= 0 or not math.isfinite(max_frame_age_s) or
+            max_frame_age_s <= 0):
+        raise ValueError("decision and freshness limits must be finite and positive")
+    rgb_images = {}
+    for frame in frames:
+        if frame.phase != "preinsert_hold":
+            raise ValueError("XY retry frame must be from preinsert_hold")
+        if not isinstance(frame.image, Image.Image) or frame.image.mode != "RGB":
+            raise ValueError("XY retry needs unchanged full-frame RGB pixels")
+        rgb_images[frame.camera_id] = np.asarray(
+            frame.image, dtype=np.uint8)[:, :, ::-1].copy()
+    verified_frames = verify_frame_provenance(
+        acquisition_metadata, request_id=frame_request_id,
+        images_bgr=rgb_images, frame_ids=frame_ids)
+    if any(frame.timestamp_s !=
+           verified_frames[frame.camera_id]["timestamp_s"]
+           for frame in frames):
+        raise ValueError("VLM frame timestamp differs from bound acquisition")
+    frame_binding = {"request_id": frame_request_id,
+                     "frames": verified_frames}
+    if (bounded_capture_skew_s(verified_frames) > max_capture_skew_s or
+            decision_timestamp_s - min(
+                row["timestamp_s"] - row["max_error_s"]
+                for row in verified_frames.values()) > max_frame_age_s or
+            max(row["timestamp_s"] + row["max_error_s"]
+                for row in verified_frames.values()) >
+            decision_timestamp_s + max_capture_skew_s):
+        return XYRetryAssessment(
+            "visual_abstain", None, None, (), None,
+            "camera_acquisition_skew_or_age_exceeds_bound", frame_binding)
     root = Path(shared_root).expanduser().resolve()
     if Path(catalog.get("shared_root", "")).expanduser().resolve() != root:
         raise ValueError("catalogue shared root differs from retry root")
@@ -120,7 +162,8 @@ def assess_xy_retry(
             rotation_drift > max_grasp_rotation_drift_deg):
         return XYRetryAssessment(
             "stop", None, None, (), None,
-            "observed_key_hand_relation_drift_exceeds_commissioned_limit")
+            "observed_key_hand_relation_drift_exceeds_commissioned_limit",
+            frame_binding)
     screen_report = screen_axis_1mm_endpoint_choices(
         shared_root=root, mode=mode,
         candidate_dir=candidate_dir,
@@ -137,9 +180,8 @@ def assess_xy_retry(
     if not choices or all(choice.choice_id == "hold" for choice in choices):
         return XYRetryAssessment(
             "no_safe_direction", screen_report, None, (), None,
-            "no alternative 1 mm target passed exact endpoint geometry")
-    if not frames or len({frame.camera_id for frame in frames}) != len(frames):
-        raise ValueError("retry needs unique synchronized camera frames")
+            "no alternative 1 mm target passed exact endpoint geometry",
+            frame_binding)
     camera_ids = {frame.camera_id for frame in frames}
     if (camera_ids - set(intrinsics_full) or camera_ids - set(extrinsics_full)):
         raise ValueError("retry frame lacks AutoDex camera calibration")
@@ -153,8 +195,6 @@ def assess_xy_retry(
     z = float(preinsert[2, 3])
     projected_frames = []
     for frame in frames:
-        if frame.phase != "preinsert_hold":
-            raise ValueError("XY retry frame must be from preinsert_hold")
         params = intrinsics_full[frame.camera_id]
         K = np.asarray(params["K_undist"], dtype=float)
         projected_frames.append(CalibratedXYFrame(
@@ -170,12 +210,9 @@ def assess_xy_retry(
     if overlays.status != "views_ready":
         return XYRetryAssessment(
             "visual_abstain", screen_report, overlays, (), None,
-            "fewer than two calibrated views resolve 1 mm candidates")
+            "fewer than two calibrated views resolve 1 mm candidates",
+            frame_binding)
     votes, observations = observe_xy_views(backend, overlays.views, choices)
-    if not (math.isfinite(decision_timestamp_s) and
-            math.isfinite(max_capture_skew_s) and
-            math.isfinite(max_frame_age_s)):
-        raise ValueError("decision and freshness limits must be finite")
     decision = resolve_multiview_choice(
         choices, votes, current_offset_socket_m=current_offset_socket_m,
         grasp_held=grasp_held, hard_abort=hard_abort,
@@ -187,4 +224,4 @@ def assess_xy_retry(
         "proposal_requires_live_preflight" if decision.status == "propose"
         else "visual_abstain_or_stop",
         screen_report, overlays, tuple(observations), decision,
-        decision.reason)
+        decision.reason, frame_binding)
