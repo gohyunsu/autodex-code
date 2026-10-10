@@ -85,6 +85,7 @@ def test_gemini_backend_requires_explicit_key_without_leaking_it(monkeypatch):
                          ("google.genai.types", sdk_types)):
         monkeypatch.setitem(sys.modules, name, module)
     backend = ZeroDexGeminiBackend.from_env(model="test-model")
+    assert backend.native_pixel_coordinates is False
     answer = backend.infer([_image(), _image()], "label the held key")
     assert answer == '{"class":"held"}'
     assert sent[0]["model"] == "test-model"

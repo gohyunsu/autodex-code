@@ -1256,8 +1256,11 @@ to its patch grid or pixel-area limits. For the cached Qwen3-VL-2B processor,
 both dimensions must be multiples of 32 and the area within its configured
 limits: 640×480 is unchanged, whereas 1280×720 becomes 1280×704 internally
 and is rejected for metric grounding. Unknown local processor geometry also
-fails closed. The point-grounding path rejects a semantic-only local backend.
-This safeguards coordinate bookkeeping, not VLM pixel accuracy:
+fails closed. The point-grounding path also requires an explicit verified
+native-pixel backend contract: an undeclared adapter or the current Gemini
+adapter cannot produce metric coordinates because its internal image
+transforms have not been verified. Gemini remains available for semantic
+read-only labels. This safeguards coordinate bookkeeping, not VLM pixel accuracy:
 calibration/held-out grounding error limits remain mandatory. Lift and
 insertion comparisons reject unpaired camera IDs, duplicate phase frames,
 or reversed timestamps; a front

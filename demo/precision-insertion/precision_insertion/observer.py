@@ -117,6 +117,9 @@ class ZeroDexGeminiBackend:
         self.client = client
         self.model = model
         self.thinking_level = thinking_level
+        # The API may transform image resolution internally; no reversible
+        # original-pixel mapping is exposed by this narrow adapter.
+        self.native_pixel_coordinates = False
 
     @classmethod
     def from_env(cls, *, model: str, env_name: str = "GEMINI_API_KEY",

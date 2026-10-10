@@ -155,6 +155,8 @@ def test_no_parallax_and_uncertain_calibration_abstain():
 
 
 class _Backend:
+    native_pixel_coordinates = True
+
     def __init__(self, answer):
         self.answer = answer
 
@@ -275,5 +277,16 @@ def test_metric_grounding_rejects_a_resized_local_backend():
 
     frame = _line_rig(np.array([0., 0., .09]),
                       np.array([0., 0., -1.]))[0].frame
-    with pytest.raises(ValueError, match="forbids local VLM image resizing"):
+    with pytest.raises(ValueError, match="requires verified native-pixel"):
         observe_grounded_cylinder_axis(ResizedBackend(), [frame])
+
+
+def test_metric_grounding_rejects_backend_without_pixel_contract():
+    class UnknownBackend:
+        def infer(self, images, prompt):
+            raise AssertionError("grounding must reject before inference")
+
+    frame = _line_rig(np.array([0., 0., .09]),
+                      np.array([0., 0., -1.]))[0].frame
+    with pytest.raises(ValueError, match="requires verified native-pixel"):
+        observe_grounded_cylinder_axis(UnknownBackend(), [frame])
