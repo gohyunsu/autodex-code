@@ -78,6 +78,10 @@ from .postshift_insertion import (
     PostShiftInsertionPreflight, plan_postshift_insertion_preflight,
     verify_postshift_insertion_preflight, write_postshift_insertion_preflight,
 )
+from .postshift_path_handoff import (
+    prepare_postshift_path_handoff as write_postshift_path_handoff,
+    verify_postshift_path_handoff,
+)
 from .repose_artifacts import write_repose_preflight_artifacts
 from .repose_preflight import validate_repose_rest_target
 from .repose_transition import (
@@ -193,6 +197,8 @@ class SessionRunner:
         self._postshift_saved_reports: set[Path] = set()
         self._postshift_20mm_used_reports: set[Path] = set()
         self._postshift_20mm_index = 0
+        self._postshift_handoff_used_reports: set[Path] = set()
+        self._postshift_handoff_index = 0
         self._write_exclusive(
             target / "frozen_session_calibration.json", calibration.record)
         self._write_exclusive(target / "endpoint_catalog.json", catalog)
@@ -2245,6 +2251,57 @@ class SessionRunner:
         self._postshift_20mm_used_reports.add(source)
         self._postshift_20mm_index += 1
         return result
+
+    def prepare_postshift_path_handoff(
+        self, *, preflight: PostShiftInsertionPreflight,
+        preflight_report_path: Path, checkpoint: PostShiftCheckpoint,
+        shift_plan: GroundedLateralPreflight,
+        measured_start: LiveRobotState, decision_timestamp_s: float,
+        max_state_age_s: float, max_start_joint_error_rad: float,
+        max_hand_drift_raw: float, max_arm_hand_skew_s: float,
+        max_hand_command_error_raw: float, max_arm_velocity_rad_s: float,
+    ) -> Path:
+        """Save a transfer-then-axial packet; never authorize either motion."""
+        if (self.current_decision().action !=
+                "guarded_withdrawal_then_xy_assessment" or
+                self._attempt is None or self._attempt_dir is None or
+                preflight.attempt_id != self._attempt.attempt_id or
+                preflight.candidate_id != self._attempt.candidate_id or
+                preflight.status != "sampled_postshift_20mm_preflight_pass"):
+            raise ValueError("post-shift handoff needs this passing held retry")
+        source = Path(preflight_report_path).expanduser().resolve()
+        expected_root = (self._attempt_dir /
+                         "postshift_20mm_preflights").resolve()
+        if (source.parent.parent != expected_root or
+                source.name != "report.json" or
+                source in self._postshift_handoff_used_reports or
+                preflight.postshift_report_path.resolve() not in
+                self._postshift_20mm_used_reports):
+            raise ValueError("post-shift handoff source is not this attempt's new plan")
+        self.verify_current_preflight_evidence()
+        output = (self._attempt_dir / "postshift_path_handoffs" /
+                  f"{self._postshift_handoff_index:03d}")
+        kwargs = dict(
+            preflight_report_path=source, expected=preflight,
+            checkpoint=checkpoint, shift_plan=shift_plan,
+            mode=self.mode, shared_root=self.shared_root,
+            calibration=self.calibration,
+            measured_start=measured_start,
+            decision_timestamp_s=decision_timestamp_s,
+            max_state_age_s=max_state_age_s,
+            max_start_joint_error_rad=max_start_joint_error_rad,
+            max_hand_drift_raw=max_hand_drift_raw,
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s)
+        path = write_postshift_path_handoff(output_dir=output, **kwargs)
+        verify_postshift_path_handoff(
+            path, expected=preflight, checkpoint=checkpoint,
+            shift_plan=shift_plan, mode=self.mode,
+            shared_root=self.shared_root, calibration=self.calibration)
+        self._postshift_handoff_used_reports.add(source)
+        self._postshift_handoff_index += 1
+        return path
 
     def record_failure(
         self, code: str, *, timestamp_s: float,

@@ -287,6 +287,62 @@ def test_postshift_20mm_session_requires_its_saved_checkpoint(
             **args, "checkpoint_report_path": tmp_path / "outside.json"})
 
 
+def test_postshift_handoff_session_uses_only_its_saved_plan(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    runner._attempt = SimpleNamespace(
+        attempt_id="attempt_1", candidate_id="table/0/3")
+    runner._attempt_dir = runner.output_dir / "attempts" / "attempt_1"
+    runner._attempt_dir.mkdir(parents=True)
+    monkeypatch.setattr(runner, "current_decision", lambda: SimpleNamespace(
+        action="guarded_withdrawal_then_xy_assessment"))
+    checks = []
+    monkeypatch.setattr(runner, "verify_current_preflight_evidence",
+                        lambda: checks.append("trial") or {})
+    checkpoint_report = (runner._attempt_dir / "postshift_checkpoints" /
+                         "000/report.json").resolve()
+    checkpoint_report.parent.mkdir(parents=True)
+    checkpoint_report.write_text("{}", encoding="utf-8")
+    runner._postshift_20mm_used_reports.add(checkpoint_report)
+    plan_report = (runner._attempt_dir / "postshift_20mm_preflights" /
+                   "000/report.json").resolve()
+    plan_report.parent.mkdir(parents=True)
+    plan_report.write_text("{}", encoding="utf-8")
+    preflight = SimpleNamespace(
+        attempt_id="attempt_1", candidate_id="table/0/3",
+        status="sampled_postshift_20mm_preflight_pass",
+        postshift_report_path=checkpoint_report)
+    calls = []
+
+    def write(*, output_dir, **kwargs):
+        calls.append(kwargs)
+        output_dir.mkdir(parents=True, exist_ok=False)
+        path = output_dir / "report.json"
+        path.write_text("{}", encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(session_runner, "write_postshift_path_handoff", write)
+    monkeypatch.setattr(session_runner, "verify_postshift_path_handoff",
+                        lambda *_args, **_kwargs: {})
+    args = dict(
+        preflight=preflight, preflight_report_path=plan_report,
+        checkpoint=object(), shift_plan=object(), measured_start=object(),
+        decision_timestamp_s=100., max_state_age_s=.1,
+        max_start_joint_error_rad=.01, max_hand_drift_raw=5.,
+        max_arm_hand_skew_s=.01, max_hand_command_error_raw=10.,
+        max_arm_velocity_rad_s=.01)
+    output = runner.prepare_postshift_path_handoff(**args)
+    assert output == (runner._attempt_dir /
+                      "postshift_path_handoffs/000/report.json")
+    assert calls[0]["preflight_report_path"] == plan_report
+    assert checks == ["trial"]
+    with pytest.raises(ValueError, match="not this attempt's new plan"):
+        runner.prepare_postshift_path_handoff(**args)
+    with pytest.raises(ValueError, match="not this attempt's new plan"):
+        runner.prepare_postshift_path_handoff(**{
+            **args, "preflight_report_path": tmp_path / "outside.json"})
+
+
 def test_attempt_rejects_changed_preflight_report_and_binding(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)

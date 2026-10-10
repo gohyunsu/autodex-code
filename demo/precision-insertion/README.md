@@ -39,8 +39,9 @@ confidence calculation, key-axis direction and predicted-versus-observed
 tip/axis consistency. It saves `lateral_hold_preflights/NNN/` without calling
 `record_retry` or changing the attempt state. Its first-step-only source
 contract means a second adjustment needs a **new** capture and a separately
-verified post-shift hold, not reuse of the earlier diagnostic. Physical
-execution of even the first shift is not implemented.
+verified post-shift hold, not reuse of the earlier diagnostic. An opt-in
+[held XY execution boundary](LATERAL_EXECUTION.md) now exists, but requires an
+independently commissioned controller; none is bundled.
 
 After an **external commissioned controller** executes that first shift,
 save a fresh same-request capture with
@@ -141,6 +142,21 @@ result = runner.prepare_postshift_insertion_preflight(
 The five error/limit variables above are measurements to commission; do not
 copy numbers from the unit tests. This call writes a report but never moves
 Franka or changes an attempt label.
+
+The passing post-shift replan contains **two** paths: a non-contact transfer
+from the new measured hold, followed by an axial 20 mm path. They cannot be
+interchanged: the shifted hold can differ from the axial start. Call
+`SessionRunner.prepare_postshift_path_handoff(...)` with that preflight, its
+saved report, the same checkpoint/shift plan, and a fresh stationary
+`LiveRobotState`. It saves `postshift_path_handoffs/NNN/report.json` with the
+hashed archive, both path endpoints, and `transfer_required`. The verifier
+replays the checkpoint/CAD/plan source checks and the 20 mm target geometry.
+This is a **read-only evidence packet**, not a transfer or contact execution
+gate. The existing centered-path `execute_bound_guarded_insertion` must not
+be used for this retry. A separately commissioned post-shift transfer,
+fresh arrival observation, guarded contact executor and physical key-depth
+admission are still needed before retry success can be labeled. See
+[POSTSHIFT_HANDOFF.md](POSTSHIFT_HANDOFF.md) for the call contract.
 
 The underlying first-shift planning API used by this binder is
 `plan_lateral_hold_shift(planner, mode, shared_root, calibration, trial_scene,
