@@ -69,6 +69,19 @@ Commission a dedicated guarded controller or a vetted external control
 interface before contact trials rather than copying the entire executor or
 using unguarded `follow_joint_trajectory` for the contact stroke.
 
+The demo now composes CAD entry, preinsert and 20 mm key/hand goals from one
+frozen socket pose in `targets.py`, retaining the selected `T_key_hand` through
+all three stages. This is only target construction. In particular, the
+unchanged `GraspPlanner.plan_cartesian_pose()` does not automatically treat
+the full key as a swept attached collision body during transfer, and
+`plan_vertical_stroke()` explicitly accepts only world ±Z strokes. The next
+full-task preflight must check the **full held key** on the dense transfer
+path and every approach-to-20 mm segment, with intended key/socket contact
+handled separately. A tilted socket cannot be fed to the world-Z primitive:
+either commission a socket-axis stroke planner or reject it under an
+explicit, measured uprightness tolerance. No target-pose result may be
+promoted to `preinsert_reached` or `insertion_success` on this basis alone.
+
 ## What the existing v8 candidate pool proves
 
 `BODex/generate.py` writes *every* optimized seed under its generated scene,
