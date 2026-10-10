@@ -14,6 +14,7 @@ import re
 from typing import Callable, Mapping
 
 from .assets import AssetPaths
+from .calibration import validate_session_camera_calibration
 from .key_perception import (
     KeyPoseObservation, admit_key_capture, verify_key_capture_artifacts,
     write_key_capture_artifacts,
@@ -165,6 +166,13 @@ def prepare_next_live_key(
         assets_root=str(paths.foundpose_assets_root(runner.mode.key_object)),
         intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
         image_hw=image_hw, mode="live", load_silhouette=False)
+    # Reject a changed camera rig before triggering another image request.
+    # admit_key_capture repeats this check after the actual capture.
+    validate_session_camera_calibration(
+        runner.calibration,
+        intrinsics_undist=init_orchestrator.intrinsics_undist,
+        extrinsics_full=init_orchestrator.extrinsics,
+        calibrated_camera_ids=calibrated_camera_ids)
     capture = collect_key_capture(
         init_orchestrator=init_orchestrator,
         key_object=runner.mode.key_object, capture_id=capture_id,

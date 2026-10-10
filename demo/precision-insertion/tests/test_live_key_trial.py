@@ -64,6 +64,8 @@ def _setup(tmp_path, monkeypatch, *, state_timestamp=100.005):
 
     class Init:
         obj_name = None
+        intrinsics_undist = {"cam_a": np.eye(3), "cam_b": np.eye(3)}
+        extrinsics = {"cam_a": np.eye(4), "cam_b": np.eye(4)}
 
         def init_object(self, **kwargs):
             events.append("init_key")
@@ -74,6 +76,13 @@ def _setup(tmp_path, monkeypatch, *, state_timestamp=100.005):
             self.obj_name = mode.key_object
 
     init = Init()
+
+    def verify_frozen_camera(_calibration, **kwargs):
+        events.append("verify_frozen_camera")
+        assert kwargs["calibrated_camera_ids"] == {"cam_a", "cam_b"}
+
+    monkeypatch.setattr(
+        trial, "validate_session_camera_calibration", verify_frozen_camera)
     capture = SimpleNamespace(capture_id="key_001", request_id=25)
     observation = KeyPoseObservation(
         "key_001", 25, mode.key_object, mode.family, np.eye(4), "cam_a",
@@ -154,7 +163,8 @@ def _setup(tmp_path, monkeypatch, *, state_timestamp=100.005):
 def test_live_key_capture_state_and_preflight_order(tmp_path, monkeypatch):
     arguments, events, _repre = _setup(tmp_path, monkeypatch)
     result = trial.prepare_next_live_key(**arguments)
-    assert events == ["compatible_renderer", "init_key", "capture", "admit", "save_key_evidence",
+    assert events == ["compatible_renderer", "init_key", "verify_frozen_camera",
+                      "capture", "admit", "save_key_evidence",
                       "verify_key_evidence", "measured_state_at_exposure",
                       "preflight"]
     assert result.observation.capture_id == "key_001"
@@ -227,3 +237,16 @@ def test_silhouette_failure_blocks_camera_and_daemon_init(tmp_path, monkeypatch)
     with pytest.raises(RuntimeError, match="renderer unavailable"):
         trial.prepare_next_live_key(**arguments)
     assert events == []
+
+
+def test_changed_camera_calibration_rejects_before_key_capture(
+        tmp_path, monkeypatch):
+    arguments, events, _repre = _setup(tmp_path, monkeypatch)
+
+    def changed(_calibration, **_kwargs):
+        raise ValueError("live camera calibration changed")
+
+    monkeypatch.setattr(trial, "validate_session_camera_calibration", changed)
+    with pytest.raises(ValueError, match="camera calibration changed"):
+        trial.prepare_next_live_key(**arguments)
+    assert events == ["compatible_renderer", "init_key"]

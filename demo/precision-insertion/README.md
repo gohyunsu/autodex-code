@@ -2171,63 +2171,14 @@ pose estimator, and a positive endpoint catalog is not motion authorization;
 the live camera/robot trial loop and guarded contact controller remain to be
 commissioned.
 
-For a **single long-running Python process**, the read-only
-`precision_insertion.live_trial_start.capture_and_preflight_next_key()` now
-joins the next step without duplicating the underlying AutoDex logic. After
-`open_verified_session()` returns its `runner`, it checks that the runner
-allows a fresh trial and that the key mesh and canonical FoundPose file exist.
-It reinitializes the existing FoundPose orchestrator for the **key**, obtains
-same-request images/masks/poses through `collect_key_capture()`, admits the
-tabletop pose with the frozen socket masked out, saves and re-verifies the
-source pixels, reads **measured** FR3/Inspire joints after the image, and
-passes that observation/state to `SessionRunner.preflight_next_key()` for
-pose-conditioned v8 selection and pickup–lift–transfer–20 mm planning.
-The returned decision may instead request another candidate or repose. It
-does not actuate either robot or treat a nominal plan as insertion success.
-
-```python
-from precision_insertion.live_session_runner import open_verified_session
-from precision_insertion.live_trial_start import (
-    KeyTrialCaptureLimits, capture_and_preflight_next_key,
-)
-
-opened = open_verified_session(
-    mode=mode, shared_root=shared_root, evidence_dir=started.evidence_dir,
-    catalog_path=current_complete_catalog, output_dir=new_run_dir,
-    max_xy_retries=2)
-prepared = capture_and_preflight_next_key(
-    runner=opened.runner, planner=autodex_fr3_inspire_planner,
-    init_orchestrator=init,
-    acquisition_metadata_for_request=acquisition_metadata_for_request,
-    read_measured_state=read_fresh_fr3_inspire_state,
-    capture_root=shared_capture_root, key_evidence_dir=new_key_evidence_dir,
-    capture_id="key_001", key_prompt="blue insertion key on the board",
-    calibrated_camera_ids=active_serials,
-    intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
-    image_hw=(H, W),
-    capture_limits=KeyTrialCaptureLimits(
-        view_limits=commissioned_key_view_limits,
-        maximum_multiview_center_error_mm=commissioned_center_error_mm,
-        maximum_multiview_angle_error_deg=commissioned_angle_error_deg,
-        maximum_socket_mask_overlap_fraction=commissioned_socket_overlap,
-        socket_projection_dilation_px=commissioned_socket_dilation_px,
-        minimum_refinement_iou=commissioned_key_refinement_iou,
-        maximum_arm_hand_skew_s=commissioned_arm_hand_skew_s,
-        maximum_hand_command_error_raw=commissioned_hand_tracking_error_raw,
-        maximum_arm_velocity_rad_s=commissioned_hold_velocity_rad_s,
-        maximum_key_state_skew_s=commissioned_key_state_skew_s),
-    path_limits=commissioned_path_audit_limits,
-    max_pose_error_deg=commissioned_tabletop_pose_error_deg,
-    axial_waypoint_step_m=commissioned_axial_waypoint_step_m,
-    timeout_s=commissioned_key_capture_timeout_s,
-)
-print(prepared.next_decision.to_record())  # evidence/preflight only
-```
-
-`run_auto.py` currently opens a ledger and **exits**; its in-memory runner is
-not resumable by another process. Use the programmatic sequence above until
-a commissioned persistent live loop is implemented. On this workstation,
-the missing canonical key/socket FoundPose files still prevent this call.
+`run_auto.py` opens a ledger and **exits**; its in-memory runner is not
+resumable by another process. For a long-running program use the existing
+[`live_key_trial.prepare_next_live_key()`](precision_insertion/live_key_trial.py)
+after `open_verified_session()`, as documented below. That path requires
+measured robot feedback buffered across the actual camera exposures; a
+single joint read after SAM/FoundPose inference is not equivalent. On this
+workstation, missing canonical key/socket FoundPose files still prevent a
+real session from reaching this stage.
 
 `board_snap` and `init` are the metadata-preserving adapters described in
 [CAMERA_FRAME_HANDOFF.md](CAMERA_FRAME_HANDOFF.md); all `commissioned_*`
