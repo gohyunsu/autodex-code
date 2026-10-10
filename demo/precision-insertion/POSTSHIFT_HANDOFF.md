@@ -267,7 +267,40 @@ controller/metric/feedback error requests `stop_and_acknowledge()` and
 requires supervised recovery. `verify_retry_guarded_execution(...)` replays
 the saved path, state, timeline, controller output, metric sources and
 commissioning references without a robot call. Even a complete external
-stroke does **not** change `insertion_success`: a new final/abort camera
-capture, VLM verdict and separately admitted physical key-depth estimate
-are still required. Synthetic fake-adapter tests are not a contact
-commissioning test.
+stroke does **not** change `insertion_success`. Synthetic fake-adapter tests
+are not a contact commissioning test.
+
+## Fresh retry insertion observation
+
+After the controller holds or aborts, obtain two **new** same-request raw
+AutoDex captures: one shortly before the stroke, after the retry handoff,
+and one after contact. Reusing the transfer-arrival frames is rejected. The
+request/frame IDs must advance, camera exposure intervals must bracket this
+stroke, and paired views must be among the arrival's grounded inlier cameras.
+
+```python
+report = runner.prepare_observed_retry_insertion_label(
+    replan=replan, previous=postshift_preflight,
+    arrival=arrival_checkpoint, checkpoint=postshift_checkpoint,
+    shift_plan=completed_shift_plan,
+    handoff_report_path=retry_packet,
+    execution_log_path=retry_execution_log,
+    preinsert_bundle=new_raw_precontact_capture,
+    final_bundle=new_raw_final_or_abort_capture,
+    backend=selected_vlm_backend,
+    decision_timestamp_s=decision_time_after_final_images,
+    max_phase_skew_s=commissioned_camera_skew,
+    max_preinsert_age_s=commissioned_precontact_age,
+    max_final_observation_gap_s=commissioned_final_gap,
+)
+```
+
+`verify_retry_insertion_checkpoint(...)` replays the saved VLM answer against
+the same PNG bytes and the exact execution/metric sources without another
+model call. The first-attempt `prepare_observed_insertion_label(...)` now
+rejects **all** retry records, including the formerly unbound v1 metric.
+The new attempt event can be `false` on a supported visible jam/slip or a
+sensor abort, or `unknown` on an ambiguous/normal-looking result. A claimed
+external key-depth interval is intentionally **not** admitted; therefore
+this path cannot yet record `insertion_success=true`. Independently
+commissioned physical key-depth admission is still needed for that label.

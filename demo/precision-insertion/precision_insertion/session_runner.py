@@ -47,7 +47,7 @@ from .endpoint import _load_mesh
 from .live_robot_state import LiveRobotState
 from .observer import ImageVLM
 from .raw_camera_capture import verify_raw_camera_capture
-from .outcome import InsertionEvidence
+from .outcome import InsertionEvidence, judge_insertion
 from .path_audit import PathAuditLimits
 from .pose_selection import classify_key_tabletop_pose
 from .postlift_preflight import (
@@ -1837,12 +1837,8 @@ class SessionRunner:
                         handoff["preinsert_report_path"]):
                     raise ValueError(
                         "guarded handoff differs from the observed arrival event")
-        elif handoff_ref is not None:
-            raise ValueError("centered axial handoff cannot label an XY retry")
-        if retry_events and (
-                report["preinsert_reached_at_s"] !=
-                retry_events[-1]["timestamp_s"]):
-            raise ValueError("retry insertion checkpoint predates the XY choice")
+        else:
+            raise ValueError("XY retry must use its own observed checkpoint")
         return self._record(lambda row: row.record_insertion_evidence(
             evidence, timestamp_s=timestamp_s, evidence_refs=evidence_refs))
 
@@ -1881,24 +1877,14 @@ class SessionRunner:
             raise ValueError("pre-insertion capture is for another key")
         retry_events = [event for event in self._attempt.events
                         if event["stage"] == "xy_retry"]
-        metric = json.loads(Path(metric_record_path).read_text(encoding="utf-8"))
-        if retry_events and metric.get("schema") == (
-                "precision_insertion_guarded_execution_v2"):
-            raise ValueError("XY retry needs its own post-shift axial handoff")
         if retry_events:
-            latest_retry = retry_events[-1]["timestamp_s"]
-            before_lower = min(
-                row["timestamp_s"] - row["max_error_s"]
-                for row in before_record["frame_evidence"].values())
-            if before_lower <= latest_retry:
-                raise ValueError("retry needs a fresh post-choice held-key frame")
-        elif (preinsert_events[0]["evidence_refs"].get(
+            raise ValueError("XY retry must use prepare_observed_retry_insertion_label")
+        metric = json.loads(Path(metric_record_path).read_text(encoding="utf-8"))
+        if (preinsert_events[0]["evidence_refs"].get(
                 "key_socket_pose" if is_key_capture else "preinsert_image") !=
               str(before_file)):
             raise ValueError("pre-insertion VLM image differs from arrival observation")
-        reached_at = max(preinsert_events[0]["timestamp_s"],
-                         retry_events[-1]["timestamp_s"] if retry_events else
-                         preinsert_events[0]["timestamp_s"])
+        reached_at = preinsert_events[0]["timestamp_s"]
         report = assess_insertion_checkpoint(
             attempt_id=self._attempt.attempt_id,
             candidate_id=self._attempt.candidate_id,
@@ -1934,6 +1920,95 @@ class SessionRunner:
             InsertionEvidence(**report["evidence"]),
             timestamp_s=decision_timestamp_s, evidence_refs=refs,
             checkpoint_path=path)
+        self._insertion_assessment_index += 1
+        return report
+
+    def prepare_observed_retry_insertion_label(
+        self, *, replan: PostShiftArrivalReplan,
+        previous: PostShiftInsertionPreflight,
+        arrival: PostShiftArrivalCheckpoint,
+        checkpoint: PostShiftCheckpoint,
+        shift_plan: GroundedLateralPreflight,
+        handoff_report_path: Path, execution_log_path: Path,
+        preinsert_bundle: Path, final_bundle: Path,
+        backend: ImageVLM, decision_timestamp_s: float,
+        max_phase_skew_s: float, max_preinsert_age_s: float,
+        max_final_observation_gap_s: float,
+        minimum_visual_views: int = 2,
+    ) -> dict:
+        """Record a second insertion verdict only from this retry's new pixels.
+
+        This cannot produce success from the external depth claim alone: the
+        retry checkpoint masks unadmitted physical key-depth measurements.
+        """
+        from .retry_insertion_checkpoint import (
+            assess_retry_insertion_checkpoint,
+            verify_retry_insertion_checkpoint,
+            write_retry_insertion_checkpoint,
+        )
+        if (self._attempt is None or self._attempt_dir is None or
+                self.current_decision().action !=
+                    "await_retry_execution_and_observation" or
+                not self._attempt.events or
+                self._attempt.events[-1].get("stage") != "xy_retry" or
+                self._attempt.events[-1].get("value") !=
+                    "grounded_continuous_xy" or
+                self._attempt.labels["insertion_success"] is not False or
+                replan.attempt_id != self._attempt.attempt_id or
+                replan.candidate_id != self._attempt.candidate_id):
+            raise ValueError("retry observation needs this pending XY attempt")
+        self.verify_current_preflight_evidence()
+        context = dict(
+            expected=replan, previous=previous, arrival=arrival,
+            checkpoint=checkpoint, shift_plan=shift_plan,
+            mode=self.mode, shared_root=self.shared_root,
+            calibration=self.calibration)
+        report = assess_retry_insertion_checkpoint(
+            execution_log_path=execution_log_path,
+            handoff_report_path=handoff_report_path,
+            **context, preinsert_bundle=preinsert_bundle,
+            final_bundle=final_bundle,
+            decision_timestamp_s=decision_timestamp_s, backend=backend,
+            max_phase_skew_s=max_phase_skew_s,
+            max_preinsert_age_s=max_preinsert_age_s,
+            max_final_observation_gap_s=max_final_observation_gap_s,
+            minimum_visual_views=minimum_visual_views)
+        if (report["attempt_id"] != self._attempt.attempt_id or
+                report["candidate_id"] != self._attempt.candidate_id or
+                report["session_calibration_sha256"] !=
+                    self.session_sha256 or
+                report["target_depth_m"] != self.mode.target_depth_m or
+                report["decision_timestamp_s"] !=
+                    float(decision_timestamp_s) or
+                report["outcome"]["insertion_success"] is True):
+            raise ValueError("retry visual result cannot certify task success")
+        output = (self._attempt_dir / "insertion_assessments" /
+                  f"{self._insertion_assessment_index:03d}")
+        path = write_retry_insertion_checkpoint(report, output)
+        verify_retry_insertion_checkpoint(path, **context)
+        metric = json.loads(Path(report["metric_record_path"]).read_text(
+            encoding="utf-8"))
+        sources = metric["source_records"]
+        refs = {
+            "vlm_observation": str(path),
+            "vlm_observation_sha256": hashlib.sha256(
+                path.read_bytes()).hexdigest(),
+            "key_depth": sources["key_depth"]["path"],
+            "alignment": sources["alignment"]["path"],
+            "force_trace": sources["force_trace"]["path"],
+            "grasp_state": sources["grasp_state"]["path"],
+            "guarded_execution": report["metric_record_path"],
+            "retry_execution_log": report["execution_log_path"],
+            "retry_axial_handoff": report["handoff_report_path"],
+        }
+        evidence = InsertionEvidence(**report["evidence"])
+        if (judge_insertion(evidence,
+                            target_depth_m=self.mode.target_depth_m)
+                .to_record() != report["outcome"]):
+            raise ValueError("retry label differs from observed checkpoint")
+        self._record(lambda row: row.record_insertion_evidence(
+            evidence, timestamp_s=decision_timestamp_s,
+            evidence_refs=refs))
         self._insertion_assessment_index += 1
         return report
 

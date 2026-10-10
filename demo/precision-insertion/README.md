@@ -181,8 +181,11 @@ the **new axial-only archive**; its exclusive packet is read-only and does
 not authorize contact. The opt-in `execute_bound_retry_guarded_insertion(...)`
 boundary can use a separately commissioned contact controller after fresh
 feedback, watchdog/contact reviews and an explicit live interlock. No such
-controller is bundled, and physical key-depth admission is still needed
-before retry success can be labeled. See
+controller is bundled. `prepare_observed_retry_insertion_label(...)` binds
+new paired raw camera frames, a VLM verdict and the retry execution record
+to a second insertion event; legacy first-insertion label code rejects retry
+records. Physical key-depth admission is still needed before retry success
+can be labeled. See
 [POSTSHIFT_HANDOFF.md](POSTSHIFT_HANDOFF.md) for the call contract.
 Its `verify_retry_guarded_metric(...)` additionally defines the external
 contact-record schema and replays the exact retry handoff/trace/source chain;
