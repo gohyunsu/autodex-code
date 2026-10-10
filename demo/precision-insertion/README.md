@@ -1091,6 +1091,16 @@ preflight = plan_insertion_after_pickup(
 print(preflight.to_record())
 ```
 
+The held hand is checked at **every** sampled joint of the lift, transfer,
+and axial cuRobo paths. If a nominally successful query changes an Inspire
+joint by more than the path contract permits, that grasp receives
+`held_lift_hand_drift`, `transfer_hand_drift`, or
+`axial_waypoint_hand_drift`; the record retains the maximum deviation and
+the per-trial scanner may test the next eligible grasp. It never executes or
+promotes that path. A malformed/non-finite path, incorrect starting joint
+state, incompatible world or unexpected solver exception still raises rather than being
+silently reclassified as ordinary grasp infeasibility.
+
 `sampled_planning_pass` is **not** a physical success label or execution
 permit. Run this against the actual selected candidate and measured session;
 the 2026-10-11 local square 1.5 mm pool has seven **nominally** eligible
@@ -2355,7 +2365,8 @@ the existing AutoDex singleton-world call to cuRobo's batch IK updater. It
 does not change either source tree. In the initial square 1.5 mm synthetic
 scene, the default Cartesian route produced an actual `0.03725 rad`
 Inspire-joint motion in a supposedly held transfer trajectory. The fixed-hand
-contract rejected it. With AutoDex's explicit **experimental** native
+contract rejected that candidate and now records the deviation before
+examining the next eligible grasp. With AutoDex's explicit **experimental** native
 locked-hand mode, `table/4/5102` passed the sampled offline chain in this
 same hypothetical scene. Its hand drift was below `3.6e-8 rad` in lift,
 transfer and axial paths. The diagnostic records the selected planner mode

@@ -14,6 +14,17 @@ rad**. The demo's fixed-hand invariant rejected that path rather than
 relabeling it as an insertion success. The preserved traceback is
 `/tmp/precision-synthetic-square-pose004-all-r3-20261011/failure.json`.
 
+A subsequent default-mode rerun now treats this specific fixed-hand path
+failure as a **candidate rejection** and scans the remaining eligible grasps.
+The seven-candidate synthetic report is
+`/tmp/precision-synthetic-square-default-hand-drift-evidence-20261011/report.json`.
+Four grasps failed AutoDex pickup preflight; the other three passed pickup but
+their nominal transfer paths changed Inspire joints by 0.0354, 0.0206 and
+0.0369 rad, respectively. Each attempt records its measured maximum drift.
+None of the seven passed the complete planning chain in default mode. These
+figures are from one hypothetical scene and do **not** establish that no
+physical pose can work or that the experimental mode is hardware-safe.
+
 The same scene with `AUTODEX_ENABLE_NATIVE_POSE_CONSTRAINTS=1` and
 `--planner-mode native-locked-experimental` produced:
 

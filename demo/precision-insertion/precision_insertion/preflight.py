@@ -69,6 +69,16 @@ class InsertionPreflight:
         }
 
 
+class HeldHandPoseDrift(ValueError):
+    """A nominal planner path changed the hand that must hold the key."""
+
+    def __init__(self, name: str, max_abs_delta_rad: float):
+        self.max_abs_delta_rad = max_abs_delta_rad
+        super().__init__(
+            f"{name} does not keep the held Inspire pose "
+            f"(max_abs_delta_rad={max_abs_delta_rad:.6g})")
+
+
 def _path(value: Any, name: str, start_q: np.ndarray,
           held_q: np.ndarray) -> np.ndarray:
     path = np.asarray(value, dtype=np.float64)
@@ -83,9 +93,7 @@ def _path(value: Any, name: str, start_q: np.ndarray,
             f"(max_abs_delta_rad={delta:.6g})")
     if not np.allclose(path[:, 7:], held_q, atol=1e-4, rtol=0):
         delta = float(np.max(np.abs(path[:, 7:] - held_q)))
-        raise ValueError(
-            f"{name} does not keep the held Inspire pose "
-            f"(max_abs_delta_rad={delta:.6g})")
+        raise HeldHandPoseDrift(name, delta)
     return path
 
 
@@ -178,7 +186,12 @@ def plan_insertion_after_pickup(
                           "planner_api": "plan_lift_preflight"})
     if lift_plan is None:
         return result("held_lift_unreachable")
-    lift = _path(lift_plan.traj, "held lift", lift_start, held)
+    try:
+        lift = _path(lift_plan.traj, "held lift", lift_start, held)
+    except HeldHandPoseDrift as exc:
+        query_records[-1]["held_hand_lock_verified"] = False
+        query_records[-1]["max_abs_hand_delta_rad"] = exc.max_abs_delta_rad
+        return result("held_lift_hand_drift")
     lift_goal = validate_se3(planner.fk_wrist(lift[-1]), name="lift endpoint FK")
     expected_lift = requested_wrist.copy()
     expected_lift[2, 3] += 0.10
@@ -259,7 +272,12 @@ def plan_held_transfer_and_axial(
     })
     if not transfer_result.success or transfer_result.trajectory is None:
         return result("transfer_unreachable")
-    transfer = _path(transfer_result.trajectory, "held transfer", start, held)
+    try:
+        transfer = _path(transfer_result.trajectory, "held transfer", start, held)
+    except HeldHandPoseDrift as exc:
+        query_records[-1]["held_hand_lock_verified"] = False
+        query_records[-1]["max_abs_hand_delta_rad"] = exc.max_abs_delta_rad
+        return result("transfer_hand_drift")
     if not _goal_met(validate_se3(planner.fk_wrist(transfer[-1]),
                                   name="transfer endpoint FK"),
                      targets.T_robot_hand_preinsert, limits):
@@ -290,8 +308,14 @@ def plan_held_transfer_and_axial(
         if not query.success or query.trajectory is None:
             return result("axial_waypoint_unreachable", transfer=transfer,
                           waypoints=index - 1)
-        segment = _path(query.trajectory, f"axial waypoint {index}",
-                        current, held)
+        try:
+            segment = _path(query.trajectory, f"axial waypoint {index}",
+                            current, held)
+        except HeldHandPoseDrift as exc:
+            query_records[-1]["held_hand_lock_verified"] = False
+            query_records[-1]["max_abs_hand_delta_rad"] = exc.max_abs_delta_rad
+            return result("axial_waypoint_hand_drift", transfer=transfer,
+                          waypoints=index - 1)
         if not _goal_met(validate_se3(planner.fk_wrist(segment[-1]),
                                       name=f"axial FK[{index}]"), goal, limits):
             return result("axial_waypoint_goal_residual", transfer=transfer,

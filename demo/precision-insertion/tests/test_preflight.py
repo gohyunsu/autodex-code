@@ -28,8 +28,12 @@ class _Planner:
     _hand = "fr3_inspire"
     _robot_cfg = {"kinematics": {"ee_link": "base_link"}}
 
-    def __init__(self, fail_query=None):
+    def __init__(self, fail_query=None, hand_drift_query=None,
+                 lift_hand_drift=False, start_mismatch_query=None):
         self.fail_query = fail_query
+        self.hand_drift_query = hand_drift_query
+        self.lift_hand_drift = lift_hand_drift
+        self.start_mismatch_query = start_mismatch_query
         self.calls = []
         self.lift_start = None
 
@@ -42,7 +46,10 @@ class _Planner:
         self.lift_start = np.asarray(start).copy()
         end = self.lift_start.copy()
         end[2] += lift_h
-        return SimpleNamespace(traj=np.linspace(start, end, 11))
+        traj = np.linspace(start, end, 11)
+        if self.lift_hand_drift:
+            traj[1:, 7] += 0.01
+        return SimpleNamespace(traj=traj)
 
     def plan_cartesian_pose(self, start, goal, **kwargs):
         self.calls.append((np.asarray(start).copy(), np.asarray(goal).copy(),
@@ -51,8 +58,12 @@ class _Planner:
             return SimpleNamespace(success=False, trajectory=None)
         end = np.asarray(start).copy()
         end[:3] = goal[:3, 3]
-        return SimpleNamespace(success=True,
-                               trajectory=np.linspace(start, end, 5))
+        traj = np.linspace(start, end, 5)
+        if self.hand_drift_query == len(self.calls):
+            traj[1:, 7] += 0.01
+        if self.start_mismatch_query == len(self.calls):
+            traj[0, 0] += 0.01
+        return SimpleNamespace(success=True, trajectory=traj)
 
 
 def _fixture():
@@ -152,6 +163,33 @@ def test_query_or_sampled_geometry_failure_does_not_promote_plan(monkeypatch):
     assert result.axial_waypoint_count == 2
     assert result.axial_trajectory is None
     assert result.to_record()["planner_query_records"][-1]["success"] is False
+
+
+@pytest.mark.parametrize(
+    ("planner_kwargs", "status", "last_stage", "completed_waypoints"), [
+        ({"lift_hand_drift": True}, "held_lift_hand_drift", "held_lift", 0),
+        ({"hand_drift_query": 1}, "transfer_hand_drift", "transfer", 0),
+        ({"hand_drift_query": 4}, "axial_waypoint_hand_drift",
+         "axial_waypoint", 2),
+    ])
+def test_planner_hand_drift_rejects_only_this_candidate(
+    planner_kwargs, status, last_stage, completed_waypoints,
+):
+    result = _run(_Planner(**planner_kwargs), _fixture())
+    assert result.status == status
+    assert result.sampled_planning_pass is False
+    assert result.axial_waypoint_count == completed_waypoints
+    assert result.axial_trajectory is None
+    last_query = result.to_record()["planner_query_records"][-1]
+    assert last_query["stage"] == last_stage
+    assert last_query["success"] is True
+    assert last_query["held_hand_lock_verified"] is False
+    assert last_query["max_abs_hand_delta_rad"] == pytest.approx(0.01)
+
+
+def test_planner_start_state_corruption_still_raises():
+    with pytest.raises(ValueError, match="does not start at the previous"):
+        _run(_Planner(start_mismatch_query=1), _fixture())
 
 
 def test_preflight_rejects_wrong_world_frame_or_untrusted_hold_source(monkeypatch):

@@ -156,12 +156,16 @@ def test_fresh_trial_tries_next_grasp_after_pickup_or_insertion_preflight_failur
     def plan_after(*, pickup_plan, **kwargs):
         del kwargs
         calls.append(tuple(pickup_plan.scene_info))
-        status = ("sampled_held_path_rejected" if calls[-1][-1] == "2"
+        status = ("transfer_hand_drift" if calls[-1][-1] == "2"
                   else "sampled_planning_pass")
+        queries = (({"stage": "transfer", "success": True,
+                     "held_hand_lock_verified": False,
+                     "max_abs_hand_delta_rad": 0.03725},)
+                   if status == "transfer_hand_drift" else ())
         return InsertionPreflight(
             status, None, None, None, {"sampled_clear": status ==
                                       "sampled_planning_pass"},
-            0, np.zeros(6), "commanded_nominal", ())
+            0, np.zeros(6), "commanded_nominal", queries)
 
     monkeypatch.setattr(
         "precision_insertion.trial_preflight.plan_insertion_after_pickup",
@@ -176,8 +180,23 @@ def test_fresh_trial_tries_next_grasp_after_pickup_or_insertion_preflight_failur
     assert len(planner.starts) == 3
     assert [row["insertion_preflight_status"]
             for row in result.attempted_candidates] == [
-                None, "sampled_held_path_rejected", "sampled_planning_pass"]
+                None, "transfer_hand_drift", "sampled_planning_pass"]
+    assert result.attempted_candidates[1]["held_hand_drift"] == {
+        "stage": "transfer", "max_abs_delta_rad": 0.03725}
     assert result.to_record()["robot_ready"] is False
+
+
+def test_fresh_trial_rejects_hand_drift_without_query_evidence(
+    tmp_path, monkeypatch,
+):
+    fixture = _fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.plan_insertion_after_pickup",
+        lambda **_: InsertionPreflight(
+            "transfer_hand_drift", None, None, None, None, 0,
+            np.zeros(6), "commanded_nominal", ()))
+    with pytest.raises(ValueError, match="lacks planner evidence"):
+        _run(tmp_path, fixture, _Planner())
 
 
 def test_no_current_pose_grasp_requests_repose_only_if_other_stem_has_one(
