@@ -85,8 +85,8 @@ The first independent helpers are in `precision_insertion/`:
   offset is expressed in the socket frame and applied equally at all three
   poses. The result records source hashes and poses but does not solve Franka
   IK, verify an attached-object trajectory, or authorize contact motion.
-- `path_audit.py` consumes the **actual planned** 13-DOF transfer (after the
-  lift) and axial-descent joint samples, using the unchanged AutoDex planner's
+- `path_audit.py` consumes the **actual planned** 13-DOF held-lift, transfer
+  and axial-descent joint samples, using the unchanged AutoDex planner's
   `fk_wrist()` (cuRobo `ee_link: base_link`). It requires fixed Inspire joints,
   continuous segment handoff, sufficiently dense samples, pre-insertion and
   20 mm goal agreement, and a monotone socket-axis descent. At every FK sample
@@ -98,7 +98,19 @@ The first independent helpers are in `precision_insertion/`:
   between samples, cuRobo Franka arm checks, controller force response and
   physical grasp/insertion remain independent gates. A tilted socket can be
   audited only if an axis-following path has already been generated; AutoDex's
-  world-Z stroke planner cannot create that path.
+  world-Z stroke planner cannot create that path. The first key/table pair
+  immediately after grasp is exempt as intended support contact; all later
+  lift samples and every hand/socket pair are checked.
+- `preflight.py` accepts one already endpoint-screened AutoDex pickup
+  `PlanResult`, replans the 10 cm lift with the declared held Inspire pose,
+  calls the unchanged cuRobo planner for transfer and <=5 mm socket-axis
+  waypoint segments, and rejects missing paths, wrong goal/FK residuals,
+  changed finger joints or a failed `path_audit.py` result. This is a
+  planning-only composition, **not** a guarded physical insertion command.
+  The default AutoDex pickup lift models the grasp pose, whereas the executor
+  squeezes farther; reusing its lift without checking the selected hold would
+  compare different hand geometries. Every caller must distinguish a nominal
+  commanded hold from actual measured hand state.
 - `candidates.py` scans the selected shared root's Inspire v8 candidate tree,
   reads matching scene `meta.pose_idx` and tabletop assets, requires full-key
   simulation evidence, and applies `endpoint.py` to surviving grasps. The
@@ -139,8 +151,8 @@ continuous pose-residual correction; it is not the bounded candidate-ID vote
 policy and is not imported as this demo's control loop.
 
 To inspect saved or freshly planned paths, keep the original planner instance
-and the **actual** dense transfer/descent `(N, 13)` joint arrays. The first
-transfer sample is after the verified lift; the descent begins at the same
+and the **actual** dense lift/transfer/descent `(N, 13)` joint arrays. The
+transfer begins at the verified lift endpoint; descent begins at the same
 joint state where transfer ends. With a `SessionCalibration` and
 `InsertionTargets` from this demo, call:
 
@@ -160,7 +172,8 @@ limits = PathAuditLimits(
 report = audit_held_joint_paths(
     shared_root=shared_root, calibration=session, targets=targets,
     planner=planner, transfer_trajectory=transfer_q,
-    descent_trajectory=descent_q, held_hand_q=held_hand_q, limits=limits,
+    descent_trajectory=descent_q, lift_trajectory=lift_q,
+    held_hand_q=held_hand_q, limits=limits,
 )
 print(report["sampled_clear"], report["failures"])
 ```
@@ -170,6 +183,41 @@ Supply the measured/selected held hand state; do not treat AutoDex's nominal
 commanded grip as measured feedback. `sampled_clear=True` is never a robot
 execution permit. The caller must retain cuRobo's arm/world path result and
 commission a guarded insertion controller and between-sample swept checks.
+
+To compose the original AutoDex planner calls after selecting **one** eligible
+v8 grasp, call `plan_insertion_after_pickup` with the corresponding fresh-key
+trial scene, frozen session, rigid targets and successful original pickup
+`PlanResult`. For the baseline executor's nominal squeeze command only:
+
+```python
+from precision_insertion.endpoint import nominal_inspire_hold_poses
+from precision_insertion.preflight import plan_insertion_after_pickup
+
+hold_q = nominal_inspire_hold_poses(
+    pickup_plan.pregrasp_pose, pickup_plan.grasp_pose,
+)["autodex_default_controller_hold"]
+preflight = plan_insertion_after_pickup(
+    planner=planner, pickup_plan=pickup_plan, trial_scene=trial_scene,
+    shared_root=shared_root, calibration=session, targets=targets,
+    held_hand_q=hold_q, held_hand_source="commanded_nominal",
+    limits=limits, axial_waypoint_step_m=0.005,
+)
+print(preflight.to_record())
+```
+
+`sampled_planning_pass` is **not** a physical success label or execution
+permit. Run this against the actual selected candidate and measured session;
+the current local square v8 pool has no 20 mm endpoint-eligible candidate,
+and the cylinder runtime pool is still missing. The nominal squeeze pose is
+not a measurement; before physical transfer, re-observe the held key and
+validate the hand–key relation against the planned one. A guarded contact
+controller, true acquisition-timestamped camera adapter, and reset/repose
+execution remain to be implemented.
+Do not feed this separately replanned `lift_trajectory` straight into the
+unchanged `FrankaExecutor.execute(lift_traj_override=...)`: its start-state
+gate still refers to the original pickup `lift_preflight` modeled at grasp
+joint values. A demo-local execution adapter must compare live arm/hand state
+with the **same** held-lift plan before replay, or replan from live state.
 
 For a **saved-image, read-only** observer replay, place this demo directory
 and a compatible ZeroDex checkout on `PYTHONPATH`, then pass already-loaded

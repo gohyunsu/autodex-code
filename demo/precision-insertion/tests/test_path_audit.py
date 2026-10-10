@@ -140,6 +140,32 @@ def test_sampled_path_checks_full_held_key_and_hand_without_authorizing_robot(
     assert "continuous swept geometry between FK samples" in result["not_validated"]
 
 
+def test_optional_lift_checks_key_socket_and_monotone_world_z(
+    tmp_path, monkeypatch,
+):
+    calibration, targets, _ = _fixture(tmp_path, monkeypatch)
+    transfer, descent = _paths()
+    lift = np.repeat(transfer[:1], 11, axis=0)
+    lift[:, 2] = np.linspace(0.035, 0.135, 11)
+    result = audit_held_joint_paths(
+        shared_root=tmp_path, calibration=calibration, targets=targets,
+        planner=_FakePlanner(), lift_trajectory=lift,
+        transfer_trajectory=transfer, descent_trajectory=descent,
+        held_hand_q=np.zeros(6), limits=_limits())
+    assert result["sampled_clear"] is True
+    assert result["sample_counts"]["lift"] == 11
+    assert len(result["input_sha256"]["lift_trajectory"]) == 64
+    lift[5, 2] -= 0.020
+    rejected = audit_held_joint_paths(
+        shared_root=tmp_path, calibration=calibration, targets=targets,
+        planner=_FakePlanner(), lift_trajectory=lift,
+        transfer_trajectory=transfer, descent_trajectory=descent,
+        held_hand_q=np.zeros(6), limits=_limits())
+    assert rejected["sampled_clear"] is False
+    assert any(row["reason"] == "not_monotone_world_z_lift"
+               for row in rejected["failures"])
+
+
 def test_socket_intersection_and_sparse_sampling_fail_closed(tmp_path, monkeypatch):
     fixture = _fixture(tmp_path, monkeypatch)
     transfer, descent = _paths(start_x=0.1)

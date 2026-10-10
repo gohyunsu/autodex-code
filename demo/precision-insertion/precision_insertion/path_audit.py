@@ -124,8 +124,9 @@ def audit_held_joint_paths(
     *, shared_root: Path, calibration, targets: InsertionTargets,
     planner, transfer_trajectory: np.ndarray, descent_trajectory: np.ndarray,
     held_hand_q: np.ndarray, limits: PathAuditLimits,
+    lift_trajectory: np.ndarray | None = None,
 ) -> dict[str, Any]:
-    """Audit FK samples of the actual planned transfer and axial approach.
+    """Audit FK samples of lift, transfer and axial approach.
 
     ``planner.fk_wrist(q)`` is the unchanged AutoDex planner FK; its cuRobo
     arm/world collision result must be checked independently by the caller.
@@ -161,8 +162,15 @@ def audit_held_joint_paths(
     descent = _joint_path(descent_trajectory, "descent_trajectory", hand_q)
     if not np.allclose(transfer[-1], descent[0], atol=1e-4, rtol=0):
         raise ValueError("transfer and descent joint trajectories are discontinuous")
+    lift = None
+    if lift_trajectory is not None:
+        lift = _joint_path(lift_trajectory, "lift_trajectory", hand_q)
+        if not np.allclose(lift[-1], transfer[0], atol=1e-4, rtol=0):
+            raise ValueError("lift and transfer joint trajectories are discontinuous")
 
-    stages = {"transfer": transfer, "descent": descent}
+    stages = ({"lift": lift, "transfer": transfer, "descent": descent}
+              if lift is not None else
+              {"transfer": transfer, "descent": descent})
     wrist = {
         stage: [validate_se3(planner.fk_wrist(q), name=f"{stage} FK[{i}]")
                 for i, q in enumerate(path)]
@@ -213,6 +221,23 @@ def audit_held_joint_paths(
                                      "lateral_error_m": lateral,
                                      "rotation_error_deg": rotation})
                 progress_previous = progress
+        elif stage == "lift":
+            first = wrist[stage][0]
+            prior_height = float(first[2, 3])
+            for i, pose in enumerate(wrist[stage]):
+                lateral = float(np.linalg.norm(
+                    pose[:2, 3] - first[:2, 3]))
+                rotation = pose_angle_deg(pose, first)
+                height = float(pose[2, 3])
+                if (lateral > limits.axial_lateral_tolerance_m or
+                        rotation > limits.axial_rotation_tolerance_deg or
+                        height + limits.goal_position_tolerance_m < prior_height):
+                    failures.append({"stage": stage, "sample": i,
+                                     "reason": "not_monotone_world_z_lift",
+                                     "lateral_error_m": lateral,
+                                     "rotation_error_deg": rotation,
+                                     "height_m": height})
+                prior_height = height
 
     fixed, world_hashes = _fixed_world_models(calibration)
     key_path = paths.raw_mesh(mode.key_object)
@@ -237,6 +262,13 @@ def audit_held_joint_paths(
             for moving_name, model in moving.items():
                 moving_pose = key_pose if moving_name == "key" else hand_pose
                 for fixed_name, (fixed_model, fixed_pose) in fixed.items():
+                    # The key is deliberately supported by the measured table
+                    # immediately after grasp. Only this initial key/table
+                    # pair is exempt; the hand and socket are never exempt,
+                    # and every subsequent lift sample must clear the table.
+                    if (stage == "lift" and i == 0 and moving_name == "key"
+                            and fixed_name == "cuboid/table"):
+                        continue
                     relative = np.linalg.inv(fixed_pose) @ moving_pose
                     result = _coal_models_report(model, fixed_model, relative)
                     pair = f"{moving_name}->{fixed_name}"
@@ -275,6 +307,8 @@ def audit_held_joint_paths(
             ).encode("utf-8")).hexdigest(),
             "transfer_trajectory": _array_sha256(transfer),
             "descent_trajectory": _array_sha256(descent),
+            **({"lift_trajectory": _array_sha256(lift)}
+               if lift is not None else {}),
             "held_hand_q": _array_sha256(hand_q),
             **world_hashes,
         },
@@ -283,6 +317,8 @@ def audit_held_joint_paths(
             "independent cuRobo Franka arm/world collision and IK result",
             "grasp stability, contact force, jam response or physical success",
             "measured hand joints, grip slip or controller tracking",
+            *(["initial key/table support contact at lift sample zero"]
+              if lift is not None else []),
         ],
         "robot_ready": False,
     }

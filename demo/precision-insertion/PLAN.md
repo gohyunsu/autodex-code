@@ -82,10 +82,22 @@ either commission a socket-axis stroke planner or reject it under an
 explicit, measured uprightness tolerance. No target-pose result may be
 promoted to `preinsert_reached` or `insertion_success` on this basis alone.
 The demo's `path_audit.py` now provides a read-only **sampled** full-key and
-whole-Inspire collision check on actual FK trajectories, including frozen
+whole-Inspire collision check on actual lift, transfer and descent FK
+trajectories, including frozen
 table/socket scene provenance, fixed finger state and socket-axis/goal checks.
 It must be combined with the original planner's arm collision result; finite
 samples alone do not prove swept clearance between samples or contact safety.
+`preflight.py` now composes the unchanged AutoDex pickup result,
+`plan_lift_preflight()` with the declared post-squeeze hold, and repeated
+`plan_cartesian_pose()` calls at <=5 mm socket-axis waypoints, then invokes
+the sampled held-path audit. Each segment must be joint-continuous and reach
+its goal; otherwise it fails closed. The original endpoint approximation may
+deviate from the socket axis, so `path_audit.py` rejects such paths. This is
+planning feasibility, not a complete continuous-swept/contact safety proof.
+The existing `FrankaExecutor.execute()` start check is bound to the original
+grasp-pose lift, so the new held-q lift cannot be supplied as a blind override.
+A demo execution adapter must revalidate the actual live state against the
+held-q path or replan after observing the grasp.
 There is still no robot-executable full-task preflight or guarded controller.
 
 ## What the existing v8 candidate pool proves
@@ -512,7 +524,9 @@ demo/precision-insertion/
     symmetry.py                   # local square/cylinder pose handling
     world.py                      # fixed fixture and attached-key worlds
     candidates.py                 # v8 pose-indexed endpoint catalog and selection; live planning pending
-    planner.py                    # full-chain preflight and XY replanning
+    preflight.py                  # planning-only pickup/lift/transfer/20 mm composition
+    path_audit.py                 # sampled held-key/hand scene collision checks
+    planner.py                    # future motion authorization and XY replanning
     execution.py                  # Franka/Inspire and guarded stroke adapter
     xy_voting.py                  # read-only multi-view XY ID consensus
     outcome.py                    # VLM-led tri-state insertion result fusion

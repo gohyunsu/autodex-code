@@ -75,8 +75,8 @@ def _hand_link_meshes(robot_urdf: Path, grasp_q: np.ndarray) -> dict:
     return result
 
 
-def _nominal_inspire_hold_poses(pregrasp_q: np.ndarray,
-                                grasp_q: np.ndarray) -> dict[str, np.ndarray]:
+def nominal_inspire_hold_poses(pregrasp_q: np.ndarray,
+                               grasp_q: np.ndarray) -> dict[str, np.ndarray]:
     """Return simulated squeeze and AutoDex's default executed hold pose.
 
     ``run_sim_filter.eval_single_grasp`` uses ``2*grasp-pregrasp``. The
@@ -99,6 +99,10 @@ def _nominal_inspire_hold_poses(pregrasp_q: np.ndarray,
             grasp_action_equivalent + 1.8 *
             (grasp_action_equivalent - pre_action_equivalent), 0.0, limits),
     }
+
+
+# Preserve the original private helper name for existing offline tools/tests.
+_nominal_inspire_hold_poses = nominal_inspire_hold_poses
 
 
 def _coal_mesh(mesh):
@@ -218,7 +222,7 @@ def screen_grasp_endpoint(
 
     T_key_hand = validate_se3(np.load(files["wrist_se3"], allow_pickle=False),
                               name="T_key_hand")
-    hand_poses = _nominal_inspire_hold_poses(
+    hand_poses = nominal_inspire_hold_poses(
         np.load(files["pregrasp_pose"], allow_pickle=False),
         np.load(files["grasp_pose"], allow_pickle=False))
     key_mesh = _load_mesh(files["key_mesh"])
