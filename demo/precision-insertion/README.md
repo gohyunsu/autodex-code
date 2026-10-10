@@ -171,7 +171,11 @@ plans only axial waypoints from the **measured arrival joints**. Its sampled
 key/hand and uncertainty audits use the same cylinder yaw gauge; a changed
 goal outside the measured pre-insertion tolerance rejects without a second
 transfer. The previous axial path is never replayed. This new report remains
-read-only: a separate retry-specific guarded contact handoff/executor and
+read-only. A passing report can be committed through
+`SessionRunner.record_grounded_xy_retry(...)`, which checks the saved
+multi-view diagnostic, completed shift, fresh arrival and axial preflight,
+then records a pending continuous <=1 mm XY retry without moving the robot.
+A separate retry-specific guarded contact handoff/executor and
 physical key-depth admission are still needed before retry success can be
 labeled. See
 [POSTSHIFT_HANDOFF.md](POSTSHIFT_HANDOFF.md) for the call contract.

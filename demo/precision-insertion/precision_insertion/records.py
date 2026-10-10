@@ -155,18 +155,7 @@ class AttemptRecord:
         ``live_preflight`` must refer to evidence from completed safe checks;
         a VLM vote alone is insufficient to register a retry.
         """
-        if not any(event["stage"] == "insertion_success" for event in self.events):
-            raise ValueError("retry needs a preceding insertion observation")
-        if self.labels["insertion_success"] is not False or self._pending_retry:
-            raise ValueError("retry requires an observed failure and no pending retry")
-        last_insertion = next(
-            event for event in reversed(self.events)
-            if event["stage"] == "insertion_success")
-        insertion_input = last_insertion["detail"]["input"]
-        if (insertion_input["grasp_held"] is not True or
-                insertion_input["safety_abort"] is not False or
-                self.failure_code in {"force_abort", "slip", "reset_failed"}):
-            raise ValueError("retry requires held grasp without safety abort")
+        self._require_retryable_failure()
         if (not isinstance(decision, ChoiceDecision) or
                 decision.status != "propose" or
                 decision.offset_socket_m is None or
@@ -206,6 +195,75 @@ class AttemptRecord:
             "choice_decision": decision.to_record(),
             "evidence_refs": refs,
             "scope": "observed_safe_preflight_not_motion_authorization",
+        })
+
+    def _require_retryable_failure(self) -> None:
+        if not any(event["stage"] == "insertion_success" for event in self.events):
+            raise ValueError("retry needs a preceding insertion observation")
+        if self.labels["insertion_success"] is not False or self._pending_retry:
+            raise ValueError("retry requires an observed failure and no pending retry")
+        last_insertion = next(
+            event for event in reversed(self.events)
+            if event["stage"] == "insertion_success")
+        insertion_input = last_insertion["detail"]["input"]
+        if (insertion_input["grasp_held"] is not True or
+                insertion_input["safety_abort"] is not False or
+                self.failure_code in {"force_abort", "slip", "reset_failed"}):
+            raise ValueError("retry requires held grasp without safety abort")
+
+    def record_grounded_retry(
+        self, *, increment_socket_xy_m: tuple[float, float],
+        supporting_cameras: tuple[str, ...], timestamp_s: float,
+        evidence_refs: Mapping[str, str],
+    ) -> None:
+        """Record an executed, reobserved metric <=1 mm correction.
+
+        The session supervisor must verify every referenced producer before
+        calling this method. This event changes the pending *observation*
+        state; it does not authorize contact or claim insertion success.
+        """
+        self._require_retryable_failure()
+        if self.mode.family != "cylinder":
+            raise ValueError("metric tip/axis retry currently needs a cylinder")
+        if (not isinstance(increment_socket_xy_m, (tuple, list)) or
+                len(increment_socket_xy_m) != 2):
+            raise ValueError("grounded retry needs two socket XY meters")
+        try:
+            dx, dy = (float(value) for value in increment_socket_xy_m)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("grounded retry needs two socket XY meters") from exc
+        if (not math.isfinite(dx) or not math.isfinite(dy) or
+                not 0 < math.hypot(dx, dy) <= VLM_XY_STEP_M + 1e-12):
+            raise ValueError("grounded retry must be nonzero and at most 1 mm")
+        if (not isinstance(supporting_cameras, tuple) or
+                len(set(supporting_cameras)) < 2 or
+                len(set(supporting_cameras)) != len(supporting_cameras) or
+                not all(isinstance(camera, str) and camera
+                        for camera in supporting_cameras)):
+            raise ValueError("grounded retry needs distinct multi-view inliers")
+        refs = _refs(evidence_refs, "preinsert_reached", False)
+        required = {
+            "axial_withdrawal", "grounded_xy", "lateral_preflight",
+            "lateral_execution", "postshift_arrival",
+            "arrival_axial_preflight",
+        }
+        if not required <= refs.keys():
+            raise ValueError("grounded retry lacks its physical source chain")
+        timestamp = _finite_time(timestamp_s)
+        if timestamp < self.events[-1]["timestamp_s"]:
+            raise ValueError("attempt events must be in nondecreasing time order")
+        target = (self.xy_offset_socket_m[0] + dx,
+                  self.xy_offset_socket_m[1] + dy)
+        self.xy_offset_socket_m = target
+        self._pending_retry = True
+        self.events.append({
+            "event_index": len(self.events), "timestamp_s": timestamp,
+            "stage": "xy_retry", "value": "grounded_continuous_xy",
+            "increment_socket_xy_m": [dx, dy],
+            "offset_socket_m": list(target),
+            "supporting_cameras": list(supporting_cameras),
+            "evidence_refs": refs,
+            "scope": "executed_observed_metric_shift_not_contact_authorization",
         })
 
     def record_failure(

@@ -130,3 +130,30 @@ a read-only preflight with synthetic-unit-test coverage, not a retry-specific
 guarded contact controller or a physical 20 mm success observation. Do not
 feed either old or newly planned axial path to the stock trajectory follower
 as a contact insertion command.
+
+After a passing replan, explicitly record the **completed and reobserved**
+continuous XY shift as one pending retry:
+
+```python
+pending = runner.record_grounded_xy_retry(
+    replan=replan,
+    replan_report_path=arrival_axial_report,
+    previous=postshift_preflight,
+    arrival=arrival_checkpoint,
+    checkpoint=postshift_checkpoint,
+    shift_plan=completed_shift_plan,
+    shift_plan_report_path=lateral_preflight_report,
+    timestamp_s=decision_time_after_arrival,
+)
+```
+
+This verifies the saved lateral diagnostic, withdrawal/shift sources, transfer
+arrival and fresh axial replan before writing an append-only `xy_retry` event.
+Unlike the older four-cardinal-choice policy, the socket-frame increment may
+point in any XY direction but must be nonzero and at most 1 mm. The attempt
+then awaits a **new** guarded execution and a fresh post-choice camera pair;
+the previous insertion verdict remains false until new evidence is recorded.
+Recording a pending retry is not a motion command or insertion-success label.
+The first-attempt guarded executor and v2 insertion checkpoint still reject
+this retry source: a separate source-bound retry contact boundary and physical
+key-depth verifier remain to be commissioned and integrated.

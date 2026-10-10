@@ -180,6 +180,44 @@ def test_retry_record_rejects_duplicate_view_and_mismatched_direction():
         _retry(record, malformed)
 
 
+def test_grounded_continuous_xy_retry_is_distinct_from_cardinal_vote():
+    record = _attempt()
+    _grasp(record)
+    _hold(record)
+    _insert(record)
+    refs = {
+        "axial_withdrawal": "robot/withdrawal.json",
+        "grounded_xy": "vlm/tip_axis.json",
+        "lateral_preflight": "planner/xy_shift.json",
+        "lateral_execution": "robot/xy_shift.json",
+        "postshift_arrival": "vision/arrival.json",
+        "arrival_axial_preflight": "planner/new_axial.json",
+    }
+    with pytest.raises(ValueError, match="multi-view inliers"):
+        record.record_grounded_retry(
+            increment_socket_xy_m=(.0006, -.0008),
+            supporting_cameras=("cam0", "cam0"), timestamp_s=5.,
+            evidence_refs=refs)
+    with pytest.raises(ValueError, match="at most 1 mm"):
+        record.record_grounded_retry(
+            increment_socket_xy_m=(.0011, 0.),
+            supporting_cameras=("cam0", "cam1"), timestamp_s=5.,
+            evidence_refs=refs)
+    record.record_grounded_retry(
+        increment_socket_xy_m=(.0006, -.0008),
+        supporting_cameras=("cam0", "cam1"), timestamp_s=5.,
+        evidence_refs=refs)
+    assert record.xy_offset_socket_m == pytest.approx((.0006, -.0008))
+    assert record.events[-1]["value"] == "grounded_continuous_xy"
+    assert decide_after_attempt(record, max_xy_retries=1).action == (
+        "await_retry_execution_and_observation")
+    with pytest.raises(ValueError, match="no pending retry"):
+        record.record_grounded_retry(
+            increment_socket_xy_m=(.0001, .0001),
+            supporting_cameras=("cam0", "cam1"), timestamp_s=5.1,
+            evidence_refs=refs)
+
+
 def test_verified_insertion_waits_for_supervised_completion():
     record = _attempt()
     _grasp(record)

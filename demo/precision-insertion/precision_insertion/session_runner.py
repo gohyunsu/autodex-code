@@ -68,7 +68,7 @@ from .retry_session import (
 from .grounded_alignment import AlignmentLimits
 from .grounded_lateral import (
     GroundedLateralPreflight, plan_grounded_lateral_from_withdrawal,
-    write_grounded_lateral_preflight,
+    verify_grounded_lateral_preflight, write_grounded_lateral_preflight,
 )
 from .postshift_checkpoint import (
     PostShiftCheckpoint, assess_postshift_alignment,
@@ -207,6 +207,8 @@ class SessionRunner:
         self._postshift_arrival_saved_reports: set[Path] = set()
         self._postshift_arrival_index = 0
         self._postshift_arrival_replan_used_reports: set[Path] = set()
+        self._postshift_arrival_replan_saved_reports: set[Path] = set()
+        self._postshift_arrival_replan_committed_reports: set[Path] = set()
         self._postshift_arrival_replan_index = 0
         self._write_exclusive(
             target / "frozen_session_calibration.json", calibration.record)
@@ -2448,8 +2450,87 @@ class SessionRunner:
             mode=self.mode, shared_root=self.shared_root,
             calibration=self.calibration)
         self._postshift_arrival_replan_used_reports.add(source)
+        self._postshift_arrival_replan_saved_reports.add(path.resolve())
         self._postshift_arrival_replan_index += 1
         return result
+
+    def record_grounded_xy_retry(
+        self, *, replan: PostShiftArrivalReplan, replan_report_path: Path,
+        previous: PostShiftInsertionPreflight,
+        arrival: PostShiftArrivalCheckpoint,
+        checkpoint: PostShiftCheckpoint,
+        shift_plan: GroundedLateralPreflight,
+        shift_plan_report_path: Path,
+        timestamp_s: float,
+    ) -> AttemptRecord:
+        """Commit a completed continuous XY shift as pending retry evidence.
+
+        This is the event-level counterpart to the existing cardinal-vote
+        ``record_retry``. It never commands a robot or labels insertion.
+        """
+        from .postshift_arrival_replan import verify_postshift_arrival_replan
+        if (self.current_decision().action !=
+                "guarded_withdrawal_then_xy_assessment" or
+                self._attempt is None or self._attempt_dir is None or
+                self.mode.family != "cylinder" or
+                replan.status != "sampled_arrival_20mm_axial_preflight_pass" or
+                replan.attempt_id != self._attempt.attempt_id or
+                replan.candidate_id != self._attempt.candidate_id or
+                shift_plan.attempt_id != self._attempt.attempt_id or
+                shift_plan.candidate_id != self._attempt.candidate_id or
+                arrival.attempt_id != self._attempt.attempt_id or
+                arrival.candidate_id != self._attempt.candidate_id):
+            raise ValueError("grounded retry needs this failed held attempt")
+        report = Path(replan_report_path).expanduser().resolve()
+        shift = Path(shift_plan_report_path).expanduser().resolve()
+        if (report not in self._postshift_arrival_replan_saved_reports or
+                report in self._postshift_arrival_replan_committed_reports or
+                report.parent.parent !=
+                    (self._attempt_dir /
+                     "postshift_arrival_axial_replans").resolve() or
+                shift.parent.parent !=
+                    (self._attempt_dir / "lateral_hold_preflights").resolve() or
+                replan.arrival_report_path.resolve() not in
+                    self._postshift_arrival_replan_used_reports or
+                checkpoint.lateral_preflight_report_path.resolve() != shift or
+                replan.arrival_report_path.resolve() not in
+                    self._postshift_arrival_saved_reports):
+            raise ValueError("grounded retry source is not this session's path")
+        self.verify_current_preflight_evidence()
+        verify_grounded_lateral_preflight(shift_plan, shift)
+        verify_postshift_arrival_replan(
+            report, expected=replan, previous=previous,
+            arrival=arrival, checkpoint=checkpoint,
+            shift_plan=shift_plan, mode=self.mode,
+            shared_root=self.shared_root, calibration=self.calibration)
+        if (not math.isfinite(float(timestamp_s)) or
+                timestamp_s <= arrival.decision_timestamp_s):
+            raise ValueError("grounded retry needs a fresh source-bound decision")
+        diagnostic = json.loads(
+            shift_plan.diagnostic_report_path.read_text(encoding="utf-8"))
+        inliers = diagnostic.get("alignment", {}).get("inlier_cameras")
+        increment = tuple(float(value) for value in
+                          shift_plan.lateral.increment_socket_xy_m)
+        if (not isinstance(inliers, list) or
+                len(set(inliers)) < 2 or
+                not np.allclose(
+                    diagnostic["alignment"]["bounded_xy_increment_socket_m"],
+                    increment, atol=1e-10, rtol=0)):
+            raise ValueError("grounded retry differs from multiview correction")
+        refs = {
+            "axial_withdrawal": str(shift_plan.withdrawal_evidence_path),
+            "grounded_xy": str(shift_plan.diagnostic_report_path),
+            "lateral_preflight": str(shift),
+            "lateral_execution": str(checkpoint.lateral_execution_path),
+            "postshift_arrival": str(replan.arrival_report_path),
+            "arrival_axial_preflight": str(report),
+        }
+        updated = self._record(lambda row: row.record_grounded_retry(
+            increment_socket_xy_m=increment,
+            supporting_cameras=tuple(inliers),
+            timestamp_s=timestamp_s, evidence_refs=refs))
+        self._postshift_arrival_replan_committed_reports.add(report)
+        return updated
 
     def record_failure(
         self, code: str, *, timestamp_s: float,

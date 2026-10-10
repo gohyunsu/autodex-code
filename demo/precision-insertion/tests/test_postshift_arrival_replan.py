@@ -17,7 +17,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion import postshift_arrival_checkpoint as checkpoint  # noqa: E402
 from precision_insertion import postshift_arrival_replan as replan  # noqa: E402
 from precision_insertion.assets import AssetPaths  # noqa: E402
+from precision_insertion.outcome import InsertionEvidence  # noqa: E402
 from precision_insertion.preflight import InsertionPreflight  # noqa: E402
+from precision_insertion.records import begin_attempt  # noqa: E402
+from precision_insertion.session_runner import SessionRunner  # noqa: E402
+from precision_insertion import session_runner as runner_module  # noqa: E402
+from precision_insertion.session_policy import decide_after_attempt  # noqa: E402
 from precision_insertion.uncertainty_margin import SurfaceDeviationBounds  # noqa: E402
 from test_postshift_arrival_checkpoint import _case  # noqa: E402
 
@@ -199,3 +204,89 @@ def test_saved_arrival_axial_rejects_mutated_path_and_cad(
             arrival=call["arrival"], checkpoint=call["checkpoint"],
             shift_plan=call["shift_plan"], mode=call["mode"],
             shared_root=tmp_path, calibration=call["calibration"])
+
+
+def test_session_records_verified_continuous_shift_as_pending_retry(
+        tmp_path, monkeypatch):
+    call, _ = _setup(tmp_path, monkeypatch)
+    result = replan.plan_postshift_arrival_axial(**call)
+    attempt_dir = tmp_path / "attempt_record"
+    attempt_dir.mkdir()
+    shift_file = attempt_dir / "lateral_hold_preflights" / "000" / "report.json"
+    shift_file.parent.mkdir(parents=True)
+    shift_file.write_text("{}")
+    arrival_file = (attempt_dir / "postshift_arrival_checkpoints" / "000" /
+                    "report.json")
+    arrival_file.parent.mkdir(parents=True)
+    arrival_file.write_text("{}")
+    replan_file = (attempt_dir / "postshift_arrival_axial_replans" / "000" /
+                   "report.json")
+    replan_file.parent.mkdir(parents=True)
+    replan_file.write_text("{}")
+    result = replace(result, arrival_report_path=arrival_file)
+    checkpoint_record = replace(
+        call["checkpoint"], lateral_preflight_report_path=shift_file)
+    mode = call["mode"]
+    session = {"schema": "precision_insertion_session_calibration_v1",
+               "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
+                        "key_object": mode.key_object,
+                        "socket_object": mode.socket_object}}
+    attempt = begin_attempt(
+        attempt_id=result.attempt_id, mode=mode, session_record=session,
+        candidate_id=result.candidate_id, tabletop_pose_stem="000",
+        xy_offset_socket_m=(0., 0.), started_at_s=1.)
+    attempt.record_stage("grasp_success", True, timestamp_s=2.,
+                         evidence_refs={"vlm_observation": "vlm/lift.json",
+                                        "key_wrist_check": "grip.json"})
+    attempt.record_stage("preinsert_reached", True, timestamp_s=3.,
+                         evidence_refs={
+                             "trajectory": "transfer.json",
+                             "key_socket_pose": "hold.json",
+                             "grasp_state": "grip.json",
+                             "postlift_preflight": "postlift.json"})
+    attempt.record_insertion_evidence(
+        InsertionEvidence("partial", (.001, .002), "key_pose_multiview",
+                          True, False, True), timestamp_s=4.,
+        evidence_refs={"vlm_observation": "vlm/final.json",
+                       "key_depth": "depth.json", "alignment": "axis.json",
+                       "force_trace": "force.json"})
+    runner = object.__new__(SessionRunner)
+    runner.mode = mode
+    runner.shared_root = tmp_path
+    runner.calibration = call["calibration"]
+    runner.max_xy_retries = 2
+    runner._attempt = attempt
+    runner._attempt_dir = attempt_dir
+    runner._attempt_index = 3
+    runner._attempted = set()
+    runner._postlift_preflight = None
+    runner._lift_checkpoint = None
+    runner._postshift_arrival_replan_saved_reports = {replan_file}
+    runner._postshift_arrival_replan_committed_reports = set()
+    runner._postshift_arrival_replan_used_reports = {arrival_file}
+    runner._postshift_arrival_saved_reports = {arrival_file}
+    monkeypatch.setattr(
+        SessionRunner, "current_decision",
+        lambda self: decide_after_attempt(
+            self._attempt, max_xy_retries=self.max_xy_retries))
+    monkeypatch.setattr(SessionRunner, "verify_current_preflight_evidence",
+                        lambda _self: {})
+    monkeypatch.setattr(runner_module, "verify_grounded_lateral_preflight",
+                        lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(replan, "verify_postshift_arrival_replan",
+                        lambda *_args, **_kwargs: {})
+    timestamp = call["arrival"].decision_timestamp_s + .1
+    kwargs = dict(
+        replan=result, replan_report_path=replan_file,
+        previous=call["previous"], arrival=call["arrival"],
+        checkpoint=checkpoint_record, shift_plan=call["shift_plan"],
+        shift_plan_report_path=shift_file, timestamp_s=timestamp)
+    updated = runner.record_grounded_xy_retry(**kwargs)
+    assert updated.events[-1]["value"] == "grounded_continuous_xy"
+    assert updated.xy_offset_socket_m == pytest.approx(
+        call["shift_plan"].lateral.increment_socket_xy_m)
+    assert runner.current_decision().action == (
+        "await_retry_execution_and_observation")
+    assert (attempt_dir / "state_004.json").is_file()
+    with pytest.raises(ValueError, match="failed held attempt"):
+        runner.record_grounded_xy_retry(**kwargs)
