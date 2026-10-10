@@ -119,6 +119,10 @@ class SessionRunner:
         self.catalog_sha256 = _digest(catalog)
         self._preflight: TrialPreflight | None = None
         self._preflight_report_path: Path | None = None
+        self._preflight_report_sha256: str | None = None
+        self._preflight_binding_path: Path | None = None
+        self._preflight_binding_sha256: str | None = None
+        self._measured_start_state_sha256: str | None = None
         self._repose_preflight: ReposeTransitionPreflight | None = None
         self._repose_report_path: Path | None = None
         self._repose_index = 0
@@ -285,6 +289,8 @@ class SessionRunner:
         live_start_q, start_q_acquisition_timestamp_s: float,
         max_key_state_skew_s: float, limits, max_pose_error_deg: float,
         axial_waypoint_step_m: float, max_candidate_attempts: int | None = None,
+        measured_start_state: LiveRobotState | None = None,
+        measured_state_limits: Mapping[str, float] | None = None,
         **optional_planning_kwargs,
     ) -> TrialPreflight:
         """Run the existing v8 pickup/20 mm preflight for a fresh key pose.
@@ -302,6 +308,27 @@ class SessionRunner:
                 manifest["capture_id"] != key_observation.capture_id or
                 manifest["request_id"] != key_observation.request_id):
             raise ValueError("saved key evidence does not match admitted pose")
+        state_record = None
+        if (measured_start_state is None) != (measured_state_limits is None):
+            raise ValueError("measured state and validation limits must be paired")
+        if measured_start_state is not None:
+            if not isinstance(measured_start_state, LiveRobotState):
+                raise TypeError("live preflight needs measured robot feedback")
+            required = {"max_arm_hand_skew_s", "max_hand_command_error_raw",
+                        "max_arm_velocity_rad_s"}
+            if (not isinstance(measured_state_limits, Mapping) or
+                    set(measured_state_limits) != required):
+                raise ValueError("measured state validation limits are incomplete")
+            measured_start_state.validate(**dict(measured_state_limits))
+            state_record = measured_start_state.to_record()
+            if (not np.array_equal(np.asarray(live_start_q, dtype=float),
+                                   np.asarray(state_record["full_q"])) or
+                    float(start_q_acquisition_timestamp_s) !=
+                    state_record["sample_timestamp_s"]):
+                raise ValueError("planner start joints differ from measured feedback")
+            key_observation.require_state_alignment(
+                state_timestamp_s=state_record["sample_timestamp_s"],
+                maximum_skew_s=max_key_state_skew_s)
         validate_catalog_session(self.catalog, mode=self.mode,
                                  session_record=self.calibration.record)
         if (_digest(self.calibration.record) != self.session_sha256 or
@@ -337,7 +364,20 @@ class SessionRunner:
         report_path = path / "report.json"
         if not report_path.is_file():
             raise ValueError("trial preflight artifact lacks its report")
-        self._write_exclusive(path / "key_evidence_binding.json", {
+        state_sha256 = None
+        if state_record is not None:
+            state_path = path / "measured_start_state.json"
+            self._write_exclusive(state_path, {
+                **state_record,
+                "validation_limits": dict(measured_state_limits),
+                "key_capture_id": key_observation.capture_id,
+                "key_acquisition_interval_s": list(
+                    key_observation.acquisition_interval_s),
+            })
+            state_sha256 = hashlib.sha256(state_path.read_bytes()).hexdigest()
+        report_sha256 = hashlib.sha256(report_path.read_bytes()).hexdigest()
+        binding_path = path / "key_evidence_binding.json"
+        self._write_exclusive(binding_path, {
             "schema": "precision_insertion_trial_key_binding_v1",
             "key_capture_id": key_observation.capture_id,
             "key_evidence_dir": str(evidence_dir),
@@ -345,8 +385,8 @@ class SessionRunner:
                 (evidence_dir / "evidence_manifest.json").read_bytes()).hexdigest(),
             "key_observation_sha256": hashlib.sha256(
                 (evidence_dir / "key_observation.json").read_bytes()).hexdigest(),
-            "preflight_report_sha256": hashlib.sha256(
-                report_path.read_bytes()).hexdigest(),
+            "preflight_report_sha256": report_sha256,
+            "measured_start_state_sha256": state_sha256,
             "session_calibration_sha256": self.session_sha256,
             "catalog_sha256": self.catalog_sha256,
             "robot_ready": False,
@@ -354,6 +394,11 @@ class SessionRunner:
         self._preflight_index += 1
         self._preflight = result
         self._preflight_report_path = report_path
+        self._preflight_report_sha256 = report_sha256
+        self._preflight_binding_path = binding_path
+        self._preflight_binding_sha256 = hashlib.sha256(
+            binding_path.read_bytes()).hexdigest()
+        self._measured_start_state_sha256 = state_sha256
         self._repose_preflight = None
         self._repose_report_path = None
         self._same_capture_reset_rejects.clear()
@@ -394,6 +439,91 @@ class SessionRunner:
                 self._same_capture_planning_rejects.add(key)
         return result
 
+    def verify_current_preflight_evidence(self) -> dict:
+        """Recheck the exact saved plan, camera bundle and measured state.
+
+        This is still not motion authorization. It closes the gap where an
+        altered report could otherwise be rehashed when an attempt begins.
+        """
+        if (self._preflight is None or self._preflight_report_path is None or
+                self._preflight_report_sha256 is None or
+                self._preflight_binding_path is None or
+                self._preflight_binding_sha256 is None or
+                self._key_evidence_dir is None or
+                self._key_evidence_manifest_sha256 is None):
+            raise ValueError("no bound current trial preflight exists")
+        report_path = self._preflight_report_path
+        binding_path = self._preflight_binding_path
+        if (not report_path.is_file() or
+                hashlib.sha256(report_path.read_bytes()).hexdigest() !=
+                self._preflight_report_sha256):
+            raise ValueError("saved trial preflight report changed")
+        if (not binding_path.is_file() or
+                hashlib.sha256(binding_path.read_bytes()).hexdigest() !=
+                self._preflight_binding_sha256):
+            raise ValueError("saved key/preflight binding changed")
+        binding = json.loads(binding_path.read_text(encoding="utf-8"))
+        if (binding.get("preflight_report_sha256") !=
+                self._preflight_report_sha256 or
+                binding.get("measured_start_state_sha256") !=
+                self._measured_start_state_sha256 or
+                binding.get("session_calibration_sha256") !=
+                self.session_sha256 or
+                binding.get("catalog_sha256") != self.catalog_sha256 or
+                binding.get("key_capture_id") !=
+                self._preflight.key_observation_id or
+                Path(binding.get("key_evidence_dir", "")).resolve() !=
+                self._key_evidence_dir):
+            raise ValueError("saved trial binding differs from its frozen inputs")
+        if (_digest(self.calibration.record) != self.session_sha256 or
+                _digest(self.catalog) != self.catalog_sha256):
+            raise ValueError("frozen session or endpoint catalogue changed")
+        verify_key_capture_artifacts(self._key_evidence_dir)
+        manifest_path = self._key_evidence_dir / "evidence_manifest.json"
+        if (not manifest_path.is_file() or
+                hashlib.sha256(manifest_path.read_bytes()).hexdigest() !=
+                self._key_evidence_manifest_sha256 or
+                binding.get("key_evidence_manifest_sha256") !=
+                self._key_evidence_manifest_sha256):
+            raise ValueError("saved key capture changed after trial preflight")
+        state_hash = self._measured_start_state_sha256
+        if state_hash is not None:
+            state_path = report_path.parent / "measured_start_state.json"
+            if (not state_path.is_file() or
+                    hashlib.sha256(state_path.read_bytes()).hexdigest() !=
+                    state_hash):
+                raise ValueError("saved measured start state changed")
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        if isinstance(self._preflight, TrialPreflight):
+            artifacts = report.get("artifacts")
+            if (not isinstance(artifacts, dict) or
+                    not isinstance(artifacts.get("trial_scene"), str) or
+                    not isinstance(artifacts.get("trial_scene_sha256"), str)):
+                raise ValueError("trial preflight has no hashed scene artifact")
+            if (self._preflight.insertion_plan is not None and
+                    not isinstance(artifacts.get("planned_trajectories"), str)):
+                raise ValueError("selected insertion plan has no hashed trajectories")
+            for name in ("trial_scene", "planned_trajectories"):
+                relative = artifacts.get(name)
+                if relative is None:
+                    continue
+                artifact = (report_path.parent / relative).resolve()
+                if (not artifact.is_relative_to(report_path.parent) or
+                        not artifact.is_file() or
+                        hashlib.sha256(artifact.read_bytes()).hexdigest() !=
+                        artifacts.get(f"{name}_sha256")):
+                    raise ValueError(f"trial preflight {name} artifact changed")
+            expected = self._preflight.to_record()
+            if {key: value for key, value in report.items()
+                    if key != "artifacts"} != expected:
+                raise ValueError("saved preflight differs from selected candidate")
+        return {
+            "report_sha256": self._preflight_report_sha256,
+            "binding_sha256": self._preflight_binding_sha256,
+            "measured_start_state_sha256": state_hash,
+            "key_evidence_manifest_sha256": self._key_evidence_manifest_sha256,
+        }
+
     def preflight_repose(
         self, *, planner, key_observation: KeyPoseObservation,
         to_pose_stem: str, height_cm: int,
@@ -422,6 +552,7 @@ class SessionRunner:
         if self._preflight is None or self._key_evidence_dir is None or (
                 self._key_evidence_manifest_sha256 is None):
             raise ValueError("repose lacks a bound fresh-key trial")
+        self.verify_current_preflight_evidence()
         if (not isinstance(key_observation, KeyPoseObservation) or
                 key_observation.capture_id != self._capture_id or
                 _digest(key_observation.to_record()) !=
@@ -603,6 +734,7 @@ class SessionRunner:
                 self._preflight_report_path is None or
                 self.current_decision().action != "execution_gate_required"):
             raise ValueError("no uniquely selected, passing trial preflight")
+        verified = self.verify_current_preflight_evidence()
         if (not math.isfinite(float(started_at_s)) or
                 float(started_at_s) < max(
                     self._capture_interval_end_s,
@@ -622,8 +754,10 @@ class SessionRunner:
             "candidate_id": "/".join(key),
             "key_capture_id": self._preflight.key_observation_id,
             "preflight_report": str(self._preflight_report_path),
-            "preflight_report_sha256": hashlib.sha256(
-                self._preflight_report_path.read_bytes()).hexdigest(),
+            "preflight_report_sha256": verified["report_sha256"],
+            "key_evidence_binding_sha256": verified["binding_sha256"],
+            "measured_start_state_sha256": (
+                verified["measured_start_state_sha256"]),
             "session_calibration_sha256": self.session_sha256,
             "robot_ready": False,
         })

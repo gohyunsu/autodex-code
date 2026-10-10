@@ -65,7 +65,8 @@ def prepare_next_live_key(
     """Capture, admit, save, and preflight one fresh tabletop key.
 
     The socket calibration/catalogue come from ``runner`` and are never
-    replaced here. The key pose and 13-DOF feedback must overlap in time.
+    replaced here. The key pose and 13-DOF feedback must overlap in time;
+    the runner hashes the measured feedback alongside this preflight.
     The callback must read a continuously sampled robot-state buffer, but
     must not manufacture a camera-time state from a later read. If any gate
     fails, no selected candidate or motor command is produced. Capture/evidence
@@ -194,6 +195,12 @@ def prepare_next_live_key(
         planner=planner, key_observation=observation,
         key_evidence_dir=output, live_start_q=state.full_q.copy(),
         start_q_acquisition_timestamp_s=state.sample_timestamp_s,
+        measured_start_state=state,
+        measured_state_limits={
+            "max_arm_hand_skew_s": max_arm_hand_skew_s,
+            "max_hand_command_error_raw": max_hand_command_error_raw,
+            "max_arm_velocity_rad_s": max_arm_velocity_rad_s,
+        },
         max_key_state_skew_s=max_key_state_skew_s, limits=limits,
         max_pose_error_deg=max_pose_error_deg,
         axial_waypoint_step_m=axial_waypoint_step_m,

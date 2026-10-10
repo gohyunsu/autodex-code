@@ -1674,6 +1674,17 @@ their relation to calibrated camera UTC must be commissioned and checked on
 the AutoDex rig before using this for physical motion. These read-only
 checks never authorize contact control.
 
+When `prepare_next_live_key()` succeeds, `SessionRunner.preflight_next_key()`
+also saves `measured_start_state.json` beside the trial report, hashes it in
+`key_evidence_binding.json`, and ties both files to the saved camera bundle.
+`runner.verify_current_preflight_evidence()` rechecks these hashes, the
+session/catalogue identity and, for an actual `TrialPreflight`, the saved
+scene/trajectory files. `begin_selected_attempt()` and repose preflight call
+that verifier before creating a new attempt or reset plan. This prevents a
+changed report from being silently rehashed as a fresh execution input; it
+still does **not** certify that a trajectory is safe to command on the live
+robot.
+
 An optional `planning_options` mapping accepts only the existing repose
 fidelity/root arguments, never runner-owned candidate exclusions. The saved
 camera evidence survives a failed state or planner gate for diagnosis. This

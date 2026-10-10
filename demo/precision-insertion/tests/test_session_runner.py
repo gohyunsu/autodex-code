@@ -19,6 +19,10 @@ from precision_insertion.calibration import SessionCalibration  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.key_perception import KeyPoseObservation  # noqa: E402
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
+from precision_insertion.path_audit import PathAuditLimits  # noqa: E402
+from precision_insertion.trial_preflight import (  # noqa: E402
+    TrialPreflight, write_trial_preflight_artifacts,
+)
 from precision_insertion.outcome import InsertionEvidence  # noqa: E402
 from precision_insertion.retry_preflight import XYRetryPreflight  # noqa: E402
 from precision_insertion import session_runner  # noqa: E402
@@ -124,6 +128,102 @@ def _plan(runner, observation):
             observation.selected_acquisition_timestamp_s),
         max_key_state_skew_s=0.05, limits=object(),
         max_pose_error_deg=5.0, axial_waypoint_step_m=0.002)
+
+
+def test_attempt_rejects_changed_preflight_report_and_binding(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        session_runner, "plan_admitted_key_trial",
+        lambda **kwargs: _report(runner, kwargs["key_observation"]))
+    _plan(runner, _observation("key_1", 10.0))
+    report = runner._preflight_report_path
+    report.write_text('{"selected_candidate_key": ["fake"]}\n',
+                      encoding="utf-8")
+    with pytest.raises(ValueError, match="preflight report changed"):
+        runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
+    assert not (runner.output_dir / "attempts").exists()
+
+    report.write_text("{}\n", encoding="utf-8")
+    binding = runner._preflight_binding_path
+    binding.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="binding changed"):
+        runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
+    assert not (runner.output_dir / "attempts").exists()
+
+
+def test_measured_start_state_is_hashed_and_checked_before_attempt(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        session_runner, "plan_admitted_key_trial",
+        lambda **kwargs: _report(runner, kwargs["key_observation"]))
+    observation = _observation("key_1", 10.0)
+    evidence = _save_evidence(runner, observation)
+    raw = np.full(6, 500., dtype=float)
+    q = np.concatenate((np.zeros(7), convert_inspire_raw(raw[None, :])[0]))
+    state = LiveRobotState(
+        q, np.zeros(7), 10., 10., 500., 10., raw.copy(), raw.copy(),
+        0., np.zeros(6))
+    state_limits = {"max_arm_hand_skew_s": .02,
+                    "max_hand_command_error_raw": 20.,
+                    "max_arm_velocity_rad_s": .1}
+    arguments = dict(
+        planner=object(), key_observation=observation,
+        key_evidence_dir=evidence, live_start_q=q.copy(),
+        start_q_acquisition_timestamp_s=10., max_key_state_skew_s=.05,
+        limits=object(), max_pose_error_deg=5., axial_waypoint_step_m=.002,
+        measured_start_state=state, measured_state_limits=state_limits)
+    wrong_q = q.copy()
+    wrong_q[0] = .1
+    with pytest.raises(ValueError, match="differ from measured feedback"):
+        runner.preflight_next_key(**{**arguments, "live_start_q": wrong_q})
+    runner.preflight_next_key(**arguments)
+    verified = runner.verify_current_preflight_evidence()
+    assert verified["measured_start_state_sha256"]
+    state_file = runner._preflight_report_path.parent / "measured_start_state.json"
+    state_file.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="measured start state changed"):
+        runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
+    assert not (runner.output_dir / "attempts").exists()
+
+
+def test_actual_trial_scene_hash_is_rechecked_before_repose(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    observation = _observation("key_1", 10.0)
+    _save_evidence(runner, observation)
+    limits = PathAuditLimits(
+        max_joint_step_rad=.02, max_wrist_step_m=.005,
+        max_wrist_rotation_deg=1., goal_position_tolerance_m=.001,
+        goal_rotation_tolerance_deg=1., axial_lateral_tolerance_m=.001,
+        axial_rotation_tolerance_deg=1., minimum_hand_clearance_m=.001)
+
+    def real_report(**kwargs):
+        return TrialPreflight(
+            status="no_eligible_pose_in_catalog", pose_class={"stem": "000"},
+            attempted_candidates=(), selected_candidate_key=None,
+            repose_target_stems=(), insertion_plan=None, pickup_plan=None,
+            trial_scene={"mesh": {"target": {"pose": [0, 0, 0, 0, 0, 0, 1]}}},
+            key_observation_id=observation.capture_id,
+            key_capture_timestamp_s=10.,
+            start_q_acquisition_timestamp_s=10.,
+            max_key_state_skew_s=.05, key_pose_world=np.eye(4),
+            live_start_q=np.zeros(13), attempted_before_trial=(),
+            covered_scenes=(), limits=limits, max_pose_error_deg=5.,
+            axial_waypoint_step_m=.002, max_candidate_attempts=None,
+            session_calibration_sha256=runner.session_sha256,
+            catalog_sha256=runner.catalog_sha256)
+
+    monkeypatch.setattr(session_runner, "plan_admitted_key_trial", real_report)
+    monkeypatch.setattr(session_runner, "write_trial_preflight_artifacts",
+                        write_trial_preflight_artifacts)
+    _plan(runner, observation)
+    runner.verify_current_preflight_evidence()
+    scene = runner._preflight_report_path.parent / "trial_scene.json"
+    scene.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="trial_scene artifact changed"):
+        runner.verify_current_preflight_evidence()
 
 
 def _bind_postlift(runner):

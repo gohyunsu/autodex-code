@@ -51,6 +51,12 @@ def _setup(tmp_path, monkeypatch, *, state_timestamp=100.005):
         assert kwargs["key_observation"].capture_id == "key_001"
         assert np.array_equal(kwargs["live_start_q"], _measured_state().full_q)
         assert kwargs["start_q_acquisition_timestamp_s"] == state_timestamp
+        assert isinstance(kwargs["measured_start_state"], LiveRobotState)
+        assert kwargs["measured_state_limits"] == {
+            "max_arm_hand_skew_s": .02,
+            "max_hand_command_error_raw": 20.,
+            "max_arm_velocity_rad_s": .1,
+        }
         assert kwargs["key_evidence_dir"] == tmp_path / "key_evidence"
         return SimpleNamespace(status="sampled_planning_pass")
 
