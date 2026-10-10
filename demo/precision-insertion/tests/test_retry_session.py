@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from autodex.utils.sync import convert_inspire_raw  # noqa: E402
 from precision_insertion.held_relation import HeldRelation  # noqa: E402
+from precision_insertion.grounded_alignment import AlignmentLimits  # noqa: E402
 from precision_insertion.key_perception import KeyPoseObservation  # noqa: E402
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.outcome import InsertionEvidence  # noqa: E402
@@ -23,7 +24,7 @@ from precision_insertion.path_audit import PathAuditLimits  # noqa: E402
 from precision_insertion.records import begin_attempt  # noqa: E402
 from precision_insertion.retry_session import (  # noqa: E402
     RetrySessionLimits, assess_and_plan_observed_xy_retry,
-    assess_unobserved_xy_diagnostic,
+    assess_unobserved_xy_diagnostic, assess_grounded_xy_diagnostic,
     write_retry_session_artifacts,
 )
 from precision_insertion import retry_session  # noqa: E402
@@ -321,3 +322,39 @@ def test_unobserved_diagnostic_rejects_stale_hand_feedback(tmp_path, monkeypatch
     with pytest.raises(ValueError, match="not synchronized with retry frames"):
         assess_unobserved_xy_diagnostic(**kwargs)
     assert kwargs["backend"].calls == 0
+
+
+def test_grounded_diagnostic_binds_failure_and_never_records_retry(
+        tmp_path, monkeypatch):
+    kwargs = _inputs(tmp_path, monkeypatch)
+    kwargs.pop("planner")
+    kwargs.pop("held_key_observation")
+    kwargs.pop("held_key_evidence_dir")
+    paths = tmp_path / "AutoDex/precision_insertion/fixtures"
+    fixture = next(paths.rglob("task_geometry.json"))
+    fixture.write_text(json.dumps({
+        "key_frame": {"tip_z_m": 0.08},
+        "verification_depth_m": 0.02,
+        "insertion_direction_socket": [0., 0., -1.],
+        "socket_entry_plane_z_m": 0.055,
+    }), encoding="utf-8")
+    alignment_limits = AlignmentLimits(
+        pixel_sigma_px=1., max_reprojection_px=3.,
+        min_parallax_deg=5., max_axis_tilt_deg=3.,
+        max_20mm_axis_sweep_m=.001,
+        max_lateral_uncertainty_95_m=.0005,
+        systematic_lateral_sigma_m=.0001,
+        cad_spacing_sigma_m=.0005)
+    result = assess_grounded_xy_diagnostic(
+        **kwargs, alignment_limits=alignment_limits,
+        axis_reference_key_z_m=.03)
+    assert result.status == "abstain"  # backend did not label landmarks
+    assert result.alignment["reason"] == (
+        "two_collinear_landmarks_cannot_estimate_square_key_yaw")
+    assert result.to_record()["preflight"] is None
+    assert kwargs["attempt"]._pending_retry is False
+    output = write_retry_session_artifacts(
+        result, kwargs["frames"], tmp_path / "grounded_diagnostic")
+    saved = json.loads((output / "report.json").read_text())
+    assert saved["schema"] == "precision_insertion_grounded_xy_diagnostic_v1"
+    assert (output / "frames/a.png").is_file()

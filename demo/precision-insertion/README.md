@@ -1,5 +1,79 @@
 # Precision insertion demo
 
+## Calibrated VLM point grounding (read-only diagnostic)
+
+`SessionRunner.prepare_grounded_xy_diagnostic(...)` is an alternative to
+closed-set XY voting **after an observed insertion failure and a logged guarded
+withdrawal**. It leaves the existing `run_auto.py`, `run_pipeline.py`, and
+`scene_cfg.py` untouched. It stores original, same-request AutoDex camera
+frames, measured Franka/Inspire state, frozen calibration, prompts/responses,
+landmarks and a metric report in
+`xy_retry_assessments/NNN/`. It does not call `record_retry`, plan a robot path,
+or send a motion command. The earlier candidate-ID voting path remains
+available for comparison.
+
+The VLM sees each **raw, full-resolution, undistorted** camera image separately.
+For the smooth cylindrical key it returns the insertion-tip centre and two
+points on the *visible projected shaft centreline*. Different views need not
+mark the same physical shaft locations: the image line is the geometric
+constraint. It returns `null` if the tip or straight shaft is obscured. The
+alternate two-corresponding-landmark solver is retained for objects with an
+identifiable CAD cross-section at `axis_reference_key_z_m`; an arbitrary point
+on a smooth cylinder is **not** such a correspondence. For the square key,
+neither two collinear landmarks nor one axis line resolves yaw, so this
+diagnostic abstains until non-collinear CAD features are added.
+
+Given full-resolution undistorted intrinsics `K_i` and frozen
+`T_camera_socket,i = T_camera_world,i T_world_robot T_robot_socket`, the
+cylinder solver triangulates the tip from multiple views, converts each 2D
+axis line to a 3D plane through its camera, and finds their intersection
+direction. Pairwise hypotheses and joint tip/line reprojection reject
+inconsistent camera views. The marked-landmark variant instead triangulates
+two points and checks their CAD spacing. Both compute lateral axis residuals
+at the socket rim and at the plane 20 mm deeper. Translation changes both
+residuals equally; if their difference or axis tilt is too large, XY alone
+cannot resolve the error and the solver abstains. For a cylindrical key yaw is
+irrelevant; the same two collinear points **cannot** determine square-key yaw,
+so square mode abstains. It never treats a hidden point, a fabricated overlay,
+or VLM confidence text as a millimetre measurement.
+
+`AlignmentLimits` requires held-out estimates of VLM pixel error and a
+*systematic lateral error floor* that includes camera/board/socket calibration,
+time synchronization and correlated visual bias. It also requires explicit
+parallax, reprojection, tilt, 20 mm sweep and 95% uncertainty limits. Defaults
+are intentionally absent except for three required views. Two can be set
+explicitly for a diagnostic but cannot independently reject a bad camera by
+consensus. The report only suggests one of ±1 mm socket-X/Y moves when the
+95% lower bound of its reduction in mean squared rim/depth error is positive;
+otherwise it abstains. This is a *visual hypothesis*, not certified physical
+accuracy. Actual key/socket fit, whole-hand clearance, live cuRobo preflight,
+guarded contact and independent task-success measurement remain separate
+requirements. A highly accurate point fit can still be wrong if the VLM
+consistently labels the wrong physical feature, or the fixture moves.
+
+Before allowing this diagnostic to influence a physical retry, collect a
+held-out AutoDex-camera dataset with independently measured cylinder tip/axis
+poses and deliberate ±1 mm socket-frame offsets. Preserve native image sizes,
+capture timestamps and per-camera extrinsics. Measure tip/line pixel errors,
+3D lateral error, axis error, abstention rate and 1 mm direction accuracy
+separately by view and by occlusion. Populate `AlignmentLimits` from those
+held-out results; its numbers must not be guessed from VLM text. Check that
+the shaft centreline is recoverable in at least three simultaneous views.
+Then add an execution adapter that repeats exact endpoint and whole-hand
+collision screening with the measured held relation, live cuRobo path
+planning and guarded force/contact control. The present point/line report
+cannot be passed to `record_retry` and has no robot actuation route.
+
+The mathematical pattern follows ZeroDex's multi-view point grounding and
+triangulation, but not its rounded projection/20-pixel RANSAC defaults, which
+are unsuitable as unvalidated millimetre tolerances. 3D feature-based
+insertion servoing motivates using the key and socket axes rather than the
+image's lowest pixel. CAD-constrained pose tracking motivates the longer-term
+silhouette/depth refinement. See the [ZeroDex paper](https://arxiv.org/abs/2606.19340),
+[3D-feature insertion visual servoing](https://arxiv.org/abs/2405.18830),
+[uncertainty-aware triangulation](https://arxiv.org/abs/2008.01258), and
+[FoundationPose](https://arxiv.org/abs/2312.08344).
+
 The isolated cylinder BODex 1,000-per-tabletop-scene run, exact filter
 sequence, reproducibility commands, and per-socket 20 mm endpoint counts are
 in [OFFLINE_CYLINDER_1000.md](OFFLINE_CYLINDER_1000.md). Passing its offline

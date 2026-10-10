@@ -53,9 +53,11 @@ from .preinsert_checkpoint import (
 from .records import AttemptRecord, begin_attempt
 from .retry_session import (
     RetrySessionLimits, RetrySessionResult, UnobservedXYDiagnostic,
+    GroundedXYDiagnostic, assess_grounded_xy_diagnostic,
     assess_and_plan_observed_xy_retry, assess_unobserved_xy_diagnostic,
     write_retry_session_artifacts,
 )
+from .grounded_alignment import AlignmentLimits
 from .repose_artifacts import write_repose_preflight_artifacts
 from .repose_preflight import validate_repose_rest_target
 from .repose_transition import (
@@ -1632,6 +1634,45 @@ class SessionRunner:
             withdrawal_evidence_path=withdrawal_evidence_path,
             postlift_preflight_report_path=postlift_preflight_report_path,
             decision_timestamp_s=decision_timestamp_s, limits=limits)
+        output = (self._attempt_dir / "xy_retry_assessments" /
+                  f"{self._retry_assessment_index:03d}")
+        write_retry_session_artifacts(result, frames, output)
+        self._retry_assessment_index += 1
+        return result
+
+    def prepare_grounded_xy_diagnostic(
+        self, *, joint_sample: LiveRobotState, frames,
+        intrinsics_full: Mapping, extrinsics_full: Mapping,
+        frame_request_id: int, frame_ids: Mapping[str, int],
+        acquisition_metadata: Mapping, backend: ImageVLM,
+        withdrawal_completed_at_s: float,
+        withdrawal_evidence_path: Path,
+        postlift_preflight_report_path: Path,
+        decision_timestamp_s: float, limits: RetrySessionLimits,
+        alignment_limits: AlignmentLimits,
+        axis_reference_key_z_m: float | None = None,
+    ) -> GroundedXYDiagnostic:
+        """Save camera-grounded metric 1 mm advice without scheduling motion."""
+        if (self.current_decision().action !=
+                "guarded_withdrawal_then_xy_assessment" or
+                self._attempt is None or self._preflight is None or
+                self._attempt_dir is None):
+            raise ValueError("grounded XY needs an observed failed insertion")
+        result = assess_grounded_xy_diagnostic(
+            mode=self.mode, shared_root=self.shared_root,
+            calibration=self.calibration, catalog=self.catalog,
+            trial=self._preflight, attempt=self._attempt,
+            joint_sample=joint_sample, frames=frames,
+            intrinsics_full=intrinsics_full,
+            extrinsics_full=extrinsics_full,
+            frame_request_id=frame_request_id, frame_ids=frame_ids,
+            acquisition_metadata=acquisition_metadata, backend=backend,
+            withdrawal_completed_at_s=withdrawal_completed_at_s,
+            withdrawal_evidence_path=withdrawal_evidence_path,
+            postlift_preflight_report_path=postlift_preflight_report_path,
+            decision_timestamp_s=decision_timestamp_s, limits=limits,
+            alignment_limits=alignment_limits,
+            axis_reference_key_z_m=axis_reference_key_z_m)
         output = (self._attempt_dir / "xy_retry_assessments" /
                   f"{self._retry_assessment_index:03d}")
         write_retry_session_artifacts(result, frames, output)

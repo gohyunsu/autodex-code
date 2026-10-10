@@ -7,7 +7,7 @@ future commissioned executor; nothing here commands or authorizes motion.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import hashlib
 import json
 import math
@@ -18,11 +18,17 @@ import numpy as np
 from PIL import Image
 
 from .calibration import validate_session_camera_calibration
+from .assets import AssetPaths
 from .candidates import select_pose_candidates, validate_catalog_session
 from .config import TaskMode
 from .endpoint import screen_grasp_endpoint
 from .frame_provenance import image_sha256, verify_frame_provenance
 from .geometry import validate_se3
+from .grounded_alignment import (
+    AlignmentLimits, estimate_grounded_alignment,
+    estimate_grounded_line_alignment, observe_grounded_key_axis,
+    observe_grounded_cylinder_axis,
+)
 from .held_relation import HeldRelation, resolve_postlift_held_relation
 from .key_perception import KeyPoseObservation, verify_key_capture_artifacts
 from .live_robot_state import LiveRobotState
@@ -35,6 +41,8 @@ from .retry_preflight import (
 )
 from .session_bootstrap import _safe_id
 from .xy_retry import XYRetryAssessment, assess_xy_retry
+from .xy_overlay import CalibratedXYFrame, camera_socket_transform
+from .world import validated_frozen_socket_pose
 
 
 def _digest(value: dict) -> str:
@@ -153,6 +161,46 @@ class UnobservedXYDiagnostic:
             "preflight": None,
             "held_key_relation_source": "v8_nominal_unobserved_key",
             "scope": "saved_direction_only_not_pending_retry_or_robot_motion",
+            "robot_ready": False,
+        }
+
+
+@dataclass(frozen=True)
+class GroundedXYDiagnostic:
+    """Metric visual hypothesis, with no retry preflight or pending motion."""
+
+    status: str
+    attempt_id: str
+    candidate_id: str
+    session_calibration_sha256: str
+    camera_calibration_sha256: str
+    withdrawal_evidence_path: Path
+    withdrawal_evidence_sha256: str
+    postlift_preflight_path: Path
+    postlift_preflight_sha256: str
+    frame_binding: dict
+    joint_sample: LiveRobotState
+    alignment: dict
+    vlm_observations: tuple
+
+    def to_record(self) -> dict:
+        return {
+            "schema": "precision_insertion_grounded_xy_diagnostic_v1",
+            "status": self.status,
+            "attempt_id": self.attempt_id,
+            "candidate_id": self.candidate_id,
+            "session_calibration_sha256": self.session_calibration_sha256,
+            "camera_calibration_sha256": self.camera_calibration_sha256,
+            "withdrawal_evidence_path": str(self.withdrawal_evidence_path),
+            "withdrawal_evidence_sha256": self.withdrawal_evidence_sha256,
+            "postlift_preflight_path": str(self.postlift_preflight_path),
+            "postlift_preflight_sha256": self.postlift_preflight_sha256,
+            "frame_binding": self.frame_binding,
+            "joint_sample": self.joint_sample.to_record(),
+            "alignment": self.alignment,
+            "vlm_observations": [v.to_record() for v in self.vlm_observations],
+            "preflight": None,
+            "scope": "saved_metric_hypothesis_only_not_pending_retry_or_robot_motion",
             "robot_ready": False,
         }
 
@@ -443,23 +491,17 @@ def assess_and_plan_observed_xy_retry(
         assessment, preflight)
 
 
-def assess_unobserved_xy_diagnostic(
+def _validated_unobserved_retry_capture(
     *, mode: TaskMode, shared_root: Path, calibration, catalog: dict,
     trial, attempt: AttemptRecord, joint_sample: LiveRobotState,
     frames: Sequence[LabeledFrame], intrinsics_full: Mapping,
     extrinsics_full: Mapping, frame_request_id: int,
     frame_ids: Mapping[str, int], acquisition_metadata: Mapping,
-    backend: ImageVLM, withdrawal_completed_at_s: float,
+    withdrawal_completed_at_s: float,
     withdrawal_evidence_path: Path, postlift_preflight_report_path: Path,
     decision_timestamp_s: float, limits: RetrySessionLimits,
-    screen: Callable = screen_grasp_endpoint,
-) -> UnobservedXYDiagnostic:
-    """Bind a raw-camera XY direction to a failed attempt without key pose.
-
-    This deliberately does not call ``plan_xy_retry_from_withdrawn_hold``:
-    nominal key/socket collision says nothing decisive about a squeezed key's
-    true lateral shift. The saved direction is not a pending robot retry.
-    """
+) -> tuple[Path, Path, Path, dict]:
+    """Common failed trial, measured state, camera and withdrawal gate."""
     limits.validate()
     insertion, _postlift, postlift_file, root = _validated_retry_trial_context(
         mode=mode, shared_root=shared_root, calibration=calibration,
@@ -509,6 +551,42 @@ def assess_unobserved_xy_diagnostic(
         withdrawal_completed_at_s=withdrawal_completed_at_s,
         withdrawal_evidence_path=withdrawal_evidence_path,
         verified_frames=verified, joint_sample=joint_sample)
+    if (decision_timestamp_s - exposure_begin > limits.max_frame_age_s or
+            exposure_end - exposure_begin > limits.max_capture_skew_s or
+            exposure_end > decision_timestamp_s + limits.max_capture_skew_s):
+        raise ValueError("retry camera capture is stale or asynchronous")
+    return root, postlift_file, withdrawal_file, verified
+
+
+def assess_unobserved_xy_diagnostic(
+    *, mode: TaskMode, shared_root: Path, calibration, catalog: dict,
+    trial, attempt: AttemptRecord, joint_sample: LiveRobotState,
+    frames: Sequence[LabeledFrame], intrinsics_full: Mapping,
+    extrinsics_full: Mapping, frame_request_id: int,
+    frame_ids: Mapping[str, int], acquisition_metadata: Mapping,
+    backend: ImageVLM, withdrawal_completed_at_s: float,
+    withdrawal_evidence_path: Path, postlift_preflight_report_path: Path,
+    decision_timestamp_s: float, limits: RetrySessionLimits,
+    screen: Callable = screen_grasp_endpoint,
+) -> UnobservedXYDiagnostic:
+    """Bind a raw-camera XY direction to a failed attempt without key pose.
+
+    This deliberately does not call ``plan_xy_retry_from_withdrawn_hold``:
+    nominal key/socket collision says nothing decisive about a squeezed key's
+    true lateral shift. The saved direction is not a pending robot retry.
+    """
+    root, postlift_file, withdrawal_file, verified = (
+        _validated_unobserved_retry_capture(
+            mode=mode, shared_root=shared_root, calibration=calibration,
+            catalog=catalog, trial=trial, attempt=attempt,
+            joint_sample=joint_sample, frames=frames,
+            intrinsics_full=intrinsics_full,
+            extrinsics_full=extrinsics_full, frame_request_id=frame_request_id,
+            frame_ids=frame_ids, acquisition_metadata=acquisition_metadata,
+            withdrawal_completed_at_s=withdrawal_completed_at_s,
+            withdrawal_evidence_path=withdrawal_evidence_path,
+            postlift_preflight_report_path=postlift_preflight_report_path,
+            decision_timestamp_s=decision_timestamp_s, limits=limits))
     assessment = assess_xy_retry(
         shared_root=root, mode=mode, calibration=calibration,
         catalog=catalog, candidate_key=trial.selected_candidate_key,
@@ -537,14 +615,110 @@ def assess_unobserved_xy_diagnostic(
         raise RuntimeError("unobserved diagnostic cannot authorize a retry")
     return UnobservedXYDiagnostic(
         assessment.status, attempt.attempt_id, attempt.candidate_id,
-        withdrawal_time, withdrawal_file,
+        float(withdrawal_completed_at_s), withdrawal_file,
         hashlib.sha256(withdrawal_file.read_bytes()).hexdigest(),
         postlift_file, hashlib.sha256(postlift_file.read_bytes()).hexdigest(),
         verified, joint_sample, assessment)
 
 
+def assess_grounded_xy_diagnostic(
+    *, mode: TaskMode, shared_root: Path, calibration, catalog: dict,
+    trial, attempt: AttemptRecord, joint_sample: LiveRobotState,
+    frames: Sequence[LabeledFrame], intrinsics_full: Mapping,
+    extrinsics_full: Mapping, frame_request_id: int,
+    frame_ids: Mapping[str, int], acquisition_metadata: Mapping,
+    backend: ImageVLM, withdrawal_completed_at_s: float,
+    withdrawal_evidence_path: Path, postlift_preflight_report_path: Path,
+    decision_timestamp_s: float, limits: RetrySessionLimits,
+    alignment_limits: AlignmentLimits,
+    axis_reference_key_z_m: float | None = None,
+) -> GroundedXYDiagnostic:
+    """Observe raw key landmarks after a failed trial, never command XY.
+
+    The cylinder route uses a tip point and the visible shaft axis line; its
+    line endpoints need no cross-view point correspondence. The square route
+    needs a third non-collinear feature to estimate yaw and therefore abstains.
+    """
+    root, postlift_file, withdrawal_file, verified = (
+        _validated_unobserved_retry_capture(
+            mode=mode, shared_root=shared_root, calibration=calibration,
+            catalog=catalog, trial=trial, attempt=attempt,
+            joint_sample=joint_sample, frames=frames,
+            intrinsics_full=intrinsics_full,
+            extrinsics_full=extrinsics_full, frame_request_id=frame_request_id,
+            frame_ids=frame_ids, acquisition_metadata=acquisition_metadata,
+            withdrawal_completed_at_s=withdrawal_completed_at_s,
+            withdrawal_evidence_path=withdrawal_evidence_path,
+            postlift_preflight_report_path=postlift_preflight_report_path,
+            decision_timestamp_s=decision_timestamp_s, limits=limits))
+    geometry = json.loads(AssetPaths(root, mode).task_geometry.read_text(
+        encoding="utf-8"))
+    tip_z = float(geometry["key_frame"]["tip_z_m"])
+    if mode.family != "cylinder":
+        if axis_reference_key_z_m is None:
+            # The square diagnostic still records why a two-point axis
+            # estimate cannot determine the key's insertion yaw.
+            reference_z = 0.0
+        else:
+            reference_z = float(axis_reference_key_z_m)
+        if (not math.isfinite(reference_z) or reference_z < 0 or
+                reference_z >= tip_z):
+            raise ValueError("axis reference must be behind the CAD tip")
+    if (float(geometry.get("verification_depth_m", mode.target_depth_m)) !=
+            mode.target_depth_m or
+            geometry["insertion_direction_socket"] != [0.0, 0.0, -1.0]):
+        raise ValueError("CAD depth/axis differs from configured insertion task")
+    socket = validated_frozen_socket_pose(
+        mode=mode, shared_root=root, calibration=calibration)
+    c2r = validate_se3(calibration.record["c2r"], name="session C2R")
+    calibrated = [CalibratedXYFrame(
+        frame.camera_id, frame.timestamp_s, frame.image,
+        camera_socket_transform(
+            T_camera_world=extrinsics_full[frame.camera_id],
+            T_world_robot=c2r, T_robot_socket=socket),
+        np.asarray(intrinsics_full[frame.camera_id]["K_undist"], dtype=float),
+    ) for frame in frames]
+    if mode.family == "cylinder":
+        grounded, observations = observe_grounded_cylinder_axis(
+            backend, calibrated)
+        alignment = estimate_grounded_line_alignment(
+            grounded,
+            socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
+            verification_depth_m=mode.target_depth_m,
+            limits=alignment_limits)
+    else:
+        grounded, observations = observe_grounded_key_axis(
+            backend, calibrated)
+        alignment = estimate_grounded_alignment(
+            grounded, landmark_spacing_m=tip_z - reference_z,
+            socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
+            verification_depth_m=mode.target_depth_m,
+            limits=alignment_limits, yaw_relevant=mode.yaw_relevant)
+    step = alignment["step_socket_m"]
+    if step is not None:
+        proposed = np.asarray(attempt.xy_offset_socket_m) + np.asarray(step)
+        if np.linalg.norm(proposed) > limits.max_total_offset_m:
+            alignment = dict(alignment, status="abstain",
+                             reason="proposed_offset_exceeds_session_budget",
+                             step_socket_m=None)
+    alignment = dict(
+        alignment, estimator_limits=asdict(alignment_limits),
+        key_object=mode.key_object, socket_object=mode.socket_object,
+        socket_entry_plane_z_m=float(geometry["socket_entry_plane_z_m"]),
+        verification_depth_m=mode.target_depth_m,
+        axis_reference_key_z_m=(reference_z if mode.family != "cylinder"
+                                else None))
+    return GroundedXYDiagnostic(
+        alignment["status"], attempt.attempt_id, attempt.candidate_id,
+        attempt.session_calibration_sha256,
+        calibration.record["camera_calibration_sha256"],
+        withdrawal_file, hashlib.sha256(withdrawal_file.read_bytes()).hexdigest(),
+        postlift_file, hashlib.sha256(postlift_file.read_bytes()).hexdigest(),
+        verified, joint_sample, alignment, tuple(observations))
+
+
 def write_retry_session_artifacts(
-    result: RetrySessionResult | UnobservedXYDiagnostic,
+    result: RetrySessionResult | UnobservedXYDiagnostic | GroundedXYDiagnostic,
     frames: Sequence[LabeledFrame],
     output_dir: Path,
 ) -> Path:
@@ -567,7 +741,8 @@ def write_retry_session_artifacts(
             raise ValueError("saved retry image differs from VLM source pixels")
         files[str(path.relative_to(target))] = hashlib.sha256(
             path.read_bytes()).hexdigest()
-    if result.assessment is not None and result.assessment.overlays is not None:
+    if (not isinstance(result, GroundedXYDiagnostic) and
+            result.assessment is not None and result.assessment.overlays is not None):
         overlay_dir = target / "overlays"
         overlay_dir.mkdir()
         for view in result.assessment.overlays.views:
@@ -578,7 +753,8 @@ def write_retry_session_artifacts(
                 image.save(path, format="PNG")
                 files[str(path.relative_to(target))] = hashlib.sha256(
                     path.read_bytes()).hexdigest()
-    if result.preflight is not None:
+    if (not isinstance(result, GroundedXYDiagnostic) and
+            result.preflight is not None):
         preflight_dir = write_xy_retry_preflight(
             result.preflight, target / "preflight")
         for path in preflight_dir.rglob("*"):
