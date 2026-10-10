@@ -5,12 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from diagnose_synthetic_full_chain import main  # noqa: E402
-from diagnose_synthetic_repose import main as repose_main  # noqa: E402
+from diagnose_synthetic_repose import (  # noqa: E402
+    _capture_failed_stroke_state, _diagnose_failed_world_obstacle,
+    main as repose_main,
+)
 from run_pipeline import main as pipeline_main  # noqa: E402
 
 
@@ -95,3 +99,62 @@ def test_synthetic_repose_release_options_are_paired_before_io(
                      "/unused/retreat.npy"])
     assert error.value.code == 2
     assert "release exit needs both" in capsys.readouterr().err
+
+
+def test_synthetic_repose_observes_failed_joint_without_changing_verdict(
+    monkeypatch,
+):
+    import autodex.planner.jacobian_stroke as stroke_module
+
+    original = lambda _planner, _q, *_, **__: (
+        np.array([True, False]), "world_collision", {})
+    monkeypatch.setattr(stroke_module, "_check_states_batch", original)
+    q = np.arange(26, dtype=np.float32).reshape(2, 13)
+    with _capture_failed_stroke_state() as captured:
+        valid, status, _ = stroke_module._check_states_batch(None, q)
+    assert valid.tolist() == [True, False]
+    assert status == "world_collision"
+    assert np.array_equal(captured["q"], q[1])
+    assert stroke_module._check_states_batch is original
+
+
+def test_synthetic_repose_isolates_table_obstacle_without_waiving_it(
+    monkeypatch,
+):
+    import autodex.planner.jacobian_stroke as stroke_module
+
+    class Checker:
+        enabled = {"table": True, "fixture_socket": True}
+
+        def get_obstacle_names(self):
+            return list(self.enabled)
+
+        def enable_obstacle(self, name, *, enable):
+            self.enabled[name] = enable
+
+    class Planner:
+        _motion_gen = type("MotionGen", (), {"world_coll_checker": Checker()})()
+
+    planner = Planner()
+
+    def check(active, _q):
+        blocked = active._motion_gen.world_coll_checker.enabled["table"]
+        return (np.array([not blocked]),
+                "world_collision" if blocked else None,
+                {"backend": "test"})
+
+    monkeypatch.setattr(stroke_module, "_check_states_batch", check)
+    scene = {
+        "cuboid": {"table": {"dims": [1., 1., .1],
+                             "pose": [0., 0., 0., 1., 0., 0., 0.]}},
+        "mesh": {
+            "fixture_socket": {"file_path": "/unused/socket.obj",
+                               "pose": [0., 0., 0., 1., 0., 0., 0.]},
+        },
+    }
+    result = _diagnose_failed_world_obstacle(planner, scene, np.zeros(13))
+    assert result["classification"] == "table_world_obstacle_necessary"
+    assert result["variants"]["full"]["feasible"] is False
+    assert result["variants"]["socket_only"]["feasible"] is True
+    assert planner._motion_gen.world_coll_checker.enabled == {
+        "table": True, "fixture_socket": True}

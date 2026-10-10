@@ -8,7 +8,7 @@ verified reset seed, a physical release, or a robot motion permit.
 from __future__ import annotations
 
 import argparse
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import asdict
 import json
 from pathlib import Path
@@ -45,6 +45,85 @@ def _finite(value: float) -> float:
     return result
 
 
+@contextmanager
+def _capture_failed_stroke_state():
+    """Observe, but do not change, the stock Jacobian collision verdict."""
+    import autodex.planner.jacobian_stroke as stroke_module
+
+    original = stroke_module._check_states_batch
+    captured = {}
+
+    def observe(planner, q_full, *args, **kwargs):
+        outcome = original(planner, q_full, *args, **kwargs)
+        invalid = np.flatnonzero(~np.asarray(outcome[0], dtype=bool))
+        if len(invalid):
+            captured["q"] = np.atleast_2d(np.asarray(
+                q_full, dtype=np.float32))[int(invalid[0])].copy()
+            captured["original_status"] = outcome[1]
+        return outcome
+
+    stroke_module._check_states_batch = observe
+    try:
+        yield captured
+    finally:
+        stroke_module._check_states_batch = original
+
+
+def _diagnose_failed_world_obstacle(planner, held_world: dict,
+                                    q_full: np.ndarray) -> dict:
+    """Recheck one rejected q with fixture/table omitted one at a time.
+
+    This counterfactual must never replace the full-world preflight. It
+    separates obstacle classes, not an exact robot link or contact point.
+    """
+    from autodex.planner.jacobian_stroke import _check_states_batch
+
+    if (not isinstance(held_world, dict) or
+            set(held_world.get("mesh", {})) != {"fixture_socket"} or
+            set(held_world.get("cuboid", {})) != {"table"}):
+        raise ValueError("collision isolation needs the frozen held table/socket world")
+    checker = planner._motion_gen.world_coll_checker
+    if not {"table", "fixture_socket"}.issubset(
+            set(checker.get_obstacle_names())):
+        raise ValueError("active cuRobo world lacks table or socket obstacle")
+    variants = {}
+    for name in ("full", "table_only", "socket_only", "neither"):
+        table_enabled = name in {"full", "table_only"}
+        socket_enabled = name in {"full", "socket_only"}
+        try:
+            checker.enable_obstacle("table", enable=table_enabled)
+            checker.enable_obstacle("fixture_socket", enable=socket_enabled)
+            valid, status, metadata = _check_states_batch(
+                planner, q_full[None])
+            variants[name] = {
+                "feasible": bool(valid[0]), "status": status,
+                "collision_backend": metadata["backend"],
+            }
+        finally:
+            try:
+                checker.enable_obstacle("table", enable=True)
+            finally:
+                checker.enable_obstacle("fixture_socket", enable=True)
+    v = {name: row["feasible"] for name, row in variants.items()}
+    if v["full"] or not v["neither"]:
+        classification = "inconclusive_full_or_nonworld_mismatch"
+    elif not v["table_only"] and v["socket_only"]:
+        classification = "table_world_obstacle_necessary"
+    elif v["table_only"] and not v["socket_only"]:
+        classification = "socket_world_obstacle_necessary"
+    elif not v["table_only"] and not v["socket_only"]:
+        classification = "both_individually_infeasible"
+    else:
+        classification = "combined_world_interaction_or_cache_mismatch"
+    return {
+        "schema": "precision_insertion_synthetic_collision_isolation_v1",
+        "synthetic": True, "robot_ready": False,
+        "status": "classified",
+        "scope": "same_rejected_joint_state_counterfactual_worlds_not_motion_permission",
+        "variants": variants, "classification": classification,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--shared-root", type=Path, required=True)
@@ -74,6 +153,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-board-edge-clearance-mm", type=_finite,
                         required=True)
     parser.add_argument("--max-seed-attempts", type=int, default=1)
+    parser.add_argument("--diagnose-collision-obstacle", action="store_true",
+                        help="offline counterfactual collision check at rejected q")
     parser.add_argument("--retreat-goal-q-npy", type=Path,
                         help="optional explicit seven-joint post-release arm goal")
     parser.add_argument("--min-release-key-clearance-mm", type=_finite,
@@ -174,33 +255,52 @@ def main(argv: list[str] | None = None) -> int:
         try:
             with log.open("w", encoding="utf-8") as stream:
                 with redirect_stdout(stream), redirect_stderr(stream):
-                    result = preflight_v8_repose_transition(
-                        planner=planner, shared_root=root, mode=mode,
-                        calibration=calibration, trial_scene=trial_scene,
-                        catalog=catalog,
-                        from_pose_stem=args.from_pose_stem,
-                        to_pose_stem=args.to_pose_stem,
-                        height_cm=args.height_cm,
-                        release_xy_robot_m=(args.release_x_m, args.release_y_m),
-                        live_start_q=start,
-                        observation_id="synthetic_reset_key_pose",
-                        key_capture_timestamp_s=2.0,
-                        start_q_acquisition_timestamp_s=2.0,
-                        max_state_skew_s=.1, max_pose_error_deg=10.,
-                        max_center_in_hand_drift_m=(
-                            args.max_reset_drift_mm / 1000.),
-                        max_symmetry_axis_tilt_deg=(
-                            args.max_reset_axis_tilt_deg),
-                        minimum_rest_socket_clearance_m=(
-                            args.min_rest_socket_clearance_mm / 1000.),
-                        minimum_board_edge_clearance_m=(
-                            args.min_board_edge_clearance_mm / 1000.),
-                        limits=limits, reset_candidate_root=reset_root,
-                        max_seed_attempts=args.max_seed_attempts,
-                        retreat_goal_arm_q=retreat_q,
-                        minimum_release_key_clearance_m=(
-                            None if args.min_release_key_clearance_mm is None
-                            else args.min_release_key_clearance_mm / 1000.))
+                    with _capture_failed_stroke_state() as failed:
+                        result = preflight_v8_repose_transition(
+                            planner=planner, shared_root=root, mode=mode,
+                            calibration=calibration, trial_scene=trial_scene,
+                            catalog=catalog,
+                            from_pose_stem=args.from_pose_stem,
+                            to_pose_stem=args.to_pose_stem,
+                            height_cm=args.height_cm,
+                            release_xy_robot_m=(args.release_x_m, args.release_y_m),
+                            live_start_q=start,
+                            observation_id="synthetic_reset_key_pose",
+                            key_capture_timestamp_s=2.0,
+                            start_q_acquisition_timestamp_s=2.0,
+                            max_state_skew_s=.1, max_pose_error_deg=10.,
+                            max_center_in_hand_drift_m=(
+                                args.max_reset_drift_mm / 1000.),
+                            max_symmetry_axis_tilt_deg=(
+                                args.max_reset_axis_tilt_deg),
+                            minimum_rest_socket_clearance_m=(
+                                args.min_rest_socket_clearance_mm / 1000.),
+                            minimum_board_edge_clearance_m=(
+                                args.min_board_edge_clearance_mm / 1000.),
+                            limits=limits, reset_candidate_root=reset_root,
+                            max_seed_attempts=args.max_seed_attempts,
+                            retreat_goal_arm_q=retreat_q,
+                            minimum_release_key_clearance_m=(
+                                None if args.min_release_key_clearance_mm is None
+                                else args.min_release_key_clearance_mm / 1000.))
+                    isolation = None
+                    if (args.diagnose_collision_obstacle and "q" in failed and
+                            any(row.get("status") == "held_descent_unreachable"
+                                for row in result.attempted_seeds)):
+                        try:
+                            isolation = _diagnose_failed_world_obstacle(
+                                planner, planner._cached_world, failed["q"])
+                        except Exception as diagnostic_error:
+                            isolation = {
+                                "schema": (
+                                    "precision_insertion_synthetic_"
+                                    "collision_isolation_v1"),
+                                "synthetic": True, "robot_ready": False,
+                                "status": "diagnostic_unavailable",
+                                "error_type": type(diagnostic_error).__name__,
+                                "error": str(diagnostic_error),
+                                "scope": "offline_counterfactual_not_motion_permission",
+                            }
         except Exception as exc:
             output.mkdir(parents=True, exist_ok=False)
             shutil.copy2(log, output / log.name)
@@ -218,6 +318,15 @@ def main(argv: list[str] | None = None) -> int:
             result=result, trial_scene=trial_scene, output_dir=output,
             source_files=source_files)
         shutil.copy2(log, output / log.name)
+    if isolation is not None:
+        q_path = output / "rejected_joint_state.npy"
+        np.save(q_path, failed["q"])
+        isolation["original_collision_status"] = failed["original_status"]
+        isolation["rejected_joint_state"] = q_path.name
+        isolation["rejected_joint_state_sha256"] = _sha(q_path)
+        (output / "collision_isolation.json").write_text(
+            json.dumps(isolation, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8")
     context = {
         "schema": "precision_insertion_synthetic_repose_diagnostic_v1",
         "synthetic": True, "robot_ready": False,
@@ -233,6 +342,8 @@ def main(argv: list[str] | None = None) -> int:
         "result_status": result.status,
         "scope": "offline_planner_diagnostic_not_session_or_motion_authorization",
         "planner_log_sha256": _sha(output / "planner_stdout_stderr.txt"),
+        "collision_isolation_sha256": (
+            None if isolation is None else _sha(output / "collision_isolation.json")),
         "attempted_reset_seed_files": {
             str(attempt["seed_id"]): {
                 path.name: _sha(path)

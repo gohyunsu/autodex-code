@@ -30,6 +30,7 @@ PYTHONPATH="$PWD/demo/precision-insertion/compat" \
   --min-rest-socket-clearance-mm 10 \
   --min-board-edge-clearance-mm 10 \
   --max-seed-attempts 1 --planner-mode native-locked-experimental \
+  --diagnose-collision-obstacle \
   --output-dir /tmp/precision-synthetic-repose-cylinder01-0to1-new
 ```
 
@@ -70,6 +71,21 @@ scene). The status does not identify which obstacle or robot link was involved;
 neither the table nor socket may be removed from the real preflight on this
 basis. A measured scene and targeted collision-pair inspection are needed
 before changing the release policy.
+
+The optional obstacle-isolation probe captures the **same rejected 13-joint
+state** from the failed stroke, then asks cuRobo to evaluate it with both
+obstacles, only the table, only the socket and neither. Obstacle masks are
+restored after each query; the actual reset preflight is never rerun with an
+obstacle removed. In the [r7 diagnostic](/tmp/precision-synthetic-repose-cylinder01-0to1-r7-isolation-20261011/collision_isolation.json),
+the joint state was infeasible with both obstacles and with the table alone,
+but feasible with the socket alone and with neither. Thus **the synthetic
+table obstacle is necessary for this particular collision verdict**; the
+socket is not. This does not identify the contacting robot link, validate
+the hypothetical table geometry against the measured ChArUco board, or
+make a higher drop safe. The failed `r6` experiment attempted to rebuild
+the cuRobo world with removed obstacles and hit a vendored world-update
+error; it is not collision evidence. The working probe toggles the existing
+obstacle masks and still leaves this reset candidate rejected.
 
 Therefore seed `191` is **not a validated reset path**, despite its prior
 MuJoCo grasp-stability result. The staged seed stays outside the canonical
