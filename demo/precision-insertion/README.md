@@ -443,6 +443,11 @@ that session and catalogue. For each new key observation:
    post-shift observation and the new 20 mm endpoint must be checked first.
    The square key additionally needs insertion yaw and therefore abstains
    with only an axial line.
+   The opt-in [held XY execution boundary](LATERAL_EXECUTION.md) now binds a
+   passing grounded shift to a fresh robot state, reviewed watchdog/interlock
+   and an injected external controller, producing the exact execution log
+   needed by `assess_postshift_lateral_alignment`. It defaults to no motion;
+   no commissioned controller or post-shift contact retry is shipped.
 5. If the pose's candidate pool is exhausted, `current_decision()` returns
    `preflight_repose`. Call `preflight_repose` with the **same saved key capture**,
    synchronized measured joints, a listed target tabletop stem, directed v8
