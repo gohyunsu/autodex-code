@@ -1521,8 +1521,61 @@ mount), and preserve those intermediate directories until the evidence bundle
 has been verified. The metadata callback must return the exact request,
 frame IDs, image hashes and bounded exposure times. The unchanged stock
 orchestrators discard frame IDs, so they deliberately fail this gate until
-demo-specific metadata-preserving adapters are deployed. These helpers are
-**not yet a live calibration command** and cannot authorize robot motion.
+demo-specific metadata-preserving adapters are deployed. These capture
+helpers alone cannot authorize robot motion.
+
+`precision_insertion.live_session_start.start_precision_session()` now joins
+those pieces into **one non-motion startup call** on the AutoDex robot PC. It
+first checks the v8 socket raw mesh, exact collision mesh and **canonical**
+socket FoundPose `repre.pth` at the explicit `shared_root`; pending
+synthetic-only PTH files are not used. With an already-streaming AutoDex
+camera rig and an independently commissioned `AcquisitionTimeProvider`, it
+collects the ChArUco board snapshot **before** initializing socket FoundPose,
+takes at least two unique-request socket captures while the key is absent,
+runs `bootstrap_session()`, freezes the socket in the collision world, writes
+the evidence bundle and reloads the saved calibration to check it. Duplicate
+request IDs or an existing output directory fail closed; partial capture
+files after a failure are retained for review. It does not connect to or
+command Franka/Inspire.
+
+```python
+from precision_insertion.config import select_mode
+from precision_insertion.live_session_start import start_precision_session
+from precision_insertion.perception_evidence import SocketViewLimits
+
+mode = select_mode("square", 1.5)
+started = start_precision_session(
+    mode=mode, shared_root=shared_root,
+    snapshot_orchestrator=board_snap, init_orchestrator=init,
+    acquisition_metadata_for_request=acquisition_metadata_for_request,
+    capture_root=shared_capture_root, evidence_dir=new_session_dir,
+    calibrated_camera_ids=active_serials,
+    intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
+    image_hw=(H, W), c2r=measured_franka_C2R,
+    base_scene=base_curobo_scene,
+    view_limits=SocketViewLimits(
+        minimum_mask_pixels=commissioned_mask_pixels,
+        minimum_foundpose_quality=commissioned_foundpose_quality,
+        minimum_foundpose_inliers=commissioned_inliers,
+        minimum_border_clearance_px=commissioned_border_px,
+        maximum_capture_skew_s=commissioned_camera_skew_s),
+    socket_prompt="fixed red socket on the ChArUco board",
+    socket_capture_count=2,
+    board_timeout_s=commissioned_board_timeout_s,
+    socket_timeout_s=commissioned_socket_timeout_s,
+    max_socket_translation_mm=commissioned_socket_repeatability_mm,
+    max_socket_angle_deg=commissioned_socket_repeatability_deg,
+)
+# started.evidence_dir/session_calibration.json freezes the measured world.
+```
+
+`board_snap` and `init` are the metadata-preserving adapters described in
+[CAMERA_FRAME_HANDOFF.md](CAMERA_FRAME_HANDOFF.md); all `commissioned_*`
+variables need measured values from the AutoDex rig. As of 2026-10-10 the
+NAS handoff has **zero real camera captures** and its FoundPose PTHs remain
+synthetic-only candidates rather than canonical assets, so this call cannot
+yet complete on the current handoff. Its tests exercise ordering, missing
+assets and duplicate-request rejection, not live hardware accuracy.
 
 Run the current offline tests from the repository root:
 
@@ -1531,11 +1584,10 @@ Run the current offline tests from the repository root:
   demo/precision-insertion/tests
 ```
 
-The future runner must acquire ChArUco images first, then several socket
-captures, with the socket already rigidly fixed. It will pass the captured
-evidence to `calibrate_session`; the calibration helper does **not** acquire
-images, assess the SAM3 mask/FoundPose photometric quality, prove hand-eye
-accuracy, or authorize robot motion. The runner must explicitly select
+The startup call enforces ChArUco before repeated socket captures, with the
+socket already rigidly fixed. Its calibration helper does **not** independently
+prove the SAM3 mask/FoundPose photometric quality, hand-eye accuracy, or
+robot-motion safety. The future trial runner must explicitly select
 `--shared-root` and use the matching v8 `object_processing` assets and Inspire
 candidates; see `PLAN.md` for the remaining gates. Until those gates are
 implemented, there is intentionally no robot-mode command to run here.

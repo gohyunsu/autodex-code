@@ -24,8 +24,11 @@ class AssetPaths:
         return self.object_dir(name) / "raw_mesh" / f"{name}.obj"
 
     def foundpose_repre(self, name: str) -> Path:
-        return (self.shared_root / "AutoDex" / "foundpose_assets" / name /
+        return (self.foundpose_assets_root(name) /
                 "object_repre" / "v1" / name / "1" / "repre.pth")
+
+    def foundpose_assets_root(self, name: str) -> Path:
+        return self.shared_root / "AutoDex" / "foundpose_assets" / name
 
     @property
     def key_planning_mesh(self) -> Path:
