@@ -15,6 +15,33 @@ The continuous-offset reports use `precision_insertion_grounded_xy_diagnostic_v2
 the evaluator rejects earlier cardinal-step reports rather than silently
 interpreting them as continuous-offset results.
 
+The separate `lateral_preflight.py` can now **read-only preflight** a
+nonzero, at-most-1 mm socket-XY hold shift *once its inputs have been
+independently source-verified*. It begins at measured 13-DOF joints, requires
+the wrist to match the saved withdrawn hold, removes only the carried key
+from the frozen cuRobo world, and keeps the socket and table. It calls the
+stock FR3/Inspire `plan_cartesian_pose(..., lock_hand=True)`, then audits
+every resulting FK sample against the full key/hand meshes, exact socket,
+table and supplied commissioned future-trial surface bounds. A planned
+vertical detour, rotation, sparse path, changed Inspire pose, collision or
+insufficient uncertainty margin rejects the shift. It records the exact
+joint path and `insertion_replan_allowed=false`; it does **not** perform a
+motion, reobserve the key, or authorize another insertion. In particular,
+`prepare_grounded_xy_diagnostic` is **not yet wired** to this lower-level
+preflight: binding its saved frames, physical grasp relation and latest live
+state to the plan is a remaining integration gate.
+
+For use by that future binding layer, the API is
+`plan_lateral_hold_shift(planner, mode, shared_root, calibration, trial_scene,
+start_q, expected_hold_pose, T_key_hand, increment_socket_xy_m, bounds,
+limits, max_path_deviation_m, max_hold_height_deviation_m,
+max_hold_rotation_deg)`. The three new path tolerances and the
+`SurfaceDeviationBounds` must be commissioned, not copied from synthetic
+tests. `write_lateral_hold_preflight(result, output_dir)` saves an exclusive
+report and the planned trajectory. A positive sampled audit is a necessary
+planning check only; fresh post-shift visual geometry, 20 mm endpoint fit,
+guarded contact and physical outcome remain mandatory.
+
 The VLM sees each **raw, full-resolution, undistorted** camera image separately.
 For the smooth cylindrical key it returns the insertion-tip centre and two
 points on the *visible projected shaft centreline*. Different views need not
@@ -283,9 +310,10 @@ that session and catalogue. For each new key observation:
    the tip/axis, and calculates a continuous socket-frame correction with an
    at-most-1 mm increment. Missing landmarks, weak parallax, tilt, or high
    uncertainty abstain. This is still a **diagnostic**, not a pending retry:
-   the new lateral path, actual held geometry, and contact retry have not been
-   preflighted. The square key additionally needs insertion yaw and therefore
-   abstains with only an axial line.
+   the standalone lateral path audit is available, but diagnostic provenance,
+   the actual held geometry and renewed contact retry are not yet bound to it.
+   The square key additionally needs insertion yaw and therefore abstains
+   with only an axial line.
 5. If the pose's candidate pool is exhausted, `current_decision()` returns
    `preflight_repose`. Call `preflight_repose` with the **same saved key capture**,
    synchronized measured joints, a listed target tabletop stem, directed v8

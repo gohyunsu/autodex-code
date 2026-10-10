@@ -88,7 +88,12 @@ cylinder-only `prepare_grounded_xy_diagnostic(...)` can now re-verify this
 post-lift report and use native-pixel multi-view VLM tip/axis observations to
 calculate a continuous socket-frame XY correction capped to a 1 mm increment.
 It saves a metric hypothesis only; no lateral or renewed insertion plan is
-recorded. The existing observed-key **live** XY retry still requires a fresh
+recorded. A separate `lateral_preflight.py` now plans and sampled-audits a
+socket-plane hold shift using the unchanged cuRobo planner, the full held
+key/hand meshes and explicit future surface bounds. It does not yet consume
+the saved diagnostic or physical calibration through a verified session
+binding, and never plans a renewed insertion. The existing observed-key
+**live** XY retry still requires a fresh
 held-key FoundPose after withdrawal. A square key also needs observable yaw,
 so its two-collinear-landmark route abstains. Do not use a test fixture or a
 nominal/MuJoCo transform in place of the missing physical records.

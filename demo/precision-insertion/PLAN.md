@@ -439,8 +439,12 @@ the empirical calibration radius as that bound. The live XY retry route still
 requires an observed held-key pose after guarded withdrawal. The cylinder
 multi-view tip/axis diagnostic now accepts a verified bounded post-lift source,
 but only reports a continuous, at-most-1 mm XY hypothesis; it does not add a
-pending retry or motion preflight. The square-key yaw remains unobservable
-from an axial line alone.
+pending retry or motion preflight. A separate low-level lateral hold preflight
+now plans with stock cuRobo and audits sampled full key/Inspire CAD plus future
+surface margins at <=1 mm, without insertion motion. Its missing session
+binding must recheck saved diagnostic/camera bytes, physical held relation,
+withdrawn measured state and post-shift observation before guarded retry. The
+square-key yaw remains unobservable from an axial line alone.
 Candidate grasp statistics update from `grasp_success`; insertion retry
 statistics update from `insertion_success` and failure cause. Unknown is not
 success and must not erase a known earlier milestone. Use a controlled failure

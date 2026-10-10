@@ -26,6 +26,7 @@ from .endpoint import (_coal_mesh, _coal_models_report, _hand_link_meshes,
 from .geometry import pose_angle_deg, validate_se3
 from .solid_occupancy import SolidMeshOccupancy
 from .targets import InsertionTargets, build_rigid_insertion_targets
+from .world import validated_frozen_socket_pose
 
 
 @dataclass(frozen=True)
@@ -151,6 +152,70 @@ def _held_pair_report(moving_model, moving_mesh, fixed_model,
     return report
 
 
+def _audit_held_geometry_samples(
+    *, shared_root: Path, mode, calibration, wrist: dict[str, list[np.ndarray]],
+    T_key_hand: np.ndarray, held_hand_q: np.ndarray,
+    minimum_hand_clearance_m: float,
+    allow_initial_key_table_support: bool = False,
+) -> tuple[list[dict], dict[str, float], dict[str, str]]:
+    """One collision implementation for held transfer and lateral-shift paths.
+
+    The result is a sampled surface/solid-containment check, not a swept
+    volume or contact-force proof. In particular, a lateral hold shift never
+    exempts its first key/table sample.
+    """
+    fixed, world_hashes = _fixed_world_models(calibration)
+    paths = AssetPaths(Path(shared_root).expanduser().resolve(), mode)
+    key_path = paths.raw_mesh(mode.key_object)
+    robot_path = paths.robot_urdf
+    if not key_path.is_file() or not robot_path.is_file():
+        raise FileNotFoundError("full key CAD and Franka/Inspire URDF are required")
+    key_mesh = _load_mesh(key_path)
+    if not key_mesh.is_watertight:
+        raise ValueError("full key CAD mesh is not watertight")
+    moving = {"key": (_coal_mesh(key_mesh), key_mesh)}
+    moving.update({f"hand/{name}": (_coal_mesh(mesh), mesh)
+                   for name, mesh in _hand_link_meshes(
+                       robot_path, held_hand_q).items()})
+    key_in_hand = np.linalg.inv(validate_se3(
+        T_key_hand, name="sampled held T_key_hand"))
+    failures: list[dict] = []
+    minimum_distances: dict[str, float] = {}
+    for stage, poses in wrist.items():
+        for i, hand_pose in enumerate(poses):
+            key_pose = hand_pose @ key_in_hand
+            for moving_name, (model, moving_mesh) in moving.items():
+                moving_pose = key_pose if moving_name == "key" else hand_pose
+                for fixed_name, (fixed_model, fixed_pose, fixed_mesh,
+                                 occupancy) in fixed.items():
+                    if (allow_initial_key_table_support and stage == "lift" and
+                            i == 0 and moving_name == "key" and
+                            fixed_name == "cuboid/table"):
+                        continue
+                    relative = np.linalg.inv(fixed_pose) @ moving_pose
+                    result = _held_pair_report(
+                        model, moving_mesh, fixed_model, fixed_mesh,
+                        occupancy, relative)
+                    pair = f"{moving_name}->{fixed_name}"
+                    distance = result["minimum_surface_distance_m"]
+                    minimum_distances[pair] = min(
+                        distance, minimum_distances.get(pair, float("inf")))
+                    required = (minimum_hand_clearance_m
+                                if moving_name != "key" else 0.0)
+                    if result["colliding"] or distance < required:
+                        failures.append({"stage": stage, "sample": i,
+                                         "reason": "held_geometry_collision_or_clearance",
+                                         "moving": moving_name,
+                                         "obstacle": fixed_name,
+                                         "colliding": result["colliding"],
+                                         "distance_m": distance,
+                                         "required_clearance_m": required})
+    return failures, minimum_distances, {
+        "key_mesh": _sha256(key_path), "robot_urdf": _sha256(robot_path),
+        **world_hashes,
+    }
+
+
 def audit_held_joint_paths(
     *, shared_root: Path, calibration, targets: InsertionTargets,
     planner, transfer_trajectory: np.ndarray, descent_trajectory: np.ndarray,
@@ -168,7 +233,6 @@ def audit_held_joint_paths(
     limits.validate()
     root = Path(shared_root).expanduser().resolve()
     mode = targets.mode
-    paths = AssetPaths(root, mode)
     # Revalidate CAD hashes, frozen fixture and every target; a stale target
     # must not be silently checked against a newly modified socket/geometry.
     refreshed = build_rigid_insertion_targets(
@@ -270,53 +334,14 @@ def audit_held_joint_paths(
                                      "height_m": height})
                 prior_height = height
 
-    fixed, world_hashes = _fixed_world_models(calibration)
-    key_path = paths.raw_mesh(mode.key_object)
-    robot_path = paths.robot_urdf
-    if not key_path.is_file() or not robot_path.is_file():
-        raise FileNotFoundError("full key CAD and Franka/Inspire URDF are required")
-    key_mesh = _load_mesh(key_path)
-    if not key_mesh.is_watertight:
-        raise ValueError("full key CAD mesh is not watertight")
-    key_model = _coal_mesh(key_mesh)
-    hand_meshes = _hand_link_meshes(robot_path, hand_q)
-    moving = {"key": (key_model, key_mesh)}
-    moving.update({f"hand/{name}": (_coal_mesh(mesh), mesh)
-                   for name, mesh in hand_meshes.items()})
-    key_in_hand = np.linalg.inv(targets.T_key_hand)
-    minimum_distances: dict[str, float] = {}
-    for stage, poses in wrist.items():
-        for i, hand_pose in enumerate(poses):
-            key_pose = hand_pose @ key_in_hand
-            for moving_name, (model, moving_mesh) in moving.items():
-                moving_pose = key_pose if moving_name == "key" else hand_pose
-                for fixed_name, (fixed_model, fixed_pose, fixed_mesh,
-                                 occupancy) in fixed.items():
-                    # The key is deliberately supported by the measured table
-                    # immediately after grasp. Only this initial key/table
-                    # pair is exempt; the hand and socket are never exempt,
-                    # and every subsequent lift sample must clear the table.
-                    if (stage == "lift" and i == 0 and moving_name == "key"
-                            and fixed_name == "cuboid/table"):
-                        continue
-                    relative = np.linalg.inv(fixed_pose) @ moving_pose
-                    result = _held_pair_report(
-                        model, moving_mesh, fixed_model, fixed_mesh,
-                        occupancy, relative)
-                    pair = f"{moving_name}->{fixed_name}"
-                    distance = result["minimum_surface_distance_m"]
-                    minimum_distances[pair] = min(
-                        distance, minimum_distances.get(pair, float("inf")))
-                    required = (limits.minimum_hand_clearance_m
-                                if moving_name != "key" else 0.0)
-                    if result["colliding"] or distance < required:
-                        failures.append({"stage": stage, "sample": i,
-                                         "reason": "held_geometry_collision_or_clearance",
-                                         "moving": moving_name,
-                                         "obstacle": fixed_name,
-                                         "colliding": result["colliding"],
-                                         "distance_m": distance,
-                                         "required_clearance_m": required})
+    geometry_failures, minimum_distances, geometry_hashes = (
+        _audit_held_geometry_samples(
+            shared_root=root, mode=mode, calibration=calibration,
+            wrist=wrist, T_key_hand=targets.T_key_hand,
+            held_hand_q=hand_q,
+            minimum_hand_clearance_m=limits.minimum_hand_clearance_m,
+            allow_initial_key_table_support=lift is not None))
+    failures.extend(geometry_failures)
 
     return {
         "schema": "precision_insertion_sampled_held_path_audit_v1",
@@ -328,8 +353,8 @@ def audit_held_joint_paths(
         "failures": failures,
         "minimum_surface_distances_m": minimum_distances,
         "input_sha256": {
-            "key_mesh": _sha256(key_path),
-            "robot_urdf": _sha256(robot_path),
+            "key_mesh": geometry_hashes["key_mesh"],
+            "robot_urdf": geometry_hashes["robot_urdf"],
             "task_geometry": targets.task_geometry_sha256,
             "session_calibration_record": hashlib.sha256(json.dumps(
                 calibration.record, sort_keys=True, allow_nan=False,
@@ -342,7 +367,8 @@ def audit_held_joint_paths(
             **({"lift_trajectory": _array_sha256(lift)}
                if lift is not None else {}),
             "held_hand_q": _array_sha256(hand_q),
-            **world_hashes,
+            **{k: v for k, v in geometry_hashes.items()
+               if k not in {"key_mesh", "robot_urdf"}},
         },
         "not_validated": [
             "continuous swept geometry between FK samples",
@@ -351,6 +377,151 @@ def audit_held_joint_paths(
             "measured hand joints, grip slip or controller tracking",
             *(["initial key/table support contact at lift sample zero"]
               if lift is not None else []),
+        ],
+        "robot_ready": False,
+    }
+
+
+def audit_held_lateral_path(
+    *, shared_root: Path, mode, calibration, planner,
+    trajectory: np.ndarray, held_hand_q: np.ndarray,
+    T_key_hand: np.ndarray, increment_socket_xy_m: tuple[float, float],
+    limits: PathAuditLimits, max_path_deviation_m: float,
+    max_hold_height_deviation_m: float,
+    max_hold_rotation_deg: float, key_surface_bound_m: float,
+    hand_surface_bound_m: float,
+) -> dict[str, Any]:
+    """Audit a planned <=1 mm hold shift, never an insertion stroke.
+
+    Every FK sample must stay near the socket-plane segment and its original
+    height/orientation. Collision and future-trial surface bounds are checked
+    against the same exact CAD and frozen world as the insertion path audit.
+    """
+    limits.validate()
+    values = (max_path_deviation_m, max_hold_height_deviation_m,
+              max_hold_rotation_deg, key_surface_bound_m,
+              hand_surface_bound_m)
+    if not all(math.isfinite(float(v)) and v > 0 for v in values):
+        raise ValueError("lateral path and future surface limits must be positive")
+    increment = np.asarray(increment_socket_xy_m, dtype=np.float64)
+    if (increment.shape != (2,) or not np.all(np.isfinite(increment)) or
+            not 0 < np.linalg.norm(increment) <= 0.001 + 1e-12):
+        raise ValueError("lateral increment must be nonzero and at most 1 mm")
+    held = np.asarray(held_hand_q, dtype=np.float64)
+    if held.shape != (6,) or not np.all(np.isfinite(held)):
+        raise ValueError("held hand must have six finite Inspire joints")
+    path = _joint_path(trajectory, "lateral_trajectory", held)
+    wrist = [validate_se3(planner.fk_wrist(q), name=f"lateral FK[{i}]")
+             for i, q in enumerate(path)]
+    socket = validated_frozen_socket_pose(
+        mode=mode, shared_root=shared_root, calibration=calibration)
+    initial = wrist[0]
+    goal = initial.copy()
+    goal[:3, 3] += socket[:3, :2] @ increment
+    failures: list[dict] = []
+    if not _poses_match(wrist[-1], goal, limits):
+        failures.append({"stage": "lateral", "sample": len(path) - 1,
+                         "reason": "lateral_goal_residual",
+                         "position_error_m": float(np.linalg.norm(
+                             wrist[-1][:3, 3] - goal[:3, 3])),
+                         "rotation_error_deg": pose_angle_deg(wrist[-1], goal)})
+    distance = float(np.linalg.norm(increment))
+    unit = increment / distance
+    previous_progress = -float("inf")
+    for i, pose in enumerate(wrist):
+        local = socket[:3, :3].T @ (pose[:3, 3] - initial[:3, 3])
+        progress = float(np.dot(local[:2], unit))
+        deviation = float(np.linalg.norm(local[:2] - progress * unit))
+        rotation = pose_angle_deg(pose, initial)
+        if (progress < -max_path_deviation_m or
+                progress > distance + max_path_deviation_m or
+                progress + max_path_deviation_m < previous_progress or
+                deviation > max_path_deviation_m or
+                abs(local[2]) > max_hold_height_deviation_m or
+                rotation > max_hold_rotation_deg):
+            failures.append({"stage": "lateral", "sample": i,
+                             "reason": "not_socket_plane_lateral_segment",
+                             "progress_m": progress,
+                             "cross_track_m": deviation,
+                             "height_error_m": float(local[2]),
+                             "rotation_error_deg": rotation})
+        previous_progress = progress
+        if i:
+            joint_step = float(np.max(np.abs(path[i] - path[i - 1])))
+            wrist_step = float(np.linalg.norm(
+                pose[:3, 3] - wrist[i - 1][:3, 3]))
+            rotation_step = pose_angle_deg(pose, wrist[i - 1])
+            if (joint_step > limits.max_joint_step_rad or
+                    wrist_step > limits.max_wrist_step_m or
+                    rotation_step > limits.max_wrist_rotation_deg):
+                failures.append({"stage": "lateral", "sample": i,
+                                 "reason": "path_sampling_too_sparse",
+                                 "joint_step_rad": joint_step,
+                                 "wrist_step_m": wrist_step,
+                                 "wrist_rotation_deg": rotation_step})
+    geometry_failures, distances, geometry_hashes = (
+        _audit_held_geometry_samples(
+            shared_root=shared_root, mode=mode, calibration=calibration,
+            wrist={"lateral": wrist}, T_key_hand=T_key_hand,
+            held_hand_q=held,
+            minimum_hand_clearance_m=limits.minimum_hand_clearance_m))
+    failures.extend(geometry_failures)
+    if ("key->mesh/fixture_socket" not in distances or
+            not any(pair.startswith("hand/") and pair.endswith(
+                "->mesh/fixture_socket") for pair in distances) or
+            not all(math.isfinite(float(value)) and value >= 0
+                    for value in distances.values())):
+        raise ValueError("lateral audit lacks finite key/hand fixture distances")
+    margins = {}
+    for pair, surface_distance in sorted(distances.items()):
+        required = (key_surface_bound_m if pair.startswith("key->") else
+                    hand_surface_bound_m + limits.minimum_hand_clearance_m)
+        margin = float(surface_distance) - required
+        margins[pair] = {"distance_m": float(surface_distance),
+                         "required_m": required, "remaining_m": margin,
+                         "clear": margin > 0}
+        if margin <= 0:
+            failures.append({"stage": "lateral", "reason":
+                             "future_surface_bound_exceeds_sampled_clearance",
+                             "pair": pair, "remaining_m": margin})
+    root = Path(shared_root).expanduser().resolve()
+    geometry_path = AssetPaths(root, mode).task_geometry
+    return {
+        "schema": "precision_insertion_sampled_lateral_hold_audit_v1",
+        "scope": "sampled_held_key_and_hand_socket_plane_shift_not_execution",
+        "mode": {"family": mode.family, "gap_mm": mode.gap_mm},
+        "sample_count": len(path),
+        "increment_socket_xy_m": increment.tolist(),
+        "T_robot_hand_start": initial.tolist(),
+        "T_robot_hand_goal": goal.tolist(),
+        "sampled_clear": not failures,
+        "failures": failures,
+        "minimum_surface_distances_m": distances,
+        "future_surface_margins": margins,
+        "limits": {**vars(limits),
+                   "max_path_deviation_m": max_path_deviation_m,
+                   "max_hold_height_deviation_m": max_hold_height_deviation_m,
+                   "max_hold_rotation_deg": max_hold_rotation_deg,
+                   "key_surface_bound_m": key_surface_bound_m,
+                   "hand_surface_bound_m": hand_surface_bound_m},
+        "input_sha256": {
+            **geometry_hashes,
+            "task_geometry": _sha256(geometry_path),
+            "session_calibration_record": hashlib.sha256(json.dumps(
+                calibration.record, sort_keys=True, allow_nan=False,
+            ).encode("utf-8")).hexdigest(),
+            "fixed_collision_scene": hashlib.sha256(json.dumps(
+                calibration.collision_scene, sort_keys=True, allow_nan=False,
+            ).encode("utf-8")).hexdigest(),
+            "T_key_hand": _array_sha256(np.asarray(T_key_hand)),
+            "held_hand_q": _array_sha256(held),
+            "lateral_trajectory": _array_sha256(path),
+        },
+        "not_validated": [
+            "continuous swept geometry between FK samples",
+            "physical authenticity or coverage of future surface bounds",
+            "grasp slip, force/contact safety and controller tracking",
+            "post-shift camera reobservation and insertion endpoint",
         ],
         "robot_ready": False,
     }

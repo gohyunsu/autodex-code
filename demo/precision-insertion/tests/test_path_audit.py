@@ -19,7 +19,7 @@ from precision_insertion.assets import AssetPaths  # noqa: E402
 from precision_insertion.calibration import SessionCalibration  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.path_audit import (  # noqa: E402
-    PathAuditLimits, audit_held_joint_paths,
+    PathAuditLimits, audit_held_joint_paths, audit_held_lateral_path,
 )
 from precision_insertion.repose_path_audit import (  # noqa: E402
     audit_repose_held_paths,
@@ -202,6 +202,76 @@ def test_nonaxial_descent_and_changed_finger_pose_rejected(tmp_path, monkeypatch
     transfer[4, 7] = 0.01
     with pytest.raises(ValueError, match="changes Inspire joints"):
         _audit(tmp_path, fixture, transfer, descent)
+
+
+def _lateral(tmp_path, fixture, path, **overrides):
+    calibration, targets, _ = fixture
+    kwargs = dict(
+        shared_root=tmp_path, mode=targets.mode, calibration=calibration,
+        planner=_FakePlanner(), trajectory=path,
+        held_hand_q=np.zeros(6), T_key_hand=np.eye(4),
+        increment_socket_xy_m=(0.001, 0.0), limits=_limits(),
+        max_path_deviation_m=0.0001,
+        max_hold_height_deviation_m=0.0001,
+        max_hold_rotation_deg=1.0,
+        key_surface_bound_m=0.0001, hand_surface_bound_m=0.0001)
+    kwargs.update(overrides)
+    return audit_held_lateral_path(**kwargs)
+
+
+def _lateral_path(x0=-0.002, z=0.135):
+    path = np.zeros((6, 13))
+    path[:, 0] = np.linspace(x0, x0 + 0.001, len(path))
+    path[:, 2] = z
+    return path
+
+
+def test_lateral_hold_audit_reuses_full_key_and_hand_collision(
+        tmp_path, monkeypatch):
+    fixture = _fixture(tmp_path, monkeypatch)
+    passed = _lateral(tmp_path, fixture, _lateral_path())
+    assert passed["sampled_clear"] is True
+    assert passed["robot_ready"] is False
+    assert passed["sample_count"] == 6
+    assert "key->mesh/fixture_socket" in passed[
+        "minimum_surface_distances_m"]
+    assert len(passed["input_sha256"]["lateral_trajectory"]) == 64
+    assert all(row["clear"] for row in passed["future_surface_margins"].values())
+    rejected = _lateral(
+        tmp_path, fixture, _lateral_path(), key_surface_bound_m=1.0)
+    assert rejected["sampled_clear"] is False
+    assert any(row["reason"] ==
+               "future_surface_bound_exceeds_sampled_clearance"
+               for row in rejected["failures"])
+
+
+def test_lateral_hold_rejects_vertical_detour_and_changed_hand(
+        tmp_path, monkeypatch):
+    fixture = _fixture(tmp_path, monkeypatch)
+    path = _lateral_path()
+    path[3, 2] += 0.001
+    rejected = _lateral(tmp_path, fixture, path)
+    assert rejected["sampled_clear"] is False
+    assert any(row["reason"] == "not_socket_plane_lateral_segment"
+               for row in rejected["failures"])
+    path = _lateral_path()
+    path[2, 7] = 0.01
+    with pytest.raises(ValueError, match="changes Inspire joints"):
+        _lateral(tmp_path, fixture, path)
+    with pytest.raises(ValueError, match="at most 1 mm"):
+        _lateral(tmp_path, fixture, _lateral_path(),
+                 increment_socket_xy_m=(0.002, 0.0))
+
+
+def test_lateral_hold_has_no_initial_socket_collision_exemption(
+        tmp_path, monkeypatch):
+    fixture = _fixture(tmp_path, monkeypatch)
+    collision = _lateral(tmp_path, fixture, _lateral_path(x0=0.05, z=0.11))
+    assert collision["sampled_clear"] is False
+    assert any(row["reason"] == "held_geometry_collision_or_clearance"
+               and row["sample"] == 0 and row["moving"] == "key" and
+               row["obstacle"] == "mesh/fixture_socket"
+               for row in collision["failures"])
 
 
 def test_stale_geometry_or_discontinuous_joint_segments_rejected(
