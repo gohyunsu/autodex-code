@@ -85,6 +85,14 @@ schema test. All physical task outcomes still require independent evidence.
 
 ## Remaining validation before live use
 
+On 2026-10-11 the cached Qwen3-VL-2B model was loaded again with
+`HF_HUB_OFFLINE=1` on the RTX 3090. The current compact prompt returned a
+parseable `held` JSON response in about 1.03 s of model inference. The two
+inputs were distinct **presentation renders**, not a synchronized grasp
+trial; the label is therefore a transport/format smoke-test result only.
+The source hashes and raw response are saved in
+`/tmp/precision-local-vlm-smoke-current-20261011.json` on this workstation.
+
 Collect time-synchronized, phase-paired **raw AutoDex camera images** with
 independent lift and insertion labels. Evaluate false-positive `held`, jam,
 and insertion-appearance rates against those labels, including occlusion and
