@@ -487,6 +487,7 @@ demo/precision-insertion/
     config.py                     # explicit paths, modes, limits
     assets.py                     # v8/object_processing and evidence checks
     endpoint.py                   # grasp-only exact 20 mm hand/socket screen
+    targets.py                    # frozen-socket, rigid key/hand hold and 20 mm goals
     camera.py                     # unchanged AutoDex camera API adapter
     calibration.py                # read-only ChArUco/socket measurement and freeze; live capture adapter pending
     symmetry.py                   # local square/cylinder pose handling

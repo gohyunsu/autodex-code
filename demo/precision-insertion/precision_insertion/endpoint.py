@@ -134,7 +134,7 @@ def _mesh_pair_report(moving_mesh, fixed_model, T_fixed_moving: np.ndarray) -> d
     return {"colliding": colliding, "minimum_surface_distance_m": float(distance)}
 
 
-def _validate_geometry(geometry: dict[str, Any], mode: TaskMode) -> np.ndarray:
+def validate_task_geometry(geometry: dict[str, Any], mode: TaskMode) -> np.ndarray:
     if geometry.get("units") != "m":
         raise ValueError("task geometry must use meters")
     if geometry.get("socket_pose_object") != mode.socket_object:
@@ -165,6 +165,11 @@ def _validate_geometry(geometry: dict[str, Any], mode: TaskMode) -> np.ndarray:
             not np.allclose(target[:3, :3] @ key_axis, direction, atol=1e-7)):
         raise ValueError("verification pose is not centered and axially aligned")
     return target
+
+
+# Retain the private name for existing offline screen/tests while the public
+# validator is reused by the live-target builder in this demo.
+_validate_geometry = validate_task_geometry
 
 
 def screen_grasp_endpoint(
@@ -200,7 +205,7 @@ def screen_grasp_endpoint(
     if missing:
         raise FileNotFoundError("missing endpoint input: " + ", ".join(missing))
     geometry = json.loads(files["task_geometry"].read_text(encoding="utf-8"))
-    T_socket_key_nominal = _validate_geometry(geometry, mode)
+    T_socket_key_nominal = validate_task_geometry(geometry, mode)
     T_socket_key = T_socket_key_nominal.copy()
     T_socket_key[:2, 3] += offset
     # On this host, a fresh process must load Coal before trimesh/yourdfpy

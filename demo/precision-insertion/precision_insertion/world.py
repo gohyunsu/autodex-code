@@ -65,17 +65,10 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def build_trial_scene_from_session(
+def validated_frozen_socket_pose(
     *, mode: TaskMode, shared_root: Path, calibration: SessionCalibration,
-    key_pose_world: np.ndarray, max_axis_error_deg: float = 20.0,
-) -> dict:
-    """Create a fresh v8 key scene while retaining the frozen session socket.
-
-    Reuses AutoDex's unchanged pose-to-scene conversion, with only the
-    cylindrical local-z symmetry adaptation owned by this demo. The session
-    base world contains measured table + socket, never a stale key target.
-    This function is geometric preparation, not planning authorization.
-    """
+) -> np.ndarray:
+    """Verify the session's socket identity, CAD bytes and collision pose."""
     root = Path(shared_root).expanduser().resolve()
     paths = AssetPaths(root, mode)
     identity = calibration.record.get("mode")
@@ -84,7 +77,6 @@ def build_trial_scene_from_session(
         "key_object": mode.key_object, "socket_object": mode.socket_object,
     }:
         raise ValueError("session calibration key/socket mode does not match trial")
-    c2r = validate_se3(calibration.record.get("c2r"), name="session C2R")
     T_robot_socket = validate_se3(
         calibration.socket_pose_robot, name="frozen T_robot_socket")
     fixed_world = calibration.collision_scene
@@ -99,6 +91,8 @@ def build_trial_scene_from_session(
     if not isinstance(fixture, dict):
         raise ValueError("session fixed world has no socket fixture")
     socket_mesh = paths.socket_collision_mesh.resolve()
+    if not socket_mesh.is_file():
+        raise FileNotFoundError(f"frozen socket collision mesh missing: {socket_mesh}")
     if (Path(fixture.get("file_path", "")).resolve() != socket_mesh or
             calibration.record.get("socket_collision_mesh") != str(socket_mesh) or
             calibration.record.get("socket_collision_mesh_sha256") !=
@@ -113,6 +107,26 @@ def build_trial_scene_from_session(
     if (fixture_pose.shape != (7,) or not np.all(np.isfinite(fixture_pose)) or
             not np.allclose(fixture_pose, se32cart(T_robot_socket), atol=1e-8)):
         raise ValueError("session socket collision pose differs from frozen pose")
+    return T_robot_socket
+
+
+def build_trial_scene_from_session(
+    *, mode: TaskMode, shared_root: Path, calibration: SessionCalibration,
+    key_pose_world: np.ndarray, max_axis_error_deg: float = 20.0,
+) -> dict:
+    """Create a fresh v8 key scene while retaining the frozen session socket.
+
+    Reuses AutoDex's unchanged pose-to-scene conversion, with only the
+    cylindrical local-z symmetry adaptation owned by this demo. The session
+    base world contains measured table + socket, never a stale key target.
+    This function is geometric preparation, not planning authorization.
+    """
+    root = Path(shared_root).expanduser().resolve()
+    paths = AssetPaths(root, mode)
+    validated_frozen_socket_pose(mode=mode, shared_root=root,
+                                 calibration=calibration)
+    c2r = validate_se3(calibration.record.get("c2r"), name="session C2R")
+    fixed_world = calibration.collision_scene
 
     pose_world = validate_se3(key_pose_world, name="fresh key pose_world")
     if mode.family == "cylinder":

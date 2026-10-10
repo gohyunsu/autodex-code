@@ -79,6 +79,12 @@ The first independent helpers are in `precision_insertion/`:
   minimum surface distance, excludes the Franka arm and all trajectories,
   and records source hashes. This is grasp-level **endpoint** evidence only;
   simulated grasp stability is still a separate v8/MuJoCo gate.
+- `targets.py` validates the selected socket's CAD entry, pre-insertion hold,
+  and 20 mm transforms; it composes them with the **session-frozen measured
+  socket pose** and one fixed `T_key_hand` grasp relation. An optional XY
+  offset is expressed in the socket frame and applied equally at all three
+  poses. The result records source hashes and poses but does not solve Franka
+  IK, verify an attached-object trajectory, or authorize contact motion.
 - `candidates.py` scans the selected shared root's Inspire v8 candidate tree,
   reads matching scene `meta.pose_idx` and tabletop assets, requires full-key
   simulation evidence, and applies `endpoint.py` to surviving grasps. The
