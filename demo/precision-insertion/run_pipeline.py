@@ -40,11 +40,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     reorient_audit.add_argument(
         "--max-reset-drift-mm", type=float,
-        help="optional commissioned key-in-hand center drift limit; requires tilt",
+        help="optional commissioned key-in-hand center drift limit; requires rotation",
     )
     reorient_audit.add_argument(
-        "--max-reset-axis-tilt-deg", type=float,
-        help="optional commissioned cylinder-axis tilt limit; requires drift",
+        "--max-reset-axis-tilt-deg", "--max-reset-rotation-deg",
+        dest="max_reset_axis_tilt_deg", type=float,
+        help="commissioned square full-rotation or cylinder axis-tilt limit; requires drift",
     )
     reorient_audit.add_argument("--output", type=Path,
                                 help="optional new JSON report; no overwrite")
@@ -145,8 +146,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     trial.add_argument("--max-reset-drift-mm", type=float,
                        help="commissioned key-in-hand reset drift limit")
-    trial.add_argument("--max-reset-axis-tilt-deg", type=float,
-                       help="commissioned symmetry-reduced reset tilt limit")
+    trial.add_argument("--max-reset-axis-tilt-deg", "--max-reset-rotation-deg",
+                       dest="max_reset_axis_tilt_deg", type=float,
+                       help="commissioned square full rotation or cylinder axis tilt")
     trial.add_argument("--reset-candidate-root", type=Path,
                        help="optional handoff parent of reset_<h> directories")
     trial.add_argument("--attempted-reset", action="append", default=[],
@@ -184,7 +186,8 @@ def main(argv: list[str] | None = None) -> int:
                         required=True)
     repose.add_argument("--max-pose-error-deg", type=float, required=True)
     repose.add_argument("--max-reset-drift-mm", type=float, required=True)
-    repose.add_argument("--max-reset-axis-tilt-deg", type=float,
+    repose.add_argument("--max-reset-axis-tilt-deg", "--max-reset-rotation-deg",
+                        dest="max_reset_axis_tilt_deg", type=float,
                         required=True)
     repose.add_argument("--attempted-insertion", action="append", default=[],
                         metavar="TYPE/SID/GID")

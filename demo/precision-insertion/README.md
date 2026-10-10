@@ -1334,6 +1334,66 @@ be counted as runtime reset assets. The v4 audit reports a raw
 `sim_eval.json` success separately from a provenance-bound seed the demo
 loader will accept; only the latter enters its stable-seed count.
 
+#### Square key: one directed 12 cm reset-cell pilot
+
+The earlier *canonical* square audit above still has zero installed reset
+seeds. A separate, non-runtime pilot now covers `000 -> 004` for the 1.5 mm
+key. `configs/square_full_key.txt` selects the **full key**, and
+`configs/square_reorient_0_to_4.json` selects only that directed v8 scene.
+With `--seed_num 1000 --seed 11011`, BODex wrote 1,000 raw proposals. The
+unchanged AutoDex filter reported **843 scene-clear, 251 squeeze-contact,
+7 MuJoCo-gravity-stable** (`2, 9, 194, 226, 229, 489, 813`). Native BODex
+`success=0/1000` is a different, stricter proposal flag and is not this
+stock filter's acceptance gate. The stock filter copies only grasp arrays;
+[`stage_square_reorient_passes.py`](stage_square_reorient_passes.py) verifies
+all 1,000 results, matching copied arrays and scene/key hashes before
+creating the [local square handoff](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/reorient_handoff_0_4_1000_20261011/manifest.json).
+It does not install anything into NAS.
+
+Unlike a symmetric cylinder, a square key must preserve **full key-in-hand
+rotation**, including yaw. Its reset loader and audit now recompute full
+relative rotation and key-center drift from MuJoCo `sim_traj.json`. Among the
+seven stock passes, squeeze-end drift spans **4.5–18.6 mm** and full rotation
+spans **7.9–43.7°**. With illustrative, **uncommissioned** 3 mm / 5° gates,
+the [square handoff audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/reorient_handoff_0_4_1000_20261011/audit_provisional_3mm_5deg.json)
+accepts **0/7** for reset planning. A gravity-stable grasp is not proof that
+the assumed rigid key–hand transform survived squeeze. No socket-aware Franka
+reset path or physical repose has been validated.
+
+To reproduce on a fresh output tree, from the repository root:
+
+```bash
+PYTHONPATH=demo/precision-insertion/compat \
+  ~/miniconda3/envs/autodex_bodex/bin/python \
+  src/grasp_generation/BODex/generate.py \
+  -c sim_inspire/precision_insertion.yml -w 1 \
+  --obj_list_file demo/precision-insertion/configs/square_full_key.txt \
+  --obj_root_dir /home/hyunsu/shared_data/object_processing \
+  --scene_type reorient_12 \
+  --scene_filter_file demo/precision-insertion/configs/square_reorient_0_to_4.json \
+  --seed_num 1000 --seed 11011 --exp_name NEW_SQUARE_RESET_RAW \
+  --output_dir /home/hyunsu/shared_data/AutoDex/bodex_raw/inspire/NEW_SQUARE_RESET_RAW
+
+PYTHONPATH=demo/precision-insertion/compat \
+  ~/miniconda3/envs/autodex_bodex/bin/python -c \
+  'from src.grasp_generation.sim_filter.run_sim_filter import run_sim_filter; print(run_sim_filter("inspire", "v8", "precision_key_1p5mm", "/home/hyunsu/shared_data/AutoDex/bodex_raw/inspire/NEW_SQUARE_RESET_RAW", "/home/hyunsu/shared_data/AutoDex/precision_insertion/NEW_SQUARE_STOCK_PASS", obj_root_dir="/home/hyunsu/shared_data/object_processing"))'
+
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/stage_square_reorient_passes.py \
+  --shared-root /home/hyunsu/shared_data --gap-mm 1.5 \
+  --raw-root /home/hyunsu/shared_data/AutoDex/bodex_raw/inspire/NEW_SQUARE_RESET_RAW \
+  --stock-candidate-root /home/hyunsu/shared_data/AutoDex/precision_insertion/NEW_SQUARE_STOCK_PASS \
+  --cell 0_4 --expected-seed-count 1000 \
+  --output-root /home/hyunsu/shared_data/AutoDex/precision_insertion/square/NEW_SQUARE_HANDOFF
+```
+
+`audit-reorient --candidate-root /path/to/NEW_SQUARE_HANDOFF` counts
+evidence-bound stock passes. Add both `--max-reset-drift-mm` and
+`--max-reset-rotation-deg` only with an explicitly stated experimental or
+commissioned policy. For square keys, the latter tests full relative
+rotation; for cylinders, it tests symmetry-reduced axis tilt. The old
+`--max-reset-axis-tilt-deg` spelling remains an alias for existing commands.
+
 For the cylinder's 12 cm release scene, direct full-key BODex generation
 failed in Coal convex-hull construction (`Too many neighbors`), so it did
 **not** yield valid raw full-key proposals. The isolated pilot instead reused

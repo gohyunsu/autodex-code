@@ -294,7 +294,8 @@ def audit_v8_reorient_assets(
                             accepted = fidelity_within_limits(
                                 fidelity,
                                 max_center_in_hand_drift_m=drift,
-                                max_symmetry_axis_tilt_deg=tilt)
+                                max_symmetry_axis_tilt_deg=tilt,
+                                family=mode.family)
                             (eligible if accepted else fidelity_rejected).append(
                                 seed.name)
                             metrics.append({
@@ -353,6 +354,9 @@ def audit_v8_reorient_assets(
         "schema": "precision_insertion_v8_reorient_asset_audit_v4",
         "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
                  "key_object": mode.key_object},
+        "reset_fidelity_rotation_measure": (
+            "full_relative_rotation_deg" if mode.family == "square" else
+            "symmetry_reduced_axis_tilt_deg"),
         "v8_pose_stems": list(ids), "directed_pairs": rows,
         "candidate_root": str(candidate_base),
         "candidate_root_is_canonical": candidate_root is None,
@@ -368,6 +372,9 @@ def audit_v8_reorient_assets(
         report["fidelity_limits"] = {
             "max_center_in_hand_drift_m": drift,
             "max_symmetry_axis_tilt_deg": tilt,
+            "rotation_measure": (
+                "full_relative_rotation_deg" if mode.family == "square" else
+                "symmetry_reduced_axis_tilt_deg"),
             "source": "caller_supplied_not_automatically_commissioned",
         }
     return report

@@ -18,7 +18,9 @@ from autodex.utils.path import RESET_RELEASE_HEIGHTS_CM
 
 from .config import TaskMode
 from .geometry import validate_se3
-from .grasp_fidelity import trajectory_closure_audit
+from .grasp_fidelity import (
+    trajectory_closure_audit, trajectory_rigid_closure_audit,
+)
 from .reorient_assets import (
     _paths, _same_scene_geometry, _scene_path, _sim_filter_scene_path,
     _tabletop_ids, _validate_scene,
@@ -32,9 +34,18 @@ EVIDENCE_SCHEMA = "precision_insertion_v8_reset_candidate_evidence_v1"
 
 def fidelity_within_limits(
     fidelity: dict, *, max_center_in_hand_drift_m: float,
-    max_symmetry_axis_tilt_deg: float,
+    max_symmetry_axis_tilt_deg: float, family: str = "cylinder",
 ) -> bool:
-    """Apply the same commissioned post-squeeze gate in audit and seed loading."""
+    """Gate the physical key-in-hand drift and mode-appropriate rotation.
+
+    Square keys have no continuous axial symmetry: the angle is the full
+    relative rotation, not the cylinder's symmetry-reduced axis tilt. The
+    historical parameter name is retained for existing callers.
+    """
+    if family not in {"square", "cylinder"}:
+        raise ValueError("reset fidelity needs square or cylinder mode")
+    angle_field = ("full_relative_rotation_deg" if family == "square" else
+                   "symmetry_reduced_axis_tilt_deg")
     drift = float(max_center_in_hand_drift_m)
     tilt = float(max_symmetry_axis_tilt_deg)
     if (not math.isfinite(drift) or drift <= 0 or
@@ -42,7 +53,7 @@ def fidelity_within_limits(
         raise ValueError("positive finite reset fidelity limits are required")
     try:
         values = [(float(fidelity[state]["center_in_hand_displacement_m"]),
-                   float(fidelity[state]["symmetry_reduced_axis_tilt_deg"]))
+                   float(fidelity[state][angle_field]))
                   for state in ("end_squeeze", "end_gravity")]
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("incomplete reset pose-fidelity evidence") from exc
@@ -104,13 +115,25 @@ def _candidate_arrays(seed: Path, *, mode: TaskMode, cell: str,
     if (evidence.get("key_mesh_sha256") != _sha256(mesh) or
             evidence.get("key_info_sha256") != _sha256(info)):
         raise ValueError(f"reset key geometry changed: {seed}")
-    height = float(json.loads(info.read_text(encoding="utf-8"))["obb"][2])
-    if (not math.isfinite(height) or height <= 0 or
-            evidence.get("key_height_m") != height):
-        raise ValueError(f"invalid reset key height: {seed}")
-    fidelity = trajectory_closure_audit(
-        json.loads((seed / "sim_traj.json").read_text(encoding="utf-8")),
-        key_height_m=height)
+    key_info = json.loads(info.read_text(encoding="utf-8"))
+    trajectory = json.loads((seed / "sim_traj.json").read_text(
+        encoding="utf-8"))
+    if mode.family == "cylinder":
+        height = float(key_info["obb"][2])
+        if (not math.isfinite(height) or height <= 0 or
+                evidence.get("key_height_m") != height):
+            raise ValueError(f"invalid reset key height: {seed}")
+        fidelity = trajectory_closure_audit(
+            trajectory, key_height_m=height)
+    elif mode.family == "square":
+        center = np.asarray(key_info["gravity_center"], dtype=np.float64)
+        if (center.shape != (3,) or not np.all(np.isfinite(center)) or
+                evidence.get("key_center_local_m") != center.tolist()):
+            raise ValueError(f"invalid reset key center: {seed}")
+        fidelity = trajectory_rigid_closure_audit(
+            trajectory, key_center_local_m=center)
+    else:
+        raise ValueError(f"unsupported reset key family: {mode.family}")
     if fidelity != evidence.get("post_squeeze_fidelity"):
         raise ValueError(f"reset grasp fidelity evidence changed: {seed}")
     result = json.loads((seed / "sim_eval.json").read_text(encoding="utf-8"))
@@ -197,7 +220,8 @@ def load_v8_reset_seeds(
     checked = [(seed, row) for seed, row in checked if
                fidelity_within_limits(
                    row[5], max_center_in_hand_drift_m=drift_limit,
-                   max_symmetry_axis_tilt_deg=tilt_limit)]
+                   max_symmetry_axis_tilt_deg=tilt_limit,
+                   family=mode.family)]
     if not checked:
         return None
     seeds = [seed for seed, _ in checked]
@@ -219,6 +243,9 @@ def load_v8_reset_seeds(
         "fidelity_limits": {
             "max_center_in_hand_drift_m": drift_limit,
             "max_symmetry_axis_tilt_deg": tilt_limit,
+            "rotation_measure": ("full_relative_rotation_deg"
+                                 if mode.family == "square" else
+                                 "symmetry_reduced_axis_tilt_deg"),
         },
         "robot_ready": False,
     }

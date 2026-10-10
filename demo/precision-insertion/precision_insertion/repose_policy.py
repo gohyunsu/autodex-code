@@ -138,6 +138,9 @@ def assess_repose_options(
         "fidelity_limits": {
             "max_center_in_hand_drift_m": drift,
             "max_symmetry_axis_tilt_deg": tilt,
+            "rotation_measure": ("full_relative_rotation_deg"
+                                 if mode.family == "square" else
+                                 "symmetry_reduced_axis_tilt_deg"),
         },
         "not_validated": [
             "socket-aware Franka pickup/lift/reorient/place/release/retreat",
