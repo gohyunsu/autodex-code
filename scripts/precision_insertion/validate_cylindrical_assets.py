@@ -136,6 +136,13 @@ def validate(shared_root: Path, *, require_learned: bool = False) -> int:
                 "end-down tabletop pose must expose z=0 grasp end and place "
                 "z=80 mm insertion end on the table"
             )
+    tabletop_side = key / "processed_data" / "info" / "tabletop" / "001.npy"
+    if tabletop_side.is_file() and key_mesh_path.is_file():
+        side_pose = np.load(tabletop_side)
+        key_mesh = trimesh.load(key_mesh_path, force="mesh", process=False)
+        world_vertices = (side_pose[:3, :3] @ key_mesh.vertices.T).T + side_pose[:3, 3]
+        if not np.isclose(world_vertices[:, 2].min(), 0.0, atol=1e-6):
+            failures.append("side-down key tabletop pose must touch, not penetrate, table")
     symmetry_path = key / "processed_data" / "info" / "symmetry.json"
     if symmetry_path.is_file():
         symmetry = json.loads(symmetry_path.read_text(encoding="utf-8"))

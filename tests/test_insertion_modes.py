@@ -9,6 +9,7 @@ from autodex.tasks.insertion_vlm import parse_answer
 from autodex.tasks.precision_insertion import (
     build_catalog, decide_retry, mode_config, require_robot_ready,
     select_scenario,
+    validate_runtime_socket_pair,
 )
 
 
@@ -21,6 +22,17 @@ class InsertionModesTest(unittest.TestCase):
         self.assertEqual(cylinder.socket, "precision_socket_cylinder_gap_20mm")
         with self.assertRaises(ValueError):
             mode_config("cylinder", gap_mm=1.5)
+
+    def test_runtime_pair_rejects_wrong_socket_family(self):
+        validate_runtime_socket_pair("precision_key_1p5mm", "precision_socket_unified")
+        validate_runtime_socket_pair("precision_key_cylinder_r15_h80",
+                                     "precision_socket_cylinder_gap_20mm")
+        with self.assertRaises(ValueError):
+            validate_runtime_socket_pair("precision_key_cylinder_r15_h80",
+                                         "precision_socket_unified")
+        with self.assertRaises(ValueError):
+            validate_runtime_socket_pair("precision_key_1p5mm",
+                                         "precision_socket_cylinder_gap_20mm")
 
     def test_catalog_does_not_promote_partial_simulation(self):
         with tempfile.TemporaryDirectory() as directory:

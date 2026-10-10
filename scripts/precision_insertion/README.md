@@ -28,6 +28,10 @@ that metadata during session preflight. It ignores unobservable socket yaw,
 but still rejects excessive center or axis variation. Generated geometry does
 not supply FoundPose weights, BODex grasps, full-task trajectories, or physical
 validation; the validator reports each such runtime blocker explicitly.
+The cylinder key requires an explicit matching `--socket-object`; passing the
+default square `precision_socket_unified` now fails before robot/camera startup.
+The default segmentation prompt switches to a round-opening prompt for this
+key. This is still the original grasp/lift/place runner, not insertion control.
 
 The **canonical path layout is shared with the square-key assets**. Source
 STLs live in this repository under `assets/precision_insertion/`; runtime

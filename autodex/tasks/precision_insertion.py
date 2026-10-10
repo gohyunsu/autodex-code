@@ -49,6 +49,28 @@ def mode_config(mode: str, *, gap_mm: float | None = None) -> InsertionMode:
     raise ValueError("mode must be 'square' or 'cylinder'")
 
 
+def validate_runtime_socket_pair(key_object: str, socket_object: str) -> None:
+    """Reject a cross-family fixture before AutoDex touches camera or robot.
+
+    A cylinder key has one geometry for all radial gaps; its socket must be
+    selected explicitly.  The square keys share the unified keyed socket.
+    Proposal proxies are not physical runtime targets and are not handled here.
+    """
+    if key_object == "precision_key_cylinder_r15_h80":
+        valid = {mode_config("cylinder", gap_mm=gap).socket
+                 for gap in (1, 3, 5, 10, 15, 20)}
+        if socket_object not in valid:
+            raise ValueError(
+                "cylinder key requires an explicit matching --socket-object "
+                "precision_socket_cylinder_gap_{01,03,05,10,15,20}mm"
+            )
+    elif key_object in {mode_config("square", gap_mm=gap).key
+                       for gap in (0.1, 0.3, 0.5, 1.0, 1.5)}:
+        if socket_object != "precision_socket_unified":
+            raise ValueError("square precision key requires --socket-object "
+                             "precision_socket_unified")
+
+
 def _scenario(id_: str, mode: InsertionMode, pose: int, path: Path,
               level: str, evidence: Mapping[str, Any]) -> dict[str, Any]:
     return {

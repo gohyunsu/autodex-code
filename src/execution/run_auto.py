@@ -2980,6 +2980,15 @@ def main(pose_adjust_handler=None, reorient_handler=None, startup_handler=None,
     )
 
     args = parser.parse_args()
+    from autodex.tasks.precision_insertion import validate_runtime_socket_pair
+
+    try:
+        validate_runtime_socket_pair(args.obj, args.socket_object)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if (args.obj == "precision_key_cylinder_r15_h80" and
+            args.socket_prompt == "fixed red socket fixture with keyed opening"):
+        args.socket_prompt = "fixed cylindrical socket fixture with round opening"
     if args.grasp_version != "v8":
         parser.error("run_auto supports only --grasp_version v8; legacy asset pools are disabled")
     if args.max_consecutive_rotates < 0:

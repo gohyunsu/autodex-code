@@ -55,6 +55,11 @@ because it describes the family as a whole. All runtime object assets keep
 the standard AutoDex `object_processing/<object_id>` layout. The legacy
 root-level `cylindrical_assets.json` was archived and is not a catalog source.
 The cylinder `gap_XXmm` suffix denotes one-sided *radial* nominal clearance.
+When launching `run_pipeline.py` with the cylinder key, explicitly pass the
+matching `--socket-object precision_socket_cylinder_gap_XXmm`; the square
+default socket is rejected before hardware initialization. The default
+segmentation prompt then changes to a round-opening description. This guard
+does not make the existing runner perform insertion.
 
 ## Offline usage
 
