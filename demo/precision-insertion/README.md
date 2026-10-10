@@ -1454,6 +1454,17 @@ accepts **0/7** for reset planning. A gravity-stable grasp is not proof that
 the assumed rigid key–hand transform survived squeeze. No socket-aware Franka
 reset path or physical repose has been validated.
 
+A later **separate** `000 -> 004` square reset pilot (`--seed_num 1000`,
+`--seed 11013`) produced [six evidence-bound MuJoCo-stable staged seeds](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/reorient_gamma180_handoff_0_4_1000_seed11013_20261011/manifest.json).
+The direct-v8 loader recognizes all six under that explicit handoff root, but
+the canonical NAS candidate tree still has zero installed square reset seeds.
+Their saved end-gravity key-center drift spans about 3.6–21.9 mm, and the
+square key's full relative rotation about 4.3–33.0°. No pose-fidelity limit
+has been commissioned, and even a limit-passing staged seed would still need
+socket-aware Franka pickup/place/release preflight and observed landing.
+Do not reinterpret the earlier `--seed 11011` result as the current entire
+staged pool, or treat these six as an executable reset action.
+
 To reproduce on a fresh output tree, from the repository root:
 
 ```bash
