@@ -18,6 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from precision_insertion.assets import audit_assets
 from precision_insertion.config import select_mode
+from precision_insertion.planner_mode import require_declared_cartesian_mode
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -137,6 +138,11 @@ def main(argv: list[str] | None = None) -> int:
     trial.add_argument("--covered-scene", type=int, action="append", default=[])
     trial.add_argument("--max-candidate-attempts", type=int,
                        help="pilot prefix; never report pose exhaustion")
+    trial.add_argument(
+        "--planner-mode", choices=("default", "native-locked-experimental"),
+        default="default",
+        help="declare AutoDex's Cartesian mode; experimental mode is offline only",
+    )
     trial.add_argument("--max-reset-drift-mm", type=float,
                        help="commissioned key-in-hand reset drift limit")
     trial.add_argument("--max-reset-axis-tilt-deg", type=float,
@@ -344,6 +350,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, indent=2))
         return 0 if result["status"] == "candidates_available" else 2
     if args.command == "preflight-trial":
+        try:
+            native_enabled = require_declared_cartesian_mode(args.planner_mode)
+        except ValueError as exc:
+            parser.error(str(exc))
         if args.output_dir.expanduser().resolve().exists():
             parser.error("preflight output directory already exists")
         from precision_insertion.calibration import load_session_calibration
@@ -377,6 +387,8 @@ def main(argv: list[str] | None = None) -> int:
             from autodex.planner import GraspPlanner
 
             planner = GraspPlanner(hand="fr3_inspire")
+            if planner._native_pose_constraints_enabled != native_enabled:
+                raise ValueError("AutoDex Cartesian planner mode changed unexpectedly")
             result = plan_fresh_key_trial(
                 planner=planner, mode=mode, shared_root=args.shared_root,
                 calibration=session, catalog=catalog_data,
@@ -404,6 +416,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(str(exc))
         print(json.dumps({
             "status": result.status,
+            "cartesian_planner_mode": result.cartesian_planner_mode,
             "attempted_candidates": len(result.attempted_candidates),
             "repose_target_stems": result.repose_target_stems,
             "repose_assessment_status": (

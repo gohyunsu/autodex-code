@@ -27,6 +27,7 @@ from .endpoint import nominal_inspire_hold_poses
 from .geometry import validate_se3
 from .key_perception import KeyPoseObservation
 from .path_audit import PathAuditLimits
+from .planner_mode import cartesian_mode_from_planner
 from .pose_selection import classify_key_tabletop_pose
 from .preflight import InsertionPreflight, plan_insertion_after_pickup
 from .repose_policy import assess_repose_options
@@ -65,6 +66,7 @@ class TrialPreflight:
     session_calibration_sha256: str
     catalog_sha256: str
     repose_assessment: dict | None = None
+    cartesian_planner_mode: str = "default"
 
     def to_record(self) -> dict:
         return {
@@ -94,6 +96,7 @@ class TrialPreflight:
             "max_candidate_attempts": self.max_candidate_attempts,
             "session_calibration_sha256": self.session_calibration_sha256,
             "catalog_sha256": self.catalog_sha256,
+            "cartesian_planner_mode": self.cartesian_planner_mode,
             "scope": "read_only_planning_not_camera_or_robot_execution",
             "robot_ready": False,
         }
@@ -369,6 +372,7 @@ def plan_fresh_key_trial(
         session_calibration_sha256=_canonical_sha256(calibration.record),
         catalog_sha256=_canonical_sha256(catalog),
         repose_assessment=repose_assessment,
+        cartesian_planner_mode=cartesian_mode_from_planner(planner),
     )
 
 

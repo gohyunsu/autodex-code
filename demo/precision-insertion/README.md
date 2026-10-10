@@ -1680,7 +1680,14 @@ snapshot and hashes from `write_session_calibration`.
 The numeric limits in the example are **illustrative only**. The exclusive
 output contains `report.json`, `trial_scene.json`, and, if a full plan is
 found, `planned_trajectories.npz`; all are offline evidence and have
-`robot_ready: false`. A pose with no candidate may return
+`robot_ready: false`. The report records `cartesian_planner_mode`. The default
+AutoDex endpoint-approximation route may move Inspire joints during transfer;
+the demo rejects such a path. For an **offline experiment only**, prefix the
+command with `AUTODEX_ENABLE_NATIVE_POSE_CONSTRAINTS=1` and add
+`--planner-mode native-locked-experimental`. A mismatch fails before reading
+session assets. This selects AutoDex's original locked-hand option, but it is
+not approved for robot motion and must still pass the fixed-hand and sampled
+collision audits. A pose with no candidate may return
 `repose_required_unplanned`, not an executable reorientation trajectory.
 To add a **read-only** reset-seed assessment when that happens, supply both
 `--max-reset-drift-mm` and `--max-reset-axis-tilt-deg`. These must be
@@ -2054,7 +2061,8 @@ real v8 candidate files and actual Franka/Inspire planner queries, but the
 table/key/socket placements and robot start are hypothetical:
 
 ```bash
-PYTHONPATH="$PWD/demo/precision-insertion/compat" \
+AUTODEX_ENABLE_NATIVE_POSE_CONSTRAINTS=1 \
+  PYTHONPATH="$PWD/demo/precision-insertion/compat" \
   ~/miniconda3/envs/autodex_bodex/bin/python \
   demo/precision-insertion/diagnose_synthetic_full_chain.py \
   --shared-root "$HOME/shared_data" \
@@ -2062,6 +2070,7 @@ PYTHONPATH="$PWD/demo/precision-insertion/compat" \
   --mode square --gap-mm 1.5 --pose-stem 004 \
   --table-z-m 0.04 --key-x-m 0.4 --key-y-m 0 \
   --socket-x-m 0.6 --socket-y-m 0 --max-candidates 7 \
+  --planner-mode native-locked-experimental \
   --output-dir /tmp/precision-synthetic-square-pose004-NEW
 ```
 
@@ -2072,12 +2081,15 @@ hardware. The demo installs two narrowly guarded, process-local compatibility
 adapters for this checkout: vendored cuRobo's default sample-count typo and
 the existing AutoDex singleton-world call to cuRobo's batch IK updater. It
 does not change either source tree. In the initial square 1.5 mm synthetic
-scene, one candidate passed pickup but its transfer was unreachable. A wider
-seven-candidate run then exposed an actual `0.03725 rad` Inspire-joint motion
-in a supposedly held transfer trajectory. The fixed-hand contract rejected
-it. This is **not** a physical grasp/insertion outcome and is not yet a valid
-full-chain preflight pass. Resolve the planner's hand-lock behavior before
-using any transfer path; do not relax the held-hand check to hide it.
+scene, the default Cartesian route produced an actual `0.03725 rad`
+Inspire-joint motion in a supposedly held transfer trajectory. The fixed-hand
+contract rejected it. With AutoDex's explicit **experimental** native
+locked-hand mode, `table/4/5102` passed the sampled offline chain in this
+same hypothetical scene. Its hand drift was below `3.6e-8 rad` in lift,
+transfer and axial paths. The diagnostic records the selected planner mode
+and rejects a mismatched environment flag. The native mode has **not** passed
+hardware-stack validation, and neither result is a physical grasp/insertion
+outcome or a motion authorization. See [synthetic planner validation](SYNTHETIC_PLANNER_VALIDATION.md).
 
 The startup call enforces ChArUco before repeated socket captures, with the
 socket already rigidly fixed. Its calibration helper does **not** independently

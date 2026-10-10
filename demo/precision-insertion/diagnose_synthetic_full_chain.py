@@ -30,6 +30,9 @@ from precision_insertion.calibration import SessionCalibration  # noqa: E402
 from precision_insertion.candidates import select_pose_candidates  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.path_audit import PathAuditLimits  # noqa: E402
+from precision_insertion.planner_mode import (  # noqa: E402
+    require_declared_cartesian_mode,
+)
 from precision_insertion.trial_preflight import (  # noqa: E402
     plan_fresh_key_trial, write_trial_preflight_artifacts,
 )
@@ -85,8 +88,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--socket-x-m", type=float, required=True)
     parser.add_argument("--socket-y-m", type=float, required=True)
     parser.add_argument("--max-candidates", type=int, default=1)
+    parser.add_argument(
+        "--planner-mode", choices=("default", "native-locked-experimental"),
+        default="default",
+        help="declare the exact AutoDex Cartesian planner mode for this offline run",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args(argv)
+    try:
+        native_enabled = require_declared_cartesian_mode(args.planner_mode)
+    except ValueError as exc:
+        parser.error(str(exc))
     root = args.shared_root.expanduser().resolve()
     output = args.output_dir.expanduser().resolve()
     if output.exists():
@@ -117,6 +129,8 @@ def main(argv: list[str] | None = None) -> int:
 
     from autodex.planner.planner import GraspPlanner
     planner = GraspPlanner(hand="fr3_inspire", use_cuda_graph=False)
+    if planner._native_pose_constraints_enabled != native_enabled:
+        raise RuntimeError("AutoDex planner mode differs from declared mode")
     start = planner._init_state.copy()  # stock FR3/Inspire diagnostic home
     # Exploratory numerical audit settings are intentionally not represented
     # as commissioned motion/force limits.  Every artifact remains synthetic.
@@ -146,6 +160,7 @@ def main(argv: list[str] | None = None) -> int:
             failure = {
                 "schema": "precision_insertion_synthetic_planner_failure_v1",
                 "synthetic": True, "robot_ready": False,
+                "planner_mode": args.planner_mode,
                 "error_type": type(exc).__name__, "error": str(exc),
                 "traceback": traceback.format_exc(),
                 "planner_log_sha256": _sha(output / log.name),
@@ -163,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     context = {
         "schema": "precision_insertion_synthetic_full_chain_diagnostic_v1",
         "synthetic": True, "robot_ready": False,
+        "planner_mode": args.planner_mode,
         "source_catalog": str(catalog_path),
         "source_catalog_sha256": _sha(catalog_path),
         "key_tabletop_pose": str(tabletop_path),

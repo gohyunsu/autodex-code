@@ -274,6 +274,7 @@ def test_trial_artifacts_are_new_and_do_not_claim_robot_readiness(
     output = write_trial_preflight_artifacts(result, tmp_path / "run_001")
     report = json.loads((output / "report.json").read_text(encoding="utf-8"))
     assert report["robot_ready"] is False
+    assert report["cartesian_planner_mode"] == "default"
     assert (output / "trial_scene.json").is_file()
     assert "planned_trajectories" not in report["artifacts"]
     with pytest.raises(FileExistsError):
