@@ -102,3 +102,17 @@ undistorted images, calibration, held-out pixel-error estimates, and measured
 multi-view metric accuracy. The current demo has no commissioned live camera
 capture/robot executor, so this local mode is not a complete autonomous
 insertion loop.
+
+## Current local-mode check (2026-10-11)
+
+Retested the existing `--backend local` path with offline-cached
+`Qwen/Qwen3-VL-2B-Instruct` on the RTX 3090. The lift and insertion-visual
+saved-image probes both loaded and produced parseable JSON (about 1.03 s and
+0.96 s of model inference, respectively). These inputs were presentation
+renders, not synchronized robot-camera trials. In the insertion probe, the
+model selected `normal_appearance` while its own evidence said the key was
+*above* the socket. This is a concrete example of why successful parsing is
+not correctness and why the VLM cannot alone certify 20 mm insertion. Raw
+reports on this workstation are
+`/tmp/precision-local-vlm-probe-user-20261011.json` and
+`/tmp/precision-local-vlm-insertion-probe-user-20261011.json`.
