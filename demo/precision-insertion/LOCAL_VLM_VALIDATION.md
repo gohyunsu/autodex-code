@@ -47,6 +47,10 @@ checkpoint therefore recorded `parse_error` and `class=unobservable`. This
 confirms that local execution is available but a syntactically valid,
 evidence-grounded answer is not guaranteed. Do not interpret this probe as a
 grasp-success or model-accuracy measurement.
+The metric tip/axis parsers now also accept a *complete* JSON Markdown fence,
+matching the semantic parser; truncated JSON or extra prose still yields
+null landmarks. This is a format compatibility fix, not a pixel-accuracy
+validation.
 
 ## Remaining validation before live use
 

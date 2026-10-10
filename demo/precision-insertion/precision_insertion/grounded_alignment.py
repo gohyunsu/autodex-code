@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import combinations
-import json
 import math
 import time
 from typing import Sequence
@@ -28,7 +27,7 @@ from scipy.optimize import least_squares
 from scipy.stats import chi2
 
 from .geometry import validate_se3
-from .observer import ImageVLM, VLMObservation, _backend_model
+from .observer import ImageVLM, VLMObservation, _backend_model, _parse_object
 from .xy_overlay import CalibratedXYFrame
 from .xy_voting import VLM_XY_STEP_M
 
@@ -399,7 +398,7 @@ def observe_grounded_key_axis(
         if not isinstance(answer, str):
             raise TypeError("VLM backend must return text")
         try:
-            parsed = json.loads(answer)
+            parsed = _parse_object(answer)
             if not isinstance(parsed, dict) or set(parsed) != {
                     "tip_px", "axis_ref_px", "evidence"} or not isinstance(
                         parsed["evidence"], str):
@@ -413,7 +412,7 @@ def observe_grounded_key_axis(
                         not (0 <= point[0] < width and 0 <= point[1] < height)):
                     raise ValueError("landmark must be an original-image pixel")
             error = None
-        except (json.JSONDecodeError, ValueError) as exc:
+        except ValueError as exc:
             parsed = {"tip_px": None, "axis_ref_px": None, "evidence": ""}
             error = str(exc)
         views.append(GroundedView(
@@ -684,7 +683,7 @@ def observe_grounded_cylinder_axis(
         if not isinstance(answer, str):
             raise TypeError("VLM backend must return text")
         try:
-            parsed = json.loads(answer)
+            parsed = _parse_object(answer)
             if not isinstance(parsed, dict) or set(parsed) != {
                     "tip_px", "axis_line_px", "evidence"} or not isinstance(
                         parsed["evidence"], str):
@@ -704,7 +703,7 @@ def observe_grounded_cylinder_axis(
                         not (0 <= point[0] < width and 0 <= point[1] < height)):
                     raise ValueError("line landmark outside original pixels")
             error = None
-        except (json.JSONDecodeError, ValueError) as exc:
+        except ValueError as exc:
             parsed = {"tip_px": None, "axis_line_px": None, "evidence": ""}
             error = str(exc)
         segment = parsed["axis_line_px"]

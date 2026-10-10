@@ -178,6 +178,25 @@ def test_vlm_returns_only_validated_raw_image_pixels():
     assert bad[0].parse_error is not None
 
 
+def test_local_vlm_complete_json_fence_is_admitted_for_metric_pixels():
+    frame = _rig(np.array([0, 0, .09]), np.array([0, 0, .14]))[0].frame
+    point_answer = '```json\n{"tip_px":[600,300],"axis_ref_px":[610,290],"evidence":"visible"}\n```'
+    point, record = observe_grounded_key_axis(
+        _Backend(point_answer), [frame])
+    assert point[0].tip_uv_px == (600, 300)
+    assert record[0].parse_error is None
+    line_answer = '```json\n{"tip_px":[600,300],"axis_line_px":[[610,290],[620,280]],"evidence":"visible"}\n```'
+    line, record = observe_grounded_cylinder_axis(
+        _Backend(line_answer), [frame])
+    assert line[0].axis_line_uv_px == ((610, 290), (620, 280))
+    assert record[0].parse_error is None
+    for malformed in (line_answer + "\nextra prose", line_answer[:-3]):
+        rejected, bad = observe_grounded_cylinder_axis(
+            _Backend(malformed), [frame])
+        assert rejected[0].tip_uv_px is None
+        assert bad[0].parse_error is not None
+
+
 def _line_rig(tip, axis, *, outlier=False):
     frames = [_camera("front", (.22, 0, .22)),
               _camera("side", (0, .22, .22)),
