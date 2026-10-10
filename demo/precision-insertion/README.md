@@ -1571,10 +1571,12 @@ started = start_precision_session(
 
 `board_snap` and `init` are the metadata-preserving adapters described in
 [CAMERA_FRAME_HANDOFF.md](CAMERA_FRAME_HANDOFF.md); all `commissioned_*`
-variables need measured values from the AutoDex rig. As of 2026-10-10 the
-NAS handoff has **zero real camera captures** and its FoundPose PTHs remain
-synthetic-only candidates rather than canonical assets, so this call cannot
-yet complete on the current handoff. Its tests exercise ordering, missing
+variables need measured values from the AutoDex rig. A later NAS addendum now
+contains 35 complete **real 20-camera shots**, but none has verified
+per-camera exposure times, repeated session socket measurements, or promoted
+canonical FoundPose PTHs. See [NAS_PERCEPTION_QA.md](NAS_PERCEPTION_QA.md)
+for the read-only image/evaluation audit. Those saved shots therefore cannot
+yet complete this live startup call. Its tests exercise ordering, missing
 assets and duplicate-request rejection, not live hardware accuracy.
 
 After a frozen session and a **complete, session-bound** endpoint catalogue

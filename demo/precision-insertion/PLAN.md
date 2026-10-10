@@ -757,6 +757,14 @@ policies where those behaviors are enabled. These are runtime/commissioning
 gates, not offline grasp-catalog promotion criteria. Presentation animations
 and endpoint-only geometry do not fill these gaps.
 
+The NAS runtime addendum added 35 real 20-camera shots and 12 **pending**
+FoundPose PTHs after the earlier local-file audit. They do not invalidate the
+canonical-path observation above: the files are not installed or approved.
+The indexed images pass byte-level checks, but lack per-camera acquisition
+timestamps and repeated-session socket measurements; several evaluator
+variants also use ROI/baseline assistance absent from the live key path.
+See [NAS_PERCEPTION_QA.md](NAS_PERCEPTION_QA.md) before asset promotion.
+
 ## Implementation sequence and acceptance gates
 
 1. Verify the original-file diff against `main` is empty and keep it empty.
