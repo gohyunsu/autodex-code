@@ -21,8 +21,13 @@ from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.path_audit import (  # noqa: E402
     PathAuditLimits, audit_held_joint_paths,
 )
+from precision_insertion.repose_path_audit import (  # noqa: E402
+    audit_repose_held_paths,
+)
 from precision_insertion.targets import build_rigid_insertion_targets  # noqa: E402
-from precision_insertion.world import add_fixed_mesh_fixtures  # noqa: E402
+from precision_insertion.world import (  # noqa: E402
+    add_fixed_mesh_fixtures, build_held_scene_from_trial,
+)
 
 
 class _FakePlanner:
@@ -49,6 +54,9 @@ def _fixture(tmp_path, monkeypatch):
     hand.apply_translation([0, 0, 0.06])
     monkeypatch.setattr(
         "precision_insertion.path_audit._hand_link_meshes",
+        lambda *_: {"hand": hand})
+    monkeypatch.setattr(
+        "precision_insertion.repose_path_audit._hand_link_meshes",
         lambda *_: {"hand": hand})
 
     board = {"table_surface_z_m": -0.1}
@@ -210,3 +218,71 @@ def test_stale_geometry_or_discontinuous_joint_segments_rejected(
     geometry_path.write_text(json.dumps(geometry), encoding="utf-8")
     with pytest.raises(ValueError, match="preinsert CAD pose"):
         _audit(tmp_path, fixture, *_paths())
+
+
+def _repose_paths():
+    lift = np.zeros((11, 13))
+    lift[:, 0] = -0.10
+    lift[:, 2] = np.linspace(0.035, 0.135, 11)
+    transfer = np.repeat(lift[-1:], 11, axis=0)
+    transfer[:, 0] = np.linspace(-0.10, -0.05, 11)
+    transfer[:, 2] = np.linspace(0.135, 0.235, 11)
+    descent = np.repeat(transfer[-1:], 11, axis=0)
+    descent[:, 2] = np.linspace(0.235, 0.135, 11)
+    return lift, transfer, descent
+
+
+def _repose_audit(tmp_path, calibration, paths):
+    initial = np.eye(4)
+    initial[:3, 3] = (-0.10, 0.0, 0.035)
+    rest = np.eye(4)
+    rest[:3, 3] = (-0.05, 0.0, 0.035)
+    return audit_repose_held_paths(
+        shared_root=tmp_path, mode=select_mode("square", 1.5),
+        calibration=calibration, planner=_FakePlanner(),
+        lift_trajectory=paths[0], transfer_trajectory=paths[1],
+        descent_trajectory=paths[2], held_hand_q=np.zeros(6),
+        T_key_hand=np.eye(4), T_robot_key_initial=initial,
+        T_robot_key_rest=rest, release_height_m=0.10, limits=_limits())
+
+
+def test_repose_keeps_frozen_socket_in_carried_world_and_samples_held_key(
+    tmp_path, monkeypatch,
+):
+    calibration, _, _ = _fixture(tmp_path, monkeypatch)
+    scene = {"mesh": dict(calibration.collision_scene["mesh"]),
+             "cuboid": calibration.collision_scene["cuboid"]}
+    scene["mesh"]["target"] = {"file_path": "key", "pose": [0] * 7}
+    carried = build_held_scene_from_trial(
+        trial_scene=scene, calibration=calibration)
+    assert "target" not in carried["mesh"]
+    assert carried["mesh"]["fixture_socket"] == scene["mesh"]["fixture_socket"]
+    carried["mesh"].clear()
+    assert "fixture_socket" in calibration.collision_scene["mesh"]
+    passed = _repose_audit(tmp_path, calibration, _repose_paths())
+    assert passed["sampled_clear"] is True
+    assert passed["robot_ready"] is False
+    assert "key->mesh/fixture_socket" in passed["minimum_surface_distances_m"]
+    assert passed["sample_counts"] == {
+        "lift": 11, "transfer": 11, "descent": 11}
+
+
+def test_repose_rejects_changed_socket_or_held_path_collision(
+    tmp_path, monkeypatch,
+):
+    calibration, _, _ = _fixture(tmp_path, monkeypatch)
+    scene = {"mesh": dict(calibration.collision_scene["mesh"]),
+             "cuboid": calibration.collision_scene["cuboid"]}
+    scene["mesh"]["target"] = {"file_path": "key", "pose": [0] * 7}
+    scene["mesh"]["fixture_socket"] = {"file_path": "wrong"}
+    with pytest.raises(ValueError, match="differ from frozen"):
+        build_held_scene_from_trial(trial_scene=scene, calibration=calibration)
+    lift, transfer, descent = _repose_paths()
+    transfer[:, 0] = np.linspace(-0.10, 0.05, 11)
+    descent[:, 0] = 0.05
+    collision = _repose_audit(tmp_path, calibration, (lift, transfer, descent))
+    assert collision["sampled_clear"] is False
+    assert any(row["reason"] == "held_geometry_collision_or_clearance"
+               and row["obstacle"] == "mesh/fixture_socket"
+               for row in collision["failures"]), (
+                   collision["failures"], collision["minimum_surface_distances_m"])

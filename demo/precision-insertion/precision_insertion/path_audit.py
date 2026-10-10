@@ -24,6 +24,7 @@ from .assets import AssetPaths
 from .endpoint import (_coal_mesh, _coal_models_report, _hand_link_meshes,
                        _load_mesh)
 from .geometry import pose_angle_deg, validate_se3
+from .solid_occupancy import SolidMeshOccupancy
 from .targets import InsertionTargets, build_rigid_insertion_targets
 
 
@@ -81,7 +82,7 @@ def _joint_path(value: np.ndarray, name: str,
 
 
 def _fixed_world_models(calibration) -> tuple[dict, dict]:
-    """Build Coal models for the frozen robot-frame collision world."""
+    """Build Coal surfaces and solid occupancy for the frozen world."""
     import coal  # noqa: F401 -- must precede trimesh on the AutoDex host
     import trimesh
 
@@ -105,7 +106,8 @@ def _fixed_world_models(calibration) -> tuple[dict, dict]:
         mesh = _load_mesh(path)
         if name == "fixture_socket" and not mesh.is_watertight:
             raise ValueError("exact socket collision mesh is not watertight")
-        models[f"mesh/{name}"] = (_coal_mesh(mesh), pose)
+        models[f"mesh/{name}"] = (
+            _coal_mesh(mesh), pose, mesh, SolidMeshOccupancy(mesh))
         source_hashes[f"mesh/{name}"] = _sha256(path)
     for name, spec in sorted(scene["cuboid"].items()):
         dims = np.asarray(spec["dims"], dtype=np.float64)
@@ -113,11 +115,40 @@ def _fixed_world_models(calibration) -> tuple[dict, dict]:
             raise ValueError(f"invalid fixed cuboid {name} dimensions")
         pose = validate_se3(cart2se3(np.asarray(spec["pose"], dtype=float)),
                             name=f"fixed cuboid {name} pose")
+        mesh = trimesh.creation.box(extents=dims)
         models[f"cuboid/{name}"] = (
-            _coal_mesh(trimesh.creation.box(extents=dims)), pose)
+            _coal_mesh(mesh), pose, mesh, SolidMeshOccupancy(mesh))
     if "mesh/fixture_socket" not in models:
         raise ValueError("frozen socket is absent from collision world")
     return models, source_hashes
+
+
+def _held_pair_report(moving_model, moving_mesh, fixed_model,
+                      fixed_mesh, fixed_occupancy,
+                      T_fixed_moving: np.ndarray) -> dict:
+    """Check surface crossing *and* a moving mesh enclosed by solid fixture.
+
+    Coal's BVH checks triangle intersection, not solid containment. The
+    inexpensive fixed AABB guard confines ray-parity occupancy calls to
+    moving vertices that could lie inside a fixed obstacle. Checking only
+    wholly enclosed links would miss a disconnected finger-link mesh whose
+    one component is enclosed and another component remains outside.
+    """
+    report = _coal_models_report(moving_model, fixed_model, T_fixed_moving)
+    if report["colliding"]:
+        return report
+    vertices = (moving_mesh.vertices @ T_fixed_moving[:3, :3].T +
+                T_fixed_moving[:3, 3])
+    within = np.all((vertices >= fixed_mesh.bounds[0] - 1e-9) &
+                    (vertices <= fixed_mesh.bounds[1] + 1e-9), axis=1)
+    if np.any(within):
+        occupied = fixed_occupancy.classify(vertices[within])
+        report["moving_vertices_inside_fixed"] = occupied.inside_vertices
+        report["moving_vertices_occupancy_ambiguous"] = occupied.ambiguous_vertices
+        if occupied.intersects_solid:
+            report["colliding"] = True
+            report["minimum_surface_distance_m"] = 0.0
+    return report
 
 
 def audit_held_joint_paths(
@@ -248,20 +279,19 @@ def audit_held_joint_paths(
     if not key_mesh.is_watertight:
         raise ValueError("full key CAD mesh is not watertight")
     key_model = _coal_mesh(key_mesh)
-    hand_models = {
-        name: _coal_mesh(mesh) for name, mesh in
-        _hand_link_meshes(robot_path, hand_q).items()
-    }
-    moving = {"key": key_model, **{f"hand/{n}": model
-                                  for n, model in hand_models.items()}}
+    hand_meshes = _hand_link_meshes(robot_path, hand_q)
+    moving = {"key": (key_model, key_mesh)}
+    moving.update({f"hand/{name}": (_coal_mesh(mesh), mesh)
+                   for name, mesh in hand_meshes.items()})
     key_in_hand = np.linalg.inv(targets.T_key_hand)
     minimum_distances: dict[str, float] = {}
     for stage, poses in wrist.items():
         for i, hand_pose in enumerate(poses):
             key_pose = hand_pose @ key_in_hand
-            for moving_name, model in moving.items():
+            for moving_name, (model, moving_mesh) in moving.items():
                 moving_pose = key_pose if moving_name == "key" else hand_pose
-                for fixed_name, (fixed_model, fixed_pose) in fixed.items():
+                for fixed_name, (fixed_model, fixed_pose, fixed_mesh,
+                                 occupancy) in fixed.items():
                     # The key is deliberately supported by the measured table
                     # immediately after grasp. Only this initial key/table
                     # pair is exempt; the hand and socket are never exempt,
@@ -270,7 +300,9 @@ def audit_held_joint_paths(
                             and fixed_name == "cuboid/table"):
                         continue
                     relative = np.linalg.inv(fixed_pose) @ moving_pose
-                    result = _coal_models_report(model, fixed_model, relative)
+                    result = _held_pair_report(
+                        model, moving_mesh, fixed_model, fixed_mesh,
+                        occupancy, relative)
                     pair = f"{moving_name}->{fixed_name}"
                     distance = result["minimum_surface_distance_m"]
                     minimum_distances[pair] = min(

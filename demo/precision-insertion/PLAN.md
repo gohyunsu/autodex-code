@@ -539,6 +539,18 @@ need different plans and labels.
   fresh perception. Current pose/reorientation catalogs are inventories, not
   automatic-reorient-ready policies.
 
+The demo now has a strict `build_held_scene_from_trial` boundary: it removes
+only the carried key target and retains the frozen session socket, table and
+other fixed obstacles. The original reset planner's `scene_lift` with an empty
+mesh map is **not** valid here. `audit_repose_held_paths` can inspect a supplied
+lift/transfer/descent joint-path triple using the unchanged planner FK, full
+key CAD and Inspire visual links. It checks the specified release pose,
+path continuity/density and sampled solid contact with the frozen socket and
+table (including completely enclosed links that a triangle-BVH surface test
+would miss). This is a diagnostic primitive, not a reset planner or execution
+permission. Release-hand opening, post-release retreat, landing pose and live
+post-lift grasp relation are still outstanding.
+
 ## Code and data layout
 
 All new or ported execution code and its tests belong below
@@ -563,6 +575,7 @@ demo/precision-insertion/
     trial_preflight.py            # fresh-key candidate-by-candidate planning replay
     preflight.py                  # planning-only pickup/lift/transfer/20 mm composition
     path_audit.py                 # sampled held-key/hand scene collision checks
+    repose_path_audit.py          # sampled held reset-path/fixture check, no execution
     xy_voting.py                  # read-only multi-view XY ID consensus
     xy_overlay.py                 # pixel-resolvability check and calibrated ID crops
     xy_retry.py                   # offline endpoint/overlay/VLM consensus proposal

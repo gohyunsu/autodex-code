@@ -153,3 +153,30 @@ def build_trial_scene_from_session(
     result = copy.deepcopy(fixed_world)
     result.setdefault("mesh", {})["target"] = target
     return result
+
+
+def build_held_scene_from_trial(*, trial_scene: dict,
+                                calibration: SessionCalibration) -> dict:
+    """Remove only the carried key; retain the session's socket and table.
+
+    AutoDex's historical reset code constructs an empty mesh world after
+    pickup. That would silently remove the fixed socket in this demo. Require
+    the fresh trial to match the frozen session world exactly before making a
+    detached-key scene for unchanged cuRobo planning primitives.
+    """
+    frozen = calibration.collision_scene
+    if (not isinstance(trial_scene, dict) or
+            not isinstance(trial_scene.get("mesh"), dict) or
+            not isinstance(frozen, dict) or
+            not isinstance(frozen.get("mesh"), dict) or
+            not isinstance(frozen.get("cuboid"), dict)):
+        raise ValueError("trial or frozen collision scene is incomplete")
+    if "target" in frozen["mesh"] or "fixture_socket" not in frozen["mesh"]:
+        raise ValueError("frozen world must contain socket but not carried key")
+    if not isinstance(trial_scene["mesh"].get("target"), dict):
+        raise ValueError("fresh trial has no key target")
+    if (trial_scene.get("cuboid") != frozen["cuboid"] or
+            {name: spec for name, spec in trial_scene["mesh"].items()
+             if name != "target"} != frozen["mesh"]):
+        raise ValueError("trial fixed obstacles differ from frozen session world")
+    return copy.deepcopy(frozen)
