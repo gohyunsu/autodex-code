@@ -324,7 +324,10 @@ def _infer_closed_set(
         + "\n\nValid camera IDs: "
         + ", ".join(sorted({frame.camera_id for frame in frames}))
         + ". In evidence_views use camera IDs only, never image numbers "
-        "or phase names. Use [] if nothing is visually established.\n\n"
+        "or phase names. Use [] if nothing is visually established. "
+        "Return exactly one compact JSON object with no Markdown or text "
+        "outside it. Keep evidence to one short visual phrase (at most "
+        "12 words); never repeat a sentence.\n\n"
         + prompt_body
     )
     started = time.perf_counter()

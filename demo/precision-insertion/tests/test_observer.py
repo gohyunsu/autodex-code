@@ -106,6 +106,8 @@ def test_lift_prompt_preserves_image_order_and_validates_closed_set():
     assert observed.image_order == (
         "before_grasp/front@1.000000", "after_lift/front@2.000000")
     assert "Hidden is not held" in backend.calls[0][1]
+    assert "at most 12 words" in backend.calls[0][1]
+    assert "never repeat a sentence" in backend.calls[0][1]
     assert len(backend.calls[0][0]) == 2
     assert observed.to_record()["scope"].endswith("not_motion_authorization")
     assert observed.to_record()["latency_s"] >= 0

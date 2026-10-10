@@ -52,6 +52,18 @@ matching the semantic parser; truncated JSON or extra prose still yields
 null landmarks. This is a format compatibility fix, not a pixel-accuracy
 validation.
 
+## Compact-response replay (2026-10-11)
+
+A repeat of the saved-render lift probe with the cached Qwen3-VL-2B model
+initially produced an unclosed JSON string: its free-form evidence repeated
+until the 512-token limit. The shared closed-set prompt now asks for one
+compact JSON object and at most 12 evidence words. With the same two
+presentation images, the model returned parseable JSON in 0.84 s of inference
+on the RTX 3090. The output class was `held`, but these images are not a
+synchronized physical lift pair; **this is format validation only, not an
+accuracy result or a trusted grasp label**. Malformed output still maps to
+`unobservable` rather than being repaired or used to authorize motion.
+
 ## Remaining validation before live use
 
 Collect time-synchronized, phase-paired **raw AutoDex camera images** with
