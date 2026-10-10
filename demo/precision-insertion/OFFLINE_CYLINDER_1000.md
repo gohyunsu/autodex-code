@@ -266,3 +266,14 @@ contains synthetic-onboarded **candidates**, explicitly withheld from
 canonical installation pending real AutoDex-image pose/mask QA. Physical
 transfer paths, guarded contact and insertion labels are also unverified.
 The unchanged stock AutoDex execution files remain untouched.
+
+The non-overwriting NAS addendum is
+`/mnt/paradex2/hyunsu/autodex_precision_insertion_tabletop_v8_handoff_20261011_955e133/`.
+It contains the 12 candidate directories under `payload/shared_data/`, an
+installation/limitations README, and a `MANIFEST.json` whose 104 file hashes
+were rechecked after export. Its six copied catalogues are under
+`audit_only/`, **not** live-installable: their absolute paths refer to
+`/home/hyunsu/shared_data`. On the AutoDex PC, merge only candidate
+directories that do not already exist, then regenerate each catalogue with
+that PC's own `--shared-root` and a newly commissioned clearance. Do not
+promote the NAS `pending_foundpose` representations until real-image QA.
