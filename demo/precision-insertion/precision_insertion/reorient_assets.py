@@ -53,12 +53,27 @@ def _scene_path(object_dir: Path, h_cm: int, i: int, j: int) -> Path:
     return object_dir / "scene" / f"reorient_{h_cm}" / f"{i}_{j}.json"
 
 
+def _sim_filter_scene_path(root: Path, mode: TaskMode,
+                           h_cm: int, i: int, j: int) -> Path:
+    # Mirror get_scene_dir("inspire", ...) while respecting the explicitly
+    # selected shared root rather than AutoDex's process-global home path.
+    return (root / "AutoDex" / "scene" / "inspire" / mode.key_object /
+            f"reorient_{h_cm}" / f"{i}_{j}.json")
+
+
 def _validate_scene(scene: dict, *, mode: TaskMode, object_dir: Path,
                     h_cm: int, i: int, j: int) -> None:
-    if not isinstance(scene, dict) or scene.get("meta") != {
+    expected_meta = {
             "scene_type": f"reorient_{h_cm}",
             "pose_i": f"{i:03d}", "pose_j": f"{j:03d}",
-            "h": h_cm / 100.0, "thickness": 0.01, "version": "v8"}:
+            "h": h_cm / 100.0, "thickness": 0.01, "version": "v8"}
+    meta = scene.get("meta") if isinstance(scene, dict) else None
+    if (not isinstance(meta, dict) or
+            any(meta.get(key) != value for key, value in expected_meta.items()) or
+            set(meta) - set(expected_meta) - {
+                "geometry_object", "grasp_target_object"} or
+            any(meta.get(key, mode.key_object) != mode.key_object
+                for key in ("geometry_object", "grasp_target_object"))):
         raise ValueError(f"reorient scene metadata differs from v8 cell {i}_{j}")
     try:
         target = scene["scene"]["mesh"]["target"]
@@ -75,11 +90,16 @@ def _validate_scene(scene: dict, *, mode: TaskMode, object_dir: Path,
         raise ValueError("reorient scene key object differs from selected mode")
 
 
+def _same_scene_geometry(a: dict, b: dict) -> bool:
+    """Optional descriptive metadata may differ; collision worlds may not."""
+    return a["scene"] == b["scene"]
+
+
 def prepare_v8_reorient_scenes(
     *, shared_root: Path, mode: TaskMode, manifest_path: Path,
     heights_cm: tuple[int, ...] = RESET_RELEASE_HEIGHTS_CM,
 ) -> dict:
-    """Create missing BODex scenes by reusing AutoDex's v8 scene generator.
+    """Create both BODex and sim-filter scenes using AutoDex's v8 generator.
 
     Existing scenes are checked, never overwritten. This creates no grasps,
     release trajectory, socket-aware collision world, or physical reset plan.
@@ -98,6 +118,8 @@ def prepare_v8_reorient_scenes(
 
     rows = []
     pending: list[tuple[Path, dict]] = []
+    new_bodex = 0
+    new_sim_filter = 0
     for h_cm in heights:
         for i in ids:
             for j in ids:
@@ -117,9 +139,27 @@ def prepare_v8_reorient_scenes(
                 _validate_scene(
                     scene, mode=mode, object_dir=object_dir,
                     h_cm=h_cm, i=i, j=j)
+                sim_path = _sim_filter_scene_path(root, mode, h_cm, i, j)
+                if sim_path.exists():
+                    sim_scene = json.loads(sim_path.read_text(encoding="utf-8"))
+                    _validate_scene(
+                        sim_scene, mode=mode, object_dir=object_dir,
+                        h_cm=h_cm, i=i, j=j)
+                    if not _same_scene_geometry(sim_scene, scene):
+                        raise ValueError(
+                            f"BODex and sim-filter reorient scenes disagree: {i}_{j}")
+                    sim_status = "existing_verified"
+                else:
+                    pending.append((sim_path, scene))
+                    sim_status = "new_sim_filter_scene"
+                    new_sim_filter += 1
+                if status == "new_v8_proposal_scene":
+                    new_bodex += 1
                 rows.append({
                     "h_cm": h_cm, "from_v8_pose": i, "to_v8_pose": j,
-                    "scene": str(path), "status": status,
+                    "bodex_scene": str(path), "bodex_status": status,
+                    "sim_filter_scene": str(sim_path),
+                    "sim_filter_status": sim_status,
                 })
     for path, scene in pending:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -127,15 +167,23 @@ def prepare_v8_reorient_scenes(
             json.dump(scene, stream, indent=2, allow_nan=False)
             stream.write("\n")
     for row in rows:
-        row["sha256"] = hashlib.sha256(Path(row["scene"]).read_bytes()).hexdigest()
+        row["bodex_sha256"] = hashlib.sha256(
+            Path(row["bodex_scene"]).read_bytes()).hexdigest()
+        row["sim_filter_sha256"] = hashlib.sha256(
+            Path(row["sim_filter_scene"]).read_bytes()).hexdigest()
     report = {
-        "schema": "precision_insertion_v8_reorient_scene_manifest_v1",
+        "schema": "precision_insertion_v8_reorient_scene_manifest_v2",
         "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
                  "key_object": mode.key_object},
         "shared_root": str(root), "v8_pose_stems": list(ids),
         "directed_scene_count": len(rows),
-        "new_scene_count": len(pending), "scenes": rows,
-        "scope": "BODex_reorient_proposal_scenes_only",
+        "new_scene_count": sum(
+            row["bodex_status"].startswith("new_") or
+            row["sim_filter_status"].startswith("new_") for row in rows),
+        "new_bodex_scene_files": new_bodex,
+        "new_sim_filter_scene_files": new_sim_filter,
+        "scenes": rows,
+        "scope": "BODex_and_sim_filter_reorient_proposal_scenes_only",
         "missing_next_stages": [
             "BODex plus original grasp-stability filter for each directed cell",
             "demo-local v8 reset grasp loader without legacy pose-index mapping",
@@ -161,14 +209,25 @@ def audit_v8_reorient_assets(*, shared_root: Path, mode: TaskMode) -> dict:
             if i == j:
                 continue
             scenes = []
+            missing_sim_scenes = []
             candidate_counts = {}
             for h_cm in RESET_RELEASE_HEIGHTS_CM:
                 scene = _scene_path(object_dir, h_cm, i, j)
+                sim_scene = _sim_filter_scene_path(root, mode, h_cm, i, j)
                 if scene.is_file():
                     data = json.loads(scene.read_text(encoding="utf-8"))
                     _validate_scene(data, mode=mode, object_dir=object_dir,
                                     h_cm=h_cm, i=i, j=j)
-                    scenes.append(h_cm)
+                    if sim_scene.is_file():
+                        sim_data = json.loads(sim_scene.read_text(encoding="utf-8"))
+                        _validate_scene(sim_data, mode=mode, object_dir=object_dir,
+                                        h_cm=h_cm, i=i, j=j)
+                        if not _same_scene_geometry(sim_data, data):
+                            raise ValueError(
+                                f"BODex and sim-filter scenes differ: {i}_{j}")
+                        scenes.append(h_cm)
+                    else:
+                        missing_sim_scenes.append(h_cm)
                 cell = (root / "AutoDex" / "candidates" / "inspire" /
                         f"reset_{h_cm}" / mode.key_object /
                         f"reorient_{h_cm}" / f"{i}_{j}")
@@ -195,6 +254,8 @@ def audit_v8_reorient_assets(*, shared_root: Path, mode: TaskMode) -> dict:
             rows.append({
                 "from_v8_pose": i, "to_v8_pose": j,
                 "scene_heights_cm": scenes,
+                "bodex_scene_missing_sim_filter_mirror_heights_cm":
+                    missing_sim_scenes,
                 "stable_reset_seed_counts_by_height_cm": candidate_counts,
                 "has_any_stable_seed": any(candidate_counts.values()),
             })
@@ -215,7 +276,7 @@ def audit_v8_reorient_assets(*, shared_root: Path, mode: TaskMode) -> dict:
             staging.append({"manifest": str(manifest),
                             "status": "unreadable_staging_manifest"})
     return {
-        "schema": "precision_insertion_v8_reorient_asset_audit_v1",
+        "schema": "precision_insertion_v8_reorient_asset_audit_v2",
         "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
                  "key_object": mode.key_object},
         "v8_pose_stems": list(ids), "directed_pairs": rows,

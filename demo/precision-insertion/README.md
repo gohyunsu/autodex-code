@@ -368,19 +368,60 @@ BODex scene is *not* an executable reorientation trajectory.
 
 `prepare-reorient-scenes` reuses AutoDex's v8 BODex scene generator, creates
 only missing directed pose-pair scenes at release heights 0, 4, 8 and 12 cm,
-verifies existing scenes, and refuses to overwrite its manifest. The current
-local cylinder run created eight proposal scenes (two pose directions × four
-heights) under `object_processing/precision_key_cylinder_r15_h80/scene/`;
-[the local manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_scene_manifest_v8_20261010.json)
-records their hashes. The square key already has 20 h=12 cm proposal scenes.
-[The square audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/reorient_square_1p5_audit_20261010.json)
-and [cylinder audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_asset_audit_v8_20261010.json)
+verifies existing scenes, and refuses to overwrite its manifest. Each scene
+must exist at **both** the BODex path
+`object_processing/<key>/scene/reorient_<h>/<i>_<j>.json` and the stock
+sim-filter path `AutoDex/scene/inspire/<key>/reorient_<h>/<i>_<j>.json`.
+The [cylinder v2 scene manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_scene_manifest_v8_v2_20261010.json)
+records eight directed-height pairs and the hashes of both copies. The square
+key already has 20 h=12 cm scene pairs.
+[The square v2 audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/reorient_square_1p5_audit_v2_20261010.json)
+and [cylinder v2 audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_asset_audit_v8_v2_20261010.json)
 find **zero runtime-stable reset seeds** for either family. Earlier square
 whole-hand staging manifests also report zero sampled passes; they must not
-be counted as runtime reset assets. BODex/MuJoCo seed generation, a direct
-v8 reset loader, and socket-aware Franka pickup–lift–reorient–place–retreat
-preflight remain required before automatic repose can replace the current
-`repose_required_unplanned` outcome.
+be counted as runtime reset assets.
+
+For the cylinder's 12 cm release scene, direct full-key BODex generation
+failed in Coal convex-hull construction (`Too many neighbors`), so it did
+**not** yield valid raw full-key proposals. The isolated pilot instead reused
+100 raw grip-proxy proposals per directed pose pair, after verifying equal
+proxy/full-key scene target poses and object frames, and staged their wrist
+and finger proposals under the **physical full-key ID**. This is a proposal
+transfer, not a grasp-success claim. The original AutoDex full-key scene
+collision, squeeze-contact, and MuJoCo filters were then run on a fresh
+staging tree with the required compatibility path. The
+[completed pilot audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_filter_audit_pilot100_retry_20261010.json)
+reports **200 raw → 107 scene-clear → 37 squeeze-contact → 0 MuJoCo-stable**.
+The first attempted filter run lacked `rsslib`; its cached collision failures
+are unusable evidence and remain isolated from this fresh retry. Do not merge
+or select candidates from that first tree. The commands for the valid pilot
+are:
+
+```bash
+PYTHONPATH=demo/precision-insertion \
+  ~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/stage_cylinder_reorient_proposals.py \
+  --raw-root /home/hyunsu/shared_data/AutoDex/bodex_raw/inspire/precision_insertion_cylinder_reorient_proxy_pilot_100 \
+  --stage-root /home/hyunsu/shared_data/AutoDex/bodex_raw/inspire/NEW_RESET_STAGE \
+  --shared-root /home/hyunsu/shared_data --expected-per-cell 100
+
+PYTHONPATH=demo/precision-insertion:demo/precision-insertion/compat \
+  ~/miniconda3/envs/autodex_bodex/bin/python -c \
+  'from src.grasp_generation.sim_filter.run_sim_filter import run_sim_filter; print(run_sim_filter("inspire", "v8", "precision_key_cylinder_r15_h80", "/home/hyunsu/shared_data/AutoDex/bodex_raw/inspire/NEW_RESET_STAGE", "/home/hyunsu/shared_data/AutoDex/precision_insertion/NEW_RESET_SIM_PASS", obj_root_dir="/home/hyunsu/shared_data/object_processing"))'
+
+PYTHONPATH=demo/precision-insertion \
+  ~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/audit_cylinder_reorient_pilot.py \
+  --stage-root /home/hyunsu/shared_data/AutoDex/bodex_raw/inspire/NEW_RESET_STAGE \
+  --output /home/hyunsu/shared_data/AutoDex/precision_insertion/NEW_RESET_AUDIT.json
+```
+
+Use new output paths because staging and audits refuse overwrite and the
+stock filter caches each seed result. A zero-yield pilot does **not** prove
+reset grasps impossible; it shows this small proxy-proposal sample supplied
+none. More robust BODex proposals, a direct v8 reset loader, and socket-aware
+Franka pickup–lift–reorient–place–retreat preflight remain required before
+automatic repose can replace `repose_required_unplanned`.
 
 For the cylindrical family, generate the key's BODex/MuJoCo v8 grasp pool
 **once**, then screen that same pool against **each** selected socket. A

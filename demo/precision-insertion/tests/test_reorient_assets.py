@@ -51,18 +51,31 @@ def test_generates_and_audits_directed_v8_scenes(tmp_path):
         heights_cm=(0,))
     assert prepared["new_scene_count"] == 2
     assert prepared["directed_scene_count"] == 2
+    assert prepared["new_bodex_scene_files"] == 2
+    assert prepared["new_sim_filter_scene_files"] == 2
     assert prepared["robot_ready"] is False
     assert (object_dir / "scene/reorient_0/0_1.json").is_file()
     assert (object_dir / "scene/reorient_0/1_0.json").is_file()
+    assert (tmp_path / "AutoDex/scene/inspire" / MODE.key_object /
+            "reorient_0/0_1.json").is_file()
     audit = audit_v8_reorient_assets(shared_root=tmp_path, mode=MODE)
     assert len(audit["directed_pairs"]) == 2
     assert all(row["scene_heights_cm"] == [0] for row in audit["directed_pairs"])
     assert not any(row["has_any_stable_seed"] for row in audit["directed_pairs"])
     assert audit["stock_reset_runner_compatible"] is False
+    mirror = (tmp_path / "AutoDex/scene/inspire" / MODE.key_object /
+              "reorient_0/0_1.json")
+    mirror.unlink()
+    incomplete = audit_v8_reorient_assets(shared_root=tmp_path, mode=MODE)
+    assert incomplete["directed_pairs"][0]["scene_heights_cm"] == []
+    assert incomplete["directed_pairs"][0][
+        "bodex_scene_missing_sim_filter_mirror_heights_cm"] == [0]
     again = prepare_v8_reorient_scenes(
         shared_root=tmp_path, mode=MODE,
         manifest_path=tmp_path / "scene_manifest_2.json", heights_cm=(0,))
-    assert again["new_scene_count"] == 0
+    assert again["new_scene_count"] == 1
+    assert again["new_bodex_scene_files"] == 0
+    assert again["new_sim_filter_scene_files"] == 1
     with pytest.raises(FileExistsError):
         prepare_v8_reorient_scenes(
             shared_root=tmp_path, mode=MODE,
@@ -88,6 +101,13 @@ def test_rejects_corrupt_existing_scene_and_counts_only_sim_pass(tmp_path):
     audit = audit_v8_reorient_assets(shared_root=tmp_path, mode=MODE)
     assert audit["directed_pairs"][0][
         "stable_reset_seed_counts_by_height_cm"]["12"] == 1
+    sim_file = (tmp_path / "AutoDex/scene/inspire" / MODE.key_object /
+                "reorient_12/0_1.json")
+    sim_scene = json.loads(sim_file.read_text())
+    sim_scene["meta"]["geometry_object"] = MODE.key_object
+    sim_scene["meta"]["grasp_target_object"] = MODE.key_object
+    sim_file.write_text(json.dumps(sim_scene))
+    audit_v8_reorient_assets(shared_root=tmp_path, mode=MODE)
     scene_file = object_dir / "scene/reorient_12/0_1.json"
     scene = json.loads(scene_file.read_text())
     scene["meta"]["pose_j"] = "099"
