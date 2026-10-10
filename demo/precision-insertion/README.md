@@ -43,6 +43,11 @@ The first independent helpers are in `precision_insertion/`:
   observations and the mesh hash to a new JSON file without overwriting a
   previous session. The capture images/masks themselves must be retained
   separately under their capture IDs.
+  The supplied timestamps must denote **image acquisition**, not SAM/FoundPose
+  completion or payload publication. The unchanged AutoDex snapshot/init
+  orchestrators do not yet return enough per-camera frame provenance for this
+  demo's precision gate. A live camera adapter is pending; never fabricate
+  synchronized times from one request ID or use payload `ts` as capture time.
 - `symmetry.py` reads the v8 `object_processing/<object>/processed_data/info/`
   symmetry and tabletop poses. The D∞ cylindrical key may exchange identical
   ends; the C∞ socket may not.

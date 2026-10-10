@@ -201,6 +201,18 @@ socket at all. The
 fixture must already be rigidly fixed while the board is measured, and
 removing the board must not move it.
 
+The live camera adapter must establish **acquisition-time** synchronization,
+not merely that each camera eventually returned a result. In unchanged
+AutoDex, `SnapshotOrchestrator.snap()` returns JPEGs but not the per-camera
+`fid`/timestamp carried by `snapshot_daemon`. `InitOrchestrator` exposes `ts`
+on pose/mask payloads, but `init_daemon` stamps these when publishing after
+SAM/FoundPose processing, not at image acquisition. Those `ts` values must
+**not** be passed to `calibrate_session` as capture times. A demo-only adapter
+needs frame IDs and a verified trigger/frame-ID-to-time mapping (or equivalent
+acquisition timestamps) for board, socket, and key captures. Until then,
+live precision calibration and motion stay disabled; one request ID alone
+does not prove cross-camera synchronization.
+
 1. `BOOT`: verify AutoDex camera IDs/calibration, current Franka hand-eye
    transform, robot identity, force sensing, emergency stop, exact key/socket
    assets, and writable output. No robot motion if a required input is absent.
@@ -211,6 +223,7 @@ removing the board must not move it.
    freeze `T_robot_socket` and its uncertainty. Ignore only unobservable
    axial yaw for the cylinder. Save all samples. Build one immutable base
    collision world containing table and socket.
+
 4. `PERCEIVE_KEY`: each trial captures fresh synchronized views, estimates
    `T_robot_key`, classifies its v8 tabletop pose, and checks segmentation,
    visibility, timestamp, calibration, and pose uncertainty.
