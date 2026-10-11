@@ -14,16 +14,66 @@ import math
 from pathlib import Path
 from typing import Mapping
 
+from .checkpoint_camera import make_checkpoint_capture
 from .franka_core import (
     FrankaFeedbackSettings, FrankaSamplingSettings, open_franka_core,
 )
 from .live_runtime import LiveRuntimeIntegration, RunLiveOptions
+from .observer import load_vlm_backend
 from .runtime_assembly import assemble_live_components
 
 
 _SCHEMA = "precision_insertion_franka_integration_v1"
 _FEEDBACK_KEYS = frozenset(FrankaFeedbackSettings.__dataclass_fields__)
 _SAMPLING_KEYS = frozenset(FrankaSamplingSettings.__dataclass_fields__)
+_VLM_KEYS = frozenset({"mode", "model_id", "max_new_tokens",
+                       "require_native_pixels", "capture_timeout_s"})
+_CHECKPOINT_CAPTURES = {
+    "lift": {"capture_after_lift": "after_lift"},
+    "task": {"capture_preinsert": "preinsert",
+             "capture_final": "final_or_abort"},
+    "retry": {"capture_withdrawn": "preinsert",
+              "capture_postshift": "post_lateral_hold",
+              "capture_arrival": "preinsert",
+              "capture_preinsert": "preinsert",
+              "capture_final": "final_or_abort"},
+}
+
+
+def _vlm_settings(value: object) -> dict:
+    if value is None:
+        return {"mode": "local", "model_id": None,
+                "max_new_tokens": 512, "require_native_pixels": True,
+                "capture_timeout_s": 10.0}
+    if not isinstance(value, dict) or set(value) - _VLM_KEYS:
+        raise ValueError("VLM settings contain unknown fields")
+    settings = {**_vlm_settings(None), **value}
+    if (settings["mode"] not in {"local", "gemini"} or
+            settings["model_id"] is not None and
+            (not isinstance(settings["model_id"], str) or
+             not settings["model_id"].strip()) or
+            type(settings["max_new_tokens"]) is not int or
+            settings["max_new_tokens"] <= 0 or
+            type(settings["require_native_pixels"]) is not bool or
+            type(settings["capture_timeout_s"]) not in (int, float) or
+            not math.isfinite(settings["capture_timeout_s"]) or
+            settings["capture_timeout_s"] <= 0 or
+            settings["mode"] == "gemini" and settings["model_id"] is None):
+        raise ValueError("invalid VLM mode, model or checkpoint timeout")
+    return settings
+
+
+def _with_checkpoint_captures(stages: Mapping, timeout_s: float) -> dict:
+    """Reuse one open camera session; every callback still takes fresh frames."""
+    result = {name: dict(fields) for name, fields in stages.items()}
+    for stage_name, captures in _CHECKPOINT_CAPTURES.items():
+        if stage_name not in result:
+            continue
+        for field, phase in captures.items():
+            if field not in result[stage_name]:
+                result[stage_name][field] = make_checkpoint_capture(
+                    phase=phase, timeout_s=timeout_s)
+    return result
 
 
 def _stage_factory(specification: str):
@@ -44,7 +94,7 @@ def _stage_factory(specification: str):
 def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     """Create one complete AutoDex FR3 integration for ``run_live.py``.
 
-    The JSON config is deliberately small: five feedback thresholds and one
+    The JSON config holds feedback, optional sampler/VLM settings, and one
     robot-PC ``module:function``. That factory returns mappings named
     ``shared`` and ``stages`` (and optional ``held_relation_route``) for the
     existing ``assemble_live_components``. It receives ``(core, live,
@@ -60,9 +110,9 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
         raise FileNotFoundError(f"FR3 robot config is missing: {source}")
     record = json.loads(source.read_text(encoding="utf-8"))
     if (not isinstance(record, dict) or record.get("schema") != _SCHEMA or
-            set(record) not in (
-                {"schema", "feedback", "stages_factory"},
-                {"schema", "feedback", "sampling", "stages_factory"}) or
+            not {"schema", "feedback", "stages_factory"} <= set(record) or
+            set(record) - {"schema", "feedback", "sampling",
+                           "stages_factory", "vlm"} or
             not isinstance(record["feedback"], dict) or
             set(record["feedback"]) != _FEEDBACK_KEYS):
         raise ValueError("FR3 robot config needs schema, feedback and stages_factory")
@@ -71,6 +121,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
            for value in record["feedback"].values()):
         raise ValueError("FR3 feedback thresholds must be finite and positive")
     sampling = None
+    vlm = _vlm_settings(record.get("vlm"))
     if "sampling" in record:
         supplied = record["sampling"]
         if (not isinstance(supplied, dict) or
@@ -109,13 +160,28 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             owned.update({"state_for_observation", "state_for_capture"})
         if owned & shared.keys():
             raise ValueError("FR3 planner and measured readers belong to core")
+        if "backend" not in shared:
+            height, width = live.cameras.launch.image_hw
+            # Qwen's processor rounds to a patch/merge factor. A slightly
+            # larger ceiling lets the backend append lossless right/bottom
+            # padding while keeping the original pixel coordinate origin.
+            native_ceiling = (
+                ((width + 31) // 32) * 32,
+                ((height + 31) // 32) * 32)
+            shared["backend"] = load_vlm_backend(
+                mode=vlm["mode"], model_id=vlm["model_id"],
+                max_input_size=native_ceiling,
+                max_new_tokens=vlm["max_new_tokens"],
+                require_native_pixels=vlm["require_native_pixels"])
         shared.update(planner=core.planner, read_state=core.read_state)
         if core.sampler is not None:
             shared.update(
                 state_for_observation=core.sampler.state_for_observation,
                 state_for_capture=core.sampler.state_for_capture)
         return assemble_live_components(
-            live, shared=shared, stages=parameters["stages"],
+            live, shared=shared,
+            stages=_with_checkpoint_captures(
+                parameters["stages"], vlm["capture_timeout_s"]),
             enable_robot_motion=options.enable_robot_motion,
             held_relation_route=parameters.get("held_relation_route", "physical"))
 

@@ -68,11 +68,28 @@ For the first-party FR3 resource path, create a robot-PC JSON file such as:
     "period_s": 0.01,
     "warmup_timeout_s": 2.0
   },
+  "vlm": {
+    "mode": "local",
+    "model_id": "Qwen/Qwen3-VL-2B-Instruct",
+    "max_new_tokens": 512,
+    "require_native_pixels": true,
+    "capture_timeout_s": 10.0
+  },
   "stages_factory": "my_robot_pc_binding:configure_stages"
 }
 ```
 
 These numbers illustrate the file format, **not** rig-approved limits.
+The `vlm` block is optional. If the stage factory does not supply `backend`,
+the integration loads local Qwen by default using the active camera image
+size; Gemini requires an explicit `mode: "gemini"` and `model_id`. The
+integration also fills missing lift, pre-insertion/final, and retry checkpoint
+callbacks with fresh snapshots from the already-open AutoDex cameras. A
+stage factory may supply a custom callback for any field. These defaults do
+not invent exposure timestamps or measured robot state. The native-pixel
+setting pads only the right/bottom edge to Qwen's patch unit without moving
+source pixels. Images outside the model's pixel-area budget still need the
+existing pixel-preserving ROI route for metric grounding.
 `configure_stages(core, live, options)` returns `{"shared": {...},
 "stages": {...}, "held_relation_route": "physical"}` for the existing
 `assemble_live_components`. The core injects its own `planner` and
@@ -81,8 +98,7 @@ long-lived feedback sampler before camera capture and also injects
 `state_for_observation` and `state_for_capture`. It records moving samples
 without killing the thread, but image lookups still require a stationary
 Franka/Inspire hold throughout exposure. The stage factory supplies the
-remaining commissioned camera, Qwen, pickup, contact, recovery and repose
-callbacks. Run:
+remaining commissioned pickup, contact, recovery and repose callbacks. Run:
 
 ```bash
 python demo/precision-insertion/run_live.py \
@@ -101,8 +117,8 @@ illustrative file: robot-PC stage callbacks and commissioned contact control
 remain required.
 
 The handler composer rejects missing/duplicate actions before any grasp. The
-module should create one long-lived feedback sampler, one Qwen backend and
-commissioned robot-side adapters, then share them across the components.
+module should supply commissioned robot-side adapters and may override the
+first-party Qwen backend or checkpoint callbacks when needed.
 The pickup executor should implement `stop_and_acknowledge()` in addition to
 `execute(...)`; the lift and transfer adapters already need that stop method.
 Only an acknowledged stop enters the supervised-recovery action. Without one,

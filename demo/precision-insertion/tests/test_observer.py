@@ -309,6 +309,8 @@ def test_local_backend_reuses_loaded_vlm():
 
 
 def test_local_metric_pixels_reject_qwen_internal_resize():
+    received = []
+
     class StubModel:
         family = "qwen"
         max_input_size = (2048, 1536)
@@ -318,13 +320,20 @@ def test_local_metric_pixels_reject_qwen_internal_resize():
                   "longest_edge": 16777216}))
 
         def infer_images_prompt(self, images, prompt, max_new_tokens):
+            received.extend(images)
             return SimpleNamespace(answer="{}")
 
     native = ZeroDexLocalBackend(StubModel())
     assert native.infer([Image.new("RGB", (640, 480))], "pixel") == "{}"
     assert native.infer([Image.new("RGB", (2048, 1536))], "pixel") == "{}"
+    source = Image.new("RGB", (1280, 720), (12, 34, 56))
+    assert native.infer([source], "pixel") == "{}"
+    assert received[-1].size == (1280, 736)
+    assert received[-1].getpixel((0, 0)) == (12, 34, 56)
+    assert received[-1].getpixel((1279, 719)) == (12, 34, 56)
+    assert received[-1].getpixel((1279, 720)) == (127, 127, 127)
     with pytest.raises(ValueError, match="processor would resize"):
-        native.infer([Image.new("RGB", (1280, 720))], "pixel")
+        native.infer([Image.new("RGB", (2048, 1537))], "pixel")
     semantic = ZeroDexLocalBackend(
         StubModel(), require_native_pixels=False)
     assert semantic.infer([Image.new("RGB", (1280, 720))], "label") == "{}"
@@ -347,7 +356,7 @@ def test_local_backend_rejects_implicit_resize_of_metric_pixels():
             return SimpleNamespace(answer="{}")
 
     backend = ZeroDexLocalBackend(StubModel())
-    with pytest.raises(ValueError, match="would resize"):
+    with pytest.raises(ValueError, match="verified Qwen processor"):
         backend.infer([_image()], "pixel grounding")
     semantic_only = ZeroDexLocalBackend(
         StubModel(), require_native_pixels=False)

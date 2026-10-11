@@ -219,14 +219,13 @@ class ZeroDexLocalBackend:
         return cls(vlm, max_new_tokens=max_new_tokens,
                    require_native_pixels=require_native_pixels)
 
-    def _require_native_processor_geometry(self, images: list[Image.Image]) -> None:
-        """Reject Qwen inputs whose internal patch processor would resize.
+    def _native_processor_geometry(self) -> tuple[int, int, int]:
+        """Return Qwen's exact patch factor and accepted pixel-area range.
 
-        ZeroDex's outer aspect-preserving resize is not the only transform:
-        the installed Qwen image processor rounds both dimensions to its
-        patch/merge factor and enforces pixel-area bounds. For metric point
-        grounding, neither transform may change the input coordinate frame.
-        Unknown processor families/configurations fail closed.
+        ZeroDex's outer aspect-preserving resize is not the only transform.
+        We pad only right and bottom so the original pixel origin and every
+        source pixel are unchanged, then require the processor to leave the
+        padded image untouched. Unknown processors still fail closed.
         """
         if getattr(self.vlm, "family", None) != "qwen":
             raise ValueError(
@@ -245,31 +244,40 @@ class ZeroDexLocalBackend:
                 for value in (patch, merge, minimum, maximum)) or
                 minimum > maximum):
             raise ValueError("invalid Qwen processor geometry")
-        factor = patch * merge
+        return patch * merge, minimum, maximum
+
+    def _native_images(self, images: list[Image.Image]) -> list[Image.Image]:
+        factor, minimum, maximum = self._native_processor_geometry()
+        ceiling = getattr(self.vlm, "max_input_size", None)
+        if (not isinstance(ceiling, (tuple, list)) or len(ceiling) != 2):
+            raise ValueError("native-pixel VLM needs an image-size ceiling")
+        prepared = []
         for frame in images:
-            area = frame.width * frame.height
-            if (frame.width % factor or frame.height % factor or
-                    not minimum <= area <= maximum):
+            if frame.mode != "RGB":
+                raise ValueError("native-pixel VLM needs RGB source images")
+            width = ((frame.width + factor - 1) // factor) * factor
+            height = ((frame.height + factor - 1) // factor) * factor
+            if (width > ceiling[0] or height > ceiling[1] or
+                    not minimum <= width * height <= maximum):
                 raise ValueError(
                     "local VLM processor would resize an original grounding "
                     f"image {frame.width}x{frame.height}; use a verified "
-                    "crop/pad-to-original pixel mapper")
+                    "smaller pixel-preserving crop")
+            if (width, height) == frame.size:
+                prepared.append(frame)
+            else:
+                padded = Image.new("RGB", (width, height), (127, 127, 127))
+                padded.paste(frame, (0, 0))
+                prepared.append(padded)
+        return prepared
 
     def infer(self, images: list[Image.Image], prompt: str) -> str:
         if (not images or any(not isinstance(img, Image.Image)
                               for img in images) or
                 not isinstance(prompt, str) or not prompt.strip()):
             raise ValueError("local VLM needs ordered PIL images and a prompt")
-        ceiling = getattr(self.vlm, "max_input_size", None)
-        if self.native_pixel_coordinates and (
-                not isinstance(ceiling, (tuple, list)) or len(ceiling) != 2 or
-                any(img.width > ceiling[0] or img.height > ceiling[1]
-                    for img in images)):
-            raise ValueError(
-                "local VLM would resize an original grounding image; "
-                "increase max_input_size or use a crop-to-original mapper")
         if self.native_pixel_coordinates:
-            self._require_native_processor_geometry(images)
+            images = self._native_images(images)
         result = self.vlm.infer_images_prompt(
             images, prompt, max_new_tokens=self.max_new_tokens)
         return result.answer

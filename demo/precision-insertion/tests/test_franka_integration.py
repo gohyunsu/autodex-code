@@ -61,7 +61,9 @@ def test_franka_integration_reuses_core_and_existing_stage_assembly(
         assert kwargs["shared"] == {
             "backend": backend, "planner": core.planner,
             "read_state": core.read_state}
-        assert kwargs["stages"] == {"task": {}}
+        assert set(kwargs["stages"]) == {"task"}
+        assert set(kwargs["stages"]["task"]) == {
+            "capture_preinsert", "capture_final"}
         assert kwargs["held_relation_route"] == "observed"
         assert kwargs["enable_robot_motion"] is True
         return ("assembled",)
@@ -128,6 +130,9 @@ def test_franka_integration_starts_and_injects_exposure_sampler(
 
     core.start_feedback_sampler = start
     monkeypatch.setattr(franka_integration, "open_franka_core", lambda _: core)
+    backend = object()
+    monkeypatch.setattr(franka_integration, "load_vlm_backend",
+                        lambda **kwargs: backend)
     module = ModuleType("robot_pc_stages")
     module.configure = lambda *_: {"shared": {}, "stages": {}}
     monkeypatch.setitem(sys.modules, module.__name__, module)
@@ -137,6 +142,7 @@ def test_franka_integration_starts_and_injects_exposure_sampler(
             sampler.state_for_observation)
         assert kwargs["shared"]["state_for_capture"] is (
             sampler.state_for_capture)
+        assert kwargs["shared"]["backend"] is backend
         return ()
 
     monkeypatch.setattr(franka_integration, "assemble_live_components", assemble)
@@ -150,6 +156,58 @@ def test_franka_integration_starts_and_injects_exposure_sampler(
         "period_s": .01, "warmup_timeout_s": 2.,
     }
     integration = franka_integration.factory(_options(tmp_path, config))
-    integration.build_components(object())
+    integration.build_components(SimpleNamespace(
+        cameras=SimpleNamespace(launch=SimpleNamespace(image_hw=(1080, 1920)))))
     integration.close()
     assert events == ["sampler_start", "close"]
+
+
+def test_first_party_qwen_and_fresh_checkpoint_callbacks(monkeypatch, tmp_path):
+    core = SimpleNamespace(
+        clear_view=object(), planner=object(), read_state=lambda: None,
+        sampler=None, close=lambda: None)
+    monkeypatch.setattr(franka_integration, "open_franka_core", lambda _: core)
+    module = ModuleType("robot_pc_stages")
+    custom_capture = lambda *_: None
+    module.configure = lambda *_: {
+        "shared": {},
+        "stages": {"lift": {}, "task": {"capture_final": custom_capture},
+                   "retry": {}}}
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    loaded = []
+    backend = object()
+
+    def load(**kwargs):
+        loaded.append(kwargs)
+        return backend
+
+    monkeypatch.setattr(franka_integration, "load_vlm_backend", load)
+    captures = []
+
+    def make(*, phase, timeout_s):
+        captures.append((phase, timeout_s))
+        return lambda *_: phase
+
+    monkeypatch.setattr(franka_integration, "make_checkpoint_capture", make)
+
+    def assemble(_live, **kwargs):
+        assert kwargs["shared"]["backend"] is backend
+        stages = kwargs["stages"]
+        assert stages["lift"]["capture_after_lift"]() == "after_lift"
+        assert stages["task"]["capture_preinsert"]() == "preinsert"
+        assert stages["task"]["capture_final"] is custom_capture
+        assert stages["retry"]["capture_postshift"]() == "post_lateral_hold"
+        assert stages["retry"]["capture_final"]() == "final_or_abort"
+        return ()
+
+    monkeypatch.setattr(franka_integration, "assemble_live_components", assemble)
+    config = _config()
+    config["vlm"] = {"capture_timeout_s": 6.0}
+    integration = franka_integration.factory(_options(tmp_path, config))
+    integration.build_components(SimpleNamespace(
+        cameras=SimpleNamespace(launch=SimpleNamespace(image_hw=(1080, 1920)))))
+    assert loaded == [{
+        "mode": "local", "model_id": None, "max_input_size": (1920, 1088),
+        "max_new_tokens": 512, "require_native_pixels": True}]
+    assert len(captures) == 7
+    assert all(timeout == 6.0 for _phase, timeout in captures)
