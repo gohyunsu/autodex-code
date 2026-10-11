@@ -44,18 +44,19 @@ def test_franka_core_uses_stock_fr3_objects_without_homing(monkeypatch):
     assert "home" not in events
 
 
-def test_franka_core_rejects_xarm_before_planner_and_releases_connection():
+def test_franka_core_rejects_xarm_and_releases_connection():
     events = []
     executor = _executor(events)
     executor.arm_dof = 6
     with pytest.raises(TypeError, match="Franka/Inspire"):
         franka_core.open_franka_core(
             _settings(), executor_factory=lambda: executor,
-            planner_factory=lambda: events.append("planner"))
+            planner_factory=lambda: SimpleNamespace(
+                _n_arm=7, _hand="fr3_inspire"))
     assert events == ["shutdown"]
 
 
-def test_franka_core_releases_executor_when_planner_fails():
+def test_franka_core_checks_cuda_planner_before_opening_franka():
     events = []
 
     def broken_planner():
@@ -63,6 +64,7 @@ def test_franka_core_releases_executor_when_planner_fails():
 
     with pytest.raises(RuntimeError, match="cuRobo unavailable"):
         franka_core.open_franka_core(
-            _settings(), executor_factory=lambda: _executor(events),
+            _settings(), executor_factory=lambda: (
+                events.append("connect") or _executor(events)),
             planner_factory=broken_planner)
-    assert events == ["shutdown"]
+    assert events == []

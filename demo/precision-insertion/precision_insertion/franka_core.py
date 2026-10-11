@@ -54,14 +54,20 @@ def open_franka_core(
     """
     if not isinstance(feedback, FrankaFeedbackSettings):
         raise TypeError("FR3 runtime needs explicit feedback settings")
-    if executor_factory is None:
-        from src.execution.franka_executor import FrankaExecutor
-
-        executor_factory = lambda: FrankaExecutor(hand_name="inspire")
     if planner_factory is None:
         from autodex.planner import GraspPlanner
 
         planner_factory = lambda: GraspPlanner(hand="fr3_inspire")
+    # cuRobo loads CUDA during planner construction. Do that before opening a
+    # robot connection, so a missing GPU never touches the Franka daemon.
+    planner = planner_factory()
+    if (getattr(planner, "_n_arm", None) != 7 or
+            getattr(planner, "_hand", None) != "fr3_inspire"):
+        raise TypeError("FR3 runtime needs GraspPlanner(hand='fr3_inspire')")
+    if executor_factory is None:
+        from src.execution.franka_executor import FrankaExecutor
+
+        executor_factory = lambda: FrankaExecutor(hand_name="inspire")
     executor = executor_factory()
     try:
         if (getattr(executor, "arm_dof", None) != 7 or
@@ -69,11 +75,6 @@ def open_franka_core(
                 {"inspire", "inspire_left"} or
                 not callable(getattr(executor, "shutdown", None))):
             raise TypeError("FR3 runtime needs the stock Franka/Inspire executor")
-        planner = planner_factory()
-        if (getattr(planner, "_n_arm", None) != 7 or
-                getattr(planner, "_hand", None) != "fr3_inspire"):
-            raise TypeError("FR3 runtime needs GraspPlanner(hand='fr3_inspire')")
-
         def read_state() -> LiveRobotState:
             return read_live_franka_inspire_state(
                 arm=executor.arm, hand=executor.hand,
