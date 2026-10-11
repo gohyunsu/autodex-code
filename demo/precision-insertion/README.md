@@ -489,7 +489,11 @@ that session and catalogue. For each new key observation:
    native-pixel view for a visible tip centre and shaft axis line, triangulates
    the tip/axis, and calculates a continuous socket-frame correction with an
    at-most-1 mm increment. Missing landmarks, weak parallax, tilt, or high
-   uncertainty abstain. This is still a **diagnostic**, not a pending retry:
+   uncertainty abstain. For the local Qwen backend, an optional explicit
+   `roi_xyxy_by_camera` map uses lossless crops of the same raw undistorted
+   frames. The raw answer, exact crop-to-full pixel mapping and source frames
+   are saved and replayed by the lateral preflight verifier; see
+   [the ROI contract](GROUNDING_PROBE.md). This is still a **diagnostic**, not a pending retry:
    a passing, saved cylinder diagnostic can now be source-bound to the
    first withdrawn-hold lateral cuRobo/CAD preflight with physical-medoid
    surface bounds. This is still not an execution or renewed contact retry:

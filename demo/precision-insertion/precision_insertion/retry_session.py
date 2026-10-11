@@ -28,8 +28,9 @@ from .geometry import validate_se3
 from .grounded_alignment import (
     AlignmentLimits, estimate_grounded_alignment,
     estimate_grounded_line_alignment,
-    observe_grounded_cylinder_axis,
+    observe_grounded_cylinder_axis, observe_grounded_cylinder_axis_cropped,
 )
+from .grounding_crop import verify_native_crop_observation
 from .held_relation import HeldRelation, resolve_postlift_held_relation
 from .key_perception import KeyPoseObservation, verify_key_capture_artifacts
 from .live_robot_state import LiveRobotState
@@ -661,6 +662,7 @@ def assess_grounded_xy_diagnostic(
     decision_timestamp_s: float, limits: RetrySessionLimits,
     alignment_limits: AlignmentLimits,
     axis_reference_key_z_m: float | None = None,
+    roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]] | None = None,
 ) -> GroundedXYDiagnostic:
     """Observe raw key landmarks after a failed trial, never command XY.
 
@@ -668,6 +670,8 @@ def assess_grounded_xy_diagnostic(
     line endpoints need no cross-view point correspondence. The square route
     needs a third non-collinear feature to estimate yaw and therefore abstains.
     """
+    if roi_xyxy_by_camera is not None and mode.yaw_relevant:
+        raise ValueError("two-landmark ROI grounding cannot determine square-key yaw")
     root, postlift_file, withdrawal_file, verified = (
         _validated_unobserved_retry_capture(
             mode=mode, shared_root=shared_root, calibration=calibration,
@@ -718,8 +722,16 @@ def assess_grounded_xy_diagnostic(
             verification_depth_m=mode.target_depth_m,
             limits=alignment_limits, yaw_relevant=True)
     else:
-        grounded, observations = observe_grounded_cylinder_axis(
-            backend, calibrated)
+        if roi_xyxy_by_camera is None:
+            grounded, observations = observe_grounded_cylinder_axis(
+                backend, calibrated)
+        else:
+            grounded, observations = observe_grounded_cylinder_axis_cropped(
+                backend, calibrated, roi_xyxy_by_camera=roi_xyxy_by_camera)
+            for frame, observation in zip(calibrated, observations):
+                verify_native_crop_observation(
+                    observation.to_record(),
+                    full_image_size_px=frame.raw.size)
         alignment = estimate_grounded_line_alignment(
             grounded,
             socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
@@ -736,6 +748,9 @@ def assess_grounded_xy_diagnostic(
                              bounded_xy_increment_socket_m=None)
     alignment = dict(
         alignment, estimator_limits=asdict(alignment_limits),
+        grounding_input=("lossless_raw_roi" if roi_xyxy_by_camera is not None
+                         and not mode.yaw_relevant else
+                         "full_undistorted_frames"),
         key_object=mode.key_object, socket_object=mode.socket_object,
         socket_entry_plane_z_m=float(geometry["socket_entry_plane_z_m"]),
         verification_depth_m=mode.target_depth_m,

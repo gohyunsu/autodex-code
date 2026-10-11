@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import json
 import math
@@ -10,6 +11,7 @@ import sys
 from types import SimpleNamespace
 
 import numpy as np
+from PIL import Image
 import pytest
 from scipy.stats import chi2
 
@@ -18,10 +20,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion import grounded_lateral  # noqa: E402
 from precision_insertion.assets import AssetPaths  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
+from precision_insertion.grounded_alignment import (  # noqa: E402
+    observe_grounded_cylinder_axis_cropped,
+)
 from precision_insertion.lateral_preflight import LateralHoldPreflight  # noqa: E402
 from precision_insertion.retry_session import (  # noqa: E402
     GroundedXYDiagnostic, write_retry_session_artifacts,
 )
+from precision_insertion.xy_overlay import CalibratedXYFrame  # noqa: E402
 from test_retry_session import _inputs  # noqa: E402
 
 
@@ -219,3 +225,37 @@ def test_grounded_lateral_rechecks_saved_xy_math_and_axis_direction(
         grounded_lateral.plan_grounded_lateral_from_withdrawal(
             **{**call, "diagnostic": modified})
     assert seen == []
+
+
+def test_cropped_grounding_source_replays_from_saved_full_frames(
+        tmp_path, monkeypatch):
+    call, _seen = _setup(tmp_path, monkeypatch)
+    path = call["diagnostic_report_path"]
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    cameras = sorted(saved["frame_binding"])
+
+    class Backend:
+        native_pixel_coordinates = True
+
+        def infer(self, _images, _prompt):
+            return ('{"tip_px":[30,20],"axis_line_px":'
+                    '[[40,30],[50,40]],"evidence":"visible shaft"}')
+
+    frames = []
+    for camera in cameras:
+        with Image.open(path.parent / "frames" / f"{camera}.png") as image:
+            raw = image.convert("RGB")
+        frames.append(CalibratedXYFrame(
+            camera, saved["frame_binding"][camera]["timestamp_s"],
+            raw, np.eye(4), np.eye(3)))
+    _grounded, observations = observe_grounded_cylinder_axis_cropped(
+        Backend(), frames,
+        roi_xyxy_by_camera={camera: (0, 0, 100, 100)
+                            for camera in cameras})
+    saved["alignment"]["grounding_input"] = "lossless_raw_roi"
+    saved["vlm_observations"] = [row.to_record() for row in observations]
+    grounded_lateral._verify_grounded_frame_artifacts(path, saved)
+    saved["vlm_observations"][0]["pixel_mapping"][
+        "mapped_full_pixels"]["tip_px"][0] += 1
+    with pytest.raises(ValueError, match="mapping differs"):
+        grounded_lateral._verify_grounded_frame_artifacts(path, saved)

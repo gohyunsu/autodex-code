@@ -32,7 +32,9 @@ from precision_insertion.grounded_alignment import (  # noqa: E402
     AlignmentLimits, estimate_grounded_line_alignment,
     observe_grounded_cylinder_axis, observe_grounded_cylinder_axis_cropped,
 )
-from precision_insertion.grounding_crop import make_native_grounding_crop  # noqa: E402
+from precision_insertion.grounding_crop import (  # noqa: E402
+    make_native_grounding_crop, verify_native_crop_observation,
+)
 from precision_insertion.observer import load_vlm_backend  # noqa: E402
 from precision_insertion.xy_overlay import CalibratedXYFrame  # noqa: E402
 
@@ -173,6 +175,10 @@ def main(argv: list[str] | None = None) -> int:
         observe_grounded_cylinder_axis_cropped(
             backend, frames, roi_xyxy_by_camera=roi_by_camera)
         if roi_by_camera else observe_grounded_cylinder_axis(backend, frames))
+    if roi_by_camera:
+        for frame, observation in zip(frames, observations):
+            verify_native_crop_observation(
+                observation.to_record(), full_image_size_px=frame.raw.size)
     limits = AlignmentLimits(**record["alignment_limits"])
     alignment = estimate_grounded_line_alignment(
         grounded, socket_rim_z_m=float(record["socket_rim_z_m"]),

@@ -10,6 +10,7 @@ the backend still checks its own actual processor geometry and fails closed.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 
 from PIL import Image
 
@@ -81,3 +82,75 @@ def make_native_grounding_crop(
     return NativeGroundingCrop(
         image, raw.size, (x0, y0, x1, y1), (width, height),
         patch_factor_px, minimum_side_px)
+
+
+def verify_native_crop_observation(
+    observation: Mapping, *, full_image_size_px: tuple[int, int],
+) -> dict | None:
+    """Replay raw-answer parsing and exact crop→full mapping from a record.
+
+    A null return means the original answer was rejected. This does not
+    establish that a geometrically valid VLM mark is the correct physical
+    feature; the independent multi-view/uncertainty gates remain necessary.
+    """
+    from .observer import _parse_object
+
+    if not isinstance(observation, Mapping):
+        raise ValueError("crop observation must be a record")
+    mapping = observation.get("pixel_mapping")
+    if (not isinstance(mapping, dict) or
+            mapping.get("schema") !=
+            "precision_insertion_lossless_grounding_crop_v1" or
+            not isinstance(full_image_size_px, tuple) or
+            len(full_image_size_px) != 2 or
+            any(type(value) is not int or value <= 0
+                for value in full_image_size_px)):
+        raise ValueError("crop observation lacks its source pixel contract")
+    roi = mapping.get("roi_xyxy_full_px")
+    patch = mapping.get("patch_factor_px")
+    minimum = mapping.get("minimum_side_px")
+    blank = Image.new("RGB", full_image_size_px)
+    expected = make_native_grounding_crop(
+        blank, roi, patch_factor_px=patch, minimum_side_px=minimum)
+    expected_mapping = expected.mapping_record()
+    if any(mapping.get(name) != value
+           for name, value in expected_mapping.items()):
+        raise ValueError("crop observation geometry or padding changed")
+    answer = observation.get("raw_answer")
+    parsed = observation.get("parsed")
+    if not isinstance(answer, str) or not isinstance(parsed, dict):
+        raise ValueError("crop observation lacks raw or parsed VLM marks")
+    try:
+        replayed = _parse_object(answer)
+    except ValueError:
+        if (observation.get("parse_error") is None or
+                mapping.get("mapped_full_pixels") is not None):
+            raise ValueError("rejected crop answer was promoted to pixels")
+        return None
+    if observation.get("parse_error") is not None:
+        if mapping.get("mapped_full_pixels") is not None:
+            raise ValueError("invalid crop mark was promoted to full pixels")
+        return None
+    if replayed != parsed:
+        raise ValueError("crop parsed marks differ from raw VLM answer")
+    if (set(parsed) != {"tip_px", "axis_line_px", "evidence"} or
+            not isinstance(parsed["evidence"], str)):
+        raise ValueError("crop VLM marks have a different schema")
+
+    def point(value) -> list[float]:
+        if (not isinstance(value, list) or len(value) != 2 or
+                any(type(v) not in (int, float) for v in value)):
+            raise ValueError("crop point needs two finite numeric pixels")
+        return list(expected.to_full_pixel((value[0], value[1])))
+
+    tip = None if parsed["tip_px"] is None else point(parsed["tip_px"])
+    line = parsed["axis_line_px"]
+    if line is not None and (not isinstance(line, list) or len(line) != 2):
+        raise ValueError("crop axis line needs two points")
+    mapped = {
+        "tip_px": tip,
+        "axis_line_px": None if line is None else [point(p) for p in line],
+    }
+    if mapping.get("mapped_full_pixels") != mapped:
+        raise ValueError("crop→full pixel mapping differs from raw VLM marks")
+    return mapped

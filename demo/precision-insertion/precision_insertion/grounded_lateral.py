@@ -21,6 +21,7 @@ from .assets import AssetPaths
 from .config import TaskMode
 from .frame_provenance import image_sha256
 from .geometry import validate_se3
+from .grounding_crop import verify_native_crop_observation
 from .lateral_preflight import (
     LateralHoldPreflight, plan_lateral_hold_shift,
     write_lateral_hold_preflight,
@@ -47,16 +48,51 @@ def _verify_grounded_frame_artifacts(path: Path, saved: dict) -> None:
                 "_", "").replace(".", "").isalnum()
                 for camera in cameras)):
         raise ValueError("grounded report lacks complete original camera frames")
+    image_sizes = {}
     for camera in cameras:
         relative = f"frames/{camera}.png"
         image_path = path.parent / relative
         if not image_path.is_file() or _sha(image_path) != artifacts[relative]:
             raise ValueError("grounded source image bytes changed")
         with Image.open(image_path) as image:
+            image_sizes[camera] = image.size
             rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
         if image_sha256(rgb[:, :, ::-1].copy()) != saved[
                 "frame_binding"][camera]["image_sha256"]:
             raise ValueError("grounded report image differs from acquired pixels")
+    alignment = saved.get("alignment")
+    if not isinstance(alignment, dict):
+        raise ValueError("grounded diagnostic lacks alignment record")
+    grounding_input = alignment.get("grounding_input")
+    if grounding_input == "lossless_raw_roi":
+        observations = saved.get("vlm_observations")
+        if not isinstance(observations, list) or len(observations) != len(cameras):
+            raise ValueError("grounded ROI report lacks one view per camera")
+        seen = set()
+        inliers = set(alignment.get("inlier_cameras", []))
+        for row in observations:
+            if (not isinstance(row, dict) or
+                    not isinstance(row.get("image_order"), list) or
+                    len(row["image_order"]) != 1):
+                raise ValueError("grounded ROI image order is invalid")
+            tag = row["image_order"][0]
+            camera = next((serial for serial in cameras if tag ==
+                           f"raw_preinsert_hold/{serial}@"
+                           f"{saved['frame_binding'][serial]['timestamp_s']:.6f}"),
+                          None)
+            if camera is None or camera in seen:
+                raise ValueError("grounded ROI view differs from source frame")
+            seen.add(camera)
+            mapped = verify_native_crop_observation(
+                row, full_image_size_px=image_sizes[camera])
+            if (camera in inliers and
+                    (mapped is None or mapped["tip_px"] is None or
+                     mapped["axis_line_px"] is None)):
+                raise ValueError("grounded ROI inlier has no verified landmarks")
+        if seen != cameras:
+            raise ValueError("grounded ROI views are incomplete")
+    elif grounding_input not in (None, "full_undistorted_frames"):
+        raise ValueError("grounded diagnostic has unknown pixel input")
 
 
 def _verified_diagnostic_report(

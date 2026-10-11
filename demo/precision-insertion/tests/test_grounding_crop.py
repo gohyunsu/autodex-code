@@ -9,7 +9,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from precision_insertion.grounding_crop import make_native_grounding_crop  # noqa: E402
+from precision_insertion.grounding_crop import (  # noqa: E402
+    make_native_grounding_crop, verify_native_crop_observation,
+)
 from precision_insertion.grounded_alignment import (  # noqa: E402
     observe_grounded_cylinder_axis_cropped,
 )
@@ -56,3 +58,29 @@ def test_vlm_mark_in_padding_cannot_become_metric_landmark():
     assert views[0].axis_line_uv_px is None
     assert "padding" in observations[0].parse_error
     assert observations[0].pixel_mapping["mapped_full_pixels"] is None
+    assert verify_native_crop_observation(
+        observations[0].to_record(), full_image_size_px=frame.raw.size) is None
+
+
+def test_saved_crop_mapping_replays_and_detects_tampering():
+    class Backend:
+        native_pixel_coordinates = True
+
+        def infer(self, _images, _prompt):
+            return ('{"tip_px":[30,20],"axis_line_px":'
+                    '[[40,30],[50,40]],"evidence":"visible shaft"}')
+
+    frame = CalibratedXYFrame(
+        "camera1", 1., Image.new("RGB", (1280, 720)), np.eye(4),
+        np.array([[1000., 0., 640.], [0., 1000., 360.], [0., 0., 1.]]))
+    views, rows = observe_grounded_cylinder_axis_cropped(
+        Backend(), [frame],
+        roi_xyxy_by_camera={"camera1": (1200, 650, 1280, 720)})
+    record = rows[0].to_record()
+    assert views[0].tip_uv_px == (1230., 670.)
+    assert verify_native_crop_observation(
+        record, full_image_size_px=frame.raw.size)["tip_px"] == [1230., 670.]
+    record["pixel_mapping"]["mapped_full_pixels"]["tip_px"][0] += 1
+    with pytest.raises(ValueError, match="mapping differs"):
+        verify_native_crop_observation(
+            record, full_image_size_px=frame.raw.size)

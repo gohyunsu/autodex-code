@@ -68,8 +68,18 @@ estimator use exact full-frame coordinates `u_full=u_crop+x0`,
 `v_full=v_crop+y0` with the original camera intrinsics. The source-image hash
 still binds the *whole* original frame. This avoids treating a resized pixel
 as a metric observation; it does not establish that the VLM's mark is
-accurate. The current live checkpoint verifiers still use full frames, not
-this saved-image ROI experiment.
+accurate. The same explicit ROI map may be supplied to the *read-only* live
+`SessionRunner.prepare_grounded_xy_diagnostic(..., roi_xyxy_by_camera=...)`
+for a cylindrical key after a documented failed insertion and guarded
+withdrawal. It records the full raw frames and replays the crop mapping at
+observation time. If its saved diagnostic is passed to the lateral hold
+preflight, that binder replays every raw answer, crop geometry, full-frame
+pixel mapping, camera/frame identity and saved image hash. The ROI must be
+independently selected from the live key region; a predicted squeeze pose
+alone is not sufficient. The square-key two-landmark route does not support
+this ROI option because insertion yaw remains unobservable. Lift, arrival,
+and insertion checkpoint verifiers still use their existing full-frame
+inputs. This option does not approve motion or contact.
 
 From the repository root, after the [local VLM setup](README.md):
 

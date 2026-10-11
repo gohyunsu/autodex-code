@@ -2199,6 +2199,7 @@ class SessionRunner:
         decision_timestamp_s: float, limits: RetrySessionLimits,
         alignment_limits: AlignmentLimits,
         axis_reference_key_z_m: float | None = None,
+        roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]] | None = None,
     ) -> GroundedXYDiagnostic:
         """Save camera-grounded metric 1 mm advice without scheduling motion."""
         if (self.current_decision().action !=
@@ -2220,7 +2221,8 @@ class SessionRunner:
             postlift_preflight_report_path=postlift_preflight_report_path,
             decision_timestamp_s=decision_timestamp_s, limits=limits,
             alignment_limits=alignment_limits,
-            axis_reference_key_z_m=axis_reference_key_z_m)
+            axis_reference_key_z_m=axis_reference_key_z_m,
+            roi_xyxy_by_camera=roi_xyxy_by_camera)
         output = (self._attempt_dir / "xy_retry_assessments" /
                   f"{self._retry_assessment_index:03d}")
         write_retry_session_artifacts(result, frames, output)

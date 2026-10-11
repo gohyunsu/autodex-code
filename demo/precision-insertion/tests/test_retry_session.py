@@ -15,6 +15,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from autodex.utils.sync import convert_inspire_raw  # noqa: E402
+from precision_insertion.assets import AssetPaths  # noqa: E402
+from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.held_relation import HeldRelation  # noqa: E402
 from precision_insertion.grounded_alignment import AlignmentLimits  # noqa: E402
 from precision_insertion.key_perception import KeyPoseObservation  # noqa: E402
@@ -362,6 +364,79 @@ def test_grounded_diagnostic_binds_failure_and_never_records_retry(
     assert saved["task_geometry_sha256"] == hashlib.sha256(
         fixture.read_bytes()).hexdigest()
     assert (output / "frames/a.png").is_file()
+
+
+def test_square_grounding_rejects_roi_without_spending_vlm_call(
+        tmp_path, monkeypatch):
+    kwargs = _inputs(tmp_path, monkeypatch)
+    for name in ("planner", "held_key_observation", "held_key_evidence_dir"):
+        kwargs.pop(name)
+    limits = AlignmentLimits(
+        pixel_sigma_px=1., max_reprojection_px=3.,
+        min_parallax_deg=5., max_axis_tilt_deg=3.,
+        max_20mm_axis_sweep_m=.001,
+        max_lateral_uncertainty_95_m=.0005,
+        systematic_lateral_sigma_m=.0001,
+        cad_spacing_sigma_m=.0005)
+    with pytest.raises(ValueError, match="cannot determine square-key yaw"):
+        assess_grounded_xy_diagnostic(
+            **kwargs, alignment_limits=limits,
+            roi_xyxy_by_camera={frame.camera_id: (0, 0, 100, 100)
+                                for frame in kwargs["frames"]})
+    assert kwargs["backend"].calls == 0
+
+
+def test_cylinder_retry_diagnostic_accepts_explicit_lossless_rois(
+        tmp_path, monkeypatch):
+    kwargs = _inputs(tmp_path, monkeypatch)
+    for name in ("planner", "held_key_observation", "held_key_evidence_dir"):
+        kwargs.pop(name)
+    mode = select_mode("cylinder", 15)
+    kwargs["mode"] = mode
+    geometry = AssetPaths(tmp_path, mode).task_geometry
+    geometry.parent.mkdir(parents=True, exist_ok=True)
+    geometry.write_text(json.dumps({
+        "key_frame": {"tip_z_m": .08},
+        "verification_depth_m": .02,
+        "insertion_direction_socket": [0., 0., -1.],
+        "socket_entry_plane_z_m": .055,
+    }), encoding="utf-8")
+    monkeypatch.setattr(
+        retry_session, "_validated_unobserved_retry_capture",
+        lambda **_inputs: (
+            tmp_path, kwargs["postlift_preflight_report_path"],
+            kwargs["withdrawal_evidence_path"],
+            kwargs["acquisition_metadata"]["frames"]))
+    monkeypatch.setattr(retry_session, "validated_frozen_socket_pose",
+                        lambda **_inputs: np.eye(4))
+
+    class Backend:
+        native_pixel_coordinates = True
+
+        def infer(self, images, prompt):
+            assert images[0].size == (256, 256)
+            assert "CROP-CANVAS" in prompt
+            return json.dumps({"tip_px": None, "axis_line_px": None,
+                               "evidence": "key occluded"})
+
+    kwargs["backend"] = Backend()
+    limits = AlignmentLimits(
+        pixel_sigma_px=1., max_reprojection_px=3.,
+        min_parallax_deg=5., max_axis_tilt_deg=3.,
+        max_20mm_axis_sweep_m=.001,
+        max_lateral_uncertainty_95_m=.0005,
+        systematic_lateral_sigma_m=.0001,
+        cad_spacing_sigma_m=.0005, minimum_views=2)
+    result = assess_grounded_xy_diagnostic(
+        **kwargs, alignment_limits=limits,
+        roi_xyxy_by_camera={frame.camera_id: (0, 0, 100, 100)
+                            for frame in kwargs["frames"]})
+    assert result.status == "abstain"
+    assert result.alignment["grounding_input"] == "lossless_raw_roi"
+    assert len(result.vlm_observations) == len(kwargs["frames"])
+    assert all(row.pixel_mapping is not None
+               for row in result.vlm_observations)
+    assert kwargs["attempt"]._pending_retry is False
 
 
 def test_grounded_diagnostic_accepts_only_verified_bounded_postlift_source(

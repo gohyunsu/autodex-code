@@ -753,11 +753,12 @@ def observe_grounded_cylinder_axis_cropped(
 ) -> tuple[list[GroundedLineView], list[VLMObservation]]:
     """Ground visible cylinder marks in lossless ROIs, return full pixels.
 
-    This is a **saved-image/read-only** experiment. The raw VLM answer and
+    This is a **read-only** observation for saved probes or live diagnostics.
+    The raw VLM answer and
     parsed marks stay crop-local in ``VLMObservation``; its pixel_mapping
     records the exact translation. Returned ``GroundedLineView`` marks are
     original full-frame pixels for unchanged calibration/triangulation.
-    Live checkpoint verifiers intentionally continue to use full frames.
+    Lift/arrival/insertion checkpoint verifiers still use full frames.
     """
     if getattr(backend, "native_pixel_coordinates", False) is not True:
         raise ValueError("cropped metric grounding needs a native-pixel backend")
