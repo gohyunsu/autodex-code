@@ -74,6 +74,8 @@ exact source paths and geometry are recorded in the generated JSON reports:
 [`24122734`](/home/hyunsu/shared_data/AutoDex/precision_insertion/registered_key_roi_saved_probe_20261011/24122734.json)
 and
 [`25322644`](/home/hyunsu/shared_data/AutoDex/precision_insertion/registered_key_roi_saved_probe_20261011/25322644.json).
+Identical readback-verified copies for the AutoDex PC are under
+`/mnt/paradex2/hyunsu/autodex_precision_insertion_registered_key_roi_20261011/`.
 
 This module is **not yet installed in the live key capture producer**. To do
 that safely, first bind one verified socket-only baseline image and mask per
