@@ -1207,11 +1207,19 @@ the 2026-10-11 local square 1.5 mm pool has seven **nominally** eligible
 pose-`004` grasps, while the other four square poses have none. The cylinder
 pool has 12 nominally eligible grasps, but no physical relation is certified.
 The nominal squeeze pose is
-not a measurement; before physical transfer, re-observe the held key and
-validate the hand–key relation against the planned one. A guarded contact
+not a measurement; before physical transfer, either observe the held key and
+validate its hand–key relation or use the separately calibrated bounded
+physical-grasp route described below. A guarded contact
 controller, true acquisition-timestamped camera adapter, commissioned
 measured-state lift/transfer execution, and reset/repose execution remain
 missing.
+
+The six local cylinder catalogs were [refreshed and source-verified on
+2026-10-11](CYLINDER_ENDPOINT_CATALOGS.md) after the candidate verifier
+changed. Earlier staged catalogs are stale; a recipient host must re-screen
+or verify its own paths and source hashes before starting a session. The
+12-per-gap result remains nominal offline eligibility, not a measured grasp
+or insertion success count.
 
 After the physical lift, use the session runner's
 `postlift_candidate_pose_prior(...)` and `admit_postlift_key_capture(...)`
