@@ -16,7 +16,7 @@ using the existing demo functions before returning. For example:
 | `capture_fresh_key`, `reobserve_key_and_preflight` | Move to measured clear view, then `prepare_next_live_key()` with the same cameras and frozen runner. For a judged grasp miss, reuse AutoDex `release(..., open_to_init=True)` and `reset()` before recapture. The attempted grasp is excluded. |
 | `continue_candidate_preflight` | `runner.preflight_next_key()` on the *same* saved key capture and measured state, continuing a budget-limited prefix rather than falsely declaring pose exhaustion. |
 | `execution_gate_required` | [`LivePickupHandlers`](precision_insertion/live_pickup_handlers.py) starts the selected v8 attempt, calls the existing `execute_bound_pickup()` through a commissioned executor, and preflights lift from *measured* post-squeeze joints. It does not execute lift or write a grasp-success label. |
-| `await_lift_observation` | Complete the measured lift, paired-camera Qwen lift checkpoint and `runner.observe_stage("grasp_success", ...)`. |
+| `await_lift_observation` | [`LiveLiftHandlers`](precision_insertion/live_lift_handlers.py) runs the saved measured-start lift through a commissioned adapter, captures fresh raw frames from the *same* AutoDex cameras, and calls `runner.prepare_raw_lift_label()` with a Qwen-compatible backend. The runner records a grasp label only for a decisive visual checkpoint. |
 | `postlift_observed_preflight_required`, `held_relation_evidence_required` | Obtain the post-squeeze key/hand relation or its explicit uncertainty bound, then call the matching `runner.prepare_*postlift_transfer()` method. |
 | `transfer_execution_gate_required` | Execute the bound held transfer, capture the pre-insertion hold, and record the separate `preinsert_reached` label. |
 | `await_guarded_insertion_and_observation` | Prepare the bound axial handoff, run a commissioned guarded stroke, then use paired Qwen views plus measured depth/alignment/force in `runner.prepare_observed_insertion_label()`; only its checkpoint may set `insertion_success`. |
@@ -49,6 +49,19 @@ cannot be supplied unchanged to `execute_bound_pickup()` because that
 function rejects its non-fail-closed trajectory follower. A passing chain
 only unlocks the next `await_lift_observation` boundary; it is not evidence
 that lift or grasp succeeded.
+
+[`LiveLiftHandlers`](precision_insertion/live_lift_handlers.py) uses
+`execute_bound_measured_lift()` and the existing raw lift checkpoint. Its
+camera callback must produce a `RawCameraCapture` with the open session's
+undistorted, acquisition-time-stamped images; its state callback must return
+joint feedback buffered for that exposure. The handler writes the existing
+raw-camera evidence format and passes it to
+`SessionRunner.prepare_raw_lift_label()`. The VLM backend can be loaded once
+with `load_vlm_backend(mode="local", max_input_size=(W, H))`, whose default
+model is Qwen3-VL-2B-Instruct. Unknown visual outcomes stay unlabelled; a
+positive visual outcome advances to held-relation calibration, not directly
+to nominal BODex transfer. The external lift adapter and raw-camera producer
+remain robot-PC integration requirements.
 
 The required [`ClearViewForPerception`](precision_insertion/clear_view.py)
 calls stock `FrankaExecutor.home(clear_view=True)` **before** the initial
@@ -91,6 +104,8 @@ from pathlib import Path
 from precision_insertion.live_orchestration import run_live_precision_session
 from precision_insertion.live_planning_handlers import LiveKeyPlanningHandlers
 from precision_insertion.live_pickup_handlers import LivePickupHandlers
+from precision_insertion.live_lift_handlers import LiveLiftHandlers
+from precision_insertion.observer import load_vlm_backend
 from precision_insertion.clear_view import ClearViewForPerception
 from precision_insertion.live_robot_state import read_live_franka_inspire_state
 
@@ -112,6 +127,8 @@ clear_view = ClearViewForPerception(
     max_arm_velocity_rad_s=commissioned_key_parameters["max_arm_velocity_rad_s"],
     max_sample_age_s=commissioned_feedback_age_s,
 )
+qwen_backend = load_vlm_backend(
+    mode="local", max_input_size=commissioned_native_image_size)
 
 def build_handlers(live):
     planning = LiveKeyPlanningHandlers(
@@ -130,7 +147,18 @@ def build_handlers(live):
         measured_lift_parameters=commissioned_measured_lift_parameters,
         enable_robot_motion=True,
     )
-    return {**planning.handlers(), **pickup.handlers()}
+    lift = LiveLiftHandlers(
+        live=live, adapter=commissioned_lift_adapter,
+        read_state=read_current_state,
+        state_for_capture=feedback_sampler.state_for_raw_capture,
+        capture_after_lift=autodex_raw_after_lift_capture,
+        backend=qwen_backend, motion_interlock=motion_interlock,
+        limits=lift_execution_limits,
+        commissioning_record_path=commissioning_record_path,
+        assessment_parameters=commissioned_lift_assessment_parameters,
+        enable_robot_motion=True,
+    )
+    return {**planning.handlers(), **pickup.handlers(), **lift.handlers()}
 
 result = run_live_precision_session(
     launch_config_path=Path("/absolute/commissioned_session_launch.json"),
@@ -154,8 +182,9 @@ camera, planner, prompt and limit objects supplied above, for example
 `pickup_execution_limits`, `measured_surface_deviation_bounds` and
 `commissioned_measured_lift_parameters` from the robot PC. Without them,
 omit `pickup.handlers()` and the loop stops at `execution_gate_required`.
-With them, the next unimplemented boundary is `await_lift_observation`;
-the example still does **not** lift the key. Lift, transfer, insertion, guarded
+With them, and commissioned lift/camera callbacks, the next unimplemented
+boundary after a positive grasp label is post-lift relation/transfer.
+Transfer, insertion, guarded
 withdrawal, independent controller logging, VLM observation and repose
 execution remain AutoDex-PC integration work. The judged grasp-miss clear-view
 reset is connected; the held-key return handler can be composed as shown

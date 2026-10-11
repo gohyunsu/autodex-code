@@ -2445,6 +2445,11 @@ the selected attempt to the existing pickup execution boundary and a
 measured-squeeze lift preflight. It requires a commissioned pickup executor;
 the unmodified stock follower is explicitly rejected by that execution
 boundary. A passing lift preflight is not a lift command or grasp label.
+[`LiveLiftHandlers`](precision_insertion/live_lift_handlers.py) connects the
+measured lift to a fresh raw capture on the same AutoDex cameras and the
+existing read-only Qwen lift checkpoint. It requires a commissioned lift
+adapter, camera-side exposure metadata and exposure-aligned robot feedback;
+unknown VLM outcomes do not become positive grasp labels.
 [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py)
 connects a failed still-held insertion to logged axial withdrawal, the
 runner's held tabletop-return plan, stock Franka held transfer/release/clear-
@@ -2455,9 +2460,11 @@ and independent six-phase controller record must be supplied on the robot
 PC; the handler refuses recapture if the return was not executed and
 verified.
 A missing handler returns `needs_handler` at the exact pending phase; no
-trial result is invented. Pickup, insertion, guarded withdrawal, independent
-controller logging, post-motion VLM observation and repose execution are
-**not bundled**, so this is not yet an unattended robot loop.
+trial result is invented. The guarded pickup/lift hardware adapters, raw
+post-lift camera producer, held-relation calibration, transfer, insertion,
+guarded withdrawal, independent controller logging, later VLM observations
+and repose execution are **not bundled**, so this is not yet an unattended
+robot loop.
 
 `board_snap` and `init` are the metadata-preserving adapters described in
 [CAMERA_FRAME_HANDOFF.md](CAMERA_FRAME_HANDOFF.md); all `commissioned_*`
