@@ -606,10 +606,10 @@ need different plans and labels.
 - After an insertion jam, stop contact, retreat axially while grip and force
   permit, then retry from a clear hold pose or return the key. Do not shift
   laterally while engaged in the bore.
-- If insertion succeeds, **automatic repeated trials are blocked until a
-  validated extraction exists**. Extraction is lower priority; initially end
-  the session or use an explicitly supervised manual reset. A "reset every
-  trial" guarantee cannot be claimed without this step.
+- If insertion succeeds, end this session immediately. Do not dispatch
+  release, extraction, reset, repose, or another grasp in the same session.
+  Any later manual recovery belongs to a new session. A "reset every trial"
+  guarantee cannot be claimed without validated extraction and reset motion.
 - `SessionRunner.observe_reset_landing` is the evidence-only manual-reset
   path. It requires a later operator-reviewed recovery record and an admitted
   new key capture; the direct `reset_success=True` stage setter is rejected.

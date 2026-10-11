@@ -908,6 +908,8 @@ class SessionRunner:
     def _record(self, mutation) -> AttemptRecord:
         if self._attempt is None or self._attempt_dir is None:
             raise ValueError("no active attempt to receive an observation")
+        if self._attempt.labels["insertion_success"] is True:
+            raise ValueError("successful insertion ended this session")
         updated = deepcopy(self._attempt)
         mutation(updated)
         index = self._attempt_index + 1
@@ -1615,10 +1617,13 @@ class SessionRunner:
     ) -> AttemptRecord:
         """Verify a supervised return from a new supported tabletop key pose.
 
-        This does not extract the key or execute reset motion. In particular,
-        a successful insertion still needs an externally logged supervised
-        extraction before this method can make another trial eligible.
+        This does not extract the key or execute reset motion. A verified
+        insertion ends this session; reset may only follow a non-successful
+        attempt.
         """
+        if (self._attempt is not None and
+                self._attempt.labels["insertion_success"] is True):
+            raise ValueError("successful insertion ended this session")
         if (self._attempt is None or self._attempt.candidate_id is None or
                 self._attempt_dir is None or self._preflight is None or
                 not self._attempt.events or

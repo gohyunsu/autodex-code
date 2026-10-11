@@ -20,9 +20,10 @@ class DecisionRunner(Protocol):
 
 
 ActionHandler = Callable[[DecisionRunner, SessionDecision], None]
-_TERMINAL_ACTIONS = frozenset({
-    "stop_for_review", "hold_for_supervised_completion",
-})
+_TERMINAL_STATUSES = {
+    "stop_for_review": "terminal",
+    "session_success": "success",
+}
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,7 @@ class ActionLoopResult:
             "status": self.status,
             "decision": self.decision.to_record(),
             "visited": [item.to_record() for item in self.visited],
-            "scope": "decision_dispatch_not_physical_task_outcome",
+            "scope": "decision_dispatch_from_observed_labels_not_robot_motion_authorization",
             "robot_ready": False,
         }
 
@@ -69,8 +70,9 @@ def run_session_actions(
         if not isinstance(decision, SessionDecision):
             raise TypeError("runner returned no SessionDecision")
         visited.append(decision)
-        if decision.action in _TERMINAL_ACTIONS:
-            return ActionLoopResult("terminal", decision, tuple(visited))
+        if decision.action in _TERMINAL_STATUSES:
+            return ActionLoopResult(
+                _TERMINAL_STATUSES[decision.action], decision, tuple(visited))
         handler = handlers.get(decision.action)
         if handler is None:
             return ActionLoopResult("needs_handler", decision, tuple(visited))
@@ -86,6 +88,6 @@ def run_session_actions(
     if not isinstance(decision, SessionDecision):
         raise TypeError("runner returned no SessionDecision")
     visited.append(decision)
-    status = ("terminal" if decision.action in _TERMINAL_ACTIONS else
-              "step_budget_exhausted")
+    status = _TERMINAL_STATUSES.get(
+        decision.action, "step_budget_exhausted")
     return ActionLoopResult(status, decision, tuple(visited))

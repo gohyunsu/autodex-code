@@ -867,7 +867,7 @@ def test_budgeted_preflight_continues_same_capture_but_new_capture_resets_reject
     assert seen[2] == ()
 
 
-def test_verified_insertion_cannot_start_new_trial_until_reset_observed(
+def test_verified_insertion_ends_session_without_reset_or_next_trial(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)
     monkeypatch.setattr(
@@ -891,51 +891,27 @@ def test_verified_insertion_cannot_start_new_trial_until_reset_observed(
                        "key_depth": "pose/depth.json",
                        "alignment": "pose/axis.json",
                        "force_trace": "wrench/trace.json"}))
-    assert runner.current_decision().action == "hold_for_supervised_completion"
+    assert runner.current_decision().action == "session_success"
     with pytest.raises(ValueError, match="no verified return"):
         _plan(runner, _observation("key_2", 11.0))
     with pytest.raises(ValueError, match="observe_reset_landing"):
         runner.observe_stage("reset_success", True, timestamp_s=10.8,
                              evidence_refs={"key_pose": "pose/reset.json"})
-    monkeypatch.setattr(
-        session_runner, "classify_key_tabletop_pose",
-        lambda **_kwargs: {"stem": "000", "rotation_error_deg": 0.0})
-    monkeypatch.setattr(
-        session_runner, "validate_repose_rest_target",
-        lambda **_kwargs: {"key_socket_clearance_m": 0.1})
-    monkeypatch.setattr(
-        session_runner, "_load_mesh",
-        lambda _path: SimpleNamespace(bounds=np.array([
-            [-0.01, -0.01, 0.0], [0.01, 0.01, 0.08]])))
-    recovery = tmp_path / "supervised_recovery.json"
-    recovery.write_text(json.dumps({
-        "schema": "precision_insertion_supervised_reset_v1",
-        "attempt_id": "attempt_1", "method": "supervised_manual_return",
-        "reviewed_by": "operator", "completed_at_s": 10.7,
-        "socket_clear": True, "hand_open": True,
-        "key_removed_from_socket": False,
-    }), encoding="utf-8")
-    landed = _observation("reset_key", 11.0)
-    landing_evidence = _save_evidence(runner, landed)
-    reset_kwargs = dict(
-        key_observation=landed, key_evidence_dir=landing_evidence,
-        recovery_log_path=recovery, timestamp_s=11.05,
-        max_pose_error_deg=5.0, max_return_center_shift_m=0.01,
-        support_tolerance_m=0.002,
-        minimum_rest_socket_clearance_m=0.005,
-        minimum_board_edge_clearance_m=0.005)
-    with pytest.raises(ValueError, match="supervised recovery log"):
-        runner.observe_reset_landing(**reset_kwargs)
-    payload = json.loads(recovery.read_text())
-    payload["key_removed_from_socket"] = True
-    recovery.write_text(json.dumps(payload), encoding="utf-8")
-    assert runner.observe_reset_landing(**reset_kwargs).labels["reset_success"] is True
-    reset_report = json.loads((tmp_path / "session/attempts/attempt_1/"
-                               "reset_landing.json").read_text())
-    assert reset_report["reset_success"] is True
-    assert reset_report["center_xy_displacement_m"] == 0
-    assert runner.current_decision().action == "reobserve_key_and_preflight"
-    _plan(runner, _observation("key_3", 12.0))
+    with pytest.raises(ValueError, match="ended this session"):
+        runner.observe_reset_landing(
+            key_observation=_observation("reset_key", 11.0),
+            key_evidence_dir=tmp_path / "unused",
+            recovery_log_path=tmp_path / "unused.json",
+            timestamp_s=11.05, max_pose_error_deg=5.0,
+            max_return_center_shift_m=0.01, support_tolerance_m=0.002,
+            minimum_rest_socket_clearance_m=0.005,
+            minimum_board_edge_clearance_m=0.005)
+    with pytest.raises(ValueError, match="ended this session"):
+        runner.observe_stage(
+            "release_success", False, timestamp_s=11.1,
+            evidence_refs={"release_observation": "vlm/release.json"})
+    assert not (tmp_path / "session/attempts/attempt_1/"
+                "reset_landing.json").exists()
 
 
 @pytest.mark.parametrize(

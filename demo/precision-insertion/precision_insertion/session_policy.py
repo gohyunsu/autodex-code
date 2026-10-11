@@ -121,14 +121,13 @@ def decide_after_attempt(
         return result(
             "reobserve_key_and_preflight", "repose_landing_observed",
             "fresh_key_pose", "fresh_robot_state")
+    if labels["insertion_success"] is True:
+        return result(
+            "session_success", "observed_20mm_insertion_success_end_session")
     if labels["reset_success"] is True:
         return result(
             "reobserve_key_and_preflight", "reset_observed",
             "fresh_key_pose", "fresh_robot_state")
-    if labels["insertion_success"] is True:
-        return result(
-            "hold_for_supervised_completion", "20mm_task_verified_extraction_deferred",
-            "commissioned_extraction_or_release_and_reset")
     if labels["insertion_success"] is False:
         if attempt._pending_retry:
             return result(

@@ -218,7 +218,7 @@ def test_grounded_continuous_xy_retry_is_distinct_from_cardinal_vote():
             evidence_refs=refs)
 
 
-def test_verified_insertion_waits_for_supervised_completion():
+def test_verified_insertion_ends_session():
     record = _attempt()
     _grasp(record)
     _hold(record)
@@ -230,8 +230,9 @@ def test_verified_insertion_waits_for_supervised_completion():
                        "key_depth": "sensors/depth.json",
                        "alignment": "sensors/alignment.json",
                        "force_trace": "sensors/wrench.json"})
-    assert decide_after_attempt(
-        record, max_xy_retries=2).action == "hold_for_supervised_completion"
+    decision = decide_after_attempt(record, max_xy_retries=2)
+    assert decision.action == "session_success"
+    assert decision.required_before_motion == ()
 
 
 def test_unmatched_failure_codes_cannot_resolve_to_a_motion_phase():

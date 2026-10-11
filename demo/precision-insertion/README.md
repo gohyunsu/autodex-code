@@ -464,9 +464,12 @@ that session and catalogue. For each new key observation:
    `observe_reset_landing`. It checks same tabletop class, a commissioned
    maximum XY center shift from the trial-start pose, measured table support,
    board footprint and socket clearance before recording success or failure.
-   After a successful insertion the log must explicitly state that the key
-   was removed from the socket. This is observed/manual recovery, not an
-   automatic extraction or reset motion.
+   A verified successful insertion ends this session immediately. The key
+   may remain in the socket: release, extraction, reset and a further grasp
+   attempt are not dispatched. Any later manual recovery belongs to a new
+   session, not `observe_reset_landing` on the successful one. For a failed
+   insertion, a supervised return remains evidence-only, not automatic
+   extraction or reset motion.
 4. After an observed insertion failure and an externally logged guarded
    withdrawal, call `prepare_observed_xy_retry` with a **held-preinsert** key
    capture, the exact same full-frame VLM images, measured Franka/Inspire

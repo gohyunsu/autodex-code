@@ -39,7 +39,7 @@ def test_repeated_grasp_failure_uses_new_capture_and_next_candidate():
         _decision("await_lift_observation", "table/0/1"),
         _decision("reobserve_key_and_preflight", "table/0/1"),
         _decision("execution_gate_required", "table/0/2"),
-        _decision("hold_for_supervised_completion", "table/0/2"),
+        _decision("session_success", "table/0/2"),
     ])
     called = []
 
@@ -55,8 +55,8 @@ def test_repeated_grasp_failure_uses_new_capture_and_next_candidate():
             "capture_fresh_key", "execution_gate_required",
             "await_lift_observation", "reobserve_key_and_preflight")},
         max_steps=10)
-    assert result.status == "terminal"
-    assert result.decision.action == "hold_for_supervised_completion"
+    assert result.status == "success"
+    assert result.decision.action == "session_success"
     assert called == [
         ("capture_fresh_key", None),
         ("execution_gate_required", "table/0/1"),
@@ -72,7 +72,7 @@ def test_insertion_failure_routes_to_xy_retry_without_implicit_execution():
         _decision("await_guarded_insertion_and_observation", "table/0/1"),
         _decision("guarded_withdrawal_then_xy_assessment", "table/0/1"),
         _decision("await_retry_execution_and_observation", "table/0/1"),
-        _decision("hold_for_supervised_completion", "table/0/1"),
+        _decision("session_success", "table/0/1"),
     ])
     result = run_session_actions(runner, handlers={
         "await_guarded_insertion_and_observation": lambda row, _: row.advance(),
@@ -85,12 +85,38 @@ def test_insertion_failure_routes_to_xy_retry_without_implicit_execution():
         "guarded_withdrawal_then_xy_assessment": lambda row, _: row.advance(),
         "await_retry_execution_and_observation": lambda row, _: row.advance(),
     })
-    assert result.status == "terminal"
+    assert result.status == "success"
     assert [step.action for step in result.visited] == [
         "guarded_withdrawal_then_xy_assessment",
         "await_retry_execution_and_observation",
-        "hold_for_supervised_completion",
+        "session_success",
     ]
+
+
+def test_success_stops_before_any_reset_or_next_trial_handler():
+    runner = Runner([
+        _decision("await_guarded_insertion_and_observation", "table/0/1"),
+        _decision("session_success", "table/0/1"),
+    ])
+    called = []
+
+    def observe(current, _decision):
+        called.append("observe_insertion")
+        current.advance()
+
+    def must_not_run(_current, _decision):
+        called.append("unexpected_motion")
+        raise AssertionError("success must not run reset or another trial")
+
+    result = run_session_actions(runner, handlers={
+        "await_guarded_insertion_and_observation": observe,
+        "session_success": must_not_run,
+        "reobserve_key_and_preflight": must_not_run,
+        "preflight_repose": must_not_run,
+    })
+    assert result.status == "success"
+    assert result.decision.action == "session_success"
+    assert called == ["observe_insertion"]
 
 
 def test_unchanged_decision_and_handler_errors_do_not_repeat_actions():
@@ -164,3 +190,40 @@ def test_live_wrapper_keeps_cameras_open_for_repeated_actions(monkeypatch):
     assert result.status == "terminal"
     assert calls == ["camera_open", "capture_fresh_key",
                      "reobserve_key_and_preflight", "camera_closed"]
+
+
+def test_live_wrapper_closes_cameras_immediately_on_success(monkeypatch):
+    from precision_insertion import live_orchestration
+
+    calls = []
+    runner = Runner([
+        _decision("await_guarded_insertion_and_observation", "table/0/1"),
+        _decision("session_success", "table/0/1"),
+    ])
+    live = SimpleNamespace(opened=SimpleNamespace(runner=runner))
+
+    @contextmanager
+    def opened(**_kwargs):
+        calls.append("camera_open")
+        try:
+            yield live
+        finally:
+            calls.append("camera_closed")
+
+    monkeypatch.setattr(live_orchestration, "open_live_precision_session", opened)
+
+    def observe(current, _decision):
+        calls.append("observe_insertion")
+        current.advance()
+
+    result = run_live_precision_session(
+        launch_config_path=Path("/unused/launch.json"),
+        endpoint_catalog_path=Path("/unused/catalog.json"),
+        run_output_dir=Path("/unused/run"), max_xy_retries=2,
+        build_handlers=lambda _live: {
+            "await_guarded_insertion_and_observation": observe,
+        },
+        max_steps=1)
+    assert result.status == "success"
+    assert result.decision.action == "session_success"
+    assert calls == ["camera_open", "observe_insertion", "camera_closed"]

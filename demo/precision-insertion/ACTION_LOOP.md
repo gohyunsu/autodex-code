@@ -35,8 +35,12 @@ must supply a running exposure-time feedback sampler, AutoDex planner,
 `PathAuditLimits`, a specific key prompt and the numeric keyword arguments
 of `prepare_next_live_key()`. No default measurement thresholds are invented.
 
-`stop_for_review` and `hold_for_supervised_completion` are terminal for this
-loop. Recovery/reset actions not listed above still need explicit handlers;
+`stop_for_review` is a non-success terminal result. A verified positive
+`insertion_success` produces `session_success`, which immediately returns
+`status="success"` without release, reset, repose, or another grasp attempt.
+The live wrapper then closes its camera context. A visual guess, nominal
+trajectory, or an unknown insertion verdict cannot end the session as
+success. Recovery/reset actions not listed above still need explicit handlers;
 otherwise the result is `needs_handler`. There is no default robot-motion
 handler. A `max_steps` limit returns `step_budget_exhausted` instead of
 silently continuing forever. If a handler returns without changing the
