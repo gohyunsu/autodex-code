@@ -270,6 +270,14 @@ has one eligible `0→4` seed under the same 5 mm drift / 10° full-rotation
 limits; `1→4`, `2→4`, and `3→4` have none. Set the root for the chosen task
 mode explicitly—these incomplete directed graphs are not universal reset
 coverage.
+Square 0.5 mm pose `000` is the one remaining tabletop pose without an
+eligible insertion grasp in the 1,000-per-scene batch. Its staged
+`0→4` reset root is
+`shared_data/AutoDex/precision_insertion/square/reorient_0p5_curated_5000_20261011/reset_12`.
+Of 33 source-verified MuJoCo-stable seeds, two pass the illustrative 5 mm
+drift / 10° full-rotation gate. The selector may therefore offer `0→4` to
+the socket-aware Franka preflight; a passing seed alone is not permission
+to move, and a failed preflight still stops for review.
 
 If the first XY-retry diagnostic abstains or its lateral preflight fails,
 the key is already at the withdrawn hold. The assembled held-return handler

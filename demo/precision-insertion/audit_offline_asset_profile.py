@@ -26,19 +26,22 @@ def _catalog_path(root: Path, family: str, gap: float) -> Path:
     base = root / "AutoDex/precision_insertion"
     if family == "cylinder":
         return (base / "cylindrical" /
-                f"endpoint_catalog_current_gap_{int(gap)}mm_20261011.json")
+                f"endpoint_catalog_current_gap_{int(gap)}mm_20261011_stock_schema3.json")
     name = str(gap).replace(".", "p")
-    if gap == 1.5:
-        return (base / "endpoint_catalogs" /
-                "square_1p5mm_20261011_v8_8_nominal_r2.json")
     return (base / "endpoint_catalogs" /
-            f"square_{name}mm_20261011_nominal_r2.json")
+            f"square_{name}mm_20261011_fullkey1000_schema3.json")
 
 
-def _reset_root(root: Path, family: str) -> Path:
-    branch = "square" if family == "square" else "cylindrical"
-    return (root / "AutoDex/precision_insertion" / branch /
-            "reorient_curated_handoff_20261011")
+def _reset_root(root: Path, family: str, gap: float) -> Path | None:
+    base = root / "AutoDex/precision_insertion"
+    if family == "square" and gap == 0.5:
+        return base / "square/reorient_0p5_curated_5000_20261011"
+    if family == "square" and gap == 1.5:
+        return base / "square/reorient_curated_handoff_20261011"
+    if family == "cylinder":
+        # All radial gaps use the same 80 mm key and directed reset scenes.
+        return base / "cylindrical/reorient_curated_handoff_20261011"
+    return None
 
 
 def build_profile(root: Path) -> dict:
@@ -66,6 +69,7 @@ def build_profile(root: Path) -> dict:
                 eligible = 0
                 poses = []
                 catalog_error = str(exc)
+            reset_root = _reset_root(root, family, gap)
             modes.append({
                 "family": family, "gap_mm": gap,
                 "key_object": mode.key_object,
@@ -77,17 +81,23 @@ def build_profile(root: Path) -> dict:
                     "eligible_pose_stems": poses,
                     "error": catalog_error,
                 },
-                "reorient_seed_root": str(_reset_root(root, family) / "reset_12"),
+                "reorient_seed_root": (
+                    str(reset_root / "reset_12") if reset_root is not None
+                    else None),
             })
     reset_audits = {}
-    for family, gap in (("square", 1.5), ("cylinder", 20)):
+    for family, gap in (("square", 0.5), ("square", 1.5),
+                        ("cylinder", 20)):
+        reset_root = _reset_root(root, family, gap)
+        assert reset_root is not None
         audit = audit_v8_reorient_assets(
             shared_root=root, mode=select_mode(family, gap),
-            candidate_root=_reset_root(root, family),
+            candidate_root=reset_root,
             max_center_in_hand_drift_m=.005,
             max_symmetry_axis_tilt_deg=10.)
-        reset_audits[family] = {
-            "candidate_root": str(_reset_root(root, family) / "reset_12"),
+        key = "square_0p5" if family == "square" and gap == 0.5 else family
+        reset_audits[key] = {
+            "candidate_root": str(reset_root / "reset_12"),
             "diagnostic_fidelity_only": {"drift_mm": 5, "rotation_deg": 10},
             "directed_cells": [
                 {"from_pose": row["from_v8_pose"],

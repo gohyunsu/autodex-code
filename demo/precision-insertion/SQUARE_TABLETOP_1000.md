@@ -64,3 +64,55 @@ current-pool endpoint catalog must then be rebuilt with
 `run_pipeline.py screen-catalog`; an older catalog becomes stale when the
 candidate pool grows. The 0.2 mm hand clearance here is an uncommissioned
 numerical screen, not a measured safety margin.
+
+## 2026-10-11 full-key result
+
+All 20 scenes contain exactly 1,000 proposals. The unchanged AutoDex v8
+filter and exact 20 mm endpoint screen produced:
+
+| Square gap | MuJoCo-stable / 5,000 | New endpoint-eligible | Eligible by tabletop pose `000`–`004` |
+| --- | ---: | ---: | --- |
+| 0.3 mm | 115 | 31 | `1 / 9 / 10 / 2 / 9` |
+| 0.5 mm | 115 | 24 | `0 / 7 / 10 / 1 / 6` |
+| 1.0 mm | 89 | 24 | `1 / 13 / 5 / 2 / 3` |
+| 1.5 mm | 114 | 34 | `1 / 5 / 13 / 7 / 8` |
+
+Screen errors were zero for all modes. The 1.5 mm key also retains its seven
+older pose-`004` eligible grasps; its refreshed, source-verified current-pool
+catalog contains **41** eligible grasps across all five poses. The sole
+remaining square no-candidate tabletop condition is **0.5 mm pose `000`** in
+this finite search. Neither the 20 mm endpoint count nor five-pose coverage
+proves a continuous Franka trajectory or physical insertion.
+
+The four current-pool catalogs are
+`shared_data/AutoDex/precision_insertion/endpoint_catalogs/`
+`square_{0p3,0p5,1p0,1p5}mm_20261011_fullkey1000_schema3.json`.
+The all-mode [offline asset audit](OFFLINE_ASSET_STATUS.md) checks all four
+against their installed candidate files.
+
+## Missing 0.5 mm pose `000`: directed reorientation attempt
+
+The stock v8 reorient scene generator prepared both BODex and sim-filter
+`reorient_12` scenes for all 20 directed 0.5 mm pose cells. Two separate
+NVIDIA scans in cell `0_4` used 1,000 and 5,000 full-key proposals. The
+larger scan had 4,245 pregrasp-scene-clear, 1,332 squeeze-contact and 33
+MuJoCo gravity-stable seeds. `stage_square_reorient_passes.py` bound those
+33 to their proposal arrays, original MuJoCo trajectory, key geometry and
+both scene files. The [curated staging manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/reorient_0p5_curated_5000_20261011/handoff_manifest.json)
+re-verifies the copied seeds. It is **not** a reset trajectory or canonical
+runtime pool.
+
+Under the *illustrative, uncommissioned* 5 mm key-center drift / 10° full
+relative-rotation gate, **two** of the 33 pass: seeds `274` and `1152`.
+Their end-gravity drifts/rotations are respectively 4.204 mm/5.705° and
+1.010 mm/5.412°. The source-verified [fidelity audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/reorient_0p5_handoff_0_4_5000_seed12013_20261011/fidelity_audit_5mm_10deg.json)
+retains measurements for every stable seed. This makes the directed reset
+seed loader usable for the *example* gate; socket-aware Franka
+pickup–lift–repose–release preflight and observed landing are still absent.
+The smaller 1,000-proposal scan remains archived separately and had seven
+MuJoCo passes but zero passes at the same illustrative gate.
+
+The normal sandbox hides CUDA and exposes NAS as read-only, whereas an
+explicitly authorized host execution saw RTX 3090 and a writable NFS mount.
+The 5,000-proposal run used that host execution; later reproductions must
+check which environment they actually run in.
