@@ -1,0 +1,33 @@
+{
+  "schema": "precision_insertion_live_session_launch_v1",
+  "mode": {"family": "square", "gap_mm": 1.5},
+  "shared_root": "/absolute/path/to/shared_data",
+  "capture_root": "/absolute/shared/path/for/init_captures",
+  "evidence_dir": "/absolute/new/path/for/one_session_evidence",
+  "pc_list": ["capture1"],
+  "capture_ips": ["REPLACE_WITH_CAPTURE_PC_IP"],
+  "camera_ids": ["REPLACE_WITH_CAMERA_SERIAL_A", "REPLACE_WITH_CAMERA_SERIAL_B"],
+  "calib_dir": "/absolute/path/to/shared_data/cam_param/COMMISSIONED_CALIBRATION",
+  "camera_time_calibrations": {
+    "REPLACE_WITH_CAMERA_SERIAL_A": "/absolute/path/to/cam_A_exposure_time_calibration.json",
+    "REPLACE_WITH_CAMERA_SERIAL_B": "/absolute/path/to/cam_B_exposure_time_calibration.json"
+  },
+  "c2r_npy": "/absolute/path/to/measured_franka_C2R.npy",
+  "base_scene_json": "/absolute/path/to/commissioned_fixed_curobo_scene.json",
+  "view_limits": {
+    "minimum_mask_pixels": 100,
+    "minimum_foundpose_quality": 0.5,
+    "minimum_foundpose_inliers": 10,
+    "minimum_border_clearance_px": 2,
+    "maximum_capture_skew_s": 0.02,
+    "minimum_accepted_views": 2
+  },
+  "socket_prompt": "fixed red socket on the ChArUco board",
+  "socket_capture_count": 2,
+  "board_timeout_s": 5.0,
+  "socket_timeout_s": 15.0,
+  "image_write_timeout_s": 5.0,
+  "max_socket_translation_mm": 1.0,
+  "max_socket_angle_deg": 1.0,
+  "minimum_socket_refined_iou": 0.8
+}

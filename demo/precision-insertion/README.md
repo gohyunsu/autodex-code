@@ -2274,6 +2274,38 @@ started = start_precision_session(
 # started.evidence_dir/session_calibration.json freezes the measured world.
 ```
 
+The same startup now has a demo-local CLI. Copy
+[`configs/live_session_start.example.json`](configs/live_session_start.example.json)
+to a new configuration file and replace **every placeholder** with the current
+AutoDex PC's absolute paths, active capture-PC/IP/camera inventory, measured
+Franka C2R, fixed-obstacle cuRobo scene and independently commissioned
+per-camera exposure-time calibrations. The example's threshold numbers are
+structural only; commission them on the actual rig. An empty or stale base
+scene is not a safe motion world. Use the precision init daemon on the selected
+capture PCs instead of the stock init daemon, and leave the stock snapshot
+daemon running; see [camera handoff](CAMERA_FRAME_HANDOFF.md).
+
+```bash
+# Read-only file/asset/calibration preflight; no camera connection:
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/run_pipeline.py start-session \
+  --config /absolute/path/to/commissioned_session_launch.json
+
+# Explicit non-motion board/socket capture after the above succeeds:
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/run_pipeline.py start-session \
+  --config /absolute/path/to/commissioned_session_launch.json --capture
+```
+
+The CLI validates the timing files, camera IDs, CAD, C2R and world before
+opening sockets. `--capture` joins the stock AutoDex orchestrators with the
+demo's frame-provenance adapters, executes `start_precision_session()`, closes
+the camera connections even on failure, and prints the immutable evidence
+directory. It never commands Franka/Inspire. The CLI has synthetic tests but
+has **not** been deployed on the robot PC; this change did not obtain or
+verify real exposure-time calibration files for that rig. Do not
+replace them with PUB timestamps merely to make the command pass.
+
 Once that startup evidence and a current **complete** endpoint catalog exist
 on the same AutoDex PC, the demo's independent `run_auto.py` can open an
 evidence-only trial ledger. It checks both canonical key/socket FoundPose

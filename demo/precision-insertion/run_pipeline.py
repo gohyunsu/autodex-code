@@ -39,6 +39,16 @@ def main(argv: list[str] | None = None) -> int:
     audit.add_argument("--shared-root", type=Path, required=True)
     audit.add_argument("--mode", choices=("square", "cylinder"), required=True)
     audit.add_argument("--gap-mm", type=float, required=True)
+    start_session = command.add_parser(
+        "start-session",
+        help="preflight commissioned camera files, optionally capture board/socket",
+    )
+    start_session.add_argument("--config", type=Path, required=True,
+                               help="absolute live-session launch JSON")
+    start_session.add_argument(
+        "--capture", action="store_true",
+        help="explicitly connect to AutoDex camera daemons and acquire frames; "
+             "never commands the robot")
     reorient_audit = command.add_parser(
         "audit-reorient", help="read-only v8 reset scene/seed readiness report",
     )
@@ -216,6 +226,28 @@ def main(argv: list[str] | None = None) -> int:
     repose.add_argument("--output-dir", type=Path, required=True,
                         help="new exclusive output directory; no overwrite")
     args = parser.parse_args(argv)
+
+    if args.command == "start-session":
+        from precision_insertion.session_launch import (
+            capture_session, load_session_launch,
+        )
+
+        try:
+            launch = load_session_launch(args.config)
+        except (FileNotFoundError, FileExistsError, KeyError, TypeError,
+                ValueError, OSError) as exc:
+            parser.error(str(exc))
+        if not args.capture:
+            print(json.dumps(launch.readiness(), indent=2, sort_keys=True))
+            return 0
+        started = capture_session(launch)
+        print(json.dumps({
+            **launch.readiness(), "session_evidence_dir": str(started.evidence_dir),
+            "board_request_id": started.board_request_id,
+            "socket_request_ids": list(started.socket_request_ids),
+            "socket_pose_source": started.calibration.record["socket_pose_source"],
+        }, indent=2, sort_keys=True))
+        return 0
 
     if args.command == "verify-saved-preflight":
         from precision_insertion.saved_preflight import (
