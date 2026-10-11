@@ -33,9 +33,12 @@ or second insertion while the same key remains in the hand.
 4. The previous candidate is allowed once despite the normal attempted-grasp
    exclusion and is tried first **only for the same tabletop pose**. If it
    cannot be planned or the pose changed, the advice is not applied to a
-   different grasp. `--max-xy-retries 0` disables this path; its default `1`
-   permits one update, while a larger nonnegative value permits successive
-   failed-trial updates subject to the separate cumulative-offset budget.
+   different grasp. `--max-xy-retries 0` disables this path. By default there
+   is **no retry-count cap**, so successive failed-trial updates accumulate
+   until success, an unavailable visual estimate, a changed pose/grasp, a
+   failed preflight, or the separately configured cumulative-offset budget
+   stops the sequence. A nonnegative `--max-xy-retries` may set an explicit
+   count cap for a particular experiment.
 5. A new attempt receives `wrist_correction_socket_m`; its historical
    `xy_offset_socket_m` (key CAD target offset) remains zero. After a
    successful fresh pickup, the default physical-calibration branch uses

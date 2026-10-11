@@ -1846,7 +1846,11 @@ Thus only the first also passes that diagnostic. These numbers are reported
 separately: the original AutoDex sim filter does **not** enforce them, and
 native BODex `success` remains false for both.
 
-To reproduce the expanded run, use fresh output names in all four steps:
+The following proxy-based reproduction command is **historical** and must
+not be used for new unrestricted grasp proposals: the current staging script
+expects the full-length proposal object. For the active 80 mm surface and
+matching staging steps, follow [FULL_LENGTH_CYLINDER_PROPOSALS.md](FULL_LENGTH_CYLINDER_PROPOSALS.md).
+The old command is retained only to identify the archived experiment:
 
 ```bash
 PYTHONPATH=demo/precision-insertion/compat \
@@ -1952,8 +1956,9 @@ new [full-length proposal workflow](FULL_LENGTH_CYLINDER_PROPOSALS.md)
 removes the historical 25 mm proposal restriction without changing the
 exact physical key used for AutoDex filtering. The current source-bound
 zero-added-margin runtime catalogues are listed in
-[COLLISION_ONLY_CATALOGS.md](COLLISION_ONLY_CATALOGS.md); the new full-length
-pool is still offline until endpoint screening and promotion finish. A
+[COLLISION_ONLY_CATALOGS.md](COLLISION_ONLY_CATALOGS.md); endpoint screening
+and promotion of the new full-length pool have finished, but the candidates
+remain **offline evidence**, not physical insertion successes. A
 recommended per-socket output layout is
 `endpoint_catalogs/cylindrical/<socket_object>/<scan_id>.json`. For example,
 after the grasp pool is present, select the 20 mm radial-gap variant with
