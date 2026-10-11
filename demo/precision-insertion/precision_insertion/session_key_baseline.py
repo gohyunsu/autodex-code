@@ -126,6 +126,8 @@ def load_session_key_baseline(
             "frame_id": row["frame_id"],
             "image_sha256": row["image_sha256"],
             "mask_file_sha256": hashlib.sha256(mask_path.read_bytes()).hexdigest(),
+            "mask_pixels_sha256": hashlib.sha256(
+                np.ascontiguousarray(masks[serial]).tobytes()).hexdigest(),
             "timestamp_s": row["timestamp_s"],
             "capture_id": capture_id,
             "request_id": payload["request_id"],

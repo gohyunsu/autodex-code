@@ -1,5 +1,6 @@
 """A fresh key observation must precede and bind the v8 trial preflight."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -16,6 +17,8 @@ from precision_insertion.key_perception import KeyPoseObservation  # noqa: E402
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.perception_evidence import SocketViewLimits  # noqa: E402
 from precision_insertion.session_runner import SessionRunner  # noqa: E402
+from precision_insertion.session_key_baseline import SessionKeyBaseline  # noqa: E402
+from precision_insertion.registered_key_capture import RegisteredKeyAssistance  # noqa: E402
 from precision_insertion import live_key_trial as trial  # noqa: E402
 
 
@@ -169,6 +172,77 @@ def test_live_key_capture_state_and_preflight_order(tmp_path, monkeypatch):
                       "preflight"]
     assert result.observation.capture_id == "key_001"
     assert result.preflight.status == "sampled_planning_pass"
+
+
+def test_optional_registered_roi_replaces_only_perception_outputs(
+        tmp_path, monkeypatch):
+    arguments, events, _repre = _setup(tmp_path, monkeypatch)
+    runner = arguments["runner"]
+    runner.output_dir = tmp_path / "run"
+    runner.output_dir.mkdir()
+    baseline_dir = tmp_path / "frozen_session"
+    baseline_dir.mkdir()
+    manifest_hash = "a" * 64
+    (runner.output_dir / "source_evidence_binding.json").write_text(
+        json.dumps({
+            "schema": "precision_insertion_session_source_binding_v1",
+            "session_evidence_dir": str(baseline_dir),
+            "session_manifest_sha256": manifest_hash,
+        }), encoding="utf-8")
+    baseline = SessionKeyBaseline(
+        baseline_dir, "socket_001", 12, manifest_hash, {}, {}, {})
+    model = SimpleNamespace(obj_name=runner.mode.key_object)
+    assistance = RegisteredKeyAssistance(
+        baseline, object(), "9", None, object(), model,
+        tmp_path / "board.json", "b" * 64)
+    arguments["registered_key_assistance"] = assistance
+    report = {"schema": "test_derivation"}
+
+    def derive(**kwargs):
+        events.append("registered_roi_on_same_capture")
+        assert kwargs["capture"].request_id == 25
+        assert kwargs["assistance"] is assistance
+        assert kwargs["key_object"] == runner.mode.key_object
+        return kwargs["capture"], report
+
+    def write(_capture, _observation, output, *, derivation_report):
+        events.append("save_key_evidence")
+        assert derivation_report is report
+        output.mkdir()
+
+    monkeypatch.setattr(trial, "derive_registered_key_capture", derive)
+    monkeypatch.setattr(trial, "write_key_capture_artifacts", write)
+    trial.prepare_next_live_key(**arguments)
+    assert events == [
+        "compatible_renderer", "init_key", "verify_frozen_camera",
+        "capture", "registered_roi_on_same_capture", "admit",
+        "save_key_evidence", "verify_key_evidence",
+        "measured_state_at_exposure", "preflight",
+    ]
+
+
+def test_registered_roi_from_another_session_blocks_camera(tmp_path, monkeypatch):
+    arguments, events, _repre = _setup(tmp_path, monkeypatch)
+    runner = arguments["runner"]
+    runner.output_dir = tmp_path / "run"
+    runner.output_dir.mkdir()
+    (runner.output_dir / "source_evidence_binding.json").write_text(
+        json.dumps({
+            "schema": "precision_insertion_session_source_binding_v1",
+            "session_evidence_dir": str(tmp_path / "frozen_session"),
+            "session_manifest_sha256": "a" * 64,
+        }), encoding="utf-8")
+    baseline = SessionKeyBaseline(
+        tmp_path / "other_session", "socket_001", 12,
+        "a" * 64, {}, {}, {})
+    assistance = RegisteredKeyAssistance(
+        baseline, object(), "9", None, object(),
+        SimpleNamespace(obj_name=runner.mode.key_object),
+        tmp_path / "board.json", "b" * 64)
+    arguments["registered_key_assistance"] = assistance
+    with pytest.raises(ValueError, match="differs from opened key session"):
+        trial.prepare_next_live_key(**arguments)
+    assert events == []
 
 
 def test_missing_canonical_foundpose_blocks_before_camera(tmp_path, monkeypatch):

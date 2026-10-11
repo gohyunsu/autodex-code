@@ -8,6 +8,7 @@ sampling only after slow SAM/FoundPose inference is not equivalent.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import math
 from pathlib import Path
 import re
@@ -23,6 +24,9 @@ from .live_capture import collect_key_capture
 from .live_robot_state import LiveRobotState
 from .path_audit import PathAuditLimits
 from .perception_evidence import SocketViewLimits
+from .registered_key_capture import (
+    RegisteredKeyAssistance, derive_registered_key_capture,
+)
 from .session_runner import SessionRunner
 from .silhouette_compat import prepare_key_silhouette
 from .trial_preflight import TrialPreflight
@@ -64,6 +68,7 @@ def prepare_next_live_key(
     max_candidate_attempts: int | None = None,
     planning_options: Mapping | None = None,
     request_id_factory: Callable[[], int] | None = None,
+    registered_key_assistance: RegisteredKeyAssistance | None = None,
 ) -> PreparedLiveKeyTrial:
     """Capture, admit, save, and preflight one fresh tabletop key.
 
@@ -74,6 +79,9 @@ def prepare_next_live_key(
     must not manufacture a camera-time state from a later read. If any gate
     fails, no selected candidate or motor command is produced. Capture/evidence
     directories already created on failure remain available for diagnosis.
+    ``registered_key_assistance`` is an explicit alternative perception
+    producer on the *same* acquired frames. It never falls back to stock
+    full-frame masks after a failed ROI and does not change the planning gate.
     """
     if not isinstance(runner, SessionRunner):
         raise TypeError("fresh key preflight needs a frozen SessionRunner")
@@ -154,6 +162,21 @@ def prepare_next_live_key(
     if unknown:
         raise ValueError("unsupported or runner-owned planning options: " +
                          ", ".join(sorted(str(key) for key in unknown)))
+    if registered_key_assistance is not None:
+        if not isinstance(registered_key_assistance, RegisteredKeyAssistance):
+            raise TypeError("registered key assistance needs a prepared context")
+        binding_path = runner.output_dir / "source_evidence_binding.json"
+        binding = json.loads(binding_path.read_text(encoding="utf-8"))
+        baseline = registered_key_assistance.baseline
+        if (binding.get("schema") !=
+                "precision_insertion_session_source_binding_v1" or
+                binding.get("session_evidence_dir") !=
+                str(baseline.session_evidence_dir) or
+                binding.get("session_manifest_sha256") !=
+                baseline.session_manifest_sha256 or
+                getattr(registered_key_assistance.foundpose_model,
+                        "obj_name", None) != runner.mode.key_object):
+            raise ValueError("ROI assistance differs from opened key session")
 
     # AutoDex's unmodified silhouette loader assumes TextureVisuals always
     # has an image. Our solid-MTL precision CAD is a counterexample. Prepare
@@ -182,6 +205,13 @@ def prepare_next_live_key(
         timeout_s=float(capture_timeout_s),
         image_write_timeout_s=float(image_write_timeout_s),
         request_id_factory=request_id_factory)
+    derivation = None
+    if registered_key_assistance is not None:
+        capture, derivation = derive_registered_key_capture(
+            capture=capture, assistance=registered_key_assistance,
+            intrinsics_undist=init_orchestrator.intrinsics_undist,
+            extrinsics_full=init_orchestrator.extrinsics,
+            key_object=runner.mode.key_object)
     observation = admit_key_capture(
         capture=capture, init_orchestrator=init_orchestrator,
         mode=runner.mode, shared_root=runner.shared_root,
@@ -198,7 +228,11 @@ def prepare_next_live_key(
         silhouette_loss_threshold=silhouette_loss_threshold)
     if observation.phase != "tabletop":
         raise ValueError("fresh key trial requires a tabletop observation")
-    write_key_capture_artifacts(capture, observation, output)
+    if derivation is None:
+        write_key_capture_artifacts(capture, observation, output)
+    else:
+        write_key_capture_artifacts(
+            capture, observation, output, derivation_report=derivation)
     verify_key_capture_artifacts(output)
     state = state_for_observation(observation)
     if not isinstance(state, LiveRobotState):

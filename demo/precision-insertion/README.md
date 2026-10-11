@@ -987,13 +987,15 @@ The first independent helpers are in `precision_insertion/`:
   SAM prompt; the loose key and fixed socket must not be conflated. Stock
   camera daemons still lack the required provenance output, so this is an
   adapter contract rather than a live runnable capture command.
-- [`registered_key_roi.py`](precision_insertion/registered_key_roi.py) is an
-  optional demo-local, ChArUco-registered socket-only baseline → key-crop
-  proposal and cropped-SAM mask QA. A [saved AutoDex-camera replay](REGISTERED_KEY_ROI.md)
-  rejects a known wrong-socket mask while retaining a plausible key mask.
-  Its exploratory thresholds and baseline association are **not** installed
-  in the current live key producer; do not report the saved replay as live
-  perception readiness.
+- [`registered_key_roi.py`](precision_insertion/registered_key_roi.py) and
+  [`registered_key_capture.py`](precision_insertion/registered_key_capture.py)
+  provide an **opt-in** ChArUco-registered socket-only baseline → cropped
+  SAM3 → full-frame FoundPose producer on the same live key capture. The
+  baseline is bound to the opened session; failed ROI views never fall back to
+  stock full-frame poses. A [saved AutoDex-camera replay](REGISTERED_KEY_ROI.md)
+  rejected a known wrong-socket mask. The ROI thresholds are exploratory,
+  the live path needs caller-supplied loaded models, and no real key-pose
+  accuracy or robot motion has been commissioned yet.
 - `key_perception.admit_key_capture()` reuses the existing AutoDex per-view
   SAM/FoundPose quality gate, rejects disagreeing multi-view key poses, and
   calls unchanged `InitOrchestrator.refine_from_payloads` in IoU/silhouette

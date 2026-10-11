@@ -169,6 +169,25 @@ def test_square_key_uses_agreeing_iou_selected_pose_and_full_capture_interval(
         verify_key_capture_artifacts(bundle)
 
 
+def test_roi_pose_inputs_reuse_stock_selector_without_mixing_views(tmp_path):
+    mode = select_mode("square", 1.5)
+    capture = _capture({serial: np.eye(4) for serial in CAMERAS}, tmp_path)
+    method = "same_session_registered_roi_sam3_foundpose"
+    for serial in CAMERAS:
+        capture.masks[serial]["perception_method"] = method
+        capture.poses[serial]["perception_method"] = method
+    selector = SelectorStub(mode.key_object)
+    admitted = _admit(capture, mode, tmp_path, selector)
+    assert selector.calls == 1
+    assert admitted.selection["perception_input"] == method
+
+    capture.poses["cam_b"].pop("perception_method")
+    selector = SelectorStub(mode.key_object)
+    with pytest.raises(ValueError, match="mix incompatible perception producers"):
+        _admit(capture, mode, tmp_path, selector)
+    assert selector.calls == 0
+
+
 def test_tabletop_key_rejects_low_or_missing_refinement_iou(tmp_path):
     mode = select_mode("square", 1.5)
     poses = {serial: np.eye(4) for serial in CAMERAS}

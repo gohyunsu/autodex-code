@@ -77,8 +77,7 @@ and
 Identical readback-verified copies for the AutoDex PC are under
 `/mnt/paradex2/hyunsu/autodex_precision_insertion_registered_key_roi_20261011/`.
 
-This module is **not yet installed in the live key capture producer**. To do
-that safely, `session_key_baseline.load_session_key_baseline(...)` now reads
+`session_key_baseline.load_session_key_baseline(...)` reads
 one **explicitly selected** socket capture from the frozen session bundle. It
 verifies the complete bundle, demands acquisition-bound frames and at least
 two admitted calibrated views, and binds each socket-only image/mask to its
@@ -95,12 +94,54 @@ baseline = load_bound_session_key_baseline(
 )
 ```
 
-This is only the *reference-loading* boundary, not a live alternative to the
-stock full-frame daemon. The remaining step is to retain the current key
-frame's acquisition identity, run cropped SAM/FoundPose on that **same** frame
-with full-frame pixel mapping, save its derivation separately from stock
-payloads, and compare the result against independently annotated key masks
-and poses. The socket-only procedure must also be verified physically: a
-hash cannot prove that no key or moving hand was present in the reference
-scene. Do not treat the saved NAS mask pass or exploratory thresholds as
-evidence that the live pipeline is ready to grasp.
+The opt-in `registered_key_capture` path now connects that baseline to
+`prepare_next_live_key(..., registered_key_assistance=assistance)`. A caller
+first constructs `assistance` with `prepare_registered_key_assistance(...)`,
+passing the currently `OpenedPrecisionSession`, the explicitly chosen socket
+capture ID, the *actual rig's* ChArUco board config, explicit ROI thresholds,
+and already-loaded stock `Sam3ImageSegmentor` and `FoundPoseInit` objects for
+the selected key. No model is loaded or camera request made by the factory.
+The caller may keep both model objects alive across key trials.
+
+```python
+from precision_insertion.registered_key_capture import prepare_registered_key_assistance
+from precision_insertion.live_key_trial import prepare_next_live_key
+
+assistance = prepare_registered_key_assistance(
+    opened=live_session.opened,
+    socket_capture_id="socket_001",
+    calibrated_camera_ids=calibrated_camera_ids,
+    board_config_path=rig_charuco_config_path,
+    board_id="9",
+    limits=commissioned_roi_limits,
+    sam_segmentor=loaded_stock_sam3,
+    foundpose_model=loaded_stock_key_foundpose,
+)
+prepared = prepare_next_live_key(
+    **commissioned_trial_arguments,
+    registered_key_assistance=assistance,
+)
+```
+
+The supplied FoundPose model's `obj_name` must equal the session mode's key
+object ID. `prepare_next_live_key` also checks the reference against the
+run's saved `source_evidence_binding.json` *before* issuing a camera request.
+
+After the normal AutoDex key request, the optional path reuses its exact saved
+undistorted frames and acquisition IDs. It registers each view to its own
+socket-only frame, runs SAM3 on the crop, maps the mask back to full pixels,
+and calls stock FoundPose with the **full frame and full-frame camera matrix**.
+The existing key-view quality, fixed-socket exclusion, multi-view agreement,
+stock IoU/silhouette refinement and v8 preflight then run unchanged. A failed
+ROI, SAM mask or FoundPose view is rejected; stock full-frame outputs are never
+used as a fallback. Its evidence records the original stock result as an
+unselected summary, the ROI/mask QA, frame provenance, baseline source,
+board config bytes and thresholds. The verification step rechecks the session
+baseline and refuses mixed perception producers.
+
+This is an **experimental opt-in** producer, not the default `run_auto.py`
+path. The socket-only procedure must still be checked physically: hashes do
+not prove that the key or a moving hand was absent. The exploratory limits
+in the supplied JSON are not commissioned for robot motion. Independent
+same-session key-mask/pose annotations, camera-time validation, GPU placement
+and real trial checks remain before relying on this path to grasp.

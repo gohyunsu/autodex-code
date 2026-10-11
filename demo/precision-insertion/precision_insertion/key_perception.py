@@ -186,6 +186,17 @@ def _admit_key_capture_common(
         calibration, intrinsics_undist=init_orchestrator.intrinsics_undist,
         extrinsics_full=init_orchestrator.extrinsics,
         calibrated_camera_ids=calibrated_camera_ids)
+    perception_inputs = {
+        (capture.masks.get(serial, {}).get(
+            "perception_method", "stock_full_frame_sam3_foundpose"),
+         capture.poses.get(serial, {}).get(
+            "perception_method", "stock_full_frame_sam3_foundpose"))
+        for serial in capture.images_bgr}
+    if (len(perception_inputs) != 1 or
+            next(iter(perception_inputs))[0] !=
+            next(iter(perception_inputs))[1]):
+        raise ValueError("key views mix incompatible perception producers")
+    perception_input = next(iter(perception_inputs))[0]
     if (not math.isfinite(maximum_multiview_center_error_mm) or
             maximum_multiview_center_error_mm <= 0 or
             not math.isfinite(maximum_multiview_angle_error_deg) or
@@ -338,6 +349,7 @@ def _admit_key_capture_common(
                 verified[serial]["max_error_s"] for serial in admitted_ids)
     selection = {
         "method": "AutoDex_refine_from_payloads_iou",
+        "perception_input": perception_input,
         "best_serial": selected,
         "best_iou": diagnostics.get("best_iou"),
         "minimum_refinement_iou": float(minimum_iou),
@@ -504,7 +516,7 @@ def admit_postlift_key_capture(
 
 def write_key_capture_artifacts(
     capture: KeyCaptureInput, observation: KeyPoseObservation,
-    output_dir: Path,
+    output_dir: Path, *, derivation_report: dict | None = None,
 ) -> Path:
     """Save the selected pose and its exact raw image/mask/pose evidence.
 
@@ -534,6 +546,9 @@ def write_key_capture_artifacts(
             {serial: row["timestamp_s"] for serial, row in verified.items()} or
             observation.selected_camera_id not in verified):
         raise ValueError("key observation and frame acquisition differ")
+    _verify_perception_derivation(
+        capture.masks, capture.poses, capture.frame_evidence,
+        derivation_report, capture.capture_id, capture.request_id)
     used_ids = observation.consistency.get("accepted_views")
     if (not isinstance(used_ids, list) or len(used_ids) < 2 or
             len(set(used_ids)) != len(used_ids) or
@@ -564,7 +579,18 @@ def write_key_capture_artifacts(
                 "sam_prompt": capture.prompt,
                 "frame_timestamp_source": capture.frame_timestamp_source,
                 "frame_evidence": capture.frame_evidence,
-                "mask_metadata": {}, "pose_payloads": {}}
+                "mask_metadata": {}, "pose_payloads": {},
+                "perception_derivation": derivation_report}
+    if derivation_report is not None:
+        source = Path(derivation_report["board_config_path"])
+        raw = source.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != derivation_report[
+                "board_config_sha256"]:
+            raise ValueError("ROI board config changed before evidence save")
+        config_path = target / "board_config.json"
+        with config_path.open("xb") as stream:
+            stream.write(raw)
+        files["board_config.json"] = hashlib.sha256(raw).hexdigest()
     for serial, image in sorted(capture.images_bgr.items()):
         safe = _safe_id(serial, "key camera ID")
         image_path = image_dir / f"{safe}.png"
@@ -643,6 +669,18 @@ def verify_key_capture_artifacts(output_dir: Path) -> dict:
             report.get("request_id") != manifest.get("request_id") or
             payloads.get("frame_evidence") != report.get("frame_evidence")):
         raise ValueError("key evidence identities conflict")
+    _verify_perception_derivation(
+        payloads.get("mask_metadata", {}), payloads.get("pose_payloads", {}),
+        payloads.get("frame_evidence", {}),
+        payloads.get("perception_derivation"), manifest["capture_id"],
+        manifest["request_id"])
+    derivation = payloads.get("perception_derivation")
+    if derivation is not None and (
+            "board_config.json" not in hashes or
+            hashlib.sha256((root / "board_config.json").read_bytes()
+                           ).hexdigest() != derivation.get(
+                               "board_config_sha256")):
+        raise ValueError("saved ROI board config differs from derivation")
     validate_se3(report.get("pose_world"), name="saved key observation pose")
     evidence = payloads["frame_evidence"]
     if report.get("selected_camera_id") not in evidence:
@@ -684,3 +722,56 @@ def verify_key_capture_artifacts(output_dir: Path) -> dict:
             report.get("acquisition_interval_s") != expected_interval):
         raise ValueError("saved key timing differs from source frames")
     return manifest
+
+
+def _verify_perception_derivation(
+    masks: dict, poses: dict, frame_evidence: dict,
+    derivation: dict | None, capture_id: str, request_id: int,
+) -> None:
+    """Reject mixed stock/ROI payloads and unbound socket references."""
+    assisted = "same_session_registered_roi_sam3_foundpose"
+    methods = {entry.get("perception_method") for entry in masks.values()}
+    pose_methods = {entry.get("perception_method") for entry in poses.values()}
+    if derivation is None:
+        if methods - {None} or pose_methods - {None}:
+            raise ValueError("assisted key payload lacks derivation evidence")
+        return
+    if (not isinstance(derivation, dict) or derivation.get("schema") !=
+            "precision_insertion_registered_key_capture_derivation_v1" or
+            derivation.get("perception_method") != assisted or
+            derivation.get("capture_id") != capture_id or
+            derivation.get("request_id") != request_id or
+            set(masks) != set(frame_evidence) or
+            set(poses) != set(frame_evidence) or
+            set(derivation.get("per_view", {})) != set(frame_evidence) or
+            methods != {assisted} or pose_methods != {assisted}):
+        raise ValueError("registered key derivation is incomplete or mixed")
+    baseline_record = derivation.get("baseline")
+    if not isinstance(baseline_record, dict):
+        raise ValueError("registered key derivation lacks socket baseline")
+    # Local import avoids a module cycle through the opened SessionRunner.
+    from .session_key_baseline import load_session_key_baseline
+
+    source = baseline_record.get("source")
+    if not isinstance(source, dict):
+        raise ValueError("registered key baseline has no source cameras")
+    baseline = load_session_key_baseline(
+        session_evidence_dir=Path(baseline_record["session_evidence_dir"]),
+        socket_capture_id=baseline_record["socket_capture_id"],
+        expected_session_manifest_sha256=baseline_record[
+            "session_manifest_sha256"],
+        calibrated_camera_ids=set(frame_evidence), minimum_views=2)
+    if baseline.to_record() != baseline_record:
+        raise ValueError("registered key baseline differs from frozen session")
+    for serial, row in frame_evidence.items():
+        mask, pose = masks[serial], poses[serial]
+        for entry in (mask, pose):
+            if (entry.get("frame_id") != row.get("frame_id") or
+                    entry.get("image_sha256") != row.get("image_sha256") or
+                    entry.get("image_space") !=
+                    "autodex_undistorted_full_frame" or
+                    entry.get("baseline_session_manifest_sha256") !=
+                    baseline.session_manifest_sha256 or
+                    entry.get("baseline_socket_capture_id") !=
+                    baseline.socket_capture_id):
+                raise ValueError("registered key payload source frame differs")
