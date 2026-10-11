@@ -45,10 +45,9 @@ socket capture and must return these ten components, all bound to that same
 8. `LiveTransferRecoveryHandlers` — judged grasp-miss AutoDex clear-view
    reset, fresh key capture and same-attempt original-pose restoration;
    optional planned held return when a
-   completed transfer has measured hand-pose error but the pre-insertion VLM
-   still sees the key matching the held prediction; supervised recovery for
-   stopped pickup/lift/transfer, Qwen abstention, suspected slip or other
-   uncertain states.
+   completed held transfer ends with visible `coarse_match` or
+   `gross_misalignment`; supervised recovery for stopped pickup/lift/transfer,
+   Qwen abstention, suspected slip or other uncertain states.
 9. `LiveReposePlanningHandlers` — directed v8 reorient planning.
 10. `LiveReposeExecutionHandlers` — selected reset execution and new key pose.
 
@@ -223,7 +222,7 @@ of `max_withdrawal_state_gap_s`. The execution recorder writes the existing
 `return_origin: "transfer"` and five ordered phases: `held_transfer`,
 `held_descent`, `release_open`, `post_release_lift`,
 `post_release_retract`. There is no fictitious guarded withdrawal. If the
-visual checkpoint says `slip_or_miss` or `gross_misalignment`, the transfer
+visual checkpoint says `slip_or_miss` or is inconclusive, the transfer
 was incomplete/aborted, or these automatic-return adapters are absent, the
 handler uses `recover_to_tabletop` and its supervised reset record. A real
 key image after clear view decides whether the return actually restored the
