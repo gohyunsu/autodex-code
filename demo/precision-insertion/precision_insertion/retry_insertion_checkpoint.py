@@ -1,8 +1,8 @@
 """Replay a fresh before/after VLM observation of one guarded XY retry.
 
 The controller's metric claim and all image bytes are source-bound. A depth
-number in that external claim is still unadmitted until an independent
-physical key-depth producer has been commissioned and replay-verified.
+number in that external claim is unadmitted. A separately replayed multi-view
+rear/axis report can be admitted only with a matching reviewed error audit.
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ from .session_bootstrap import _safe_id
 
 _SCHEMA = "precision_insertion_retry_observed_checkpoint_v1"
 _SCOPE = "retry_raw_images_and_external_metrics_not_physical_depth_success"
+_REVIEWED_SCOPE = "retry_raw_images_and_reviewed_multiview_depth_task_label"
 
 
 def _sha(path: Path) -> str:
@@ -54,6 +55,8 @@ def assess_retry_insertion_checkpoint(
     max_phase_skew_s: float, max_preinsert_age_s: float,
     max_final_observation_gap_s: float,
     minimum_visual_views: int = 2,
+    depth_report_path: Path | None = None,
+    depth_commissioning_path: Path | None = None,
 ) -> dict:
     """Observe a second stroke, not a replay of the first insertion images."""
     limits = (max_phase_skew_s, max_preinsert_age_s,
@@ -143,7 +146,29 @@ def assess_retry_insertion_checkpoint(
                  minimum_visual_views)
     visual_class = (visual.parsed["visual_class"] if supported else
                     "unobservable")
-    sensor, admissibility = _admitted_measurement(metric)
+    if (depth_report_path is None) != (depth_commissioning_path is None):
+        raise ValueError("retry depth report and commissioning must be paired")
+    depth_request = None
+    depth_admission = None
+    if depth_report_path is not None:
+        from .depth_admission import admit_exposed_depth
+
+        depth_request = {
+            "report_path": str(Path(depth_report_path).expanduser().resolve()),
+            "commissioning_path": str(
+                Path(depth_commissioning_path).expanduser().resolve()),
+        }
+        _, depth_admission = admit_exposed_depth(
+            depth_report_path=Path(depth_request["report_path"]),
+            commissioning_path=Path(depth_request["commissioning_path"]),
+            attempt_id=expected.attempt_id,
+            candidate_id=expected.candidate_id,
+            session_calibration_sha256=execution[
+                "session_calibration_sha256"],
+            final_bundle=after_root, guarded_completed_at_s=completed,
+            decision_timestamp_s=decision_timestamp_s)
+    sensor, admissibility = _admitted_measurement(
+        metric, depth_admission=depth_admission)
     evidence = InsertionEvidence(
         visual_class,
         tuple(sensor["key_depth_interval_m"])
@@ -181,9 +206,10 @@ def assess_retry_insertion_checkpoint(
             float(max_final_observation_gap_s),
         "effective_vlm_class": visual_class,
         "key_depth_admissibility": admissibility,
-        "evidence": asdict(evidence),
+        "depth_admission_request": depth_request,
+        "evidence": json.loads(json.dumps(asdict(evidence))),
         "outcome": outcome.to_record(),
-        "scope": _SCOPE,
+        "scope": (_REVIEWED_SCOPE if depth_admission is not None else _SCOPE),
         "robot_ready": False,
     }
 
@@ -208,8 +234,11 @@ def verify_retry_insertion_checkpoint(
     """Replay saved VLM text, pixels, metric and label without inference."""
     saved = json.loads(Path(report_path).expanduser().resolve().read_text(
         encoding="utf-8"))
+    expected_scope = (_REVIEWED_SCOPE if isinstance(saved, dict) and
+                      saved.get("depth_admission_request") is not None else
+                      _SCOPE)
     if (not isinstance(saved, dict) or saved.get("schema") != _SCHEMA or
-            saved.get("scope") != _SCOPE or
+            saved.get("scope") != expected_scope or
             saved.get("robot_ready") is not False or
             not isinstance(saved.get("visual"), dict) or
             type(saved["visual"].get("latency_s")) not in (int, float) or
@@ -229,7 +258,13 @@ def verify_retry_insertion_checkpoint(
         max_phase_skew_s=saved["max_phase_skew_s"],
         max_preinsert_age_s=saved["max_preinsert_age_s"],
         max_final_observation_gap_s=saved["max_final_observation_gap_s"],
-        minimum_visual_views=saved["minimum_visual_views"])
+        minimum_visual_views=saved["minimum_visual_views"],
+        depth_report_path=(
+            Path(saved["depth_admission_request"]["report_path"])
+            if saved.get("depth_admission_request") is not None else None),
+        depth_commissioning_path=(
+            Path(saved["depth_admission_request"]["commissioning_path"])
+            if saved.get("depth_admission_request") is not None else None))
     rebuilt["visual"]["latency_s"] = saved["visual"]["latency_s"]
     if saved != rebuilt:
         raise ValueError("retry insertion checkpoint differs from replay")

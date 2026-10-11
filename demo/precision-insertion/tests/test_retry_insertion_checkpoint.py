@@ -147,6 +147,44 @@ def test_retry_observation_replays_new_frames_but_cannot_claim_success(
         path, **_verify_kwargs(call)) == observed
 
 
+def test_reviewed_depth_allows_successful_retry_to_end_session(
+        tmp_path, monkeypatch):
+    from precision_insertion import depth_admission
+
+    call, _, runner = _case(tmp_path, monkeypatch)
+    _attach_pending_attempt(tmp_path, call, runner)
+
+    def admitted(**_kwargs):
+        return (.0201, .021), {
+            "status": "admitted_exposed_length_cad",
+            "depth_report_path": str(tmp_path / "reviewed_retry_depth.json"),
+            "key_depth_interval_m": [.0201, .021],
+        }
+
+    monkeypatch.setattr(depth_admission, "admit_exposed_depth", admitted)
+    extra = dict(depth_report_path=tmp_path / "reviewed_retry_depth.json",
+                 depth_commissioning_path=tmp_path / "review.json")
+    observed = runner.prepare_observed_retry_insertion_label(
+        replan=call["expected"], previous=call["previous"],
+        arrival=call["arrival"], checkpoint=call["checkpoint"],
+        shift_plan=call["shift_plan"],
+        handoff_report_path=call["handoff_report_path"],
+        execution_log_path=call["execution_log_path"],
+        preinsert_bundle=call["preinsert_bundle"],
+        final_bundle=call["final_bundle"], backend=call["backend"],
+        decision_timestamp_s=call["decision_timestamp_s"],
+        max_phase_skew_s=call["max_phase_skew_s"],
+        max_preinsert_age_s=call["max_preinsert_age_s"],
+        max_final_observation_gap_s=call["max_final_observation_gap_s"],
+        **extra)
+    assert observed["outcome"]["insertion_success"] is True
+    assert decide_after_attempt(runner._attempt, max_xy_retries=1).action == (
+        "session_success")
+    path = tmp_path / "insertion_assessments/000/report.json"
+    assert verify_retry_insertion_checkpoint(
+        path, **_verify_kwargs(call))["outcome"]["insertion_success"] is True
+
+
 def test_retry_observed_rim_jam_is_failure_without_invented_depth(
         tmp_path, monkeypatch):
     call, _, _ = _case(tmp_path, monkeypatch, visual_class="rim_jam")

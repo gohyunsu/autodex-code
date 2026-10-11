@@ -8,6 +8,7 @@ from the AutoDex PC; this module does not emulate physical motion or sensors.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 import time
 from typing import Callable, Mapping
@@ -15,6 +16,7 @@ from typing import Callable, Mapping
 from .action_loop import ActionHandler
 from .guarded_insertion_execution import execute_bound_guarded_insertion
 from .live_robot_state import LiveRobotState
+from .live_depth import prepare_live_depth_evidence
 from .raw_camera_capture import (
     RawCameraCapture, verify_raw_camera_capture, write_raw_camera_capture,
 )
@@ -51,6 +53,9 @@ class LiveTaskHandlers:
     handoff_parameters: Mapping[str, object]
     insertion_parameters: Mapping[str, object]
     final_parameters: Mapping[str, object]
+    depth_limits: object | None = None
+    depth_capture_parameters: Mapping[str, float] = field(default_factory=dict)
+    depth_commissioning_path: Path | None = None
     enable_robot_motion: bool = False
     decision_time: Callable[[], float] = time.time
     _preinsert_bundle: Path | None = field(default=None, init=False)
@@ -150,11 +155,27 @@ class LiveTaskHandlers:
         final, _capture = self._capture(
             runner=runner, decision=decision,
             callback=self.capture_final, phase="final_or_abort")
+        decision_at = self.decision_time()
+        depth_path = None
+        if self.depth_limits is not None:
+            metric_record = json.loads(metric.read_text(encoding="utf-8"))
+            saved, visible = prepare_live_depth_evidence(
+                runner=runner, final_bundle=final, backend=self.backend,
+                completed_at_s=metric_record["completed_at_s"],
+                decision_timestamp_s=decision_at,
+                limits=self.depth_limits,
+                capture_parameters=self.depth_capture_parameters,
+                slot="first")
+            if visible and self.depth_commissioning_path is not None:
+                depth_path = saved
         runner.prepare_observed_insertion_label(
             preinsert_bundle=self._preinsert_bundle,
             final_bundle=final, metric_record_path=metric,
             backend=self.backend,
-            decision_timestamp_s=self.decision_time(),
+            decision_timestamp_s=decision_at,
+            depth_report_path=depth_path,
+            depth_commissioning_path=(
+                self.depth_commissioning_path if depth_path is not None else None),
             **dict(self.final_parameters))
 
     def handlers(self) -> dict[str, ActionHandler]:

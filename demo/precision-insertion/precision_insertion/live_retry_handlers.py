@@ -18,6 +18,7 @@ from PIL import Image
 from .action_loop import ActionHandler
 from .frame_provenance import verify_frame_provenance
 from .lateral_execution import execute_bound_lateral_shift
+from .live_depth import prepare_live_depth_evidence
 from .live_robot_state import LiveRobotState
 from .observer import LabeledFrame
 from .postshift_transfer_execution import execute_bound_postshift_transfer
@@ -75,6 +76,9 @@ class LiveGroundedRetryHandlers:
     retry_handoff_parameters: Mapping[str, object]
     retry_execution_parameters: Mapping[str, object]
     final_parameters: Mapping[str, object]
+    depth_limits: object | None = None
+    depth_capture_parameters: Mapping[str, float] = field(default_factory=dict)
+    depth_commissioning_path: Path | None = None
     enable_robot_motion: bool = False
     decision_time: Callable[[], float] = time.time
     _pending: dict | None = field(default=None, init=False)
@@ -314,7 +318,7 @@ class LiveGroundedRetryHandlers:
             **dict(self.retry_handoff_parameters))
         before, _, _ = self._capture(
             runner, decision, self.capture_preinsert, "preinsert")
-        execute_bound_retry_guarded_insertion(
+        executed = execute_bound_retry_guarded_insertion(
             runner=runner, expected=pending["replan"],
             previous=pending["previous"], arrival=pending["arrival"],
             checkpoint=pending["checkpoint"],
@@ -331,13 +335,30 @@ class LiveGroundedRetryHandlers:
                      handoff.parent.name / "execution.json")
         after, _, _ = self._capture(
             runner, decision, self.capture_final, "final_or_abort")
+        decision_at = self.decision_time()
+        depth_path = None
+        if self.depth_limits is not None:
+            metric_path = Path(executed["metric_record"]["path"])
+            metric = json.loads(metric_path.read_text(encoding="utf-8"))
+            saved, visible = prepare_live_depth_evidence(
+                runner=runner, final_bundle=after, backend=self.backend,
+                completed_at_s=metric["completed_at_s"],
+                decision_timestamp_s=decision_at,
+                limits=self.depth_limits,
+                capture_parameters=self.depth_capture_parameters,
+                slot="retry")
+            if visible and self.depth_commissioning_path is not None:
+                depth_path = saved
         runner.prepare_observed_retry_insertion_label(
             replan=pending["replan"], previous=pending["previous"],
             arrival=pending["arrival"], checkpoint=pending["checkpoint"],
             shift_plan=pending["shift_plan"],
             handoff_report_path=handoff, execution_log_path=execution,
             preinsert_bundle=before, final_bundle=after,
-            backend=self.backend, decision_timestamp_s=self.decision_time(),
+            backend=self.backend, decision_timestamp_s=decision_at,
+            depth_report_path=depth_path,
+            depth_commissioning_path=(
+                self.depth_commissioning_path if depth_path is not None else None),
             **dict(self.final_parameters))
         self._pending = None
 

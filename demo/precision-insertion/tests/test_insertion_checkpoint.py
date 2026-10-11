@@ -203,6 +203,29 @@ def test_multiview_appearance_cannot_certify_unverified_depth(tmp_path):
         verify_insertion_checkpoint(saved)
 
 
+def test_reviewed_visual_depth_can_complete_task_label(tmp_path, monkeypatch):
+    from precision_insertion import depth_admission
+
+    args, _ = _setup(tmp_path)
+
+    def admitted(**_kwargs):
+        return (.0201, .021), {
+            "status": "admitted_exposed_length_cad",
+            "depth_report_path": str(tmp_path / "reviewed_depth.json"),
+            "key_depth_interval_m": [.0201, .021],
+        }
+
+    monkeypatch.setattr(depth_admission, "admit_exposed_depth", admitted)
+    extra = dict(depth_report_path=tmp_path / "reviewed_depth.json",
+                 depth_commissioning_path=tmp_path / "review.json")
+    report = assess_insertion_checkpoint(**args, **extra)
+    assert report["outcome"]["insertion_success"] is True
+    assert report["evidence"]["key_depth_source"] == "exposed_length_cad"
+    saved = write_insertion_checkpoint(report, tmp_path / "admitted_label")
+    assert verify_insertion_checkpoint(saved)["outcome"][
+        "insertion_success"] is True
+
+
 def test_saved_local_vlm_json_fence_replays_at_insertion_checkpoint(tmp_path):
     answer = {"visual_class": "normal_appearance",
               "evidence_views": list(CAMERAS),

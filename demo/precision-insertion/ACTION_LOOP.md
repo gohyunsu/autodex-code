@@ -130,6 +130,9 @@ per-stage limits are still required; composition does not supply them.
 `stop_for_review` is a non-success terminal result. A verified positive
 `insertion_success` produces `session_success`, which immediately returns
 `status="success"` without release, reset, repose, or another grasp attempt.
+For a positive **20 mm** label, configure the optional reviewed
+[exposed-depth admission](DEPTH_ADMISSION.md) on both task and retry handlers;
+an external controller's wrist-stroke/depth claim is not admitted by itself.
 The live wrapper then closes its camera context. A visual guess, nominal
 trajectory, or an unknown insertion verdict cannot end the session as
 success. Recovery/reset actions not listed above still need explicit handlers;

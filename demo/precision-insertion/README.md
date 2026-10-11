@@ -2493,11 +2493,13 @@ connects an uncertain transfer outcome to a supervised tabletop recovery
 record and fresh key capture. [`compose_live_handlers()`](precision_insertion/live_orchestration.py)
 requires exactly one handler for every nonterminal action before the
 session begins, so an absent robot-PC callback is visible before pickup.
-A successful 20 mm label still requires an admitted physical key-depth
-measurement. The existing insertion checkpoint masks unverified controller
-depth claims, so current local tests cannot produce a genuine physical
-success label; this is a remaining producer/commissioning gap, not an
-offline grasp-asset failure.
+A successful 20 mm label still requires admitted key depth. The optional
+[exposed-depth admission path](DEPTH_ADMISSION.md) now connects replayable
+multi-view/CAD key-depth estimation to both first and retry insertion labels,
+provided a matching reviewed held-out error audit exists. Unverified
+controller depth claims remain masked. This checkout has no real-camera
+commissioning audit, so its synthetic positive-label tests are not evidence
+of physical insertion success.
 A missing handler returns `needs_handler` at the exact pending phase; no
 trial result is invented. The guarded pickup/lift hardware adapters, raw
 post-lift camera producer, physical held-relation calibration data, real

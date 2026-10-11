@@ -1992,8 +1992,13 @@ class SessionRunner:
                 path.read_bytes()).hexdigest(),
             "guarded_execution": report["metric_record_path"],
             **{name: sources[name]["path"] for name in (
-                "key_depth", "alignment", "force_trace", "grasp_state")},
+                "alignment", "force_trace", "grasp_state")},
         }
+        expected_refs["key_depth"] = (
+            report["key_depth_admissibility"]["depth_report_path"]
+            if report["key_depth_admissibility"]["status"] ==
+                "admitted_exposed_length_cad" else
+            sources["key_depth"]["path"])
         handoff_ref = report.get("guarded_axial_handoff")
         if handoff_ref is not None:
             expected_refs["guarded_axial_handoff"] = handoff_ref["path"]
@@ -2045,6 +2050,8 @@ class SessionRunner:
         decision_timestamp_s: float, max_phase_skew_s: float,
         max_preinsert_age_s: float, max_final_observation_gap_s: float,
         minimum_visual_views: int = 2,
+        depth_report_path: Path | None = None,
+        depth_commissioning_path: Path | None = None,
     ) -> dict:
         """Persist paired VLM frames and external metric sources, then label.
 
@@ -2094,7 +2101,9 @@ class SessionRunner:
             max_phase_skew_s=max_phase_skew_s,
             max_preinsert_age_s=max_preinsert_age_s,
             max_final_observation_gap_s=max_final_observation_gap_s,
-            minimum_visual_views=minimum_visual_views)
+            minimum_visual_views=minimum_visual_views,
+            depth_report_path=depth_report_path,
+            depth_commissioning_path=depth_commissioning_path)
         output = (self._attempt_dir / "insertion_assessments" /
                   f"{self._insertion_assessment_index:03d}")
         path = write_insertion_checkpoint(report, output)
@@ -2104,7 +2113,11 @@ class SessionRunner:
             "vlm_observation": str(path),
             "vlm_observation_sha256": hashlib.sha256(
                 path.read_bytes()).hexdigest(),
-            "key_depth": sources["key_depth"]["path"],
+            "key_depth": (
+                report["key_depth_admissibility"]["depth_report_path"]
+                if report["key_depth_admissibility"]["status"] ==
+                    "admitted_exposed_length_cad" else
+                sources["key_depth"]["path"]),
             "alignment": sources["alignment"]["path"],
             "force_trace": sources["force_trace"]["path"],
             "grasp_state": sources["grasp_state"]["path"],
@@ -2132,6 +2145,8 @@ class SessionRunner:
         max_phase_skew_s: float, max_preinsert_age_s: float,
         max_final_observation_gap_s: float,
         minimum_visual_views: int = 2,
+        depth_report_path: Path | None = None,
+        depth_commissioning_path: Path | None = None,
     ) -> dict:
         """Record a second insertion verdict only from this retry's new pixels.
 
@@ -2169,16 +2184,17 @@ class SessionRunner:
             max_phase_skew_s=max_phase_skew_s,
             max_preinsert_age_s=max_preinsert_age_s,
             max_final_observation_gap_s=max_final_observation_gap_s,
-            minimum_visual_views=minimum_visual_views)
+            minimum_visual_views=minimum_visual_views,
+            depth_report_path=depth_report_path,
+            depth_commissioning_path=depth_commissioning_path)
         if (report["attempt_id"] != self._attempt.attempt_id or
                 report["candidate_id"] != self._attempt.candidate_id or
                 report["session_calibration_sha256"] !=
                     self.session_sha256 or
                 report["target_depth_m"] != self.mode.target_depth_m or
                 report["decision_timestamp_s"] !=
-                    float(decision_timestamp_s) or
-                report["outcome"]["insertion_success"] is True):
-            raise ValueError("retry visual result cannot certify task success")
+                    float(decision_timestamp_s)):
+            raise ValueError("retry visual result differs from this attempt")
         output = (self._attempt_dir / "insertion_assessments" /
                   f"{self._insertion_assessment_index:03d}")
         path = write_retry_insertion_checkpoint(report, output)
@@ -2190,7 +2206,11 @@ class SessionRunner:
             "vlm_observation": str(path),
             "vlm_observation_sha256": hashlib.sha256(
                 path.read_bytes()).hexdigest(),
-            "key_depth": sources["key_depth"]["path"],
+            "key_depth": (
+                report["key_depth_admissibility"]["depth_report_path"]
+                if report["key_depth_admissibility"]["status"] ==
+                    "admitted_exposed_length_cad" else
+                sources["key_depth"]["path"]),
             "alignment": sources["alignment"]["path"],
             "force_trace": sources["force_trace"]["path"],
             "grasp_state": sources["grasp_state"]["path"],

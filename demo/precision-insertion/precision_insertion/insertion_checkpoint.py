@@ -221,15 +221,24 @@ def _handoff_capture_binding(metric: dict, before_root: Path) -> dict | None:
     return reference
 
 
-def _admitted_measurement(metric: dict) -> tuple[dict, dict]:
+def _admitted_measurement(
+    metric: dict, *, depth_admission: dict | None = None,
+) -> tuple[dict, dict]:
     """Never promote an unchecked external depth claim to a task label.
 
-    Hashes and matching summary files prove consistency, not a physically
-    commissioned key-depth estimate. No supported producer can currently
-    replay and certify one, so even a numerical interval remains diagnostic.
+    Hashes and matching controller summaries prove consistency, not physical
+    key penetration. Only the separate replayed multi-view/CAD estimate with
+    a matching reviewed held-out error audit may override that raw claim.
     """
     raw = metric["measurement"]
     admitted = dict(raw)
+    if depth_admission is not None:
+        if depth_admission.get("status") != "admitted_exposed_length_cad":
+            raise ValueError("key depth needs an admitted visual/CAD report")
+        admitted["key_depth_interval_m"] = depth_admission[
+            "key_depth_interval_m"]
+        admitted["key_depth_source"] = "exposed_length_cad"
+        return admitted, depth_admission
     admitted["key_depth_interval_m"] = None
     admitted["key_depth_source"] = None
     return admitted, {
@@ -289,6 +298,8 @@ def assess_insertion_checkpoint(
     backend: ImageVLM, max_phase_skew_s: float,
     max_preinsert_age_s: float, max_final_observation_gap_s: float,
     minimum_visual_views: int = 2,
+    depth_report_path: Path | None = None,
+    depth_commissioning_path: Path | None = None,
 ) -> dict:
     """Fuse a saved multiview comparison with independent metric assertions."""
     _safe_id(attempt_id, "attempt ID")
@@ -357,7 +368,27 @@ def assess_insertion_checkpoint(
                  minimum_visual_views)
     visual_class = (visual.parsed["visual_class"] if supported else
                     "unobservable")
-    sensor, depth_admissibility = _admitted_measurement(metric)
+    if (depth_report_path is None) != (depth_commissioning_path is None):
+        raise ValueError("depth report and commissioning must be supplied together")
+    depth_request = None
+    depth_admission = None
+    if depth_report_path is not None:
+        from .depth_admission import admit_exposed_depth
+
+        depth_request = {
+            "report_path": str(Path(depth_report_path).expanduser().resolve()),
+            "commissioning_path": str(
+                Path(depth_commissioning_path).expanduser().resolve()),
+        }
+        _, depth_admission = admit_exposed_depth(
+            depth_report_path=Path(depth_request["report_path"]),
+            commissioning_path=Path(depth_request["commissioning_path"]),
+            attempt_id=attempt_id, candidate_id=candidate_id,
+            session_calibration_sha256=session_calibration_sha256,
+            final_bundle=after_root, guarded_completed_at_s=completed,
+            decision_timestamp_s=decision_timestamp_s)
+    sensor, depth_admissibility = _admitted_measurement(
+        metric, depth_admission=depth_admission)
     evidence = InsertionEvidence(
         visual_class, tuple(sensor["key_depth_interval_m"])
         if sensor["key_depth_interval_m"] is not None else None,
@@ -385,6 +416,7 @@ def assess_insertion_checkpoint(
             "observed_hold_axial_path" if handoff_reference is not None
             else "unbound_legacy_diagnostic"),
         "key_depth_admissibility": depth_admissibility,
+        "depth_admission_request": depth_request,
         "frames": inputs, "visual": visual.to_record(),
         "minimum_visual_views": minimum_visual_views,
         "max_phase_skew_s": max_phase_skew_s,
@@ -543,7 +575,24 @@ def verify_insertion_checkpoint(report_path: Path) -> dict:
     vlm_class = parsed.get("visual_class") if supported else "unobservable"
     if vlm_class != report["effective_vlm_class"]:
         raise ValueError("insertion effective visual class changed")
-    sensor, depth_admissibility = _admitted_measurement(metric)
+    request = report.get("depth_admission_request")
+    admission = None
+    if request is not None:
+        if (not isinstance(request, dict) or
+                set(request) != {"report_path", "commissioning_path"}):
+            raise ValueError("invalid depth admission source paths")
+        from .depth_admission import admit_exposed_depth
+
+        _, admission = admit_exposed_depth(
+            depth_report_path=Path(request["report_path"]),
+            commissioning_path=Path(request["commissioning_path"]),
+            attempt_id=report["attempt_id"],
+            candidate_id=report["candidate_id"],
+            session_calibration_sha256=digest,
+            final_bundle=after_root, guarded_completed_at_s=completed,
+            decision_timestamp_s=report["decision_timestamp_s"])
+    sensor, depth_admissibility = _admitted_measurement(
+        metric, depth_admission=admission)
     if report.get("key_depth_admissibility") != depth_admissibility:
         raise ValueError("insertion key-depth admissibility changed")
     evidence = InsertionEvidence(

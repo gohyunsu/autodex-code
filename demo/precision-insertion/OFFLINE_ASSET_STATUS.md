@@ -50,8 +50,11 @@ candidate, a staged reset seed or a
 `repre.pth` from another object a usable canonical asset just to make an
 inventory appear complete.
 
-The **code** has a separate gap: the demo `run_auto.py` opens an evidence
-ledger and exits; no single production loop yet sequences all repeated
-trials and controls the robot. The component-level planner, stage labels,
-retry diagnostic and reset/repose policy do not by themselves close that
-integration gap. This is not an additional missing 3D asset.
+The **code** now has a demo-local live action loop and stage handlers for
+pickup, lift, transfer, first guarded insertion, one grounded XY retry,
+held-key return, transfer-recovery observation and directed repose. The
+`run_auto.py` CLI itself still only opens an evidence ledger; the live loop
+is a Python API requiring AutoDex-PC callbacks and independently commissioned
+controllers. An optional replayable depth-admission path exists, but no real
+held-out depth audit or reviewed calibration is installed. These are runtime
+integration/measurement gaps, not missing 3D meshes.
