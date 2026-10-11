@@ -101,6 +101,12 @@ For the current cylinder staging root
 the loader with 5 mm center-in-hand and 10° axis-tilt limits accepts one
 `0→1` seed and no `1→0` seed. These are offline proposal results, not a
 socket-aware Franka path or physical reset success.
+For square 1.5 mm, the corresponding
+`shared_data/AutoDex/precision_insertion/square/reorient_curated_handoff_20261011/reset_12`
+has one eligible `0→4` seed under the same 5 mm drift / 10° full-rotation
+limits; `1→4`, `2→4`, and `3→4` have none. Set the root for the chosen task
+mode explicitly—these incomplete directed graphs are not universal reset
+coverage.
 
 For VLM checkpoints, `make_checkpoint_capture` in
 `precision_insertion.checkpoint_camera` supplies the existing handlers'
