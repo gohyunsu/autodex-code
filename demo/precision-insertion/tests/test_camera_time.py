@@ -11,7 +11,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.camera_time import (  # noqa: E402
-    AcquisitionTimeProvider, CameraTimeCalibration,
+    AcquisitionTimeProvider, BoundedRequestTimeProvider,
+    CameraTimeCalibration, RequestWindowRegistry,
 )
 from precision_insertion.camera_transport import FrameIdentityRegistry  # noqa: E402
 from precision_insertion.camera_transport import (  # noqa: E402
@@ -163,3 +164,57 @@ def test_board_transport_to_calibrated_capture_is_same_frame(tmp_path):
         image_sha256(decoded))
     assert capture.frame_timestamps_s["cam_a"] == pytest.approx(
         1_800_000_000.06, abs=1e-6)
+
+
+def test_bounded_request_time_encloses_new_frame_without_clock_calibration():
+    frame = np.zeros((24, 32, 3), dtype=np.uint8)
+    identities = FrameIdentityRegistry()
+    identities.register(42, {"cam_a": {
+        "frame_id": 106, "image_sha256": image_sha256(frame)}})
+    windows = RequestWindowRegistry()
+    windows.put(42, 1_800_000_000., 1_800_000_002., 10., 12.)
+    evidence = BoundedRequestTimeProvider(identities, windows)(42)
+    verified = verify_frame_provenance(
+        evidence, request_id=42, images_bgr={"cam_a": frame},
+        frame_ids={"cam_a": 106})
+    assert verified["cam_a"]["timestamp_s"] == 1_800_000_001.
+    assert verified["cam_a"]["max_error_s"] == 1.
+    assert verified["cam_a"]["timestamp_method"] == (
+        "bounded_request_interval")
+    assert verified["cam_a"]["request_window_start_s"] == 1_800_000_000.
+    assert verified["cam_a"]["request_window_end_s"] == 1_800_000_002.
+    evidence["frames"]["cam_a"]["max_error_s"] = .01
+    with pytest.raises(ValueError, match="does not bound exposure"):
+        verify_frame_provenance(
+            evidence, request_id=42, images_bgr={"cam_a": frame},
+            frame_ids={"cam_a": 106})
+    with pytest.raises(ValueError, match="clock"):
+        windows.put(43, 1_800_000_000., 1_800_000_002., 10., 11.)
+
+
+def test_board_transport_records_request_window_with_matching_pixels():
+    image = np.zeros((24, 32, 3), dtype=np.uint8)
+    ok, encoded = cv2.imencode(".jpg", image)
+    assert ok
+    jpeg = encoded.tobytes()
+    decoded = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8),
+                           cv2.IMREAD_COLOR)
+    metadata = SnapshotMetadataBuffer()
+    identities = FrameIdentityRegistry()
+    windows = RequestWindowRegistry()
+
+    class Snapshot:
+        def snap(self, **kwargs):
+            metadata.put({"req_id": kwargs["request_id"],
+                          "serial": "cam_a", "fid": 106}, jpeg)
+            return {"cam_a": {"jpeg": jpeg, "image": decoded}}, {
+                "request_id": kwargs["request_id"]}
+
+    adapter = ProvenanceSnapshotAdapter(
+        Snapshot(), metadata, identities, request_windows=windows)
+    capture = collect_board_snapshot(
+        snapshot_orchestrator=adapter, calibrated_camera_ids={"cam_a"},
+        acquisition_metadata_for_request=BoundedRequestTimeProvider(
+            identities, windows), timeout_s=.2, request_id_factory=lambda: 42)
+    assert capture.frame_evidence["cam_a"]["frame_id"] == 106
+    assert capture.frame_evidence["cam_a"]["max_error_s"] >= 0

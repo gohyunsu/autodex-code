@@ -16,6 +16,7 @@ from precision_insertion.camera_transport import (  # noqa: E402
     SnapshotMetadataBuffer, decode_precision_mask, decode_precision_pose,
     install_init_provenance,
 )
+from precision_insertion.camera_time import RequestWindowRegistry  # noqa: E402
 from precision_insertion.frame_provenance import image_sha256  # noqa: E402
 
 
@@ -160,3 +161,21 @@ def test_robot_orchestrator_callback_keeps_fid_and_hash():
         {"request_id": 7})
     wrapper.collect_payloads()
     assert identities.get(7)["cam"]["frame_id"] == 12
+
+
+def test_robot_orchestrator_bounds_live_init_request_interval():
+    stock = SimpleNamespace(
+        _mask_thread=SimpleNamespace(on_message=None),
+        _pose_thread=SimpleNamespace(on_message=None),
+        mask_buf=SimpleNamespace(), pose_buf=SimpleNamespace())
+    stock.collect_payloads = lambda **_kwargs: (
+        {"cam": {"frame_id": 12, "image_sha256": "f" * 64}},
+        {"cam": {"frame_id": 12, "image_sha256": "f" * 64}},
+        {"request_id": 7})
+    identities = FrameIdentityRegistry()
+    windows = RequestWindowRegistry()
+    PrecisionInitOrchestrator(
+        stock, identities, request_windows=windows).collect_payloads()
+    assert identities.get(7)["cam"]["frame_id"] == 12
+    start, end = windows.get(7)
+    assert 0 <= end - start < 1.

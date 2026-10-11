@@ -15,12 +15,15 @@ import math
 from pathlib import Path
 import re
 import time
-from typing import Iterator
+from typing import Callable, Iterator
 
 import numpy as np
 
 from .assets import AssetPaths
-from .camera_time import AcquisitionTimeProvider, CameraTimeCalibration
+from .camera_time import (
+    AcquisitionTimeProvider, BoundedRequestTimeProvider,
+    CameraTimeCalibration, RequestWindowRegistry,
+)
 from .camera_transport import (
     FrameIdentityRegistry, PrecisionInitOrchestrator,
     ProvenanceSnapshotAdapter, SnapshotMetadataTap,
@@ -60,6 +63,7 @@ class SessionLaunch:
     max_socket_translation_mm: float
     max_socket_angle_deg: float
     minimum_socket_refined_iou: float
+    camera_time_mode: str = "calibrated_frame_id"
 
     def readiness(self) -> dict:
         return {
@@ -72,6 +76,7 @@ class SessionLaunch:
             "camera_time_calibration_ids": {
                 serial: row.calibration_id
                 for serial, row in sorted(self.camera_times.items())},
+            "camera_time_mode": self.camera_time_mode,
             "minimum_socket_refined_iou": self.minimum_socket_refined_iou,
             "socket_capture_count": self.socket_capture_count,
             "scope": "file_preflight_not_live_camera_or_pose_accuracy",
@@ -91,7 +96,7 @@ class OpenSessionCameras:
     launch: SessionLaunch
     snapshot_orchestrator: object
     init_orchestrator: object
-    acquisition_metadata_for_request: AcquisitionTimeProvider
+    acquisition_metadata_for_request: Callable[[int], dict]
 
     def start(self) -> StartedPrecisionSession:
         """Capture ChArUco then repeated socket observations once."""
@@ -219,17 +224,25 @@ def load_session_launch(path: Path) -> SessionLaunch:
                       kind="directory")
     intrinsics, extrinsics, image_hw = _load_stock_camera_calibration(
         calib_dir, camera_ids)
+    time_mode = record.get("camera_time_mode", "calibrated_frame_id")
     timing_paths = record.get("camera_time_calibrations")
-    if not isinstance(timing_paths, dict) or set(timing_paths) != camera_ids:
-        raise ValueError("every active camera needs its own time calibration")
-    camera_times = {serial: CameraTimeCalibration.load(
-        _path(timing_paths[serial], name=f"{serial} time calibration", kind="file"))
-        for serial in camera_ids}
-    if (any(row.camera_serial != serial or row.valid_until_utc_s <= time.time()
-            for serial, row in camera_times.items()) or
-            len({row.calibration_id for row in camera_times.values()}) !=
-            len(camera_times)):
-        raise ValueError("camera-time calibration IDs, serials or expiry are invalid")
+    if time_mode == "calibrated_frame_id":
+        if not isinstance(timing_paths, dict) or set(timing_paths) != camera_ids:
+            raise ValueError("every active camera needs its own time calibration")
+        camera_times = {serial: CameraTimeCalibration.load(
+            _path(timing_paths[serial], name=f"{serial} time calibration", kind="file"))
+            for serial in camera_ids}
+        if (any(row.camera_serial != serial or row.valid_until_utc_s <= time.time()
+                for serial, row in camera_times.items()) or
+                len({row.calibration_id for row in camera_times.values()}) !=
+                len(camera_times)):
+            raise ValueError("camera-time calibration IDs, serials or expiry are invalid")
+    elif time_mode == "bounded_request_interval":
+        if timing_paths is not None:
+            raise ValueError("bounded request timing must not claim camera calibration")
+        camera_times = {}
+    else:
+        raise ValueError("unknown camera-time mode")
     c2r = validate_se3(np.load(_path(record.get("c2r_npy"), name="C2R",
                                      kind="file"), allow_pickle=False),
                        name="saved Franka C2R")
@@ -273,7 +286,7 @@ def load_session_launch(path: Path) -> SessionLaunch:
     return SessionLaunch(
         mode, root, capture_root, evidence, tuple(pcs), tuple(ips), camera_ids,
         intrinsics, extrinsics, image_hw, c2r, base_scene, camera_times,
-        limits, prompt, count, **values)
+        limits, prompt, count, **values, camera_time_mode=time_mode)
 
 
 @contextmanager
@@ -293,18 +306,25 @@ def open_session_cameras(
     from autodex.perception.snapshot_orchestrator import SnapshotOrchestrator
 
     registry = FrameIdentityRegistry()
+    windows = (RequestWindowRegistry() if launch.camera_time_mode ==
+               "bounded_request_interval" else None)
     with ExitStack() as stack:
         stock_snapshot = SnapshotOrchestrator(
             list(launch.pc_list), list(launch.capture_ips))
         stack.callback(stock_snapshot.close)
         tap = SnapshotMetadataTap(list(launch.capture_ips))
         stack.callback(tap.close)
-        board = ProvenanceSnapshotAdapter(stock_snapshot, tap.buffer, registry)
+        board = ProvenanceSnapshotAdapter(
+            stock_snapshot, tap.buffer, registry, request_windows=windows)
         stock_init = InitOrchestrator(
             list(launch.pc_list), list(launch.capture_ips))
         stack.callback(stock_init.close)
-        init = PrecisionInitOrchestrator(stock_init, registry)
-        provider = AcquisitionTimeProvider(registry, launch.camera_times)
+        init = (PrecisionInitOrchestrator(stock_init, registry)
+                if windows is None else PrecisionInitOrchestrator(
+                    stock_init, registry, request_windows=windows))
+        provider = (BoundedRequestTimeProvider(registry, windows)
+                    if windows is not None else
+                    AcquisitionTimeProvider(registry, launch.camera_times))
         yield OpenSessionCameras(launch, board, init, provider)
 
 

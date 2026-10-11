@@ -10,7 +10,10 @@ multi-view XY correction, and follows the existing recovery/repose decisions.
 It ends immediately on an admitted insertion-success label.
 
 The script does **not** include a robot/force controller or invent camera
-timestamps. On the AutoDex PC, an importable `module:factory` must return a
+exposure timestamps. The optional `bounded_request_interval` camera mode
+uses the complete new-frame request/response interval as timing uncertainty
+for stationary bring-up; slow FoundPose calls may still fail the unchanged
+camera/feedback timing gates. On the AutoDex PC, an importable `module:factory` must return a
 `LiveRuntimeIntegration(clear_view, build_components, close)`; the factory
 receives `RunLiveOptions`. `build_components(live)` is called after board and
 socket capture and must return these ten components, all bound to that same

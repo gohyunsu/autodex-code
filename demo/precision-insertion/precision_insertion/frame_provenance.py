@@ -18,7 +18,8 @@ import numpy as np
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-_METHODS = {"hardware_exposure", "calibrated_frame_id"}
+_METHODS = {"hardware_exposure", "calibrated_frame_id",
+            "bounded_request_interval"}
 
 
 def image_sha256(image: np.ndarray) -> str:
@@ -39,8 +40,10 @@ def verify_frame_provenance(
 ) -> dict[str, dict]:
     """Require matching request, serial, frame ID, decoded pixels and time.
 
-    ``max_error_s`` bounds conversion of the exposure timestamp into a common
-    Unix-time clock. Receipt/processing/publication times are not admitted.
+    ``max_error_s`` bounds exposure time in the robot-host Unix clock. A
+    bounded request interval is admissible only because stock live daemons
+    wait for *new* frames after dispatch; its midpoint is not an exposure
+    measurement. Receipt/processing/publication times alone are not admitted.
     """
     if not isinstance(metadata, Mapping) or metadata.get("request_id") != request_id:
         raise ValueError("camera acquisition metadata has wrong request ID")
@@ -81,6 +84,19 @@ def verify_frame_provenance(
             raise ValueError(f"invalid timing calibration ID for {serial}")
         if method == "calibrated_frame_id" and calibration_id is None:
             raise ValueError(f"missing timing calibration ID for {serial}")
+        window = None
+        if method == "bounded_request_interval":
+            start = row.get("request_window_start_s")
+            end = row.get("request_window_end_s")
+            if (type(start) not in (int, float) or
+                    type(end) not in (int, float) or
+                    not math.isfinite(start) or not math.isfinite(end) or
+                    start <= 0 or end <= start or
+                    abs(float(stamp) - (start + end) / 2) > 1e-6 or
+                    error + 1e-9 < (end - start) / 2 or
+                    calibration_id is not None):
+                raise ValueError(f"request interval does not bound exposure for {serial}")
+            window = (float(start), float(end))
         verified[serial] = {
             "frame_id": fid,
             "image_sha256": digest,
@@ -91,6 +107,9 @@ def verify_frame_provenance(
         }
         if calibration_id is not None:
             verified[serial]["calibration_id"] = calibration_id
+        if window is not None:
+            verified[serial]["request_window_start_s"] = window[0]
+            verified[serial]["request_window_end_s"] = window[1]
     return verified
 
 

@@ -223,12 +223,14 @@ class ProvenanceSnapshotAdapter:
 
     def __init__(self, snapshot_orchestrator, metadata_buffer,
                  identity_registry: FrameIdentityRegistry | None = None,
+                 request_windows=None,
                  *, poll_s: float = 0.01):
         if not math.isfinite(poll_s) or poll_s <= 0:
             raise ValueError("snapshot metadata poll interval must be positive")
         self.snapshot = snapshot_orchestrator
         self.metadata = metadata_buffer
         self.identity_registry = identity_registry
+        self.request_windows = request_windows
         self.poll_s = poll_s
 
     def snap(self, **kwargs):
@@ -237,7 +239,9 @@ class ProvenanceSnapshotAdapter:
         request_id = kwargs.get("request_id")
         if type(request_id) is not int or request_id <= 0:
             raise ValueError("precision board capture requires request ID")
+        started_utc_s, started_monotonic_s = time.time(), time.monotonic()
         payload, timing = self.snapshot.snap(**kwargs)
+        finished_utc_s, finished_monotonic_s = time.time(), time.monotonic()
         if not isinstance(payload, Mapping) or not payload:
             raise ValueError("stock snapshot returned no camera images")
         deadline = time.monotonic() + float(kwargs.get("timeout_s", 0.0))
@@ -267,6 +271,10 @@ class ProvenanceSnapshotAdapter:
                 serial: {"frame_id": entry["frame_id"],
                          "image_sha256": image_sha256(entry["image"])}
                 for serial, entry in enriched.items()})
+        if self.request_windows is not None:
+            self.request_windows.put(
+                request_id, started_utc_s, finished_utc_s,
+                started_monotonic_s, finished_monotonic_s)
         self.metadata.drop(request_id)
         return enriched, timing
 
@@ -306,9 +314,11 @@ class PrecisionInitOrchestrator:
     """
 
     def __init__(self, stock_orchestrator,
-                 identity_registry: FrameIdentityRegistry | None = None):
+                 identity_registry: FrameIdentityRegistry | None = None,
+                 request_windows=None):
         self.stock = stock_orchestrator
         self.identity_registry = identity_registry
+        self.request_windows = request_windows
         mask_thread = getattr(stock_orchestrator, "_mask_thread", None)
         pose_thread = getattr(stock_orchestrator, "_pose_thread", None)
         if (mask_thread is None or pose_thread is None or
@@ -330,7 +340,9 @@ class PrecisionInitOrchestrator:
         self.stock.pose_buf.put(request_id, serial, row)
 
     def collect_payloads(self, *args, **kwargs):
+        started_utc_s, started_monotonic_s = time.time(), time.monotonic()
         masks, poses, timing = self.stock.collect_payloads(*args, **kwargs)
+        finished_utc_s, finished_monotonic_s = time.time(), time.monotonic()
         if not isinstance(timing, Mapping) or type(timing.get("request_id")) is not int:
             raise ValueError("FoundPose collection has no request identity")
         request_id = timing["request_id"]
@@ -344,4 +356,8 @@ class PrecisionInitOrchestrator:
                 s: {"frame_id": masks[s]["frame_id"],
                     "image_sha256": masks[s]["image_sha256"]}
                 for s in masks})
+        if self.request_windows is not None:
+            self.request_windows.put(
+                request_id, started_utc_s, finished_utc_s,
+                started_monotonic_s, finished_monotonic_s)
         return masks, poses, timing

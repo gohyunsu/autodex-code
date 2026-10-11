@@ -8,6 +8,7 @@
   "capture_ips": ["REPLACE_WITH_CAPTURE_PC_IP"],
   "camera_ids": ["REPLACE_WITH_CAMERA_SERIAL_A", "REPLACE_WITH_CAMERA_SERIAL_B"],
   "calib_dir": "/absolute/path/to/shared_data/cam_param/COMMISSIONED_CALIBRATION",
+  "camera_time_mode": "calibrated_frame_id",
   "camera_time_calibrations": {
     "REPLACE_WITH_CAMERA_SERIAL_A": "/absolute/path/to/cam_A_exposure_time_calibration.json",
     "REPLACE_WITH_CAMERA_SERIAL_B": "/absolute/path/to/cam_B_exposure_time_calibration.json"

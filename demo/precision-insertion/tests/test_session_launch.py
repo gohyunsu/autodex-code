@@ -119,6 +119,17 @@ def test_missing_one_camera_time_or_existing_output_stops_before_capture(
         launch.load_session_launch(config)
 
 
+def test_bounded_request_launch_needs_no_camera_time_files(tmp_path):
+    config, record = _config(tmp_path)
+    record.pop("camera_time_calibrations")
+    record["camera_time_mode"] = "bounded_request_interval"
+    config.write_text(json.dumps(record), encoding="utf-8")
+    loaded = launch.load_session_launch(config)
+    assert loaded.camera_times == {}
+    assert loaded.readiness()["camera_time_mode"] == (
+        "bounded_request_interval")
+
+
 def test_placeholder_capture_address_fails_file_preflight(tmp_path, monkeypatch):
     config, record = _config(tmp_path)
     _stub_time(monkeypatch)

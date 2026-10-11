@@ -14,6 +14,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import threading
 import time
 from typing import Mapping
 
@@ -194,3 +195,74 @@ class AcquisitionTimeProvider:
             }
         return {"request_id": request_id,
                 "source": "camera_acquisition", "frames": frames}
+
+
+class RequestWindowRegistry:
+    """Robot-host UTC interval enclosing a new-frame AutoDex request.
+
+    This deliberately gives no per-camera exposure estimate. Stock live
+    daemons wait for a frame newer than the one present *after* receiving the
+    request; their response is received after that frame was captured. The
+    entire robot-host request/response interval therefore encloses exposure,
+    even without synchronized capture-PC clocks.
+    """
+
+    def __init__(self, *, max_clock_step_s: float = .05):
+        if (not math.isfinite(max_clock_step_s) or max_clock_step_s <= 0):
+            raise ValueError("request-window clock-step limit must be positive")
+        self.max_clock_step_s = float(max_clock_step_s)
+        self._lock = threading.Lock()
+        self._windows: dict[int, tuple[float, float]] = {}
+
+    def put(self, request_id: int, start_s: float, end_s: float,
+            start_monotonic_s: float, end_monotonic_s: float) -> None:
+        wall_span = end_s - start_s
+        mono_span = end_monotonic_s - start_monotonic_s
+        if (type(request_id) is not int or request_id <= 0 or
+                not all(math.isfinite(float(value)) for value in (
+                    start_s, end_s, start_monotonic_s, end_monotonic_s)) or
+                start_s <= 0 or wall_span <= 0 or mono_span <= 0 or
+                abs(wall_span - mono_span) > self.max_clock_step_s):
+            raise ValueError("request interval or robot-host clock is invalid")
+        with self._lock:
+            if request_id in self._windows:
+                raise ValueError("request interval was already recorded")
+            self._windows[request_id] = (float(start_s), float(end_s))
+
+    def get(self, request_id: int) -> tuple[float, float]:
+        with self._lock:
+            if request_id not in self._windows:
+                raise ValueError("request has no bounded acquisition interval")
+            return self._windows[request_id]
+
+
+class BoundedRequestTimeProvider:
+    """Conservative live bring-up timing without a camera clock calibration.
+
+    The midpoint is a serialization convention only. ``max_error_s`` spans
+    the *entire* request/response interval, so consumers with tight timing or
+    feedback gates reject a slow capture instead of mistaking the midpoint
+    for a measured exposure timestamp.
+    """
+
+    def __init__(self, identities: FrameIdentityRegistry,
+                 windows: RequestWindowRegistry):
+        self.identities = identities
+        self.windows = windows
+
+    def __call__(self, request_id: int) -> dict:
+        rows = self.identities.get(request_id)
+        if not rows:
+            raise ValueError("request lacks matched camera frame identities")
+        start, end = self.windows.get(request_id)
+        middle, radius = (start + end) / 2, (end - start) / 2
+        return {
+            "request_id": request_id, "source": "camera_acquisition",
+            "frames": {serial: {
+                **row, "timestamp_s": middle, "max_error_s": radius,
+                "timestamp_method": "bounded_request_interval",
+                "request_window_start_s": start,
+                "request_window_end_s": end,
+                "clock_domain": "unix_utc",
+            } for serial, row in rows.items()},
+        }

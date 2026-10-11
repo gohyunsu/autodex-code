@@ -1,11 +1,12 @@
 # AutoDex camera-frame provenance handoff
 
 The precision demo must not freeze a socket collision world from an image whose
-capture time or identity is unknown. The demo-local `live_capture.py` now
-rejects the unchanged AutoDex snapshot/init outputs **by design**. This is a
-deployment requirement, not a claim that the camera rig is already timed.
+capture time or identity is unknown. The demo-local `live_capture.py` rejects
+the unchanged AutoDex snapshot/init outputs **by design**. A conservative
+request/response *interval* can now bound exposure for bring-up; it is not a
+millisecond-accurate camera timestamp or a precision-calibration result.
 
-## Demo-only transport now implemented (still not a timestamp solution)
+## Demo-only transport and timing modes
 
 `precision_insertion/camera_transport.py` supplies two narrow adapters while
 reusing the stock camera capture and FoundPose inference code:
@@ -53,9 +54,35 @@ is not a guaranteed barrier: if it misses an initial message, the capture
 fails closed and must be repeated. These adapters have synthetic transport
 tests, **not** an AutoDex-camera-PC deployment test.
 
-`camera_time.py` supplies the **interface and validation** for
-`acquisition_metadata_for_request(request_id)`. It is not a calibration
-measurement. For each imaging camera, a
+`camera_time.py` supplies two modes for
+`acquisition_metadata_for_request(request_id)`:
+
+- `calibrated_frame_id` (default): the existing per-camera exposure-time
+  calibration below. Use this for quantitative timing and precision claims.
+- `bounded_request_interval`: on the robot PC, record Unix-clock times before
+  the stock request and after its response. The unchanged **live** AutoDex
+  daemons call `wait_for_new_frames()` after receiving that request, so the
+  exact matched frame's exposure lies inside this interval. Store its midpoint
+  only as a representation of `[start, end]`, with `max_error_s` equal to half
+  the full interval. This requires no capture-PC clock synchronization and
+  never uses publication `ts` as exposure. A slow SAM/FoundPose response can
+  produce seconds of uncertainty; all existing cross-view, frame-age and
+  robot-feedback gates still see that full bound and may refuse the capture.
+  It is suitable for stationary bring-up, not measured millimetre-level
+  temporal accuracy. It does not work with disk-mode replay, where the frame
+  predates the request.
+
+To try bounded timing, change the launch JSON to
+`"camera_time_mode": "bounded_request_interval"` and **remove**
+`camera_time_calibrations`. Keep the precision init daemon and snapshot tap
+for exact frame IDs/pixels. The initial `start-session --config ...` command
+is a file-only preflight; adding `--capture` actually opens the cameras.
+Robot motion still needs the separate `run_live.py` integration and controllers.
+If a bound is wider than a configured timing/feedback limit, use a faster
+capture or a true camera calibration; do not shrink `max_error_s` by hand.
+
+The calibrated mode is not itself a calibration measurement. For each imaging
+camera, a
 `precision_insertion_camera_time_calibration_v1` JSON needs:
 
 - `calibration_id`, `camera_serial`, `source_method` equal to
@@ -81,7 +108,8 @@ returns only `pc_time` and `frameID`; the chunk exposure timestamp is not
 presently carried into SHM. Reading/validating that timestamp per imaging
 camera (or instrumenting an external trigger) and measuring its UTC clock
 conversion is the next capture-PC commissioning task. No real calibration
-record is included, so the adapter cannot make the current rig robot-ready.
+record is included, so calibrated-frame-ID mode cannot make the current rig
+robot-ready without that handoff.
 An opt-in [same-image chunk journal](CAMERA_CHUNK_CAPTURE.md) now records raw
 frame/tick pairs without changing ParaDex source. It remains an offline
 commissioning input: raw ticks and host receipt time are **not** UTC exposure
@@ -103,8 +131,9 @@ measurements and are never fed into a session by themselves.
   separate timestamp-monitor camera is not a per-frame clock for each
   imaging camera without an independently validated correspondence.
 
-Do not put publication, dispatch, or unbounded host-receipt time into
-`timestamp_s` merely to pass the gate.
+Do not put publication, dispatch, or host-receipt time alone into
+`timestamp_s` merely to pass the gate. The bounded mode uses *both* endpoints
+of a verified new-frame request and reports the entire interval as error.
 
 ## Required demo-local camera producer/adapters
 
@@ -116,12 +145,10 @@ that provide the following for *the exact frame* used in each request:
    board JPEG return, and through both socket SAM and FoundPose payloads.
    One camera's mask and pose must have the same ID. IDs must be positive and
    should be checked for monotonic advance at the producer.
-2. On the capture PC, provide exposure time converted to the common Unix UTC
-   clock using either a real hardware exposure timestamp or a validated
-   per-camera frame-ID-to-exposure-time calibration. Record the method, a
-   worst-case clock-conversion error in seconds, and the calibration ID when
-   applicable. Measure the camera-PC↔robot-PC clock offset/error; do not
-   assume NTP alone satisfies a millimetre-level task.
+2. For precise exposure timing, provide capture-PC hardware time or validated
+   per-camera frame-ID calibration in the common clock and retain its error
+   bound. For stationary bring-up only, the robot-host bounded-request mode
+   is available as described above. It never claims per-camera exposure time.
 3. Bind this record to the decoded BGR pixels with
    `frame_provenance.image_sha256(image)`. For board capture, hash pixels
    decoded from the *same encoded JPEG* that is transmitted. For socket
@@ -195,9 +222,9 @@ key-specific prompts, and review bring-up examples before robot use.
 This contract catches accidental cross-frame mixing; it is not a signature
 or an independent certification of the producer. A physical bring-up still
 needs a measured timestamp-error budget, camera/robot calibration, socket
-repeatability tests, and guarded insertion commissioning. Until then, use
-saved offline evidence only and do not authorize robot motion from these
-session helpers.
+repeatability tests, and guarded insertion commissioning. Bounded-request
+timing can exercise a stationary live session without the camera-clock files,
+but it does not by itself authorize robot motion or certify insertion depth.
 
 Test the software gate without hardware:
 
