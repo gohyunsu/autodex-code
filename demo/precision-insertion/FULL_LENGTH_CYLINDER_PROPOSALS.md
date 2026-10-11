@@ -113,3 +113,48 @@ PYTHONPATH=demo/precision-insertion:src \
   --manifest /home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/NEW_full_length_promotion.json \
   --install
 ```
+
+## AutoDex-PC addendum handoff
+
+The new 112 installed candidate directories have a separate, append-only
+handoff at
+`/mnt/paradex2/hyunsu/autodex_precision_insertion_cylinder_full_length_addendum_20261011_eb38993`.
+Its `MANIFEST.json` binds all payload bytes, source key meshes, both physical
+key tabletop scenes and tabletop-pose files. The source-machine catalogues
+and promotion manifest are retained under `audit_only/`; they are **not**
+live catalogues on a PC with a different `shared_data` root. Existing key,
+socket, fixture, URDF and FoundPose assets must be installed from prior
+handoffs first. The proxy asset need not be installed to *use* already
+filtered v8 candidates; regenerate it on that PC with
+`build_full_length_cylinder_proposal.py` only if reproducing BODex generation.
+The bundle's `eb38993` hash identifies the candidate-generation source;
+pull the **latest** `feat/precision-insertion` branch for the export/import
+utilities documented here.
+
+From the recipient checkout, check the addendum and inspect the dry-run
+install report before appending the new candidate IDs:
+
+```bash
+PYTHONPATH=demo/precision-insertion:src python \
+  demo/precision-insertion/export_full_length_cylinder_handoff.py \
+  --verify-root /mnt/paradex2/hyunsu/autodex_precision_insertion_cylinder_full_length_addendum_20261011_eb38993
+
+PYTHONPATH=demo/precision-insertion:src python \
+  demo/precision-insertion/rehydrate_full_length_cylinder_handoff.py \
+  --bundle-root /mnt/paradex2/hyunsu/autodex_precision_insertion_cylinder_full_length_addendum_20261011_eb38993 \
+  --target-shared-root /ABSOLUTE/AUTODEX_PC/shared_data
+
+# Only after the dry run reports the expected 112 new IDs and no conflicts:
+PYTHONPATH=demo/precision-insertion:src python \
+  demo/precision-insertion/rehydrate_full_length_cylinder_handoff.py \
+  --bundle-root /mnt/paradex2/hyunsu/autodex_precision_insertion_cylinder_full_length_addendum_20261011_eb38993 \
+  --target-shared-root /ABSOLUTE/AUTODEX_PC/shared_data --install
+```
+
+Then run `run_pipeline.py screen-catalog` once per actual cylinder gap using
+the recipient's `--shared-root`, `--min-hand-clearance-mm 0` and a **new**
+output path. The recipient's catalogue must show the complete candidate tree
+and pass `preflight_endpoint_catalog_file`. If the 12 older IDs have not yet
+been installed there, its new tree will contain 112 rather than 124 rows;
+the import is valid but the legacy baseline remains absent. Do not copy the
+source-root-bound `audit_only` catalogue into a live session.

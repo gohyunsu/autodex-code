@@ -122,6 +122,11 @@ source-verified append-only promotion are complete. The older 12 candidates
 remain installed, and [all six full-pool catalogues](COLLISION_ONLY_CATALOGS.md)
 were regenerated, source-reopened and preflighted. Runtime selection does
 not imply robot motion or physical validation.
+The 112 new candidate directories are also packaged in a
+[source-verified NAS addendum](/mnt/paradex2/hyunsu/autodex_precision_insertion_cylinder_full_length_addendum_20261011_eb38993).
+Its 904 files passed NAS read-back SHA256 verification. The addendum is
+append-only and its catalogues are **audit-only** on another host; see the
+[handoff/install instructions](FULL_LENGTH_CYLINDER_PROPOSALS.md).
 
 The additional cylinder reset scans used independent BODex seeds and the
 original v8 full-key collision, squeeze-contact and MuJoCo stability filter:
