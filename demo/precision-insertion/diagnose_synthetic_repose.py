@@ -45,6 +45,20 @@ def _finite(value: float) -> float:
     return result
 
 
+def _optional_reset_fidelity(
+    drift_mm: float | None, axis_tilt_deg: float | None,
+) -> tuple[float | None, float | None]:
+    """Keep a historical diagnostic screen opt-in, never a default v8 gate."""
+    if (drift_mm is None) != (axis_tilt_deg is None):
+        raise ValueError("reset drift and axis tilt screens must be supplied together")
+    if drift_mm is None:
+        return None, None
+    if (not np.isfinite(drift_mm) or not np.isfinite(axis_tilt_deg) or
+            min(drift_mm, axis_tilt_deg) <= 0):
+        raise ValueError("optional reset fidelity screens must be positive")
+    return drift_mm / 1000., axis_tilt_deg
+
+
 @contextmanager
 def _capture_failed_stroke_state():
     """Observe, but do not change, the stock Jacobian collision verdict."""
@@ -146,8 +160,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--board-x-max-m", type=_finite, required=True)
     parser.add_argument("--board-y-min-m", type=_finite, required=True)
     parser.add_argument("--board-y-max-m", type=_finite, required=True)
-    parser.add_argument("--max-reset-drift-mm", type=_finite, required=True)
-    parser.add_argument("--max-reset-axis-tilt-deg", type=_finite, required=True)
+    parser.add_argument("--max-reset-drift-mm", type=_finite,
+                        help="optional extra grasp-fidelity screen; requires axis tilt")
+    parser.add_argument("--max-reset-axis-tilt-deg", type=_finite,
+                        help="optional extra grasp-fidelity screen; requires drift")
     parser.add_argument("--min-rest-socket-clearance-mm", type=_finite,
                         required=True)
     parser.add_argument("--min-board-edge-clearance-mm", type=_finite,
@@ -171,10 +187,14 @@ def main(argv: list[str] | None = None) -> int:
     if (args.board_x_min_m >= args.board_x_max_m or
             args.board_y_min_m >= args.board_y_max_m or
             args.max_seed_attempts < 1 or
-            min(args.max_reset_drift_mm, args.max_reset_axis_tilt_deg,
-                args.min_rest_socket_clearance_mm,
+            min(args.min_rest_socket_clearance_mm,
                 args.min_board_edge_clearance_mm) <= 0):
         parser.error("board bounds, seed budget and tolerances must be positive")
+    try:
+        reset_drift_m, reset_axis_tilt_deg = _optional_reset_fidelity(
+            args.max_reset_drift_mm, args.max_reset_axis_tilt_deg)
+    except ValueError as exc:
+        parser.error(str(exc))
     if ((args.retreat_goal_q_npy is None) !=
             (args.min_release_key_clearance_mm is None)):
         parser.error("release exit needs both retreat goal and key clearance")
@@ -269,10 +289,8 @@ def main(argv: list[str] | None = None) -> int:
                             key_capture_timestamp_s=2.0,
                             start_q_acquisition_timestamp_s=2.0,
                             max_state_skew_s=.1, max_pose_error_deg=10.,
-                            max_center_in_hand_drift_m=(
-                                args.max_reset_drift_mm / 1000.),
-                            max_symmetry_axis_tilt_deg=(
-                                args.max_reset_axis_tilt_deg),
+                            max_center_in_hand_drift_m=reset_drift_m,
+                            max_symmetry_axis_tilt_deg=reset_axis_tilt_deg,
                             minimum_rest_socket_clearance_m=(
                                 args.min_rest_socket_clearance_mm / 1000.),
                             minimum_board_edge_clearance_m=(
@@ -339,6 +357,11 @@ def main(argv: list[str] | None = None) -> int:
         "start_q_source": "stock_FR3_Inspire_diagnostic_home_not_measured",
         "board_source": "hypothetical_rectangle_not_measured_charuco",
         "limits_source": "exploratory_not_commissioned",
+        "optional_reset_fidelity_limits": (
+            None if args.max_reset_drift_mm is None else {
+                "max_center_in_hand_drift_mm": args.max_reset_drift_mm,
+                "max_symmetry_axis_tilt_deg": args.max_reset_axis_tilt_deg,
+            }),
         "result_status": result.status,
         "scope": "offline_planner_diagnostic_not_session_or_motion_authorization",
         "planner_log_sha256": _sha(output / "planner_stdout_stderr.txt"),
