@@ -1,0 +1,110 @@
+"""Choose directed v8 reset targets after the current key pose is exhausted.
+
+This keeps the original key XY as the first release site, then tries nearby
+cells. The existing socket-aware reset preflight—not this ranker—decides
+whether a site, grasp and complete release/exit path are feasible.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import math
+
+import numpy as np
+
+from autodex.utils.conversion import cart2se3
+
+
+class ReposeTargetsExhausted(RuntimeError):
+    """No untried target pose/height/release site remains this capture."""
+
+
+@dataclass
+class DirectedReposeTargetSelector:
+    """Rank known insertion poses and try one release site at a time."""
+
+    heights_cm: tuple[int, ...] = (12,)
+    xy_offsets_m: tuple[tuple[float, float], ...] = (
+        (0.0, 0.0), (0.03, 0.0), (-0.03, 0.0),
+        (0.0, 0.03), (0.0, -0.03))
+    _capture_id: str | None = field(default=None, init=False)
+    _choices: list[dict] = field(default_factory=list, init=False)
+    _index: int = field(default=-1, init=False)
+    _attempted: list[dict] = field(default_factory=list, init=False)
+
+    def __post_init__(self) -> None:
+        if (not self.heights_cm or
+                any(type(value) is not int or value not in (4, 8, 12)
+                    for value in self.heights_cm) or
+                len(set(self.heights_cm)) != len(self.heights_cm) or
+                not self.xy_offsets_m or
+                any(len(offset) != 2 or
+                    any(type(value) not in (int, float) or
+                        not math.isfinite(value) for value in offset)
+                    for offset in self.xy_offsets_m)):
+            raise ValueError("repose selector needs distinct v8 heights and finite XY cells")
+
+    def _start_capture(self, runner, latest) -> None:
+        trial = latest.preflight
+        source = trial.pose_class["stem"]
+        targets = tuple(trial.repose_target_stems)
+        if not targets or source in targets:
+            raise ValueError("exhausted pose has no distinct insertion target")
+        key_pose = np.asarray(cart2se3(np.asarray(
+            trial.trial_scene["mesh"]["target"]["pose"], dtype=float)),
+            dtype=float)
+        xy = key_pose[:2, 3]
+        if key_pose.shape != (4, 4) or not np.all(np.isfinite(xy)):
+            raise ValueError("repose needs the measured robot-frame key XY")
+        counts = {stem: 0 for stem in targets}
+        for row in runner.catalog["candidates"]:
+            stem = row.get("tabletop_pose_stem")
+            if stem in counts and row.get("eligible") is True:
+                counts[stem] += 1
+        ordered = sorted(targets, key=lambda stem: (-counts[stem], stem))
+        self._choices = [
+            {"to_pose_stem": stem, "height_cm": height,
+             "release_xy_robot_m": (float(xy[0] + dx), float(xy[1] + dy))}
+            for stem in ordered for height in self.heights_cm
+            for dx, dy in self.xy_offsets_m]
+        self._capture_id = latest.observation.capture_id
+        self._index = -1
+        self._attempted = []
+
+    def __call__(self, runner, decision, latest) -> dict:
+        capture_id = latest.observation.capture_id
+        if self._capture_id != capture_id:
+            self._start_capture(runner, latest)
+        if decision.action in {"continue_repose_seed_preflight",
+                               "preflight_repose_release"}:
+            if self._index < 0:
+                raise ValueError("repose continuation lacks its previous target")
+        elif decision.action in {"preflight_repose",
+                                 "preflight_alternative_repose_cell"}:
+            previous = (None if self._index < 0 else
+                        self._choices[self._index])
+            self._index += 1
+            # Missing directed seeds are independent of the release XY; do
+            # not repeat the same absent asset for every nearby site.
+            if (decision.action == "preflight_alternative_repose_cell" and
+                    decision.reason == "no_verified_reset_seed" and
+                    previous is not None):
+                while (self._index < len(self._choices) and
+                       self._choices[self._index]["to_pose_stem"] ==
+                       previous["to_pose_stem"] and
+                       self._choices[self._index]["height_cm"] ==
+                       previous["height_cm"]):
+                    self._index += 1
+        else:
+            raise ValueError("selector received a non-repose decision")
+        if self._index >= len(self._choices):
+            raise ReposeTargetsExhausted(
+                f"searched all {len(self._choices)} directed release choices")
+        selected = dict(self._choices[self._index])
+        if (decision.action in {"preflight_repose",
+                                "preflight_alternative_repose_cell"}):
+            self._attempted.append(selected)
+        return selected
+
+    def attempted_choices(self) -> tuple[dict, ...]:
+        return tuple(dict(row) for row in self._attempted)

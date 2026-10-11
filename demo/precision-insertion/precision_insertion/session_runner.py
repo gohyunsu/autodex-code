@@ -161,6 +161,7 @@ class SessionRunner:
         self._repose_preflight: ReposeTransitionPreflight | None = None
         self._repose_report_path: Path | None = None
         self._repose_index = 0
+        self._repose_search_exhausted = False
         self._same_capture_reset_rejects: set[tuple[int, str, str]] = set()
         self._key_evidence_dir: Path | None = None
         self._key_evidence_manifest_sha256: str | None = None
@@ -304,6 +305,9 @@ class SessionRunner:
                      "uncertainty_bounded_socket_endpoint_and_path_preflight"))
             return decide_after_attempt(
                 self._attempt, max_xy_retries=self.max_xy_retries)
+        if self._repose_search_exhausted:
+            return SessionDecision(
+                "stop_for_review", "directed_repose_targets_exhausted", None)
         if self._repose_preflight is not None:
             status = self._repose_preflight.status
             if status == "nominal_reset_preflight_pass_drop_unobserved":
@@ -481,6 +485,7 @@ class SessionRunner:
         self._measured_start_state_sha256 = state_sha256
         self._repose_preflight = None
         self._repose_report_path = None
+        self._repose_search_exhausted = False
         self._same_capture_reset_rejects.clear()
         self._key_evidence_dir = evidence_dir
         self._key_evidence_manifest_sha256 = hashlib.sha256(
@@ -607,6 +612,34 @@ class SessionRunner:
             "measured_start_state_sha256": state_hash,
             "key_evidence_manifest_sha256": self._key_evidence_manifest_sha256,
         }
+
+    def exhaust_repose_targets(self, attempted_choices: tuple[dict, ...]) -> None:
+        """End a finite directed-reset search without inventing a landing."""
+        decision = self.current_decision()
+        if (decision.action not in {
+                "preflight_repose", "continue_repose_seed_preflight",
+                "preflight_repose_release", "preflight_alternative_repose_cell"}
+                or self._attempt is not None or self._preflight is None or
+                not isinstance(attempted_choices, tuple)):
+            raise ValueError("repose exhaustion needs the active unexecuted key capture")
+        for choice in attempted_choices:
+            if (not isinstance(choice, dict) or
+                    set(choice) != {"to_pose_stem", "height_cm",
+                                    "release_xy_robot_m"} or
+                    choice["to_pose_stem"] not in
+                    self._preflight.repose_target_stems):
+                raise ValueError("repose search contains an unrelated target")
+        self._write_exclusive(
+            self.output_dir / "repose_targets_exhausted.json", {
+                "schema": "precision_insertion_repose_search_exhausted_v1",
+                "key_capture_id": self._capture_id,
+                "from_pose_stem": self._preflight.pose_class["stem"],
+                "attempted_choices": list(attempted_choices),
+                "last_decision": decision.to_record(),
+                "scope": "finite_nominal_repose_search_no_robot_motion",
+                "robot_ready": False,
+            })
+        self._repose_search_exhausted = True
 
     def preflight_repose(
         self, *, planner, key_observation: KeyPoseObservation,

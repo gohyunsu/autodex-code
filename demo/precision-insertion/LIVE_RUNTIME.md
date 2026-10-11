@@ -63,6 +63,19 @@ def build_components(live):
 This removes integration boilerplate; it does not synthesize camera frames,
 robot feedback, physical grasp calibration or an insertion controller.
 
+`LiveReposePlanningHandlers` now uses `DirectedReposeTargetSelector` by
+default. When a tabletop pose has no remaining usable grasp, it ranks the
+other v8 poses by eligible insertion-grasp count. It first tries the key's
+current robot-frame XY as the release site, then four nearby 30 mm cells at
+the v8 12 cm reset height. Each choice still goes through the existing
+socket-aware full pickup/held/release/clear-view preflight. Exhausting the
+finite choices writes `repose_targets_exhausted.json` and ends in
+`stop_for_review`, rather than planning the same failed reset forever.
+The handler defaults to AutoDex `FR3_CLEAR_VIEW` for the exit and 5 mm
+minimum release-key clearance; both can be overridden in its `parameters`.
+Set `reset_candidate_root` there to the **exact** installed `reset_12`
+directory if the curated v8 reset seeds are not at the canonical path.
+
 For VLM checkpoints, `make_checkpoint_capture` in
 `precision_insertion.checkpoint_camera` supplies the existing handlers'
 `(live, runner, decision)` callback. Its default `snapshot` transport uses
