@@ -43,6 +43,10 @@ class _Executor:
             raise RuntimeError("simulated contact abort")
         return np.full(6, 600.0)
 
+    def stop_and_acknowledge(self):
+        self.calls.append(("stop", {}))
+        return {"acknowledged": False}
+
 
 def _case(tmp_path, monkeypatch):
     monkeypatch.setattr(pickup_execution, "_wall_time", lambda: 101.1)
@@ -178,8 +182,25 @@ def test_failed_motor_call_is_logged_without_grasp_label(tmp_path, monkeypatch):
         execute_bound_pickup(**kwargs)
     log = json.loads((attempt_dir / "pickup_execution.json").read_text())
     assert log["status"] == "execution_or_feedback_failed"
+    assert log["stop_acknowledgement"]["acknowledged"] is False
     assert "grasp_success" not in log
     assert kwargs["runner"].active_attempt.events == []
+
+
+def test_failed_pickup_calls_available_stop_adapter(tmp_path, monkeypatch):
+    kwargs, _archive, attempt_dir = _case(tmp_path, monkeypatch)
+
+    class StoppableExecutor(_Executor):
+        def stop_and_acknowledge(self):
+            self.calls.append(("stop", {}))
+            return {"acknowledged": True}
+
+    kwargs["executor"] = StoppableExecutor(fail=True)
+    with pytest.raises(RuntimeError, match="simulated contact abort"):
+        execute_bound_pickup(**kwargs)
+    log = json.loads((attempt_dir / "pickup_execution.json").read_text())
+    assert log["stop_acknowledgement"] == {"acknowledged": True}
+    assert kwargs["executor"].calls[-1][0] == "stop"
 
 
 def test_post_command_feedback_mismatch_is_not_grasp_success(
@@ -189,7 +210,7 @@ def test_post_command_feedback_mismatch_is_not_grasp_success(
         102., np.full(7, .2), 600.)
     with pytest.raises(RuntimeError, match="post-squeeze"):
         execute_bound_pickup(**kwargs)
-    assert len(kwargs["executor"].calls) == 1
+    assert kwargs["executor"].calls[-1][0] == "stop"
     log = json.loads((attempt_dir / "pickup_execution.json").read_text())
     assert log["status"] == "execution_or_feedback_failed"
     assert log["post_state"]["full_q"][:7] == [.2] * 7

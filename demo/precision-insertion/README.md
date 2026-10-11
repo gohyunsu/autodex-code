@@ -2501,6 +2501,10 @@ The five return phases are logged without inventing an axial withdrawal.
 Suspected slip, incomplete transfer and other uncertain key states still
 require a supervised tabletop recovery record. Both routes end in a fresh
 key capture; only its observed landing label permits the next grasp.
+Stopped pickup/lift commands and unknown post-lift or pre-insertion VLM
+verdicts also use that supervised route. Their grasp/arrival labels remain
+unknown where appropriate; an unknown pre-insertion verdict is recorded so
+the session never repeats the already executed transfer.
 [`compose_live_handlers()`](precision_insertion/live_orchestration.py)
 requires exactly one handler for every nonterminal action before the
 session begins, so an absent robot-PC callback is visible before pickup.

@@ -44,6 +44,8 @@ TRUE_EVIDENCE = {
 }
 FAILURE_CODES = frozenset({
     "perception_unreliable", "grasp_miss", "slip",
+    "pickup_execution_failed", "post_squeeze_preflight_failed",
+    "lift_execution_failed",
     "transfer_unreachable", "transfer_collision", "preinsert_misaligned",
     "rim_jam", "depth_shortfall", "force_abort", "reset_failed",
 })

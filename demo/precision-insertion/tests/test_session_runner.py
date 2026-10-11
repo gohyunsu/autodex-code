@@ -1025,6 +1025,23 @@ def test_failed_insertion_auto_return_observation_restarts_with_fresh_key(
     assert saved["recovery_mode"] == "planned_held_return"
 
 
+def test_unknown_preinsert_checkpoint_routes_to_recovery_not_repeat_transfer(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        session_runner, "plan_admitted_key_trial",
+        lambda **kwargs: _report(runner, kwargs["key_observation"]))
+    _plan(runner, _observation("key_1", 10.0))
+    runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
+    runner.observe_stage("grasp_success", True, timestamp_s=10.3,
+                         evidence_refs=_bind_lift(runner))
+    _bind_postlift(runner)
+    runner.observe_stage(
+        "preinsert_reached", None, timestamp_s=10.4,
+        evidence_refs={"preinsert_checkpoint": "vlm/unknown.json"})
+    assert runner.current_decision().action == "recover_key_then_reobserve"
+
+
 def test_failed_return_plan_reuses_postlift_relation_and_frozen_world(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)

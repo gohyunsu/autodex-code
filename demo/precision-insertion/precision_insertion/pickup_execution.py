@@ -93,6 +93,8 @@ def execute_bound_pickup(
             not callable(read_post_state) or not callable(motion_interlock)):
         raise ValueError("pickup needs an active attempt and live interlock")
     _reject_known_stock_follower(executor)
+    if not callable(getattr(executor, "stop_and_acknowledge", None)):
+        raise TypeError("pickup adapter needs an acknowledged stop operation")
     attempt = runner.active_attempt
     trial = runner._preflight  # same demo's immutable, hash-bound selection
     if (attempt is None or not isinstance(trial, TrialPreflight) or
@@ -221,9 +223,21 @@ def execute_bound_pickup(
                   "completed_at_s": post.sample_timestamp_s,
                   "robot_ready": False}
     except Exception as exc:
+        stop = getattr(executor, "stop_and_acknowledge", None)
+        try:
+            stop_ack = (stop() if callable(stop) else
+                        {"acknowledged": False, "error": "no stop adapter"})
+        except Exception as stop_exc:
+            stop_ack = {"acknowledged": False, "error": str(stop_exc)}
+        if not isinstance(stop_ack, dict):
+            stop_ack = {"acknowledged": False,
+                        "error": "stop adapter returned no record"}
         failure = {**base, "status": "execution_or_feedback_failed",
                    "error_type": type(exc).__name__,
-                   "error": str(exc), "robot_ready": False}
+                   "error": str(exc), "robot_ready": False,
+                   "stop_acknowledgement": stop_ack,
+                   "robot_state_after_failure":
+                   "unknown_requires_supervised_recovery"}
         if raw is not None and raw.shape == (6,) and np.all(np.isfinite(raw)):
             failure["squeeze_action_raw"] = raw.tolist()
         if isinstance(post, LiveRobotState):

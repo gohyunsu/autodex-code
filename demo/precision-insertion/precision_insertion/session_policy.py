@@ -128,6 +128,16 @@ def decide_after_attempt(
         return result(
             "reobserve_key_and_preflight", "reset_observed",
             "fresh_key_pose", "fresh_robot_state")
+    if attempt.failure_code in {
+            "pickup_execution_failed", "post_squeeze_preflight_failed",
+            "lift_execution_failed"}:
+        if (labels["grasp_success"] is not None or
+                not any(event["stage"] == "grasp_success" and
+                        event["value"] is None for event in attempt.events)):
+            return result("stop_for_review", "motor_failure_lacks_unknown_grasp")
+        return result(
+            "recover_key_then_reobserve", attempt.failure_code,
+            "supervised_key_recovery", "fresh_key_pose")
     if labels["insertion_success"] is False:
         if attempt._pending_retry:
             return result(
@@ -175,7 +185,9 @@ def decide_after_attempt(
             "await_guarded_insertion_and_observation", "preinsert_hold_observed",
             "commissioned_contact_limits", "fresh_alignment_and_grip_check")
     if any(event["stage"] == "preinsert_reached" for event in attempt.events):
-        return result("stop_for_review", "preinsert_verdict_unknown")
+        return result(
+            "recover_key_then_reobserve", "preinsert_verdict_unknown",
+            "supervised_key_recovery", "fresh_key_pose")
     if labels["grasp_success"] is False:
         return result(
             "reobserve_key_and_preflight", "grasp_failed_try_next_candidate",
@@ -186,7 +198,9 @@ def decide_after_attempt(
             "fresh_multiview_key_pose", "measured_franka_inspire_state",
             "observed_key_hand_endpoint_and_held_path_preflight")
     if any(event["stage"] == "grasp_success" for event in attempt.events):
-        return result("stop_for_review", "grasp_verdict_unknown")
+        return result(
+            "recover_key_then_reobserve", "grasp_verdict_unknown",
+            "supervised_key_recovery", "fresh_key_pose")
     if candidate_id is None:
         if any(event["stage"] == "reorient_success" for event in attempt.events):
             return result("stop_for_review", "repose_verdict_unknown")

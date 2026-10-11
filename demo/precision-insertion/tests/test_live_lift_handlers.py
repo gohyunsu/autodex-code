@@ -1,6 +1,7 @@
 """A measured lift is assessed from fresh cameras, not a nominal plan."""
 
 from pathlib import Path
+import json
 import sys
 from types import SimpleNamespace
 
@@ -59,6 +60,7 @@ class Runner:
         self.events.append(("assess", kwargs))
         self.decision = SessionDecision(
             "held_relation_evidence_required", "lifted_key_observed", "table/0/3")
+        return SimpleNamespace(grasp_success=True)
 
 
 def _handler(tmp_path, *, enabled=True, cameras=("front", "side")):
@@ -127,6 +129,58 @@ def test_disabled_lift_does_not_capture_or_change_trial(tmp_path):
         bound.lift_and_observe(runner, runner.current_decision())
     assert runner.events == []
     assert runner.current_decision().action == "await_lift_observation"
+
+
+def test_acknowledged_lift_abort_routes_unknown_grasp_to_manual_recovery(
+        tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    stages = []
+    runner.observe_stage = lambda *args, **kwargs: stages.append((args, kwargs))
+    runner.record_failure = lambda *args, **kwargs: stages.append((args, kwargs))
+
+    def abort(**_kwargs):
+        path = tmp_path / "attempts/attempt_001/lift_failure.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({
+            "schema": "precision_insertion_lift_execution_v1",
+            "attempt_id": "attempt_001", "candidate_id": "table/0/3",
+            "status": "execution_or_feedback_failed",
+            "stop_acknowledgement": {"acknowledged": True},
+        }), encoding="utf-8")
+        raise RuntimeError("lift stopped")
+
+    monkeypatch.setattr(live_lift_handlers, "execute_bound_measured_lift",
+                        abort)
+    bound.lift_and_observe(runner, runner.current_decision())
+    assert stages[0][0] == ("grasp_success", None)
+    assert stages[1][0] == ("lift_execution_failed",)
+
+
+def test_vlm_abstention_is_recorded_once_for_supervised_recovery(
+        tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    runner._lift_assessment_index = 0
+    stages = []
+    runner.observe_stage = lambda *args, **kwargs: stages.append((args, kwargs))
+    monkeypatch.setattr(live_lift_handlers, "execute_bound_measured_lift",
+                        lambda **_kwargs: None)
+    monkeypatch.setattr(live_lift_handlers, "write_raw_camera_capture",
+                        lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(live_lift_handlers, "verify_raw_camera_capture",
+                        lambda *_args, **_kwargs: None)
+
+    def abstain(**_kwargs):
+        report = tmp_path / "attempts/attempt_001/lift_assessments/000/report.json"
+        report.parent.mkdir(parents=True)
+        report.write_text("{}", encoding="utf-8")
+        runner._lift_assessment_index += 1
+        return SimpleNamespace(grasp_success=None)
+
+    runner.prepare_raw_lift_label = abstain
+    bound.lift_and_observe(runner, runner.current_decision())
+    assert stages[0][0] == ("grasp_success", None)
+    assert stages[0][1]["evidence_refs"]["vlm_observation"].endswith(
+        "lift_assessments/000/report.json")
 
 
 def test_uncalibrated_camera_cannot_be_used_for_lift_label(

@@ -1,6 +1,7 @@
 """The live action loop uses the existing pickup and measured-lift boundary."""
 
 from pathlib import Path
+import json
 import sys
 from types import SimpleNamespace
 
@@ -114,6 +115,30 @@ def test_disabled_motion_does_not_open_an_attempt(tmp_path, monkeypatch):
         bound.begin_and_squeeze(runner, runner.current_decision())
     assert runner.events == []
     assert runner.current_decision().action == "execution_gate_required"
+
+
+def test_acknowledged_pickup_abort_routes_unknown_grasp_to_manual_recovery(
+        tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    stages = []
+    runner.observe_stage = lambda *args, **kwargs: stages.append((args, kwargs))
+    runner.record_failure = lambda *args, **kwargs: stages.append((args, kwargs))
+
+    def abort(**_kwargs):
+        path = tmp_path / "attempts/attempt_001/pickup_execution.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({
+            "schema": "precision_insertion_pickup_execution_v1",
+            "attempt_id": "attempt_001", "candidate_id": "table/0/3",
+            "status": "execution_or_feedback_failed",
+            "stop_acknowledgement": {"acknowledged": True},
+        }), encoding="utf-8")
+        raise RuntimeError("pickup stopped")
+
+    monkeypatch.setattr(live_pickup_handlers, "execute_bound_pickup", abort)
+    bound.begin_and_squeeze(runner, runner.current_decision())
+    assert stages[0][0] == ("grasp_success", None)
+    assert stages[1][0] == ("pickup_execution_failed",)
 
 
 def test_other_session_or_decision_never_starts_pickup(tmp_path):

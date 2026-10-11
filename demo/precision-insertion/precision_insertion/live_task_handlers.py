@@ -20,6 +20,7 @@ from .live_depth import prepare_live_depth_evidence
 from .raw_camera_capture import (
     RawCameraCapture, verify_raw_camera_capture, write_raw_camera_capture,
 )
+from .recoverable_failure import acknowledged_failure
 from .session_policy import SessionDecision
 from .transfer_execution import execute_bound_held_transfer
 
@@ -108,17 +109,11 @@ class LiveTaskHandlers:
             # held-key assumption is fabricated from a failed controller call.
             failure_path = (Path(runner.output_dir) / "attempts" /
                             attempt.attempt_id / "transfer_failure.json")
-            if not failure_path.is_file():
-                raise
-            failure = json.loads(failure_path.read_text(encoding="utf-8"))
-            if (failure.get("schema") !=
-                    "precision_insertion_transfer_execution_v1" or
-                    failure.get("attempt_id") != attempt.attempt_id or
-                    failure.get("candidate_id") != attempt.candidate_id or
-                    failure.get("status") != "execution_or_feedback_failed" or
-                    not isinstance(failure.get("stop_acknowledgement"), dict) or
-                    failure.get("stop_acknowledgement", {}).get(
-                        "acknowledged") is not True):
+            if not acknowledged_failure(
+                    failure_path,
+                    schema="precision_insertion_transfer_execution_v1",
+                    attempt_id=attempt.attempt_id,
+                    candidate_id=attempt.candidate_id):
                 raise
             runner.observe_stage(
                 "preinsert_reached", False,
@@ -137,19 +132,18 @@ class LiveTaskHandlers:
             raw_bundle=raw, transfer_execution_path=transfer_log,
             joint_sample=state, backend=self.backend,
             **dict(self.preinsert_parameters))
-        if checkpoint.preinsert_reached is not None:
-            report = runner._preinsert_report_path
-            refs = {
-                "postlift_preflight": str(runner._postlift_report_path),
-                "preinsert_checkpoint": str(report),
-                "trajectory": str(transfer_log),
-                "grasp_state": str(transfer_log),
-                "key_socket_pose": str(report),
-                "preinsert_image": str(raw / "manifest.json"),
-            }
-            runner.observe_stage(
-                "preinsert_reached", checkpoint.preinsert_reached,
-                timestamp_s=self.decision_time(), evidence_refs=refs)
+        report = runner._preinsert_report_path
+        refs = {
+            "postlift_preflight": str(runner._postlift_report_path),
+            "preinsert_checkpoint": str(report),
+            "trajectory": str(transfer_log),
+            "grasp_state": str(transfer_log),
+            "key_socket_pose": str(report),
+            "preinsert_image": str(raw / "manifest.json"),
+        }
+        runner.observe_stage(
+            "preinsert_reached", checkpoint.preinsert_reached,
+            timestamp_s=self.decision_time(), evidence_refs=refs)
         if checkpoint.preinsert_reached is True:
             self._preinsert_bundle = raw
             self._preinsert_attempt_id = attempt.attempt_id

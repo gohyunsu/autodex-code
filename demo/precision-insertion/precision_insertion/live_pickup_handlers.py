@@ -16,6 +16,7 @@ from uuid import uuid4
 from .action_loop import ActionHandler
 from .live_robot_state import LiveRobotState
 from .pickup_execution import PickupExecutionLimits, execute_bound_pickup
+from .recoverable_failure import acknowledged_failure
 from .session_policy import SessionDecision
 
 
@@ -48,12 +49,14 @@ class LivePickupHandlers:
     enable_robot_motion: bool = False
     attempt_id_factory: Callable[[], str] = lambda: f"attempt_{uuid4().hex}"
     started_at_factory: Callable[[], float] = time.time
+    decision_time: Callable[[], float] = time.time
 
     def __post_init__(self) -> None:
         if (not callable(self.read_state) or
                 not callable(self.motion_interlock) or
                 not callable(self.attempt_id_factory) or
                 not callable(self.started_at_factory) or
+                not callable(self.decision_time) or
                 not isinstance(self.pickup_limits, PickupExecutionLimits) or
                 not isinstance(self.measured_lift_parameters, Mapping)):
             raise TypeError("live pickup needs feedback, limits and an interlock")
@@ -85,23 +88,49 @@ class LivePickupHandlers:
             after = self.read_state()
             return after
 
-        execute_bound_pickup(
-            runner=runner, executor=self.executor, planner=self.planner,
-            pre_state=before, read_post_state=read_post_state,
-            limits=self.pickup_limits,
-            motion_interlock=self.motion_interlock,
-            enable_robot_motion=self.enable_robot_motion)
-        if not isinstance(after, LiveRobotState):
-            raise RuntimeError("pickup completed without measured squeeze feedback")
         pickup_log = (Path(runner.output_dir) / "attempts" /
                       attempt.attempt_id / "pickup_execution.json")
+        try:
+            execute_bound_pickup(
+                runner=runner, executor=self.executor, planner=self.planner,
+                pre_state=before, read_post_state=read_post_state,
+                limits=self.pickup_limits,
+                motion_interlock=self.motion_interlock,
+                enable_robot_motion=self.enable_robot_motion)
+        except Exception:
+            if not acknowledged_failure(
+                    pickup_log,
+                    schema="precision_insertion_pickup_execution_v1",
+                    attempt_id=attempt.attempt_id,
+                    candidate_id=attempt.candidate_id):
+                raise
+            self._route_supervised_recovery(
+                runner, code="pickup_execution_failed", evidence=pickup_log)
+            return
+        if not isinstance(after, LiveRobotState):
+            raise RuntimeError("pickup completed without measured squeeze feedback")
         chain = runner.prepare_measured_lift_chain(
             planner=self.planner, pickup_execution_log=pickup_log,
             joint_sample=after, bounds=self.lift_bounds,
             limits=self.path_limits,
             **dict(self.measured_lift_parameters))
         if chain.status != "sampled_measured_chain_pass":
-            raise ValueError(f"measured squeeze has no passing lift chain: {chain.status}")
+            report = runner._measured_lift_report_path
+            if report is None or not Path(report).is_file():
+                raise ValueError("rejected measured lift has no saved report")
+            self._route_supervised_recovery(
+                runner, code="post_squeeze_preflight_failed",
+                evidence=Path(report))
+
+    def _route_supervised_recovery(self, runner, *, code: str,
+                                   evidence: Path) -> None:
+        stamp = self.decision_time()
+        runner.observe_stage(
+            "grasp_success", None, timestamp_s=stamp,
+            evidence_refs={"aborted_attempt": str(evidence)})
+        runner.record_failure(
+            code, timestamp_s=stamp,
+            evidence_refs={"aborted_attempt": str(evidence)})
 
     def handlers(self) -> dict[str, ActionHandler]:
         return {"execution_gate_required": self.begin_and_squeeze}

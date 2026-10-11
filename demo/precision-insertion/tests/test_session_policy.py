@@ -124,7 +124,34 @@ def test_grasp_transfer_and_unknown_observations_branch_separately():
         "grasp_success", None, timestamp_s=2.0,
         evidence_refs={"vlm_observation": "vlm/occluded.json"})
     assert decide_after_attempt(
-        unknown, max_xy_retries=2).action == "stop_for_review"
+        unknown, max_xy_retries=2).action == "recover_key_then_reobserve"
+
+
+@pytest.mark.parametrize("code", [
+    "pickup_execution_failed", "post_squeeze_preflight_failed",
+    "lift_execution_failed",
+])
+def test_unknown_grasp_after_stopped_failure_requires_supervised_return(code):
+    attempt = _attempt()
+    attempt.record_stage(
+        "grasp_success", None, timestamp_s=2.0,
+        evidence_refs={"aborted_attempt": "robot/abort.json"})
+    attempt.record_failure(
+        code, timestamp_s=2.0,
+        evidence_refs={"aborted_attempt": "robot/abort.json"})
+    decision = decide_after_attempt(attempt, max_xy_retries=1)
+    assert decision.action == "recover_key_then_reobserve"
+    assert "supervised_key_recovery" in decision.required_before_motion
+
+
+def test_unknown_preinsert_does_not_repeat_same_transfer():
+    attempt = _attempt()
+    _grasp(attempt)
+    attempt.record_stage(
+        "preinsert_reached", None, timestamp_s=3.0,
+        evidence_refs={"preinsert_checkpoint": "vlm/unknown.json"})
+    assert decide_after_attempt(
+        attempt, max_xy_retries=1).action == "recover_key_then_reobserve"
 
 
 def test_failed_insertion_requires_withdrawal_then_bounded_1mm_retry():

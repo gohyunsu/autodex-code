@@ -28,13 +28,18 @@ socket capture and must return these ten components, all bound to that same
 8. `LiveTransferRecoveryHandlers` — optional planned held return when a
    completed transfer has measured hand-pose error but the pre-insertion VLM
    still sees the key matching the held prediction; supervised recovery for
-   suspected slip, abort or other uncertain states.
+   stopped pickup/lift/transfer, Qwen abstention, suspected slip or other
+   uncertain states.
 9. `LiveReposePlanningHandlers` — directed v8 reorient planning.
 10. `LiveReposeExecutionHandlers` — selected reset execution and new key pose.
 
 The handler composer rejects missing/duplicate actions before any grasp. The
 module should create one long-lived feedback sampler, one Qwen backend and
 commissioned robot-side adapters, then share them across the components.
+The pickup executor should implement `stop_and_acknowledge()` in addition to
+`execute(...)`; the lift and transfer adapters already need that stop method.
+Only an acknowledged stop enters the supervised-recovery action. Without one,
+the loop raises and does not move to another grasp.
 See [ACTION_LOOP.md](ACTION_LOOP.md) for each constructor's existing
 parameters and the exact decision-to-handler mapping. The `close` callback
 must release robot-side resources even if a handler raises. The demo closes

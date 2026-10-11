@@ -19,6 +19,7 @@ from .live_robot_state import LiveRobotState
 from .raw_camera_capture import (
     RawCameraCapture, verify_raw_camera_capture, write_raw_camera_capture,
 )
+from .recoverable_failure import acknowledged_failure
 from .session_policy import SessionDecision
 
 
@@ -84,12 +85,29 @@ class LiveLiftHandlers:
         if attempt is None or attempt.candidate_id != decision.candidate_id:
             raise ValueError("held lift has no selected v8 attempt")
         before = self.read_state()
-        execute_bound_measured_lift(
-            runner=runner, adapter=self.adapter, pre_state=before,
-            read_post_state=self.read_state, limits=self.limits,
-            commissioning_record_path=self.commissioning_record_path,
-            motion_interlock=self.motion_interlock,
-            enable_robot_motion=self.enable_robot_motion)
+        failure_path = (Path(runner.output_dir) / "attempts" /
+                        attempt.attempt_id / "lift_failure.json")
+        try:
+            execute_bound_measured_lift(
+                runner=runner, adapter=self.adapter, pre_state=before,
+                read_post_state=self.read_state, limits=self.limits,
+                commissioning_record_path=self.commissioning_record_path,
+                motion_interlock=self.motion_interlock,
+                enable_robot_motion=self.enable_robot_motion)
+        except Exception:
+            if not acknowledged_failure(
+                    failure_path,
+                    schema="precision_insertion_lift_execution_v1",
+                    attempt_id=attempt.attempt_id,
+                    candidate_id=attempt.candidate_id):
+                raise
+            stamp = self.decision_time()
+            refs = {"lift_failure": str(failure_path)}
+            runner.observe_stage("grasp_success", None,
+                                 timestamp_s=stamp, evidence_refs=refs)
+            runner.record_failure("lift_execution_failed",
+                                  timestamp_s=stamp, evidence_refs=refs)
+            return
         lift_log = (Path(runner.output_dir) / "attempts" /
                     attempt.attempt_id / "lift_execution.json")
         capture = self.capture_after_lift(self.live, runner, decision)
@@ -107,12 +125,25 @@ class LiveLiftHandlers:
         exposure_state = self.state_for_capture(capture)
         if not isinstance(exposure_state, LiveRobotState):
             raise TypeError("post-lift camera exposure lacks measured robot state")
-        runner.prepare_raw_lift_label(
+        assessment_index = getattr(runner, "_lift_assessment_index", None)
+        checkpoint = runner.prepare_raw_lift_label(
             after_raw_evidence_dir=evidence_dir,
             joint_sample=exposure_state, backend=self.backend,
             lift_execution_log_path=lift_log,
             decision_timestamp_s=self.decision_time(),
             **dict(self.assessment_parameters))
+        if checkpoint.grasp_success is None:
+            if type(assessment_index) is not int:
+                raise ValueError("unknown lift verdict lacks a saved assessment index")
+            report = (Path(runner.output_dir) / "attempts" /
+                      attempt.attempt_id / "lift_assessments" /
+                      f"{assessment_index:03d}" / "report.json")
+            if not report.is_file():
+                raise FileNotFoundError("unknown lift verdict lacks its VLM report")
+            runner.observe_stage(
+                "grasp_success", None, timestamp_s=self.decision_time(),
+                evidence_refs={"vlm_observation": str(report),
+                               "lift_execution": str(lift_log)})
 
     def handlers(self) -> dict[str, ActionHandler]:
         return {"await_lift_observation": self.lift_and_observe}

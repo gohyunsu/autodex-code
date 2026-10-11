@@ -3,7 +3,7 @@
 No key pose is inferred from an incomplete/aborted transfer. A completed held
 transfer with a failed visual arrival can use the existing socket-aware held
 return and release path. The fallback producer must write a supervised-reset
-record for an unknown key state.
+record for an unknown key state after pickup, lift or transfer.
 """
 
 from __future__ import annotations

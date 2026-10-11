@@ -257,7 +257,9 @@ class SessionRunner:
                     self._postlift_preflight.status ==
                     "sampled_postlift_preflight_pass" and
                     self._attempt.labels["grasp_success"] is True and
-                    self._attempt.labels["preinsert_reached"] is None):
+                    self._attempt.labels["preinsert_reached"] is None and
+                    not any(event["stage"] == "preinsert_reached"
+                            for event in self._attempt.events)):
                 if (self._postlift_report_path is None or
                         not self._postlift_report_path.is_file() or
                         self._postlift_report_sha256 is None or
