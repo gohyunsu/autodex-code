@@ -486,6 +486,15 @@ that session and catalogue. For each new key observation:
    the held-key admission prior must agree before the VLM is consulted.
    Only a passing result calls `record_retry` to log a pending retry; neither
    method sends the robot an XY command.
+   For a visible square key, the pending retry's saved non-contact transfer
+   can now be executed through
+   `execute_bound_observed_retry_transfer(...)`. It uses the same external
+   `follow_transfer` result contract as the first transfer and checks the
+   selected retry event, archive and measured arrival. **This is not yet
+   wired into the live square retry handler**: a fresh arrival observation,
+   guarded axial handoff and retry-specific final task label must follow
+   before the square retry is executable end to end. Do not use the transfer
+   result as an insertion-success label.
    If the withdrawn key is too occluded for another FoundPose estimate,
    `prepare_unobserved_xy_diagnostic` can instead save same-request raw
    camera frames, a measured 13-joint sample, the matching failed attempt,

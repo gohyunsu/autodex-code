@@ -60,6 +60,29 @@ def _source_records(result: dict) -> dict:
     return checked
 
 
+def verify_transfer_controller_result(
+    result: dict, *, trajectory_sha256: str, requested_at_s: float,
+    max_execution_duration_s: float,
+) -> tuple[float, float, dict]:
+    """Shared external-controller result contract for initial and XY transfer."""
+    if (not isinstance(result, dict) or
+            result.get("schema") !=
+            "precision_insertion_external_transfer_result_v1" or
+            result.get("trajectory_complete") is not True or
+            result.get("safety_abort") is not False or
+            result.get("grasp_held") is not True or
+            result.get("terminal_hold_acknowledged") is not True or
+            result.get("trajectory_sha256") != trajectory_sha256):
+        raise RuntimeError("guarded transfer controller did not complete safely")
+    begun = float(result["started_at_s"])
+    completed = float(result["completed_at_s"])
+    if (not all(math.isfinite(value) for value in (begun, completed)) or
+            not requested_at_s <= begun < completed or
+            completed - begun > max_execution_duration_s):
+        raise RuntimeError("guarded transfer completion times are invalid")
+    return begun, completed, _source_records(result)
+
+
 def execute_bound_held_transfer(
     *, runner: SessionRunner, adapter, pre_state: LiveRobotState,
     read_post_state: Callable[[], LiveRobotState],
@@ -179,23 +202,11 @@ def execute_bound_held_transfer(
             transfer.copy(), max_duration_s=limits.max_execution_duration_s,
             expected_hand_raw=pre_state.hand_raw_measured.copy(),
             trajectory_sha256=base["trajectory_sha256"])
-        if (not isinstance(result, dict) or
-                result.get("schema") !=
-                "precision_insertion_external_transfer_result_v1" or
-                result.get("trajectory_complete") is not True or
-                result.get("safety_abort") is not False or
-                result.get("grasp_held") is not True or
-                result.get("terminal_hold_acknowledged") is not True or
-                result.get("trajectory_sha256") != base["trajectory_sha256"]):
-            raise RuntimeError("guarded transfer controller did not complete safely")
-        begun = float(result["started_at_s"])
-        completed = float(result["completed_at_s"])
         requested = json.loads(started_path.read_text(encoding="utf-8"))["requested_at_s"]
-        if (not all(math.isfinite(value) for value in (begun, completed)) or
-                not requested <= begun < completed or
-                completed - begun > limits.max_execution_duration_s):
-            raise RuntimeError("guarded transfer completion times are invalid")
-        sources = _source_records(result)
+        begun, completed, sources = verify_transfer_controller_result(
+            result, trajectory_sha256=base["trajectory_sha256"],
+            requested_at_s=requested,
+            max_execution_duration_s=limits.max_execution_duration_s)
         post = read_post_state()
         if not isinstance(post, LiveRobotState):
             raise RuntimeError("held transfer has no measured final robot feedback")
