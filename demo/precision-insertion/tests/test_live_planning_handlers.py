@@ -111,7 +111,8 @@ def test_capture_then_continue_uses_same_key_and_measured_state(
     assert bound.latest.preflight.status == "sampled_planning_pass"
 
 
-def test_failed_grasp_reobserves_with_new_capture(tmp_path, monkeypatch):
+def test_verified_reset_reobserves_with_new_capture_without_repeating_recovery(
+        tmp_path, monkeypatch):
     runner = Runner(tmp_path / "session")
     live = _live(runner)
     captured = []
@@ -143,14 +144,11 @@ def test_failed_grasp_reobserves_with_new_capture(tmp_path, monkeypatch):
         capture_id_factory=lambda: next(ids))
     bound.capture_and_preflight(runner, runner.current_decision())
     runner.decision = SessionDecision(
-        "reobserve_key_and_preflight", "grasp_failed_try_next_candidate",
+        "reobserve_key_and_preflight", "reset_observed",
         "table/0/1")
     bound.capture_and_preflight(runner, runner.current_decision())
     assert captured == ["key_001", "key_002"]
-    assert len(recovery) == 1
-    assert recovery[0]["planner"] is bound.planner
-    assert recovery[0]["pickup_plan"].success is True
-    assert "fixture_socket" in recovery[0]["trial_scene"]["mesh"]
+    assert recovery == []
     assert bound.latest.observation.capture_id == "key_002"
 
 
@@ -188,7 +186,7 @@ def test_fresh_and_reobserved_key_check_clear_view_before_capture_and_exposure(
         key_parameters=PARAMETERS)
     bound.capture_and_preflight(runner, runner.current_decision())
     runner.decision = SessionDecision(
-        "reobserve_key_and_preflight", "grasp_failed_try_next_candidate",
+        "reobserve_key_and_preflight", "reset_observed",
         "table/0/1")
     bound.capture_and_preflight(runner, runner.current_decision())
     assert events == ["before", "capture", ("exposure", "key_exposure", False),

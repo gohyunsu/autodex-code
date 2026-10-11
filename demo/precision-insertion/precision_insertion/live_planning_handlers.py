@@ -63,9 +63,7 @@ class LiveKeyPlanningHandlers:
             raise TypeError("key planning needs feedback, IDs, prompt and parameters")
         if not callable(getattr(getattr(self.live, "clear_view", None),
                                 "before_key_capture", None)) or not callable(
-                getattr(self.live.clear_view, "verify_state", None)) or not callable(
-                getattr(self.live.clear_view,
-                        "prepare_failed_grasp_for_capture", None)):
+                getattr(self.live.clear_view, "verify_state", None)):
             raise TypeError("key planning needs a measured clear-view gate")
         parameters = dict(self.key_parameters)
         missing = _CONTINUATION_PARAMETERS - parameters.keys()
@@ -89,14 +87,6 @@ class LiveKeyPlanningHandlers:
         self._require_decision(
             runner, decision,
             frozenset({"capture_fresh_key", "reobserve_key_and_preflight"}))
-        if (decision.action == "reobserve_key_and_preflight" and
-                decision.reason == "grasp_failed_try_next_candidate"):
-            if self.latest is None:
-                raise ValueError("missed-grasp recovery lacks its selected AutoDex plan")
-            self.live.clear_view.prepare_failed_grasp_for_capture(
-                pickup_plan=self.latest.preflight.pickup_plan,
-                planner=self.planner,
-                trial_scene=self.latest.preflight.trial_scene)
         self.live.clear_view.before_key_capture()
         capture_id = self.capture_id_factory()
         launch = self.live.cameras.launch
