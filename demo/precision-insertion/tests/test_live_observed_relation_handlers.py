@@ -48,7 +48,12 @@ def test_observed_relation_uses_fresh_foundpose_and_measured_feedback(
                                "table/0/1")
     received = {}
     observed = SimpleNamespace(capture_id="held_1")
-    capture = SimpleNamespace(capture_id="held_1")
+    capture = SimpleNamespace(
+        capture_id="held_1", request_id=17,
+        images_bgr={camera: np.zeros((2, 2, 3), dtype=np.uint8)
+                    for camera in ("cam_a", "cam_b")},
+        frame_evidence={camera: {"frame_id": index}
+                        for index, camera in enumerate(("cam_a", "cam_b"), 1)})
     monkeypatch.setattr(module, "collect_key_capture",
                         lambda **kwargs: received.setdefault("capture", kwargs)
                         and capture)
@@ -88,8 +93,8 @@ def test_observed_relation_uses_fresh_foundpose_and_measured_feedback(
                 camera_ids=("cam_a", "cam_b"), capture_root=tmp_path,
                 view_limits=object())))
     handler = module.LiveObservedHeldRelationHandlers(
-        live=live, planner=object(), read_state=_sample,
-        state_for_observation=lambda observation: _sample(),
+        live=live, planner=object(),
+        state_for_capture=lambda raw: received.setdefault("raw", raw) and _sample(),
         key_prompt="blue key handle", path_limits=object(),
         capture_parameters=_capture_parameters(),
         parameters=_parameters(), capture_id_factory=lambda: "held_1")
@@ -97,6 +102,7 @@ def test_observed_relation_uses_fresh_foundpose_and_measured_feedback(
     assert received["capture"]["init_orchestrator"] is \
         live.cameras.init_orchestrator
     assert received["admit"]["candidate_pose_prior_world"].shape == (4, 4)
+    assert received["raw"].capture_id == "held_1"
     assert received["plan"]["key_observation"] is observed
     assert received["plan"]["joint_sample"].sample_timestamp_s == 100.
     assert received["verify"] == tmp_path / "held_key_captures" / "held_1"
@@ -124,8 +130,7 @@ def test_occluded_held_key_does_not_advance_to_transfer(monkeypatch, tmp_path):
                 camera_ids=("cam_a", "cam_b"), capture_root=tmp_path,
                 view_limits=object())))
     handler = module.LiveObservedHeldRelationHandlers(
-        live=live, planner=object(), read_state=_sample,
-        state_for_observation=lambda observation: _sample(),
+        live=live, planner=object(), state_for_capture=lambda raw: _sample(),
         key_prompt="blue key handle", path_limits=object(),
         capture_parameters=_capture_parameters(),
         parameters=_parameters(), capture_id_factory=lambda: "held_1")

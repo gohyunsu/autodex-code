@@ -20,6 +20,7 @@ from .key_perception import (
 )
 from .live_capture import collect_key_capture
 from .live_robot_state import LiveRobotState
+from .raw_camera_capture import RawCameraCapture
 from .session_policy import SessionDecision
 
 
@@ -48,8 +49,7 @@ class LiveObservedHeldRelationHandlers:
 
     live: object
     planner: object
-    read_state: Callable[[], LiveRobotState]
-    state_for_observation: Callable
+    state_for_capture: Callable[[RawCameraCapture], LiveRobotState]
     key_prompt: str
     path_limits: object
     capture_parameters: Mapping[str, object]
@@ -57,8 +57,7 @@ class LiveObservedHeldRelationHandlers:
     capture_id_factory: Callable[[], str] = lambda: f"held_{uuid4().hex}"
 
     def __post_init__(self) -> None:
-        if (not callable(self.read_state) or
-                not callable(self.state_for_observation) or
+        if (not callable(self.state_for_capture) or
                 not callable(self.capture_id_factory) or
                 not isinstance(self.key_prompt, str) or
                 not self.key_prompt.strip()):
@@ -85,15 +84,6 @@ class LiveObservedHeldRelationHandlers:
             raise ValueError("observed held relation belongs to another trial")
         launch = self.live.cameras.launch
         cameras = self.live.cameras
-        initial = self.read_state()
-        if not isinstance(initial, LiveRobotState):
-            raise TypeError("held-key prior needs measured robot feedback")
-        prior = runner.postlift_candidate_pose_prior(
-            planner=self.planner, joint_sample=initial,
-            max_arm_hand_skew_s=self.parameters["max_arm_hand_skew_s"],
-            max_hand_command_error_raw=(
-                self.parameters["max_hand_command_error_raw"]),
-            max_arm_velocity_rad_s=self.parameters["max_arm_velocity_rad_s"])
         capture_id = self.capture_id_factory()
         options = dict(self.capture_parameters)
         timeout = options.pop("capture_timeout_s")
@@ -106,6 +96,25 @@ class LiveObservedHeldRelationHandlers:
             acquisition_metadata_for_request=(
                 cameras.acquisition_metadata_for_request),
             timeout_s=timeout, image_write_timeout_s=write_timeout)
+        raw = RawCameraCapture(
+            capture_id=capture.capture_id,
+            request_id=capture.request_id,
+            images_bgr=capture.images_bgr,
+            frame_ids={camera: row["frame_id"]
+                       for camera, row in capture.frame_evidence.items()},
+            acquisition_metadata={
+                "request_id": capture.request_id,
+                "source": "camera_acquisition",
+                "frames": capture.frame_evidence})
+        measured = self.state_for_capture(raw)
+        if not isinstance(measured, LiveRobotState):
+            raise TypeError("held key exposure needs measured robot feedback")
+        prior = runner.postlift_candidate_pose_prior(
+            planner=self.planner, joint_sample=measured,
+            max_arm_hand_skew_s=self.parameters["max_arm_hand_skew_s"],
+            max_hand_command_error_raw=(
+                self.parameters["max_hand_command_error_raw"]),
+            max_arm_velocity_rad_s=self.parameters["max_arm_velocity_rad_s"])
         observation = admit_postlift_key_capture(
             capture=capture,
             init_orchestrator=cameras.init_orchestrator,
@@ -114,15 +123,12 @@ class LiveObservedHeldRelationHandlers:
             calibrated_camera_ids=set(launch.camera_ids),
             view_limits=launch.view_limits,
             candidate_pose_prior_world=prior,
-            measured_wrist_timestamp_s=initial.sample_timestamp_s,
+            measured_wrist_timestamp_s=measured.sample_timestamp_s,
             **options)
         evidence_dir = (Path(runner.output_dir) / "held_key_captures" /
                         capture_id)
         write_key_capture_artifacts(capture, observation, evidence_dir)
         verify_key_capture_artifacts(evidence_dir)
-        measured = self.state_for_observation(observation)
-        if not isinstance(measured, LiveRobotState):
-            raise TypeError("held key exposure needs measured robot feedback")
         result = runner.prepare_postlift_transfer(
             planner=self.planner, key_observation=observation,
             key_evidence_dir=evidence_dir, joint_sample=measured,

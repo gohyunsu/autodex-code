@@ -67,7 +67,9 @@ robot feedback, physical grasp calibration or an insertion controller.
 Set `held_relation_route="observed"` only when the held key is visible enough
 for a **new** multi-view FoundPose measurement after Qwen's positive lift
 label. This route uses the measured wrist plus selected v8 grasp solely as a
-loose search prior, then replans from the observed key–hand relation. Failed
+loose search prior; the wrist sample is selected from the buffered feedback
+at the new images' exposure time, not before the camera request. It then
+replans from the observed key–hand relation. Failed
 pose admission stops that attempt; it does not silently substitute the
 nominal BODex transform. The current grounded XY **retry** route still uses
 physical bounded-relation evidence, so run the observed route with
