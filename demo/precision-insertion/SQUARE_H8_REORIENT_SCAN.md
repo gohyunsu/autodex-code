@@ -37,6 +37,15 @@ physical repose. Changing the fidelity gate to admit this seed would require
 real pickup/release evidence; the scan does not justify doing so. `002→004`
 remains without a MuJoCo-stable seed in this finite batch.
 
+An additional *hypothetical*, known-pose Franka/fixture preflight admitted
+seed `66` for diagnosis only under widened, uncommissioned 6 mm / 15° bounds.
+At key XY `(0.40, 0.00)` m, socket XY `(0.60, 0.00)` m, and a proposed release
+XY `(0.45, 0.08)` m, it stopped at **`pickup_unreachable`** before lift,
+transfer or release. The saved [report](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/synthetic_repose_1_4_h8_seed66_20261011/report.json)
+proves only failure for this one illustrative layout/start state; it does not
+prove the seed is unreachable at every physical key location. In particular,
+the shorter release height has not produced a runnable reset route.
+
 Reproduce from the repository root using fresh output roots:
 
 ```bash
