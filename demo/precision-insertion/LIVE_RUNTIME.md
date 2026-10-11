@@ -152,9 +152,11 @@ Required recipient inputs remain distinct from code completeness:
   and FoundPose representations.
 - Acquisition-timestamped multi-view AutoDex cameras and exposure-aligned
   measured Franka/Inspire feedback.
-- Per-grasp physical held-relation calibration and commissioned pickup,
-  lift, transfer, lateral-shift, guarded-contact, withdrawal and reset
-  controllers with their independent execution records.
+- Either a per-grasp physical held-relation calibration, or a visible
+  post-lift multi-view key observation plus independently commissioned total
+  surface bounds; and commissioned pickup, lift, transfer, lateral-shift,
+  guarded-contact, withdrawal and reset controllers with their independent
+  execution records.
 - For a **positive 20 mm label**, the optional reviewed visual-depth error
   audit described in [DEPTH_ADMISSION.md](DEPTH_ADMISSION.md). Without it,
   unverified controller stroke depth remains diagnostic and a visually

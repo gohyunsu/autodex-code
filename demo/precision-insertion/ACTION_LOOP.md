@@ -17,7 +17,7 @@ using the existing demo functions before returning. For example:
 | `continue_candidate_preflight` | `runner.preflight_next_key()` on the *same* saved key capture and measured state, continuing a budget-limited prefix rather than falsely declaring pose exhaustion. |
 | `execution_gate_required` | [`LivePickupHandlers`](precision_insertion/live_pickup_handlers.py) starts the selected v8 attempt, calls the existing `execute_bound_pickup()` through a commissioned executor, and preflights lift from *measured* post-squeeze joints. It does not execute lift or write a grasp-success label. |
 | `await_lift_observation` | [`LiveLiftHandlers`](precision_insertion/live_lift_handlers.py) runs the saved measured-start lift through a commissioned adapter, captures fresh raw frames from the *same* AutoDex cameras, and calls `runner.prepare_raw_lift_label()` with a Qwen-compatible backend. The runner records a grasp label only for a decisive visual checkpoint. |
-| `postlift_observed_preflight_required`, `held_relation_evidence_required` | A visible independent key pose can use `runner.prepare_postlift_transfer()`. For the occluded-key/raw-Qwen case, [`LiveHeldRelationHandlers`](precision_insertion/live_held_relation_handlers.py) selects that *grasp's* physical key/hand calibration and calls `runner.prepare_bounded_postlift_transfer()` from fresh measured joints. It never substitutes the MuJoCo squeeze pose. |
+| `held_relation_evidence_required` | Choose one handler at assembly: [`LiveObservedHeldRelationHandlers`](precision_insertion/live_observed_relation_handlers.py) uses a fresh visible multi-view key pose and measured wrist; [`LiveHeldRelationHandlers`](precision_insertion/live_held_relation_handlers.py) uses the selected grasp's physical calibration when the key is occluded. Neither substitutes the MuJoCo squeeze pose. |
 | `transfer_execution_gate_required` | [`LiveTaskHandlers`](precision_insertion/live_task_handlers.py) runs the existing bound held-transfer executor, captures the pre-insertion hold on the same AutoDex cameras, and records `preinsert_reached` through the runner's existing Qwen checkpoint. |
 | `await_guarded_insertion_and_observation` | The same handler prepares the axial handoff, runs the existing commissioned guarded stroke, captures final/abort views, then invokes `runner.prepare_observed_insertion_label()` using the controller's metric record. Only this checkpoint may set `insertion_success`. |
 | `guarded_withdrawal_then_xy_assessment` | [`LiveGroundedRetryHandlers`](precision_insertion/live_retry_handlers.py) withdraws the still-held key, obtains same-session multi-view tip/axis images, computes a bounded socket-frame XY correction, plans and executes one lateral hold shift, reobserves it, replans 20 mm axial insertion and records a pending retry. Abstention or a rejected plan routes to held-key return. |
@@ -71,6 +71,13 @@ grasp and mode. The runner verifies its source samples, candidate and saved
 lift checkpoint before planning a bounded transfer. No such calibration
 has been found in the local shared assets, so this branch cannot yet advance
 on real data; a simulated squeeze transform is not an acceptable substitute.
+For a visible key, select `held_relation_route="observed"` in
+`assemble_live_components()`. Its separate handler captures the key after
+lift, aligns the measured wrist to the image exposure, and replans transfer
+from the observed relation. The same grounded 1 mm retry path now accepts
+that relation if the operator supplies a commissioned total key/hand surface
+bound that includes visual estimation error. Failed pose admission or an
+under-bounded retry does not fall back to the nominal BODex relation.
 
 [`LiveTaskHandlers`](precision_insertion/live_task_handlers.py) connects the
 first non-contact transfer and 20 mm guarded insertion to their existing
@@ -240,11 +247,10 @@ camera, planner, prompt and limit objects supplied above, for example
 `pickup_execution_limits`, `measured_surface_deviation_bounds` and
 `commissioned_measured_lift_parameters` from the robot PC. Without them,
 omit `pickup.handlers()` and the loop stops at `execution_gate_required`.
-With them, and commissioned lift/camera callbacks, the next unimplemented
-boundary after a positive grasp label and passing physical held relation is
-transfer execution. Transfer, insertion, guarded
-withdrawal, independent controller logging, VLM observation and repose
-execution remain AutoDex-PC integration work. The judged grasp-miss clear-view
+The subsequent transfer, guarded insertion, withdrawal, retry, reset and
+repose boundaries are now connected as handlers in the demo; their real
+controllers, independent execution logs and camera callbacks remain
+AutoDex-PC integration work. The judged grasp-miss clear-view
 reset is connected; the held-key return handler can be composed as shown
 below once its commissioned callbacks exist. Returning from
 `run_live_precision_session()` closes the cameras and loses the in-memory
