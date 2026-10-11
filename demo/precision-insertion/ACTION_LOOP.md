@@ -25,6 +25,16 @@ using the existing demo functions before returning. For example:
 | `preflight_repose`, `continue_repose_seed_preflight`, `preflight_repose_release`, `preflight_alternative_repose_cell` | Use the same captured key and `runner.preflight_repose()` with directed v8 reset seeds; a staged seed alone is not a plan. |
 | `repose_execution_gate_required`, `await_repose_observation` | Execute a commissioned reset plan, observe the landed tabletop pose, and record `reorient_success` before a fresh key capture. |
 
+The first two rows are now implemented as
+[`LiveKeyPlanningHandlers`](precision_insertion/live_planning_handlers.py).
+It obtains capture IDs and uses the *same* `live.cameras` context and frozen
+runner for every new key. A pilot prefix continues from its saved
+`PreparedLiveKeyTrial` without another camera exposure; the runner retains
+its exclusions and checks that the key/state record is the same. The caller
+must supply a running exposure-time feedback sampler, AutoDex planner,
+`PathAuditLimits`, a specific key prompt and the numeric keyword arguments
+of `prepare_next_live_key()`. No default measurement thresholds are invented.
+
 `stop_for_review` and `hold_for_supervised_completion` are terminal for this
 loop. Recovery/reset actions not listed above still need explicit handlers;
 otherwise the result is `needs_handler`. There is no default robot-motion
@@ -42,17 +52,17 @@ camera, planner, feedback, Qwen and motion adapters):
 ```python
 from pathlib import Path
 from precision_insertion.live_orchestration import run_live_precision_session
+from precision_insertion.live_planning_handlers import LiveKeyPlanningHandlers
 
 def build_handlers(live):
-    # Each function takes (runner, decision) and calls the named existing
-    # capture/planning/execution/observation boundary. Supply only handlers
-    # implemented and commissioned on this AutoDex PC.
-    return {
-        "capture_fresh_key": capture_and_preflight,
-        "reobserve_key_and_preflight": capture_and_preflight,
-        "await_lift_observation": lift_and_observe,
-        # Add each remaining required action before unattended operation.
-    }
+    planning = LiveKeyPlanningHandlers(
+        live=live, planner=planner,
+        state_for_observation=feedback_sampler.state_for_observation,
+        limits=path_audit_limits,
+        key_prompt="blue precision key on the board, excluding the fixed red socket",
+        key_parameters=commissioned_key_parameters,
+    )
+    return planning.handlers()
 
 result = run_live_precision_session(
     launch_config_path=Path("/absolute/commissioned_session_launch.json"),
@@ -63,8 +73,15 @@ result = run_live_precision_session(
 print(result.to_record())
 ```
 
-The names `capture_and_preflight` and `lift_and_observe` above are **operator
-integration placeholders**, not provided functions. This API connects the
-stage order and camera lifetime; it does not claim a packaged hardware
-executor or a complete live trial. A passing offline endpoint catalogue and
-synthetic plan are not physical-success evidence.
+`planner`, `feedback_sampler`, `path_audit_limits` and
+`commissioned_key_parameters` are **operator-supplied values**. The feedback
+sampler must already run before the key exposure; configure it as shown in
+the main [README](README.md). `commissioned_key_parameters` contains the
+threshold arguments of `prepare_next_live_key()` other than the session,
+camera, planner, prompt and limit objects supplied above, for example
+`max_key_state_skew_s`, `max_pose_error_deg` and
+`axial_waypoint_step_m`. With only these three handlers the loop stops at
+`execution_gate_required` (or a repose decision) and reports
+`needs_handler`; it **does not** pick up the key. The motion/VLM/reset
+handlers are still AutoDex-PC integration work. A passing offline endpoint
+catalogue and synthetic plan are not physical-success evidence.

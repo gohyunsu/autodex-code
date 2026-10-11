@@ -2415,10 +2415,13 @@ For a repeated session, [`run_live_precision_session()`](precision_insertion/liv
 now keeps this same camera context open while the demo-local
 [`run_session_actions()`](precision_insertion/action_loop.py) dispatches the
 runner's existing decisions. See [action-loop integration](ACTION_LOOP.md)
-for the handler contract and routing. A missing handler returns
+for the handler contract and routing. The new
+[`LiveKeyPlanningHandlers`](precision_insertion/live_planning_handlers.py)
+connects fresh key capture, complete v8 preflight and same-capture candidate
+continuation without additional camera or robot-policy code. A missing handler returns
 `needs_handler` at the exact pending phase; no trial result or robot command
-is invented. The AutoDex-PC motion, capture and observation handlers are
-**not bundled**, so this is not yet an unattended robot loop.
+is invented. The AutoDex-PC physical motion, post-motion VLM observation and
+reset handlers are **not bundled**, so this is not yet an unattended robot loop.
 
 `board_snap` and `init` are the metadata-preserving adapters described in
 [CAMERA_FRAME_HANDOFF.md](CAMERA_FRAME_HANDOFF.md); all `commissioned_*`
