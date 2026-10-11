@@ -26,10 +26,10 @@ def _catalog_path(root: Path, family: str, gap: float) -> Path:
     base = root / "AutoDex/precision_insertion"
     if family == "cylinder":
         return (base / "cylindrical" /
-                f"endpoint_catalog_current_gap_{int(gap)}mm_20261011_stock_schema3.json")
+                f"endpoint_catalog_full_length_collision_only_gap_{int(gap)}mm_20261011.json")
     name = str(gap).replace(".", "p")
     return (base / "endpoint_catalogs" /
-            f"square_{name}mm_20261011_fullkey1000_schema3.json")
+            f"square_{name}mm_20261011_collision_only.json")
 
 
 def _reset_root(root: Path, family: str, gap: float) -> Path | None:
@@ -92,24 +92,20 @@ def build_profile(root: Path) -> dict:
         assert reset_root is not None
         audit = audit_v8_reorient_assets(
             shared_root=root, mode=select_mode(family, gap),
-            candidate_root=reset_root,
-            max_center_in_hand_drift_m=.005,
-            max_symmetry_axis_tilt_deg=10.)
+            candidate_root=reset_root)
         key = "square_0p5" if family == "square" and gap == 0.5 else family
         reset_audits[key] = {
             "candidate_root": str(reset_root / "reset_12"),
-            "diagnostic_fidelity_only": {"drift_mm": 5, "rotation_deg": 10},
+            "fidelity_threshold_applied": False,
             "directed_cells": [
                 {"from_pose": row["from_v8_pose"],
                  "to_pose": row["to_v8_pose"],
                  "mujoco_stable_12cm": row[
-                     "stable_reset_seed_counts_by_height_cm"]["12"],
-                 "fidelity_eligible_12cm": row[
-                     "fidelity_eligible_seed_counts_by_height_cm"]["12"]}
+                     "stable_reset_seed_counts_by_height_cm"]["12"]}
                 for row in audit["directed_pairs"]],
         }
     return {
-        "schema": "precision_insertion_offline_asset_profile_v1",
+        "schema": "precision_insertion_offline_asset_profile_v2",
         "shared_root": str(root), "modes": modes,
         "reorient": reset_audits,
         "scope": "offline_files_and_verified_source_seeds_only",
