@@ -184,13 +184,19 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             shared.update(
                 state_for_observation=core.sampler.state_for_observation,
                 state_for_capture=core.sampler.state_for_capture)
+        stages = _with_checkpoint_captures(
+            parameters["stages"], vlm["capture_timeout_s"],
+            family=getattr(getattr(getattr(
+                getattr(live, "opened", None), "runner", None),
+                "mode", None), "family", None))
+        if "pickup" in stages and "executor" not in stages["pickup"]:
+            # Use the same FR3 connection as clear-view and measured state.
+            # This is the demo's completion-checked stock subclass; the
+            # robot-PC factory still supplies the motion interlock and limits.
+            stages["pickup"]["executor"] = core.executor
         return assemble_live_components(
             live, shared=shared,
-            stages=_with_checkpoint_captures(
-                parameters["stages"], vlm["capture_timeout_s"],
-                family=getattr(getattr(getattr(
-                    getattr(live, "opened", None), "runner", None),
-                    "mode", None), "family", None)),
+            stages=stages,
             enable_robot_motion=options.enable_robot_motion,
             held_relation_route=parameters.get("held_relation_route", "physical"))
 

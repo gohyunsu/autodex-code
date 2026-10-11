@@ -76,6 +76,30 @@ def test_franka_integration_reuses_core_and_existing_stage_assembly(
     assert events[-1] == "close"
 
 
+@pytest.mark.parametrize("override", [False, True])
+def test_franka_integration_reuses_checked_core_for_pickup_unless_overridden(
+        monkeypatch, tmp_path, override):
+    core = SimpleNamespace(
+        clear_view=object(), planner=object(), executor=object(),
+        read_state=lambda: None, sampler=None, close=lambda: None)
+    monkeypatch.setattr(franka_integration, "open_franka_core", lambda _: core)
+    module = ModuleType("robot_pc_stages")
+    external = object()
+    module.configure = lambda *_: {
+        "shared": {"backend": object()},
+        "stages": {"pickup": {"executor": external} if override else {}}}
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+
+    def assemble(_live, **kwargs):
+        assert kwargs["stages"]["pickup"]["executor"] is (
+            external if override else core.executor)
+        return ()
+
+    monkeypatch.setattr(franka_integration, "assemble_live_components", assemble)
+    integration = franka_integration.factory(_options(tmp_path, _config()))
+    integration.build_components(object())
+
+
 def test_invalid_stage_factory_fails_before_robot_connection(monkeypatch, tmp_path):
     events = []
     monkeypatch.setattr(franka_integration, "open_franka_core",

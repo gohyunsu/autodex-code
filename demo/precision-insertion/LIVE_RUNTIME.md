@@ -109,8 +109,12 @@ or guarantee that a full-resolution two-image call fits the robot PC GPU.
 long-lived feedback sampler before camera capture and also injects
 `state_for_observation` and `state_for_capture`. It records moving samples
 without killing the thread, but image lookups still require a stationary
-Franka/Inspire hold throughout exposure. The stage factory supplies the
-remaining commissioned pickup, contact, recovery and repose callbacks.
+Franka/Inspire hold throughout exposure. The stage factory may omit
+`pickup.executor`: the integration then passes the same demo-local
+completion-checked FR3 executor used for clear-view and feedback. It must
+still supply pickup limits and a real motion interlock; the subclass does
+not replace a robot-side watchdog or physical review. The stage factory
+supplies the remaining commissioned contact, recovery and repose callbacks.
 
 For the default physical held-relation route, the stage factory may omit
 `held_relation.calibration_for_candidate`: assembly then looks for the exact
