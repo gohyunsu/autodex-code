@@ -83,5 +83,9 @@ camera, planner, prompt and limit objects supplied above, for example
 `axial_waypoint_step_m`. With only these three handlers the loop stops at
 `execution_gate_required` (or a repose decision) and reports
 `needs_handler`; it **does not** pick up the key. The motion/VLM/reset
-handlers are still AutoDex-PC integration work. A passing offline endpoint
+handlers are still AutoDex-PC integration work. Returning from
+`run_live_precision_session()` closes the cameras and loses the in-memory
+runner, so `needs_handler` is a diagnostic stop, **not** a resumable paused
+trial. Supply the remaining handlers before starting a physical session.
+A passing offline endpoint
 catalogue and synthetic plan are not physical-success evidence.
