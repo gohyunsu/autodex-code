@@ -53,8 +53,9 @@ inventory appear complete.
 The **code** now has a demo-local live action loop and stage handlers for
 pickup, lift, transfer, first guarded insertion, one grounded XY retry,
 held-key return, transfer-recovery observation and directed repose. The
-`run_auto.py` CLI itself still only opens an evidence ledger; the live loop
-is a Python API requiring AutoDex-PC callbacks and independently commissioned
-controllers. An optional replayable depth-admission path exists, but no real
+`run_auto.py` CLI itself still only opens an evidence ledger; the new
+[`run_live.py`](run_live.py) CLI drives the live loop through an explicit
+AutoDex-PC integration module and independently commissioned controllers.
+An optional replayable depth-admission path exists, but no real
 held-out depth audit or reviewed calibration is installed. These are runtime
 integration/measurement gaps, not missing 3D meshes.

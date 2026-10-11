@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Independent precision-insertion entry point; no robot connection.
+"""Offline precision-insertion asset, perception and planning commands.
 
-Robot execution will be added only after the live-path preflight and guarded
-controller are commissioned. The saved-trial planner never sends commands.
+This entry point never connects to the robot. The separate demo-local
+``run_live.py`` owns the opt-in session action loop on the AutoDex PC.
 """
 
 from __future__ import annotations

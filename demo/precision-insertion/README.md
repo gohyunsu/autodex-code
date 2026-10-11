@@ -1,5 +1,10 @@
 # Precision insertion demo
 
+For the complete AutoDex-PC execution entry point and required integration
+module, see [LIVE_RUNTIME.md](LIVE_RUNTIME.md). `run_live.py` keeps all
+precision-specific robot-loop code under this demo; stock AutoDex execution
+files remain unchanged.
+
 For a concise distinction between **offline-usable**, staging-only and
 missing assets, see [OFFLINE_ASSET_STATUS.md](OFFLINE_ASSET_STATUS.md). It
 does not treat live-camera/robot commissioning as a missing 3D file.

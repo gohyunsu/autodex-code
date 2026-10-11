@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""Run one precision-insertion session with an AutoDex-PC integration module.
+
+This CLI is intentionally opt-in for robot motion. It calls the demo-local
+session loop, not stock run_pipeline.py or run_auto.py. The integration module
+supplies commissioned robot/camera adapters and all ten action components.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import sys
+
+DEMO_DIR = Path(__file__).resolve().parent
+if str(DEMO_DIR) not in sys.path:
+    sys.path.insert(0, str(DEMO_DIR))
+
+from precision_insertion.live_runtime import (  # noqa: E402
+    RunLiveOptions, run_integrated_live_session,
+)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--launch-config", type=Path, required=True)
+    parser.add_argument("--endpoint-catalog", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--integration", required=True,
+                        help="importable AutoDex-PC module:factory")
+    parser.add_argument("--max-xy-retries", type=int, choices=(0, 1), default=1)
+    parser.add_argument("--max-steps", type=int, default=100)
+    parser.add_argument("--enable-robot-motion", action="store_true",
+                        help="required: initial clear-view and trial motions")
+    args = parser.parse_args(argv)
+    options = RunLiveOptions(
+        launch_config_path=args.launch_config,
+        endpoint_catalog_path=args.endpoint_catalog,
+        run_output_dir=args.output_dir,
+        max_xy_retries=args.max_xy_retries,
+        max_steps=args.max_steps,
+        enable_robot_motion=args.enable_robot_motion)
+    result = run_integrated_live_session(
+        options, integration_spec=args.integration)
+    payload = result.to_record()
+    output = options.run_output_dir.expanduser().resolve()
+    report_path = output / "action_loop_result.json"
+    with report_path.open("x", encoding="utf-8") as stream:
+        json.dump(payload, stream, indent=2, sort_keys=True, allow_nan=False)
+        stream.write("\n")
+    print(json.dumps({"result": payload, "report_path": str(report_path)},
+                     indent=2, sort_keys=True))
+    return 0 if result.status == "success" else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
