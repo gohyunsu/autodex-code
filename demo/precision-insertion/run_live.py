@@ -34,7 +34,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="importable AutoDex-PC module:factory")
     parser.add_argument("--robot-config", type=Path,
                         help="FR3 config for precision_insertion.franka_integration:factory")
-    parser.add_argument("--max-xy-retries", type=int, choices=(0, 1), default=1)
+    parser.add_argument(
+        "--max-xy-retries", type=int, default=1,
+        help="number of failed-trial XY advisories allowed for fresh physical pickups")
+    parser.add_argument(
+        "--xy-update-weight", type=float, default=1.0,
+        help="gain applied to each failed-trial XY residual before adding to the next trial (default: 1.0)")
     parser.add_argument("--max-steps", type=int, default=100)
     parser.add_argument("--label-mode", choices=(
         "vlm_only", "manual", "evidence_fused"), default="vlm_only",
@@ -48,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         endpoint_catalog_path=args.endpoint_catalog,
         run_output_dir=args.output_dir,
         max_xy_retries=args.max_xy_retries,
+        xy_update_weight=args.xy_update_weight,
         max_steps=args.max_steps,
         enable_robot_motion=args.enable_robot_motion,
         robot_config_path=args.robot_config,

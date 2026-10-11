@@ -40,11 +40,7 @@ _CHECKPOINT_CAPTURES = {
     "lift": {"capture_after_lift": "after_lift"},
     "task": {"capture_preinsert": "preinsert",
              "capture_final": "final_or_abort"},
-    "retry": {"capture_withdrawn": "preinsert",
-              "capture_postshift": "post_lateral_hold",
-              "capture_arrival": "preinsert",
-              "capture_preinsert": "preinsert",
-              "capture_final": "final_or_abort"},
+    "retry": {"capture_withdrawn": "preinsert"},
 }
 
 
@@ -79,10 +75,7 @@ def _with_checkpoint_captures(
     for stage_name, configured in _CHECKPOINT_CAPTURES.items():
         if stage_name not in result:
             continue
-        captures = ({"capture_arrival": "preinsert",
-                     "capture_final": "final_or_abort"}
-                    if family == "square" and stage_name == "retry" else
-                    configured)
+        captures = configured
         for field, phase in captures.items():
             if field not in result[stage_name]:
                 result[stage_name][field] = make_checkpoint_capture(
@@ -225,12 +218,9 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             # robot-PC factory still supplies the motion interlock and limits.
             stages["pickup"]["executor"] = core.executor
         assignments = (
-            [("lift", "adapter"), ("task", "transfer_adapter"),
-             ("retry", "transfer_adapter")]
+            [("lift", "adapter"), ("task", "transfer_adapter")]
             if held_motion_monitor is not None else
             [("lift", "adapter")])
-        if held_motion_monitor is not None and family == "cylinder":
-            assignments.append(("retry", "lateral_adapter"))
         monitor = held_motion_monitor or lift_monitor
         missing = [(stage, field) for stage, field in assignments
                    if stage in stages and field not in stages[stage]]

@@ -101,23 +101,34 @@ def test_default_physical_calibration_lookup_is_grasp_and_mode_specific(tmp_path
         "table/0/184/physical_grasp_calibration.json")
 
 
-def test_square_session_selects_observed_xy_retry_handler(monkeypatch):
+def test_cylinder_live_uses_physical_relation_for_cumulative_xy(monkeypatch):
+    from precision_insertion.config import select_mode
+
+    _fake_classes(monkeypatch)
+    live = SimpleNamespace(opened=SimpleNamespace(runner=SimpleNamespace(
+        mode=select_mode("cylinder", 20))))
+    stages = {name: {} for name in runtime_assembly.STAGE_CLASSES}
+    with pytest.raises(ValueError, match="physical held-relation"):
+        runtime_assembly.assemble_live_components(
+            live, shared={"planner": object()}, stages=stages,
+            enable_robot_motion=True, held_relation_route="observed")
+
+
+def test_square_session_uses_same_metric_retry_handler(monkeypatch):
     from precision_insertion.config import select_mode
 
     _fake_classes(monkeypatch)
     monkeypatch.setattr(runtime_assembly,
                         "LiveObservedHeldRelationHandlers", _ObservedStage)
-    monkeypatch.setattr(runtime_assembly,
-                        "LiveObservedXYRetryHandlers", _ObservedStage)
     live = SimpleNamespace(opened=SimpleNamespace(runner=SimpleNamespace(
         mode=select_mode("square", 1.5))))
     stages = {name: {} for name in runtime_assembly.STAGE_CLASSES}
     physically_calibrated = runtime_assembly.assemble_live_components(
         live, shared={"planner": object()}, stages=stages,
         enable_robot_motion=True)
-    assert isinstance(physically_calibrated[5], _ObservedStage)
+    assert isinstance(physically_calibrated[5], _Stage)
     assert isinstance(physically_calibrated[3], _Stage)
     components = runtime_assembly.assemble_live_components(
         live, shared={"planner": object()}, stages=stages,
         enable_robot_motion=True, held_relation_route="observed")
-    assert isinstance(components[5], _ObservedStage)
+    assert isinstance(components[5], _Stage)

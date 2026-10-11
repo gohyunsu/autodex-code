@@ -77,6 +77,7 @@ def preflight_endpoint_catalog_file(
 def open_verified_session(
     *, mode: TaskMode, shared_root: Path, evidence_dir: Path,
     catalog_path: Path, output_dir: Path, max_xy_retries: int,
+    xy_update_weight: float = 1.0,
 ) -> OpenedPrecisionSession:
     """Fail before creating a run if camera/fixture/candidate evidence is stale.
 
@@ -138,7 +139,8 @@ def open_verified_session(
     runner = SessionRunner(
         mode=mode, calibration=calibration, catalog=catalog,
         shared_root=root, output_dir=target,
-        max_xy_retries=max_xy_retries)
+        max_xy_retries=max_xy_retries,
+        xy_update_weight=xy_update_weight)
     binding_path = target / "source_evidence_binding.json"
     with binding_path.open("x", encoding="utf-8") as stream:
         json.dump({

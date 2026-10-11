@@ -50,6 +50,7 @@ class PostLiftPreflight:
     endpoint_screen: dict | None
     targets: InsertionTargets | None
     planning: InsertionPreflight | None
+    previous_trial_wrist_correction_socket_m: tuple[float, float] = (0.0, 0.0)
 
     def to_record(self) -> dict:
         return {
@@ -68,6 +69,11 @@ class PostLiftPreflight:
             "T_world_key_observed": self.T_world_key_observed.tolist(),
             "T_robot_wrist_measured": self.T_robot_wrist_measured.tolist(),
             "observed_held_relation": self.relation.to_record(),
+            "previous_trial_wrist_correction_socket_m": list(
+                self.previous_trial_wrist_correction_socket_m),
+            "previous_trial_correction_status": (
+                "superseded_by_fresh_observed_key_hand_relation" if any(
+                    self.previous_trial_wrist_correction_socket_m) else "none"),
             "endpoint_screen": self.endpoint_screen,
             "targets": None if self.targets is None else self.targets.to_record(),
             "planning": None if self.planning is None else self.planning.to_record(),
@@ -187,7 +193,8 @@ def plan_postlift_observed_transfer(
             trial.session_calibration_sha256, trial.catalog_sha256,
             trial.key_observation_id, key_observation_id,
             timestamp, joint_time, start.copy(), joint_sample, pose_world,
-            wrist_robot, relation, endpoint, targets, planning)
+            wrist_robot, relation, endpoint, targets, planning,
+            tuple(attempt.wrist_correction_socket_m))
 
     if (relation.translation_drift_m > max_grasp_translation_drift_m or
             relation.rotation_drift_deg > max_grasp_rotation_drift_deg):

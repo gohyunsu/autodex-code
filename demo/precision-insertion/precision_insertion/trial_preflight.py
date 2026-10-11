@@ -241,6 +241,7 @@ def plan_fresh_key_trial(
     max_reset_axis_tilt_deg: float | None = None,
     reset_candidate_root: Path | None = None,
     attempted_reset: tuple[tuple[int, str, str], ...] = (),
+    preferred_candidate: tuple[str, str, str] | None = None,
 ) -> TrialPreflight:
     """Plan one scene from an explicitly fresh pose, trying grasps in order.
 
@@ -344,7 +345,12 @@ def plan_fresh_key_trial(
     elif selected["status"] != "candidates_available":
         raise ValueError(f"unexpected candidate selection: {selected['status']}")
     else:
-        candidates = selected["candidates"]
+        candidates = list(selected["candidates"])
+        if preferred_candidate is not None:
+            if (not isinstance(preferred_candidate, tuple) or
+                    len(preferred_candidate) != 3):
+                raise ValueError("preferred v8 candidate must be a three-part key")
+            candidates.sort(key=lambda row: tuple(row["key"]) != preferred_candidate)
         budgeted = (candidates if max_candidate_attempts is None
                     else candidates[:max_candidate_attempts])
         for candidate in budgeted:

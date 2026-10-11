@@ -1,5 +1,9 @@
 # One-session action loop
 
+The current insertion-failure route stores XY advice for a **new physical
+attempt**, never a same-held-key reinsert. See
+[`NEXT_TRIAL_XY.md`](NEXT_TRIAL_XY.md).
+
 `run_live_precision_session()` joins the already implemented AutoDex-camera
 ChArUco→socket startup to `SessionRunner`'s existing trial policy. It keeps
 the same initialized cameras available across key captures, attempts and
@@ -20,8 +24,7 @@ using the existing demo functions before returning. For example:
 | `held_relation_evidence_required` | Choose one handler at assembly: [`LiveObservedHeldRelationHandlers`](precision_insertion/live_observed_relation_handlers.py) uses a fresh visible multi-view key pose and measured wrist; [`LiveHeldRelationHandlers`](precision_insertion/live_held_relation_handlers.py) uses the selected grasp's physical calibration when the key is occluded. Neither substitutes the MuJoCo squeeze pose. |
 | `transfer_execution_gate_required` | [`LiveTaskHandlers`](precision_insertion/live_task_handlers.py) runs the existing bound held-transfer executor, captures the pre-insertion hold on the same AutoDex cameras, and records `preinsert_reached` through the runner's existing Qwen checkpoint. An unknown VLM verdict is recorded once and sent to supervised recovery, not a repeated transfer. If transfer aborts, it records `preinsert_reached=False` only after the controller acknowledges a stop; the next action is supervised recovery, never insertion. An unacknowledged stop remains an exception. |
 | `await_guarded_insertion_and_observation` | The same handler prepares the axial handoff, runs the existing commissioned guarded stroke, captures final/abort views, then invokes `runner.prepare_observed_insertion_label()` using the controller's metric record. Only this checkpoint may set `insertion_success`. |
-| `guarded_withdrawal_then_xy_assessment` | Cylinder: [`LiveGroundedRetryHandlers`](precision_insertion/live_retry_handlers.py) withdraws the held key, grounds tip/axis in multiple views and executes an at-most-1 mm shift before re-observation. Square: [`LiveObservedXYRetryHandlers`](precision_insertion/live_observed_xy_retry_handlers.py) recaptures the visible held key with AutoDex FoundPose, chooses a bounded XY correction, executes the saved non-contact transfer and observes its new arrival. Both require a fresh 20 mm axial handoff; abstention routes to held-key return. |
-| `await_retry_execution_and_observation` | The mode-selected retry handler executes the bound guarded retry stroke, captures final/abort views and records a *new* insertion checkpoint. |
+| `guarded_withdrawal_then_xy_assessment` | [`LiveGroundedRetryHandlers`](precision_insertion/live_retry_handlers.py) withdraws the held key, grounds its tip/axis in fresh AutoDex multi-view images, and saves at most 1 mm socket-XY advice for the **next** attempt. It issues **no lateral motion or second insertion** in this attempt. Live operation is cylinder-only; square diagnostic code remains offline. Abstention also routes to held-key return. |
 | `recover_held_key_then_reobserve` | [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py) joins logged guarded withdrawal, `runner.prepare_failed_insertion_return()`, stock Franka held return/release/clear-view motion, independently recorded controller phases, a fresh key capture on the same cameras, and `runner.observe_reset_landing()`. Guarded withdrawal and independent logging remain commissioned robot-PC callbacks. |
 | `recover_key_then_reobserve` | [`LiveTransferRecoveryHandlers`](precision_insertion/live_transfer_recovery.py) can plan and execute a held tabletop return only after a completed, still-held transfer whose pre-insertion checkpoint shows a matching key but an off-target measured hand. Stopped pickup/lift/transfer, unknown lift/pre-insertion VLM verdict, suspected slip and other uncertain states require a supervised tabletop recovery record. Both routes clear the view, recapture through the same SAM/FoundPose path and label the reset; an unknown held-key state is never treated as a safe automatic return. |
 | `preflight_repose`, `continue_repose_seed_preflight`, `preflight_repose_release`, `preflight_alternative_repose_cell` | [`LiveReposePlanningHandlers`](precision_insertion/live_repose_handlers.py) reuses the exhausted pose's saved key capture and measured joints, selects a target pose/release cell, and invokes `runner.preflight_repose()` with directed v8 reset seeds. |
@@ -74,10 +77,10 @@ on real data; a simulated squeeze transform is not an acceptable substitute.
 For a visible key, select `held_relation_route="observed"` in
 `assemble_live_components()`. Its separate handler captures the key after
 lift, aligns the measured wrist to the image exposure, and replans transfer
-from the observed relation. The same grounded 1 mm retry path now accepts
-that relation if the operator supplies a commissioned total key/hand surface
-bound that includes visual estimation error. Failed pose admission or an
-under-bounded retry does not fall back to the nominal BODex relation.
+from the observed relation. This fresh observed relation supersedes a saved
+previous-trial wrist-bias hypothesis; the default physical-calibration route
+applies the saved bias to the next attempt's wrist target. Failed pose
+admission never falls back to the nominal BODex relation.
 
 [`LiveTaskHandlers`](precision_insertion/live_task_handlers.py) connects the
 first non-contact transfer and 20 mm guarded insertion to their existing
@@ -87,18 +90,15 @@ controller's depth/alignment/force record plus final images to the insertion
 checkpoint. Its robot adapters, raw-frame producers and numeric limits are
 injected on the AutoDex PC. The separate
 [`LiveGroundedRetryHandlers`](precision_insertion/live_retry_handlers.py)
-composes the cylinder diagnostic, lateral controller, post-shift observation,
-renewed cuRobo/endpoint preflight, transfer, and guarded retry. Square mode
-uses [`LiveObservedXYRetryHandlers`](precision_insertion/live_observed_xy_retry_handlers.py)
-instead: its first transfer may use an independently calibrated grasp
-relation; after withdrawal it requires a fresh admitted held-key pose, plans
-and executes the corrected transfer, observes arrival, then executes the
-newly bound 20 mm stroke and second task checkpoint. Neither mode reuses an
-old failed stroke or permits a second correction in the same attempt.
-Square mode's *tip/axis-only* diagnostic still abstains because it cannot
-resolve yaw; the live square route uses a full held-key pose. A view that
-makes the held key/hand relation unreliable stops for review rather than
-planning from a possibly slipped grasp.
+only composes guarded withdrawal, a fresh raw multi-view diagnostic, and a
+candidate/pose-specific next-attempt advice record. The held-return handler
+then releases the key; a fresh SAM/FoundPose key capture and v8 pickup plan
+are mandatory before that candidate is tried again. The next physical
+attempt adjusts its calibrated wrist command, while the CAD key insertion
+goal remains socket-centered and endpoint/path checks are rerun. Square
+tip/shoulder grounding supplies XY and tilt but **not yaw**; a yaw error
+needs separate evidence or a different grasp. No same-attempt lateral shift
+or second guarded stroke is registered in the live action mapping.
 
 [`LiveReposePlanningHandlers`](precision_insertion/live_repose_handlers.py)
 handles pose exhaustion without another key exposure. Its target selector
@@ -142,11 +142,13 @@ per-stage limits are still required; composition does not supply them.
 `insertion_success` produces `session_success`, which immediately returns
 `status="success"` without release, reset, repose, or another grasp attempt.
 For a positive **20 mm** label, configure the optional reviewed
-[exposed-depth admission](DEPTH_ADMISSION.md) on both task and retry handlers;
+[exposed-depth admission](DEPTH_ADMISSION.md) on the task handler;
 an external controller's wrist-stroke/depth claim is not admitted by itself.
-The live wrapper then closes its camera context. A visual guess, nominal
-trajectory, or an unknown insertion verdict cannot end the session as
-success. Recovery/reset actions not listed above still need explicit handlers;
+The live wrapper then closes its camera context. In `vlm_only` mode a
+positive visual label can end the session as **experimental visual success**,
+but it does not verify 20 mm penetration. A nominal trajectory or unknown
+verdict does not establish task success. Recovery/reset actions not listed
+above still need explicit handlers;
 otherwise the result is `needs_handler`. There is no default robot-motion
 handler. A `max_steps` limit returns `step_budget_exhausted` instead of
 silently continuing forever. If a handler returns without changing the

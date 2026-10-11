@@ -154,7 +154,7 @@ def test_unknown_preinsert_does_not_repeat_same_transfer():
         attempt, max_xy_retries=1).action == "recover_key_then_reobserve"
 
 
-def test_failed_insertion_requires_withdrawal_then_bounded_1mm_retry():
+def test_failed_insertion_advice_returns_key_before_next_physical_attempt():
     record = _attempt()
     _grasp(record)
     _hold(record)
@@ -162,14 +162,19 @@ def test_failed_insertion_requires_withdrawal_then_bounded_1mm_retry():
     assert decide_after_attempt(
         record, max_xy_retries=1).action == (
             "guarded_withdrawal_then_xy_assessment")
-    _retry(record)
-    assert decide_after_attempt(
-        record, max_xy_retries=1).action == (
-            "await_retry_execution_and_observation")
-    _insert(record, timestamp=6.0)
+    record.record_next_trial_xy_advice(
+        increment_socket_xy_m=(0.0006, -0.0008),
+        update_weight=1.0,
+        applied_step_socket_xy_m=(0.0006, -0.0008),
+        next_wrist_correction_socket_m=(0.0006, -0.0008),
+        supporting_cameras=("cam0", "cam1"), timestamp_s=5.0,
+        evidence_refs={"axial_withdrawal": "robot/withdrawal.json",
+                       "grounded_xy": "vlm/tip_axis.json"})
     assert decide_after_attempt(
         record, max_xy_retries=1).action == (
             "recover_held_key_then_reobserve")
+    assert record.xy_offset_socket_m == (0.0, 0.0)
+    assert not record._pending_retry
 
 
 def test_abstained_grounded_retry_returns_held_key_without_false_motion():
@@ -252,7 +257,7 @@ def test_grounded_continuous_xy_retry_is_distinct_from_cardinal_vote():
     assert record.xy_offset_socket_m == pytest.approx((.0006, -.0008))
     assert record.events[-1]["value"] == "grounded_continuous_xy"
     assert decide_after_attempt(record, max_xy_retries=1).action == (
-        "await_retry_execution_and_observation")
+        "stop_for_review")
     with pytest.raises(ValueError, match="no pending retry"):
         record.record_grounded_retry(
             increment_socket_xy_m=(.0001, .0001),

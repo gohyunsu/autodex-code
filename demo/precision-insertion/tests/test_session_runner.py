@@ -25,6 +25,8 @@ from precision_insertion.trial_preflight import (  # noqa: E402
 )
 from precision_insertion.outcome import InsertionEvidence  # noqa: E402
 from precision_insertion.retry_preflight import XYRetryPreflight  # noqa: E402
+from precision_insertion.retry_session import GroundedXYDiagnostic  # noqa: E402
+from precision_insertion.records import begin_attempt  # noqa: E402
 from precision_insertion import session_runner  # noqa: E402
 from precision_insertion.xy_retry import XYRetryAssessment  # noqa: E402
 from precision_insertion.xy_voting import ChoiceDecision  # noqa: E402
@@ -128,6 +130,126 @@ def _plan(runner, observation):
             observation.selected_acquisition_timestamp_s),
         max_key_state_skew_s=0.05, limits=object(),
         max_pose_error_deg=5.0, axial_waypoint_step_m=0.002)
+
+
+def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    runner.max_xy_retries = 2
+    runner.xy_update_weight = 0.5
+    first = begin_attempt(
+        attempt_id="attempt_1", mode=MODE,
+        session_record=runner.calibration.record,
+        candidate_id="/".join(KEY_A), tabletop_pose_stem="000",
+        xy_offset_socket_m=(0.0, 0.0), started_at_s=1.0)
+    first.record_stage(
+        "grasp_success", True, timestamp_s=2.0,
+        evidence_refs={"vlm_observation": "lift.json",
+                       "raw_lift_visual": "lift.png"})
+    first.record_stage(
+        "preinsert_reached", True, timestamp_s=3.0,
+        evidence_refs={"trajectory": "transfer.json",
+                       "key_socket_pose": "hold.json",
+                       "grasp_state": "hand.json",
+                       "postlift_preflight": "postlift.json"})
+    first.record_insertion_evidence(
+        InsertionEvidence("partial", (0.005, 0.008),
+                          "key_pose_multiview", True, False, True),
+        timestamp_s=4.0,
+        evidence_refs={"vlm_observation": "insert.json",
+                       "key_depth": "depth.json", "alignment": "axis.json",
+                       "force_trace": "force.json"})
+    runner._attempt = first
+    runner._attempt_dir = runner.output_dir / "attempts" / first.attempt_id
+    runner._attempt_dir.mkdir(parents=True)
+    assert runner.current_decision().action == "guarded_withdrawal_then_xy_assessment"
+    withdrawal = tmp_path / "withdrawal.json"
+    withdrawal.write_text("{}", encoding="utf-8")
+    diagnostic = GroundedXYDiagnostic(
+        "diagnostic_metric_xy_correction", first.attempt_id,
+        first.candidate_id, runner.session_sha256, "camera_hash",
+        "geometry_hash", 1, withdrawal,
+        hashlib.sha256(withdrawal.read_bytes()).hexdigest(),
+        tmp_path / "postlift.json", "postlift_hash", {},
+        SimpleNamespace(to_record=lambda: {}),
+        {"bounded_xy_increment_socket_m": [0.0006, -0.0008],
+         "inlier_cameras": ["cam0", "cam1"]}, ())
+    source = runner._attempt_dir / "xy_retry_assessments/000/report.json"
+    source.parent.mkdir(parents=True)
+    source.write_text(json.dumps(diagnostic.to_record()), encoding="utf-8")
+    runner.record_next_trial_xy_advice(
+        diagnostic=diagnostic, diagnostic_report_path=source,
+        timestamp_s=5.0, max_total_offset_m=0.005)
+    assert runner.current_decision().action == "recover_held_key_then_reobserve"
+    assert runner.active_attempt.xy_offset_socket_m == (0.0, 0.0)
+    assert all(event["stage"] != "xy_retry" for event in runner.active_attempt.events)
+    runner._record(lambda row: row.record_stage(
+        "reset_success", True, timestamp_s=6.0,
+        evidence_refs={"key_pose": "fresh_key.json"}))
+    captured = []
+
+    def plan_next(**kwargs):
+        captured.append(kwargs)
+        return _report(runner, kwargs["key_observation"])
+
+    monkeypatch.setattr(session_runner, "plan_admitted_key_trial", plan_next)
+    _plan(runner, _observation("key_2", 7.0))
+    assert captured[0]["preferred_candidate"] == KEY_A
+    assert KEY_A not in captured[0]["attempted"]
+    runner.begin_selected_attempt(attempt_id="attempt_2", started_at_s=7.2)
+    assert runner.active_attempt.wrist_correction_socket_m == pytest.approx(
+        (0.0003, -0.0004))
+    assert runner.active_attempt.xy_offset_socket_m == (0.0, 0.0)
+    assert runner._pending_next_trial_xy is None
+    assert runner.current_decision().action == "await_lift_observation"
+
+    second = runner._attempt
+    second.record_stage(
+        "grasp_success", True, timestamp_s=8.0,
+        evidence_refs={"vlm_observation": "lift2.json",
+                       "raw_lift_visual": "lift2.png"})
+    second.record_stage(
+        "preinsert_reached", True, timestamp_s=9.0,
+        evidence_refs={"trajectory": "transfer2.json",
+                       "key_socket_pose": "hold2.json",
+                       "grasp_state": "hand2.json",
+                       "postlift_preflight": "postlift2.json"})
+    second.record_insertion_evidence(
+        InsertionEvidence("partial", (0.005, 0.008),
+                          "key_pose_multiview", True, False, True),
+        timestamp_s=10.0,
+        evidence_refs={"vlm_observation": "insert2.json",
+                       "key_depth": "depth2.json", "alignment": "axis2.json",
+                       "force_trace": "force2.json"})
+    assert runner.current_decision().action == "guarded_withdrawal_then_xy_assessment"
+    diagnostic2 = GroundedXYDiagnostic(
+        "diagnostic_metric_xy_correction", second.attempt_id,
+        second.candidate_id, runner.session_sha256, "camera_hash",
+        "geometry_hash", 1, withdrawal,
+        hashlib.sha256(withdrawal.read_bytes()).hexdigest(),
+        tmp_path / "postlift.json", "postlift_hash", {},
+        SimpleNamespace(to_record=lambda: {}),
+        {"bounded_xy_increment_socket_m": [0.0004, 0.0],
+         "inlier_cameras": ["cam0", "cam1"]}, ())
+    source2 = runner._attempt_dir / "xy_retry_assessments/000/report.json"
+    source2.parent.mkdir(parents=True)
+    source2.write_text(json.dumps(diagnostic2.to_record()), encoding="utf-8")
+    runner.record_next_trial_xy_advice(
+        diagnostic=diagnostic2, diagnostic_report_path=source2,
+        timestamp_s=11.0, max_total_offset_m=0.005)
+    advice2 = json.loads((runner._attempt_dir /
+                          "next_trial_xy_advice.json").read_text())
+    assert advice2["prior_wrist_correction_socket_m"] == pytest.approx(
+        [0.0003, -0.0004])
+    assert advice2["next_wrist_correction_socket_m"] == pytest.approx(
+        [0.0005, -0.0004])
+    runner._record(lambda row: row.record_stage(
+        "reset_success", True, timestamp_s=12.0,
+        evidence_refs={"key_pose": "fresh_key3.json"}))
+    _plan(runner, _observation("key_3", 13.0))
+    runner.begin_selected_attempt(attempt_id="attempt_3", started_at_s=13.2)
+    assert runner.active_attempt.wrist_correction_socket_m == pytest.approx(
+        (0.0005, -0.0004))
 
 
 def test_grounded_lateral_session_only_accepts_own_saved_diagnostic(
@@ -1207,7 +1329,7 @@ def test_retry_requires_matching_two_view_vote_and_live_replan(
         "guarded_withdrawal_then_xy_assessment")
     assert runner.active_attempt.events[-1]["stage"] == "insertion_success"
     runner.prepare_observed_xy_retry(**retry_inputs)
-    assert runner.current_decision().action == "await_retry_execution_and_observation"
+    assert runner.current_decision().action == "stop_for_review"
     assert (tmp_path / "session/attempts/attempt_1/state_004.json").is_file()
     assert (tmp_path / "session/attempts/attempt_1/"
             "xy_retry_assessments/000/report.json").is_file()

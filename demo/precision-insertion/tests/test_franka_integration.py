@@ -151,8 +151,7 @@ def test_franka_integration_reuses_held_motion_adapter_across_stages(
     custom = object()
     module.configure = lambda *_: {
         "shared": {"backend": object()},
-        "stages": {"lift": {}, "task": {},
-                   "retry": {"insertion_adapter": custom}}}
+        "stages": {"lift": {}, "task": {}, "retry": {}}}
     monkeypatch.setitem(sys.modules, module.__name__, module)
     created = []
 
@@ -168,11 +167,8 @@ def test_franka_integration_reuses_held_motion_adapter_across_stages(
         stages = kwargs["stages"]
         assert stages["lift"]["adapter"] is held_adapter
         assert stages["task"]["transfer_adapter"] is held_adapter
-        assert stages["retry"]["transfer_adapter"] is held_adapter
-        assert stages["retry"]["insertion_adapter"] is custom
-        assert ("lateral_adapter" in stages["retry"]) == (family == "cylinder")
-        if family == "cylinder":
-            assert stages["retry"]["lateral_adapter"] is held_adapter
+        assert "transfer_adapter" not in stages["retry"]
+        assert "lateral_adapter" not in stages["retry"]
         return ()
 
     monkeypatch.setattr(franka_integration, "assemble_live_components", assemble)
@@ -341,8 +337,8 @@ def test_first_party_qwen_and_fresh_checkpoint_callbacks(monkeypatch, tmp_path):
         assert stages["lift"]["capture_after_lift"]() == "after_lift"
         assert stages["task"]["capture_preinsert"]() == "preinsert"
         assert stages["task"]["capture_final"] is custom_capture
-        assert stages["retry"]["capture_postshift"]() == "post_lateral_hold"
-        assert stages["retry"]["capture_final"]() == "final_or_abort"
+        assert stages["retry"]["capture_withdrawn"]() == "preinsert"
+        assert "capture_postshift" not in stages["retry"]
         return ()
 
     monkeypatch.setattr(franka_integration, "assemble_live_components", assemble)
@@ -354,5 +350,5 @@ def test_first_party_qwen_and_fresh_checkpoint_callbacks(monkeypatch, tmp_path):
     assert loaded == [{
         "mode": "local", "model_id": None, "max_input_size": (1920, 1088),
         "max_new_tokens": 512, "require_native_pixels": True}]
-    assert len(captures) == 7
+    assert len(captures) == 3
     assert all(timeout == 6.0 for _phase, timeout in captures)

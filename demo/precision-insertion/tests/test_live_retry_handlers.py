@@ -6,6 +6,7 @@ import sys
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -15,7 +16,9 @@ from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E40
 from precision_insertion.session_policy import SessionDecision  # noqa: E402
 
 
-def test_live_grounded_retry_abstain_routes_to_held_return(tmp_path, monkeypatch):
+@pytest.mark.parametrize("status", ["abstain", "diagnostic_metric_xy_correction"])
+def test_live_grounded_advice_never_moves_xy_in_same_attempt(
+        tmp_path, monkeypatch, status):
     class State:
         pass
 
@@ -25,8 +28,11 @@ def test_live_grounded_retry_abstain_routes_to_held_return(tmp_path, monkeypatch
     events = []
 
     class Runner:
+        mode = SimpleNamespace(family="cylinder")
+        xy_update_weight = 1.0
         active_attempt = SimpleNamespace(
-            attempt_id="attempt_1", candidate_id="table/0/1")
+            attempt_id="attempt_1", candidate_id="table/0/1",
+            wrist_correction_socket_m=(0.0, 0.0))
         _postlift_report_path = tmp_path / "postlift.json"
         _attempt_dir = tmp_path
         _retry_assessment_index = 0
@@ -38,12 +44,17 @@ def test_live_grounded_retry_abstain_routes_to_held_return(tmp_path, monkeypatch
             events.append(("diagnostic", kwargs["frame_request_id"]))
             report = tmp_path / "xy_retry_assessments/000/report.json"
             report.parent.mkdir(parents=True)
-            report.write_text('{"status":"abstain"}', encoding="utf-8")
+            report.write_text(json.dumps({"status": status}), encoding="utf-8")
             self._retry_assessment_index += 1
-            return SimpleNamespace(status="abstain")
+            return SimpleNamespace(
+                status=status,
+                alignment={"bounded_xy_increment_socket_m": [0.001, 0.0]})
 
         def record_xy_retry_unavailable(self, **kwargs):
             events.append(("unavailable", kwargs["reason"]))
+
+        def record_next_trial_xy_advice(self, **kwargs):
+            events.append(("next_trial", kwargs["diagnostic"].status))
 
     runner = Runner()
     launch = SimpleNamespace(
@@ -72,37 +83,20 @@ def test_live_grounded_retry_abstain_routes_to_held_return(tmp_path, monkeypatch
     withdrawal.write_text(json.dumps({"completed_at_s": 4.0}),
                           encoding="utf-8")
     params = dict(
-        live=live, planner=object(), backend=object(),
-        read_state=State,
+        live=live, backend=object(),
         state_for_capture=lambda _: State(),
         withdraw_guarded=lambda *_: (State(), withdrawal),
         capture_withdrawn=lambda *_: capture,
-        capture_postshift=lambda *_: None,
-        capture_arrival=lambda *_: None,
-        capture_preinsert=lambda *_: None,
-        capture_final=lambda *_: None,
-        lateral_adapter=object(), transfer_adapter=object(),
-        insertion_adapter=object(), motion_interlock=lambda: True,
-        retry_limits=object(), alignment_limits=object(),
-        deviation_bounds=object(), lateral_limits=object(),
-        transfer_limits=object(), insertion_limits=object(),
-        contact_limits=object(), lateral_commissioning_path=tmp_path,
-        transfer_commissioning_path=tmp_path,
-        insertion_watchdog_path=tmp_path,
-        insertion_contact_path=tmp_path,
-        diagnostic_parameters={}, lateral_parameters={},
-        lateral_execution_parameters={}, checkpoint_parameters={},
-        insertion_preflight_parameters={}, path_handoff_parameters={},
-        transfer_execution_parameters={}, arrival_parameters={},
-        axial_replan_parameters={}, retry_handoff_parameters={},
-        retry_execution_parameters={}, final_parameters={},
+        retry_limits=SimpleNamespace(max_total_offset_m=0.003),
+        alignment_limits=object(),
+        diagnostic_parameters={},
         enable_robot_motion=True, decision_time=lambda: 10.0)
     handler = live_retry_handlers.LiveGroundedRetryHandlers(**params)
-    handler.assess_and_shift(runner, decision)
-    assert events == [("diagnostic", 1), ("unavailable", "vlm_abstain")]
-    assert handler._pending is None
+    handler.assess_for_next_trial(runner, decision)
+    assert events == [("diagnostic", 1), (
+        ("unavailable", "vlm_abstain") if status == "abstain" else
+        ("next_trial", "diagnostic_metric_xy_correction"))]
     assert handler.withdrawn_for_return() == (
         "attempt_1", handler._withdrawn[1], withdrawal.resolve())
     assert set(handler.handlers()) == {
-        "guarded_withdrawal_then_xy_assessment",
-        "await_retry_execution_and_observation"}
+        "guarded_withdrawal_then_xy_assessment"}

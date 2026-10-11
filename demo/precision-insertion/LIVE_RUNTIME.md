@@ -25,8 +25,7 @@ socket capture and must return these ten components, all bound to that same
 4. `LiveHeldRelationHandlers` — physical grasp-specific key/hand relation,
    or `LiveObservedHeldRelationHandlers` for a newly visible post-lift key.
 5. `LiveTaskHandlers` — transfer, arrival label, first guarded insertion.
-6. `LiveGroundedRetryHandlers` for cylinder or
-   `LiveObservedXYRetryHandlers` for square — guarded withdrawal,
+6. `LiveGroundedRetryHandlers` for both cylinder and square — guarded withdrawal,
    VLM ≤1 mm XY correction, renewed planning and one guarded reattempt.
 7. `LiveHeldReturnHandlers` — held-key return after failed insertion.
 8. `LiveTransferRecoveryHandlers` — optional planned held return when a
@@ -116,8 +115,9 @@ still supply pickup limits and a real motion interlock; the subclass does
 not replace a robot-side watchdog or physical review. The stage factory
 supplies the remaining commissioned contact, recovery and repose callbacks.
 An optional [`held_motion_monitor` block](MEASURED_LIFT_ADAPTER.md) builds
-one measured non-contact adapter for lift, first transfer and retry transfer;
-for cylinder mode it also fills the retry lateral shift. The older
+one measured non-contact adapter for lift and first transfer. Retry requires
+only the independently commissioned guarded axial withdrawal; there is no
+same-attempt lateral or retry-transfer adapter. The older
 `lift_monitor` block still fills only `lift.adapter`. The factory may override
 each field. Neither setting supplies a reviewed daemon watchdog record,
 stage limits, interlock, contact controller or real-robot validation.
@@ -212,36 +212,31 @@ optional `held_relation.calibration_sample_bounds` exports that accepted
 physical key/wrist pair for later grasp-specific commissioning; see
 [`INSERTION_GRASP_CALIBRATION.md`](INSERTION_GRASP_CALIBRATION.md). The bounds
 must be supplied from rig measurements, not chosen to make a sample pass.
-The grounded 1 mm XY retry now accepts this same observed relation through the
-existing lateral, re-observation and 20 mm endpoint/path stages. The observed
-route still requires an **independently commissioned** `SurfaceDeviationBounds`
-from the retry stage's `deviation_bounds`, covering the entire visible held
-motion **including** the VLM tip/axis estimation error at subsequent holds;
-a visual point estimate is not a future-trial error bound. The post-shift
-endpoint checks that the supplied bound covers the stated visual error.
-An unavailable or under-bounded input stops the
-retry. The physical-calibration route remains the default and retains its
-separate medoid evidence.
+The observed route uses a fresh measured key/hand relation in its next
+attempt; that direct evidence supersedes a learned wrist-bias hypothesis.
+The physical-calibration route remains the default and adds any saved
+previous-trial socket-XY compensation to the grasp-specific medoid command.
+The key CAD target stays centered; the corrected hand/key endpoint and held
+path are re-screened before transfer.
 
-Square mode selects `LiveObservedXYRetryHandlers` for the retry with either
-initial held-relation route. A square first transfer can therefore use a
-grasp-specific physical calibration when the post-lift key is hidden. The
-retry uses a new same-request held-key
-FoundPose capture after guarded withdrawal, plans a bounded XY correction,
-executes its non-contact transfer, observes the corrected pre-insertion
-hold, then uses the saved axial path with the guarded controller and records
-a second VLM/metric insertion checkpoint. The `retry` stage must supply
-`key_capture_parameters` including `capture_timeout_s` and
-`image_write_timeout_s`, plus the numeric admission arguments accepted by
-`admit_held_key_capture`; `key_prompt` defaults to the key-planning stage's
-prompt. Alternatively, supply `capture_withdrawn_key` returning an admitted
-`HeldKeyRetryCapture` with raw frames and exposure-aligned feedback. The
-assembly can provide fresh `capture_arrival` and `capture_final` snapshots
-from the open AutoDex cameras, but the actual contact/withdrawal adapters
-and reviewed limits are still robot-PC inputs. Occlusion or failed pose
-admission records `held_key_pose_unavailable` and routes to held-key return;
-it does not substitute nominal squeeze or command a guessed XY offset.
-This includes a capture with no calibrated SAM/FoundPose payload in any view.
+The cylinder live path uses one **future-trial advice** handler (see
+[`NEXT_TRIAL_XY.md`](NEXT_TRIAL_XY.md) for the attempt boundary and transform):
+guarded axial withdrawal, fresh raw AutoDex multi-view images, metric
+tip/axis reconstruction, save an at-most-1-mm socket-XY increment, return
+the key to the tabletop, clear view, and start a new perception/pickup
+attempt. There is no lateral hold shift or second insertion in the failed
+attempt. The cylinder VLM marks a tip and
+visible shaft-axis line. Offline square diagnostic code marks the insertion tip and CAD
+handle/shaft shoulder centre; triangulation estimates tip, shaft tilt and
+socket-frame XY. Two collinear marks **do not observe square yaw**: the
+post-lift bounded key/hand relation supplies its yaw prior, carried through
+minimum-axis-rotation reconstruction. Exact square-mesh endpoint screening
+and the held-relation uncertainty bound remain required for offline square evaluation.
+If the marks are hidden or disagree across views, the diagnostic abstains
+and follows held-key return without saving compensation. The older
+`LiveObservedXYRetryHandlers` is not selected by runtime assembly and its
+same-attempt action is unsupported by the session policy. The robot-PC
+factory still supplies actual withdrawal/contact adapters and limits.
 A malformed request ID, changed frame provenance or controller failure is
 still an error requiring review, not a visual abstention.
 
@@ -282,15 +277,14 @@ release-site probes of those two seeds found no complete Franka path; one
 same-state collision isolation implicated the hypothetical table obstacle.
 This is a planner diagnostic, not a claim about every measured session.
 
-If the first XY-retry diagnostic abstains or its lateral preflight fails,
-the key is already at the withdrawn hold. The assembled held-return handler
+After the XY diagnostic (whether advice or abstention), the key is already
+at the withdrawn hold. The assembled held-return handler
 reuses that withdrawal record and fresh measured joint state, instead of
-commanding a second axial withdrawal. It accepts reuse only before any
-lateral motion starts and only if the joints remain at the withdrawn hold.
+commanding a second axial withdrawal. It accepts reuse only if the joints
+remain at the withdrawn hold.
 `max_withdrawal_state_gap_s` in the held-return settings must cover the
 elapsed VLM/planning time; otherwise the return raises before motion.
-After a lateral command, the normal guarded-withdrawal adapter is still
-required. The robot-PC integration must supply a real `read_state` and the
+The robot-PC integration must supply a real `read_state` and the
 original guarded withdrawal controller; this wiring does not implement it.
 
 For VLM checkpoints, `make_checkpoint_capture` in
@@ -300,7 +294,7 @@ the **same open AutoDex snapshot cameras** without asking SAM/FoundPose to
 recognize a partly occluded held key. It undistorts the original snapshot
 using the session camera calibration, and saves both image versions so that
 the VLM bundle can replay that exact derivation. Instantiate a callback per
-phase (`after_lift`, `preinsert`, `post_lateral_hold`, `final_or_abort`);
+phase (`after_lift`, `preinsert`, `final_or_abort`);
 repeated calls create fresh capture IDs. `transport="init_key"` retains the
 older key-init capture path when FoundPose outputs are explicitly wanted.
 The default still requires complete frame-ID/exposure metadata from the
@@ -335,13 +329,18 @@ PYTHONPATH="$PWD/demo/precision-insertion:$PWD/src:/path/to/robot_pc_integration
   --endpoint-catalog /absolute/path/to/current_endpoint_catalog.json \
   --output-dir /absolute/path/to/new_run_directory \
   --integration my_robot_integration:create_integration \
-  --max-xy-retries 1 --enable-robot-motion
+  --max-xy-retries 1 --xy-update-weight 1.0 --enable-robot-motion
 ```
 
 Use a **new** output directory; the command does not overwrite an earlier
 run. `--enable-robot-motion` is mandatory because the first clear-view move
-occurs before camera capture. `--max-xy-retries 0` disables XY correction;
-the current grounded implementation supports one correction, not two.
+occurs before camera capture. `--max-xy-retries 0` disables next-trial XY
+advice; `1` permits one candidate-specific corrected **new physical attempt**
+per session. A larger count permits cumulative failed-trial updates
+`p_(n+1)=p_n+w*d_n`; the weight defaults to `1.0` and must lie in `(0,1]`.
+The robot integration's `RetrySessionLimits.max_total_offset_m` must allow
+the desired cumulative travel. The live CLI currently accepts only
+`cylinder` launch mode; `square` remains an offline/planning mode.
 `action_loop_result.json` is saved in the run directory. Exit code 0 means
 the session reached its task-success label; 2 means a normal non-success
 terminal/step-budget result. An exception is not converted into a success or
@@ -356,7 +355,7 @@ Required recipient inputs remain distinct from code completeness:
   measured Franka/Inspire feedback.
 - Either a per-grasp physical held-relation calibration, or a visible
   post-lift multi-view key observation plus independently commissioned total
-  surface bounds; and commissioned pickup, lift, transfer, lateral-shift,
+  surface bounds; and commissioned pickup, lift, transfer,
   guarded-contact, withdrawal and reset controllers with their independent
   execution records.
 - Under `evidence_fused`, for a **positive verified 20 mm label**, the optional reviewed visual-depth error
@@ -385,8 +384,8 @@ After each capture the terminal shows the saved PNG directory and asks for
 `y`, `n` or `u`, plus an optional note. The VLM answer is still saved for
 comparison but the named human label drives the task state. This terminal
 workflow blocks for input; a robot-PC integration needs an operator interface
-and watchdog before unattended physical use. First insertion and retry share
-the mode. `--label-mode evidence_fused` restores the prior VLM-plus-metric
+and watchdog before unattended physical use. The next physical attempt uses
+the same label mode. `--label-mode evidence_fused` restores the prior VLM-plus-metric
 criterion.
 
 The checkpoint report records `label_mode`, `manual_annotation` and source

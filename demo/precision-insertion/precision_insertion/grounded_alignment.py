@@ -363,6 +363,7 @@ def estimate_grounded_alignment(
 
 def observe_grounded_key_axis(
     backend: ImageVLM, frames: Sequence[CalibratedXYFrame],
+    *, reference_kind: str = "marked_cross_section",
 ) -> tuple[list[GroundedView], list[VLMObservation]]:
     """Ground per-view original pixels. Never show a predicted key overlay here.
 
@@ -374,20 +375,27 @@ def observe_grounded_key_axis(
     if getattr(backend, "native_pixel_coordinates", False) is not True:
         raise ValueError(
             "metric grounding requires verified native-pixel backend geometry")
+    if reference_kind not in {"marked_cross_section", "square_shoulder"}:
+        raise ValueError("unknown CAD axis-reference feature")
     if len({frame.camera_id for frame in frames}) != len(frames):
         raise ValueError("grounding needs unique camera IDs")
     for frame in frames:
         if not isinstance(frame.raw, Image.Image) or frame.raw.mode != "RGB":
             raise ValueError("grounding needs original undistorted RGB frames")
         width, height = frame.raw.size
+        reference = (
+            "the centre of the specifically marked axis-reference "
+            "cross-section behind that tip" if reference_kind ==
+            "marked_cross_section" else
+            "the centre of the visible shoulder cross-section where the "
+            "square insertion shaft meets its wider handle behind that tip")
         prompt = (
             f"Camera {frame.camera_id}; ORIGINAL UNDISTORTED image "
             f"{width}x{height} pixels. Use only visible raw pixels, no robot "
             "command or CAD overlay as evidence. Mark the centre of the "
-            "key's insertion tip and the centre of the specifically marked "
-            "axis-reference cross-section behind that tip. The caller has "
+            "key's insertion tip and " + reference + ". The caller has "
             "measured their CAD spacing; do not choose an arbitrary point "
-            "along a smooth sidewall. If either centre is occluded, not "
+            "along a sidewall. If either centre is occluded, not "
             "physically identifiable, or ambiguous, set it to null. "
             "Return JSON only: "
             '{"tip_px":[x,y]|null,"axis_ref_px":[x,y]|null,'
@@ -426,6 +434,42 @@ def observe_grounded_key_axis(
             (f"raw_preinsert_hold/{frame.camera_id}@{frame.timestamp_s:.6f}",),
             error, _backend_model(backend), latency))
     return views, records
+
+
+def observe_mode_key_axis(backend: ImageVLM,
+                          frames: Sequence[CalibratedXYFrame], *,
+                          family: str, geometry: Mapping,
+                          verification_depth_m: float,
+                          limits: AlignmentLimits):
+    """Use one metric tip/axis contract with family-specific image features.
+
+    A square shoulder is a CAD-corresponding cross-section; its two points
+    measure translation and shaft tilt, never rotation about the shaft. That
+    remaining yaw must come from the bounded held-grasp prior downstream.
+    """
+    rim_z = float(geometry["socket_entry_plane_z_m"])
+    if family == "cylinder":
+        grounded, observations = observe_grounded_cylinder_axis(
+            backend, frames)
+        alignment = estimate_grounded_line_alignment(
+            grounded, socket_rim_z_m=rim_z,
+            verification_depth_m=verification_depth_m, limits=limits)
+    elif family == "square":
+        key = geometry["key_frame"]
+        spacing = float(key["tip_z_m"]) - float(key["handle_front_z_m"])
+        grounded, observations = observe_grounded_key_axis(
+            backend, frames, reference_kind="square_shoulder")
+        alignment = estimate_grounded_alignment(
+            grounded, landmark_spacing_m=spacing, socket_rim_z_m=rim_z,
+            verification_depth_m=verification_depth_m, limits=limits)
+        alignment = dict(
+            alignment, square_translation_only=True,
+            square_yaw_observed=False,
+            square_yaw_source="bounded_held_grasp_prior",
+            axis_reference_feature="insertion_shaft_handle_shoulder")
+    else:
+        raise ValueError("unsupported insertion key family")
+    return grounded, observations, alignment
 
 
 def _line_geometry(view: GroundedLineView) -> tuple[np.ndarray, np.ndarray]:

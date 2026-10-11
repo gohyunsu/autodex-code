@@ -27,7 +27,7 @@ from .frame_provenance import bounded_capture_skew_s
 from .geometry import pose_angle_deg, validate_se3
 from .grounded_alignment import (
     AlignmentLimits, estimate_grounded_line_alignment,
-    observe_grounded_cylinder_axis,
+    observe_grounded_cylinder_axis, observe_mode_key_axis,
 )
 from .grounded_lateral import (
     GroundedLateralPreflight, verify_grounded_lateral_preflight,
@@ -162,12 +162,12 @@ def assess_postshift_alignment(
         max_visual_axis_tilt_deg, max_grounded_tip_error_m)
     if not all(math.isfinite(float(v)) and v > 0 for v in limits):
         raise ValueError("post-shift checkpoint needs commissioned positive limits")
-    if (mode.family != "cylinder" or
+    if (mode.family not in {"cylinder", "square"} or
             not isinstance(plan, GroundedLateralPreflight) or
             plan.lateral.status != "sampled_lateral_hold_shift_pass" or
             plan.lateral.sampled_audit.get("mode") != {
                 "family": mode.family, "gap_mm": mode.gap_mm}):
-        raise ValueError("post-shift needs a passing cylinder lateral plan")
+        raise ValueError("post-shift needs a passing key lateral plan")
     plan_path = Path(plan_report_path).expanduser().resolve()
     verify_grounded_lateral_preflight(plan, plan_path)
     root = Path(shared_root).expanduser().resolve()
@@ -190,19 +190,25 @@ def assess_postshift_alignment(
     prior = json.loads(plan.diagnostic_report_path.read_text(
         encoding="utf-8"))
     if _sha(geometry_path) != prior.get("task_geometry_sha256"):
-        raise ValueError("post-shift cylinder CAD changed since diagnostic")
+        raise ValueError("post-shift key CAD changed since diagnostic")
     geometry = json.loads(geometry_path.read_text(encoding="utf-8"))
     if (geometry.get("key_object") != mode.key_object or
             geometry.get("socket_pose_object") != mode.socket_object):
         raise ValueError("post-shift CAD belongs to another key or socket")
-    clearance = float(geometry["socket_bore_radius_m"]) - float(
-        geometry["key_radius_m"])
     future_key_bound = float(plan.lateral.sampled_audit[
         "limits"]["key_surface_bound_m"])
-    if (not math.isfinite(clearance) or not math.isfinite(future_key_bound) or
-            clearance <= future_key_bound or
-            max_visual_lateral_error_m >= clearance - future_key_bound):
-        raise ValueError("visual budget exceeds bounded cylinder CAD clearance")
+    if mode.family == "cylinder":
+        clearance = float(geometry["socket_bore_radius_m"]) - float(
+            geometry["key_radius_m"])
+        if (not math.isfinite(clearance) or
+                not math.isfinite(future_key_bound) or
+                clearance <= future_key_bound or
+                max_visual_lateral_error_m >= clearance - future_key_bound):
+            raise ValueError("visual budget exceeds bounded cylinder CAD clearance")
+    elif not math.isfinite(future_key_bound):
+        raise ValueError("square held-relation surface bound is invalid")
+    # A noncircular bore has no single radial clearance. The exact 20 mm
+    # key/hand mesh screen below, not a fictitious radius, is its geometry gate.
     execution_path = Path(execution_log_path).expanduser().resolve()
     _log, _started, completed = _execution_log(
         execution_path, plan=plan, plan_report_path=plan_path)
@@ -273,11 +279,18 @@ def assess_postshift_alignment(
                 T_camera_world=extrinsics_full[camera], T_world_robot=c2r,
                 T_robot_socket=socket),
             np.asarray(intrinsics_full[camera]["K_undist"], dtype=float)))
-    grounded, observations = observe_grounded_cylinder_axis(backend, frames)
-    alignment = estimate_grounded_line_alignment(
-        grounded, socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
-        verification_depth_m=mode.target_depth_m,
-        limits=alignment_limits)
+    if mode.family == "cylinder":
+        grounded, observations = observe_grounded_cylinder_axis(
+            backend, frames)
+        alignment = estimate_grounded_line_alignment(
+            grounded, socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
+            verification_depth_m=mode.target_depth_m,
+            limits=alignment_limits)
+    else:
+        grounded, observations, alignment = observe_mode_key_axis(
+            backend, frames, family=mode.family, geometry=geometry,
+            verification_depth_m=mode.target_depth_m,
+            limits=alignment_limits)
     status = "visual_abstain"
     if (alignment["status"] == "diagnostic_metric_xy_correction" or
             alignment.get("reason") ==

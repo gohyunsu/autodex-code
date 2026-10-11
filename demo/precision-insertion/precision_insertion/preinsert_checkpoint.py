@@ -348,6 +348,10 @@ def assess_preinsert_checkpoint(
         verify_bounded_postlift_preflight(
             postlift_path, mode=mode, shared_root=shared_root,
             candidate_dir=candidate_dir)
+    held_relation = (
+        postlift.relation.T_key_hand_command
+        if bounded and postlift.relation.T_key_hand_command is not None else
+        postlift.relation.T_key_hand)
     if (not isinstance(saved_plan, dict) or
             not isinstance(saved_plan.get(relation_field), dict) or
             not isinstance(saved_plan.get("targets"), dict) or
@@ -361,7 +365,7 @@ def assess_preinsert_checkpoint(
             postlift.targets.T_robot_hand_preinsert.tolist()):
         raise ValueError("saved post-lift plan does not match this transfer")
     if not np.allclose(postlift.targets.T_key_hand,
-                       postlift.relation.T_key_hand, rtol=0, atol=1e-8):
+                       held_relation, rtol=0, atol=1e-8):
         raise ValueError("preinsert target changed the key-hand relation")
     transfer_path = Path(transfer_execution_path).expanduser().resolve()
     transfer = _transfer_log(transfer_path, attempt)
@@ -398,7 +402,7 @@ def assess_preinsert_checkpoint(
             calibration=calibration, shared_root=shared_root, mode=mode,
             raw_bundle=bundle, frame_rows=frame_rows,
             joint_sample=joint_sample,
-            T_key_hand=postlift.relation.T_key_hand,
+            T_key_hand=held_relation,
             T_robot_hand_target=postlift.targets.T_robot_hand_preinsert,
             relation_source=(
                 "verified_physical_grasp_calibration" if bounded else

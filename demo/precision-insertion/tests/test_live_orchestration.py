@@ -40,7 +40,8 @@ def _clear_view(events):
 
 
 def _patch_camera_lifetime(monkeypatch, events):
-    launch = SimpleNamespace(mode="square", shared_root=Path("/shared"))
+    launch = SimpleNamespace(
+        mode=SimpleNamespace(family="cylinder"), shared_root=Path("/shared"))
     monkeypatch.setattr(orchestration, "load_session_launch",
                         lambda _path: launch)
     monkeypatch.setattr(orchestration, "preflight_endpoint_catalog_file",
@@ -66,7 +67,7 @@ def _patch_camera_lifetime(monkeypatch, events):
 def test_live_session_keeps_same_camera_transport_for_next_key(
         tmp_path, monkeypatch):
     events = []
-    _patch_camera_lifetime(monkeypatch, events)
+    launch = _patch_camera_lifetime(monkeypatch, events)
     catalog = tmp_path / "catalog.json"
     catalog.write_text("{}", encoding="utf-8")
     opened = SimpleNamespace(runner="same_runner")
@@ -74,9 +75,10 @@ def test_live_session_keeps_same_camera_transport_for_next_key(
     def open_ledger(**kwargs):
         events.append("ledger_open")
         assert kwargs == {
-            "mode": "square", "shared_root": Path("/shared"),
+            "mode": launch.mode, "shared_root": Path("/shared"),
             "evidence_dir": Path("/evidence"), "catalog_path": catalog,
             "output_dir": tmp_path / "new_run", "max_xy_retries": 2,
+            "xy_update_weight": 1.0,
         }
         return opened
 
@@ -147,7 +149,8 @@ def test_stale_catalog_preflight_does_not_connect_cameras(tmp_path, monkeypatch)
 
     def stale(**kwargs):
         assert kwargs == {
-            "mode": "square", "shared_root": Path("/shared"),
+            "mode": SimpleNamespace(family="cylinder"),
+            "shared_root": Path("/shared"),
             "catalog_path": catalog,
         }
         raise ValueError("v8 catalog is stale for pose 000")

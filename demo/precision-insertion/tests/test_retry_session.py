@@ -416,6 +416,46 @@ def test_grounded_diagnostic_binds_failure_and_never_records_retry(
     assert (output / "frames/a.png").is_file()
 
 
+def test_square_translation_only_uses_visible_tip_and_shoulder_but_not_yaw(
+        tmp_path, monkeypatch):
+    kwargs = _inputs(tmp_path, monkeypatch)
+    for name in ("planner", "held_key_observation", "held_key_evidence_dir"):
+        kwargs.pop(name)
+    fixture = next((tmp_path / "AutoDex/precision_insertion/fixtures").rglob(
+        "task_geometry.json"))
+    fixture.write_text(json.dumps({
+        "key_frame": {"tip_z_m": .0855, "handle_front_z_m": .045},
+        "verification_depth_m": .02,
+        "insertion_direction_socket": [0., 0., -1.],
+        "socket_entry_plane_z_m": .0585,
+    }), encoding="utf-8")
+    calls = []
+
+    def ground(backend, frames, *, reference_kind):
+        calls.append((len(frames), reference_kind))
+        return [], ()  # Key tip/shoulder occluded in this test exposure.
+
+    monkeypatch.setattr(retry_session, "observe_grounded_key_axis", ground)
+    alignment_limits = AlignmentLimits(
+        pixel_sigma_px=1., max_reprojection_px=3.,
+        min_parallax_deg=5., max_axis_tilt_deg=3.,
+        max_20mm_axis_sweep_m=.001,
+        max_lateral_uncertainty_95_m=.0005,
+        systematic_lateral_sigma_m=.0001,
+        cad_spacing_sigma_m=.0005)
+    result = assess_grounded_xy_diagnostic(
+        **kwargs, alignment_limits=alignment_limits,
+        square_translation_only=True)
+    assert calls == [(2, "square_shoulder")]
+    assert result.alignment["reason"] == (
+        "insufficient_visible_corresponding_axis_landmarks")
+    assert result.alignment["square_translation_only"] is True
+    assert result.alignment["square_yaw_observed"] is False
+    assert result.alignment["square_yaw_requires_independent_evidence"] is True
+    assert result.to_record()["preflight"] is None
+    assert kwargs["attempt"]._pending_retry is False
+
+
 def test_square_grounding_rejects_roi_without_spending_vlm_call(
         tmp_path, monkeypatch):
     kwargs = _inputs(tmp_path, monkeypatch)

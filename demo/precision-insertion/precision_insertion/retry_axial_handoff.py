@@ -51,9 +51,10 @@ def _build_record(
     if (not isinstance(expected, PostShiftArrivalReplan) or
             not isinstance(arrival, PostShiftArrivalCheckpoint) or
             not isinstance(measured_start, LiveRobotState) or
-            not isinstance(mode, TaskMode) or mode.family != "cylinder" or
+            not isinstance(mode, TaskMode) or
+            mode.family not in {"cylinder", "square"} or
             not math.isclose(mode.target_depth_m, .020, abs_tol=1e-9)):
-        raise ValueError("retry axial handoff needs a measured 20 mm cylinder")
+        raise ValueError("retry axial handoff needs a measured 20 mm held key")
     limits = {
         "max_state_age_s": _positive(max_state_age_s, "state age"),
         "max_arrival_age_s": _positive(max_arrival_age_s, "arrival age"),

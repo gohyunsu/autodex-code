@@ -28,6 +28,7 @@ from .geometry import validate_se3
 from .grounded_alignment import (
     AlignmentLimits, estimate_grounded_alignment,
     estimate_grounded_line_alignment,
+    observe_grounded_key_axis,
     observe_grounded_cylinder_axis, observe_grounded_cylinder_axis_cropped,
 )
 from .grounding_crop import verify_native_crop_observation
@@ -669,13 +670,19 @@ def assess_grounded_xy_diagnostic(
     alignment_limits: AlignmentLimits,
     axis_reference_key_z_m: float | None = None,
     roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]] | None = None,
+    square_translation_only: bool = False,
 ) -> GroundedXYDiagnostic:
     """Observe raw key landmarks after a failed trial, never command XY.
 
     The cylinder route uses a tip point and the visible shaft axis line; its
-    line endpoints need no cross-view point correspondence. The square route
-    needs a third non-collinear feature to estimate yaw and therefore abstains.
+    line endpoints need no cross-view point correspondence. An opt-in square
+    diagnostic triangulates tip and CAD shoulder centres to estimate *only*
+    XY/axis tilt. Square yaw remains unobserved and this diagnostic cannot
+    authorize a retry or insertion. The default square route still abstains.
     """
+    if type(square_translation_only) is not bool or (
+            square_translation_only and mode.family != "square"):
+        raise ValueError("square translation-only grounding needs square mode")
     if roi_xyxy_by_camera is not None and mode.yaw_relevant:
         raise ValueError("two-landmark ROI grounding cannot determine square-key yaw")
     root, postlift_file, withdrawal_file, verified = (
@@ -696,14 +703,16 @@ def assess_grounded_xy_diagnostic(
     tip_z = float(geometry["key_frame"]["tip_z_m"])
     if mode.family != "cylinder":
         if axis_reference_key_z_m is None:
-            # The square diagnostic still records why a two-point axis
-            # estimate cannot determine the key's insertion yaw.
-            reference_z = 0.0
+            reference_z = (geometry["key_frame"].get("handle_front_z_m")
+                           if square_translation_only else 0.0)
         else:
             reference_z = float(axis_reference_key_z_m)
-        if (not math.isfinite(reference_z) or reference_z < 0 or
+        if (reference_z is None or not math.isfinite(reference_z) or
+                reference_z < 0 or
                 reference_z >= tip_z):
             raise ValueError("axis reference must be behind the CAD tip")
+        if square_translation_only and reference_z <= 0:
+            raise ValueError("square shoulder needs a positive CAD z coordinate")
     if (float(geometry.get("verification_depth_m", mode.target_depth_m)) !=
             mode.target_depth_m or
             geometry["insertion_direction_socket"] != [0.0, 0.0, -1.0]):
@@ -719,14 +728,29 @@ def assess_grounded_xy_diagnostic(
         np.asarray(intrinsics_full[frame.camera_id]["K_undist"], dtype=float),
     ) for frame in frames]
     if mode.yaw_relevant:
-        # Two collinear points/one axial line leave square-key yaw
-        # unobservable. Do not spend an API call on a guaranteed abstention.
-        observations = ()
-        alignment = estimate_grounded_alignment(
-            [], landmark_spacing_m=tip_z - reference_z,
-            socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
-            verification_depth_m=mode.target_depth_m,
-            limits=alignment_limits, yaw_relevant=True)
+        if square_translation_only:
+            grounded, observations = observe_grounded_key_axis(
+                backend, calibrated, reference_kind="square_shoulder")
+            alignment = estimate_grounded_alignment(
+                grounded, landmark_spacing_m=tip_z - reference_z,
+                socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
+                verification_depth_m=mode.target_depth_m,
+                limits=alignment_limits)
+            alignment = dict(
+                alignment, square_translation_only=True,
+                square_yaw_observed=False,
+                square_yaw_requires_independent_evidence=True,
+                axis_reference_feature="insertion_shaft_handle_shoulder",
+                scope="read_only_xy_axis_diagnostic_square_yaw_unobserved")
+        else:
+            # Two collinear points/one axial line leave square-key yaw
+            # unobservable. Do not spend an API call on a guaranteed abstention.
+            observations = ()
+            alignment = estimate_grounded_alignment(
+                [], landmark_spacing_m=tip_z - reference_z,
+                socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
+                verification_depth_m=mode.target_depth_m,
+                limits=alignment_limits, yaw_relevant=True)
     else:
         if roi_xyxy_by_camera is None:
             grounded, observations = observe_grounded_cylinder_axis(
@@ -743,15 +767,8 @@ def assess_grounded_xy_diagnostic(
             socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
             verification_depth_m=mode.target_depth_m,
             limits=alignment_limits)
-    increment = alignment["bounded_xy_increment_socket_m"]
-    if increment is not None:
-        proposed = (np.asarray(attempt.xy_offset_socket_m) +
-                    np.asarray(increment))
-        if np.linalg.norm(proposed) > limits.max_total_offset_m:
-            alignment = dict(alignment, status="abstain",
-                             reason="proposed_offset_exceeds_session_budget",
-                             xy_correction_socket_m=None,
-                             bounded_xy_increment_socket_m=None)
+    # The session runner applies the configured weight and checks the
+    # cumulative command offset. The diagnostic only measures residual error.
     alignment = dict(
         alignment, estimator_limits=asdict(alignment_limits),
         grounding_input=("lossless_raw_roi" if roi_xyxy_by_camera is not None

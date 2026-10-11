@@ -52,6 +52,7 @@ class AxisymmetricHeldHypothesis:
     observed_axis_socket: np.ndarray
     tip_prior_residual_m: float
     axis_prior_residual_deg: float
+    family: str = "cylinder"
 
     def to_record(self) -> dict:
         return {
@@ -65,8 +66,13 @@ class AxisymmetricHeldHypothesis:
             "observed_axis_socket": self.observed_axis_socket.tolist(),
             "tip_prior_residual_m": self.tip_prior_residual_m,
             "axis_prior_residual_deg": self.axis_prior_residual_deg,
-            "unobservable_dof": "rotation_about_cylinder_axis",
-            "yaw_gauge": "minimum_axis_rotation_from_physical_grasp_medoid",
+            "unobservable_dof": ("rotation_about_key_axis" if
+                                 self.family == "square" else
+                                 "rotation_about_cylinder_axis"),
+            "yaw_gauge": ("minimum_axis_rotation_from_bounded_held_grasp_prior"
+                          if self.family == "square" else
+                          "minimum_axis_rotation_from_physical_grasp_medoid"),
+            "family": self.family,
             "scope": "read_only_observed_tip_axis_plus_prior_yaw_hypothesis",
             "robot_ready": False,
         }
@@ -78,6 +84,7 @@ def reconstruct_axisymmetric_held_hypothesis(
     insertion_axis_key: np.ndarray, tip_socket_m: np.ndarray,
     insertion_axis_socket: np.ndarray,
     max_tip_prior_residual_m: float, max_axis_prior_residual_deg: float,
+    family: str = "cylinder",
 ) -> AxisymmetricHeldHypothesis:
     """Preserve the prior yaw gauge while fitting observed tip and axis.
 
@@ -88,6 +95,8 @@ def reconstruct_axisymmetric_held_hypothesis(
     G' = K'^-1 H is a *hypothesis* whose uncertainty must be included in a
     separately commissioned whole-surface bound before any endpoint audit.
     """
+    if family not in {"cylinder", "square"}:
+        raise ValueError("unsupported held-key family")
     socket = validate_se3(T_robot_socket, name="frozen T_robot_socket")
     hand = validate_se3(T_robot_hand_measured, name="measured T_robot_hand")
     prior = validate_se3(T_key_hand_prior, name="physical medoid T_key_hand")
@@ -128,7 +137,7 @@ def reconstruct_axisymmetric_held_hypothesis(
                         name="gauge-fixed T_key_hand")
     return AxisymmetricHeldHypothesis(
         observed, robot_key, held, predicted_tip, tip_observed,
-        predicted_axis, observed_axis, tip_error, axis_error)
+        predicted_axis, observed_axis, tip_error, axis_error, family)
 
 
 def tip_axis_visual_surface_bound(

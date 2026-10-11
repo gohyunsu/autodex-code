@@ -77,6 +77,7 @@ from .retry_session import (
     write_retry_session_artifacts,
 )
 from .grounded_alignment import AlignmentLimits
+from .xy_voting import VLM_XY_STEP_M
 from .grounded_lateral import (
     GroundedLateralPreflight, plan_grounded_lateral_from_withdrawal,
     verify_grounded_lateral_preflight, write_grounded_lateral_preflight,
@@ -136,10 +137,13 @@ class SessionRunner:
     def __init__(
         self, *, mode: TaskMode, calibration: SessionCalibration,
         catalog: dict, shared_root: Path, output_dir: Path,
-        max_xy_retries: int,
+        max_xy_retries: int, xy_update_weight: float = 1.0,
     ) -> None:
         if type(max_xy_retries) is not int or max_xy_retries < 0:
             raise ValueError("max_xy_retries must be a nonnegative integer")
+        if (not math.isfinite(float(xy_update_weight)) or
+                not 0 < xy_update_weight <= 1):
+            raise ValueError("XY update weight must be in (0, 1]")
         if not isinstance(calibration, SessionCalibration):
             raise TypeError("session needs a frozen SessionCalibration")
         validate_catalog_session(catalog, mode=mode,
@@ -158,6 +162,7 @@ class SessionRunner:
         self.shared_root = root
         self.output_dir = target
         self.max_xy_retries = max_xy_retries
+        self.xy_update_weight = float(xy_update_weight)
         self.session_sha256 = _digest(calibration.record)
         self.catalog_sha256 = _digest(catalog)
         self._preflight: TrialPreflight | None = None
@@ -175,6 +180,8 @@ class SessionRunner:
         self._key_evidence_manifest_sha256: str | None = None
         self._attempt: AttemptRecord | None = None
         self._attempted: set[tuple[str, str, str]] = set()
+        self._pending_next_trial_xy: dict | None = None
+        self._future_xy_corrections_used = 0
         self._same_capture_planning_rejects: set[tuple[str, str, str]] = set()
         self._capture_id: str | None = None
         self._capture_timestamp_s = -math.inf
@@ -239,6 +246,7 @@ class SessionRunner:
             "session_calibration_sha256": self.session_sha256,
             "catalog_sha256": self.catalog_sha256,
             "max_xy_retries": max_xy_retries,
+            "xy_update_weight": self.xy_update_weight,
             "scope": "evidence_and_preflight_only_not_robot_motion_authorization",
             "robot_ready": False,
         })
@@ -314,7 +322,8 @@ class SessionRunner:
                     ("fresh_visible_key_pose_or_commissioned_grasp_relation",
                      "uncertainty_bounded_socket_endpoint_and_path_preflight"))
             return decide_after_attempt(
-                self._attempt, max_xy_retries=self.max_xy_retries)
+                self._attempt, max_xy_retries=max(
+                    0, self.max_xy_retries - self._future_xy_corrections_used))
         if self._repose_search_exhausted:
             return SessionDecision(
                 "stop_for_review", "directed_repose_targets_exhausted", None)
@@ -391,7 +400,9 @@ class SessionRunner:
 
         Failed planning candidates are skipped only while continuing the same
         capture's bounded pilot. A new key pose/state may make them feasible.
-        Physical attempts are excluded for the remainder of this session.
+        Physical attempts are excluded for the remainder of this session,
+        except the same candidate may be preferred once when a previous
+        failed insertion supplied candidate/pose-bound next-trial XY advice.
         """
         self._can_plan_key(key_observation)
         evidence_dir = Path(key_evidence_dir).expanduser().resolve()
@@ -430,11 +441,18 @@ class SessionRunner:
             raise ValueError("frozen session or endpoint catalogue changed")
         new_capture = key_observation.capture_id != self._capture_id
         exclusions = set(self._attempted)
+        pending_xy = self._pending_next_trial_xy
+        preferred = None
+        if pending_xy is not None:
+            preferred = tuple(pending_xy["candidate_id"].split("/"))
+            # One new physical pickup of the same grasp is permitted even
+            # though all other attempted v8 grasps remain excluded.
+            exclusions.discard(preferred)
         if not new_capture:
             exclusions.update(self._same_capture_planning_rejects)
         if {"attempted", "covered_scenes", "mode", "calibration", "catalog",
             "shared_root", "key_pose_world", "key_observation_id",
-            "key_capture_timestamp_s"} & optional_planning_kwargs.keys():
+            "key_capture_timestamp_s", "preferred_candidate"} & optional_planning_kwargs.keys():
             raise ValueError("runner-owned planning inputs cannot be overridden")
         result = plan_admitted_key_trial(
             planner=planner, mode=self.mode, shared_root=self.shared_root,
@@ -446,7 +464,11 @@ class SessionRunner:
             axial_waypoint_step_m=axial_waypoint_step_m,
             max_candidate_attempts=max_candidate_attempts,
             attempted=tuple(sorted(exclusions)), covered_scenes=(),
+            preferred_candidate=preferred,
             **optional_planning_kwargs)
+        if (pending_xy is not None and
+                result.pose_class["stem"] != pending_xy["tabletop_pose_stem"]):
+            self._pending_next_trial_xy = None
         if (result.session_calibration_sha256 != self.session_sha256 or
                 result.catalog_sha256 != self.catalog_sha256 or
                 result.key_observation_id != key_observation.capture_id):
@@ -906,11 +928,28 @@ class SessionRunner:
             raise ValueError("physical attempt cannot start before key/state acquisition")
         key = self._preflight.selected_candidate_key
         assert key is not None
+        pending_xy = self._pending_next_trial_xy
+        correction = (0.0, 0.0)
+        if pending_xy is not None:
+            source = Path(pending_xy["diagnostic_report_path"]).resolve()
+            if (pending_xy["session_calibration_sha256"] != self.session_sha256 or
+                    pending_xy["catalog_sha256"] != self.catalog_sha256 or
+                    not source.is_file() or
+                    hashlib.sha256(source.read_bytes()).hexdigest() !=
+                    pending_xy["diagnostic_report_sha256"]):
+                raise ValueError("next-trial XY source changed before new pickup")
+            if (pending_xy["candidate_id"] == "/".join(key) and
+                    pending_xy["tabletop_pose_stem"] ==
+                    self._preflight.pose_class["stem"]):
+                correction = tuple(
+                    pending_xy["next_wrist_correction_socket_m"])
+            self._pending_next_trial_xy = None
         attempt = begin_attempt(
             attempt_id=attempt_id, mode=self.mode,
             session_record=self.calibration.record, candidate_id="/".join(key),
             tabletop_pose_stem=self._preflight.pose_class["stem"],
-            xy_offset_socket_m=(0.0, 0.0), started_at_s=started_at_s)
+            xy_offset_socket_m=(0.0, 0.0), started_at_s=started_at_s,
+            wrist_correction_socket_m=correction)
         attempt_dir = self.output_dir / "attempts" / attempt_id
         attempt_dir.mkdir(parents=True, exist_ok=False)
         self._write_exclusive(attempt_dir / "preflight_binding.json", {
@@ -923,6 +962,13 @@ class SessionRunner:
             "measured_start_state_sha256": (
                 verified["measured_start_state_sha256"]),
             "session_calibration_sha256": self.session_sha256,
+            "next_trial_xy_source": (
+                None if correction == (0.0, 0.0) else
+                pending_xy["diagnostic_report_path"]),
+            "next_trial_xy_source_sha256": (
+                None if correction == (0.0, 0.0) else
+                pending_xy["diagnostic_report_sha256"]),
+            "wrist_correction_socket_m": list(correction),
             "robot_ready": False,
         })
         attempt.write_new(attempt_dir / "state_000.json")
@@ -1816,8 +1862,12 @@ class SessionRunner:
         minimum_release_key_clearance_m: float,
     ):
         """Reuse the same socket-aware held motion for both failure stages."""
+        held_relation = self._postlift_preflight.relation
         relation = validate_se3(
-            self._postlift_preflight.relation.T_key_hand,
+            (held_relation.T_key_hand_command
+             if isinstance(self._postlift_preflight, BoundedPostLiftPreflight)
+             and held_relation.T_key_hand_command is not None
+             else held_relation.T_key_hand),
             name="failed-return post-lift T_key_hand")
         c2r = validate_se3(self.calibration.record.get("c2r"),
                            name="session C2R")
@@ -2646,6 +2696,7 @@ class SessionRunner:
         alignment_limits: AlignmentLimits,
         axis_reference_key_z_m: float | None = None,
         roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]] | None = None,
+        square_translation_only: bool = False,
     ) -> GroundedXYDiagnostic:
         """Save camera-grounded metric 1 mm advice without scheduling motion."""
         if (self.current_decision().action !=
@@ -2668,12 +2719,87 @@ class SessionRunner:
             decision_timestamp_s=decision_timestamp_s, limits=limits,
             alignment_limits=alignment_limits,
             axis_reference_key_z_m=axis_reference_key_z_m,
-            roi_xyxy_by_camera=roi_xyxy_by_camera)
+            roi_xyxy_by_camera=roi_xyxy_by_camera,
+            square_translation_only=square_translation_only)
         output = (self._attempt_dir / "xy_retry_assessments" /
                   f"{self._retry_assessment_index:03d}")
         write_retry_session_artifacts(result, frames, output)
         self._retry_assessment_index += 1
         return result
+
+    def record_next_trial_xy_advice(
+        self, *, diagnostic: GroundedXYDiagnostic,
+        diagnostic_report_path: Path, timestamp_s: float,
+        max_total_offset_m: float,
+    ) -> AttemptRecord:
+        """Queue one measured XY wrist correction for a new pickup only."""
+        if (self.current_decision().action !=
+                "guarded_withdrawal_then_xy_assessment" or
+                self._attempt is None or self._attempt_dir is None or
+                self._pending_next_trial_xy is not None or
+                self._future_xy_corrections_used >= self.max_xy_retries or
+                not isinstance(diagnostic, GroundedXYDiagnostic) or
+                diagnostic.status != "diagnostic_metric_xy_correction" or
+                diagnostic.attempt_id != self._attempt.attempt_id or
+                diagnostic.candidate_id != self._attempt.candidate_id or
+                diagnostic.session_calibration_sha256 != self.session_sha256):
+            raise ValueError("next-trial XY advice needs this failed held attempt")
+        source = Path(diagnostic_report_path).expanduser().resolve()
+        expected = self._attempt_dir / "xy_retry_assessments"
+        if source.parent.parent != expected or not source.is_file():
+            raise ValueError("next-trial advice needs this attempt's saved diagnostic")
+        saved = json.loads(source.read_text(encoding="utf-8"))
+        current = diagnostic.to_record()
+        if any(saved.get(key) != value for key, value in current.items()):
+            raise ValueError("saved multi-view diagnostic differs from advice")
+        increment = diagnostic.alignment.get("bounded_xy_increment_socket_m")
+        inliers = diagnostic.alignment.get("inlier_cameras")
+        if (not isinstance(increment, list) or len(increment) != 2 or
+                not isinstance(inliers, list)):
+            raise ValueError("grounded diagnostic lacks metric XY/inliers")
+        correction = tuple(float(value) for value in increment)
+        if (not math.isfinite(float(max_total_offset_m)) or
+                max_total_offset_m <= 0):
+            raise ValueError("cumulative XY budget must be finite and positive")
+        applied_step = tuple(self.xy_update_weight * value for value in correction)
+        prior = self._attempt.wrist_correction_socket_m
+        cumulative = tuple(a + b for a, b in zip(prior, applied_step))
+        if (math.hypot(*applied_step) > VLM_XY_STEP_M + 1e-12 or
+                math.hypot(*cumulative) > max_total_offset_m + 1e-12):
+            raise ValueError("weighted XY step or cumulative offset exceeds budget")
+        cameras = tuple(inliers)
+        snapshot = self._record(lambda row: row.record_next_trial_xy_advice(
+            increment_socket_xy_m=correction,
+            update_weight=self.xy_update_weight,
+            applied_step_socket_xy_m=applied_step,
+            next_wrist_correction_socket_m=cumulative,
+            supporting_cameras=cameras, timestamp_s=timestamp_s,
+            evidence_refs={
+                "axial_withdrawal": str(diagnostic.withdrawal_evidence_path),
+                "grounded_xy": str(source),
+            }))
+        advice = {
+            "schema": "precision_insertion_next_trial_xy_v1",
+            "source_attempt_id": snapshot.attempt_id,
+            "candidate_id": snapshot.candidate_id,
+            "tabletop_pose_stem": snapshot.tabletop_pose_stem,
+            "increment_socket_xy_m": list(correction),
+            "update_weight": self.xy_update_weight,
+            "applied_step_socket_xy_m": list(applied_step),
+            "prior_wrist_correction_socket_m": list(prior),
+            "next_wrist_correction_socket_m": list(cumulative),
+            "max_total_offset_m": max_total_offset_m,
+            "diagnostic_report_path": str(source),
+            "diagnostic_report_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            "session_calibration_sha256": self.session_sha256,
+            "catalog_sha256": self.catalog_sha256,
+            "scope": "next_physical_attempt_wrist_command_only",
+        }
+        self._write_exclusive(self._attempt_dir / "next_trial_xy_advice.json",
+                              advice)
+        self._pending_next_trial_xy = advice
+        self._future_xy_corrections_used += 1
+        return snapshot
 
     def prepare_grounded_lateral_hold_preflight(
         self, *, planner, diagnostic: GroundedXYDiagnostic,
@@ -3057,7 +3183,7 @@ class SessionRunner:
         if (self.current_decision().action !=
                 "guarded_withdrawal_then_xy_assessment" or
                 self._attempt is None or self._attempt_dir is None or
-                self.mode.family != "cylinder" or
+                self.mode.family not in {"cylinder", "square"} or
                 replan.status != "sampled_arrival_20mm_axial_preflight_pass" or
                 replan.attempt_id != self._attempt.attempt_id or
                 replan.candidate_id != self._attempt.candidate_id or

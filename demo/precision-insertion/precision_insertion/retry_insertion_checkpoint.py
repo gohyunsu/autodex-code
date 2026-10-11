@@ -65,7 +65,8 @@ def assess_retry_insertion_checkpoint(
     """Observe a second stroke, not a replay of the first insertion images."""
     limits = (max_phase_skew_s, max_preinsert_age_s,
               max_final_observation_gap_s)
-    if (not isinstance(mode, TaskMode) or mode.family != "cylinder" or
+    if (not isinstance(mode, TaskMode) or
+            mode.family not in {"cylinder", "square"} or
             not math.isclose(mode.target_depth_m, .020, abs_tol=1e-9) or
             not all(type(value) in (float, int) and
                     math.isfinite(value) and value > 0 for value in limits) or

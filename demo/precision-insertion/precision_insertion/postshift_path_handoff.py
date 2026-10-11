@@ -51,10 +51,11 @@ def _build_record(
     if (not isinstance(expected, PostShiftInsertionPreflight) or
             not isinstance(checkpoint, PostShiftCheckpoint) or
             not isinstance(shift_plan, GroundedLateralPreflight) or
-            not isinstance(mode, TaskMode) or mode.family != "cylinder" or
+            not isinstance(mode, TaskMode) or
+            mode.family not in {"cylinder", "square"} or
             not math.isclose(mode.target_depth_m, .020, abs_tol=1e-9) or
             not isinstance(measured_start, LiveRobotState)):
-        raise ValueError("post-shift handoff needs a held 20 mm cylinder plan")
+        raise ValueError("post-shift handoff needs a held 20 mm key plan")
     limits = {
         "max_state_age_s": _positive(max_state_age_s, "state age"),
         "max_start_joint_error_rad": _positive(

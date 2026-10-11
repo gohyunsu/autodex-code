@@ -84,6 +84,7 @@ class AttemptRecord:
     tabletop_pose_stem: str | None
     xy_offset_socket_m: tuple[float, float]
     started_at_s: float
+    wrist_correction_socket_m: tuple[float, float] = (0.0, 0.0)
     labels: dict[str, bool | None] = field(
         default_factory=lambda: {name: None for name in STAGES})
     events: list[dict] = field(default_factory=list)
@@ -232,6 +233,62 @@ class AttemptRecord:
                 self.failure_code in {"force_abort", "slip", "reset_failed"}):
             raise ValueError("retry requires held grasp without safety abort")
 
+    def record_next_trial_xy_advice(
+        self, *, increment_socket_xy_m: tuple[float, float],
+        update_weight: float, applied_step_socket_xy_m: tuple[float, float],
+        next_wrist_correction_socket_m: tuple[float, float],
+        supporting_cameras: tuple[str, ...], timestamp_s: float,
+        evidence_refs: Mapping[str, str],
+    ) -> None:
+        """Record advice for a *new pickup*, without moving this held grasp."""
+        self._require_retryable_failure()
+        if any(event["stage"] == "next_trial_xy_advice" for event in self.events):
+            raise ValueError("this failure already produced next-trial advice")
+        if (not isinstance(increment_socket_xy_m, (tuple, list)) or
+                len(increment_socket_xy_m) != 2):
+            raise ValueError("next-trial advice needs socket XY meters")
+        dx, dy = (float(value) for value in increment_socket_xy_m)
+        if (not math.isfinite(dx) or not math.isfinite(dy) or
+                not 0 < math.hypot(dx, dy) <= VLM_XY_STEP_M + 1e-12):
+            raise ValueError("next-trial XY step must be nonzero and at most 1 mm")
+        if not math.isfinite(update_weight) or not 0 < update_weight <= 1:
+            raise ValueError("XY update weight must be in (0, 1]")
+        applied = tuple(float(v) for v in applied_step_socket_xy_m)
+        next_value = tuple(float(v) for v in next_wrist_correction_socket_m)
+        if (len(applied) != 2 or len(next_value) != 2 or
+                not all(math.isfinite(v) for v in (*applied, *next_value)) or
+                not all(math.isclose(actual, raw * update_weight,
+                                     abs_tol=1e-12, rel_tol=0)
+                        for actual, raw in zip(applied, (dx, dy))) or
+                math.hypot(*applied) > VLM_XY_STEP_M + 1e-12 or
+                not all(math.isclose(actual, prior + step,
+                                     abs_tol=1e-12, rel_tol=0)
+                        for actual, prior, step in zip(
+                            next_value, self.wrist_correction_socket_m, applied))):
+            raise ValueError("next-trial XY must equal prior + weight * increment")
+        if (not isinstance(supporting_cameras, tuple) or
+                len(set(supporting_cameras)) < 2 or
+                len(set(supporting_cameras)) != len(supporting_cameras)):
+            raise ValueError("next-trial advice needs distinct camera inliers")
+        refs = _refs(evidence_refs, "preinsert_reached", False)
+        if not {"axial_withdrawal", "grounded_xy"} <= refs.keys():
+            raise ValueError("next-trial advice needs withdrawal and diagnostic")
+        timestamp = _finite_time(timestamp_s)
+        if timestamp < self.events[-1]["timestamp_s"]:
+            raise ValueError("attempt events must be in nondecreasing time order")
+        self.events.append({
+            "event_index": len(self.events), "timestamp_s": timestamp,
+            "stage": "next_trial_xy_advice", "value": [dx, dy],
+            "update_weight": update_weight,
+            "prior_wrist_correction_socket_m": list(
+                self.wrist_correction_socket_m),
+            "applied_step_socket_xy_m": list(applied),
+            "next_wrist_correction_socket_m": list(next_value),
+            "supporting_cameras": list(supporting_cameras),
+            "evidence_refs": refs,
+            "scope": "next_physical_attempt_only_no_same_attempt_lateral_motion",
+        })
+
     def record_grounded_retry(
         self, *, increment_socket_xy_m: tuple[float, float],
         supporting_cameras: tuple[str, ...], timestamp_s: float,
@@ -244,8 +301,8 @@ class AttemptRecord:
         state; it does not authorize contact or claim insertion success.
         """
         self._require_retryable_failure()
-        if self.mode.family != "cylinder":
-            raise ValueError("metric tip/axis retry currently needs a cylinder")
+        if self.mode.family not in {"cylinder", "square"}:
+            raise ValueError("metric tip/axis retry needs a supported key family")
         if (not isinstance(increment_socket_xy_m, (tuple, list)) or
                 len(increment_socket_xy_m) != 2):
             raise ValueError("grounded retry needs two socket XY meters")
@@ -295,6 +352,7 @@ class AttemptRecord:
         self._require_retryable_failure()
         if reason not in {
                 "vlm_abstain", "lateral_preflight_failed",
+                "xy_update_budget_exhausted",
                 "held_key_pose_unavailable",
                 "postshift_alignment_failed", "insertion_preflight_failed",
                 "arrival_preflight_failed"}:
@@ -344,6 +402,7 @@ class AttemptRecord:
             "candidate_id": self.candidate_id,
             "tabletop_pose_stem": self.tabletop_pose_stem,
             "xy_offset_socket_m": list(self.xy_offset_socket_m),
+            "wrist_correction_socket_m": list(self.wrist_correction_socket_m),
             **self.labels,
             "failure_code": self.failure_code,
             "events": list(self.events),
@@ -363,6 +422,7 @@ def begin_attempt(
     *, attempt_id: str, mode: TaskMode, session_record: Mapping,
     candidate_id: str | None, tabletop_pose_stem: str | None,
     xy_offset_socket_m: tuple[float, float], started_at_s: float,
+    wrist_correction_socket_m: tuple[float, float] = (0.0, 0.0),
 ) -> AttemptRecord:
     """Bind a new record to a frozen session without claiming readiness."""
     if not isinstance(attempt_id, str) or not attempt_id.strip():
@@ -390,6 +450,9 @@ def begin_attempt(
     if len(xy_offset_socket_m) != 2 or not all(
             math.isfinite(float(v)) for v in xy_offset_socket_m):
         raise ValueError("XY offset must be two finite socket-frame values")
+    if (len(wrist_correction_socket_m) != 2 or
+            not all(math.isfinite(float(v)) for v in wrist_correction_socket_m)):
+        raise ValueError("next-attempt wrist correction needs finite socket XY")
     canonical_session = json.dumps(
         dict(session_record), sort_keys=True, separators=(",", ":"),
         allow_nan=False).encode("utf-8")
@@ -399,4 +462,6 @@ def begin_attempt(
         candidate_id=candidate_id, tabletop_pose_stem=tabletop_pose_stem,
         xy_offset_socket_m=tuple(float(v) for v in xy_offset_socket_m),
         started_at_s=_finite_time(started_at_s),
+        wrist_correction_socket_m=tuple(
+            float(v) for v in wrist_correction_socket_m),
     )

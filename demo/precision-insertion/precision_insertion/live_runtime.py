@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
+import math
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -13,6 +14,7 @@ from .live_orchestration import (
 )
 from .action_loop import ActionLoopResult
 from .labeling import LABEL_MODES
+from .session_launch import load_session_launch
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,7 @@ class RunLiveOptions:
     robot_config_path: Path | None = None
     label_mode: str = "vlm_only"
     annotator: str | None = None
+    xy_update_weight: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -75,13 +78,18 @@ def run_integrated_live_session(
         raise TypeError("live run needs RunLiveOptions")
     if options.enable_robot_motion is not True:
         raise PermissionError("live session requires explicit robot-motion opt-in")
-    if type(options.max_xy_retries) is not int or options.max_xy_retries not in (0, 1):
-        raise ValueError("current live grounded retry supports zero or one correction")
+    if type(options.max_xy_retries) is not int or options.max_xy_retries < 0:
+        raise ValueError("max_xy_retries must be a nonnegative integer")
+    if (not math.isfinite(float(options.xy_update_weight)) or
+            not 0 < options.xy_update_weight <= 1):
+        raise ValueError("XY update weight must be in (0, 1]")
     if type(options.max_steps) is not int or options.max_steps < 1:
         raise ValueError("max_steps must be positive")
     if options.label_mode not in LABEL_MODES or (
             options.label_mode == "manual" and not options.annotator):
         raise ValueError("manual labeling needs a named annotator")
+    if load_session_launch(options.launch_config_path).mode.family != "cylinder":
+        raise ValueError("live insertion currently supports cylinder mode only")
     integration = load_runtime_integration(integration_spec, options)
     try:
         def handlers(live: LivePrecisionSession):
@@ -93,6 +101,7 @@ def run_integrated_live_session(
             endpoint_catalog_path=options.endpoint_catalog_path,
             run_output_dir=options.run_output_dir,
             max_xy_retries=options.max_xy_retries,
+            xy_update_weight=options.xy_update_weight,
             clear_view=integration.clear_view,
             build_handlers=handlers, max_steps=options.max_steps)
     finally:

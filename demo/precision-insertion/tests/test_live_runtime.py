@@ -26,6 +26,8 @@ def test_live_cli_imports_stock_and_demo_packages_from_another_cwd(tmp_path):
 
 
 def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path):
+    monkeypatch.setattr(live_runtime, "load_session_launch", lambda _path:
+                        SimpleNamespace(mode=SimpleNamespace(family="cylinder")))
     class ClearView:
         pass
 
@@ -64,17 +66,19 @@ def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path)
 
 def test_integration_refuses_motion_without_opt_in_or_missing_handlers(
         monkeypatch, tmp_path):
+    monkeypatch.setattr(live_runtime, "load_session_launch", lambda _path:
+                        SimpleNamespace(mode=SimpleNamespace(family="cylinder")))
     options = live_runtime.RunLiveOptions(
         tmp_path / "launch.json", tmp_path / "catalog.json",
         tmp_path / "run")
     with pytest.raises(PermissionError, match="opt-in"):
         live_runtime.run_integrated_live_session(
             options, integration_spec="missing:factory")
-    with pytest.raises(ValueError, match="zero or one"):
+    with pytest.raises(ValueError, match="nonnegative"):
         live_runtime.run_integrated_live_session(
             live_runtime.RunLiveOptions(
                 options.launch_config_path, options.endpoint_catalog_path,
-                options.run_output_dir, max_xy_retries=2,
+                options.run_output_dir, max_xy_retries=-1,
                 enable_robot_motion=True),
             integration_spec="missing:factory")
 
@@ -103,3 +107,30 @@ def test_integration_refuses_motion_without_opt_in_or_missing_handlers(
                 options.run_output_dir, enable_robot_motion=True),
             integration_spec="incomplete_robot_integration:factory")
     assert closed == [True]
+
+
+def test_square_live_mode_stops_before_constructing_robot_integration(
+        monkeypatch, tmp_path):
+    monkeypatch.setattr(live_runtime, "load_session_launch", lambda _path:
+                        SimpleNamespace(mode=SimpleNamespace(family="square")))
+    monkeypatch.setattr(live_runtime, "load_runtime_integration", lambda *_a:
+                        pytest.fail("square must not construct robot adapter"))
+    options = live_runtime.RunLiveOptions(
+        tmp_path / "launch.json", tmp_path / "catalog.json",
+        tmp_path / "run", enable_robot_motion=True)
+    with pytest.raises(ValueError, match="cylinder mode only"):
+        live_runtime.run_integrated_live_session(
+            options, integration_spec="ignored:factory")
+
+
+@pytest.mark.parametrize("weight", [0.0, -0.1, 1.1, float("nan")])
+def test_invalid_xy_weight_is_rejected_before_robot_integration(
+        monkeypatch, tmp_path, weight):
+    monkeypatch.setattr(live_runtime, "load_runtime_integration", lambda *_a:
+                        pytest.fail("bad gain must not construct robot adapter"))
+    options = live_runtime.RunLiveOptions(
+        tmp_path / "launch.json", tmp_path / "catalog.json",
+        tmp_path / "run", xy_update_weight=weight, enable_robot_motion=True)
+    with pytest.raises(ValueError, match="XY update weight"):
+        live_runtime.run_integrated_live_session(
+            options, integration_spec="ignored:factory")

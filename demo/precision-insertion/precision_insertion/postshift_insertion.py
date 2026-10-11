@@ -127,7 +127,7 @@ def plan_postshift_insertion_preflight(
             max_preinsert_hand_rotation_deg >= 90):
         raise ValueError("post-shift insertion needs commissioned positive limits")
     bounds.validate()
-    if (mode.family != "cylinder" or
+    if (mode.family not in {"cylinder", "square"} or
             not isinstance(shift_plan, GroundedLateralPreflight) or
             not isinstance(checkpoint, PostShiftCheckpoint) or
             checkpoint.status != "visual_alignment_within_budget" or
@@ -135,7 +135,7 @@ def plan_postshift_insertion_preflight(
             checkpoint.candidate_id != shift_plan.candidate_id or
             checkpoint.attempt_id != getattr(attempt, "attempt_id", None) or
             checkpoint.candidate_id != getattr(attempt, "candidate_id", None)):
-        raise ValueError("20 mm replan needs one visually aligned held cylinder")
+        raise ValueError("20 mm replan needs one visually aligned held key")
     checkpoint_path = Path(checkpoint_report_path).expanduser().resolve()
     verify_postshift_checkpoint(checkpoint, checkpoint_path, plan=shift_plan)
     _insertion, postlift, postlift_path, root = (
@@ -193,11 +193,11 @@ def plan_postshift_insertion_preflight(
     original = json.loads(shift_plan.diagnostic_report_path.read_text(
         encoding="utf-8"))
     if _sha(geometry_path) != original.get("task_geometry_sha256"):
-        raise ValueError("cylinder task geometry changed after the VLM diagnostic")
+        raise ValueError("key task geometry changed after the VLM diagnostic")
     geometry = json.loads(geometry_path.read_text(encoding="utf-8"))
     if (geometry.get("key_object") != mode.key_object or
             geometry.get("socket_pose_object") != mode.socket_object):
-        raise ValueError("task geometry does not match selected cylinder")
+        raise ValueError("task geometry does not match selected key")
     axis_key = np.asarray(geometry["key_frame"]["insertion_axis"],
                           dtype=np.float64)
     tip_key = np.array([0., 0., float(geometry["key_frame"]["tip_z_m"])])
@@ -227,10 +227,12 @@ def plan_postshift_insertion_preflight(
         tip_socket_m=alignment["tip_socket_m"],
         insertion_axis_socket=alignment["insertion_axis_socket"],
         max_tip_prior_residual_m=key_prior + max_visual_tip_error_m,
-        max_axis_prior_residual_deg=max_axis_prior_residual_deg)
+        max_axis_prior_residual_deg=max_axis_prior_residual_deg,
+        family=mode.family)
     # Both endpoint and held-path targets use the same unobservable yaw gauge.
     heading = hypothesis.T_socket_key[:3, 0]
-    yaw = math.atan2(float(heading[1]), float(heading[0]))
+    yaw = (math.atan2(float(heading[1]), float(heading[0]))
+           if mode.family == "cylinder" else 0.0)
     selected = select_pose_candidates(
         catalog, expected_mode=mode,
         tabletop_pose_stem=attempt.tabletop_pose_stem)
@@ -256,12 +258,14 @@ def plan_postshift_insertion_preflight(
         T_key_hand_override=hypothesis.T_key_hand,
         hand_poses_override={"measured_postshift":
                              checkpoint.joint_sample.full_q[7:]},
-        override_source=("postshift_tip_axis_physical_medoid_yaw_gauge" if
+        override_source=("postshift_tip_axis_bounded_yaw_prior" if
+                         mode.family == "square" else
+                         "postshift_tip_axis_physical_medoid_yaw_gauge" if
                          physical else
                          "postshift_tip_axis_observed_relation_yaw_gauge"),
         cylinder_yaw_gauge_socket_rad=yaw)
     screened = validate_se3(endpoint.get("T_socket_key_tested"),
-                            name="screened cylinder endpoint")
+                            name="screened key endpoint")
     if not np.allclose(screened, np.linalg.inv(socket) @
                        targets.T_robot_key_verification,
                        atol=1e-8, rtol=0):

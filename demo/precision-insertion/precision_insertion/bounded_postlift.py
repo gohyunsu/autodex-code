@@ -27,6 +27,7 @@ from .endpoint import _load_mesh, screen_grasp_endpoint
 from .geometry import validate_se3
 from .lift_checkpoint import LiftCheckpoint, verify_lift_checkpoint
 from .live_robot_state import LiveRobotState
+from .next_trial_xy import compensated_key_hand_relation
 from .path_audit import PathAuditLimits
 from .physical_grasp_calibration import verify_physical_held_relation
 from .preflight import InsertionPreflight, plan_held_transfer_and_axial
@@ -61,11 +62,17 @@ class BoundedHeldRelation:
     hand_calibration_excess_rad: float
     maximum_hand_calibration_excess_rad: float
     surface_bounds: SurfaceDeviationBounds
+    wrist_correction_socket_m: tuple[float, float] = (0.0, 0.0)
+    T_key_hand_command: np.ndarray | None = None
 
     def to_record(self) -> dict:
         return {
             "schema": "precision_insertion_bounded_held_relation_v1",
             "T_key_hand": self.T_key_hand.tolist(),
+            "T_key_hand_command": (
+                self.T_key_hand if self.T_key_hand_command is None
+                else self.T_key_hand_command).tolist(),
+            "wrist_correction_socket_m": list(self.wrist_correction_socket_m),
             "source": "physical_grasp_calibration_medoid_not_runtime_key_pose",
             "physical_calibration_path": str(self.calibration_path),
             "physical_calibration_sha256": self.calibration_sha256,
@@ -247,10 +254,14 @@ def plan_bounded_postlift_transfer(
         np.maximum(lower - held, held - upper), 0.0)))
     if hand_excess > max_calibration_hand_excess_rad:
         raise ValueError("measured Inspire pose is outside calibrated grasp range")
+    commanded_relation = compensated_key_hand_relation(
+        mode=mode, shared_root=root, T_key_hand=relation,
+        wrist_correction_socket_m=attempt.wrist_correction_socket_m)
     bounded_relation = BoundedHeldRelation(
         relation, calibration_file, _sha(calibration_file),
         physical["medoid_trial_id"], descriptive, hand_excess,
-        max_calibration_hand_excess_rad, bounds)
+        max_calibration_hand_excess_rad, bounds,
+        tuple(attempt.wrist_correction_socket_m), commanded_relation)
     now = _wall_time()
     if (joint_sample.sample_timestamp_s <=
             raw_lift.decision_timestamp_s or
@@ -268,12 +279,12 @@ def plan_bounded_postlift_transfer(
     endpoint = screen(
         shared_root=root, mode=mode, candidate_dir=candidate_dir,
         minimum_hand_clearance_m=catalog["minimum_hand_clearance_m"],
-        T_key_hand_override=relation,
+        T_key_hand_override=commanded_relation,
         hand_poses_override={"measured_post_lift": joint_sample.full_q[7:]},
         override_source="physical_grasp_medoid_plus_measured_Inspire")
     if (not np.allclose(validate_se3(endpoint.get("T_key_hand"),
                                     name="bounded endpoint relation"),
-                        relation, atol=1e-8, rtol=0) or
+                        commanded_relation, atol=1e-8, rtol=0) or
             not np.allclose(endpoint.get("xy_offset_socket_m"),
                             [0., 0.], atol=1e-12, rtol=0) or
             not np.allclose(endpoint.get("hold_pose_screens", {}).get(
@@ -296,7 +307,7 @@ def plan_bounded_postlift_transfer(
         return result("bounded_20mm_endpoint_rejected")
     targets = build_rigid_insertion_targets(
         mode=mode, shared_root=root, calibration=calibration,
-        T_key_hand=relation)
+        T_key_hand=commanded_relation)
     planning = plan_held_transfer_and_axial(
         planner=planner, trial_scene=trial.trial_scene,
         shared_root=root, calibration=calibration,
@@ -399,6 +410,14 @@ def verify_bounded_postlift_preflight(
             relation_record.get("medoid_trial_id") !=
             calibration["medoid_trial_id"]):
         raise ValueError("bounded post-lift medoid changed")
+    correction = relation_record.get("wrist_correction_socket_m", [0.0, 0.0])
+    command = compensated_key_hand_relation(
+        mode=mode, shared_root=shared_root, T_key_hand=relation,
+        wrist_correction_socket_m=correction)
+    if not np.allclose(validate_se3(relation_record.get(
+            "T_key_hand_command"), name="saved wrist-corrected relation"),
+            command, atol=1e-8, rtol=0):
+        raise ValueError("bounded wrist correction differs from socket geometry")
     mesh = _load_mesh(AssetPaths(Path(shared_root), mode).raw_mesh(
         mode.key_object))
     descriptive = relation_rotation_surface_bound(
@@ -460,8 +479,8 @@ def verify_bounded_postlift_preflight(
                 record.get("uncertainty_margin", {}).get(
                     "sampled_margin_pass") is not True or
                 not np.allclose(validate_se3(record["targets"]["T_key_hand"]),
-                                relation, atol=1e-8, rtol=0) or
+                                command, atol=1e-8, rtol=0) or
                 not np.allclose(validate_se3(record["endpoint_screen"][
-                    "T_key_hand"]), relation, atol=1e-8, rtol=0)):
+                    "T_key_hand"]), command, atol=1e-8, rtol=0)):
             raise ValueError("bounded passing plan lacks its verified screens")
     return record

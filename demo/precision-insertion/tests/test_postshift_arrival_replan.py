@@ -301,8 +301,9 @@ def test_session_records_verified_continuous_shift_as_pending_retry(
     assert updated.events[-1]["value"] == "grounded_continuous_xy"
     assert updated.xy_offset_socket_m == pytest.approx(
         call["shift_plan"].lateral.increment_socket_xy_m)
-    assert runner.current_decision().action == (
-        "await_retry_execution_and_observation")
+    # Old same-held-attempt records remain readable but cannot execute a
+    # second insertion under the next-physical-trial policy.
+    assert runner.current_decision().action == "stop_for_review"
     assert (attempt_dir / "state_004.json").is_file()
     with pytest.raises(ValueError, match="failed held attempt"):
         runner.record_grounded_xy_retry(**kwargs)

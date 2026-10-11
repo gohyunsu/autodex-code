@@ -180,6 +180,29 @@ def test_vlm_returns_only_validated_raw_image_pixels():
     assert bad[0].parse_error is not None
 
 
+def test_square_shoulder_prompt_reports_visible_cad_correspondence_only():
+    frame = _rig(np.array([0, 0, .09]), np.array([0, 0, .14]))[0].frame
+    prompts = []
+
+    class Backend(_Backend):
+        def infer(self, images, prompt):
+            prompts.append(prompt)
+            return super().infer(images, prompt)
+
+    response = json.dumps({"tip_px": [600, 300],
+                           "axis_ref_px": [610, 290],
+                           "evidence": "visible shoulder"})
+    views, observations = observe_grounded_key_axis(
+        Backend(response), [frame], reference_kind="square_shoulder")
+    assert views[0].axis_ref_uv_px == (610, 290)
+    assert "visible shoulder cross-section" in prompts[0]
+    assert "If either centre is occluded" in prompts[0]
+    assert observations[0].parse_error is None
+    with pytest.raises(ValueError, match="axis-reference"):
+        observe_grounded_key_axis(Backend(response), [frame],
+                                  reference_kind="unknown")
+
+
 def test_local_vlm_complete_json_fence_is_admitted_for_metric_pixels():
     frame = _rig(np.array([0, 0, .09]), np.array([0, 0, .14]))[0].frame
     point_answer = '```json\n{"tip_px":[600,300],"axis_ref_px":[610,290],"evidence":"visible"}\n```'

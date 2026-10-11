@@ -16,7 +16,6 @@ from .labeling import LABEL_MODES
 from .live_held_relation_handlers import LiveHeldRelationHandlers
 from .live_lift_handlers import LiveLiftHandlers
 from .live_observed_relation_handlers import LiveObservedHeldRelationHandlers
-from .live_observed_xy_retry_handlers import LiveObservedXYRetryHandlers
 from .live_pickup_handlers import LivePickupHandlers
 from .live_planning_handlers import LiveKeyPlanningHandlers
 from .live_recovery_handlers import LiveHeldReturnHandlers
@@ -75,15 +74,16 @@ def assemble_live_components(
         raise TypeError("runtime assembly needs a boolean motion setting")
     if held_relation_route not in {"physical", "observed"}:
         raise ValueError("held relation route must be physical or observed")
+    family = getattr(getattr(getattr(live, "opened", None), "runner", None),
+                     "mode", None)
+    if (getattr(family, "family", None) == "cylinder" and
+            held_relation_route != "physical"):
+        raise ValueError(
+            "cylinder live retries require the physical held-relation route")
     if label_mode not in LABEL_MODES or (
             label_mode == "manual" and not callable(manual_label_provider)):
         raise ValueError("invalid label mode or missing manual label provider")
     classes = dict(STAGE_CLASSES)
-    active_mode = getattr(
-        getattr(getattr(live, "opened", None), "runner", None),
-        "mode", None)
-    if getattr(active_mode, "family", None) == "square":
-        classes["retry"] = LiveObservedXYRetryHandlers
     if held_relation_route == "observed":
         classes["held_relation"] = LiveObservedHeldRelationHandlers
     missing = classes.keys() - stages.keys()
@@ -126,10 +126,6 @@ def assemble_live_components(
                 "calibration_for_candidate" not in arguments):
             arguments["calibration_for_candidate"] = (
                 _default_physical_calibration_for_candidate(live))
-        if (name == "retry" and cls is LiveObservedXYRetryHandlers and
-                "key_prompt" in accepted and
-                "key_prompt" not in arguments):
-            arguments["key_prompt"] = getattr(components[0], "key_prompt", None)
         arguments["live"] = live
         if name == "repose_planning":
             arguments["key_planning"] = components[0]
@@ -138,8 +134,7 @@ def assemble_live_components(
         components.append(cls(**arguments))
     retry = components[list(classes).index("retry")]
     held_return = components[list(classes).index("held_return")]
-    if (isinstance(retry, (LiveGroundedRetryHandlers,
-                           LiveObservedXYRetryHandlers)) and
+    if (isinstance(retry, LiveGroundedRetryHandlers) and
             isinstance(held_return, LiveHeldReturnHandlers) and
             held_return.reuse_withdrawal is None):
         held_return.reuse_withdrawal = retry.withdrawn_for_return

@@ -2523,12 +2523,13 @@ PC; the handler refuses recapture if the return was not executed and
 verified.
 [`LiveGroundedRetryHandlers`](precision_insertion/live_retry_handlers.py)
 now connects the first failed held insertion through logged withdrawal,
-Qwen cylinder-tip/axis grounding, at-most-1 mm socket-XY lateral planning
-and execution, fresh post-shift/arrival images, renewed 20 mm axial planning,
-guarded retry execution and a fresh final VLM label. A VLM abstention or
-failed preflight records why no correction was used and routes to the held
-return. The grounded route deliberately stops after one correction; a
-second failed stroke returns the key rather than reusing stale geometry.
+Qwen cylinder-tip/axis grounding and a saved socket-XY correction for the
+**next physical pickup**. It does not command lateral motion or another
+insertion in the same attempt. After return, clear view and fresh key
+perception, a same-pose/same-grasp new attempt uses the cumulative wrist
+command offset `p_(n+1)=p_n+w*d_n` (default `w=1.0`); each diagnostic is
+bounded to 1 mm and the cumulative offset has a separate configured bound.
+VLM abstention or an exhausted budget routes to held return without advice.
 [`LiveTransferRecoveryHandlers`](precision_insertion/live_transfer_recovery.py)
 now reuses the same held-return/release plan after a completed transfer only
 when controller feedback still reports a held key and the pre-insertion VLM

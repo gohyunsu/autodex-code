@@ -172,13 +172,13 @@ def plan_grounded_lateral_from_withdrawal(
                     max_hold_height_deviation_m, max_hold_rotation_deg)
     if not all(math.isfinite(float(v)) and v > 0 for v in extra_limits):
         raise ValueError("grounded lateral needs commissioned positive limits")
-    if (mode.family != "cylinder" or not isinstance(
+    if (mode.family not in {"cylinder", "square"} or not isinstance(
             diagnostic, GroundedXYDiagnostic) or
             diagnostic.status != "diagnostic_metric_xy_correction" or
             diagnostic.alignment.get("schema") !=
             "precision_insertion_grounded_alignment_v2" or
             diagnostic.alignment.get("status") != diagnostic.status):
-        raise ValueError("lateral shift needs a confident cylinder diagnostic")
+        raise ValueError("lateral shift needs a confident metric diagnostic")
     inliers = diagnostic.alignment.get("inlier_cameras", [])
     required_views = diagnostic.alignment.get(
         "estimator_limits", {}).get("minimum_views")
@@ -311,7 +311,7 @@ def plan_grounded_lateral_from_withdrawal(
                             dtype=np.float64)
     if (not math.isfinite(tip_z) or tip_z <= 0 or
             not np.allclose(axis_local, [0., 0., 1.], atol=1e-8)):
-        raise ValueError("cylinder CAD tip and insertion axis changed")
+        raise ValueError("key CAD tip and insertion axis changed")
     predicted_tip = (key_socket @ np.array([0., 0., tip_z, 1.]))[:3]
     predicted_axis = key_socket[:3, :3] @ axis_local
     observed_tip = np.asarray(alignment["tip_socket_m"], dtype=np.float64)

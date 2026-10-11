@@ -124,7 +124,7 @@ def plan_postshift_arrival_axial(
             max_axis_prior_residual_deg >= 90):
         raise ValueError("arrival replan needs commissioned positive limits")
     bounds.validate()
-    if (mode.family != "cylinder" or
+    if (mode.family not in {"cylinder", "square"} or
             not math.isclose(mode.target_depth_m, .020, abs_tol=1e-9) or
             not isinstance(arrival, PostShiftArrivalCheckpoint) or
             arrival.status != "visual_alignment_within_budget" or
@@ -157,7 +157,7 @@ def plan_postshift_arrival_axial(
     geometry = json.loads(geometry_path.read_text(encoding="utf-8"))
     if (geometry.get("key_object") != mode.key_object or
             geometry.get("socket_pose_object") != mode.socket_object):
-        raise ValueError("arrival task geometry differs from selected cylinder")
+        raise ValueError("arrival task geometry differs from selected key")
     tip_key = np.array([0., 0., float(geometry["key_frame"]["tip_z_m"])])
     axis_key = np.asarray(geometry["key_frame"]["insertion_axis"], dtype=float)
     visual_extra = tip_axis_visual_surface_bound(
@@ -207,9 +207,11 @@ def plan_postshift_arrival_axial(
         insertion_axis_socket=alignment["insertion_axis_socket"],
         max_tip_prior_residual_m=(previous.bounds.key_surface_m +
                                   max_visual_tip_error_m),
-        max_axis_prior_residual_deg=max_axis_prior_residual_deg)
+        max_axis_prior_residual_deg=max_axis_prior_residual_deg,
+        family=mode.family)
     heading = hypothesis.T_socket_key[:3, 0]
-    yaw = math.atan2(float(heading[1]), float(heading[0]))
+    yaw = (math.atan2(float(heading[1]), float(heading[0]))
+           if mode.family == "cylinder" else 0.0)
     targets = build_rigid_insertion_targets(
         mode=mode, shared_root=root, calibration=calibration,
         T_key_hand=hypothesis.T_key_hand,
@@ -221,12 +223,14 @@ def plan_postshift_arrival_axial(
         T_key_hand_override=hypothesis.T_key_hand,
         hand_poses_override={"measured_arrival":
                              arrival.joint_sample.full_q[7:]},
-        override_source=("fresh_arrival_tip_axis_physical_medoid_yaw_gauge" if
+        override_source=("fresh_arrival_tip_axis_bounded_yaw_prior" if
+                         mode.family == "square" else
+                         "fresh_arrival_tip_axis_physical_medoid_yaw_gauge" if
                          physical else
                          "fresh_arrival_tip_axis_observed_relation_yaw_gauge"),
         cylinder_yaw_gauge_socket_rad=yaw)
     tested = validate_se3(endpoint.get("T_socket_key_tested"),
-                          name="arrival screened cylinder endpoint")
+                          name="arrival screened key endpoint")
     if not np.allclose(tested, np.linalg.inv(socket) @
                        targets.T_robot_key_verification,
                        atol=1e-8, rtol=0):

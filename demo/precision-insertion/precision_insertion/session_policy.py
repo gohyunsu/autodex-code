@@ -82,11 +82,10 @@ def decide_after_attempt(
 ) -> SessionDecision:
     """Choose the next *evidence gate* after one observed physical phase.
 
-    A failed grasp is never followed by a transfer. A failed insertion can
-    reach a 1 mm VLM proposal only if the key is still held, there was no
-    safety abort, and the finite retry budget remains. The separate retry
-    module still requires guarded withdrawal, exact endpoint screening,
-    multi-view consensus and a new live-state preflight.
+    A failed grasp is never followed by a transfer. A failed insertion may
+    produce a bounded visual XY proposal, but it cannot move laterally or
+    reinsert during the same physical attempt. The key is returned before a
+    fresh key observation and new pickup can use the proposal.
     """
     if type(max_xy_retries) is not int or max_xy_retries < 0:
         raise ValueError("max_xy_retries must be a nonnegative integer")
@@ -141,9 +140,12 @@ def decide_after_attempt(
     if labels["insertion_success"] is False:
         if attempt._pending_retry:
             return result(
-                "await_retry_execution_and_observation",
-                "1mm_choice_withdrawal_and_replan_recorded_not_executed",
-                "commissioned_guarded_controller", "new_insertion_observation")
+                "stop_for_review", "legacy_same_attempt_retry_is_unsupported")
+        if attempt.events[-1]["stage"] == "next_trial_xy_advice":
+            return result(
+                "recover_held_key_then_reobserve",
+                "xy_advice_saved_for_next_physical_attempt",
+                "verified_key_rest", "fresh_key_pose")
         if attempt.events[-1]["stage"] == "xy_retry_unavailable":
             return result(
                 "recover_held_key_then_reobserve",
@@ -172,8 +174,8 @@ def decide_after_attempt(
         return result(
             "guarded_withdrawal_then_xy_assessment", "observed_insertion_failure",
             "guarded_axial_withdrawal", "observed_post_withdrawal_key_hand_pose",
-            "calibrated_multiview_1mm_endpoint_and_vote",
-            "fresh_held_transfer_and_axial_preflight")
+            "calibrated_multiview_1mm_diagnostic",
+            "next_attempt_only_no_lateral_motion")
     if any(event["stage"] == "insertion_success" for event in attempt.events):
         return result("stop_for_review", "insertion_verdict_unknown")
     if labels["preinsert_reached"] is False:

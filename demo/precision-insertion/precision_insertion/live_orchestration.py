@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import math
 from pathlib import Path
 from typing import Callable, Iterator, Mapping
 
@@ -83,7 +84,7 @@ def compose_live_handlers(
 def open_live_precision_session(
     *, launch_config_path: Path, endpoint_catalog_path: Path,
     run_output_dir: Path, max_xy_retries: int,
-    clear_view: ClearViewForPerception,
+    clear_view: ClearViewForPerception, xy_update_weight: float = 1.0,
 ) -> Iterator[LivePrecisionSession]:
     """Capture once, open the bound ledger, and retain camera connections.
 
@@ -93,6 +94,8 @@ def open_live_precision_session(
     is retained and all camera connections are still closed.
     """
     launch = load_session_launch(launch_config_path)
+    if launch.mode.family != "cylinder":
+        raise ValueError("live insertion currently supports cylinder mode only")
     catalog_input = Path(endpoint_catalog_path).expanduser()
     output_input = Path(run_output_dir).expanduser()
     if not catalog_input.is_absolute() or not output_input.is_absolute():
@@ -107,6 +110,8 @@ def open_live_precision_session(
         raise FileNotFoundError("session run output parent is missing")
     if type(max_xy_retries) is not int or max_xy_retries < 0:
         raise ValueError("max_xy_retries must be a nonnegative integer")
+    if not math.isfinite(float(xy_update_weight)) or not 0 < xy_update_weight <= 1:
+        raise ValueError("XY update weight must be in (0, 1]")
     if not isinstance(clear_view, ClearViewForPerception):
         raise TypeError("live perception needs a measured clear-view controller")
     # Reject a stale/incomplete v8 pool before a slow board/socket capture.
@@ -123,7 +128,8 @@ def open_live_precision_session(
         opened = open_verified_session(
             mode=launch.mode, shared_root=launch.shared_root,
             evidence_dir=started.evidence_dir, catalog_path=catalog,
-            output_dir=output, max_xy_retries=max_xy_retries)
+            output_dir=output, max_xy_retries=max_xy_retries,
+            xy_update_weight=xy_update_weight)
         yield LivePrecisionSession(started, opened, cameras, clear_view)
 
 
@@ -132,7 +138,7 @@ def run_live_precision_session(
     run_output_dir: Path, max_xy_retries: int,
     clear_view: ClearViewForPerception,
     build_handlers: Callable[[LivePrecisionSession], Mapping[str, ActionHandler]],
-    max_steps: int = 100,
+    max_steps: int = 100, xy_update_weight: float = 1.0,
 ) -> ActionLoopResult:
     """Keep the one ChArUco/socket camera session open across trial actions.
 
@@ -152,6 +158,7 @@ def run_live_precision_session(
             endpoint_catalog_path=endpoint_catalog_path,
             run_output_dir=run_output_dir,
             max_xy_retries=max_xy_retries,
+            xy_update_weight=xy_update_weight,
             clear_view=clear_view) as live:
         return run_session_actions(
             live.opened.runner, handlers=build_handlers(live),

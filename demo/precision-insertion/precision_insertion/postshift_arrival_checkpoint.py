@@ -25,7 +25,7 @@ from .frame_provenance import bounded_capture_skew_s
 from .geometry import pose_angle_deg, validate_se3
 from .grounded_alignment import (
     AlignmentLimits, estimate_grounded_line_alignment,
-    observe_grounded_cylinder_axis,
+    observe_grounded_cylinder_axis, observe_mode_key_axis,
 )
 from .grounded_lateral import GroundedLateralPreflight
 from .live_robot_state import LiveRobotState
@@ -120,14 +120,14 @@ def assess_postshift_arrival(
               max_visual_axis_tilt_deg, max_grounded_tip_error_m)
     if not all(math.isfinite(float(value)) and value > 0 for value in limits):
         raise ValueError("post-shift arrival needs positive commissioned limits")
-    if (mode.family != "cylinder" or
+    if (mode.family not in {"cylinder", "square"} or
             preflight.status != "sampled_postshift_20mm_preflight_pass" or
             checkpoint.status != "visual_alignment_within_budget" or
             preflight.attempt_id != checkpoint.attempt_id or
             preflight.candidate_id != checkpoint.candidate_id or
             preflight.attempt_id != shift_plan.attempt_id or
             preflight.candidate_id != shift_plan.candidate_id):
-        raise ValueError("arrival needs the same aligned held cylinder")
+        raise ValueError("arrival needs the same aligned held key")
     handoff_path = Path(handoff_report_path).expanduser().resolve()
     handoff = verify_postshift_path_handoff(
         handoff_path, expected=preflight, checkpoint=checkpoint,
@@ -200,13 +200,16 @@ def assess_postshift_arrival(
         raise ValueError("arrival geometry changed since post-shift replan")
     socket = validated_frozen_socket_pose(
         mode=mode, shared_root=root, calibration=calibration)
-    clearance = float(geometry["socket_bore_radius_m"]) - float(
-        geometry["key_radius_m"])
     future_bound = preflight.bounds.key_surface_m
-    if (not math.isfinite(clearance) or
-            clearance <= future_bound or
-            max_visual_lateral_error_m >= clearance - future_bound):
-        raise ValueError("arrival visual budget exceeds cylinder CAD clearance")
+    if mode.family == "cylinder":
+        clearance = float(geometry["socket_bore_radius_m"]) - float(
+            geometry["key_radius_m"])
+        if (not math.isfinite(clearance) or
+                clearance <= future_bound or
+                max_visual_lateral_error_m >= clearance - future_bound):
+            raise ValueError("arrival visual budget exceeds cylinder CAD clearance")
+    elif not math.isfinite(future_bound):
+        raise ValueError("square held-relation surface bound is invalid")
     cameras = set(intrinsics_full)
     validate_session_camera_calibration(
         calibration,
@@ -230,19 +233,30 @@ def assess_postshift_arrival(
                 T_camera_world=extrinsics_full[camera], T_world_robot=c2r,
                 T_robot_socket=socket),
             np.asarray(intrinsics_full[camera]["K_undist"], dtype=float)))
-    grounded, observations = observe_grounded_cylinder_axis(backend, frames)
+    if mode.family == "cylinder":
+        grounded, observations = observe_grounded_cylinder_axis(
+            backend, frames)
+        alignment = estimate_grounded_line_alignment(
+            grounded, socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
+            verification_depth_m=mode.target_depth_m, limits=alignment_limits)
+    else:
+        grounded, observations, alignment = observe_mode_key_axis(
+            backend, frames, family=mode.family, geometry=geometry,
+            verification_depth_m=mode.target_depth_m,
+            limits=alignment_limits)
+    stage = ("cylinder_tip_axis_line_grounding" if mode.family == "cylinder"
+             else "key_axis_grounding")
+    reference_field = ("axis_line_px" if mode.family == "cylinder"
+                       else "axis_ref_px")
     if (len(observations) != len(frames) or
             any(not isinstance(row, VLMObservation) or
-                row.stage != "cylinder_tip_axis_line_grounding" or
+                row.stage != stage or
                 row.image_order != (
                     f"raw_preinsert_hold/{frame.camera_id}@"
                     f"{frame.timestamp_s:.6f}",) or
                 not isinstance(row.raw_answer, str)
                 for row, frame in zip(observations, frames))):
         raise ValueError("arrival VLM responses are not bound to raw views")
-    alignment = estimate_grounded_line_alignment(
-        grounded, socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
-        verification_depth_m=mode.target_depth_m, limits=alignment_limits)
     status = "visual_abstain"
     inliers = alignment.get("inlier_cameras")
     has_metric_axis = (
@@ -257,7 +271,7 @@ def assess_postshift_arrival(
                          in zip(frames, observations)}
         if any(grounded_rows[camera].parse_error is not None or
                grounded_rows[camera].parsed.get("tip_px") is None or
-               grounded_rows[camera].parsed.get("axis_line_px") is None
+               grounded_rows[camera].parsed.get(reference_field) is None
                for camera in inliers):
             raise ValueError("metric arrival uses a malformed VLM view")
         try:
