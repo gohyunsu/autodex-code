@@ -10,8 +10,11 @@ missing assets, see [OFFLINE_ASSET_STATUS.md](OFFLINE_ASSET_STATUS.md). It
 does not treat live-camera/robot commissioning as a missing 3D file.
 The active cylinder live loop uses a **next-physical-attempt** cumulative XY
 offset after failed insertion. It does not perform lateral correction or
-reinsertion within the failed attempt. See [EXTRA_GATE_AUDIT.md](EXTRA_GATE_AUDIT.md)
-for the 1 mm per-update norm cap, default gain 1.0, and separate stop gates.
+reinsertion within the failed attempt. The current behavior is specified in
+[NEXT_TRIAL_XY.md](NEXT_TRIAL_XY.md): 10 mm per-update norm cap, default gain
+1.0, no cumulative cap, nominal v8 held relation, and original-pose reset.
+Sections below discussing 1 mm same-held-attempt shifts or physical/observed
+held relations are historical/optional utilities, **not** the live route.
 The older same-attempt lateral-shift tools discussed below are experimental
 read-only/opt-in utilities, not the active live retry route.
 
@@ -2504,8 +2507,9 @@ Qwen cylinder-tip/axis grounding and a saved socket-XY correction for the
 insertion in the same attempt. After return, clear view and fresh key
 perception, a same-pose/same-grasp new attempt uses the cumulative wrist
 command offset `p_(n+1)=p_n+w*d_n` (default `w=1.0`); each diagnostic is
-bounded to 1 mm and the cumulative offset has a separate configured bound.
-VLM abstention or an exhausted budget routes to held return without advice.
+bounded to 10 mm and there is no separate cumulative offset bound.
+Insufficient image evidence produces a labeled single-view estimate or
+exploratory search step; it does not silently invent a multi-view measurement.
 [`LiveTransferRecoveryHandlers`](precision_insertion/live_transfer_recovery.py)
 now reuses the same held-return/release plan after a completed transfer only
 when controller feedback still reports a held key and the pre-insertion VLM

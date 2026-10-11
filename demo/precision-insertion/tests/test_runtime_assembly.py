@@ -82,7 +82,7 @@ def test_observed_relation_route_uses_distinct_handler(monkeypatch):
         object(), shared={"planner": object()}, stages=stages,
         enable_robot_motion=True, held_relation_route="observed")
     assert isinstance(components[3], _ObservedStage)
-    with pytest.raises(ValueError, match="physical, observed or nominal"):
+    with pytest.raises(ValueError, match="auto, physical, observed or nominal"):
         runtime_assembly.assemble_live_components(
             object(), shared={"planner": object()}, stages=stages,
             enable_robot_motion=True, held_relation_route="unknown")
@@ -116,17 +116,21 @@ def test_default_physical_calibration_lookup_is_grasp_and_mode_specific(tmp_path
         "table/0/184/physical_grasp_calibration.json")
 
 
-def test_cylinder_live_uses_physical_relation_for_cumulative_xy(monkeypatch):
+def test_cylinder_live_rejects_postgrasp_observed_relation(monkeypatch):
     from precision_insertion.config import select_mode
 
     _fake_classes(monkeypatch)
     live = SimpleNamespace(opened=SimpleNamespace(runner=SimpleNamespace(
         mode=select_mode("cylinder", 20))))
     stages = {name: {} for name in runtime_assembly.STAGE_CLASSES}
-    with pytest.raises(ValueError, match="physical or experimental nominal"):
+    with pytest.raises(ValueError, match="nominal v8 grasp relation only"):
         runtime_assembly.assemble_live_components(
             live, shared={"planner": object()}, stages=stages,
             enable_robot_motion=True, held_relation_route="observed")
+    with pytest.raises(ValueError, match="nominal v8 grasp relation only"):
+        runtime_assembly.assemble_live_components(
+            live, shared={"planner": object()}, stages=stages,
+            enable_robot_motion=True, held_relation_route="physical")
 
 
 def test_square_session_uses_same_metric_retry_handler(monkeypatch):

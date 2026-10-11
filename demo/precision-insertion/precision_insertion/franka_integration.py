@@ -236,7 +236,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             live, shared=shared,
             stages=stages,
             enable_robot_motion=options.enable_robot_motion,
-            held_relation_route=parameters.get("held_relation_route", "physical"),
+            held_relation_route=parameters.get("held_relation_route", "auto"),
             label_mode=options.label_mode,
             manual_label_provider=(
                 terminal_label_provider(options.annotator)

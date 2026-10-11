@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
-import math
 from pathlib import Path
 import time
 from typing import Callable, Mapping
@@ -76,7 +75,7 @@ class LiveGroundedRetryHandlers:
         self._require(runner, decision,
                       "guarded_withdrawal_then_xy_assessment")
         if runner._postlift_report_path is None:
-            raise ValueError("retry needs the measured post-lift held relation")
+            raise ValueError("retry needs this attempt's saved post-lift plan")
         withdrawal = self.withdraw_guarded(runner, decision)
         if (not isinstance(withdrawal, tuple) or len(withdrawal) != 2 or
                 not isinstance(withdrawal[0], LiveRobotState)):
@@ -89,7 +88,8 @@ class LiveGroundedRetryHandlers:
         capture = self.capture_withdrawn(self.live, runner, decision)
         if not isinstance(capture, RawCameraCapture):
             raise TypeError("withdrawn hold needs same-session camera frames")
-        if (len(capture.images_bgr) < 2 or
+        minimum_views = 1 if runner.mode.family == "cylinder" else 2
+        if (len(capture.images_bgr) < minimum_views or
                 not set(capture.images_bgr) <=
                 set(self.live.cameras.launch.camera_ids)):
             raise ValueError("withdrawn frames differ from session cameras")
@@ -123,17 +123,9 @@ class LiveGroundedRetryHandlers:
         if diagnostic.status != "diagnostic_metric_xy_correction":
             self._unavailable(runner, "vlm_abstain", diagnostic_path)
             return
-        delta = diagnostic.alignment["bounded_xy_increment_socket_m"]
-        weight = runner.xy_update_weight
-        prior = runner.active_attempt.wrist_correction_socket_m
-        next_xy = tuple(prior[i] + weight * delta[i] for i in range(2))
-        if math.hypot(*next_xy) > self.retry_limits.max_total_offset_m + 1e-12:
-            self._unavailable(runner, "xy_update_budget_exhausted", diagnostic_path)
-            return
         runner.record_next_trial_xy_advice(
             diagnostic=diagnostic, diagnostic_report_path=diagnostic_path,
-            timestamp_s=self.decision_time(),
-            max_total_offset_m=self.retry_limits.max_total_offset_m)
+            timestamp_s=self.decision_time())
         # No lateral command or guarded reinsertion belongs to this attempt.
         # The held-return handler now releases the key; a fresh pickup consumes
         # the saved candidate-specific wrist correction.

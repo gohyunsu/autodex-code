@@ -10,6 +10,17 @@ multi-view XY update after each eligible failure and accumulates it for the
 next physical attempt, then follows the existing recovery/repose decisions.
 It ends immediately on an admitted insertion-success label.
 
+**Current cylinder contract (2026-10-11):** the assembled held-relation
+handler defaults to the selected v8 nominal hypothesis; cylinder live mode
+rejects physical/observed post-grasp key–hand routes. Failed-trial advice is
+at most 10 mm per update, weighted by `--xy-update-weight` (default 1.0),
+with no separate cumulative offset cap. Its VLM, human and metric records
+remain distinct. If the first failed-return placement lands outside the
+original pose/XY tolerance, the same attempt plans and executes another
+pickup/place and recaptures from clear view before recording reset success.
+See [NEXT_TRIAL_XY.md](NEXT_TRIAL_XY.md). Older discussions later on this
+page describe optional/historical branches, not the active cylinder loop.
+
 The script does **not** include a robot/force controller or invent camera
 exposure timestamps. The optional `bounded_request_interval` camera mode
 uses the complete new-frame request/response interval as timing uncertainty
@@ -23,15 +34,14 @@ socket capture and must return these ten components, all bound to that same
 1. `LiveKeyPlanningHandlers` — key SAM/FoundPose and v8 trial preflight.
 2. `LivePickupHandlers` — selected grasp, measured squeeze and lift plan.
 3. `LiveLiftHandlers` — executed lift and fresh Qwen grasp label.
-4. `LiveHeldRelationHandlers` — physical grasp-specific key/hand relation;
-   `LiveObservedHeldRelationHandlers` for a newly visible post-lift key; or
-   explicitly selected `LiveNominalRelationHandlers` for an **unmeasured v8
-   key–hand hypothesis** in the repeatable-bias experiment.
+4. `LiveNominalRelationHandlers` — selected v8 **unmeasured key–hand
+   hypothesis** for cylinder live execution; no post-grasp key pose estimate.
 5. `LiveTaskHandlers` — transfer, arrival label, first guarded insertion.
 6. `LiveGroundedRetryHandlers` — guarded withdrawal and continuous multi-view
-   cylinder XY diagnosis; an at-most-1 mm update is saved for a **new pickup**,
+   cylinder XY diagnosis; an at-most-10 mm update is saved for a **new pickup**,
    not a same-held-attempt movement. Square live execution is disabled.
-7. `LiveHeldReturnHandlers` — held-key return after failed insertion.
+7. `LiveHeldReturnHandlers` — held-key return, clear-view recapture and, if
+   misplaced, original-pose pick/place restoration in the same attempt.
 8. `LiveTransferRecoveryHandlers` — optional planned held return when a
    completed transfer has measured hand-pose error but the pre-insertion VLM
    still sees the key matching the held prediction; supervised recovery for
@@ -106,7 +116,7 @@ prompt and image order is retained inside the aggregate checkpoint record.
 This bounds the image count per model call; it does not establish VLM accuracy
 or guarantee that a full-resolution two-image call fits the robot PC GPU.
 `configure_stages(core, live, options)` returns `{"shared": {...},
-"stages": {...}, "held_relation_route": "physical"}` for the existing
+"stages": {...}}` for the existing
 `assemble_live_components`. The core injects its own `planner` and
 `read_state`. If the optional `sampling` block is present, it starts the
 long-lived feedback sampler before camera capture and also injects
@@ -126,15 +136,15 @@ same-attempt lateral or retry-transfer adapter. The older
 each field. Neither setting supplies a reviewed daemon watchdog record,
 stage limits, interlock, contact controller or real-robot validation.
 
-For the default physical held-relation route, the stage factory may omit
+For the **historical square/offline** physical held-relation route, the stage factory may omit
 `held_relation.calibration_for_candidate`: assembly then looks for the exact
 candidate under the session's canonical
 `shared_root/AutoDex/precision_insertion/physical_grasp_calibrations` layout.
 Generate those grasp-specific records from independent physical pickups using
 [`INSERTION_GRASP_CALIBRATION.md`](INSERTION_GRASP_CALIBRATION.md). A missing
 record stops at the held-relation stage; no simulated key pose is substituted.
-For a deliberate no-physical-calibration **experimental cylinder** run,
-return `"held_relation_route": "nominal"` from the robot-PC stage factory.
+For the active cylinder run, omit `held_relation_route` or explicitly return
+`"held_relation_route": "nominal"` from the robot-PC stage factory.
 Its `held_relation` stage supplies `limits` (`PathAuditLimits`) and a
 `parameters` mapping containing `max_state_age_s`, `max_arm_hand_skew_s`,
 `max_hand_command_error_raw`, `max_arm_velocity_rad_s`,
@@ -148,6 +158,26 @@ checkpoint, guarded insertion and failed-trial diagnostic retain that
 provenance. This mode tests whether next-trial XY learning absorbs a
 repeatable translation bias; it does not establish physical held-key pose,
 axis tilt or grasp repeatability.
+
+For failed-return original-pose restoration, the robot-PC stage factory must
+provide `stages["held_return"]["execute_restoration"]`. Its callable receives
+`(runner, decision, plan, preflight_report_path)` and returns an absolute
+execution-log path. `plan` is a `ReposeTransitionPreflight` assembled from
+the freshly recaptured key, measured FR3/Inspire joints, the original
+tabletop class/CAD-center XY, eligible v8 pickup candidates or directed reset
+seeds, socket-aware held transfer, and release/exit trajectories. The
+callback must execute that exact plan and write a
+`precision_insertion_repose_execution_evidence_v1` log for the **current
+failed attempt ID**; the handler verifies it before another clear-view key
+capture. The same helper is wired into completed-transfer recovery. If no
+placement is needed, the callback is not called. No new key/socket mesh or
+same-pose reset seed is required: an eligible full-key v8 grasp from the
+source tabletop pose is used for same-pose relocation. If neither a directed
+reset seed nor an eligible source-pose grasp has a complete planned path,
+restoration remains unavailable for that observed scene; it is not reported
+as a successful reset. `restoration_height_cm` defaults to 12 and
+`max_restoration_attempts` to 3 in the held-return stage; both can be set by
+the robot-PC factory.
 
 Run:
 
@@ -233,24 +263,24 @@ physical key/wrist pair for later grasp-specific commissioning; see
 must be supplied from rig measurements, not chosen to make a sample pass.
 The observed route uses a fresh measured key/hand relation in its next
 attempt; that direct evidence supersedes a learned wrist-bias hypothesis.
-The physical-calibration route remains the default and adds any saved
-previous-trial socket-XY compensation to the grasp-specific medoid command.
-The nominal route applies the same correction to the selected v8 hypothesis.
+The physical-calibration route is historical/offline for this cylinder demo.
+The active nominal route applies compensation to the selected v8 hypothesis.
 The key CAD target stays centered; the corrected hand/key endpoint and held
 path are re-screened before transfer.
 
 The cylinder live path uses one **future-trial advice** handler (see
 [`NEXT_TRIAL_XY.md`](NEXT_TRIAL_XY.md) for the attempt boundary and transform):
 guarded axial withdrawal, fresh raw AutoDex multi-view images, metric
-tip/axis reconstruction, save an at-most-1-mm socket-XY increment, return
+tip/axis reconstruction, save an at-most-10-mm socket-XY increment, return
 the key to the tabletop, clear view, and start a new perception/pickup
 attempt. There is no lateral hold shift or second insertion in the failed
 attempt. The cylinder VLM marks a tip and visible shaft-axis line.
 Square remains an offline asset/planning mode with **no XY correction**;
 its effective update weight and retry budget are zero. Historical square
 diagnostic helpers are not assembled into the active pipeline.
-If the marks are hidden or disagree across views, the diagnostic abstains
-and follows held-key return without saving compensation. The older
+If full tip/axis marks are unavailable, use a calibrated multi-view tip,
+single-view nominal-height intersection or explicitly exploratory step,
+according to the available evidence. The older
 `LiveObservedXYRetryHandlers` is not selected by runtime assembly and its
 same-attempt action is unsupported by the session policy. The robot-PC
 factory still supplies actual withdrawal/contact adapters and limits.
@@ -356,8 +386,7 @@ advice; `1` permits one candidate-specific corrected **new physical attempt**
 per session. By default there is no retry-count cap: eligible failures can
 continue to contribute cumulative updates
 `p_(n+1)=p_n+w*d_n`; the weight defaults to `1.0` and must lie in `(0,1]`.
-The robot integration's `RetrySessionLimits.max_total_offset_m` must allow
-the desired cumulative travel. The live CLI currently accepts only
+There is no separate cumulative XY bound. The live CLI currently accepts only
 `cylinder` launch mode; `square` remains an offline/planning mode.
 `action_loop_result.json` is saved in the run directory. Exit code 0 means
 the session reached its task-success label; 2 means a normal non-success

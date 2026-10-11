@@ -175,6 +175,25 @@ def test_failed_insertion_advice_returns_key_before_next_physical_attempt():
             "recover_held_key_then_reobserve")
 
 
+def test_next_trial_xy_has_10mm_step_but_no_cumulative_limit():
+    record = begin_attempt(
+        attempt_id="trial_large_offset", mode=MODE, session_record=SESSION,
+        candidate_id="table/0/3", tabletop_pose_stem="000",
+        xy_offset_socket_m=(0., 0.), started_at_s=1.,
+        wrist_correction_socket_m=(.025, 0.))
+    _grasp(record)
+    _hold(record)
+    _insert(record)
+    record.record_next_trial_xy_advice(
+        increment_socket_xy_m=(.01, 0.), update_weight=1.,
+        applied_step_socket_xy_m=(.01, 0.),
+        next_wrist_correction_socket_m=(.035, 0.),
+        supporting_cameras=(), timestamp_s=5.,
+        evidence_refs={"axial_withdrawal": "robot/withdrawal.json",
+                       "grounded_xy": "vlm/search.json"})
+    assert record.events[-1]["next_wrist_correction_socket_m"] == [.035, 0.]
+
+
 def test_retry_count_cap_is_optional_not_an_implicit_single_trial_limit():
     record = _attempt()
     _grasp(record)

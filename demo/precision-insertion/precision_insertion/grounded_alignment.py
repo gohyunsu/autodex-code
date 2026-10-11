@@ -8,7 +8,7 @@ If the shaft is hidden, one triangulated tip does not determine key tilt.
 
 All pixels refer to original, undistorted AutoDex images. T_camera_socket is
 composed from the frozen session camera/robot/socket transforms. The returned
-continuous XY correction and its at-most-1-mm increment are diagnostic;
+continuous XY correction and its at-most-10-mm increment are diagnostic;
 they do not bypass grasp, collision, path or guarded
 contact gates and cannot command the Franka.
 """
@@ -30,7 +30,8 @@ from .geometry import validate_se3
 from .grounding_crop import make_native_grounding_crop
 from .observer import ImageVLM, VLMObservation, _backend_model, _parse_object
 from .xy_overlay import CalibratedXYFrame
-from .xy_voting import VLM_XY_STEP_M
+
+NEXT_TRIAL_XY_MAX_STEP_M = 0.010
 
 
 @dataclass(frozen=True)
@@ -177,12 +178,12 @@ def _continuous_xy_advice(mean: np.ndarray, cov_xy: np.ndarray) -> dict:
 
     For rim/depth axis offsets e0,e1, minimizing
     ||e0 + d||² + ||e1 + d||² gives d* = -(e0+e1)/2 = -mean.
-    The estimated correction is continuous; the 1 mm bound is an inherited
+    The estimated correction is continuous; the 10 mm bound is an inherited
     retry-motion limit, not a quantization or a candidate-direction vote.
     """
     correction = -np.asarray(mean, dtype=float)
     magnitude = float(np.linalg.norm(correction))
-    increment = (correction * min(1.0, VLM_XY_STEP_M / magnitude)
+    increment = (correction * min(1.0, NEXT_TRIAL_XY_MAX_STEP_M / magnitude)
                  if magnitude else correction)
     improvement = -2 * float(mean @ increment) - float(increment @ increment)
     # A single 2D confidence ellipse bounds the selected, data-dependent
@@ -199,6 +200,71 @@ def _continuous_xy_advice(mean: np.ndarray, cov_xy: np.ndarray) -> dict:
     }
 
 
+def resolve_xy_only_cylinder_alignment(
+    views: Sequence[GroundedLineView], alignment: Mapping, *,
+    nominal_tip_z_socket_m: float, search_index: int,
+) -> dict:
+    """Always provide a *next-trial* XY update, without claiming unseen pose.
+
+    The calibrated two-view tip estimate is preferred. With one visible tip,
+    intersect that camera ray with the commanded nominal tip-height plane;
+    this is a planar hypothesis, not an independent depth observation. With
+    no usable tip, take a deterministic exploratory step and record its source.
+    Axis tilt is deliberately outside this XY-only policy.
+    """
+    if alignment.get("status") == "diagnostic_metric_xy_correction":
+        return dict(alignment, xy_source="multiview_tip_and_axis")
+    if not math.isfinite(nominal_tip_z_socket_m):
+        raise ValueError("nominal tip height must be finite")
+    if type(search_index) is not int or search_index < 0:
+        raise ValueError("search index must be nonnegative")
+    tips = [view for view in views if view.tip_uv_px is not None]
+    point = None
+    source = "no_visible_tip_exploratory_search"
+    supporting = []
+    if len(tips) >= 2:
+        for pair in combinations(tips, 2):
+            point = _dlt(pair, "tip_uv_px")
+            if point is not None:
+                source = "multiview_tip_xy_vertical_axis_assumption"
+                supporting = [view.frame.camera_id for view in tips]
+                break
+    if point is None and tips:
+        view = tips[0]
+        direction = _ray(view, view.tip_uv_px)
+        transform = view.frame.T_camera_socket
+        origin = -transform[:3, :3].T @ transform[:3, 3]
+        if abs(direction[2]) > 1e-9:
+            distance = (nominal_tip_z_socket_m - origin[2]) / direction[2]
+            if distance > 0:
+                point = origin + distance * direction
+                source = "single_view_nominal_tip_height_plane"
+                supporting = [view.frame.camera_id]
+    if point is None or not np.all(np.isfinite(point)) or np.linalg.norm(point[:2]) < 1e-9:
+        # A missing visual measurement cannot identify a metric correction.
+        # Explore a small, explicitly non-measured direction instead.
+        angle = search_index * math.pi * (3.0 - math.sqrt(5.0))
+        correction = np.array([math.cos(angle), math.sin(angle)]) * 0.002
+        source = "no_metric_measurement_exploratory_search"
+    else:
+        correction = -np.asarray(point[:2], dtype=float)
+    magnitude = float(np.linalg.norm(correction))
+    increment = correction * min(1.0, NEXT_TRIAL_XY_MAX_STEP_M / magnitude)
+    return {
+        **dict(alignment),
+        "status": "diagnostic_metric_xy_correction",
+        "reason": source,
+        "xy_source": source,
+        "inlier_cameras": supporting,
+        "nominal_tip_z_socket_m": nominal_tip_z_socket_m,
+        "tip_socket_m": None if point is None else point.tolist(),
+        "xy_correction_socket_m": correction.tolist(),
+        "bounded_xy_increment_socket_m": increment.tolist(),
+        "xy_correction_norm_m": magnitude,
+        "increment_norm_m": float(np.linalg.norm(increment)),
+    }
+
+
 def estimate_grounded_alignment(
     views: Sequence[GroundedView], *, landmark_spacing_m: float,
     socket_rim_z_m: float, verification_depth_m: float,
@@ -208,7 +274,7 @@ def estimate_grounded_alignment(
 
     A single VLM-selected pixel cannot determine scale or axis by itself.
     The least-squares XY correction minimizes mean lateral error at rim and
-    20 mm. Only its next increment is capped at 1 mm, with a 95% lower
+    20 mm. Only its next increment is capped at 10 mm, with a 95% lower
     confidence bound on squared-error improvement. Both remain advisory.
     """
     limits.validate()

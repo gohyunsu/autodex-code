@@ -80,7 +80,7 @@ from .retry_session import (
     assess_and_plan_observed_xy_retry, assess_unobserved_xy_diagnostic,
     write_retry_session_artifacts,
 )
-from .grounded_alignment import AlignmentLimits
+from .grounded_alignment import AlignmentLimits, NEXT_TRIAL_XY_MAX_STEP_M
 from .xy_voting import VLM_XY_STEP_M
 from .grounded_lateral import (
     GroundedLateralPreflight, plan_grounded_lateral_from_withdrawal,
@@ -335,9 +335,9 @@ class SessionRunner:
                     self._attempt.labels["preinsert_reached"] is None):
                 return SessionDecision(
                     "held_relation_evidence_required",
-                    "visible_grasp_but_key_hand_pose_unknown",
+                    "visible_grasp_with_nominal_v8_key_hand_hypothesis",
                     self._attempt.candidate_id,
-                    ("fresh_visible_key_pose_or_commissioned_grasp_relation",
+                    ("selected_v8_grasp_relation_not_postgrasp_measurement",
                      "uncertainty_bounded_socket_endpoint_and_path_preflight"))
             return decide_after_attempt(
                 self._attempt, max_xy_retries=(
@@ -1801,7 +1801,7 @@ class SessionRunner:
     ):
         """Plan this attempt's held return from a logged axial withdrawal.
 
-        Reuse the observed/bounded post-lift relation, frozen socket world,
+        Reuse the saved post-lift relation (nominal for cylinder), frozen socket world,
         original tabletop key pose, Franka v8 planning primitives and a fully
         open/clear-view release goal. This does not command motors or assert
         that the key landed successfully.
@@ -1991,6 +1991,43 @@ class SessionRunner:
             held=held, release=release)
         return held, release, report
 
+    def reset_landing_geometry(
+        self, *, key_observation: KeyPoseObservation,
+        max_pose_error_deg: float,
+    ) -> dict:
+        """Compare a fresh tabletop key with this attempt's original pose/XY."""
+        if self._preflight is None or not isinstance(key_observation, KeyPoseObservation):
+            raise ValueError("original-pose comparison needs a live trial and key")
+        c2r = validate_se3(self.calibration.record.get("c2r"),
+                           name="session C2R")
+        original = validate_se3(
+            np.linalg.inv(c2r) @ self._preflight.key_pose_world,
+            name="trial-start T_robot_key")
+        landed = validate_se3(
+            np.linalg.inv(c2r) @ key_observation.pose_world,
+            name="reset-landed T_robot_key")
+        classification = classify_key_tabletop_pose(
+            mode=self.mode, shared_root=self.shared_root,
+            pose_robot_key=landed,
+            max_rotation_error_deg=max_pose_error_deg)
+        mesh = _load_mesh(AssetPaths(self.shared_root, self.mode).raw_mesh(
+            self.mode.key_object))
+        center_local = np.asarray(mesh.bounds, dtype=np.float64).mean(axis=0)
+        if center_local.shape != (3,) or not np.all(np.isfinite(center_local)):
+            raise ValueError("key CAD has no finite physical center")
+        original_xy = (original[:3, :3] @ center_local + original[:3, 3])[:2]
+        landed_xy = (landed[:3, :3] @ center_local + landed[:3, 3])[:2]
+        return {
+            "original_T_robot_key": original,
+            "landed_T_robot_key": landed,
+            "classification": classification,
+            "target_pose_stem": self._preflight.pose_class["stem"],
+            "original_center_xy_robot_m": tuple(float(v) for v in original_xy),
+            "key_center_local_m": tuple(float(v) for v in center_local),
+            "center_xy_displacement_m": float(np.linalg.norm(
+                landed_xy - original_xy)),
+        }
+
     def observe_reset_landing(
         self, *, key_observation: KeyPoseObservation,
         key_evidence_dir: Path, recovery_log_path: Path,
@@ -1998,6 +2035,7 @@ class SessionRunner:
         max_return_center_shift_m: float, support_tolerance_m: float,
         minimum_rest_socket_clearance_m: float,
         minimum_board_edge_clearance_m: float,
+        restoration_evidence_paths: tuple[Path, ...] = (),
     ) -> AttemptRecord:
         """Verify a manual or bound automatic return from a fresh key pose.
 
@@ -2094,18 +2132,11 @@ class SessionRunner:
         if (_digest(self.calibration.record) != self.session_sha256 or
                 _digest(self.catalog) != self.catalog_sha256):
             raise ValueError("frozen session or endpoint catalogue changed")
-        c2r = validate_se3(self.calibration.record.get("c2r"),
-                           name="session C2R")
-        original = validate_se3(
-            np.linalg.inv(c2r) @ self._preflight.key_pose_world,
-            name="trial-start T_robot_key")
-        landed = validate_se3(
-            np.linalg.inv(c2r) @ key_observation.pose_world,
-            name="reset-landed T_robot_key")
-        classification = classify_key_tabletop_pose(
-            mode=self.mode, shared_root=self.shared_root,
-            pose_robot_key=landed,
-            max_rotation_error_deg=max_pose_error_deg)
+        geometry = self.reset_landing_geometry(
+            key_observation=key_observation,
+            max_pose_error_deg=max_pose_error_deg)
+        landed = geometry["landed_T_robot_key"]
+        classification = geometry["classification"]
         support = validate_repose_rest_target(
             shared_root=self.shared_root, mode=self.mode,
             calibration=self.calibration, T_robot_key_rest=landed,
@@ -2113,14 +2144,7 @@ class SessionRunner:
             minimum_rest_socket_clearance_m=(
                 minimum_rest_socket_clearance_m),
             minimum_board_edge_clearance_m=minimum_board_edge_clearance_m)
-        mesh = _load_mesh(AssetPaths(self.shared_root, self.mode).raw_mesh(
-            self.mode.key_object))
-        center_local = np.asarray(mesh.bounds, dtype=np.float64).mean(axis=0)
-        if center_local.shape != (3,) or not np.all(np.isfinite(center_local)):
-            raise ValueError("key CAD has no finite physical center")
-        original_xy = (original[:3, :3] @ center_local + original[:3, 3])[:2]
-        landed_xy = (landed[:3, :3] @ center_local + landed[:3, 3])[:2]
-        shift = float(np.linalg.norm(landed_xy - original_xy))
+        shift = geometry["center_xy_displacement_m"]
         success = (classification["stem"] ==
                    self._preflight.pose_class["stem"] and
                    shift <= maximum_shift)
@@ -2136,6 +2160,10 @@ class SessionRunner:
             "recovery_log_sha256": hashlib.sha256(
                 recovery_bytes).hexdigest(),
             "recovery_mode": recovery_mode,
+            "restoration_evidence": [
+                {"path": str(Path(path).expanduser().resolve()),
+                 "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest()}
+                for path in restoration_evidence_paths],
             "target_pose_stem": self._preflight.pose_class["stem"],
             "observed_pose_class": classification,
             "observed_support": support,
@@ -2778,7 +2806,7 @@ class SessionRunner:
         roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]] | None = None,
         square_translation_only: bool = False,
     ) -> GroundedXYDiagnostic:
-        """Save camera-grounded metric 1 mm advice without scheduling motion."""
+        """Save camera-grounded, at-most-10-mm next-trial XY advice."""
         if (self.mode.family != "cylinder" or
                 self.current_decision().action !=
                 "guarded_withdrawal_then_xy_assessment" or
@@ -2801,7 +2829,8 @@ class SessionRunner:
             alignment_limits=alignment_limits,
             axis_reference_key_z_m=axis_reference_key_z_m,
             roi_xyxy_by_camera=roi_xyxy_by_camera,
-            square_translation_only=square_translation_only)
+            square_translation_only=square_translation_only,
+            search_index=self._future_xy_corrections_used)
         output = (self._attempt_dir / "xy_retry_assessments" /
                   f"{self._retry_assessment_index:03d}")
         write_retry_session_artifacts(result, frames, output)
@@ -2811,7 +2840,6 @@ class SessionRunner:
     def record_next_trial_xy_advice(
         self, *, diagnostic: GroundedXYDiagnostic,
         diagnostic_report_path: Path, timestamp_s: float,
-        max_total_offset_m: float,
     ) -> AttemptRecord:
         """Queue one measured XY wrist correction for a new pickup only."""
         if (self.mode.family != "cylinder" or
@@ -2841,15 +2869,11 @@ class SessionRunner:
                 not isinstance(inliers, list)):
             raise ValueError("grounded diagnostic lacks metric XY/inliers")
         correction = tuple(float(value) for value in increment)
-        if (not math.isfinite(float(max_total_offset_m)) or
-                max_total_offset_m <= 0):
-            raise ValueError("cumulative XY budget must be finite and positive")
         applied_step = tuple(self.xy_update_weight * value for value in correction)
         prior = self._attempt.wrist_correction_socket_m
         cumulative = tuple(a + b for a, b in zip(prior, applied_step))
-        if (math.hypot(*applied_step) > VLM_XY_STEP_M + 1e-12 or
-                math.hypot(*cumulative) > max_total_offset_m + 1e-12):
-            raise ValueError("weighted XY step or cumulative offset exceeds budget")
+        if math.hypot(*applied_step) > NEXT_TRIAL_XY_MAX_STEP_M + 1e-12:
+            raise ValueError("weighted next-trial XY step exceeds 10 mm")
         cameras = tuple(inliers)
         snapshot = self._record(lambda row: row.record_next_trial_xy_advice(
             increment_socket_xy_m=correction,
@@ -2871,7 +2895,6 @@ class SessionRunner:
             "applied_step_socket_xy_m": list(applied_step),
             "prior_wrist_correction_socket_m": list(prior),
             "next_wrist_correction_socket_m": list(cumulative),
-            "max_total_offset_m": max_total_offset_m,
             "diagnostic_report_path": str(source),
             "diagnostic_report_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
             "session_calibration_sha256": self.session_sha256,

@@ -68,6 +68,14 @@ def resolve_label(
     return None, "vlm_visual_abstained"
 
 
+def independent_vlm_label(stage: str, visual_class: str) -> dict:
+    """Keep the VLM's own verdict even when a human overrides the stage."""
+    value, reason = resolve_label(
+        stage=stage, mode="vlm_only", visual_class=visual_class,
+        fused_value=None, fused_reason="not_used")
+    return {"value": value, "reason": reason, "class": visual_class}
+
+
 def manual_annotation(
     stage: str, value: bool | None, annotator: str, note: str = "",
 ) -> dict:

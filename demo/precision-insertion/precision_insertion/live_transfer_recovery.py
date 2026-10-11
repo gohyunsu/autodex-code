@@ -34,6 +34,7 @@ class LiveTransferRecoveryHandlers:
     record_execution: Callable | None = None
     return_parameters: Mapping[str, object] | None = None
     capture_id_factory: Callable[[], str] = lambda: f"transfer_reset_{uuid4().hex}"
+    restore_original: Callable | None = None
 
     def _completed_held_transfer(self, runner) -> bool:
         attempt = runner.active_attempt
@@ -124,11 +125,16 @@ class LiveTransferRecoveryHandlers:
             view_limits=launch.view_limits,
             expected_action="recover_key_then_reobserve",
             **dict(self.capture_parameters))
+        restoration_logs = ()
+        if callable(self.restore_original):
+            landed, restoration_logs = self.restore_original(
+                runner, decision, landed, launch)
         runner.observe_reset_landing(
             key_observation=landed.observation,
             key_evidence_dir=landed.key_evidence_dir,
             recovery_log_path=recovery_log,
             timestamp_s=landed.observation.acquisition_interval_s[1],
+            restoration_evidence_paths=restoration_logs,
             **dict(self.landing_parameters))
 
     def handlers(self) -> dict[str, ActionHandler]:

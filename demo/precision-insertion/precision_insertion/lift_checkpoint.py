@@ -60,6 +60,13 @@ class LiftCheckpoint:
     manual_annotation: dict | None = None
 
     def to_record(self) -> dict:
+        from .labeling import independent_vlm_label
+
+        parsed = self.visual.parsed
+        visual_class = (parsed.get("class", "unobservable")
+                        if self.visual.parse_error is None and
+                        len(set(parsed.get("evidence_views", ()))) >=
+                        self.minimum_visual_views else "unobservable")
         return {
             "schema": (
                 "precision_insertion_raw_lift_checkpoint_v1"
@@ -73,6 +80,7 @@ class LiftCheckpoint:
             "reason": self.reason,
             "label_mode": self.label_mode,
             "manual_annotation": self.manual_annotation,
+            "vlm_label": independent_vlm_label("grasp_success", visual_class),
             "lift_completed_at_s": self.lift_completed_at_s,
             "decision_timestamp_s": self.decision_timestamp_s,
             "before_capture_id": self.before_capture_id,

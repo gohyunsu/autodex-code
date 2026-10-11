@@ -14,6 +14,7 @@ from precision_insertion.grounded_alignment import (  # noqa: E402
     AlignmentLimits, GroundedView, GroundedLineView,
     estimate_grounded_alignment, estimate_grounded_line_alignment,
     observe_grounded_key_axis, observe_grounded_cylinder_axis,
+    resolve_xy_only_cylinder_alignment,
 )
 from precision_insertion.xy_overlay import CalibratedXYFrame  # noqa: E402
 
@@ -77,7 +78,7 @@ def test_continuous_xy_offset_comes_from_triangulated_tip_and_axis():
     assert result["xy_correction_socket_m"] == pytest.approx(
         [-.0016, .0002], abs=1e-7)
     assert np.linalg.norm(result["bounded_xy_increment_socket_m"]) == (
-        pytest.approx(.001))
+        pytest.approx(np.linalg.norm(result["xy_correction_socket_m"])))
     assert result["bounded_xy_increment_socket_m"][1] > 0
     assert result["mean_error_xy_m"] == pytest.approx(tip[:2], abs=1e-7)
     assert result["robot_ready"] is False
@@ -251,7 +252,7 @@ def test_cylinder_tip_plus_visible_axis_line_needs_no_second_physical_point():
     assert result["xy_correction_socket_m"] == pytest.approx(
         [-.0018, .0002], abs=1e-6)
     assert np.linalg.norm(result["bounded_xy_increment_socket_m"]) == (
-        pytest.approx(.001))
+        pytest.approx(np.linalg.norm(result["xy_correction_socket_m"])))
     assert result["mean_error_xy_m"] == pytest.approx(tip[:2], abs=1e-6)
     assert len(result["inlier_cameras"]) == 4
 
@@ -313,3 +314,31 @@ def test_metric_grounding_rejects_backend_without_pixel_contract():
                       np.array([0., 0., -1.]))[0].frame
     with pytest.raises(ValueError, match="requires verified native-pixel"):
         observe_grounded_cylinder_axis(UnknownBackend(), [frame])
+
+
+def test_xy_only_retry_uses_multiview_tip_when_axis_is_hidden():
+    tip = np.array([.013, -.004, .09])
+    rows = _line_rig(tip, np.array([0., 0., -1.]))
+    missing = [GroundedLineView(v.frame, v.tip_uv_px, None) for v in rows]
+    result = resolve_xy_only_cylinder_alignment(
+        missing, {"status": "abstain", "reason": "hidden_axis"},
+        nominal_tip_z_socket_m=.09, search_index=0)
+    assert result["xy_source"] == "multiview_tip_xy_vertical_axis_assumption"
+    assert result["xy_correction_socket_m"] == pytest.approx(
+        [-.013, .004], abs=1e-6)
+    assert np.linalg.norm(result["bounded_xy_increment_socket_m"]) == pytest.approx(.01)
+
+
+def test_xy_only_retry_one_view_uses_nominal_height_and_zero_view_explores():
+    rows = _line_rig(np.array([.003, -.002, .09]),
+                     np.array([0., 0., -1.]))
+    one = resolve_xy_only_cylinder_alignment(
+        rows[:1], {"status": "abstain"}, nominal_tip_z_socket_m=.09,
+        search_index=0)
+    assert one["xy_source"] == "single_view_nominal_tip_height_plane"
+    assert one["xy_correction_socket_m"] == pytest.approx([-.003, .002], abs=1e-6)
+    none = resolve_xy_only_cylinder_alignment(
+        [], {"status": "abstain"}, nominal_tip_z_socket_m=.09,
+        search_index=1)
+    assert none["xy_source"] == "no_metric_measurement_exploratory_search"
+    assert np.linalg.norm(none["bounded_xy_increment_socket_m"]) == pytest.approx(.002)

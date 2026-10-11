@@ -30,6 +30,23 @@ a candidate file exists only in a handoff or lacks independent qualification;
 **missing** means no canonical file/pool is present at the expected runtime
 path. These labels are about offline inputs, not a claim of robot readiness.
 
+For the current cylinder/20 mm-gap development path, the key and socket raw
+OBJ files are installed under
+`shared_data/object_processing/precision_key_cylinder_r15_h80/raw_mesh/` and
+`shared_data/object_processing/precision_socket_cylinder_gap_20mm/raw_mesh/`.
+The socket's exact static collision OBJ is at
+`shared_data/object_processing/precision_socket_cylinder_gap_20mm/processed_data/mesh/static_collision.obj`.
+The canonical endpoint pool is
+`shared_data/AutoDex/precision_insertion/cylindrical/endpoint_catalog_full_length_collision_only_gap_20mm_20261011.json`;
+the corresponding key/socket FoundPose representations are under
+`shared_data/AutoDex/foundpose_assets/<object_id>/object_repre/v1/<object_id>/1/repre.pth`.
+The local Qwen3-VL-2B-Instruct model snapshot is in the Hugging Face cache.
+These paths were reopened on 2026-10-11. The missing resource for *physical*
+original-pose restoration is the robot-PC executor/evidence producer, not an
+additional 3D mesh. The existing directed reset candidates have not passed a
+complete pickup-to-release path in the reported synthetic checks, so each
+fresh observed location still needs runtime path planning.
+
 The three quoted NAS handoffs were read back on 2026-10-11. Every
 manifest-listed payload file matched its recorded byte count and SHA256:
 asset/FoundPose 529 files (9,708,884,390 bytes), runtime addendum 1,744 files
@@ -50,7 +67,7 @@ does not install those assets into the local runtime.
 | FoundPose representations | All 10 modes now have their key/socket PTHs at canonical local paths. Seven formerly missing objects (square keys 0.3/0.5/1.0 mm and cylinder sockets 1/3/5/10 mm) were rendered with the isolated MV-GoTrack generator on RTX 3090, reloaded and bound to exact raw-mesh hashes. The older NAS [pending candidates](/mnt/paradex2/hyunsu/autodex_precision_insertion_handoff_20261010_652ac909/pending_foundpose) were not promoted. | File generation and reload are **not** independent metric pose-accuracy evidence; the 2026-10-10 captured-frame evaluation still reports key-mask problems, and no physical socket-pose qualification is implied. |
 | Square tabletop grasp pools | The [full-key 1,000-per-scene scan and supplemental pose-`000` scan](SQUARE_TABLETOP_1000.md) and source-verified current-pool catalogs have 31/24/24/41 nominal 20 mm endpoint-eligible grasps for gaps 0.3/0.5/1.0/1.5 mm respectively. All five tabletop poses have a candidate for 0.3, 1.0 and 1.5 mm. | The 0.5 mm pose `000` has **zero** eligible grasp after 1,000 initial plus 5,000 supplemental proposals; the 277 additionally MuJoCo-stable candidates all failed whole-hand/socket clearance at 20 mm. This finite scan is not a geometric impossibility proof or full Franka-path evidence. |
 | Cylinder grasp pool | A new [full-length 80 mm proposal run](FULL_LENGTH_CYLINDER_PROPOSALS.md) produced 123 unchanged-stock-v8 full-key MuJoCo passes from 2,000 BODex seeds. Its 112 distinct 20 mm endpoint-passing seeds were appended to the canonical v8 candidate tree at ID offset 20,000; the 12 historical candidates were preserved. The [new complete, zero-margin catalogs](COLLISION_ONLY_CATALOGS.md) index all 124 directories and admit 109/109/112/112/112/110 candidates for gaps 1/3/5/10/15/20 mm. | These are nominal offline grasp/endpoint passes, not actual pickup, transfer, insertion or physical success. Only historical candidate `table/0/194` at the 15 mm gap passed one hypothetical sampled full-chain replay; no new candidate has that evidence. The old 12-row cylinder catalogs are stale. |
-| Reset/reorient | Cylinder `000→001/191` and `001→000/1687` are installed in the canonical v8 reset tree after full-key source and MuJoCo checks; see the [forward](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/cylinder_reset_install_0_1_20261011.json) and [reverse](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/cylinder_reset_install_1_0_seed1687_stock_v8_20261011.json) installation manifests. The reverse seed was installed without an arbitrary drift/tilt gate. Curated **staging** seeds also exist for square 1.5 mm `000→004` and square 0.5 mm `000→004` ([detail](SQUARE_TABLETOP_1000.md)). | Both cylinder seeds are grasp seeds, **not** verified socket-aware Franka repose trajectories or measured landings. Other directed square cells are incomplete. |
+| Reset/reorient | Cylinder `000→001/191` and `001→000/1687` are installed in the canonical v8 reset tree after full-key source and MuJoCo checks; see the [forward](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/cylinder_reset_install_0_1_20261011.json) and [reverse](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/cylinder_reset_install_1_0_seed1687_stock_v8_20261011.json) installation manifests. The reverse seed was installed without an arbitrary drift/tilt gate. Curated **staging** seeds also exist for square 1.5 mm `000→004` and square 0.5 mm `000→004` ([detail](SQUARE_TABLETOP_1000.md)). | A new 20 mm-gap zero-fidelity-gate synthetic check found `000→001/191` **held descent unreachable**; `001→000/1687` reached a held path but had **no release/exit preflight** in that run. Neither is a complete verified reset trajectory or measured landing. Other directed square cells are incomplete. |
 
 For a minimal file-backed prototype, choose **square 1.5 mm** (all five
 tabletop poses now have an eligible endpoint grasp) or **any cylinder gap**
@@ -105,13 +122,28 @@ the source catalogs inside the handoff remain audit-only on another PC.
 The **code** now has a demo-local live action loop and stage handlers for
 pickup, lift, transfer, first guarded insertion, cumulative cylinder
 next-trial XY advice,
-held-key return, transfer-recovery observation and directed repose. The
-optional `held_relation_route="nominal"` explicitly runs that cylinder loop
+held-key return, same-trial original-pose restoration after a misplaced
+return, transfer-recovery observation and directed repose. The default
+`held_relation_route="auto"` selects `nominal` for cylinder live execution;
+physical/observed post-grasp key–hand relation routes are rejected there.
+This explicitly runs that cylinder loop
 from the selected v8 key–hand **hypothesis** when no per-grasp physical
 calibration exists; its report cannot be mistaken for an observed or
-physically calibrated held-key pose. The default remains the physical
-calibration route. Nominal endpoint/path passes do not demonstrate actual
+physically calibrated held-key pose. A failed insertion produces a calibrated
+XY update of at most 10 mm for the next attempt, with default gain 1.0 and no
+separate cumulative cap. With no visible tip it saves an explicitly
+exploratory step, not a fabricated measurement. Manual-mode checkpoint
+reports retain both the human verdict and an independent VLM verdict.
+Nominal endpoint/path passes do not demonstrate actual
 post-squeeze key pose or real insertion success.
+Original-pose restoration needs no new CAD mesh or same-pose reset seed:
+it reuses an eligible source-pose v8 grasp, or a directed v8 reset seed when
+the pose changed. The already-installed cylinder catalog has 106 eligible
+grasp rows for pose `000` and 4 for pose `001` at the 20 mm gap. These are
+**unplanned** for each new observed tabletop location; a complete Franka
+restoration path still must be found at runtime. The robot-PC
+`execute_restoration` callback and execution log remain external integration
+resources, not files supplied by the offline asset handoff.
 `run_auto.py` CLI itself still only opens an evidence ledger; the new
 [`run_live.py`](run_live.py) CLI drives the live loop through an explicit
 AutoDex-PC integration module and independently commissioned controllers.

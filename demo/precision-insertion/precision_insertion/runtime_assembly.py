@@ -56,7 +56,7 @@ def assemble_live_components(
     live: object, *, shared: Mapping[str, object],
     stages: Mapping[str, Mapping[str, object]],
     enable_robot_motion: bool,
-    held_relation_route: str = "physical",
+    held_relation_route: str = "auto",
     label_mode: str = "evidence_fused",
     manual_label_provider=None,
 ) -> tuple[object, ...]:
@@ -73,14 +73,18 @@ def assemble_live_components(
         raise TypeError("runtime assembly needs shared and stage mappings")
     if type(enable_robot_motion) is not bool:
         raise TypeError("runtime assembly needs a boolean motion setting")
-    if held_relation_route not in {"physical", "observed", "nominal"}:
-        raise ValueError("held relation route must be physical, observed or nominal")
     family = getattr(getattr(getattr(live, "opened", None), "runner", None),
                      "mode", None)
+    if held_relation_route == "auto":
+        held_relation_route = (
+            "nominal" if getattr(family, "family", None) == "cylinder"
+            else "physical")
+    if held_relation_route not in {"physical", "observed", "nominal"}:
+        raise ValueError("held relation route must be auto, physical, observed or nominal")
     if (getattr(family, "family", None) == "cylinder" and
-            held_relation_route == "observed"):
+            held_relation_route != "nominal"):
         raise ValueError(
-            "cylinder live retries need physical or experimental nominal relation")
+            "cylinder live mode uses the nominal v8 grasp relation only")
     if label_mode not in LABEL_MODES or (
             label_mode == "manual" and not callable(manual_label_provider)):
         raise ValueError("invalid label mode or missing manual label provider")
@@ -141,4 +145,9 @@ def assemble_live_components(
             isinstance(held_return, LiveHeldReturnHandlers) and
             held_return.reuse_withdrawal is None):
         held_return.reuse_withdrawal = retry.withdrawn_for_return
+    transfer_recovery = components[list(classes).index("transfer_recovery")]
+    if (isinstance(transfer_recovery, LiveTransferRecoveryHandlers) and
+            isinstance(held_return, LiveHeldReturnHandlers) and
+            transfer_recovery.restore_original is None):
+        transfer_recovery.restore_original = held_return.restore_until_original
     return tuple(components)

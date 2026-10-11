@@ -64,6 +64,8 @@ def test_manual_raw_lift_report_replays_and_tamper_is_rejected(tmp_path):
         **args, label_mode="manual", manual_annotation=annotation)
     assert result.grasp_success is False
     path = write_lift_checkpoint(result, tmp_path / "label") / "report.json"
+    assert json.loads(path.read_text())["vlm_label"]["class"] == (
+        result.visual.parsed["class"])
     assert verify_lift_checkpoint(path)["grasp_success"] is False
     altered = json.loads(path.read_text())
     altered["grasp_success"] = True
@@ -80,6 +82,7 @@ def test_manual_preinsert_report_replays(tmp_path):
             "preinsert_reached", False, "researcher", "tilted"))
     assert result.preinsert_reached is False
     path = write_preinsert_checkpoint(result, tmp_path / "manual_preinsert")
+    assert json.loads(path.read_text())["vlm_label"]["class"] == result.visual.status
     assert verify_preinsert_checkpoint(path)["preinsert_reached"] is False
 
 
@@ -94,5 +97,6 @@ def test_visual_and_manual_insertion_reports_replay(tmp_path):
     manual = assess_insertion_checkpoint(
         **args, label_mode="manual", manual_annotation=annotation)
     assert manual["outcome"]["insertion_success"] is False
+    assert manual["vlm_label"]["value"] is True
     manual_path = write_insertion_checkpoint(manual, tmp_path / "manual_insertion")
     assert verify_insertion_checkpoint(manual_path)["outcome"] == manual["outcome"]

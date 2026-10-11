@@ -35,7 +35,7 @@ from .live_robot_state import LiveRobotState
 from .nominal_postlift import (
     NominalPostLiftPreflight, verify_nominal_postlift_preflight,
 )
-from .labeling import resolve_label
+from .labeling import resolve_label, independent_vlm_label
 from .observer import (
     HeldSceneView, ImageVLM, PreinsertVisualAssessment,
     observe_preinsert_hold_views,
@@ -286,6 +286,8 @@ class PreinsertCheckpoint:
             "hand_translation_error_m": self.hand_translation_error_m,
             "hand_rotation_error_deg": self.hand_rotation_error_deg,
             "visual": self.visual.to_record(),
+            "vlm_label": independent_vlm_label(
+                "preinsert_reached", self.visual.status),
             "comparison": self.comparison.to_record(),
             **self.source_record,
             "scope": "read_only_saved_evidence_not_controller_or_sensor_certification",

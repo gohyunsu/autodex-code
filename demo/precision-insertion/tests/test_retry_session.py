@@ -499,6 +499,9 @@ def test_cylinder_retry_diagnostic_accepts_explicit_lossless_rois(
             kwargs["acquisition_metadata"]["frames"]))
     monkeypatch.setattr(retry_session, "validated_frozen_socket_pose",
                         lambda **_inputs: np.eye(4))
+    kwargs["postlift_preflight_report_path"].write_text(json.dumps({
+        "targets": {"T_robot_key_preinsert": np.eye(4).tolist()}
+    }), encoding="utf-8")
 
     class Backend:
         native_pixel_coordinates = True
@@ -521,7 +524,9 @@ def test_cylinder_retry_diagnostic_accepts_explicit_lossless_rois(
         **kwargs, alignment_limits=limits,
         roi_xyxy_by_camera={frame.camera_id: (0, 0, 100, 100)
                             for frame in kwargs["frames"]})
-    assert result.status == "abstain"
+    assert result.status == "diagnostic_metric_xy_correction"
+    assert result.alignment["xy_source"] == (
+        "no_metric_measurement_exploratory_search")
     assert result.alignment["grounding_input"] == "lossless_raw_roi"
     assert len(result.vlm_observations) == len(kwargs["frames"])
     assert all(row.pixel_mapping is not None

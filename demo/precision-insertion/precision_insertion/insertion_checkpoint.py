@@ -449,6 +449,7 @@ def assess_insertion_checkpoint(
         "max_preinsert_age_s": max_preinsert_age_s,
         "max_final_observation_gap_s": max_final_observation_gap_s,
         "effective_vlm_class": visual_class,
+        "vlm_label": outcome["vlm_label"],
         "label_mode": label_mode,
         "manual_annotation": manual_annotation,
         "evidence": asdict(evidence), "outcome": outcome,

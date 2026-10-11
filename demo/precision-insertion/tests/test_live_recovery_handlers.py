@@ -60,6 +60,10 @@ class Runner:
     def current_decision(self):
         return self.decision
 
+    def reset_landing_geometry(self, **_kwargs):
+        return {"classification": {"stem": "000"},
+                "target_pose_stem": "000", "center_xy_displacement_m": 0.0}
+
     def prepare_failed_insertion_return(self, **kwargs):
         self.events.append(("plan", kwargs))
         return object(), object(), self.output_dir / "return_plan.json"
@@ -227,3 +231,33 @@ def test_wrong_session_or_action_cannot_move_robot(tmp_path):
     with pytest.raises(ValueError, match="another session or decision"):
         bound.recover(runner, wrong)
     assert not events
+
+
+def test_misplaced_return_is_restored_before_trial_reset_label(tmp_path, monkeypatch):
+    bound, runner, events = _setup(tmp_path)
+    monkeypatch.setattr(live_recovery_handlers,
+                        "verify_failed_return_execution",
+                        lambda **_kwargs: {"plan_report": {
+                            "path": str((tmp_path / "return_plan.json").resolve())}})
+    captures = iter(("reset_initial", "reset_corrected"))
+    bound.capture_id_factory = lambda: next(captures)
+
+    def capture(**kwargs):
+        events.append(("capture", kwargs["capture_id"]))
+        return ReturnedKeyCapture(
+            SimpleNamespace(acquisition_interval_s=(30., 31.)),
+            _state(), kwargs["key_evidence_dir"])
+
+    monkeypatch.setattr(live_recovery_handlers,
+                        "capture_returned_key_for_reset", capture)
+    states = iter((.035, .0))
+    runner.reset_landing_geometry = lambda **_kwargs: {
+        "classification": {"stem": "000"}, "target_pose_stem": "000",
+        "center_xy_displacement_m": next(states)}
+    execution = tmp_path / "restoration_execution.json"
+    bound._restore_original = lambda *_args: (
+        events.append("restore") or (execution, 25.0))
+    bound.recover(runner, runner.current_decision())
+    assert [item[0] if isinstance(item, tuple) else item for item in events].count(
+        "restore") == 1
+    assert runner.events[-1][1]["restoration_evidence_paths"] == (execution,)

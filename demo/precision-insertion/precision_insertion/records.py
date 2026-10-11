@@ -17,6 +17,7 @@ from typing import Mapping
 from .config import TaskMode
 from .outcome import InsertionEvidence, judge_insertion
 from .xy_voting import ChoiceDecision, VLM_XY_STEP_M
+from .grounded_alignment import NEXT_TRIAL_XY_MAX_STEP_M
 
 
 STAGES = (
@@ -251,8 +252,8 @@ class AttemptRecord:
             raise ValueError("next-trial advice needs socket XY meters")
         dx, dy = (float(value) for value in increment_socket_xy_m)
         if (not math.isfinite(dx) or not math.isfinite(dy) or
-                not 0 < math.hypot(dx, dy) <= VLM_XY_STEP_M + 1e-12):
-            raise ValueError("next-trial XY step must be nonzero and at most 1 mm")
+                not 0 < math.hypot(dx, dy) <= NEXT_TRIAL_XY_MAX_STEP_M + 1e-12):
+            raise ValueError("next-trial XY step must be nonzero and at most 10 mm")
         if not math.isfinite(update_weight) or not 0 < update_weight <= 1:
             raise ValueError("XY update weight must be in (0, 1]")
         applied = tuple(float(v) for v in applied_step_socket_xy_m)
@@ -262,16 +263,15 @@ class AttemptRecord:
                 not all(math.isclose(actual, raw * update_weight,
                                      abs_tol=1e-12, rel_tol=0)
                         for actual, raw in zip(applied, (dx, dy))) or
-                math.hypot(*applied) > VLM_XY_STEP_M + 1e-12 or
+                math.hypot(*applied) > NEXT_TRIAL_XY_MAX_STEP_M + 1e-12 or
                 not all(math.isclose(actual, prior + step,
                                      abs_tol=1e-12, rel_tol=0)
                         for actual, prior, step in zip(
                             next_value, self.wrist_correction_socket_m, applied))):
             raise ValueError("next-trial XY must equal prior + weight * increment")
         if (not isinstance(supporting_cameras, tuple) or
-                len(set(supporting_cameras)) < 2 or
                 len(set(supporting_cameras)) != len(supporting_cameras)):
-            raise ValueError("next-trial advice needs distinct camera inliers")
+            raise ValueError("next-trial advice needs distinct supporting cameras")
         refs = _refs(evidence_refs, "preinsert_reached", False)
         if not {"axial_withdrawal", "grounded_xy"} <= refs.keys():
             raise ValueError("next-trial advice needs withdrawal and diagnostic")

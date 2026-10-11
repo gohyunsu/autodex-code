@@ -1,4 +1,4 @@
-"""Bind one observed insertion failure to a read-only 1 mm VLM retry.
+"""Bind a failed insertion to grounded next-trial XY advice.
 
 This joins existing camera, held-relation, endpoint, ZeroDex-style voting and
 cuRobo preflight helpers. Guarded withdrawal and its log are supplied by a
@@ -31,6 +31,7 @@ from .grounded_alignment import (
     estimate_grounded_line_alignment,
     observe_grounded_key_axis,
     observe_grounded_cylinder_axis, observe_grounded_cylinder_axis_cropped,
+    resolve_xy_only_cylinder_alignment,
 )
 from .grounding_crop import verify_native_crop_observation
 from .held_relation import HeldRelation, resolve_postlift_held_relation
@@ -63,25 +64,30 @@ class RetrySessionLimits:
     max_arm_velocity_rad_s: float
     max_grasp_translation_drift_m: float
     max_grasp_rotation_drift_deg: float
-    max_total_offset_m: float
     minimum_anchor_separation_px: float
     crop_width_px: int
     max_frame_age_s: float
     max_capture_skew_s: float
     axial_waypoint_step_m: float
     path_limits: PathAuditLimits
+    # Legacy same-attempt retry budget; inactive for next-trial XY learning.
+    max_total_offset_m: float | None = None
 
     def validate(self) -> None:
         values = (
             self.max_state_skew_s, self.max_arm_hand_skew_s,
             self.max_hand_command_error_raw, self.max_arm_velocity_rad_s,
             self.max_grasp_translation_drift_m,
-            self.max_grasp_rotation_drift_deg, self.max_total_offset_m,
+            self.max_grasp_rotation_drift_deg,
             self.minimum_anchor_separation_px, self.max_frame_age_s,
             self.max_capture_skew_s, self.axial_waypoint_step_m)
         if (not all(math.isfinite(float(v)) and float(v) > 0 for v in values) or
                 type(self.crop_width_px) is not int or self.crop_width_px < 32):
             raise ValueError("retry limits must be finite and commissioned")
+        if self.max_total_offset_m is not None and (
+                not math.isfinite(self.max_total_offset_m) or
+                self.max_total_offset_m <= 0):
+            raise ValueError("legacy total offset limit must be positive")
         self.path_limits.validate()
 
 
@@ -572,10 +578,12 @@ def _validated_unobserved_retry_capture(
     verified = verify_frame_provenance(
         acquisition_metadata, request_id=frame_request_id,
         images_bgr=images_bgr, frame_ids=frame_ids)
-    if (len(verified) < 2 or
+    minimum_views = 1 if mode.family == "cylinder" else 2
+    if (len(verified) < minimum_views or
             any(frame.timestamp_s != verified[frame.camera_id]["timestamp_s"]
                 for frame in frames)):
-        raise ValueError("diagnostic needs two bound same-request camera frames")
+        raise ValueError(
+            "diagnostic needs bound same-request camera frames")
     exposure_begin = min(row["timestamp_s"] - row["max_error_s"]
                          for row in verified.values())
     exposure_end = max(row["timestamp_s"] + row["max_error_s"]
@@ -679,6 +687,7 @@ def assess_grounded_xy_diagnostic(
     axis_reference_key_z_m: float | None = None,
     roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]] | None = None,
     square_translation_only: bool = False,
+    search_index: int = 0,
 ) -> GroundedXYDiagnostic:
     """Observe raw key landmarks after a failed trial, never command XY.
 
@@ -775,8 +784,17 @@ def assess_grounded_xy_diagnostic(
             socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
             verification_depth_m=mode.target_depth_m,
             limits=alignment_limits)
-    # The session runner applies the configured weight and checks the
-    # cumulative command offset. The diagnostic only measures residual error.
+        nominal = json.loads(postlift_file.read_text(encoding="utf-8"))
+        T_robot_key = validate_se3(
+            nominal["targets"]["T_robot_key_preinsert"],
+            name="commanded preinsert key target")
+        tip_robot = T_robot_key @ np.array([0., 0., tip_z, 1.])
+        tip_socket = np.linalg.inv(socket) @ tip_robot
+        alignment = resolve_xy_only_cylinder_alignment(
+            grounded, alignment,
+            nominal_tip_z_socket_m=float(tip_socket[2]),
+            search_index=search_index)
+    # The session runner applies the configured weight to the next attempt.
     alignment = dict(
         alignment, estimator_limits=asdict(alignment_limits),
         grounding_input=("lossless_raw_roi" if roi_xyxy_by_camera is not None

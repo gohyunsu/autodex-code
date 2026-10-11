@@ -116,7 +116,8 @@ def test_local_probe_reuses_metric_estimator_and_records_exact_sources(
     assert report["alignment"]["xy_correction_socket_m"] == pytest.approx(
         [-.0016, .0002], abs=1e-7)
     assert np.linalg.norm(
-        report["alignment"]["bounded_xy_increment_socket_m"]) == pytest.approx(.001)
+        report["alignment"]["bounded_xy_increment_socket_m"]) == pytest.approx(
+            np.linalg.norm(report["alignment"]["xy_correction_socket_m"]))
     assert len(report["observations"]) == 3
     assert report["source_images"][0]["sha256"] == hashlib.sha256(
         (tmp_path / "front.png").read_bytes()).hexdigest()

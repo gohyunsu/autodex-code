@@ -17,8 +17,9 @@ from precision_insertion.session_policy import SessionDecision  # noqa: E402
 
 
 @pytest.mark.parametrize("status", ["abstain", "diagnostic_metric_xy_correction"])
+@pytest.mark.parametrize("camera_count", [1, 2])
 def test_live_grounded_advice_never_moves_xy_in_same_attempt(
-        tmp_path, monkeypatch, status):
+        tmp_path, monkeypatch, status, camera_count):
     class State:
         pass
 
@@ -57,8 +58,9 @@ def test_live_grounded_advice_never_moves_xy_in_same_attempt(
             events.append(("next_trial", kwargs["diagnostic"].status))
 
     runner = Runner()
+    camera_ids = ("front", "side")[:camera_count]
     launch = SimpleNamespace(
-        camera_ids=("front", "side"), intrinsics_full={},
+        camera_ids=camera_ids, intrinsics_full={},
         extrinsics_full={})
     live = SimpleNamespace(
         opened=SimpleNamespace(runner=runner),
@@ -78,7 +80,9 @@ def test_live_grounded_advice_never_moves_xy_in_same_attempt(
         },
     }
     capture = RawCameraCapture(
-        "withdrawn_1", 1, images, {"front": 1, "side": 2}, metadata)
+        "withdrawn_1", 1, images,
+        {camera: index for index, camera in enumerate(camera_ids, start=1)},
+        metadata)
     withdrawal = tmp_path / "withdrawal.json"
     withdrawal.write_text(json.dumps({"completed_at_s": 4.0}),
                           encoding="utf-8")

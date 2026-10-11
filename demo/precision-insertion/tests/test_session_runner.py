@@ -206,7 +206,7 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
     source.write_text(json.dumps(diagnostic.to_record()), encoding="utf-8")
     runner.record_next_trial_xy_advice(
         diagnostic=diagnostic, diagnostic_report_path=source,
-        timestamp_s=5.0, max_total_offset_m=0.005)
+        timestamp_s=5.0)
     assert runner.current_decision().action == "recover_held_key_then_reobserve"
     assert runner.active_attempt.xy_offset_socket_m == (0.0, 0.0)
     assert all(event["stage"] != "xy_retry" for event in runner.active_attempt.events)
@@ -263,7 +263,7 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
     source2.write_text(json.dumps(diagnostic2.to_record()), encoding="utf-8")
     runner.record_next_trial_xy_advice(
         diagnostic=diagnostic2, diagnostic_report_path=source2,
-        timestamp_s=11.0, max_total_offset_m=0.005)
+        timestamp_s=11.0)
     advice2 = json.loads((runner._attempt_dir /
                           "next_trial_xy_advice.json").read_text())
     assert advice2["prior_wrist_correction_socket_m"] == pytest.approx(

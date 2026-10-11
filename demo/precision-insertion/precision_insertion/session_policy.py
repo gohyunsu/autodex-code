@@ -51,7 +51,7 @@ def decide_after_trial_preflight(report: Mapping) -> SessionDecision:
             "/".join(selected), (
                 "commissioned_robot_and_force_limits",
                 "fresh_synchronized_key_and_robot_state",
-                "measured_post_lift_key_hand_relation",
+                "nominal_v8_key_hand_relation_for_cylinder",
                 "guarded_insertion_controller",
             ))
     if selected is not None:
@@ -180,8 +180,8 @@ def decide_after_attempt(
                 "guarded_axial_withdrawal", "verified_key_rest_or_human_recovery")
         return result(
             "guarded_withdrawal_then_xy_assessment", "observed_insertion_failure",
-            "guarded_axial_withdrawal", "observed_post_withdrawal_key_hand_pose",
-            "calibrated_multiview_1mm_diagnostic",
+            "guarded_axial_withdrawal", "raw_multiview_tip_observation",
+            "calibrated_xy_only_up_to_10mm_next_trial_update",
             "next_attempt_only_no_lateral_motion")
     if any(event["stage"] == "insertion_success" for event in attempt.events):
         return result("stop_for_review", "insertion_verdict_unknown")
@@ -204,8 +204,8 @@ def decide_after_attempt(
     if labels["grasp_success"] is True:
         return result(
             "postlift_observed_preflight_required", "lifted_key_observed",
-            "fresh_multiview_key_pose", "measured_franka_inspire_state",
-            "observed_key_hand_endpoint_and_held_path_preflight")
+            "raw_multiview_lift_label", "measured_franka_inspire_state",
+            "nominal_v8_key_hand_endpoint_and_held_path_preflight")
     if any(event["stage"] == "grasp_success" for event in attempt.events):
         return result(
             "recover_key_then_reobserve", "grasp_verdict_unknown",

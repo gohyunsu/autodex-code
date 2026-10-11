@@ -118,7 +118,7 @@ def resolve_insertion_outcome(
     not a claim that measured key penetration reached 20 mm. A controller
     abort still stops motion through its own execution path.
     """
-    from .labeling import resolve_label
+    from .labeling import resolve_label, independent_vlm_label
 
     fused = judge_insertion(evidence, target_depth_m=target_depth_m)
     value, reason = resolve_label(
@@ -129,6 +129,8 @@ def resolve_insertion_outcome(
     record = fused.to_record()
     record["insertion_success"] = value
     record["reason"] = reason
+    record["vlm_label"] = independent_vlm_label(
+        "insertion_success", evidence.vlm_class)
     if label_mode != "evidence_fused":
         record["scope"] = ("visual_task_label_not_verified_20mm_depth"
                            if label_mode == "vlm_only" else

@@ -8,16 +8,24 @@ injected: this module does not fabricate either physical observation.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 from pathlib import Path
 from typing import Callable, Mapping
 from uuid import uuid4
 
 import numpy as np
+from autodex.utils.robot_config import FR3_CLEAR_VIEW
 
 from .action_loop import ActionHandler
 from .failed_return_evidence import verify_failed_return_execution
 from .live_key_trial import capture_returned_key_for_reset
 from .live_robot_state import LiveRobotState
+from .original_pose_restoration import (
+    original_center_release_xy, plan_original_pose_restoration,
+)
+from .repose_artifacts import write_repose_preflight_artifacts
+from .repose_execution_evidence import verify_repose_execution_evidence
 from .session_policy import SessionDecision
 
 
@@ -70,6 +78,9 @@ class LiveHeldReturnHandlers:
     capture_id_factory: Callable[[], str] = lambda: f"reset_{uuid4().hex}"
     read_state: Callable[[], LiveRobotState] | None = None
     reuse_withdrawal: Callable[[], tuple[str, LiveRobotState, Path] | None] | None = None
+    execute_restoration: Callable | None = None
+    restoration_height_cm: int = 12
+    max_restoration_attempts: int = 3
 
     def __post_init__(self) -> None:
         if (not callable(self.state_for_observation) or
@@ -79,6 +90,13 @@ class LiveHeldReturnHandlers:
                 not isinstance(self.key_prompt, str) or
                 not self.key_prompt.strip()):
             raise TypeError("held-return handler needs commissioned callbacks and prompt")
+        if (self.restoration_height_cm not in (4, 8, 12) or
+                type(self.max_restoration_attempts) is not int or
+                self.max_restoration_attempts < 1):
+            raise ValueError("restoration height/attempt budget is invalid")
+        if self.execute_restoration is not None and not callable(
+                self.execute_restoration):
+            raise TypeError("restoration executor must be callable")
         for name, provided, required, optional in (
                 ("capture", self.capture_parameters, _CAPTURE_KEYS,
                  _CAPTURE_OPTIONAL),
@@ -93,6 +111,109 @@ class LiveHeldReturnHandlers:
                 raise ValueError(
                     f"{name} limits missing {sorted(missing)} or unknown "
                     f"{sorted(unknown)}")
+
+    def _capture_landing(self, runner, launch, decision):
+        self.live.clear_view.before_key_capture()
+        capture_id = self.capture_id_factory()
+        return capture_returned_key_for_reset(
+            runner=runner, clear_view=self.live.clear_view,
+            init_orchestrator=self.live.cameras.init_orchestrator,
+            acquisition_metadata_for_request=(
+                self.live.cameras.acquisition_metadata_for_request),
+            state_for_observation=self.state_for_observation,
+            capture_root=launch.capture_root,
+            key_evidence_dir=(runner.output_dir / "reset_key_captures" /
+                              capture_id),
+            capture_id=capture_id,
+            calibrated_camera_ids=set(launch.camera_ids),
+            intrinsics_full=launch.intrinsics_full,
+            extrinsics_full=launch.extrinsics_full,
+            image_hw=launch.image_hw, key_prompt=self.key_prompt,
+            view_limits=launch.view_limits,
+            expected_action=decision.action,
+            **dict(self.capture_parameters))
+
+    def restore_until_original(self, runner, decision, landed, launch):
+        """Correct a misplaced key inside the same failed physical attempt."""
+        restoration_logs = []
+        for index in range(self.max_restoration_attempts):
+            geometry = runner.reset_landing_geometry(
+                key_observation=landed.observation,
+                max_pose_error_deg=self.landing_parameters["max_pose_error_deg"])
+            if (geometry["classification"]["stem"] ==
+                    geometry["target_pose_stem"] and
+                    geometry["center_xy_displacement_m"] <=
+                    self.landing_parameters["max_return_center_shift_m"]):
+                break
+            restoration_log, completed_at = self._restore_original(
+                runner, decision, landed, index)
+            restoration_logs.append(restoration_log)
+            landed = self._capture_landing(runner, launch, decision)
+            if landed.observation.acquisition_interval_s[0] <= completed_at:
+                raise ValueError("restoration key image precedes placement release")
+        return landed, tuple(restoration_logs)
+
+    def _restore_original(self, runner, decision, landed, index: int
+                          ) -> tuple[Path, float]:
+        if not callable(self.execute_restoration):
+            raise RuntimeError(
+                "original-pose restoration needs a commissioned reset executor")
+        geometry = runner.reset_landing_geometry(
+            key_observation=landed.observation,
+            max_pose_error_deg=self.landing_parameters["max_pose_error_deg"])
+        plan, scene = plan_original_pose_restoration(
+            planner=self.planner, shared_root=runner.shared_root,
+            mode=runner.mode, calibration=runner.calibration,
+            catalog=runner.catalog, key_observation=landed.observation,
+            measured_start_q=landed.state.full_q,
+            start_q_timestamp_s=landed.state.sample_timestamp_s,
+            max_state_skew_s=self.capture_parameters["max_key_state_skew_s"],
+            target_pose_stem=geometry["target_pose_stem"],
+            target_xy_robot_m=original_center_release_xy(
+                shared_root=runner.shared_root, mode=runner.mode,
+                target_pose_stem=geometry["target_pose_stem"],
+                original_center_xy_robot_m=(
+                    geometry["original_center_xy_robot_m"]),
+                key_center_local_m=geometry["key_center_local_m"]),
+            release_height_cm=self.restoration_height_cm,
+            max_pose_error_deg=self.landing_parameters["max_pose_error_deg"],
+            minimum_rest_socket_clearance_m=(
+                self.landing_parameters["minimum_rest_socket_clearance_m"]),
+            minimum_board_edge_clearance_m=(
+                self.landing_parameters["minimum_board_edge_clearance_m"]),
+            minimum_release_key_clearance_m=(
+                self.return_parameters["minimum_release_key_clearance_m"]),
+            retreat_goal_arm_q=np.asarray(FR3_CLEAR_VIEW, dtype=float),
+            limits=self.limits)
+        if plan.status != "nominal_reset_preflight_pass_drop_unobserved":
+            raise RuntimeError(f"original-pose restoration unavailable: {plan.status}")
+        folder = Path(runner._attempt_dir) / "reset_restoration" / f"{index:03d}"
+        inputs = folder / "inputs"
+        inputs.mkdir(parents=True, exist_ok=False)
+        key_file = inputs / "key_pose_world.npy"
+        state_file = inputs / "live_start_q.npy"
+        limits_file = inputs / "limits.json"
+        np.save(key_file, landed.observation.pose_world)
+        np.save(state_file, landed.state.full_q)
+        limits_file.write_text(json.dumps(vars(self.limits), indent=2) + "\n",
+                               encoding="utf-8")
+        report = write_repose_preflight_artifacts(
+            result=plan, trial_scene=scene, output_dir=folder / "preflight",
+            source_files={
+                "session": runner.output_dir / "frozen_session_calibration.json",
+                "catalog": runner.output_dir / "endpoint_catalog.json",
+                "key_pose_world": key_file, "live_start_q": state_file,
+                "limits": limits_file}) / "report.json"
+        execution = Path(self.execute_restoration(
+            runner, decision, plan, report)).expanduser().resolve()
+        verified = verify_repose_execution_evidence(
+            path=execution, attempt_id=runner.active_attempt.attempt_id,
+            attempt_started_at_s=runner.active_attempt.started_at_s,
+            preflight_report_path=report,
+            preflight_report_sha256=hashlib.sha256(report.read_bytes()).hexdigest(),
+            session_calibration_sha256=runner.session_sha256,
+            selected_seed=plan.selected_seed)
+        return execution, float(verified["release_completed_at_s"])
 
     def recover(self, runner, decision: SessionDecision) -> None:
         if (runner is not self.live.opened.runner or
@@ -158,30 +279,16 @@ class LiveHeldReturnHandlers:
             catalog_sha256=runner.catalog_sha256)
         if verified["plan_report"]["path"] != str(Path(report_path).resolve()):
             raise ValueError("controller executed another failed-return plan")
-        self.live.clear_view.before_key_capture()
         launch = self.live.cameras.launch
-        capture_id = self.capture_id_factory()
-        landed = capture_returned_key_for_reset(
-            runner=runner, clear_view=self.live.clear_view,
-            init_orchestrator=self.live.cameras.init_orchestrator,
-            acquisition_metadata_for_request=(
-                self.live.cameras.acquisition_metadata_for_request),
-            state_for_observation=self.state_for_observation,
-            capture_root=launch.capture_root,
-            key_evidence_dir=(runner.output_dir / "reset_key_captures" /
-                              capture_id),
-            capture_id=capture_id,
-            calibrated_camera_ids=set(launch.camera_ids),
-            intrinsics_full=launch.intrinsics_full,
-            extrinsics_full=launch.extrinsics_full,
-            image_hw=launch.image_hw, key_prompt=self.key_prompt,
-            view_limits=launch.view_limits,
-            **dict(self.capture_parameters))
+        landed = self._capture_landing(runner, launch, decision)
+        landed, restoration_logs = self.restore_until_original(
+            runner, decision, landed, launch)
         runner.observe_reset_landing(
             key_observation=landed.observation,
             key_evidence_dir=landed.key_evidence_dir,
             recovery_log_path=execution_path,
             timestamp_s=landed.observation.acquisition_interval_s[1],
+            restoration_evidence_paths=restoration_logs,
             **dict(self.landing_parameters))
 
     def handlers(self) -> dict[str, ActionHandler]:
