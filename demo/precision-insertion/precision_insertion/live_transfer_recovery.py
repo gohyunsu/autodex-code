@@ -1,9 +1,10 @@
 """Return a known held key after misalignment, or supervise an unknown one.
 
 No key pose is inferred from an incomplete/aborted transfer. A completed held
-transfer with a failed visual arrival can use the existing socket-aware held
-return and release path. The fallback producer must write a supervised-reset
-record for an unknown key state after pickup, lift or transfer.
+transfer with a visible alignment failure can use the existing socket-aware
+held return and release path. A visible slip/miss is not a held return. The
+fallback producer must write a supervised-reset record for an unknown key
+state after pickup, lift or transfer.
 """
 
 from __future__ import annotations
@@ -82,8 +83,11 @@ class LiveTransferRecoveryHandlers:
         checkpoint = runner._preinsert_checkpoint
         if (checkpoint is None or
                 checkpoint.preinsert_reached is not False or
-                checkpoint.reason != "measured_hold_pose_outside_limits" or
-                checkpoint.visual.status != "coarse_match"):
+                checkpoint.reason not in {
+                    "measured_hold_pose_outside_limits",
+                    "multiview_visible_preinsert_failure"} or
+                checkpoint.visual.status not in {
+                    "coarse_match", "gross_misalignment"}):
             return False
         path = runner._attempt_dir / "transfer_execution.json"
         if not path.is_file():

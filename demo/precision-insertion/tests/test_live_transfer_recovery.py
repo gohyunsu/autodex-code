@@ -45,6 +45,9 @@ def test_automatic_return_eligibility_requires_visible_rigid_hold(tmp_path):
     checkpoint.visual.status = "slip_or_miss"
     assert not handler._completed_held_transfer(runner)
     checkpoint.visual.status = "gross_misalignment"
+    checkpoint.reason = "multiview_visible_preinsert_failure"
+    assert handler._completed_held_transfer(runner)
+    checkpoint.visual.status = "unknown"
     assert not handler._completed_held_transfer(runner)
 
 
