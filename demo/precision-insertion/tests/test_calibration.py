@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -14,7 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.calibration import (  # noqa: E402
-    SocketObservation, calibrate_session, load_session_calibration,
+    SocketCaptureRefinement, SocketObservation, calibrate_session, load_session_calibration,
     write_session_calibration,
 )
 from precision_insertion.assets import AssetPaths  # noqa: E402
@@ -76,6 +77,28 @@ def _arguments(tmp_path, *, family="square"):
     }
 
 
+def _refinements(args):
+    raw_mesh = (args["object_root"] / args["mode"].socket_object / "raw_mesh" /
+                f"{args['mode'].socket_object}.obj")
+    raw_mesh.parent.mkdir(parents=True, exist_ok=True)
+    raw_mesh.write_text("v 0 0 0\n", encoding="utf-8")
+    digest = hashlib.sha256(raw_mesh.read_bytes()).hexdigest()
+    return tuple(SocketCaptureRefinement(
+        capture_id=capture_id, request_id=request_id,
+        pose_world=_pose(x), accepted_camera_ids=("cam_a", "cam_b"),
+        selected_camera_id="cam_a",
+        per_view_iou={"cam_a": .93, "cam_b": .91},
+        minimum_refined_iou=.8,
+        stock_selection={"selection_mode": "iou", "best_serial": "cam_a",
+                         "n_candidates": 2, "n_masks": 2,
+                         "silhouette_iterations": 100,
+                         "silhouette_loss_threshold": .003,
+                         "sil_loss": .0005},
+        raw_mesh_sha256=digest)
+        for capture_id, request_id, x in (
+            ("first", 2, 1.1005), ("second", 3, 1.1006)))
+
+
 @pytest.fixture
 def board_measurement(monkeypatch):
     calls = []
@@ -118,6 +141,49 @@ def test_calibration_freezes_robot_pose_and_adds_socket_without_mutation(
     assert json.loads(saved.read_text(encoding="utf-8")) == result.record
     with pytest.raises(FileExistsError):
         write_session_calibration(result, saved)
+
+
+def test_refined_session_counts_captures_not_camera_views_and_replays(
+        tmp_path, board_measurement):
+    args = _arguments(tmp_path)
+    paths = AssetPaths(tmp_path, args["mode"])
+    paths.socket_collision_mesh.parent.mkdir(parents=True)
+    paths.socket_collision_mesh.write_bytes(args["socket_collision_mesh"].read_bytes())
+    args["socket_collision_mesh"] = paths.socket_collision_mesh
+    args["object_root"] = paths.object_root
+    args["socket_capture_refinements"] = _refinements(args)
+    session = calibrate_session(**args)
+    assert session.socket_diagnostics["sample_count"] == 2
+    assert len(session.record["socket_observations"]) == 4
+    assert session.socket_pose_robot[0, 3] == pytest.approx(.1005)
+    assert session.record["socket_pose_source"] == (
+        "per_capture_stock_multiview_refinement")
+    saved = write_session_calibration(session, tmp_path / "refined.json")
+    replay = load_session_calibration(saved, mode=args["mode"], shared_root=tmp_path)
+    np.testing.assert_allclose(replay.socket_pose_robot, session.socket_pose_robot)
+    changed = json.loads(saved.read_text(encoding="utf-8"))
+    changed["socket_capture_refinements"][0]["per_view_iou"]["cam_b"] = .1
+    tampered = tmp_path / "changed_refinement.json"
+    tampered.write_text(json.dumps(changed), encoding="utf-8")
+    with pytest.raises(ValueError, match="refinements changed"):
+        load_session_calibration(tampered, mode=args["mode"], shared_root=tmp_path)
+    changed = json.loads(saved.read_text(encoding="utf-8"))
+    changed["socket_pose_robot"][0][3] += .01
+    tampered.write_text(json.dumps(changed), encoding="utf-8")
+    with pytest.raises(ValueError, match="differs from refined captures"):
+        load_session_calibration(tampered, mode=args["mode"], shared_root=tmp_path)
+
+
+def test_refined_session_rejects_one_bad_view_or_duplicate_request(
+        tmp_path, board_measurement):
+    args = _arguments(tmp_path)
+    first, second = _refinements(args)
+    with pytest.raises(ValueError, match="per-view IoU gate"):
+        calibrate_session(**{**args, "socket_capture_refinements": (
+            replace(first, per_view_iou={"cam_a": .93, "cam_b": .7}), second)})
+    with pytest.raises(ValueError, match="request IDs must be unique"):
+        calibrate_session(**{**args, "socket_capture_refinements": (
+            first, replace(second, request_id=first.request_id))})
 
 
 @pytest.mark.parametrize("change,error", [

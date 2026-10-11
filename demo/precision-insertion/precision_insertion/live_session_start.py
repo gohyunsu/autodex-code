@@ -23,6 +23,8 @@ from .geometry import validate_se3
 from .fixture_contract import validate_cylinder_socket_fixture
 from .live_capture import collect_board_snapshot, collect_socket_capture
 from .perception_evidence import SocketViewLimits
+from .silhouette_compat import prepare_precision_silhouette
+from .socket_refinement import refine_socket_capture
 from .session_bootstrap import (
     bootstrap_session, verify_session_evidence_bundle,
     write_session_bootstrap_artifacts,
@@ -50,6 +52,7 @@ def start_precision_session(
     board_timeout_s: float, socket_timeout_s: float,
     max_socket_translation_mm: float,
     max_socket_angle_deg: float,
+    minimum_socket_refined_iou: float,
     image_write_timeout_s: float = 5.0,
     request_id_factory: Callable[[], int] | None = None,
 ) -> StartedPrecisionSession:
@@ -83,6 +86,10 @@ def start_precision_session(
                         ("max_socket_angle_deg", max_socket_angle_deg)):
         if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
             raise ValueError(f"{name} must be finite and positive")
+    if (type(minimum_socket_refined_iou) not in (int, float) or
+            not math.isfinite(minimum_socket_refined_iou) or
+            not 0 < minimum_socket_refined_iou <= 1):
+        raise ValueError("commissioned minimum_socket_refined_iou must be in (0,1]")
     view_limits.validate()
     if (not isinstance(calibrated_camera_ids, set) or
             len(calibrated_camera_ids) < view_limits.minimum_accepted_views or
@@ -129,6 +136,9 @@ def start_precision_session(
         calibrated_camera_ids=calibrated_camera_ids,
         acquisition_metadata_for_request=acquisition_metadata_for_request,
         timeout_s=float(board_timeout_s), request_id_factory=next_request_id)
+    prepare_precision_silhouette(
+        init_orchestrator=init_orchestrator,
+        object_name=mode.socket_object, raw_mesh=socket_mesh)
     init_orchestrator.init_object(
         obj_name=mode.socket_object, mesh_path=str(socket_mesh),
         assets_root=str(paths.foundpose_assets_root(mode.socket_object)),
@@ -161,7 +171,12 @@ def start_precision_session(
         c2r=c2r, base_scene=base_scene,
         socket_collision_mesh=socket_collision,
         max_socket_translation_mm=float(max_socket_translation_mm),
-        max_socket_angle_deg=float(max_socket_angle_deg))
+        max_socket_angle_deg=float(max_socket_angle_deg),
+        socket_refiner=lambda capture, admission: refine_socket_capture(
+            capture=capture, admission=admission,
+            init_orchestrator=init_orchestrator,
+            socket_object=mode.socket_object, raw_mesh=socket_mesh,
+            minimum_refined_iou=float(minimum_socket_refined_iou)))
     saved = write_session_bootstrap_artifacts(bootstrap, output)
     manifest = verify_session_evidence_bundle(saved)
     if manifest.get("all_frames_bound_to_acquisition_evidence") is not True:

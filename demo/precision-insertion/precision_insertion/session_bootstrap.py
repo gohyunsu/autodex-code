@@ -13,12 +13,14 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 import cv2
 import numpy as np
 
-from .calibration import SessionCalibration, calibrate_session
+from .calibration import (
+    SessionCalibration, SocketCaptureRefinement, calibrate_session,
+)
 from .config import TaskMode
 from .frame_provenance import bounded_capture_skew_s, verify_frame_provenance
 from .perception_evidence import (
@@ -52,6 +54,7 @@ class SessionBootstrap:
     socket_captures: tuple[SocketCaptureInput, ...]
     socket_admissions: tuple[SocketCaptureEvidence, ...]
     board_frame_evidence: Mapping[str, dict] | None = None
+    socket_refinements: tuple[SocketCaptureRefinement, ...] = ()
 
 
 def _safe_id(value: str, name: str) -> str:
@@ -85,6 +88,8 @@ def bootstrap_session(
     c2r: np.ndarray, base_scene: dict, socket_collision_mesh: Path,
     max_socket_translation_mm: float, max_socket_angle_deg: float,
     board_frame_evidence: Mapping[str, dict] | None = None,
+    socket_refiner: Callable[[SocketCaptureInput, SocketCaptureEvidence],
+                             SocketCaptureRefinement] | None = None,
 ) -> SessionBootstrap:
     """Admit repeated socket observations, then freeze one AutoDex world.
 
@@ -121,6 +126,7 @@ def bootstrap_session(
     if not isinstance(socket_captures, Sequence) or len(socket_captures) < 2:
         raise ValueError("at least two socket captures are required")
     admissions: list[SocketCaptureEvidence] = []
+    refinements: list[SocketCaptureRefinement] = []
     seen_ids: set[str] = set()
     seen_requests: set[int] = {board_request_id}
     for capture in socket_captures:
@@ -174,11 +180,21 @@ def bootstrap_session(
                     bounded_capture_skew_s(verified) >
                     view_limits.maximum_capture_skew_s):
                 raise ValueError("socket frame timing conflicts with verified evidence")
-        admissions.append(admit_socket_capture(
+        admission = admit_socket_capture(
             capture_id=capture_id, masks=capture.masks, poses=capture.poses,
             frame_timestamps_s=capture.frame_timestamps_s,
             frame_timestamp_source=capture.frame_timestamp_source,
-            calibrated_camera_ids=calibrated_camera_ids, limits=view_limits))
+            calibrated_camera_ids=calibrated_camera_ids, limits=view_limits)
+        admissions.append(admission)
+        if socket_refiner is not None:
+            refined = socket_refiner(capture, admission)
+            if (not isinstance(refined, SocketCaptureRefinement) or
+                    refined.capture_id != capture_id or
+                    refined.request_id != request_id or
+                    set(refined.accepted_camera_ids) != {
+                        item.camera_id for item in admission.observations}):
+                raise ValueError("socket refinement does not match admitted capture")
+            refinements.append(refined)
     calibration = calibrate_session(
         mode=mode, object_root=object_root,
         board_images_bgr=board_images_bgr,
@@ -195,11 +211,13 @@ def bootstrap_session(
         max_socket_angle_deg=max_socket_angle_deg,
         min_socket_captures=2,
         min_views_per_capture=view_limits.minimum_accepted_views,
+        socket_capture_refinements=(
+            tuple(refinements) if socket_refiner is not None else None),
     )
     return SessionBootstrap(
         calibration, board_request_id, board_images_bgr, board_timestamps_s,
         board_timestamp_source, tuple(socket_captures), tuple(admissions),
-        board_frame_evidence)
+        board_frame_evidence, tuple(refinements))
 
 
 def _write_png(path: Path, image: np.ndarray) -> str:
@@ -235,6 +253,8 @@ def write_session_bootstrap_artifacts(
         files[str(path.relative_to(target))] = _write_png(path, image)
     socket_root = target / "socket"
     socket_root.mkdir()
+    refined_by_capture = {
+        row.capture_id: row for row in bootstrap.socket_refinements}
     for capture, admission in zip(
             bootstrap.socket_captures, bootstrap.socket_admissions,
             strict=True):
@@ -249,6 +269,8 @@ def write_session_bootstrap_artifacts(
             "request_id": capture.request_id,
             "sam_prompt": capture.prompt,
             "admission": admission.to_record(),
+            "refinement": (refined_by_capture[capture.capture_id].to_record()
+                           if capture.capture_id in refined_by_capture else None),
             "frame_timestamps_s": dict(capture.frame_timestamps_s),
             "frame_evidence": (dict(capture.frame_evidence)
                                if capture.frame_evidence is not None else None),
@@ -293,6 +315,8 @@ def write_session_bootstrap_artifacts(
                                bootstrap.socket_captures],
         "socket_request_ids": [capture.request_id for capture in
                                bootstrap.socket_captures],
+        "socket_pose_source": bootstrap.calibration.record.get(
+            "socket_pose_source"),
         "files_sha256": files,
         "scope": "saved_calibration_evidence_not_live_robot_authorization",
         "robot_ready": False,
@@ -327,6 +351,23 @@ def verify_session_evidence_bundle(output_dir: Path) -> dict:
             raise ValueError(f"missing or out-of-root session evidence: {relative}")
         if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
             raise ValueError(f"session evidence changed: {relative}")
+    calibration = json.loads((root / "session_calibration.json").read_text(
+        encoding="utf-8"))
+    source = calibration.get("socket_pose_source")
+    if manifest.get("socket_pose_source") != source:
+        raise ValueError("manifest socket pose source differs from calibration")
+    refinements = calibration.get("socket_capture_refinements", [])
+    if source == "per_capture_stock_multiview_refinement":
+        capture_ids = manifest.get("socket_capture_ids")
+        if (not isinstance(refinements, list) or
+                not isinstance(capture_ids, list) or
+                len(refinements) != len(capture_ids) or
+                any(not isinstance(row, dict) for row in refinements) or
+                [row.get("capture_id") for row in refinements] != capture_ids):
+            raise ValueError("saved socket refinements differ from capture list")
+        refined_by_capture = {row["capture_id"]: row for row in refinements}
+    else:
+        refined_by_capture = {}
     board_evidence = manifest.get("board_frame_evidence")
     if board_evidence is not None:
         board_images = {
@@ -347,6 +388,15 @@ def verify_session_evidence_bundle(output_dir: Path) -> dict:
         folder = root / "socket" / _safe_id(capture_id, "capture ID")
         payload = json.loads((folder / "payloads.json").read_text(
             encoding="utf-8"))
+        if source == "per_capture_stock_multiview_refinement":
+            refinement = refined_by_capture[capture_id]
+            if (payload.get("refinement") != refinement or
+                    payload.get("capture_id") != capture_id or
+                    payload.get("request_id") != refinement.get("request_id") or
+                    set(payload.get("admission", {}).get(
+                        "accepted_camera_ids", [])) !=
+                    set(refinement.get("accepted_camera_ids", []))):
+                raise ValueError("saved socket refinement differs from capture")
         evidence = payload.get("frame_evidence")
         if evidence is None:
             bound_sockets = False

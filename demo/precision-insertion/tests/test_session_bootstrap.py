@@ -12,7 +12,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from precision_insertion.calibration import SessionCalibration  # noqa: E402
+from precision_insertion.calibration import (  # noqa: E402
+    SessionCalibration, SocketCaptureRefinement,
+)
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.perception_evidence import SocketViewLimits  # noqa: E402
 from precision_insertion.frame_provenance import image_sha256  # noqa: E402
@@ -37,17 +39,24 @@ def _capture(capture_id: str, timestamp: float) -> sb.SocketCaptureInput:
 
 
 def _bootstrap(monkeypatch, captures=None, board_source="camera_acquisition",
-               extra_camera_ids=(), board_frame_evidence=None):
+               extra_camera_ids=(), board_frame_evidence=None,
+               socket_refiner=None):
     received = {}
 
     def fake_calibrate_session(**kwargs):
         received.update(kwargs)
+        refinements = kwargs.get("socket_capture_refinements") or ()
         return SessionCalibration(
             board={"test": True}, socket_pose_robot=np.eye(4),
             socket_diagnostics={"accepted": True},
             collision_scene={"mesh": {}, "cuboid": {}},
             record={"schema": "precision_insertion_session_calibration_v1",
-                    "board": {"test": True}, "socket_observations": []},
+                    "board": {"test": True}, "socket_observations": [],
+                    "socket_pose_source": (
+                        "per_capture_stock_multiview_refinement" if refinements
+                        else "per_view_foundpose_legacy"),
+                    "socket_capture_refinements": [
+                        row.to_record() for row in refinements]},
         )
 
     monkeypatch.setattr(sb, "calibrate_session", fake_calibrate_session)
@@ -72,7 +81,8 @@ def _bootstrap(monkeypatch, captures=None, board_source="camera_acquisition",
         c2r=np.eye(4), base_scene={"mesh": {}, "cuboid": {}},
         socket_collision_mesh=Path("/unused/socket.obj"),
         max_socket_translation_mm=1.0, max_socket_angle_deg=1.0,
-        board_frame_evidence=board_frame_evidence)
+        board_frame_evidence=board_frame_evidence,
+        socket_refiner=socket_refiner)
     return result, received
 
 
@@ -86,6 +96,29 @@ def test_joins_ch_ar_uco_and_repeated_socket_admissions(monkeypatch):
         "frame_capture_timestamp_s"] == 100.005
     assert result.socket_admissions[0].per_view["cam_b"][
         "pose_publish_timestamp_s"] == 112.0
+
+
+def test_refinement_callback_receives_admitted_views_and_is_saved(
+        monkeypatch, tmp_path):
+    calls = []
+
+    def refine(capture, admission):
+        calls.append((capture.capture_id, tuple(
+            view.camera_id for view in admission.observations)))
+        return SocketCaptureRefinement(
+            capture.capture_id, capture.request_id, np.eye(4),
+            ("cam_a", "cam_b"), "cam_a", {"cam_a": .9, "cam_b": .91},
+            .8, {"best_serial": "cam_a"}, "a" * 64)
+
+    result, received = _bootstrap(monkeypatch, socket_refiner=refine)
+    assert calls == [("socket_1", ("cam_a", "cam_b")),
+                     ("socket_2", ("cam_a", "cam_b"))]
+    assert len(received["socket_capture_refinements"]) == 2
+    target = sb.write_session_bootstrap_artifacts(result, tmp_path / "refined")
+    assert sb.verify_session_evidence_bundle(target)["socket_pose_source"] == (
+        "per_capture_stock_multiview_refinement")
+    payload = json.loads((target / "socket/socket_1/payloads.json").read_text())
+    assert payload["refinement"]["request_id"] == 100
 
 
 def test_rejects_unverified_time_and_mismatched_raw_frames(monkeypatch):

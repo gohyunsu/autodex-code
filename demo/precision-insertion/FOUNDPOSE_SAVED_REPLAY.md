@@ -83,16 +83,15 @@ fixture truth must be commissioned before session acceptance. The reports
 record the exact full saved-view set and source hashes; no mask was invented
 for the other cameras.
 
-The current demo `start_precision_session()` takes admitted per-camera
-FoundPose poses through `bootstrap_session()` and
-`calibrate_session()`; it **does not yet run this stock selection/refinement
-for each socket capture** before freezing the collision world. Therefore the
-table above is a diagnostic, not proof that the current live session path
-would produce those refined poses. The next code boundary is to preserve
-per-view quality/provenance, produce one refined pose per independently
-captured socket observation, and test repeatability **between captures**
-without counting duplicated refined poses as independent views. The physical
-board/fixture reference and real acquisition clocks remain mandatory.
+The demo `start_precision_session()` now runs this same stock selection and
+silhouette refinement separately for each admitted socket capture. It checks
+every admitted camera's post-refinement IoU against a **commissioned**
+`minimum_socket_refined_iou`, then checks repeatability between one pose per
+independent capture. Raw per-view estimates and the stock selection report
+remain in the saved evidence bundle. The table above is still a saved-image
+diagnostic, **not** proof that a future live session will produce those poses
+or that either pose has sub-millimetre absolute accuracy. Independent physical
+fixture truth, camera calibration and real acquisition clocks remain mandatory.
 
 To reproduce one read-only replay, after creating the isolated environment
 described below and installing [NVlabs nvdiffrast](https://github.com/NVlabs/nvdiffrast/blob/main/docs/index.html)

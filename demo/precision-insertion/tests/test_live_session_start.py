@@ -69,6 +69,7 @@ def _setup(tmp_path, monkeypatch, request_ids=(11, 12, 13)):
         assert [row.request_id for row in kwargs["socket_captures"]] == [12, 13]
         assert kwargs["socket_collision_mesh"] == collision
         assert kwargs["object_root"] == shared / "object_processing"
+        assert callable(kwargs["socket_refiner"])
         return SimpleNamespace(calibration=frozen)
 
     def write(_bootstrap, output):
@@ -96,6 +97,8 @@ def _setup(tmp_path, monkeypatch, request_ids=(11, 12, 13)):
     # contract is exercised independently by the fixture relocation tests.
     monkeypatch.setattr(start, "validate_cylinder_socket_fixture",
                         lambda **_kwargs: {"paths_bound_to_shared_root": True})
+    monkeypatch.setattr(start, "prepare_precision_silhouette",
+                        lambda **_kwargs: events.append("socket_renderer"))
     identifiers = iter(request_ids)
     arguments = {
         "mode": mode, "shared_root": shared,
@@ -111,6 +114,7 @@ def _setup(tmp_path, monkeypatch, request_ids=(11, 12, 13)):
         "socket_prompt": "fixed red cylindrical socket", "socket_capture_count": 2,
         "board_timeout_s": 5., "socket_timeout_s": 15.,
         "max_socket_translation_mm": 1., "max_socket_angle_deg": 1.,
+        "minimum_socket_refined_iou": .8,
         "request_id_factory": lambda: next(identifiers),
     }
     return arguments, events, repre
@@ -120,12 +124,38 @@ def test_session_start_orders_board_before_socket_and_reloads_frozen_world(
         tmp_path, monkeypatch):
     arguments, events, _repre = _setup(tmp_path, monkeypatch)
     result = start.start_precision_session(**arguments)
-    assert events == ["board", "socket_init", "socket_000", "socket_001",
+    assert events == ["board", "socket_renderer", "socket_init",
+                      "socket_000", "socket_001",
                       "freeze_world", "save", "verify", "reload_frozen_world"]
     assert result.board_request_id == 11
     assert result.socket_request_ids == (12, 13)
     assert result.evidence_dir == arguments["evidence_dir"]
     assert result.calibration.record["schema"] == "test"
+
+
+def test_session_start_passes_commissioned_refinement_into_bootstrap(
+        tmp_path, monkeypatch):
+    arguments, _events, _repre = _setup(tmp_path, monkeypatch)
+    captured = []
+    original_bootstrap = start.bootstrap_session
+
+    def fake_refine(**kwargs):
+        captured.append(kwargs)
+        return "one_refined_socket_pose"
+
+    def invoke_refiner(**kwargs):
+        assert kwargs["socket_refiner"](
+            SimpleNamespace(capture_id="socket_000"),
+            SimpleNamespace(capture_id="socket_000")) == (
+                "one_refined_socket_pose")
+        return original_bootstrap(**kwargs)
+
+    monkeypatch.setattr(start, "refine_socket_capture", fake_refine)
+    monkeypatch.setattr(start, "bootstrap_session", invoke_refiner)
+    start.start_precision_session(**arguments)
+    assert len(captured) == 1
+    assert captured[0]["minimum_refined_iou"] == .8
+    assert captured[0]["socket_object"] == arguments["mode"].socket_object
 
 
 def test_missing_canonical_socket_repre_rejects_before_any_capture(
@@ -155,7 +185,8 @@ def test_duplicate_request_or_existing_output_never_reuses_a_session(
         tmp_path, monkeypatch, request_ids=(11, 12, 12))
     with pytest.raises(ValueError, match="unique positive int31"):
         start.start_precision_session(**arguments)
-    assert events == ["board", "socket_init", "socket_000", "socket_001"]
+    assert events == ["board", "socket_renderer", "socket_init",
+                      "socket_000", "socket_001"]
     events.clear()
     arguments["evidence_dir"].mkdir()
     with pytest.raises(FileExistsError, match="already exists"):
@@ -186,6 +217,7 @@ def test_session_rejects_unbound_saved_frame_evidence(tmp_path, monkeypatch):
     monkeypatch.setattr(start, "verify_session_evidence_bundle", unbound)
     with pytest.raises(ValueError, match="acquisition-bound camera frames"):
         start.start_precision_session(**arguments)
-    assert events == ["board", "socket_init", "socket_000", "socket_001",
+    assert events == ["board", "socket_renderer", "socket_init",
+                      "socket_000", "socket_001",
                       "freeze_world", "save", "verify"]
     assert arguments["evidence_dir"].is_dir()

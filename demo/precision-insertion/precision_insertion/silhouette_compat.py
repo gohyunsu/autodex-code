@@ -42,20 +42,20 @@ class SolidMtlSilhouetteOptimizer(SilhouetteOptimizer):
         return mesh
 
 
-def prepare_key_silhouette(
+def prepare_precision_silhouette(
     *, init_orchestrator, object_name: str, raw_mesh: Path,
 ) -> str:
-    """Prepare the robot-side renderer before AutoDex key init/capture.
+    """Prepare the robot-side renderer for the exact precision key or socket.
 
-    This does not patch a global class or modify stock source. ``init_object``
-    must subsequently be called with ``load_silhouette=False`` so its daemon
-    initialization runs unchanged while this compatible local renderer stays
-    installed on the same stock orchestrator instance.
+    This does not patch a global class or modify stock source. A subsequent
+    ``init_object`` must use ``load_silhouette=False`` so daemon initialization
+    runs unchanged while this compatible renderer remains installed on the
+    same stock orchestrator instance.
     """
     stock = getattr(init_orchestrator, "stock", init_orchestrator)
     if (not isinstance(object_name, str) or not object_name or
             not isinstance(raw_mesh, Path)):
-        raise ValueError("key silhouette needs an object name and raw mesh path")
+        raise ValueError("precision silhouette needs an object name and raw mesh path")
     mesh = raw_mesh.expanduser().resolve()
     if not mesh.is_file():
         raise FileNotFoundError(mesh)
@@ -74,3 +74,12 @@ def prepare_key_silhouette(
     renderer._precision_mesh_sha256 = digest
     stock._sil = renderer
     return digest
+
+
+def prepare_key_silhouette(
+    *, init_orchestrator, object_name: str, raw_mesh: Path,
+) -> str:
+    """Compatibility name for the existing key path; same renderer contract."""
+    return prepare_precision_silhouette(
+        init_orchestrator=init_orchestrator,
+        object_name=object_name, raw_mesh=raw_mesh)

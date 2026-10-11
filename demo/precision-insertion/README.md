@@ -2228,11 +2228,19 @@ With an already-streaming AutoDex
 camera rig and an independently commissioned `AcquisitionTimeProvider`, it
 collects the ChArUco board snapshot **before** initializing socket FoundPose,
 takes at least two unique-request socket captures while the key is absent,
-runs `bootstrap_session()`, freezes the socket in the collision world, writes
+takes only admitted SAM/FoundPose views from each capture into stock
+`InitOrchestrator.refine_from_payloads(selection_mode="iou")` and its
+silhouette optimizer, then requires a commissioned minimum **per-view**
+post-refinement IoU. Each capture contributes exactly one refined pose to
+the repeatability test; the raw per-camera poses remain saved evidence but
+are not counted as independent fixture measurements. It runs
+`bootstrap_session()`, freezes the socket in the collision world, writes
 the evidence bundle and reloads the saved calibration to check it. Duplicate
 request IDs or an existing output directory fail closed; partial capture
 files after a failure are retained for review. It does not connect to or
-command Franka/Inspire.
+command Franka/Inspire. Neither silhouette loss nor per-view IoU proves
+absolute socket accuracy; commission the threshold against independently
+measured fixture truth before a robot trial.
 
 ```python
 from precision_insertion.config import select_mode
@@ -2261,6 +2269,7 @@ started = start_precision_session(
     socket_timeout_s=commissioned_socket_timeout_s,
     max_socket_translation_mm=commissioned_socket_repeatability_mm,
     max_socket_angle_deg=commissioned_socket_repeatability_deg,
+    minimum_socket_refined_iou=commissioned_per_view_iou,
 )
 # started.evidence_dir/session_calibration.json freezes the measured world.
 ```

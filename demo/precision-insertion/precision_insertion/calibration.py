@@ -1,8 +1,8 @@
 """Read-only ChArUco-then-socket calibration for one insertion session.
 
 The caller acquires synchronized AutoDex images and quality-checked FoundPose
-observations. This module reuses AutoDex's board measurement, transforms all
-socket observations into the robot frame, freezes an *observed* medoid, and
+observations. This module reuses AutoDex's board measurement, freezes an
+*observed* medoid of one refined pose per independent socket capture, and
 adds the exact socket mesh to a copy of the collision scene. It neither
 captures images nor connects to, commands, or authorizes the robot.
 """
@@ -32,6 +32,36 @@ class SocketObservation:
     timestamp_s: float
     pose_world: np.ndarray
     timestamp_source: str
+
+
+@dataclass(frozen=True)
+class SocketCaptureRefinement:
+    """One stock multi-view result from one independently timed capture."""
+
+    capture_id: str
+    request_id: int
+    pose_world: np.ndarray
+    accepted_camera_ids: tuple[str, ...]
+    selected_camera_id: str
+    per_view_iou: dict[str, float]
+    minimum_refined_iou: float
+    stock_selection: dict
+    raw_mesh_sha256: str
+
+    def to_record(self) -> dict:
+        return {
+            "capture_id": self.capture_id,
+            "request_id": self.request_id,
+            "pose_world": validate_se3(self.pose_world,
+                                        name="refined socket pose").tolist(),
+            "accepted_camera_ids": list(self.accepted_camera_ids),
+            "selected_camera_id": self.selected_camera_id,
+            "per_view_iou": dict(self.per_view_iou),
+            "minimum_refined_iou": self.minimum_refined_iou,
+            "stock_selection": dict(self.stock_selection),
+            "raw_mesh_sha256": self.raw_mesh_sha256,
+            "scope": "one_refined_capture_not_independent_pose_ground_truth",
+        }
 
 
 @dataclass(frozen=True)
@@ -187,6 +217,11 @@ def load_session_calibration(
     diagnostics = record.get("socket_diagnostics")
     if not isinstance(diagnostics, dict) or diagnostics.get("accepted") is not True:
         raise ValueError("saved socket calibration was not accepted")
+    if record.get("socket_pose_source") == "per_capture_stock_multiview_refinement":
+        _verify_saved_socket_refinements(
+            record, mode=mode, shared_root=shared_root, socket_pose=socket_pose)
+    elif record.get("socket_pose_source") not in (None, "per_view_foundpose_legacy"):
+        raise ValueError("unknown saved socket pose source")
     session = SessionCalibration(board, socket_pose, diagnostics, scene, record)
     from .world import validated_frozen_socket_pose
 
@@ -217,6 +252,110 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _verify_saved_socket_refinements(
+    record: dict, *, mode: TaskMode, shared_root: Path, socket_pose: np.ndarray,
+) -> None:
+    """Replay one pose per capture; a record hash alone is not a pose check."""
+    refinements = record.get("socket_capture_refinements")
+    if (not isinstance(refinements, list) or len(refinements) < 2 or
+            record.get("socket_capture_refinements_sha256") !=
+            _canonical_sha256({"refinements": refinements})):
+        raise ValueError("saved socket refinements changed or are missing")
+    raw_mesh = (Path(shared_root).expanduser().resolve() / "object_processing" /
+                mode.socket_object / "raw_mesh" / f"{mode.socket_object}.obj")
+    if not raw_mesh.is_file():
+        raise ValueError("saved refined socket raw mesh is missing")
+    raw_mesh_hash = _file_sha256(raw_mesh)
+    c2r = validate_se3(record["c2r"], name="saved C2R")
+    robot_from_world = np.linalg.inv(c2r)
+    raw_by_capture: dict[str, set[str]] = {}
+    for observation in record["socket_observations"]:
+        capture_id = observation.get("capture_id")
+        camera_id = observation.get("camera_id")
+        if not isinstance(capture_id, str) or not isinstance(camera_id, str):
+            raise ValueError("saved socket observation identity is invalid")
+        cameras = raw_by_capture.setdefault(capture_id, set())
+        if camera_id in cameras:
+            raise ValueError("saved socket observation repeats a camera")
+        cameras.add(camera_id)
+        raw_world = validate_se3(observation.get("pose_world"),
+                                 name="saved per-view socket pose")
+        raw_robot = validate_se3(observation.get("pose_robot"),
+                                 name="saved per-view robot socket pose")
+        if not np.allclose(robot_from_world @ raw_world, raw_robot, atol=1e-8):
+            raise ValueError("saved per-view socket pose differs from C2R")
+    diagnostics = record["socket_diagnostics"]
+    if (len(refinements) != len(raw_by_capture) or
+            diagnostics.get("sample_count") != len(refinements)):
+        raise ValueError("saved socket refinement count differs from captures")
+    refined_robot = []
+    seen_captures: set[str] = set()
+    seen_requests: set[int] = set()
+    for row in refinements:
+        if not isinstance(row, dict):
+            raise ValueError("invalid saved socket refinement")
+        capture_id = row.get("capture_id")
+        cameras = raw_by_capture.get(capture_id)
+        accepted = row.get("accepted_camera_ids")
+        per_view = row.get("per_view_iou")
+        selected = row.get("selected_camera_id")
+        request_id = row.get("request_id")
+        selection = row.get("stock_selection")
+        if (not isinstance(capture_id, str) or capture_id in seen_captures or
+                cameras is None or not isinstance(accepted, list) or
+                not all(isinstance(camera, str) for camera in accepted) or
+                len(accepted) != len(cameras) or set(accepted) != cameras or
+                not isinstance(per_view, dict) or set(per_view) != cameras or
+                selected not in cameras or type(request_id) is not int or
+                request_id <= 0 or request_id in seen_requests or
+                row.get("raw_mesh_sha256") != raw_mesh_hash or
+                not isinstance(selection, dict) or
+                selection.get("selection_mode") != "iou" or
+                selection.get("best_serial") != selected or
+                selection.get("n_candidates") != len(cameras) or
+                selection.get("n_masks") != len(cameras) or
+                selection.get("sil_reject") or selection.get("sil_skipped") or
+                type(selection.get("silhouette_iterations")) is not int or
+                selection["silhouette_iterations"] <= 0):
+            raise ValueError("saved socket refinement source binding is invalid")
+        try:
+            threshold = float(row["minimum_refined_iou"])
+            loss = float(selection["sil_loss"])
+            loss_limit = float(selection["silhouette_loss_threshold"])
+            scores = [float(per_view[camera]) for camera in cameras]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("saved socket refinement quality is invalid") from exc
+        if (not 0 < threshold <= 1 or
+                any(not math.isfinite(score) or not threshold <= score <= 1
+                    for score in scores) or
+                not math.isfinite(loss) or not math.isfinite(loss_limit) or
+                loss_limit <= 0 or loss > loss_limit):
+            raise ValueError("saved socket refinement quality gate failed")
+        seen_captures.add(capture_id)
+        seen_requests.add(request_id)
+        refined_robot.append(validate_se3(
+            robot_from_world @ validate_se3(row.get("pose_world")),
+            name="saved refined robot socket"))
+    if seen_captures != set(raw_by_capture):
+        raise ValueError("saved socket refinements do not cover all captures")
+    axis = None
+    if mode.family == "cylinder":
+        axis = load_axial_symmetry(
+            Path(shared_root).expanduser().resolve() / "object_processing",
+            mode.socket_object).axis_local
+    try:
+        replayed, replay_diagnostics = freeze_fixture_pose(
+            refined_robot,
+            translation_limit_mm=float(diagnostics["translation_limit_mm"]),
+            angle_limit_deg=float(diagnostics["angle_limit_deg"]),
+            continuous_axis_local=axis)
+    except (KeyError, TypeError) as exc:
+        raise ValueError("saved socket repeatability limits are invalid") from exc
+    if (not np.allclose(replayed, socket_pose, atol=1e-8) or
+            replay_diagnostics != diagnostics):
+        raise ValueError("saved socket pose differs from refined captures")
+
+
 def calibrate_session(
     *,
     mode: TaskMode,
@@ -235,6 +374,7 @@ def calibrate_session(
     max_socket_angle_deg: float,
     min_socket_captures: int = 2,
     min_views_per_capture: int = 2,
+    socket_capture_refinements: Sequence[SocketCaptureRefinement] | None = None,
 ) -> SessionCalibration:
     """Build one frozen calibration from supplied, already-captured evidence.
 
@@ -243,6 +383,9 @@ def calibrate_session(
     ``pose_world`` uses the same world frame as ``c2r`` and AutoDex's board
     measurement. Bounds are explicit commissioning inputs, not defaults.
 
+    When ``socket_capture_refinements`` is provided, each capture contributes
+    exactly one independently refined pose to the fixture repeatability
+    check. Raw per-view poses remain evidence but are not counted repeatedly.
     Geometric agreement alone does not establish absolute sub-mm accuracy or
     FoundPose photometric quality. The caller must reject bad masks/poses
     before supplying them and must separately validate hand-eye calibration.
@@ -289,6 +432,58 @@ def calibrate_session(
     if len(groups) < min_socket_captures:
         raise ValueError("too few separate socket captures")
 
+    refined_by_capture: dict[str, SocketCaptureRefinement] = {}
+    if socket_capture_refinements is not None:
+        if (not isinstance(socket_capture_refinements, Sequence) or
+                len(socket_capture_refinements) != len(groups)):
+            raise ValueError("one socket refinement per capture is required")
+        for refinement in socket_capture_refinements:
+            if (not isinstance(refinement, SocketCaptureRefinement) or
+                    refinement.capture_id not in groups or
+                    refinement.capture_id in refined_by_capture):
+                raise ValueError("socket refinements need unique capture IDs")
+            cameras = {item.camera_id for item in groups[refinement.capture_id]}
+            if (set(refinement.accepted_camera_ids) != cameras or
+                    len(refinement.accepted_camera_ids) != len(cameras) or
+                    refinement.selected_camera_id not in cameras or
+                    set(refinement.per_view_iou) != cameras):
+                raise ValueError("socket refinement cameras differ from admitted views")
+            threshold = float(refinement.minimum_refined_iou)
+            if (not math.isfinite(threshold) or not 0 < threshold <= 1 or
+                    any(not math.isfinite(float(score)) or
+                            not threshold <= float(score) <= 1
+                            for score in refinement.per_view_iou.values())):
+                raise ValueError("socket refinement failed per-view IoU gate")
+            if (type(refinement.request_id) is not int or
+                    refinement.request_id <= 0 or
+                    not isinstance(refinement.raw_mesh_sha256, str) or
+                    len(refinement.raw_mesh_sha256) != 64):
+                raise ValueError("socket refinement lacks source binding")
+            selection = refinement.stock_selection
+            if (not isinstance(selection, dict) or
+                    selection.get("selection_mode") != "iou" or
+                    selection.get("best_serial") != refinement.selected_camera_id or
+                    selection.get("n_candidates") != len(cameras) or
+                    selection.get("n_masks") != len(cameras) or
+                    selection.get("sil_reject") or
+                    selection.get("sil_skipped") or
+                    type(selection.get("silhouette_iterations")) is not int or
+                    selection["silhouette_iterations"] <= 0):
+                raise ValueError("socket refinement lacks passing stock selection")
+            try:
+                loss = float(selection["sil_loss"])
+                loss_limit = float(selection["silhouette_loss_threshold"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError("socket refinement lacks stock silhouette loss") from exc
+            if (not math.isfinite(loss) or not math.isfinite(loss_limit) or
+                    loss_limit <= 0 or loss > loss_limit):
+                raise ValueError("socket refinement failed stock silhouette loss")
+            validate_se3(refinement.pose_world, name="refined socket pose_world")
+            refined_by_capture[refinement.capture_id] = refinement
+        request_ids = [row.request_id for row in refined_by_capture.values()]
+        if len(request_ids) != len(set(request_ids)):
+            raise ValueError("socket refinement request IDs must be unique")
+
     ordered_groups = sorted(
         groups.items(), key=lambda item: min(float(o.timestamp_s) for o in item[1]))
     prior_capture_end = max(board_times.values())
@@ -306,6 +501,16 @@ def calibrate_session(
     mesh = Path(socket_collision_mesh).expanduser().resolve()
     if not mesh.is_file():
         raise FileNotFoundError(f"exact socket collision mesh not found: {mesh}")
+    if refined_by_capture:
+        raw_mesh = (Path(object_root).expanduser().resolve() /
+                    mode.socket_object / "raw_mesh" /
+                    f"{mode.socket_object}.obj")
+        if not raw_mesh.is_file():
+            raise ValueError("refined socket raw mesh differs from session asset")
+        raw_mesh_hash = _file_sha256(raw_mesh)
+        if any(row.raw_mesh_sha256 != raw_mesh_hash
+               for row in refined_by_capture.values()):
+            raise ValueError("refined socket raw mesh differs from session asset")
     if not isinstance(base_scene, dict):
         raise TypeError("base_scene must be a scene dictionary")
     if not isinstance(base_scene.get("mesh", {}), dict):
@@ -341,7 +546,8 @@ def calibrate_session(
             pose_robot = validate_se3(
                 world_to_robot @ pose_world,
                 name="socket pose_robot")
-            observations_robot.append(pose_robot)
+            if socket_capture_refinements is None:
+                observations_robot.append(pose_robot)
             source_rows.append({
                 "capture_id": capture_id,
                 "camera_id": observation.camera_id,
@@ -350,6 +556,15 @@ def calibrate_session(
                 "pose_world": pose_world.tolist(),
                 "pose_robot": pose_robot.tolist(),
             })
+        if socket_capture_refinements is not None:
+            # One independently captured/refined pose per capture. Repeating
+            # it for each admitted camera would manufacture agreement.
+            refined_world = validate_se3(
+                refined_by_capture[capture_id].pose_world,
+                name=f"refined socket {capture_id}")
+            observations_robot.append(validate_se3(
+                world_to_robot @ refined_world,
+                name=f"refined robot socket {capture_id}"))
     selected, diagnostics = freeze_fixture_pose(
         observations_robot,
         translation_limit_mm=translation_limit,
@@ -385,6 +600,12 @@ def calibrate_session(
         "board_timestamps_s": board_times,
         "board_timestamp_source": board_timestamp_source,
         "socket_observations": source_rows,
+        "socket_pose_source": (
+            "per_capture_stock_multiview_refinement" if refined_by_capture
+            else "per_view_foundpose_legacy"),
+        "socket_capture_refinements": [
+            refined_by_capture[capture_id].to_record()
+            for capture_id, _ in ordered_groups] if refined_by_capture else [],
         "socket_pose_robot": selected.tolist(),
         "socket_diagnostics": diagnostics,
         "socket_collision_mesh": str(mesh),
@@ -398,4 +619,6 @@ def calibrate_session(
         "scope": "read_only_session_calibration_not_robot_authorization",
         "robot_ready": False,
     }
+    record["socket_capture_refinements_sha256"] = _canonical_sha256({
+        "refinements": record["socket_capture_refinements"]})
     return SessionCalibration(board, selected, diagnostics, scene, record)
