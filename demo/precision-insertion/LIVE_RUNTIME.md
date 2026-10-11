@@ -212,8 +212,10 @@ An unavailable or under-bounded input stops the
 retry. The physical-calibration route remains the default and retains its
 separate medoid evidence.
 
-Square mode selects `LiveObservedXYRetryHandlers` and requires
-`held_relation_route="observed"`: it uses a new same-request held-key
+Square mode selects `LiveObservedXYRetryHandlers` for the retry with either
+initial held-relation route. A square first transfer can therefore use a
+grasp-specific physical calibration when the post-lift key is hidden. The
+retry uses a new same-request held-key
 FoundPose capture after guarded withdrawal, plans a bounded XY correction,
 executes its non-contact transfer, observes the corrected pre-insertion
 hold, then uses the saved axial path with the guarded controller and records
@@ -226,7 +228,8 @@ prompt. Alternatively, supply `capture_withdrawn_key` returning an admitted
 assembly can provide fresh `capture_arrival` and `capture_final` snapshots
 from the open AutoDex cameras, but the actual contact/withdrawal adapters
 and reviewed limits are still robot-PC inputs. Occlusion or failed pose
-admission stops the observed retry; it does not substitute nominal squeeze.
+admission records `held_key_pose_unavailable` and routes to held-key return;
+it does not substitute nominal squeeze or command a guessed XY offset.
 
 `LiveReposePlanningHandlers` now uses `DirectedReposeTargetSelector` by
 default. When a tabletop pose has no remaining usable grasp, it checks each

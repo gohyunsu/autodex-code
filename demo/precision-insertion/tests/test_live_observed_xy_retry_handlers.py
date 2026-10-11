@@ -17,6 +17,52 @@ from precision_insertion.session_policy import SessionDecision  # noqa: E402
 from test_measured_lift_preflight import _state  # noqa: E402
 
 
+def test_occluded_square_retry_records_unavailable_and_keeps_withdrawal(
+        tmp_path):
+    state = _state(102.0, np.full(7, .03))
+    attempt = SimpleNamespace(attempt_id="a1", candidate_id="table/0/3")
+    decision = SessionDecision(
+        "guarded_withdrawal_then_xy_assessment", "failed", "table/0/3")
+    runner = SimpleNamespace(
+        mode=SimpleNamespace(family="square"), active_attempt=attempt,
+        _attempt_dir=tmp_path / "attempt", _postlift_report_path=(
+            tmp_path / "postlift.json"), _retry_assessment_index=0,
+        current_decision=lambda: decision)
+    runner._attempt_dir.mkdir()
+    logged = []
+    runner.record_xy_retry_unavailable = lambda **kwargs: logged.append(kwargs)
+    withdrawal = tmp_path / "withdrawal.json"
+    withdrawal.write_text(json.dumps({"completed_at_s": 101.9}),
+                          encoding="utf-8")
+    live = SimpleNamespace(opened=SimpleNamespace(runner=runner))
+    handler = module.LiveObservedXYRetryHandlers(
+        live=live, planner=object(), backend=object(),
+        read_state=lambda: state, state_for_capture=lambda _: state,
+        withdraw_guarded=lambda *_: (state, withdrawal),
+        capture_arrival=lambda *_: None, capture_final=lambda *_: None,
+        transfer_adapter=object(), insertion_adapter=object(),
+        motion_interlock=lambda: True, retry_limits=object(),
+        transfer_limits=object(), insertion_limits=object(),
+        contact_limits=object(), transfer_commissioning_path=tmp_path,
+        insertion_watchdog_path=tmp_path,
+        insertion_contact_path=tmp_path, arrival_parameters={},
+        handoff_parameters={}, insertion_parameters={}, final_parameters={},
+        enable_robot_motion=True, decision_time=lambda: 102.2)
+
+    def no_visible_pose(_runner):
+        raise module.HeldKeyRetryUnobservable(
+            "no consistent key pose", tmp_path / "raw")
+
+    handler._capture_held_key = no_visible_pose
+    handler.assess_and_shift(runner, decision)
+    assert handler.withdrawn_for_return()[2] == withdrawal.resolve()
+    assert logged[0]["reason"] == "held_key_pose_unavailable"
+    saved = json.loads(logged[0]["retry_assessment_path"].read_text(
+        encoding="utf-8"))
+    assert saved["scope"] == "no_observed_key_pose_no_xy_motion"
+    assert handler._pending is None
+
+
 def test_square_live_retry_connects_withdrawal_transfer_arrival_and_label(
     tmp_path, monkeypatch,
 ):

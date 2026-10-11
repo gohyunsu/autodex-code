@@ -19,6 +19,7 @@ import numpy as np
 from PIL import Image
 
 from .action_loop import ActionHandler
+from .bounded_postlift import BoundedPostLiftPreflight
 from .guarded_insertion_execution import execute_bound_guarded_insertion
 from .geometry import validate_se3
 from .key_perception import (
@@ -44,6 +45,14 @@ class HeldKeyRetryCapture:
     evidence_dir: Path
     raw: RawCameraCapture
     state: LiveRobotState
+
+
+class HeldKeyRetryUnobservable(ValueError):
+    """A captured withdrawn key could not yield an admitted multiview pose."""
+
+    def __init__(self, reason: str, raw_dir: Path):
+        super().__init__(reason)
+        self.raw_dir = raw_dir
 
 
 @dataclass
@@ -125,6 +134,10 @@ class LiveObservedXYRetryHandlers:
                 "request_id": capture.request_id,
                 "source": "camera_acquisition",
                 "frames": capture.frame_evidence})
+        raw_dir = (Path(runner._attempt_dir) / "raw_captures" /
+                   "retry_held" / capture_id)
+        write_raw_camera_capture(raw, raw_dir, phase="preinsert")
+        verify_raw_camera_capture(raw_dir, phase="preinsert")
         measured = self.state_for_capture(raw)
         if not isinstance(measured, LiveRobotState):
             raise TypeError("retry FoundPose exposure lacks measured feedback")
@@ -136,19 +149,25 @@ class LiveObservedXYRetryHandlers:
             name="measured withdrawn wrist FK")
         c2r = validate_se3(runner.calibration.record["c2r"],
                            name="session C2R")
+        prior_source = (
+            "measured_wrist_plus_bounded_held_relation"
+            if isinstance(runner._postlift_preflight, BoundedPostLiftPreflight)
+            else "measured_wrist_plus_observed_held_relation")
         prior = validate_se3(c2r @ wrist @ np.linalg.inv(relation),
                              name="measured withdrawn key prior")
-        observation = admit_held_key_capture(
-            capture=capture, init_orchestrator=cameras.init_orchestrator,
-            mode=runner.mode, shared_root=runner.shared_root,
-            calibration=runner.calibration,
-            calibrated_camera_ids=set(launch.camera_ids),
-            view_limits=launch.view_limits,
-            held_pose_prior_world=prior,
-            held_pose_prior_timestamp_s=measured.sample_timestamp_s,
-            held_pose_prior_source=(
-                "measured_wrist_plus_observed_held_relation"),
-            **options)
+        try:
+            observation = admit_held_key_capture(
+                capture=capture, init_orchestrator=cameras.init_orchestrator,
+                mode=runner.mode, shared_root=runner.shared_root,
+                calibration=runner.calibration,
+                calibrated_camera_ids=set(launch.camera_ids),
+                view_limits=launch.view_limits,
+                held_pose_prior_world=prior,
+                held_pose_prior_timestamp_s=measured.sample_timestamp_s,
+                held_pose_prior_source=prior_source,
+                **options)
+        except ValueError as exc:
+            raise HeldKeyRetryUnobservable(str(exc), raw_dir) from exc
         evidence = (Path(runner._attempt_dir) /
                     "observed_retry_held_keys" / capture_id)
         write_key_capture_artifacts(capture, observation, evidence)
@@ -197,9 +216,29 @@ class LiveObservedXYRetryHandlers:
             encoding="utf-8"))["completed_at_s"])
         self._withdrawn = (runner.active_attempt.attempt_id,
                            withdrawal[0], withdrawal_path)
-        held = (self.capture_withdrawn_key(self.live, runner, decision)
-                if self.capture_withdrawn_key is not None else
-                self._capture_held_key(runner))
+        try:
+            held = (self.capture_withdrawn_key(self.live, runner, decision)
+                    if self.capture_withdrawn_key is not None else
+                    self._capture_held_key(runner))
+        except HeldKeyRetryUnobservable as exc:
+            assessment_path = (
+                Path(runner._attempt_dir) / "xy_retry_assessments" /
+                f"{runner._retry_assessment_index:03d}" / "report.json")
+            assessment_path.parent.mkdir(parents=True, exist_ok=False)
+            assessment_path.write_text(json.dumps({
+                "schema": "precision_insertion_held_retry_unobservable_v1",
+                "attempt_id": runner.active_attempt.attempt_id,
+                "candidate_id": runner.active_attempt.candidate_id,
+                "raw_capture_dir": str(exc.raw_dir),
+                "withdrawal_evidence_path": str(withdrawal_path),
+                "reason": str(exc),
+                "scope": "no_observed_key_pose_no_xy_motion",
+            }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            runner.record_xy_retry_unavailable(
+                reason="held_key_pose_unavailable",
+                retry_assessment_path=assessment_path,
+                timestamp_s=self.decision_time())
+            return
         if (not isinstance(held, HeldKeyRetryCapture) or
                 not isinstance(held.raw, RawCameraCapture) or
                 not isinstance(held.state, LiveRobotState) or

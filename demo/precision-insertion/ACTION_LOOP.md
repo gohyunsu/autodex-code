@@ -90,7 +90,8 @@ injected on the AutoDex PC. The separate
 composes the cylinder diagnostic, lateral controller, post-shift observation,
 renewed cuRobo/endpoint preflight, transfer, and guarded retry. Square mode
 uses [`LiveObservedXYRetryHandlers`](precision_insertion/live_observed_xy_retry_handlers.py)
-instead: after withdrawal it requires a fresh admitted held-key pose, plans
+instead: its first transfer may use an independently calibrated grasp
+relation; after withdrawal it requires a fresh admitted held-key pose, plans
 and executes the corrected transfer, observes arrival, then executes the
 newly bound 20 mm stroke and second task checkpoint. Neither mode reuses an
 old failed stroke or permits a second correction in the same attempt.

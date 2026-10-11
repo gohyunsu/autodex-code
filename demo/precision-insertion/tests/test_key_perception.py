@@ -278,6 +278,14 @@ def test_held_key_can_overlap_socket_only_with_fresh_wrist_prior_and_iou(tmp_pat
     bundle = write_key_capture_artifacts(
         capture, admitted, tmp_path / "held_evidence")
     assert verify_key_capture_artifacts(bundle)["robot_ready"] is False
+    calibrated = admit_held_key_capture(**{
+        **common,
+        "held_pose_prior_source":
+            "measured_wrist_plus_bounded_held_relation"})
+    calibrated_bundle = write_key_capture_artifacts(
+        capture, calibrated, tmp_path / "bounded_held_evidence")
+    assert (verify_key_capture_artifacts(calibrated_bundle)["robot_ready"]
+            is False)
     with pytest.raises(ValueError, match="motion prior is stale"):
         admit_held_key_capture(**{
             **common, "held_pose_prior_timestamp_s": 99.0})
@@ -316,7 +324,7 @@ def test_first_postlift_prior_is_distinct_from_observed_preinsert_prior(tmp_path
     bundle = write_key_capture_artifacts(
         capture, admitted, tmp_path / "postlift_evidence")
     assert verify_key_capture_artifacts(bundle)["robot_ready"] is False
-    with pytest.raises(ValueError, match="observed held relation"):
+    with pytest.raises(ValueError, match="held relation"):
         admit_held_key_capture(
             capture=capture, init_orchestrator=SelectorStub(mode.key_object),
             mode=mode, shared_root=tmp_path,

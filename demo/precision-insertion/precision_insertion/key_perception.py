@@ -159,6 +159,7 @@ def _admit_key_capture_common(
             minimum_held_refinement_iou)
         if (held_pose_prior_source not in {
                 "measured_wrist_plus_observed_held_relation",
+                "measured_wrist_plus_bounded_held_relation",
                 "measured_wrist_plus_candidate_grasp"} or
                 any(value is None or not math.isfinite(float(value))
                     for value in held_limits) or
@@ -442,11 +443,14 @@ def admit_held_key_capture(
     Socket-mask overlap is expected at pre-insertion hold. Per-view FoundPose,
     multi-view agreement, refinement IoU and a bounded *measured-wrist* prior
     replace that tabletop-only veto. A caller must derive the prior from live
-    wrist feedback plus an already observed key/hand relation; this function
-    verifies the declared source and timing but cannot prove its provenance.
+    wrist feedback plus a previously observed or independently calibrated
+    key/hand relation; this function verifies the declared source and timing
+    but cannot prove its provenance.
     """
-    if held_pose_prior_source != "measured_wrist_plus_observed_held_relation":
-        raise ValueError("preinsert held-key prior needs an observed held relation")
+    if held_pose_prior_source not in {
+            "measured_wrist_plus_observed_held_relation",
+            "measured_wrist_plus_bounded_held_relation"}:
+        raise ValueError("preinsert held-key prior needs a held relation")
     return _admit_key_capture_common(
         capture=capture, init_orchestrator=init_orchestrator, mode=mode,
         shared_root=shared_root, calibration=calibration,
@@ -654,13 +658,15 @@ def verify_key_capture_artifacts(output_dir: Path) -> dict:
     if phase not in {"tabletop", "held_postlift", "held_preinsert"}:
         raise ValueError("saved key observation has an unknown capture phase")
     prior = report.get("consistency", {}).get("held_pose_prior")
-    expected_source = {
-        "held_postlift": "measured_wrist_plus_candidate_grasp",
-        "held_preinsert": "measured_wrist_plus_observed_held_relation",
+    expected_sources = {
+        "held_postlift": {"measured_wrist_plus_candidate_grasp"},
+        "held_preinsert": {
+            "measured_wrist_plus_observed_held_relation",
+            "measured_wrist_plus_bounded_held_relation"},
     }.get(phase)
-    if expected_source is not None and (
+    if expected_sources is not None and (
             not isinstance(prior, dict) or
-            prior.get("source") != expected_source or
+            prior.get("source") not in expected_sources or
             report.get("consistency", {}).get("socket_exclusion") is not None):
         raise ValueError("held key evidence lacks its measured-wrist prior gate")
     if (payloads.get("capture_id") != manifest.get("capture_id") or

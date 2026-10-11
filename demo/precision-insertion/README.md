@@ -502,11 +502,15 @@ that session and catalogue. For each new key observation:
    The square-mode `LiveObservedXYRetryHandlers` now connects withdrawal,
    a same-request held-key capture, observed XY preflight, corrected transfer,
    fresh arrival, axial handoff, guarded retry, and a second insertion label.
-   It requires `held_relation_route="observed"`, a key prompt, admitted
-   held-key capture parameters (or an injected `capture_withdrawn_key`),
+   Its first transfer may use `held_relation_route="observed"` or a
+   grasp-specific `"physical"` calibration. The retry requires a *new*
+   visible held-key observation, a key prompt, admitted held-key capture
+   parameters (or an injected `capture_withdrawn_key`),
    exposure-aligned measured joints, and the same independently commissioned
    robot/contact adapters as the first stroke. This is code wiring, not a
-   physically commissioned retry; an occluded held key cannot take this route.
+   physically commissioned retry. If the withdrawn key is occluded or pose
+   admission fails, the handler records an unavailable retry and routes to
+   held-key return without an XY command.
    Neither a completed transfer nor a visual arrival is an insertion-success
    label.
    If the withdrawn key is too occluded for another FoundPose estimate,

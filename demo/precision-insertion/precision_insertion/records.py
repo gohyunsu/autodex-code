@@ -276,6 +276,7 @@ class AttemptRecord:
         self._require_retryable_failure()
         if reason not in {
                 "vlm_abstain", "lateral_preflight_failed",
+                "held_key_pose_unavailable",
                 "postshift_alignment_failed", "insertion_preflight_failed",
                 "arrival_preflight_failed"}:
             raise ValueError("unknown XY retry-unavailable reason")

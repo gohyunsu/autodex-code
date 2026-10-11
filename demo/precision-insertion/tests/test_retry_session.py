@@ -208,6 +208,56 @@ def test_same_frame_held_pose_and_measured_hand_gate_retry_before_vote(
     assert "plan_q" in seen
 
 
+def test_visible_retry_after_physically_calibrated_square_transfer(
+        tmp_path, monkeypatch):
+    kwargs = _inputs(tmp_path, monkeypatch)
+    assert kwargs["mode"].family == "square"
+    source = kwargs["postlift_preflight_report_path"]
+    saved = json.loads(source.read_text(encoding="utf-8"))
+    saved["schema"] = "precision_insertion_bounded_postlift_preflight_v1"
+    saved["bounded_held_relation"] = saved.pop("observed_held_relation")
+    saved["uncertainty_margin"] = {"sampled_margin_pass": True}
+    source.write_text(json.dumps(saved), encoding="utf-8")
+    monkeypatch.setattr(
+        retry_session, "verify_bounded_postlift_preflight",
+        lambda path, **_kwargs: saved if path == source.resolve() else None)
+    held = replace(kwargs["held_key_observation"], consistency={
+        **kwargs["held_key_observation"].consistency,
+        "held_pose_prior": {
+            **kwargs["held_key_observation"].consistency["held_pose_prior"],
+            "source": "measured_wrist_plus_bounded_held_relation"}})
+    kwargs["held_key_observation"] = held
+    (kwargs["held_key_evidence_dir"] / "key_observation.json").write_text(
+        json.dumps(held.to_record()), encoding="utf-8")
+    nominal = np.load(
+        tmp_path / "AutoDex/candidates/inspire/v8" /
+        kwargs["mode"].key_object / "table/0/1/wrist_se3.npy",
+        allow_pickle=False)
+    seen = {}
+
+    def resolve(**inputs):
+        seen["reference"] = inputs["candidate_T_key_hand"]
+        return HeldRelation(
+            np.eye(4), nominal, np.zeros(3), 0.0, 0.0, "identity")
+
+    monkeypatch.setattr(retry_session, "resolve_postlift_held_relation", resolve)
+    choice = ChoiceDecision(
+        "propose", "two_view_consensus", "x_plus_1mm", (0.001, 0.0),
+        ("a", "b"), {"x_plus_1mm": 2})
+    monkeypatch.setattr(
+        retry_session, "assess_xy_retry",
+        lambda **_inputs: XYRetryAssessment(
+            "proposal_requires_live_preflight", {}, None, (), choice,
+            "two_view_consensus"))
+    monkeypatch.setattr(
+        retry_session, "plan_xy_retry_from_withdrawn_hold",
+        lambda **_inputs: SimpleNamespace(
+            status="sampled_retry_preflight_pass"))
+    result = assess_and_plan_observed_xy_retry(**kwargs)
+    assert result.status == "ready_to_record_pending_retry"
+    assert np.allclose(seen["reference"], nominal)
+
+
 def test_retry_rejects_prewithdrawal_frames_or_missing_log(
         tmp_path, monkeypatch):
     kwargs = _inputs(tmp_path, monkeypatch)
@@ -489,7 +539,7 @@ def test_grounded_diagnostic_accepts_only_verified_bounded_postlift_source(
     assert result.status == "abstain"  # square yaw still unobservable
     assert verification_calls == [postlift_file.resolve()]
     assert kwargs["backend"].calls == 0
-    with pytest.raises(ValueError, match="observed held-key post-lift plan"):
+    with pytest.raises(ValueError, match="measured-wrist prior"):
         assess_and_plan_observed_xy_retry(**kwargs)
     monkeypatch.setattr(
         retry_session, "verify_bounded_postlift_preflight",

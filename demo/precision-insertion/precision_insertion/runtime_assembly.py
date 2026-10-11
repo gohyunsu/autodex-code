@@ -77,9 +77,6 @@ def assemble_live_components(
         getattr(getattr(live, "opened", None), "runner", None),
         "mode", None)
     if getattr(active_mode, "family", None) == "square":
-        if held_relation_route != "observed":
-            raise ValueError(
-                "square XY retry needs the observed post-lift held relation")
         classes["retry"] = LiveObservedXYRetryHandlers
     if held_relation_route == "observed":
         classes["held_relation"] = LiveObservedHeldRelationHandlers

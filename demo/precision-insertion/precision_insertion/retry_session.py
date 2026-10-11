@@ -352,8 +352,8 @@ def assess_and_plan_observed_xy_retry(
         mode=mode, shared_root=shared_root, calibration=calibration,
         catalog=catalog, trial=trial, attempt=attempt,
         postlift_preflight_report_path=postlift_preflight_report_path)
-    if postlift["schema"] != "precision_insertion_postlift_preflight_v1":
-        raise ValueError("observed XY retry needs an observed held-key post-lift plan")
+    bounded_postlift = (
+        postlift["schema"] == "precision_insertion_bounded_postlift_preflight_v1")
     if (not isinstance(held_key_observation, KeyPoseObservation) or
             held_key_observation.phase != "held_preinsert" or
             held_key_observation.key_object != mode.key_object or
@@ -430,13 +430,18 @@ def assess_and_plan_observed_xy_retry(
     wrist_robot = validate_se3(
         planner.fk_wrist(joint_sample.full_q),
         name="measured withdrawn wrist FK")
+    relation_field = ("bounded_held_relation" if bounded_postlift else
+                      "observed_held_relation")
+    prior_source = (
+        "measured_wrist_plus_bounded_held_relation" if bounded_postlift else
+        "measured_wrist_plus_observed_held_relation")
     previous_relation = validate_se3(
-        postlift.get("observed_held_relation", {}).get("T_key_hand"),
+        postlift.get(relation_field, {}).get("T_key_hand"),
         name="saved post-lift T_key_hand")
     prior = held_key_observation.consistency.get("held_pose_prior")
     if (not isinstance(prior, dict) or
             prior.get("source") !=
-            "measured_wrist_plus_observed_held_relation" or
+            prior_source or
             not math.isfinite(float(prior.get("timestamp_s", math.nan))) or
             abs(prior["timestamp_s"] - joint_sample.sample_timestamp_s) >
             limits.max_state_skew_s):
@@ -453,7 +458,8 @@ def assess_and_plan_observed_xy_retry(
         mode=mode, shared_root=root,
         T_robot_key_observed=key_robot,
         T_robot_hand_measured=wrist_robot,
-        candidate_T_key_hand=nominal_relation,
+        candidate_T_key_hand=(previous_relation if bounded_postlift else
+                              nominal_relation),
         max_translation_drift_m=limits.max_grasp_translation_drift_m,
         max_rotation_drift_deg=limits.max_grasp_rotation_drift_deg)
     manifest_hash = hashlib.sha256(

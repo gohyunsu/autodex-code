@@ -112,10 +112,11 @@ def test_square_session_selects_observed_xy_retry_handler(monkeypatch):
     live = SimpleNamespace(opened=SimpleNamespace(runner=SimpleNamespace(
         mode=select_mode("square", 1.5))))
     stages = {name: {} for name in runtime_assembly.STAGE_CLASSES}
-    with pytest.raises(ValueError, match="observed post-lift"):
-        runtime_assembly.assemble_live_components(
-            live, shared={"planner": object()}, stages=stages,
-            enable_robot_motion=True)
+    physically_calibrated = runtime_assembly.assemble_live_components(
+        live, shared={"planner": object()}, stages=stages,
+        enable_robot_motion=True)
+    assert isinstance(physically_calibrated[5], _ObservedStage)
+    assert isinstance(physically_calibrated[3], _Stage)
     components = runtime_assembly.assemble_live_components(
         live, shared={"planner": object()}, stages=stages,
         enable_robot_motion=True, held_relation_route="observed")

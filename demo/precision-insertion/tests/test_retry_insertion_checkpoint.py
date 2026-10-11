@@ -269,7 +269,7 @@ def test_session_runner_records_second_verdict_without_false_success(
     call, _, runner = _case(tmp_path, monkeypatch)
     _attach_pending_attempt(tmp_path, call, runner)
     assert isinstance(runner, SessionRunner)
-    with pytest.raises(ValueError, match="XY retry must use"):
+    with pytest.raises(ValueError, match="XY retry needs its corrected arrival"):
         runner.prepare_observed_insertion_label(
             preinsert_bundle=call["preinsert_bundle"],
             final_bundle=call["final_bundle"],
