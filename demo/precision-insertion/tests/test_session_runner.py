@@ -1505,7 +1505,7 @@ def test_unobserved_xy_advice_is_saved_without_pending_retry(monkeypatch, tmp_pa
 @pytest.mark.parametrize(
     ("landing_stem", "next_action", "support_ok"),
     [("001", "reobserve_key_and_preflight", True),
-     ("000", "stop_for_review", True),
+     ("000", "reobserve_key_and_preflight", True),
      ("001", "await_repose_observation", False)],
 )
 def test_pose_exhaustion_routes_to_separate_repose_and_observed_landing(

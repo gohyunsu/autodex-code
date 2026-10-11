@@ -121,7 +121,10 @@ def decide_after_attempt(
     if labels["reorient_success"] is not None and candidate_id is not None:
         return result("stop_for_review", "repose_label_on_insertion_attempt")
     if labels["reorient_success"] is False:
-        return result("stop_for_review", "repose_landing_unverified")
+        return result(
+            "reobserve_key_and_preflight",
+            "repose_landed_in_different_supported_pose",
+            "fresh_key_pose", "fresh_robot_state")
     if labels["reorient_success"] is True:
         return result(
             "reobserve_key_and_preflight", "repose_landing_observed",

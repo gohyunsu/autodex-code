@@ -487,13 +487,16 @@ that session and catalogue. For each new key observation:
 4. After an observed **cylinder** insertion failure, withdraw axially and
    capture the still-held key with the same AutoDex cameras. The saved
    multi-view tip/axis diagnostic gives a socket-frame residual `d_n`, capped
-   at 1 mm. Do not move laterally or insert again in this attempt. Return the
+   at 10 mm per update. With insufficient visible landmarks it instead records
+   a single-view nominal-height estimate or an explicitly exploratory step;
+   it does not treat that as a measured multi-view residual. Do not move
+   laterally or insert again in this attempt. Return the
    key to the tabletop, clear the view and recognize it again. A new pickup
    of the same grasp and tabletop class uses the accumulated wrist correction
    `p_(n+1)=p_n+w*d_n`, initially zero, with default `w=1.0`. The grasp and
    held-path preflights run again. See [NEXT_TRIAL_XY.md](NEXT_TRIAL_XY.md).
-   If the VLM abstains or the cumulative budget is exhausted, return without
-   updating the parameter. **Square mode has no XY error-correction branch**:
+   There is no default retry-count cap or cumulative XY cap. **Square mode has
+   no XY error-correction branch**:
    after insertion failure it returns/reobserves the key with effective
    update weight zero. Historical same-held-attempt retry helpers remain in
    source for audit of old experiments but are not assembled into the
@@ -511,8 +514,10 @@ that session and catalogue. For each new key observation:
    **newer** saved multi-view key capture: it
    checks the target tabletop class, measured
    table support, ChArUco footprint and socket clearance before recording
-   `reorient_success`. A wrong class is failure; missing/ambiguous support
-   evidence keeps the outcome unknown for review. No result is inferred from
+   `reorient_success`. A wrong but supported class is recorded as failure and
+   triggers a fresh key capture and preflight in that *observed* class;
+   missing/ambiguous support evidence keeps the outcome unknown for review.
+   No result is inferred from
    the reset plan alone. The [synthetic v8 reset diagnostic](SYNTHETIC_REPOSE_VALIDATION.md)
    exercises the staged candidate through the same planner without promoting
    it to a runtime reset asset.
