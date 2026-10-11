@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -14,7 +15,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.observed_retry_arrival_checkpoint import (  # noqa: E402
-    assess_observed_retry_arrival, write_observed_retry_arrival,
+    assess_observed_retry_arrival, verify_observed_retry_arrival,
+    write_observed_retry_arrival,
+)
+from precision_insertion.observed_retry_axial_handoff import (  # noqa: E402
+    prepare_observed_retry_axial_handoff,
 )
 from precision_insertion.retry_preflight import XYRetryPreflight  # noqa: E402
 from test_preinsert_checkpoint import _setup  # noqa: E402
@@ -35,14 +40,22 @@ def _retry_inputs(tmp_path):
     old = args.pop("postlift")
     args.pop("postlift_report_path")
     target = old.targets.T_robot_hand_preinsert.copy()
+    mode = args["mode"]
     targets = SimpleNamespace(
         xy_offset_socket_m=(0.001, 0.0),
         T_robot_hand_preinsert=target,
-        to_record=lambda: {"xy_offset_socket_m": [0.001, 0.0],
-                           "T_robot_hand_preinsert": target.tolist()})
-    trajectory = np.zeros((2, 13))
+        to_record=lambda: {
+            "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
+                     "key_object": mode.key_object,
+                     "socket_object": mode.socket_object,
+                     "target_depth_m": mode.target_depth_m},
+            "xy_offset_socket_m": [0.001, 0.0],
+            "T_robot_hand_preinsert": target.tolist()})
+    trajectory = np.tile(args["joint_sample"].full_q, (2, 1))
+    axial = trajectory.copy()
     planning = SimpleNamespace(
         sampled_planning_pass=True, transfer_trajectory=trajectory,
+        axial_trajectory=axial,
         to_record=lambda: {"sampled_planning_pass": True})
     preflight = XYRetryPreflight(
         "sampled_retry_preflight_pass", ("table", "0", "3"),
@@ -51,7 +64,7 @@ def _retry_inputs(tmp_path):
     folder = tmp_path / "xy_preflight"
     folder.mkdir()
     archive = folder / "planned_trajectories.npz"
-    np.savez_compressed(archive, transfer=trajectory)
+    np.savez_compressed(archive, transfer=trajectory, axial=axial)
     report = folder / "report.json"
     report.write_text(json.dumps({
         **preflight.to_record(),
@@ -81,6 +94,23 @@ def test_observed_retry_arrival_uses_fresh_camera_and_saved_xy_plan(tmp_path):
     report = json.loads(saved.read_text(encoding="utf-8"))
     assert report["schema"] == "precision_insertion_observed_xy_retry_arrival_v1"
     assert sorted(report["overlay_png_sha256"]) == ["cam_a", "cam_b"]
+    assert verify_observed_retry_arrival(saved)["retry_arrived"] is True
+    held = replace(
+        args["joint_sample"], sample_timestamp_s=11.02,
+        arm_timestamp_s=11.02, hand_timestamp_s=11.02)
+    handoff = prepare_observed_retry_axial_handoff(
+        attempt=args["attempt"], preflight=args["preflight"],
+        preflight_report_path=args["preflight_report_path"],
+        arrival_report_path=saved, measured_start=held,
+        mode=args["mode"],
+        session_calibration_sha256=args["attempt"].session_calibration_sha256,
+        decision_timestamp_s=11.03, max_state_age_s=0.2,
+        max_start_joint_error_rad=0.05, max_arm_hand_skew_s=0.02,
+        max_hand_command_error_raw=30.0, max_arm_velocity_rad_s=0.05,
+        output_dir=tmp_path / "axial_handoff")
+    packet = json.loads(handoff.read_text(encoding="utf-8"))
+    assert packet["axial_sample_count"] == 2
+    assert packet["arrival_report_path"] == str(saved)
 
 
 def test_observed_retry_arrival_never_promotes_an_occluded_key(tmp_path):

@@ -495,10 +495,14 @@ that session and catalogue. For each new key observation:
    preinsert camera capture and exposure-aligned measured joints, then uses
    the same raw-versus-rendered multiview VLM comparison as the first
    transfer. It saves `observed_retry_arrivals/NNN/report.json` and overlay
-   images. An occluded key remains unknown. **These steps are not yet wired
-   into the live square retry handler**; the guarded axial handoff, retry
-   execution and final task label also remain. Neither a completed transfer
-   nor a visual arrival is an insertion-success label.
+   images. An occluded key remains unknown. If arrival is positive,
+   `SessionRunner.prepare_observed_xy_retry_axial_handoff(...)` binds its
+   saved 20 mm axial-only trajectory to that fresh camera observation and a
+   newer measured held state; it never replays the old failed stroke.
+   **These steps are not yet wired into the live square retry handler**;
+   the guarded execution and retry-specific final task label also remain.
+   Neither a completed transfer nor a visual arrival is an insertion-success
+   label.
    If the withdrawn key is too occluded for another FoundPose estimate,
    `prepare_unobserved_xy_diagnostic` can instead save same-request raw
    camera frames, a measured 13-joint sample, the matching failed attempt,

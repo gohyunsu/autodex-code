@@ -14,13 +14,17 @@ import math
 from pathlib import Path
 from typing import Callable
 
+import cv2
+from PIL import Image
+
 from .calibration import SessionCalibration
 from .config import TaskMode
-from .frame_provenance import bounded_capture_skew_s
+from .frame_provenance import bounded_capture_skew_s, image_sha256
 from .live_robot_state import LiveRobotState
-from .observer import ImageVLM
+from .observer import HeldSceneView, ImageVLM
 from .preinsert_checkpoint import (
     PreinsertCheckpoint, _arrival_label, _canonical_digest, _transfer_log,
+    _verify_visual_record, _verify_visual_replay,
     observe_held_preinsert_scene, write_preinsert_checkpoint,
 )
 from .raw_camera_capture import verify_raw_camera_capture
@@ -162,3 +166,78 @@ def write_observed_retry_arrival(
     if not isinstance(checkpoint, ObservedRetryArrivalCheckpoint):
         raise TypeError("expected an observed XY retry arrival")
     return write_preinsert_checkpoint(checkpoint, output_dir)
+
+
+def verify_observed_retry_arrival(report_path: Path) -> dict:
+    """Replay the saved retry arrival from its plan, camera and VLM bytes."""
+    path = Path(report_path).expanduser().resolve()
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if (not isinstance(report, dict) or report.get("schema") !=
+            "precision_insertion_observed_xy_retry_arrival_v1" or
+            report.get("robot_ready") is not False):
+        raise ValueError("invalid observed XY retry arrival")
+    plan = Path(report["xy_preflight_report_path"])
+    transfer = Path(report["transfer_execution_path"])
+    raw = Path(report["raw_bundle"])
+    if (not all(source.is_absolute() and source.is_file()
+                for source in (plan, transfer, raw / "manifest.json")) or
+            _sha(plan) != report["xy_preflight_report_sha256"] or
+            _sha(transfer) != report["transfer_execution_sha256"] or
+            _sha(raw / "manifest.json") != report["raw_manifest_sha256"]):
+        raise ValueError("observed XY retry arrival source changed")
+    saved_plan = json.loads(plan.read_text(encoding="utf-8"))
+    archive = plan.parent / saved_plan["planned_trajectories"]
+    if (saved_plan.get("status") != "sampled_retry_preflight_pass" or
+            saved_plan.get("candidate_key") != report["candidate_id"].split("/") or
+            saved_plan.get("planned_trajectories") !=
+                "planned_trajectories.npz" or
+            _sha(archive) != saved_plan.get("planned_trajectories_sha256")):
+        raise ValueError("observed XY retry arrival plan changed")
+    identity = type("AttemptRef", (), {
+        "attempt_id": report["attempt_id"],
+        "candidate_id": report["candidate_id"],
+    })()
+    source = _transfer_log(
+        transfer, identity,
+        schema="precision_insertion_observed_xy_transfer_execution_v1")
+    if (source.get("preflight_report_path") != str(plan) or
+            source.get("preflight_report_sha256") != _sha(plan) or
+            source.get("trajectory_sha256") != _sha(archive) or
+            source["measurement"] != report["transfer_measurement"] or
+            source["completed_at_s"] != report["transfer_completed_at_s"]):
+        raise ValueError("observed XY retry transfer changed")
+    capture = verify_raw_camera_capture(raw, phase="preinsert")
+    views = report.get("comparison", {}).get("views", {})
+    png_hashes = report.get("overlay_png_sha256", {})
+    if (len(views) < 2 or set(views) != set(png_hashes) or
+            set(views) != set(capture["frame_evidence"])):
+        raise ValueError("observed XY retry camera set changed")
+    paired = []
+    for serial in sorted(views):
+        image = cv2.imread(str(raw / "images" / f"{serial}.png"),
+                           cv2.IMREAD_COLOR)
+        overlay_path = path.parent / "overlays" / f"{serial}.png"
+        overlay = cv2.imread(str(overlay_path), cv2.IMREAD_COLOR)
+        stamps = capture["frame_evidence"][serial]
+        if (image is None or overlay is None or
+                image_sha256(image) != views[serial]["raw_image_sha256"] or
+                image_sha256(overlay) != views[serial]["overlay_image_sha256"] or
+                _sha(overlay_path) != png_hashes[serial] or
+                views[serial]["timestamp_s"] != stamps["timestamp_s"]):
+            raise ValueError("observed XY retry arrival pixels changed")
+        paired.append(HeldSceneView(
+            serial, stamps["timestamp_s"],
+            Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB)),
+            Image.fromarray(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB))))
+    _verify_visual_record(report["visual"], views)
+    _verify_visual_replay(report["visual"], paired)
+    label, reason = _arrival_label(
+        measurement=report["transfer_measurement"],
+        position_error=report["hand_translation_error_m"],
+        rotation_error=report["hand_rotation_error_deg"],
+        max_position_error=report["max_hand_translation_error_m"],
+        max_rotation_error=report["max_hand_rotation_error_deg"],
+        visual_status=report["visual"]["status"])
+    if report["retry_arrived"] is not label or report["reason"] != reason:
+        raise ValueError("observed XY retry arrival label changed")
+    return report

@@ -65,6 +65,9 @@ from .observed_retry_arrival_checkpoint import (
     ObservedRetryArrivalCheckpoint, assess_observed_retry_arrival,
     write_observed_retry_arrival,
 )
+from .observed_retry_axial_handoff import (
+    prepare_observed_retry_axial_handoff as write_observed_retry_axial_handoff,
+)
 from .records import AttemptRecord, begin_attempt
 from .retry_session import (
     RetrySessionLimits, RetrySessionResult, UnobservedXYDiagnostic,
@@ -2492,6 +2495,35 @@ class SessionRunner:
                   f"{sum(1 for _ in (self._attempt_dir / 'observed_retry_arrivals').glob('*')):03d}")
         write_observed_retry_arrival(result, output)
         return result
+
+    def prepare_observed_xy_retry_axial_handoff(
+        self, *, preflight: XYRetryPreflight,
+        preflight_report_path: Path, arrival_report_path: Path,
+        measured_start: LiveRobotState, decision_timestamp_s: float,
+        max_state_age_s: float, max_start_joint_error_rad: float,
+        max_arm_hand_skew_s: float, max_hand_command_error_raw: float,
+        max_arm_velocity_rad_s: float,
+    ) -> Path:
+        """Bind the corrected, observed square hold to its 20 mm stroke."""
+        if (self.current_decision().action !=
+                "await_retry_execution_and_observation" or
+                self._attempt is None or self._attempt_dir is None):
+            raise ValueError("XY retry axial handoff needs a pending attempt")
+        root = self._attempt_dir / "observed_retry_axial_handoffs"
+        output = root / f"{sum(1 for _ in root.glob('*')):03d}"
+        return write_observed_retry_axial_handoff(
+            attempt=self._attempt, preflight=preflight,
+            preflight_report_path=preflight_report_path,
+            arrival_report_path=arrival_report_path,
+            measured_start=measured_start, mode=self.mode,
+            session_calibration_sha256=self.session_sha256,
+            decision_timestamp_s=decision_timestamp_s,
+            max_state_age_s=max_state_age_s,
+            max_start_joint_error_rad=max_start_joint_error_rad,
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s,
+            output_dir=output)
 
     def prepare_unobserved_xy_diagnostic(
         self, *, joint_sample: LiveRobotState, frames,
