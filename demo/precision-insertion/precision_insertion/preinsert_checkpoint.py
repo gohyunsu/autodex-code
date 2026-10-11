@@ -52,10 +52,13 @@ def _canonical_digest(record: dict) -> str:
         allow_nan=False).encode("utf-8")).hexdigest()
 
 
-def _transfer_log(path: Path, attempt: AttemptRecord) -> dict:
+def _transfer_log(
+    path: Path, attempt: AttemptRecord, *,
+    schema: str = "precision_insertion_transfer_execution_v1",
+) -> dict:
     data = json.loads(path.read_text(encoding="utf-8"))
     if (not isinstance(data, dict) or
-            data.get("schema") != "precision_insertion_transfer_execution_v1" or
+            data.get("schema") != schema or
             data.get("attempt_id") != attempt.attempt_id or
             data.get("candidate_id") != attempt.candidate_id):
         raise ValueError("transfer log does not belong to this attempt")
@@ -106,6 +109,67 @@ def _arrival_label(
             "grasp_held": True}):
         return True, "measured_arrival_and_visible_held_key"
     return None, "preinsert_evidence_incomplete_or_occluded"
+
+
+def observe_held_preinsert_scene(
+    *, calibration: SessionCalibration, shared_root: Path, mode: TaskMode,
+    raw_bundle: Path, frame_rows: dict, joint_sample: LiveRobotState,
+    T_key_hand: np.ndarray, T_robot_hand_target: np.ndarray,
+    relation_source: str, backend: ImageVLM, max_capture_skew_s: float,
+    renderer_factory: Callable | None = None,
+    robot_loader: Callable | None = None,
+) -> tuple[float, float, HeldSceneComparison, PreinsertVisualAssessment]:
+    """Render and label one measured held-key arrival for either transfer route."""
+    snapshot = calibration.record.get("camera_calibration", {})
+    camera_ids = set(frame_rows)
+    if (not isinstance(snapshot, dict) or
+            not isinstance(snapshot.get("intrinsics_full"), dict) or
+            not isinstance(snapshot.get("extrinsics_full"), dict) or
+            not camera_ids <= set(snapshot["intrinsics_full"]) or
+            not camera_ids <= set(snapshot["extrinsics_full"])):
+        raise ValueError("preinsert cameras differ from the frozen session")
+    all_camera_ids = set(snapshot["intrinsics_full"])
+    K_all = {serial: np.asarray(snapshot["intrinsics_full"][serial]["K_undist"],
+                                dtype=float) for serial in all_camera_ids}
+    camera_world_all = {
+        serial: validate_se3(snapshot["extrinsics_full"][serial],
+                             name=f"{serial} camera-world extrinsic")
+        for serial in all_camera_ids}
+    validate_session_camera_calibration(
+        calibration, intrinsics_undist=K_all,
+        extrinsics_full=camera_world_all, calibrated_camera_ids=all_camera_ids)
+    c2r = validate_se3(calibration.record.get("c2r"), name="session C2R")
+    prediction_kwargs = {}
+    if robot_loader is not None:
+        prediction_kwargs["robot_loader"] = robot_loader
+    prediction = build_held_scene_prediction(
+        shared_root=shared_root, mode=mode,
+        full_q_measured=joint_sample.full_q,
+        T_robot_socket_frozen=validated_frozen_socket_pose(
+            mode=mode, shared_root=shared_root, calibration=calibration),
+        T_key_hand_hypothesis=T_key_hand,
+        relation_source=relation_source, **prediction_kwargs)
+    target = validate_se3(T_robot_hand_target,
+                          name="planned preinsert T_robot_hand")
+    position_error = float(np.linalg.norm(
+        prediction.T_robot_hand[:3, 3] - target[:3, 3]))
+    rotation_error = pose_angle_deg(prediction.T_robot_hand, target)
+    frames = {serial: cv2.imread(
+        str(raw_bundle / "images" / f"{serial}.png"), cv2.IMREAD_COLOR)
+        for serial in camera_ids}
+    if any(frame is None for frame in frames.values()):
+        raise ValueError("saved preinsert image cannot be decoded")
+    comparison = build_held_scene_comparison(
+        prediction=prediction, frames_bgr=frames,
+        frame_timestamps_s={serial: frame_rows[serial]["timestamp_s"]
+                            for serial in camera_ids},
+        intrinsics_undistorted={serial: K_all[serial] for serial in camera_ids},
+        T_camera_robot={serial: camera_world_all[serial] @ c2r
+                        for serial in camera_ids},
+        renderer_factory=renderer_factory)
+    visual = observe_preinsert_hold_views(
+        backend, comparison.views, max_capture_skew_s=max_capture_skew_s)
+    return position_error, rotation_error, comparison, visual
 
 
 def _verify_visual_record(visual: dict, views: dict) -> None:
@@ -326,60 +390,18 @@ def assess_preinsert_checkpoint(
             abs(joint_sample.sample_timestamp_s -
                 (first_exposure + last_exposure) / 2) > max_joint_frame_skew_s):
         raise ValueError("preinsert joint feedback and exposure are not aligned")
-    snapshot = calibration.record.get("camera_calibration", {})
-    camera_ids = set(frame_rows)
-    if (not isinstance(snapshot, dict) or
-            not isinstance(snapshot.get("intrinsics_full"), dict) or
-            not isinstance(snapshot.get("extrinsics_full"), dict) or
-            not camera_ids <= set(snapshot.get("intrinsics_full", {})) or
-            not camera_ids <= set(snapshot.get("extrinsics_full", {}))):
-        raise ValueError("preinsert cameras differ from the frozen session")
-    all_camera_ids = set(snapshot["intrinsics_full"])
-    K_all = {serial: np.asarray(snapshot["intrinsics_full"][serial]["K_undist"],
-                                dtype=float) for serial in all_camera_ids}
-    camera_world_all = {
-        serial: validate_se3(snapshot["extrinsics_full"][serial],
-                             name=f"{serial} camera-world extrinsic")
-        for serial in all_camera_ids}
-    validate_session_camera_calibration(
-        calibration, intrinsics_undist=K_all,
-        extrinsics_full=camera_world_all, calibrated_camera_ids=all_camera_ids)
-    K = {serial: K_all[serial] for serial in camera_ids}
-    camera_world = {serial: camera_world_all[serial] for serial in camera_ids}
-    c2r = validate_se3(calibration.record.get("c2r"), name="session C2R")
-    T_camera_robot = {serial: camera_world[serial] @ c2r
-                      for serial in camera_ids}
-    socket = validated_frozen_socket_pose(
-        mode=mode, shared_root=shared_root, calibration=calibration)
-    prediction_kwargs = {}
-    if robot_loader is not None:
-        prediction_kwargs["robot_loader"] = robot_loader
-    prediction = build_held_scene_prediction(
-        shared_root=shared_root, mode=mode,
-        full_q_measured=joint_sample.full_q,
-        T_robot_socket_frozen=socket,
-        T_key_hand_hypothesis=postlift.relation.T_key_hand,
-        relation_source=("verified_physical_grasp_calibration" if bounded else
-                         "observed_multiview_key_plus_wrist"),
-        **prediction_kwargs)
-    target = validate_se3(postlift.targets.T_robot_hand_preinsert,
-                          name="planned preinsert T_robot_hand")
-    position_error = float(np.linalg.norm(
-        prediction.T_robot_hand[:3, 3] - target[:3, 3]))
-    rotation_error = pose_angle_deg(prediction.T_robot_hand, target)
-    frames = {serial: cv2.imread(str(bundle / "images" / f"{serial}.png"),
-                                   cv2.IMREAD_COLOR)
-              for serial in camera_ids}
-    if any(frame is None for frame in frames.values()):
-        raise ValueError("saved preinsert image cannot be decoded")
-    comparison = build_held_scene_comparison(
-        prediction=prediction, frames_bgr=frames,
-        frame_timestamps_s={serial: frame_rows[serial]["timestamp_s"]
-                            for serial in camera_ids},
-        intrinsics_undistorted=K, T_camera_robot=T_camera_robot,
-        renderer_factory=renderer_factory)
-    visual = observe_preinsert_hold_views(
-        backend, comparison.views, max_capture_skew_s=max_capture_skew_s)
+    position_error, rotation_error, comparison, visual = (
+        observe_held_preinsert_scene(
+            calibration=calibration, shared_root=shared_root, mode=mode,
+            raw_bundle=bundle, frame_rows=frame_rows,
+            joint_sample=joint_sample,
+            T_key_hand=postlift.relation.T_key_hand,
+            T_robot_hand_target=postlift.targets.T_robot_hand_preinsert,
+            relation_source=(
+                "verified_physical_grasp_calibration" if bounded else
+                "observed_multiview_key_plus_wrist"),
+            backend=backend, max_capture_skew_s=max_capture_skew_s,
+            renderer_factory=renderer_factory, robot_loader=robot_loader))
     measurement = transfer["measurement"]
     label, reason = _arrival_label(
         measurement=measurement, position_error=position_error,

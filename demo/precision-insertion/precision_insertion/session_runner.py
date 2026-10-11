@@ -61,6 +61,10 @@ from .preinsert_checkpoint import (
     PreinsertCheckpoint, assess_preinsert_checkpoint,
     verify_preinsert_checkpoint, write_preinsert_checkpoint, _transfer_log,
 )
+from .observed_retry_arrival_checkpoint import (
+    ObservedRetryArrivalCheckpoint, assess_observed_retry_arrival,
+    write_observed_retry_arrival,
+)
 from .records import AttemptRecord, begin_attempt
 from .retry_session import (
     RetrySessionLimits, RetrySessionResult, UnobservedXYDiagnostic,
@@ -2449,6 +2453,44 @@ class SessionRunner:
                     "live_preflight": str(output / "preflight" / "report.json"),
                     "xy_vlm_vote": str(output / "report.json"),
                 })
+        return result
+
+    def assess_observed_xy_retry_arrival(
+        self, *, preflight: XYRetryPreflight,
+        preflight_report_path: Path, transfer_execution_path: Path,
+        raw_bundle: Path, joint_sample: LiveRobotState,
+        backend: ImageVLM, max_capture_skew_s: float,
+        max_joint_frame_skew_s: float,
+        max_transfer_observation_gap_s: float,
+        max_hand_translation_error_m: float,
+        max_hand_rotation_error_deg: float,
+        max_arm_hand_skew_s: float,
+        max_hand_command_error_raw: float,
+        max_arm_velocity_rad_s: float,
+    ) -> ObservedRetryArrivalCheckpoint:
+        """Save a new observed square-key hold after the 1 mm transfer."""
+        if (self.current_decision().action !=
+                "await_retry_execution_and_observation" or
+                self._attempt is None or self._attempt_dir is None):
+            raise ValueError("observed XY arrival needs a pending retry")
+        result = assess_observed_retry_arrival(
+            attempt=self._attempt, preflight=preflight,
+            preflight_report_path=preflight_report_path,
+            calibration=self.calibration, shared_root=self.shared_root,
+            mode=self.mode, raw_bundle=raw_bundle,
+            transfer_execution_path=transfer_execution_path,
+            joint_sample=joint_sample, backend=backend,
+            max_capture_skew_s=max_capture_skew_s,
+            max_joint_frame_skew_s=max_joint_frame_skew_s,
+            max_transfer_observation_gap_s=max_transfer_observation_gap_s,
+            max_hand_translation_error_m=max_hand_translation_error_m,
+            max_hand_rotation_error_deg=max_hand_rotation_error_deg,
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s)
+        output = (self._attempt_dir / "observed_retry_arrivals" /
+                  f"{sum(1 for _ in (self._attempt_dir / 'observed_retry_arrivals').glob('*')):03d}")
+        write_observed_retry_arrival(result, output)
         return result
 
     def prepare_unobserved_xy_diagnostic(

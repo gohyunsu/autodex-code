@@ -490,11 +490,15 @@ that session and catalogue. For each new key observation:
    can now be executed through
    `execute_bound_observed_retry_transfer(...)`. It uses the same external
    `follow_transfer` result contract as the first transfer and checks the
-   selected retry event, archive and measured arrival. **This is not yet
-   wired into the live square retry handler**: a fresh arrival observation,
-   guarded axial handoff and retry-specific final task label must follow
-   before the square retry is executable end to end. Do not use the transfer
-   result as an insertion-success label.
+   selected retry event, archive and measured arrival. After it finishes,
+   `SessionRunner.assess_observed_xy_retry_arrival(...)` consumes a **new**
+   preinsert camera capture and exposure-aligned measured joints, then uses
+   the same raw-versus-rendered multiview VLM comparison as the first
+   transfer. It saves `observed_retry_arrivals/NNN/report.json` and overlay
+   images. An occluded key remains unknown. **These steps are not yet wired
+   into the live square retry handler**; the guarded axial handoff, retry
+   execution and final task label also remain. Neither a completed transfer
+   nor a visual arrival is an insertion-success label.
    If the withdrawn key is too occluded for another FoundPose estimate,
    `prepare_unobserved_xy_diagnostic` can instead save same-request raw
    camera frames, a measured 13-joint sample, the matching failed attempt,
