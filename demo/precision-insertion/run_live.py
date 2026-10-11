@@ -29,6 +29,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--integration", required=True,
                         help="importable AutoDex-PC module:factory")
+    parser.add_argument("--robot-config", type=Path,
+                        help="FR3 config for precision_insertion.franka_integration:factory")
     parser.add_argument("--max-xy-retries", type=int, choices=(0, 1), default=1)
     parser.add_argument("--max-steps", type=int, default=100)
     parser.add_argument("--enable-robot-motion", action="store_true",
@@ -40,7 +42,8 @@ def main(argv: list[str] | None = None) -> int:
         run_output_dir=args.output_dir,
         max_xy_retries=args.max_xy_retries,
         max_steps=args.max_steps,
-        enable_robot_motion=args.enable_robot_motion)
+        enable_robot_motion=args.enable_robot_motion,
+        robot_config_path=args.robot_config)
     result = run_integrated_live_session(
         options, integration_spec=args.integration)
     payload = result.to_record()

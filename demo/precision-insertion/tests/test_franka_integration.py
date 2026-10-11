@@ -1,0 +1,111 @@
+"""The built-in robot-PC factory owns FR3 resources and reuses stage wiring."""
+
+import json
+from pathlib import Path
+import sys
+from types import ModuleType, SimpleNamespace
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from precision_insertion import franka_integration  # noqa: E402
+from precision_insertion.live_runtime import RunLiveOptions  # noqa: E402
+
+
+def _options(tmp_path, config):
+    path = tmp_path / "robot.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+    return RunLiveOptions(
+        tmp_path / "launch.json", tmp_path / "catalog.json",
+        tmp_path / "run", enable_robot_motion=True,
+        robot_config_path=path)
+
+
+def _config():
+    return {
+        "schema": "precision_insertion_franka_integration_v1",
+        "feedback": {
+            "max_arm_hand_skew_s": .1, "max_sample_age_s": 1.,
+            "max_hand_command_error_raw": 20.,
+            "max_arm_update_wait_s": .2,
+            "max_arm_velocity_rad_s": .05,
+        },
+        "stages_factory": "robot_pc_stages:configure",
+    }
+
+
+def test_franka_integration_reuses_core_and_existing_stage_assembly(
+        monkeypatch, tmp_path):
+    events = []
+    core = SimpleNamespace(
+        clear_view=object(), planner=object(), read_state=lambda: None,
+        close=lambda: events.append("close"))
+    monkeypatch.setattr(franka_integration, "open_franka_core",
+                        lambda feedback: (events.append(feedback) or core))
+    module = ModuleType("robot_pc_stages")
+
+    def configure(received_core, live, options):
+        assert received_core is core and live is session
+        assert options.robot_config_path.is_file()
+        return {"shared": {"backend": backend}, "stages": {"task": {}},
+                "held_relation_route": "observed"}
+
+    module.configure = configure
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    backend = object()
+    session = object()
+
+    def assemble(live, **kwargs):
+        assert live is session
+        assert kwargs["shared"] == {
+            "backend": backend, "planner": core.planner,
+            "read_state": core.read_state}
+        assert kwargs["stages"] == {"task": {}}
+        assert kwargs["held_relation_route"] == "observed"
+        assert kwargs["enable_robot_motion"] is True
+        return ("assembled",)
+
+    monkeypatch.setattr(franka_integration, "assemble_live_components", assemble)
+    integration = franka_integration.factory(_options(tmp_path, _config()))
+    assert integration.clear_view is core.clear_view
+    assert integration.build_components(session) == ("assembled",)
+    integration.close()
+    assert events[-1] == "close"
+
+
+def test_invalid_stage_factory_fails_before_robot_connection(monkeypatch, tmp_path):
+    events = []
+    monkeypatch.setattr(franka_integration, "open_franka_core",
+                        lambda _: events.append("connect"))
+    config = _config()
+    config["stages_factory"] = "not a module"
+    with pytest.raises(ValueError, match="stage factory"):
+        franka_integration.factory(_options(tmp_path, config))
+    assert events == []
+
+
+def test_invalid_feedback_fails_before_robot_connection(monkeypatch, tmp_path):
+    events = []
+    monkeypatch.setattr(franka_integration, "open_franka_core",
+                        lambda _: events.append("connect"))
+    config = _config()
+    config["feedback"]["max_arm_velocity_rad_s"] = -1
+    with pytest.raises(ValueError, match="finite and positive"):
+        franka_integration.factory(_options(tmp_path, config))
+    assert events == []
+
+
+def test_stage_factory_cannot_replace_fr3_planner_or_feedback(
+        monkeypatch, tmp_path):
+    core = SimpleNamespace(
+        clear_view=object(), planner=object(), read_state=lambda: None,
+        close=lambda: None)
+    monkeypatch.setattr(franka_integration, "open_franka_core", lambda _: core)
+    module = ModuleType("robot_pc_stages")
+    module.configure = lambda *_: {
+        "shared": {"planner": object()}, "stages": {}}
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    integration = franka_integration.factory(_options(tmp_path, _config()))
+    with pytest.raises(ValueError, match="belong to core"):
+        integration.build_components(object())

@@ -22,6 +22,7 @@ class RunLiveOptions:
     max_xy_retries: int = 1
     max_steps: int = 100
     enable_robot_motion: bool = False
+    robot_config_path: Path | None = None
 
 
 @dataclass(frozen=True)

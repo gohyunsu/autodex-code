@@ -16,18 +16,6 @@ receives `RunLiveOptions`. `build_components(live)` is called after board and
 socket capture and must return these ten components, all bound to that same
 `live` object:
 
-The demo now provides `open_franka_core(FrankaFeedbackSettings(...))` in
-`precision_insertion.franka_core` for the common robot resources. It creates
-the existing `src.execution.franka_executor.FrankaExecutor(hand_name="inspire")`,
-`GraspPlanner(hand="fr3_inspire")`, measured FR3/Inspire state reader and
-clear-view gate. The integration factory can pass `core.clear_view` and
-`core.close` to `LiveRuntimeIntegration`, and share `core.planner` and
-`core.read_state` across stages. Construction connects to the robot but does
-not command `home()`; the live session does that after explicit motion opt-in.
-Do not use `autodex.executor.real.RealExecutor`: it controls xArm, and the
-clear-view gate rejects it. This core does not supply guarded contact,
-camera timestamps or the remaining hardware callbacks.
-
 1. `LiveKeyPlanningHandlers` — key SAM/FoundPose and v8 trial preflight.
 2. `LivePickupHandlers` — selected grasp, measured squeeze and lift plan.
 3. `LiveLiftHandlers` — executed lift and fresh Qwen grasp label.
@@ -44,6 +32,57 @@ camera timestamps or the remaining hardware callbacks.
    uncertain states.
 9. `LiveReposePlanningHandlers` — directed v8 reorient planning.
 10. `LiveReposeExecutionHandlers` — selected reset execution and new key pose.
+
+The demo provides `open_franka_core(FrankaFeedbackSettings(...))` in
+`precision_insertion.franka_core` for the common robot resources. It creates
+the existing `src.execution.franka_executor.FrankaExecutor(hand_name="inspire")`,
+`GraspPlanner(hand="fr3_inspire")`, measured FR3/Inspire state reader and
+clear-view gate. The integration factory can pass `core.clear_view` and
+`core.close` to `LiveRuntimeIntegration`, and share `core.planner` and
+`core.read_state` across stages. Construction connects to the robot but does
+not command `home()`; the live session does that after explicit motion opt-in.
+Do not use `autodex.executor.real.RealExecutor`: it controls xArm, and the
+clear-view gate rejects it. This core does not supply guarded contact,
+camera timestamps or the remaining hardware callbacks.
+
+For the first-party FR3 resource path, create a robot-PC JSON file such as:
+
+```json
+{
+  "schema": "precision_insertion_franka_integration_v1",
+  "feedback": {
+    "max_arm_hand_skew_s": 0.1,
+    "max_sample_age_s": 1.0,
+    "max_hand_command_error_raw": 20.0,
+    "max_arm_update_wait_s": 0.2,
+    "max_arm_velocity_rad_s": 0.05
+  },
+  "stages_factory": "my_robot_pc_binding:configure_stages"
+}
+```
+
+These numbers illustrate the file format, **not** rig-approved limits.
+`configure_stages(core, live, options)` returns `{"shared": {...},
+"stages": {...}, "held_relation_route": "physical"}` for the existing
+`assemble_live_components`. The core injects its own `planner` and
+`read_state`; the stage factory supplies the remaining commissioned camera,
+feedback-buffer, Qwen, pickup, contact, recovery and repose callbacks. Run:
+
+```bash
+python demo/precision-insertion/run_live.py \
+  --launch-config /absolute/session_launch.json \
+  --endpoint-catalog /absolute/endpoint_catalog.json \
+  --output-dir /absolute/new_run \
+  --integration precision_insertion.franka_integration:factory \
+  --robot-config /absolute/franka_runtime.json \
+  --enable-robot-motion
+```
+
+The JSON/stage module is read before the FR3 connection; the planner is
+initialized before the executor. On process exit, the built-in integration
+shuts down the Franka executor. This command still cannot run with only the
+illustrative file: robot-PC stage callbacks and commissioned contact control
+remain required.
 
 The handler composer rejects missing/duplicate actions before any grasp. The
 module should create one long-lived feedback sampler, one Qwen backend and
