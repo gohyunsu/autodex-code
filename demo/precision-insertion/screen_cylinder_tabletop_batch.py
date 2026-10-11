@@ -13,10 +13,9 @@ import argparse
 import json
 from pathlib import Path
 
-import numpy as np
-
 from precision_insertion.config import CYLINDER_RADIAL_GAPS_MM, select_mode
 from precision_insertion.endpoint import screen_grasp_endpoint
+from precision_insertion.stock_tabletop import audit_tabletop_cell
 
 KEY = "precision_key_cylinder_r15_h80"
 SCENES = ("0", "1")
@@ -27,46 +26,6 @@ def _write(path: Path, data: dict) -> None:
     with path.open("x", encoding="utf-8") as stream:
         json.dump(data, stream, indent=2)
         stream.write("\n")
-
-
-def _scene_rows(stage_root: Path, candidate_root: Path, scene_id: str,
-                expected: int) -> tuple[dict, list[tuple[str, Path]]]:
-    raw_scene = stage_root / KEY / "table" / scene_id
-    passed_scene = candidate_root / KEY / "table" / scene_id
-    raw_dirs = {p.name: p for p in raw_scene.iterdir() if p.is_dir()}
-    if set(raw_dirs) != {str(i) for i in range(expected)}:
-        raise ValueError(f"incomplete staged scene {scene_id}: {len(raw_dirs)}/{expected}")
-    counts = {"generated": expected, "scene_clear": 0, "squeeze_contact": 0,
-              "mujoco_stable": 0, "failed_scene_collision": 0,
-              "failed_no_object_contact": 0, "failed_mujoco_or_error": 0}
-    passed = []
-    for name, directory in sorted(raw_dirs.items(), key=lambda row: int(row[0])):
-        coll = bool(np.load(directory / "coll_valid.npy", allow_pickle=False))
-        evaluation = json.loads((directory / "sim_eval.json").read_text(encoding="utf-8"))
-        if coll:
-            counts["scene_clear"] += 1
-        if not coll:
-            counts["failed_scene_collision"] += 1
-            if evaluation.get("reason") != "scene_collision":
-                raise ValueError(f"inconsistent scene collision result: {directory}")
-            continue
-        if evaluation.get("reason") == "no_object_contact":
-            counts["failed_no_object_contact"] += 1
-            continue
-        counts["squeeze_contact"] += 1
-        if evaluation.get("success") is True:
-            candidate = passed_scene / name
-            required = ("wrist_se3.npy", "pregrasp_pose.npy", "grasp_pose.npy", "bodex_info.npy")
-            if not all((candidate / file).is_file() for file in required):
-                raise FileNotFoundError(f"AutoDex did not copy stable candidate {candidate}")
-            counts["mujoco_stable"] += 1
-            passed.append((name, candidate))
-        else:
-            counts["failed_mujoco_or_error"] += 1
-    observed = {p.name for p in passed_scene.iterdir() if p.is_dir()} if passed_scene.is_dir() else set()
-    if observed != {name for name, _ in passed}:
-        raise ValueError(f"AutoDex candidate pool disagrees with sim results: scene {scene_id}")
-    return counts, passed
 
 
 def run(shared_root: Path, stage_root: Path, candidate_root: Path,
@@ -81,8 +40,10 @@ def run(shared_root: Path, stage_root: Path, candidate_root: Path,
     all_passed = []
     stages = {}
     for scene_id in SCENES:
-        stages[scene_id], passed = _scene_rows(stage_root, candidate_root,
-                                              scene_id, expected)
+        stages[scene_id], passed = audit_tabletop_cell(
+            raw_root=stage_root, pass_root=candidate_root,
+            key_object=KEY, scene_id=scene_id,
+            expected_seed_count=expected)
         all_passed.extend((scene_id, name, directory) for name, directory in passed)
     output_root.mkdir(parents=True)
     gaps = {}

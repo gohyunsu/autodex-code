@@ -22,6 +22,9 @@ from .assets import AssetPaths
 from .config import TaskMode, select_mode
 from .geometry import validate_se3
 from .square_promotion import SCHEMA as SQUARE_PROMOTION_SCHEMA, SOURCE_FILES as SQUARE_SOURCE_FILES
+from .square_stock_promotion import (
+    SCHEMA as SQUARE_STOCK_SCHEMA, SOURCE_FILES as SQUARE_STOCK_SOURCE_FILES,
+)
 
 
 def _sha256(path: Path) -> str:
@@ -131,6 +134,25 @@ def _grasp_evidence(candidate: Path, key_mesh: Path) -> tuple[bool, str]:
                     _sha256(highres_copy) or
                     _json(endpoint_file).get("endpoint_pass") is not True):
                 return False, "stale_square_source_file"
+        if validation.get("schema") == SQUARE_STOCK_SCHEMA:
+            source_hashes = validation.get("source_file_sha256")
+            endpoint_file = candidate / "nominal_endpoint_screen.json"
+            if (not isinstance(source_hashes, dict) or
+                    set(source_hashes) != set(SQUARE_STOCK_SOURCE_FILES) or
+                    declared is None or
+                    validation.get("physical_validation") is not False or
+                    validation.get("robot_ready") is not False or
+                    validation.get("contact_policy_mode") !=
+                    "unrestricted_full_key" or
+                    not endpoint_file.is_file()):
+                return False, "incomplete_square_stock_source_evidence"
+            if (any(not (candidate / name).is_file() or
+                    source_hashes[name] != _sha256(candidate / name)
+                    for name in SQUARE_STOCK_SOURCE_FILES) or
+                    validation.get("nominal_endpoint_screen_sha256") !=
+                    _sha256(endpoint_file) or
+                    _json(endpoint_file).get("endpoint_pass") is not True):
+                return False, "stale_square_stock_source_file"
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return False, f"invalid_grasp_evidence:{exc}"
     return True, "mujoco_grasp_passed_not_physical"
@@ -224,7 +246,8 @@ def build_endpoint_catalog(
             passed, reason = _grasp_evidence(candidate, paths.key_planning_mesh)
             if passed and mode.family == "square":
                 validation = _json(candidate / "simulation_validation.json")
-                if validation.get("schema") == SQUARE_PROMOTION_SCHEMA and (
+                if validation.get("schema") in (
+                        SQUARE_PROMOTION_SCHEMA, SQUARE_STOCK_SCHEMA) and (
                         validation.get("source_scene_sha256") !=
                         row["scene_sha256"] or
                         validation.get("raw_key_mesh_sha256") !=
