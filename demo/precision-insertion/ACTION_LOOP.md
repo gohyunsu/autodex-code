@@ -24,7 +24,7 @@ using the existing demo functions before returning. For example:
 | `await_retry_execution_and_observation` | Execute the bound retry path and record a *new* insertion checkpoint. |
 | `recover_held_key_then_reobserve` | [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py) joins logged guarded withdrawal, `runner.prepare_failed_insertion_return()`, stock Franka held return/release/clear-view motion, independently recorded controller phases, a fresh key capture on the same cameras, and `runner.observe_reset_landing()`. Guarded withdrawal and independent logging remain commissioned robot-PC callbacks. |
 | `recover_key_then_reobserve` | Transfer/hold failure may leave the key in an unknown state. Do not use the held-key or grasp-miss motion blindly; require observed recovery or operator intervention before a new capture. |
-| `preflight_repose`, `continue_repose_seed_preflight`, `preflight_repose_release`, `preflight_alternative_repose_cell` | Use the same captured key and `runner.preflight_repose()` with directed v8 reset seeds; a staged seed alone is not a plan. |
+| `preflight_repose`, `continue_repose_seed_preflight`, `preflight_repose_release`, `preflight_alternative_repose_cell` | [`LiveReposePlanningHandlers`](precision_insertion/live_repose_handlers.py) reuses the exhausted pose's saved key capture and measured joints, selects a target pose/release cell, and invokes `runner.preflight_repose()` with directed v8 reset seeds. |
 | `repose_execution_gate_required`, `await_repose_observation` | Execute a commissioned reset plan, observe the landed tabletop pose, and record `reorient_success` before a fresh key capture. |
 
 The first two rows are implemented as
@@ -78,8 +78,14 @@ execution/checkpoint primitives. It reuses the opened AutoDex camera IDs,
 records a separate pre-insertion arrival label, and then passes the guarded
 controller's depth/alignment/force record plus final images to the insertion
 checkpoint. Its robot adapters, raw-frame producers and numeric limits are
-injected on the AutoDex PC. It does not implement the XY-retry or repose
-branches yet.
+injected on the AutoDex PC. It does not implement the XY-retry branch yet.
+
+[`LiveReposePlanningHandlers`](precision_insertion/live_repose_handlers.py)
+handles pose exhaustion without another key exposure. Its target selector
+chooses an eligible tabletop pose, release height and robot-frame XY cell;
+the existing v8 reset planner decides whether that target is feasible.
+Physical repose execution and its observed landing remain separate robot-PC
+steps to connect.
 
 The required [`ClearViewForPerception`](precision_insertion/clear_view.py)
 calls stock `FrankaExecutor.home(clear_view=True)` **before** the initial

@@ -2462,6 +2462,11 @@ hold checkpoint and its separate arrival label, then connects the bound
 guarded 20 mm stroke to final/abort frames and the existing insertion
 checkpoint. The first successful insertion label ends the session; no
 additional release/reset is initiated on that success path.
+[`LiveReposePlanningHandlers`](precision_insertion/live_repose_handlers.py)
+reuses the exhausted tabletop pose's saved key capture for the existing
+directed v8 reset preflight, including seed/cell continuation. It needs a
+target-pose/release-cell selector; execution and landing observation are not
+yet connected.
 [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py)
 connects a failed still-held insertion to logged axial withdrawal, the
 runner's held tabletop-return plan, stock Franka held transfer/release/clear-
