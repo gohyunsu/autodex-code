@@ -99,3 +99,24 @@ def test_default_physical_calibration_lookup_is_grasp_and_mode_specific(tmp_path
         tmp_path / "AutoDex/precision_insertion/physical_grasp_calibrations" /
         mode.family / mode.key_object / mode.socket_object /
         "table/0/184/physical_grasp_calibration.json")
+
+
+def test_square_session_selects_observed_xy_retry_handler(monkeypatch):
+    from precision_insertion.config import select_mode
+
+    _fake_classes(monkeypatch)
+    monkeypatch.setattr(runtime_assembly,
+                        "LiveObservedHeldRelationHandlers", _ObservedStage)
+    monkeypatch.setattr(runtime_assembly,
+                        "LiveObservedXYRetryHandlers", _ObservedStage)
+    live = SimpleNamespace(opened=SimpleNamespace(runner=SimpleNamespace(
+        mode=select_mode("square", 1.5))))
+    stages = {name: {} for name in runtime_assembly.STAGE_CLASSES}
+    with pytest.raises(ValueError, match="observed post-lift"):
+        runtime_assembly.assemble_live_components(
+            live, shared={"planner": object()}, stages=stages,
+            enable_robot_motion=True)
+    components = runtime_assembly.assemble_live_components(
+        live, shared={"planner": object()}, stages=stages,
+        enable_robot_motion=True, held_relation_route="observed")
+    assert isinstance(components[5], _ObservedStage)

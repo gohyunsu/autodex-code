@@ -63,12 +63,18 @@ def _vlm_settings(value: object) -> dict:
     return settings
 
 
-def _with_checkpoint_captures(stages: Mapping, timeout_s: float) -> dict:
+def _with_checkpoint_captures(
+    stages: Mapping, timeout_s: float, *, family: str | None = None,
+) -> dict:
     """Reuse one open camera session; every callback still takes fresh frames."""
     result = {name: dict(fields) for name, fields in stages.items()}
-    for stage_name, captures in _CHECKPOINT_CAPTURES.items():
+    for stage_name, configured in _CHECKPOINT_CAPTURES.items():
         if stage_name not in result:
             continue
+        captures = ({"capture_arrival": "preinsert",
+                     "capture_final": "final_or_abort"}
+                    if family == "square" and stage_name == "retry" else
+                    configured)
         for field, phase in captures.items():
             if field not in result[stage_name]:
                 result[stage_name][field] = make_checkpoint_capture(
@@ -181,7 +187,10 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
         return assemble_live_components(
             live, shared=shared,
             stages=_with_checkpoint_captures(
-                parameters["stages"], vlm["capture_timeout_s"]),
+                parameters["stages"], vlm["capture_timeout_s"],
+                family=getattr(getattr(getattr(
+                    getattr(live, "opened", None), "runner", None),
+                    "mode", None), "family", None)),
             enable_robot_motion=options.enable_robot_motion,
             held_relation_route=parameters.get("held_relation_route", "physical"))
 

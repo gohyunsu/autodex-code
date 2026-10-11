@@ -25,8 +25,9 @@ socket capture and must return these ten components, all bound to that same
 4. `LiveHeldRelationHandlers` — physical grasp-specific key/hand relation,
    or `LiveObservedHeldRelationHandlers` for a newly visible post-lift key.
 5. `LiveTaskHandlers` — transfer, arrival label, first guarded insertion.
-6. `LiveGroundedRetryHandlers` — guarded withdrawal, VLM ≤1 mm XY correction,
-   renewed planning and one guarded reattempt.
+6. `LiveGroundedRetryHandlers` for cylinder or
+   `LiveObservedXYRetryHandlers` for square — guarded withdrawal,
+   VLM ≤1 mm XY correction, renewed planning and one guarded reattempt.
 7. `LiveHeldReturnHandlers` — held-key return after failed insertion.
 8. `LiveTransferRecoveryHandlers` — optional planned held return when a
    completed transfer has measured hand-pose error but the pre-insertion VLM
@@ -210,6 +211,22 @@ endpoint checks that the supplied bound covers the stated visual error.
 An unavailable or under-bounded input stops the
 retry. The physical-calibration route remains the default and retains its
 separate medoid evidence.
+
+Square mode selects `LiveObservedXYRetryHandlers` and requires
+`held_relation_route="observed"`: it uses a new same-request held-key
+FoundPose capture after guarded withdrawal, plans a bounded XY correction,
+executes its non-contact transfer, observes the corrected pre-insertion
+hold, then uses the saved axial path with the guarded controller and records
+a second VLM/metric insertion checkpoint. The `retry` stage must supply
+`key_capture_parameters` including `capture_timeout_s` and
+`image_write_timeout_s`, plus the numeric admission arguments accepted by
+`admit_held_key_capture`; `key_prompt` defaults to the key-planning stage's
+prompt. Alternatively, supply `capture_withdrawn_key` returning an admitted
+`HeldKeyRetryCapture` with raw frames and exposure-aligned feedback. The
+assembly can provide fresh `capture_arrival` and `capture_final` snapshots
+from the open AutoDex cameras, but the actual contact/withdrawal adapters
+and reviewed limits are still robot-PC inputs. Occlusion or failed pose
+admission stops the observed retry; it does not substitute nominal squeeze.
 
 `LiveReposePlanningHandlers` now uses `DirectedReposeTargetSelector` by
 default. When a tabletop pose has no remaining usable grasp, it checks each

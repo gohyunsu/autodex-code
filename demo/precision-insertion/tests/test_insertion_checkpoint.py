@@ -411,7 +411,9 @@ def test_guarded_v2_record_binds_exact_observed_hold_and_axial_handoff(
             (raw / "manifest.json").read_bytes()).hexdigest(),
     }), encoding="utf-8")
     handoff_path = tmp_path / "axial_handoff.json"
-    handoff_path.write_text("{}", encoding="utf-8")
+    handoff_path.write_text(json.dumps({
+        "schema": "precision_insertion_guarded_axial_handoff_v1",
+    }), encoding="utf-8")
     handoff = {
         "attempt_id": args["attempt_id"],
         "candidate_id": args["candidate_id"],

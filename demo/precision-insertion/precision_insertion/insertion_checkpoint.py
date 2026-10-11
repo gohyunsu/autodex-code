@@ -19,6 +19,7 @@ from PIL import Image
 
 from .frame_provenance import bounded_capture_skew_s, image_sha256
 from .guarded_axial_handoff import verify_guarded_axial_handoff
+from .observed_retry_axial_handoff import verify_observed_retry_axial_handoff
 from .guarded_trace import verify_guarded_contact_trace
 from .key_perception import verify_key_capture_artifacts
 from .observer import (
@@ -145,7 +146,15 @@ def _metric_record(
         if (not handoff_path.is_absolute() or not handoff_path.is_file() or
                 _sha(handoff_path) != reference["sha256"]):
             raise ValueError("guarded axial handoff reference changed")
-        handoff = verify_guarded_axial_handoff(handoff_path)
+        handoff_schema = json.loads(handoff_path.read_text(
+            encoding="utf-8")).get("schema")
+        if handoff_schema == "precision_insertion_guarded_axial_handoff_v1":
+            handoff = verify_guarded_axial_handoff(handoff_path)
+        elif handoff_schema == (
+                "precision_insertion_observed_xy_retry_axial_handoff_v1"):
+            handoff = verify_observed_retry_axial_handoff(handoff_path)
+        else:
+            raise ValueError("guarded stroke has an unknown axial handoff")
         if (handoff["attempt_id"] != attempt_id or
                 handoff["candidate_id"] != candidate_id or
                 handoff["session_calibration_sha256"] !=
@@ -213,9 +222,19 @@ def _handoff_capture_binding(metric: dict, before_root: Path) -> dict | None:
     reference = metric["axial_handoff"]
     if not (before_root / "manifest.json").is_file():
         raise ValueError("bound axial handoff requires a raw hold capture")
-    handoff = verify_guarded_axial_handoff(Path(reference["path"]))
-    preinsert = json.loads(Path(handoff["preinsert_report_path"]).read_text(
-        encoding="utf-8"))
+    handoff_path = Path(reference["path"])
+    handoff_schema = json.loads(handoff_path.read_text(
+        encoding="utf-8")).get("schema")
+    if handoff_schema == "precision_insertion_guarded_axial_handoff_v1":
+        handoff = verify_guarded_axial_handoff(handoff_path)
+        source_path = Path(handoff["preinsert_report_path"])
+    elif handoff_schema == (
+            "precision_insertion_observed_xy_retry_axial_handoff_v1"):
+        handoff = verify_observed_retry_axial_handoff(handoff_path)
+        source_path = Path(handoff["arrival_report_path"])
+    else:
+        raise ValueError("guarded capture has an unknown axial handoff")
+    preinsert = json.loads(source_path.read_text(encoding="utf-8"))
     raw_root = Path(preinsert["raw_bundle"]).expanduser().resolve()
     if (raw_root != before_root or
             preinsert["raw_manifest_sha256"] !=

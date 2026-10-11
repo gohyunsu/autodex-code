@@ -499,8 +499,14 @@ that session and catalogue. For each new key observation:
    `SessionRunner.prepare_observed_xy_retry_axial_handoff(...)` binds its
    saved 20 mm axial-only trajectory to that fresh camera observation and a
    newer measured held state; it never replays the old failed stroke.
-   **These steps are not yet wired into the live square retry handler**;
-   the guarded execution and retry-specific final task label also remain.
+   The square-mode `LiveObservedXYRetryHandlers` now connects withdrawal,
+   a same-request held-key capture, observed XY preflight, corrected transfer,
+   fresh arrival, axial handoff, guarded retry, and a second insertion label.
+   It requires `held_relation_route="observed"`, a key prompt, admitted
+   held-key capture parameters (or an injected `capture_withdrawn_key`),
+   exposure-aligned measured joints, and the same independently commissioned
+   robot/contact adapters as the first stroke. This is code wiring, not a
+   physically commissioned retry; an occluded held key cannot take this route.
    Neither a completed transfer nor a visual arrival is an insertion-success
    label.
    If the withdrawn key is too occluded for another FoundPose estimate,

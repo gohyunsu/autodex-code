@@ -63,10 +63,11 @@ from .preinsert_checkpoint import (
 )
 from .observed_retry_arrival_checkpoint import (
     ObservedRetryArrivalCheckpoint, assess_observed_retry_arrival,
-    write_observed_retry_arrival,
+    verify_observed_retry_arrival, write_observed_retry_arrival,
 )
 from .observed_retry_axial_handoff import (
     prepare_observed_retry_axial_handoff as write_observed_retry_axial_handoff,
+    verify_observed_retry_axial_handoff,
 )
 from .records import AttemptRecord, begin_attempt
 from .retry_session import (
@@ -2187,7 +2188,23 @@ class SessionRunner:
                     raise ValueError(
                         "guarded handoff differs from the observed arrival event")
         else:
-            raise ValueError("XY retry must use its own observed checkpoint")
+            if (len(retry_events) != 1 or handoff_ref is None or
+                    self.current_decision().action !=
+                    "await_retry_execution_and_observation"):
+                raise ValueError("XY retry needs its own observed checkpoint")
+            handoff = verify_observed_retry_axial_handoff(
+                Path(handoff_ref["path"]))
+            arrival = verify_observed_retry_arrival(
+                Path(handoff["arrival_report_path"]))
+            if (arrival["raw_bundle"] != report["preinsert_bundle"] or
+                    arrival["retry_arrived"] is not True or
+                    handoff["xy_preflight_report_path"] !=
+                    retry_events[-1]["evidence_refs"].get("live_preflight") or
+                    report["preinsert_reached_at_s"] !=
+                    arrival["observation_completed_at_s"] or
+                    evidence_refs.get("observed_retry_arrival") !=
+                    handoff["arrival_report_path"]):
+                raise ValueError("XY retry VLM used another corrected hold")
         return self._record(lambda row: row.record_insertion_evidence(
             evidence, timestamp_s=timestamp_s, evidence_refs=evidence_refs))
 
@@ -2199,6 +2216,7 @@ class SessionRunner:
         minimum_visual_views: int = 2,
         depth_report_path: Path | None = None,
         depth_commissioning_path: Path | None = None,
+        retry_arrival_report_path: Path | None = None,
     ) -> dict:
         """Persist paired VLM frames and external metric sources, then label.
 
@@ -2229,13 +2247,30 @@ class SessionRunner:
         retry_events = [event for event in self._attempt.events
                         if event["stage"] == "xy_retry"]
         if retry_events:
-            raise ValueError("XY retry must use prepare_observed_retry_insertion_label")
+            if (len(retry_events) != 1 or
+                    self.current_decision().action !=
+                    "await_retry_execution_and_observation" or
+                    retry_arrival_report_path is None):
+                raise ValueError("XY retry needs its corrected arrival")
+            arrival_path = Path(retry_arrival_report_path).expanduser().resolve()
+            arrival = verify_observed_retry_arrival(arrival_path)
+            if (arrival["retry_arrived"] is not True or
+                    arrival["attempt_id"] != self._attempt.attempt_id or
+                    arrival["candidate_id"] != self._attempt.candidate_id or
+                    arrival["raw_bundle"] != str(before_root) or
+                    arrival["xy_preflight_report_path"] !=
+                    retry_events[-1]["evidence_refs"].get("live_preflight")):
+                raise ValueError("XY retry images differ from corrected arrival")
+            reached_at = arrival["observation_completed_at_s"]
+        elif retry_arrival_report_path is not None:
+            raise ValueError("first insertion cannot use a retry arrival")
+        else:
+            reached_at = preinsert_events[0]["timestamp_s"]
         metric = json.loads(Path(metric_record_path).read_text(encoding="utf-8"))
-        if (preinsert_events[0]["evidence_refs"].get(
+        if not retry_events and (preinsert_events[0]["evidence_refs"].get(
                 "key_socket_pose" if is_key_capture else "preinsert_image") !=
               str(before_file)):
             raise ValueError("pre-insertion VLM image differs from arrival observation")
-        reached_at = preinsert_events[0]["timestamp_s"]
         report = assess_insertion_checkpoint(
             attempt_id=self._attempt.attempt_id,
             candidate_id=self._attempt.candidate_id,
@@ -2273,6 +2308,14 @@ class SessionRunner:
         if report["guarded_axial_handoff"] is not None:
             refs["guarded_axial_handoff"] = report[
                 "guarded_axial_handoff"]["path"]
+        if retry_events:
+            if report["guarded_axial_handoff"] is None:
+                raise ValueError("XY retry needs a bound guarded axial stroke")
+            handoff = verify_observed_retry_axial_handoff(
+                Path(report["guarded_axial_handoff"]["path"]))
+            if handoff["arrival_report_path"] != str(arrival_path):
+                raise ValueError("XY retry guarded stroke used another arrival")
+            refs["observed_retry_arrival"] = str(arrival_path)
         self.observe_insertion(
             InsertionEvidence(**report["evidence"]),
             timestamp_s=decision_timestamp_s, evidence_refs=refs,

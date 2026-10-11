@@ -14,8 +14,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import TaskMode
-from .guarded_axial_handoff import _positive
+from .config import TaskMode, select_mode
+from .guarded_axial_handoff import _positive, _state_from_record
 from .live_robot_state import LiveRobotState
 from .observed_retry_arrival_checkpoint import verify_observed_retry_arrival
 from .records import AttemptRecord
@@ -143,3 +143,83 @@ def prepare_observed_retry_axial_handoff(
         json.dump(record, stream, indent=2, sort_keys=True, allow_nan=False)
         stream.write("\n")
     return report
+
+
+def verify_observed_retry_axial_handoff(report_path: Path) -> dict:
+    """Check the persisted retry contact packet before it is consumed."""
+    path = Path(report_path).expanduser().resolve()
+    record = json.loads(path.read_text(encoding="utf-8"))
+    if (not isinstance(record, dict) or record.get("schema") !=
+            "precision_insertion_observed_xy_retry_axial_handoff_v1" or
+            record.get("scope") !=
+            "saved_retry_axial_path_not_contact_or_insertion_success" or
+            record.get("robot_ready") is not False):
+        raise ValueError("invalid observed XY retry axial handoff")
+    mode_row = record["mode"]
+    mode = select_mode(mode_row["family"], mode_row["gap_mm"])
+    if mode_row != {
+            "family": mode.family, "gap_mm": mode.gap_mm,
+            "key_object": mode.key_object,
+            "socket_object": mode.socket_object,
+            "target_depth_m": mode.target_depth_m}:
+        raise ValueError("retry axial handoff mode changed")
+    plan = Path(record["xy_preflight_report_path"])
+    arrival_path = Path(record["arrival_report_path"])
+    archive = Path(record["trajectory_archive_path"])
+    if (not all(source.is_absolute() and source.is_file()
+                for source in (plan, arrival_path, archive)) or
+            _sha(plan) != record["xy_preflight_report_sha256"] or
+            _sha(arrival_path) != record["arrival_report_sha256"] or
+            _sha(archive) != record["trajectory_archive_sha256"]):
+        raise ValueError("retry axial handoff source changed")
+    saved = json.loads(plan.read_text(encoding="utf-8"))
+    arrival = verify_observed_retry_arrival(arrival_path)
+    if (saved.get("schema") != "precision_insertion_xy_retry_preflight_v1" or
+            saved.get("status") != "sampled_retry_preflight_pass" or
+            saved.get("candidate_key") != record["candidate_id"].split("/") or
+            saved.get("planned_trajectories") != archive.name or
+            saved.get("planned_trajectories_sha256") != _sha(archive) or
+            saved.get("targets", {}).get("mode") != mode_row or
+            arrival.get("retry_arrived") is not True or
+            arrival.get("attempt_id") != record["attempt_id"] or
+            arrival.get("candidate_id") != record["candidate_id"] or
+            arrival.get("session_calibration_sha256") !=
+                record["session_calibration_sha256"] or
+            arrival.get("xy_preflight_report_path") != str(plan)):
+        raise ValueError("retry axial handoff differs from observed arrival")
+    with np.load(archive, allow_pickle=False) as data:
+        if set(data.files) != {"transfer", "axial"}:
+            raise ValueError("retry axial archive is incomplete")
+        transfer = np.asarray(data["transfer"], dtype=np.float64)
+        axial = np.asarray(data["axial"], dtype=np.float64)
+    if (axial.shape != (record["axial_sample_count"], 13) or
+            transfer.ndim != 2 or transfer.shape[1] != 13 or
+            len(transfer) < 2 or len(axial) < 2 or
+            not np.all(np.isfinite(axial)) or
+            not np.array_equal(axial[0], transfer[-1]) or
+            not np.array_equal(axial[0], record["axial_start_q"]) or
+            not np.array_equal(axial[-1], record["axial_end_q"]) or
+            not np.allclose(axial[:, 7:], axial[0, 7:], atol=1e-8, rtol=0)):
+        raise ValueError("retry axial handoff path changed")
+    limits = record["limits"]
+    if set(limits) != {
+            "max_state_age_s", "max_start_joint_error_rad",
+            "max_arm_hand_skew_s", "max_hand_command_error_raw",
+            "max_arm_velocity_rad_s"}:
+        raise ValueError("retry axial handoff limits changed")
+    for key, value in limits.items():
+        _positive(value, key)
+    measured = _state_from_record(record["measured_start"])
+    measured.validate(
+        max_arm_hand_skew_s=limits["max_arm_hand_skew_s"],
+        max_hand_command_error_raw=limits["max_hand_command_error_raw"],
+        max_arm_velocity_rad_s=limits["max_arm_velocity_rad_s"])
+    if (record["target_depth_m"] != mode.target_depth_m or
+            not arrival["observation_completed_at_s"] <
+                measured.sample_timestamp_s <= record["decision_timestamp_s"] or
+            record["decision_timestamp_s"] - measured.sample_timestamp_s >
+                limits["max_state_age_s"] or
+            np.max(np.abs(measured.full_q - axial[0])) >
+                limits["max_start_joint_error_rad"]):
+        raise ValueError("retry axial handoff measured hold changed")
+    return record

@@ -19,7 +19,7 @@ from precision_insertion.observed_retry_arrival_checkpoint import (  # noqa: E40
     write_observed_retry_arrival,
 )
 from precision_insertion.observed_retry_axial_handoff import (  # noqa: E402
-    prepare_observed_retry_axial_handoff,
+    prepare_observed_retry_axial_handoff, verify_observed_retry_axial_handoff,
 )
 from precision_insertion.retry_preflight import XYRetryPreflight  # noqa: E402
 from test_preinsert_checkpoint import _setup  # noqa: E402
@@ -111,6 +111,7 @@ def test_observed_retry_arrival_uses_fresh_camera_and_saved_xy_plan(tmp_path):
     packet = json.loads(handoff.read_text(encoding="utf-8"))
     assert packet["axial_sample_count"] == 2
     assert packet["arrival_report_path"] == str(saved)
+    assert verify_observed_retry_axial_handoff(handoff) == packet
 
 
 def test_observed_retry_arrival_never_promotes_an_occluded_key(tmp_path):

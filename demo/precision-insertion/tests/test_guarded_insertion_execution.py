@@ -236,3 +236,60 @@ def test_guarded_insertion_rejects_foreign_handoff_without_command(
             **{**args, "handoff_report_path": foreign},
             enable_robot_motion=True)
     assert args["adapter"].calls == 0
+
+
+def test_observed_xy_retry_reuses_guarded_controller_with_retry_handoff(
+    tmp_path, monkeypatch,
+):
+    args = _setup(tmp_path, monkeypatch)
+    runner = args["runner"]
+    runner._attempt.labels["insertion_success"] = False
+    runner._attempt._pending_retry = True
+    plan = tmp_path / "retry_plan.json"
+    plan.write_text(json.dumps({"choice_id": "x_plus_1mm"}), encoding="utf-8")
+    runner._attempt.events = [{
+        "stage": "xy_retry", "value": "x_plus_1mm",
+        "evidence_refs": {"live_preflight": str(plan)},
+    }]
+    runner.verify_current_preflight_evidence = lambda: None
+    monkeypatch.setattr(SessionRunner, "current_decision", lambda self:
+                        SimpleNamespace(
+                            action="await_retry_execution_and_observation"))
+    retry_dir = (runner._attempt_dir /
+                 "observed_retry_axial_handoffs" / "000")
+    retry_dir.mkdir(parents=True)
+    retry_report = retry_dir / "report.json"
+    retry_report.write_text("{}", encoding="utf-8")
+    with np.load(tmp_path / "axial.npz", allow_pickle=False) as archive:
+        axial = archive["axial"]
+    handoff = {
+        "attempt_id": runner._attempt.attempt_id,
+        "candidate_id": runner._attempt.candidate_id,
+        "session_calibration_sha256": runner.session_sha256,
+        "mode": {"family": "cylinder"},
+        "xy_preflight_report_path": str(plan),
+        "trajectory_archive_path": str(tmp_path / "axial.npz"),
+        "trajectory_archive_sha256": _sha(tmp_path / "axial.npz"),
+        "axial_sample_count": 2,
+        "axial_start_q": axial[0].tolist(),
+        "axial_end_q": axial[-1].tolist(),
+        "decision_timestamp_s": 102.1,
+        "measured_start": _state(102.0, np.full(7, .03)).to_record(),
+    }
+    monkeypatch.setattr(execution, "verify_observed_retry_axial_handoff",
+                        lambda _path: handoff)
+    metric = {
+        "schema": "precision_insertion_guarded_execution_v2",
+        "axial_handoff": {"path": str(retry_report),
+                            "sha256": _sha(retry_report)},
+        "measurement": {"safety_abort": False},
+    }
+    monkeypatch.setattr(execution, "_metric_record", lambda *_a, **_k:
+                        (metric, 102.33, 102.5))
+    result = execute_bound_guarded_insertion(
+        **{**args, "handoff_report_path": retry_report},
+        enable_robot_motion=True, observed_xy_retry=True)
+    assert result["safety_abort"] is False
+    assert runner._attempt.labels["insertion_success"] is False
+    assert (runner._attempt_dir /
+            "observed_retry_guarded_insertion_execution.json").is_file()

@@ -20,6 +20,7 @@ from typing import Callable
 import numpy as np
 
 from .guarded_axial_handoff import verify_guarded_axial_handoff
+from .observed_retry_axial_handoff import verify_observed_retry_axial_handoff
 from .guarded_contact import GuardedContactLimits
 from .insertion_checkpoint import _metric_record
 from .lift_execution import (
@@ -82,6 +83,7 @@ def execute_bound_guarded_insertion(
     contact_commissioning_path: Path,
     motion_interlock: Callable[[], bool],
     enable_robot_motion: bool = False,
+    observed_xy_retry: bool = False,
 ) -> dict:
     """Run one *bound* external contact stroke; never infer key insertion.
 
@@ -96,8 +98,10 @@ def execute_bound_guarded_insertion(
             not math.isfinite(max_handoff_age_s) or
             max_handoff_age_s <= 0 or
             not isinstance(runner, SessionRunner) or
-            runner.current_decision().action !=
-            "await_guarded_insertion_and_observation" or
+            type(observed_xy_retry) is not bool or
+            runner.current_decision().action != (
+                "await_retry_execution_and_observation" if observed_xy_retry
+                else "await_guarded_insertion_and_observation") or
             not isinstance(pre_state, LiveRobotState) or
             not callable(read_post_state) or
             not callable(motion_interlock) or
@@ -111,24 +115,41 @@ def execute_bound_guarded_insertion(
     if (attempt is None or attempt_dir is None or
             attempt.labels.get("grasp_success") is not True or
             attempt.labels.get("preinsert_reached") is not True or
-            attempt.labels.get("insertion_success") is not None or
+            attempt.labels.get("insertion_success") is not (
+                False if observed_xy_retry else None) or
+            (observed_xy_retry and (not attempt._pending_retry or
+                not attempt.events or
+                attempt.events[-1].get("stage") != "xy_retry")) or
             attempt.failure_code is not None):
         raise ValueError("guarded insertion needs a successful observed arrival")
     report_path = Path(handoff_report_path).expanduser().resolve()
-    handoff_root = (attempt_dir / "guarded_axial_handoffs").resolve()
+    handoff_root = (attempt_dir / (
+        "observed_retry_axial_handoffs" if observed_xy_retry
+        else "guarded_axial_handoffs")).resolve()
     if (not report_path.is_relative_to(handoff_root) or
             report_path.name != "report.json"):
         raise ValueError("guarded handoff is outside this attempt")
-    handoff = verify_guarded_axial_handoff(report_path)
+    handoff = (verify_observed_retry_axial_handoff(report_path)
+               if observed_xy_retry else
+               verify_guarded_axial_handoff(report_path))
     if (handoff["attempt_id"] != attempt.attempt_id or
             handoff["candidate_id"] != attempt.candidate_id or
             handoff["session_calibration_sha256"] != runner.session_sha256 or
-            handoff["postlift_report_path"] !=
-            str(runner._postlift_report_path) or
-            handoff["preinsert_report_path"] !=
-            str(runner._preinsert_report_path) or
             handoff["mode"]["family"] != runner.mode.family):
         raise ValueError("guarded path is not bound to this observed attempt")
+    if observed_xy_retry:
+        runner.verify_current_preflight_evidence()
+        if (attempt.events[-1].get("evidence_refs", {}).get(
+                "live_preflight") != handoff["xy_preflight_report_path"] or
+                attempt.events[-1].get("value") !=
+                json.loads(Path(handoff["xy_preflight_report_path"])
+                           .read_text(encoding="utf-8"))["choice_id"]):
+            raise ValueError("guarded retry uses another pending XY choice")
+    elif (handoff["postlift_report_path"] !=
+            str(runner._postlift_report_path) or
+            handoff["preinsert_report_path"] !=
+            str(runner._preinsert_report_path)):
+        raise ValueError("guarded first insertion uses another hold")
     archive_path = Path(handoff["trajectory_archive_path"])
     if _sha(archive_path) != handoff["trajectory_archive_sha256"]:
         raise ValueError("guarded axial archive changed after handoff verification")
@@ -139,9 +160,11 @@ def execute_bound_guarded_insertion(
             not np.array_equal(axial[0], handoff["axial_start_q"]) or
             not np.array_equal(axial[-1], handoff["axial_end_q"])):
         raise ValueError("guarded axial archive differs from handoff")
-    output = attempt_dir / "guarded_insertion_execution.json"
-    started_path = attempt_dir / "guarded_insertion_started.json"
-    failure_path = attempt_dir / "guarded_insertion_failure.json"
+    prefix = ("observed_retry_guarded_insertion" if observed_xy_retry else
+              "guarded_insertion")
+    output = attempt_dir / f"{prefix}_execution.json"
+    started_path = attempt_dir / f"{prefix}_started.json"
+    failure_path = attempt_dir / f"{prefix}_failure.json"
     if any(path.exists() for path in (output, started_path, failure_path)):
         raise FileExistsError("this attempt already started guarded insertion")
     pre_state.validate(
