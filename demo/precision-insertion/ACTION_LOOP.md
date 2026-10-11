@@ -18,8 +18,8 @@ using the existing demo functions before returning. For example:
 | `execution_gate_required` | [`LivePickupHandlers`](precision_insertion/live_pickup_handlers.py) starts the selected v8 attempt, calls the existing `execute_bound_pickup()` through a commissioned executor, and preflights lift from *measured* post-squeeze joints. It does not execute lift or write a grasp-success label. |
 | `await_lift_observation` | [`LiveLiftHandlers`](precision_insertion/live_lift_handlers.py) runs the saved measured-start lift through a commissioned adapter, captures fresh raw frames from the *same* AutoDex cameras, and calls `runner.prepare_raw_lift_label()` with a Qwen-compatible backend. The runner records a grasp label only for a decisive visual checkpoint. |
 | `postlift_observed_preflight_required`, `held_relation_evidence_required` | A visible independent key pose can use `runner.prepare_postlift_transfer()`. For the occluded-key/raw-Qwen case, [`LiveHeldRelationHandlers`](precision_insertion/live_held_relation_handlers.py) selects that *grasp's* physical key/hand calibration and calls `runner.prepare_bounded_postlift_transfer()` from fresh measured joints. It never substitutes the MuJoCo squeeze pose. |
-| `transfer_execution_gate_required` | Execute the bound held transfer, capture the pre-insertion hold, and record the separate `preinsert_reached` label. |
-| `await_guarded_insertion_and_observation` | Prepare the bound axial handoff, run a commissioned guarded stroke, then use paired Qwen views plus measured depth/alignment/force in `runner.prepare_observed_insertion_label()`; only its checkpoint may set `insertion_success`. |
+| `transfer_execution_gate_required` | [`LiveTaskHandlers`](precision_insertion/live_task_handlers.py) runs the existing bound held-transfer executor, captures the pre-insertion hold on the same AutoDex cameras, and records `preinsert_reached` through the runner's existing Qwen checkpoint. |
+| `await_guarded_insertion_and_observation` | The same handler prepares the axial handoff, runs the existing commissioned guarded stroke, captures final/abort views, then invokes `runner.prepare_observed_insertion_label()` using the controller's metric record. Only this checkpoint may set `insertion_success`. |
 | `guarded_withdrawal_then_xy_assessment` | Withdraw the still-held key and use the existing native-pixel multi-view cylinder landmark/XY diagnostic; replan and record a bounded retry. Do not turn a VLM suggestion directly into a motor command. |
 | `await_retry_execution_and_observation` | Execute the bound retry path and record a *new* insertion checkpoint. |
 | `recover_held_key_then_reobserve` | [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py) joins logged guarded withdrawal, `runner.prepare_failed_insertion_return()`, stock Franka held return/release/clear-view motion, independently recorded controller phases, a fresh key capture on the same cameras, and `runner.observe_reset_landing()`. Guarded withdrawal and independent logging remain commissioned robot-PC callbacks. |
@@ -71,6 +71,15 @@ grasp and mode. The runner verifies its source samples, candidate and saved
 lift checkpoint before planning a bounded transfer. No such calibration
 has been found in the local shared assets, so this branch cannot yet advance
 on real data; a simulated squeeze transform is not an acceptable substitute.
+
+[`LiveTaskHandlers`](precision_insertion/live_task_handlers.py) connects the
+first non-contact transfer and 20 mm guarded insertion to their existing
+execution/checkpoint primitives. It reuses the opened AutoDex camera IDs,
+records a separate pre-insertion arrival label, and then passes the guarded
+controller's depth/alignment/force record plus final images to the insertion
+checkpoint. Its robot adapters, raw-frame producers and numeric limits are
+injected on the AutoDex PC. It does not implement the XY-retry or repose
+branches yet.
 
 The required [`ClearViewForPerception`](precision_insertion/clear_view.py)
 calls stock `FrankaExecutor.home(clear_view=True)` **before** the initial

@@ -2456,6 +2456,12 @@ grasp-specific *physical* key/hand calibration, measures current joints and
 invokes the existing uncertainty-bounded held-transfer preflight. No such
 physical calibration artifact is present locally, so a MuJoCo squeeze pose
 cannot be used to advance this branch.
+[`LiveTaskHandlers`](precision_insertion/live_task_handlers.py) connects the
+passing held-transfer plan to execution, a same-session Qwen pre-insertion
+hold checkpoint and its separate arrival label, then connects the bound
+guarded 20 mm stroke to final/abort frames and the existing insertion
+checkpoint. The first successful insertion label ends the session; no
+additional release/reset is initiated on that success path.
 [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py)
 connects a failed still-held insertion to logged axial withdrawal, the
 runner's held tabletop-return plan, stock Franka held transfer/release/clear-
@@ -2467,8 +2473,8 @@ PC; the handler refuses recapture if the return was not executed and
 verified.
 A missing handler returns `needs_handler` at the exact pending phase; no
 trial result is invented. The guarded pickup/lift hardware adapters, raw
-post-lift camera producer, physical held-relation calibration data, transfer,
-insertion,
+post-lift camera producer, physical held-relation calibration data, real
+transfer/insertion controllers and camera callbacks,
 guarded withdrawal, independent controller logging, later VLM observations
 and repose execution are **not bundled**, so this is not yet an unattended
 robot loop.
