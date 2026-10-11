@@ -1266,6 +1266,9 @@ state with the **same** held-lift plan before invoking its external controller;
 it does not make the stock follower safe.
 
 For a **saved-image, read-only** observer replay, choose a backend explicitly.
+The newly generated key/socket FoundPose representations have a separate
+[saved-camera diagnostic](FOUNDPOSE_SAVED_REPLAY.md); it does not validate or
+enable the VLM/robot loop.
 The local option reuses ZeroDex's `main.vlm_base.BaseVLM`; it does not use a
 Gemini key or send images to an API. Install its optional dependencies in an
 **isolated** venv, not the production AutoDex Python environment:

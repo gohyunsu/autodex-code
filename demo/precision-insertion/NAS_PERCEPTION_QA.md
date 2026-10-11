@@ -68,12 +68,20 @@ silhouette pass and even a high mean across other cameras cannot license that
 view. Review its [raw frame](/mnt/paradex2/hyunsu/tmp/precision_insertion_multiview_20261010_652ac909/square/precision_key_1p5mm/pose_02/views/shot_20261010T131640Z_585435e4/24122734.jpg)
 and [CAD overlay](/mnt/paradex2/hyunsu/autodex_precision_insertion_perception_eval_20261010_652ac909/results/key_roi_sam3_square/square/precision_key_1p5mm/pose_02/24122734_cad_overlay.jpg).
 
+The evaluation statistics above describe the **older NAS candidate PTHs**,
+not the four canonical representations generated on 2026-10-11. A separate
+[read-only replay of those new PTHs](FOUNDPOSE_SAVED_REPLAY.md) found substantial
+cross-view disagreement in their initial per-camera poses. Neither result
+licenses a fixture pose or physical insertion attempt.
+
 None of the 35 selected `shot.json` files provides a verified **per-camera
 frame ID and exposure UTC interval**. Its overall `captured_at_utc` and
 request timing cannot replace that evidence for the session bootstrap. The
 shots also span different object placements and do not supply repeated
-same-session socket measurements. The 12 large `repre.pth` files remain under
-`pending_foundpose/`, not canonical `AutoDex/foundpose_assets/`.
+same-session socket measurements. The 12 **older candidate** `repre.pth` files
+remain under `pending_foundpose/`, not canonical
+`AutoDex/foundpose_assets/`; the four newly generated canonical PTHs are
+separate assets described in [FoundPose onboarding](FOUNDPOSE_ONBOARDING.md).
 
 ## Finalized evaluation re-audit (2026-10-11)
 
@@ -102,7 +110,9 @@ demo-local tabletop key gate now requires a separately commissioned minimum
 selected-mask/refined-CAD IoU in addition to stock refinement and multi-view
 pose consistency. This veto does not make the assisted ROI method equivalent
 to the current live full-frame pipeline, nor does it certify sub-millimetre
-pose accuracy. None of the candidate PTHs has been promoted.
+pose accuracy. None of the **older candidate** PTHs has been promoted. The
+four new canonical PTHs are generated but **not accepted for robot use**;
+their saved-camera diagnostic is documented separately.
 
 Before promoting any object for a live session:
 

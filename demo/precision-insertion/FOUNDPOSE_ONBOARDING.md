@@ -12,13 +12,18 @@ visual words. The generator saved each `repre.pth` and reloaded it successfully.
 
 | Object | Purpose | Status |
 | --- | --- | --- |
-| `precision_key_1p5mm` | Square 1.5 mm baseline key | Generated, camera validation pending |
-| `precision_socket_unified` | Fixed square socket | Generated, camera validation pending |
-| `precision_key_cylinder_r15_h80` | Shared cylinder key | Generated, camera validation pending |
-| `precision_socket_cylinder_gap_15mm` | Cylinder 15 mm radial-gap socket | Generated, camera validation pending |
+| `precision_key_1p5mm` | Square 1.5 mm baseline key | Generated; saved-image diagnostic found cross-view disagreement |
+| `precision_socket_unified` | Fixed square socket | Generated; saved-image diagnostic found cross-view disagreement |
+| `precision_key_cylinder_r15_h80` | Shared cylinder key | Generated; saved-image diagnostic found cross-view disagreement |
+| `precision_socket_cylinder_gap_15mm` | Cylinder 15 mm radial-gap socket | Generated; saved-image diagnostic found cross-view disagreement |
 
 All four completed the generator's own representation reload. Other gap
 variants are **not** implied to be onboarded by these files.
+The read-only [saved AutoDex-camera replay](FOUNDPOSE_SAVED_REPLAY.md) tests
+these new representations on three selected real views per condition. Its
+initial per-view estimates are not sufficiently consistent to commission a
+fixture pose; the later stock multi-view refinement and independent metric
+accuracy have not yet been evaluated with these representations.
 
 For every object, the canonical runtime path is:
 
