@@ -522,17 +522,12 @@ that session and catalogue. For each new key observation:
    exercises the staged candidate through the same planner without promoting
    it to a runtime reset asset.
 
-   The initial reset chain is **nominal**: its squeeze hand state and
-   key-in-hand transform are hypotheses. The demo-local
-   `plan_repose_held_chain` also accepts `held_hand_source="measured"`, but
-   then requires the entire measured post-squeeze 13-DoF start and plans the
-   lift from those joints. Measured fingers with the nominal arm endpoint
-   are rejected. This is a planner primitive, not a source-bound physical
-   reset executor; a commissioned grasp-specific key/hand relation and
-   future-trial error bound are still needed before physical transfer.
-   The [reset grasp calibration CLI](RESET_GRASP_CALIBRATION.md) now provides
-   a source-bound path to create that grasp-specific physical relation from
-   independent real pickups; there are no real calibration samples yet.
+   The active cylinder reset chain uses the **nominal v8** squeeze hand state
+   and key-in-hand transform as hypotheses. It does not require or substitute
+   a measured post-grasp relation; its preflight and observed landing remain
+   separate. The optional `held_hand_source="measured"` planner primitive and
+   [reset grasp calibration CLI](RESET_GRASP_CALIBRATION.md) belong to earlier
+   experiments and are not assembled into the cylinder live loop.
    For an insertion failure with the key still held, the separate
    [failed-trial held-key return](FAILURE_RETURN.md) preflight starts after
    axial withdrawal from measured joints and reuses the same socket-aware
