@@ -78,9 +78,29 @@ Identical readback-verified copies for the AutoDex PC are under
 `/mnt/paradex2/hyunsu/autodex_precision_insertion_registered_key_roi_20261011/`.
 
 This module is **not yet installed in the live key capture producer**. To do
-that safely, first bind one verified socket-only baseline image and mask per
-camera from the *same frozen session*, retain the current frame's acquisition
-identity, run the cropped SAM/FoundPose chain with full-frame pixel mapping,
-and compare it against independently annotated key masks/poses. Do not treat
-the saved NAS mask pass or the exploratory thresholds as evidence that the
-live pipeline is ready to grasp.
+that safely, `session_key_baseline.load_session_key_baseline(...)` now reads
+one **explicitly selected** socket capture from the frozen session bundle. It
+verifies the complete bundle, demands acquisition-bound frames and at least
+two admitted calibrated views, and binds each socket-only image/mask to its
+camera, frame ID, request ID and manifest digest. The preferred helper also
+checks that this digest matches the **currently opened run**. For example:
+
+```python
+from precision_insertion.session_key_baseline import load_bound_session_key_baseline
+
+baseline = load_bound_session_key_baseline(
+    opened=opened_precision_session,
+    socket_capture_id="socket_001",
+    calibrated_camera_ids={"CAMERA_A", "CAMERA_B"},
+)
+```
+
+This is only the *reference-loading* boundary, not a live alternative to the
+stock full-frame daemon. The remaining step is to retain the current key
+frame's acquisition identity, run cropped SAM/FoundPose on that **same** frame
+with full-frame pixel mapping, save its derivation separately from stock
+payloads, and compare the result against independently annotated key masks
+and poses. The socket-only procedure must also be verified physically: a
+hash cannot prove that no key or moving hand was present in the reference
+scene. Do not treat the saved NAS mask pass or exploratory thresholds as
+evidence that the live pipeline is ready to grasp.
