@@ -18,7 +18,8 @@ if str(DEMO_DIR) not in sys.path:
     sys.path.insert(0, str(DEMO_DIR))
 
 from precision_insertion.observer import (  # noqa: E402
-    LabeledFrame, load_vlm_backend, observe_insertion_visual, observe_lift,
+    DEFAULT_LOCAL_VLM_MODEL_ID, LabeledFrame, load_vlm_backend,
+    observe_insertion_visual, observe_lift,
 )
 
 
@@ -27,8 +28,9 @@ _CAMERA = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backend", choices=("local", "gemini"), required=True)
-    parser.add_argument("--model-id", required=True)
+    parser.add_argument("--backend", choices=("local", "gemini"),
+                        default="local")
+    parser.add_argument("--model-id", help="defaults to local Qwen3-VL-2B")
     parser.add_argument("--task", choices=("lift", "insertion_visual"),
                         required=True)
     parser.add_argument("--view", nargs=3, action="append", required=True,
@@ -47,6 +49,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.backend == "gemini" and not args.allow_external_images:
         parser.error("Gemini needs explicit --allow-external-images consent")
+    if args.backend == "gemini" and not args.model_id:
+        parser.error("Gemini needs explicit --model-id")
     if (args.max_input_width <= 0 or args.max_input_height <= 0 or
             args.max_new_tokens <= 0):
         parser.error("positive local image/token limits required")
@@ -78,11 +82,13 @@ def main(argv: list[str] | None = None) -> int:
         require_cuda=not args.allow_cpu,
         require_native_pixels=False,  # semantic smoke test only
     )
+    selected_model = (args.model_id if args.model_id is not None else
+                      DEFAULT_LOCAL_VLM_MODEL_ID)
     observed = (observe_lift(backend, frames) if args.task == "lift" else
                 observe_insertion_visual(backend, frames))
     report = {
         "schema": "precision_insertion_saved_image_vlm_probe_v1",
-        "backend": args.backend, "model_id": args.model_id,
+        "backend": args.backend, "model_id": selected_model,
         "task": args.task, "source_images": sources,
         "observation": observed.to_record(),
         "timestamp_source": "synthetic_order_only_not_camera_acquisition",

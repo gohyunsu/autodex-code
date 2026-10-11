@@ -1,5 +1,16 @@
 # Local VLM mode: initial validation (2026-10-10)
 
+## Default-mode regression (2026-10-11)
+
+The shared loader and saved-image probe/benchmark now default to local
+`Qwen/Qwen3-VL-2B-Instruct`; Gemini still requires explicit selection and a
+model ID. An offline-cache `probe_vlm.py` invocation with **no** `--backend`
+or `--model-id` loaded Qwen on the RTX 3090 and saved a parseable `held`
+response in `/tmp/precision-qwen-default-smoke-20261011.json` (about 1.00 s
+model inference). Its two inputs are presentation panels, not one actual
+before/after trial, so this confirms the default routing and response format
+only. It gives no estimate of grasp-label accuracy or insertion success.
+
 The independent demo can select `mode="local"` with
 `load_vlm_backend(...)`, using ZeroDex's existing `main.vlm_base.BaseVLM`.
 `probe_vlm.py --backend local` runs lift or insertion-visual classification

@@ -79,12 +79,14 @@ export PYTHONPATH="$PWD/demo/precision-insertion:$HOME/realtime_vlm"
 ~/.venvs/precision-vlm/bin/python \
   demo/precision-insertion/evaluate_saved_vlm.py \
   --manifest /path/to/held_out_manifest.json \
-  --backend local --model-id Qwen/Qwen3-VL-2B-Instruct \
   --output /path/to/new_local_vlm_report.json
 ```
 
+Local `Qwen/Qwen3-VL-2B-Instruct` is the default; `--backend` and
+`--model-id` are optional for that case.
 `--backend gemini` uses the same manifest but additionally requires
-`--allow-external-images`, `GEMINI_API_KEY` and the optional Gemini SDK.
+`--model-id`, `--allow-external-images`, `GEMINI_API_KEY` and the optional
+Gemini SDK.
 The report retains exact prompts/responses, parse errors, source hashes,
 per-task confusion counts and target-class false-positive counts. The
 reported target classes are `held` and `normal_appearance`, respectively;

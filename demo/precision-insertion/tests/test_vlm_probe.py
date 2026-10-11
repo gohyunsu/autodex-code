@@ -59,3 +59,28 @@ def test_gemini_probe_requires_explicit_external_image_opt_in(tmp_path):
             "--backend", "gemini", "--model-id", "test-model",
             "--task", "lift", "--view", "front", str(before), str(after),
             "--output", str(tmp_path / "probe.json")])
+
+
+def test_probe_defaults_to_local_qwen(tmp_path, monkeypatch):
+    before, after = tmp_path / "before.png", tmp_path / "after.png"
+    Image.new("RGB", (10, 10)).save(before)
+    Image.new("RGB", (10, 10)).save(after)
+    loaded = []
+
+    class Backend:
+        def infer(self, images, prompt):
+            return '{"class":"held","evidence_views":["front"],"evidence":"visible"}'
+
+    def load(**kwargs):
+        loaded.append(kwargs)
+        return Backend()
+
+    monkeypatch.setattr(probe_vlm, "load_vlm_backend", load)
+    report = tmp_path / "default.json"
+    assert probe_vlm.main([
+        "--task", "lift", "--view", "front", str(before), str(after),
+        "--output", str(report)]) == 0
+    assert loaded[0]["mode"] == "local"
+    assert loaded[0]["model_id"] is None
+    assert json.loads(report.read_text())["model_id"] == (
+        probe_vlm.DEFAULT_LOCAL_VLM_MODEL_ID)

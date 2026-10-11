@@ -26,7 +26,8 @@ if str(DEMO_DIR) not in sys.path:
     sys.path.insert(0, str(DEMO_DIR))
 
 from precision_insertion.observer import (  # noqa: E402
-    LabeledFrame, load_vlm_backend, observe_insertion_visual, observe_lift,
+    DEFAULT_LOCAL_VLM_MODEL_ID, LabeledFrame, load_vlm_backend,
+    observe_insertion_visual, observe_lift,
 )
 
 
@@ -188,8 +189,9 @@ def _summarize(rows: list[dict]) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--backend", choices=("local", "gemini"), required=True)
-    parser.add_argument("--model-id", required=True)
+    parser.add_argument("--backend", choices=("local", "gemini"),
+                        default="local")
+    parser.add_argument("--model-id", help="defaults to local Qwen3-VL-2B")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--allow-external-images", action="store_true")
     parser.add_argument("--allow-cpu", action="store_true")
@@ -199,6 +201,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.backend == "gemini" and not args.allow_external_images:
         parser.error("Gemini needs explicit --allow-external-images consent")
+    if args.backend == "gemini" and not args.model_id:
+        parser.error("Gemini needs explicit --model-id")
     if (args.max_input_width <= 0 or args.max_input_height <= 0 or
             args.max_new_tokens <= 0):
         parser.error("positive image/token limits required")
@@ -233,7 +237,9 @@ def main(argv: list[str] | None = None) -> int:
         "schema": "precision_insertion_vlm_visual_benchmark_report_v1",
         "manifest_path": str(manifest_path),
         "manifest_sha256": manifest_sha,
-        "backend": args.backend, "model_id": args.model_id,
+        "backend": args.backend,
+        "model_id": (args.model_id if args.model_id is not None else
+                     DEFAULT_LOCAL_VLM_MODEL_ID),
         "cases": rows, "summary": _summarize(rows),
         "scope": "visual_label_dataset_replay_not_physical_task_success",
         "robot_ready": False,

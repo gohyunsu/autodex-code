@@ -88,10 +88,11 @@ export PYTHONPATH="$PWD/demo/precision-insertion:$HOME/realtime_vlm"
 ~/.venvs/precision-vlm/bin/python \
   demo/precision-insertion/probe_grounded_alignment.py \
   --manifest /path/to/new_grounding_manifest.json \
-  --model-id Qwen/Qwen3-VL-2B-Instruct \
   --output /path/to/new_grounding_report.json
 ```
 
+`Qwen/Qwen3-VL-2B-Instruct` is the default model ID; override it only when
+testing a specific local model.
 The script refuses to overwrite a report or load the model if hashes,
 transforms or claimed cross-camera times fail. Local metric grounding uses
 `require_native_pixels=True`: Qwen/ZeroDex resizing is rejected, since

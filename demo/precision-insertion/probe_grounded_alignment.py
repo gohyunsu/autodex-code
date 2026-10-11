@@ -35,7 +35,9 @@ from precision_insertion.grounded_alignment import (  # noqa: E402
 from precision_insertion.grounding_crop import (  # noqa: E402
     make_native_grounding_crop, verify_native_crop_observation,
 )
-from precision_insertion.observer import load_vlm_backend  # noqa: E402
+from precision_insertion.observer import (  # noqa: E402
+    DEFAULT_LOCAL_VLM_MODEL_ID, load_vlm_backend,
+)
 from precision_insertion.xy_overlay import CalibratedXYFrame  # noqa: E402
 
 
@@ -138,7 +140,7 @@ def _load_manifest(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--model-id", default="Qwen/Qwen3-VL-2B-Instruct")
+    parser.add_argument("--model-id", default=DEFAULT_LOCAL_VLM_MODEL_ID)
     parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument("--allow-cpu", action="store_true",
                         help="slow offline smoke test only")

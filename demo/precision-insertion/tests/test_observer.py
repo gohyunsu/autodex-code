@@ -14,7 +14,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.observer import (  # noqa: E402
-    HeldSceneView, LabeledFrame, XYView, ZeroDexGeminiBackend,
+    DEFAULT_LOCAL_VLM_MODEL_ID, HeldSceneView, LabeledFrame, XYView,
+    ZeroDexGeminiBackend,
     ZeroDexLocalBackend, load_vlm_backend,
     observe_insertion_visual, observe_lift, observe_preinsert_hold_views,
     observe_xy_views,
@@ -389,5 +390,11 @@ def test_local_loader_reuses_zerodex_without_gemini_or_resize(monkeypatch):
         "max_input_size": (16, 12), "use_thinking": False,
     }]
     assert backend.infer([_image()], "label") == '{"class":"held"}'
+    default_backend = load_vlm_backend(
+        max_input_size=(16, 12), max_new_tokens=40, require_cuda=False)
+    assert isinstance(default_backend, ZeroDexLocalBackend)
+    assert loaded[-1]["model_id"] == DEFAULT_LOCAL_VLM_MODEL_ID
+    with pytest.raises(ValueError, match="explicit model ID"):
+        load_vlm_backend(mode="gemini", max_input_size=(16, 12))
     with pytest.raises(ValueError, match="mode must be gemini or local"):
         load_vlm_backend(mode="auto", model_id="Qwen/test")

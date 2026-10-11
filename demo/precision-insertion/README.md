@@ -1,5 +1,9 @@
 # Precision insertion demo
 
+For a concise distinction between **offline-usable**, staging-only and
+missing assets, see [OFFLINE_ASSET_STATUS.md](OFFLINE_ASSET_STATUS.md). It
+does not treat live-camera/robot commissioning as a missing 3D file.
+
 ## Calibrated VLM point grounding (read-only diagnostic)
 
 `SessionRunner.prepare_grounded_xy_diagnostic(...)` is an alternative to
@@ -1286,7 +1290,8 @@ joint values. The demo-local measured lift boundary compares live arm/hand
 state with the **same** held-lift plan before invoking its external controller;
 it does not make the stock follower safe.
 
-For a **saved-image, read-only** observer replay, choose a backend explicitly.
+For a **saved-image, read-only** observer replay, the default backend is local
+`Qwen/Qwen3-VL-2B-Instruct`. Gemini is an explicit opt-in only.
 The newly generated key/socket FoundPose representations have a separate
 [saved-camera diagnostic](FOUNDPOSE_SAVED_REPLAY.md); it does not validate or
 enable the VLM/robot loop.
@@ -1314,7 +1319,7 @@ cache. For a semantic-only smoke test on *saved* images (not a real trial):
 
 ```bash
 ~/.venvs/precision-vlm/bin/python demo/precision-insertion/probe_vlm.py \
-  --backend local --model-id Qwen/Qwen3-VL-2B-Instruct --task lift \
+  --task lift \
   --view front /path/to/before.png /path/to/after.png \
   --output /tmp/precision-local-lift-probe.json
 ```
@@ -1335,7 +1340,6 @@ from precision_insertion.observer import (
 )
 
 backend = load_vlm_backend(
-    mode="local", model_id="Qwen/Qwen3-VL-2B-Instruct",
     max_input_size=(640, 640), require_native_pixels=False,
 )
 result = observe_lift(backend, [

@@ -25,6 +25,9 @@ class ImageVLM(Protocol):
     def infer(self, images: list[Image.Image], prompt: str) -> str: ...
 
 
+DEFAULT_LOCAL_VLM_MODEL_ID = "Qwen/Qwen3-VL-2B-Instruct"
+
+
 _CAMERA_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 
 
@@ -182,7 +185,7 @@ class ZeroDexLocalBackend:
 
     @classmethod
     def from_zerodex(
-        cls, *, model_id: str = "Qwen/Qwen3-VL-2B-Instruct",
+        cls, *, model_id: str = DEFAULT_LOCAL_VLM_MODEL_ID,
         family: str = "qwen", max_input_size: tuple[int, int],
         max_new_tokens: int = 512, require_cuda: bool = True,
         require_native_pixels: bool = True,
@@ -273,7 +276,7 @@ class ZeroDexLocalBackend:
 
 
 def load_vlm_backend(
-    *, mode: str, model_id: str,
+    *, mode: str = "local", model_id: str | None = None,
     max_input_size: tuple[int, int] | None = None,
     max_new_tokens: int = 512, require_cuda: bool = True,
     require_native_pixels: bool = True,
@@ -284,12 +287,16 @@ def load_vlm_backend(
     explicit external-API opt-in; local uses ZeroDex's existing BaseVLM.
     """
     if mode == "gemini":
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise ValueError("Gemini needs an explicit model ID")
         return ZeroDexGeminiBackend.from_env(model=model_id)
     if mode == "local":
+        selected_model = (DEFAULT_LOCAL_VLM_MODEL_ID if model_id is None
+                          else model_id)
         if max_input_size is None:
             raise ValueError("local mode needs original image-size ceiling")
         return ZeroDexLocalBackend.from_zerodex(
-            model_id=model_id, max_input_size=max_input_size,
+            model_id=selected_model, max_input_size=max_input_size,
             max_new_tokens=max_new_tokens, require_cuda=require_cuda,
             require_native_pixels=require_native_pixels)
     raise ValueError("VLM mode must be gemini or local")

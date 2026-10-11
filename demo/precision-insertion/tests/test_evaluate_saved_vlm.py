@@ -126,3 +126,28 @@ def test_gemini_batch_requires_explicit_external_image_consent(tmp_path):
         evaluate_saved_vlm.main([
             "--manifest", str(manifest), "--backend", "gemini",
             "--model-id", "gemini-test", "--output", str(tmp_path / "out.json")])
+
+
+def test_benchmark_defaults_to_local_qwen(tmp_path, monkeypatch):
+    manifest = _dataset(tmp_path / "dataset")
+    loaded = []
+
+    class Backend:
+        def infer(self, images, prompt):
+            return ('{"class":"miss","evidence_views":["front"],"evidence":"visible"}'
+                    if "after_lift" in prompt else
+                    '{"visual_class":"rim_jam","evidence_views":["front"],'
+                    '"evidence":"visible"}')
+
+    def load(**kwargs):
+        loaded.append(kwargs)
+        return Backend()
+
+    monkeypatch.setattr(evaluate_saved_vlm, "load_vlm_backend", load)
+    output = tmp_path / "default.json"
+    assert evaluate_saved_vlm.main([
+        "--manifest", str(manifest), "--output", str(output)]) == 0
+    assert loaded[0]["mode"] == "local"
+    assert loaded[0]["model_id"] is None
+    assert json.loads(output.read_text())["model_id"] == (
+        evaluate_saved_vlm.DEFAULT_LOCAL_VLM_MODEL_ID)
