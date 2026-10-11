@@ -4,6 +4,9 @@ This is a **read-only diagnostic** of the four representations generated on
 2026-10-11, not an accepted session calibration. The four full JSON reports
 are under
 `shared_data/AutoDex/precision_insertion/foundpose_saved_replay_20261011/`.
+An additional 20 mm-gap cylinder socket representation and nine-view replay
+were generated separately later the same day; see below. It is not included
+in the earlier four-object NAS archive.
 The replay uses the existing `autodex.perception.foundpose_init.FoundPoseInit`
 with each object's canonical v8 asset path. No stock source file, live camera
 or robot was changed or called.
@@ -82,6 +85,29 @@ Per-view minimum refined IoU, wrong-object visual review, and independent
 fixture truth must be commissioned before session acceptance. The reports
 record the exact full saved-view set and source hashes; no mask was invented
 for the other cameras.
+
+## Additional 20 mm-gap cylinder socket replay
+
+The exact `precision_socket_cylinder_gap_20mm` representation was loaded by
+the existing AutoDex `FoundPoseInit` and replayed on all **nine** saved masks
+available for one real socket-only rig shot. The hash-bound initial report is
+`foundpose_saved_replay_20261011/cylinder_socket_20mm.json`; its matching
+stock-selection/refinement report is
+`foundpose_stock_refine_20261011/cylinder_socket_20mm.json` under
+`shared_data/AutoDex/precision_insertion/`. Independent per-view initial
+poses disagreed by as much as **117.9 mm** in CAD-bounds centre and **148.7°**
+in directed socket axis. They must not be frozen individually.
+
+On those same nine masks, the unchanged stock IoU selection scored **0.858**
+mean cross-view IoU before silhouette refinement. The refined pose scored
+**0.973** mean and **0.964** in its weakest view, and passed the stock
+silhouette-loss gate. The optimizer excluded two views from its gradient but
+the reported post-refinement scores independently include all nine. This is
+evidence that the generated file loads and the existing multi-view method can
+fit these **supplied saved masks**. It is not independent pose ground truth:
+mask-to-exposure provenance, acquisition clocks, repeated fixture estimates,
+and physical socket-frame measurement are still unverified. A high IoU does
+not certify sub-millimetre insertion alignment or robot readiness.
 
 The demo `start_precision_session()` now runs this same stock selection and
 silhouette refinement separately for each admitted socket capture. It checks

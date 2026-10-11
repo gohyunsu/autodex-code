@@ -16,11 +16,13 @@ visual words. The generator saved each `repre.pth` and reloaded it successfully.
 | `precision_socket_unified` | Fixed square socket | Generated; saved-image diagnostic found cross-view disagreement |
 | `precision_key_cylinder_r15_h80` | Shared cylinder key | Generated; saved-image diagnostic found cross-view disagreement |
 | `precision_socket_cylinder_gap_15mm` | Cylinder 15 mm radial-gap socket | Generated; saved-image diagnostic found cross-view disagreement |
+| `precision_socket_cylinder_gap_20mm` | Cylinder 20 mm radial-gap socket | Generated; nine-view initial disagreement, then stock refinement replay passed silhouette fit only |
 
-All four completed the generator's own representation reload. Other gap
+All five completed the generator's own representation reload. Other gap
 variants are **not** implied to be onboarded by these files.
-The read-only [saved AutoDex-camera replay](FOUNDPOSE_SAVED_REPLAY.md) tests
-these new representations on three selected real views per condition. Initial
+The initial read-only [saved AutoDex-camera replay](FOUNDPOSE_SAVED_REPLAY.md)
+tests the first four representations on three selected real views per
+condition; the separate 20 mm socket replay uses nine views. Initial
 per-view estimates disagree, while a second replay shows that stock AutoDex
 multi-view IoU selection and silhouette refinement improves agreement with
 the supplied masks. Independent metric pose accuracy, repeated fixed-fixture
@@ -117,7 +119,8 @@ An interrupted, incomplete directory-by-directory NAS transfer is retained
 as `partial_directory_copy_interrupted/` in the same handoff directory.
 Never install that partial tree.
 
-Expected representation SHA-256 digests:
+Representation SHA-256 digests (the 20 mm row belongs to the separate tar
+documented below, not the four-object tar):
 
 | Object | `repre.pth` SHA-256 |
 | --- | --- |
@@ -125,6 +128,33 @@ Expected representation SHA-256 digests:
 | `precision_socket_unified` | `f9ce9b733aec9853ada959a0ac69781db0435e03bcb5fd9813f89bc9c40302c2` |
 | `precision_key_cylinder_r15_h80` | `e7a0cff2181a85aafe5b26c865b5d9752c9c18aeb8567b59e6a4f06537145597` |
 | `precision_socket_cylinder_gap_15mm` | `aa5894bc7637b672388c1c7f073acd490c6335e37ed7f183ee90e3624b40861f` |
+| `precision_socket_cylinder_gap_20mm` | `b63a88d900eb04223985b26e0c8aeda4f155a3443555675e818f768f834ceb0e` |
+
+The 20 mm representation was generated separately on 2026-10-11, after the
+four-object NAS tar above. It is **not** included in that tar. Its source
+metric OBJ SHA-256 is
+`14bf4683c9c4b8d20668aa552f6a05449fe01bb7baeaf7221bd32741e010d72d`.
+The 798-template, 82,023-feature representation was generated in a new local
+staging directory, reloaded by the generator, then moved into the canonical
+`foundpose_assets/precision_socket_cylinder_gap_20mm` path without replacing
+another representation. The old `GENERATION_REQUIRED.json` was preserved at
+`shared_data/AutoDex/archive/precision_socket_cylinder_gap_20mm_foundpose_marker_20261011/`.
+The demo asset audit now finds the 20 mm socket representation. A separate
+read-only replay of nine saved AutoDex views is described in
+[FOUNDPOSE_SAVED_REPLAY.md](FOUNDPOSE_SAVED_REPLAY.md); neither that replay nor
+the green file audit commissions the socket fixture for robot insertion.
+For AutoDex-PC handoff, the separately created
+`precision_foundpose_socket_20mm_20261011.tar` is in
+`/mnt/paradex2/hyunsu/autodex_precision_insertion_foundpose_20261011/`.
+It contains the `AutoDex/foundpose_assets/precision_socket_cylinder_gap_20mm/`
+tree relative to a shared-data root and has SHA-256
+`c11a637bf167e48585baadd13734cfef5fd50072c1256d771518ba9c88fcf8a8`;
+the NAS copy was read back and matched the local tar. Inspect the tar member
+names and the destination before extraction, and never overwrite an existing
+accepted representation. The summary records workstation-absolute source
+paths as provenance; the canonical runtime location is the relative tree
+above. Matching object-processing mesh and calibration still have to exist
+on the recipient PC.
 
 On the recipient, list and hash the tar before extracting it into the
 **intended** shared-data root. Do not unpack over a previously validated
