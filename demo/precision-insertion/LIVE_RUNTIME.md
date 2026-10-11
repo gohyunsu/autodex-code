@@ -277,7 +277,10 @@ eligible insertion grasp in the 1,000-per-scene batch. Its staged
 Of 33 source-verified MuJoCo-stable seeds, two pass the illustrative 5 mm
 drift / 10° full-rotation gate. The selector may therefore offer `0→4` to
 the socket-aware Franka preflight; a passing seed alone is not permission
-to move, and a failed preflight still stops for review.
+to move, and a failed preflight still stops for review. Three hypothetical
+release-site probes of those two seeds found no complete Franka path; one
+same-state collision isolation implicated the hypothetical table obstacle.
+This is a planner diagnostic, not a claim about every measured session.
 
 If the first XY-retry diagnostic abstains or its lateral preflight fails,
 the key is already at the withdrawn hold. The assembled held-return handler

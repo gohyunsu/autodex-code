@@ -90,6 +90,29 @@ The four current-pool catalogs are
 The all-mode [offline asset audit](OFFLINE_ASSET_STATUS.md) checks all four
 against their installed candidate files.
 
+## Four-gap NAS handoff and path relocation
+
+The [versioned NAS handoff](/mnt/paradex2/hyunsu/autodex_precision_insertion_square_fullkey1000_handoff_20261011_10c455d)
+contains all four key object-processing trees, the shared socket/fixture,
+their five v8 tabletop scenes each, and the full current candidate pools
+(124 candidate directories, of which 120 pass the nominal endpoint screen).
+Its source catalogs are **audit-only**. All 1,266 payload/support files were
+read back from NAS and SHA256-checked against `MANIFEST.json`.
+
+On another PC, first provide the identical FR3/Inspire URDF and its meshes
+at that PC's active `shared_data/AutoDex/content` path. Dry-run
+`rehydrate_square_fullkey_handoff.py --bundle-root NAS_HANDOFF
+--target-shared-root NEW_SHARED_ROOT`; add `--install` only after confirming
+it reports no conflicting files. The installer never overwrites existing
+files. It changes only the known scene/fixture absolute paths and the
+candidate hashes that bind those scenes, preserving the original source
+hash in each relocation record. Then run `run_pipeline.py screen-catalog`
+for **each** square gap at the recipient root; never use the NAS copy's
+source-root catalog directly. A scratch relocation into a different path
+reproduced 31/24/24/41 eligible counts with zero screen errors.
+FoundPose PTHs are distributed separately; neither bundle proves camera
+pose accuracy or physical insertion.
+
 ## Missing 0.5 mm pose `000`: directed reorientation attempt
 
 The stock v8 reorient scene generator prepared both BODex and sim-filter
@@ -111,6 +134,26 @@ seed loader usable for the *example* gate; socket-aware Franka
 pickup–lift–repose–release preflight and observed landing are still absent.
 The smaller 1,000-proposal scan remains archived separately and had seven
 MuJoCo passes but zero passes at the same illustrative gate.
+
+The [versioned NAS reset handoff](/mnt/paradex2/hyunsu/autodex_precision_insertion_reorient_square_0p5_5000_20261011_10c455d)
+includes all 33 seeds, the original key and scene snapshot, a source-hash
+manifest, and the 5 mm/10° audit. All files were byte-compared against the
+local curated root. `rehydrate_curated_reorient.py --mode square --gap-mm 0.5`
+relocated that NAS bundle into a distinct scratch shared-data path; its
+direct-v8 loader reproduced 33 stable and two illustrative fidelity passes.
+The required `--target-handoff-root` must be a new directory **inside** the
+recipient's `--target-shared-root`, outside canonical AutoDex candidates.
+
+Three hypothetical release sites were tested with the two illustrative
+fidelity-pass seeds. All failed complete Franka repose preflight: at
+`(0.45, 0.08)` m and `(0.40, 0.00)` m both failed held descent; at
+`(0.35, -0.12)` m one failed descent by joint limit and the other failed
+held transfer. For the first site's seed `274`, a [same-state obstacle
+isolation](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/synthetic_repose_0p5_0_4_isolation_20261011/collision_isolation.json)
+found the synthetic table obstacle necessary for its cuRobo world-collision
+verdict: table-only failed, socket-only and neither passed. This does **not**
+identify a contacting robot link or prove failure for every measured layout.
+No 0.5 mm reset path is yet accepted for runtime execution.
 
 The normal sandbox hides CUDA and exposes NAS as read-only, whereas an
 explicitly authorized host execution saw RTX 3090 and a writable NFS mount.
