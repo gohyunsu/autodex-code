@@ -44,6 +44,9 @@ from .insertion_checkpoint import (
     write_insertion_checkpoint,
 )
 from .endpoint import _load_mesh
+from .failed_return_evidence import (
+    verify_failed_return_execution, write_failed_return_plan,
+)
 from .live_robot_state import LiveRobotState
 from .observer import ImageVLM
 from .raw_camera_capture import verify_raw_camera_capture
@@ -87,7 +90,10 @@ if TYPE_CHECKING:
     from .postshift_arrival_replan import PostShiftArrivalReplan
 from .repose_artifacts import write_repose_preflight_artifacts
 from .repose_execution_evidence import verify_repose_execution_evidence
-from .repose_preflight import validate_repose_rest_target
+from .repose_preflight import (
+    plan_repose_held_from_state, validate_repose_rest_target,
+)
+from .repose_release import plan_repose_release_exit
 from .repose_transition import (
     ReposeTransitionPreflight, preflight_v8_repose_transition,
 )
@@ -1607,6 +1613,107 @@ class SessionRunner:
             stage, status, timestamp_s=timestamp_s,
             evidence_refs=evidence_refs))
 
+    def prepare_failed_insertion_return(
+        self, *, planner, withdrawn_state: LiveRobotState,
+        withdrawal_evidence_path: Path, limits: PathAuditLimits,
+        release_height_m: float, minimum_rest_socket_clearance_m: float,
+        minimum_board_edge_clearance_m: float,
+        minimum_release_key_clearance_m: float,
+        max_withdrawal_state_gap_s: float,
+        max_arm_hand_skew_s: float,
+        max_hand_command_error_raw: float,
+        max_arm_velocity_rad_s: float,
+    ):
+        """Plan this attempt's held return from a logged axial withdrawal.
+
+        Reuse the observed/bounded post-lift relation, frozen socket world,
+        original tabletop key pose, Franka v8 planning primitives and a fully
+        open/clear-view release goal. This does not command motors or assert
+        that the key landed successfully.
+        """
+        if (self.current_decision().action !=
+                "recover_held_key_then_reobserve" or
+                self._attempt is None or self._attempt_dir is None or
+                self._preflight is None or self._postlift_preflight is None or
+                self._postlift_preflight.status !=
+                "sampled_postlift_preflight_pass" or
+                self._postlift_report_path is None or
+                self._postlift_report_sha256 is None or
+                not self._postlift_report_path.is_file() or
+                hashlib.sha256(self._postlift_report_path.read_bytes()).hexdigest()
+                != self._postlift_report_sha256):
+            raise ValueError("failed return needs this insertion attempt's held relation")
+        if (not isinstance(withdrawn_state, LiveRobotState) or
+                not isinstance(limits, PathAuditLimits) or
+                not math.isfinite(float(max_withdrawal_state_gap_s)) or
+                max_withdrawal_state_gap_s <= 0):
+            raise ValueError("failed return needs fresh measured state and limits")
+        withdrawn_state.validate(
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s)
+        withdrawal_path = Path(withdrawal_evidence_path).expanduser().resolve()
+        withdrawal = json.loads(withdrawal_path.read_text(encoding="utf-8"))
+        insertion_at = next(
+            row["timestamp_s"] for row in reversed(self._attempt.events)
+            if row["stage"] == "insertion_success")
+        completed = float(withdrawal.get("completed_at_s", float("nan")))
+        if (withdrawal.get("schema") !=
+                "precision_insertion_guarded_withdrawal_v1" or
+                withdrawal.get("attempt_id") != self._attempt.attempt_id or
+                withdrawal.get("candidate_id") != self._attempt.candidate_id or
+                withdrawal.get("status") != "withdrawn_to_preinsert_hold" or
+                withdrawal.get("source") != "commissioned_guarded_controller" or
+                withdrawal.get("key_still_held") is not True or
+                withdrawal.get("safety_abort") is not False or
+                not math.isfinite(completed) or completed <= insertion_at or
+                withdrawn_state.sample_timestamp_s <= completed or
+                withdrawn_state.sample_timestamp_s - completed >
+                max_withdrawal_state_gap_s):
+            raise ValueError("failed return needs this attempt's recent held withdrawal")
+        relation = validate_se3(
+            self._postlift_preflight.relation.T_key_hand,
+            name="failed-return post-lift T_key_hand")
+        c2r = validate_se3(self.calibration.record.get("c2r"),
+                           name="session C2R")
+        rest = validate_se3(
+            np.linalg.inv(c2r) @ self._preflight.key_pose_world,
+            name="original tabletop key rest pose")
+        held = plan_repose_held_from_state(
+            planner=planner, trial_scene=self._preflight.trial_scene,
+            shared_root=self.shared_root, calibration=self.calibration,
+            mode=self.mode, T_key_hand=relation,
+            measured_start_q=withdrawn_state.full_q,
+            T_robot_key_rest=rest, release_height_m=release_height_m,
+            minimum_rest_socket_clearance_m=(
+                minimum_rest_socket_clearance_m),
+            minimum_board_edge_clearance_m=(
+                minimum_board_edge_clearance_m), limits=limits)
+        if held.status != "sampled_held_path_pass_release_unplanned":
+            raise ValueError(f"failed held return was rejected: {held.status}")
+        from autodex.utils.robot_config import FR3_CLEAR_VIEW, INSPIRE_INIT
+
+        release = plan_repose_release_exit(
+            planner=planner, trial_scene=self._preflight.trial_scene,
+            shared_root=self.shared_root, calibration=self.calibration,
+            mode=self.mode, held_plan=held, release_hand_q=INSPIRE_INIT,
+            retreat_goal_arm_q=FR3_CLEAR_VIEW,
+            minimum_release_key_clearance_m=(
+                minimum_release_key_clearance_m), limits=limits)
+        if release.status != "nominal_release_exit_path_pass_drop_unobserved":
+            raise ValueError(f"failed return release was rejected: {release.status}")
+        report = write_failed_return_plan(
+            output_dir=self._attempt_dir / "failed_return_preflight",
+            attempt_id=self._attempt.attempt_id,
+            candidate_id=self._attempt.candidate_id,
+            session_calibration_sha256=self.session_sha256,
+            catalog_sha256=self.catalog_sha256,
+            withdrawal_evidence_path=withdrawal_path,
+            postlift_report_path=self._postlift_report_path,
+            withdrawn_state=withdrawn_state,
+            held=held, release=release)
+        return held, release, report
+
     def observe_reset_landing(
         self, *, key_observation: KeyPoseObservation,
         key_evidence_dir: Path, recovery_log_path: Path,
@@ -1615,7 +1722,7 @@ class SessionRunner:
         minimum_rest_socket_clearance_m: float,
         minimum_board_edge_clearance_m: float,
     ) -> AttemptRecord:
-        """Verify a supervised return from a new supported tabletop key pose.
+        """Verify a manual or bound automatic return from a fresh key pose.
 
         This does not extract the key or execute reset motion. A verified
         insertion ends this session; reset may only follow a non-successful
@@ -1639,24 +1746,50 @@ class SessionRunner:
         recovery_bytes = recovery_file.read_bytes()
         recovery = json.loads(recovery_bytes)
         if not isinstance(recovery, dict):
-            raise ValueError("supervised recovery log must be a JSON object")
-        try:
-            completed = float(recovery.get("completed_at_s", float("nan")))
-        except (TypeError, ValueError) as exc:
-            raise ValueError("invalid supervised recovery completion time") from exc
-        if (recovery.get("schema") !=
-                "precision_insertion_supervised_reset_v1" or
-                recovery.get("attempt_id") != self._attempt.attempt_id or
-                recovery.get("method") != "supervised_manual_return" or
-                not isinstance(recovery.get("reviewed_by"), str) or
-                not recovery["reviewed_by"].strip() or
-                recovery.get("socket_clear") is not True or
-                recovery.get("hand_open") is not True or
-                not math.isfinite(completed) or
-                completed <= self._attempt.events[-1]["timestamp_s"] or
-                (self._attempt.labels["insertion_success"] is not None and
-                 recovery.get("key_removed_from_socket") is not True)):
-            raise ValueError("reset needs a later supervised recovery log")
+            raise ValueError("recovery log must be a JSON object")
+        if recovery.get("schema") == "precision_insertion_failed_return_execution_v1":
+            if (self.current_decision().action !=
+                    "recover_held_key_then_reobserve" or
+                    self._postlift_report_path is None or
+                    self._postlift_report_sha256 is None or
+                    not self._postlift_report_path.is_file() or
+                    hashlib.sha256(self._postlift_report_path.read_bytes()).hexdigest()
+                    != self._postlift_report_sha256):
+                raise ValueError("automatic return needs this held-key attempt")
+            execution = verify_failed_return_execution(
+                path=recovery_file, attempt_id=self._attempt.attempt_id,
+                candidate_id=self._attempt.candidate_id,
+                attempt_started_at_s=self._attempt.started_at_s,
+                session_calibration_sha256=self.session_sha256,
+                catalog_sha256=self.catalog_sha256)
+            plan = json.loads(Path(execution["plan_report"]["path"]).read_text(
+                encoding="utf-8"))
+            if plan["sources"]["postlift_report"] != {
+                    "path": str(self._postlift_report_path.resolve()),
+                    "sha256": self._postlift_report_sha256}:
+                raise ValueError("automatic return differs from this held relation")
+            completed = execution["exit_completed_at_s"]
+            recovery_mode = "planned_held_return"
+        else:
+            try:
+                completed = float(recovery.get("completed_at_s", float("nan")))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("invalid supervised recovery completion time") from exc
+            if (recovery.get("schema") !=
+                    "precision_insertion_supervised_reset_v1" or
+                    recovery.get("attempt_id") != self._attempt.attempt_id or
+                    recovery.get("method") != "supervised_manual_return" or
+                    not isinstance(recovery.get("reviewed_by"), str) or
+                    not recovery["reviewed_by"].strip() or
+                    recovery.get("socket_clear") is not True or
+                    recovery.get("hand_open") is not True or
+                    not math.isfinite(completed) or
+                    (self._attempt.labels["insertion_success"] is not None and
+                     recovery.get("key_removed_from_socket") is not True)):
+                raise ValueError("reset needs a later supervised recovery log")
+            recovery_mode = "supervised_manual_return"
+        if completed <= self._attempt.events[-1]["timestamp_s"]:
+            raise ValueError("reset recovery did not follow the attempt")
         observation_time = float(timestamp_s)
         if (not math.isfinite(observation_time) or
                 key_observation.capture_id == self._capture_id or
@@ -1717,6 +1850,7 @@ class SessionRunner:
             "recovery_log": str(recovery_file),
             "recovery_log_sha256": hashlib.sha256(
                 recovery_bytes).hexdigest(),
+            "recovery_mode": recovery_mode,
             "target_pose_stem": self._preflight.pose_class["stem"],
             "observed_pose_class": classification,
             "observed_support": support,
@@ -1725,7 +1859,7 @@ class SessionRunner:
             "reset_success": success,
             "session_calibration_sha256": self.session_sha256,
             "catalog_sha256": self.catalog_sha256,
-            "scope": "observed_tabletop_return_after_supervised_recovery_not_automatic_extraction",
+            "scope": "observed_tabletop_return_after_bound_recovery_not_inferred_drop_pose",
             "robot_ready": False,
         })
         return self._record(lambda row: row.record_stage(

@@ -13,19 +13,27 @@ For a **still-held key after insertion failure**, the intended common tail is:
    site. The trial-start site is a useful target, but its full key footprint
    must fit the measured ChArUco area and clear the frozen socket.
 3. Preflight hand opening, upward exit and retract using the existing reset
-   release planner. Then call `ClearViewForPerception.finish_planned_release_exit()`
-   with blocking commissioned motion callbacks. It opens Inspire fully,
-   checks measured opening, follows the vertical exit and socket-aware
-   retract, then confirms measured `FR3_CLEAR_VIEW` / `INSPIRE_INIT` joints.
+   release planner. `ClearViewForPerception.complete_failed_insertion_return_with_autodex()`
+   follows the planned held transfer/descent through the stock
+   `FrankaExecutor.follow_joint_trajectory()` with converted Inspire actions,
+   then calls its ramped `release()` and follows the vertical exit/retract.
+   It checks measured endpoints and final `FR3_CLEAR_VIEW` / `INSPIRE_INIT`.
    Do not use free-space `home(clear_view=True)` after a trial.
 4. Capture the landed key afresh only after clear-view feedback passes. A
    commanded drop does not prove its pose.
-   `SessionRunner.observe_reset_landing()` currently admits only a supervised
-   manual return; a bound automatic-return execution/landing adapter is still
-   needed before the action loop can repeat trials this way.
+   `SessionRunner.observe_reset_landing()` accepts either a supervised manual
+   return or an ordered, source-bound automatic-return execution record. A
+   commissioned controller still has to produce that independent record;
+   neither a commanded drop nor a planned trajectory proves the landing.
 
-For a missed grasp, there is no held key to withdraw or drop; recapture the
-tabletop key. A lost grasp or abort cannot use the held-key return path.
+For a **judged missed grasp**, there is no held key to withdraw or drop.
+`LiveKeyPlanningHandlers` calls stock AutoDex
+`FrankaExecutor.release(..., open_to_init=True)` and `reset()` before
+recapture. The reset scene preserves the original tabletop key and frozen
+socket as obstacles, then checks measured open-hand/clear-view feedback.
+If reset planning or execution fails, key perception does not restart. A
+lost grasp or ambiguous abort cannot use this missed-grasp path or the
+held-key return path automatically.
 
 The new planning primitive starts **after** the withdrawal. It shares the
 socket-aware held transfer/descent and release checks used by directed v8
@@ -33,6 +41,13 @@ repose; it neither runs AutoDex's pickup planner again nor invents a second
 lift. Supply the actual measured 13-DoF withdrawal endpoint, a previously
 established held relation, the original trial scene, and an explicit safe
 tabletop target:
+
+In a live session, prefer `runner.prepare_failed_insertion_return(...)`.
+It accepts the externally logged guarded withdrawal, checks the measured
+Franka/Inspire start, reuses that attempt's saved post-lift key/hand relation
+and original tabletop pose, and writes an immutable return plan with source
+hashes under the attempt. The explicit lower-level equivalent is shown here
+to clarify the geometry:
 
 ```python
 from precision_insertion.repose_preflight import plan_repose_held_from_state
@@ -62,15 +77,45 @@ release = plan_repose_release_exit(
 if release.status != "nominal_release_exit_path_pass_drop_unobserved":
     raise RuntimeError(release.status)
 
-# First execute held.transfer_trajectory and held.descent_trajectory through
-# the commissioned controller. The callbacks below must block and report
-# physical execution failures; the gate confirms release-site feedback.
-clear_view.finish_planned_release_exit(
-    release_plan=release,
-    open_hand=commissioned_open_inspire,
-    follow_joint_trajectory=commissioned_follow_franka_inspire,
-)
+# After the commissioned guarded withdrawal and a fresh measured start,
+# this reuses the existing FrankaExecutor for all return/exit motion.
+clear_view.complete_failed_insertion_return_with_autodex(
+    held_plan=held, release_plan=release)
 ```
+
+The live call supplies the same physical quantities but also binds sources:
+
+```python
+held, release, plan_report = runner.prepare_failed_insertion_return(
+    planner=planner, withdrawn_state=withdrawn_state,
+    withdrawal_evidence_path=withdrawal_log_path,
+    limits=path_audit_limits, release_height_m=release_height_m,
+    minimum_rest_socket_clearance_m=socket_clearance_m,
+    minimum_board_edge_clearance_m=board_edge_margin_m,
+    minimum_release_key_clearance_m=release_key_clearance_m,
+    max_withdrawal_state_gap_s=commissioned_state_gap_s,
+    max_arm_hand_skew_s=commissioned_arm_hand_skew_s,
+    max_hand_command_error_raw=commissioned_hand_error_raw,
+    max_arm_velocity_rad_s=commissioned_arm_velocity_rad_s,
+)
+clear_view.complete_failed_insertion_return_with_autodex(
+    held_plan=held, release_plan=release)
+```
+
+The commissioned execution recorder must then save an ordered
+`precision_insertion_failed_return_execution_v1` record (phases:
+`axial_withdrawal`, `held_transfer`, `held_descent`, `release_open`,
+`post_release_lift`, `post_release_retract`) with the exact `plan_report`
+path/hash, session/catalogue hashes and independent hashed controller
+feedback files. See
+[`failed_return_evidence.py`](precision_insertion/failed_return_evidence.py).
+After the arm is clear, capture the key anew and call
+`runner.observe_reset_landing(..., recovery_log_path=execution_log_path)`.
+Only an observed supported tabletop pose in the original pose class and
+within the configured return-position tolerance sets `reset_success=True`.
+The action-loop handler that obtains the new camera observation and
+controller log remains AutoDex-PC integration work; neither the plan writer
+nor the motion wrapper fabricates those measurements.
 
 The first two identical `held.lift_trajectory` rows are a stationary audit
 hold, **not** an executable lift. Only `held.transfer_trajectory` and

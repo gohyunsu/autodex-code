@@ -7,6 +7,7 @@ vertical exit and socket-aware retract before this gate admits a new image.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 import math
 import time
@@ -17,6 +18,7 @@ import numpy as np
 from autodex.utils.robot_config import FR3_CLEAR_VIEW, INSPIRE_INIT
 
 from .live_robot_state import LiveRobotState
+from .repose_preflight import ReposeHeldPreflight
 from .repose_release import ReposeReleasePreflight
 
 
@@ -99,6 +101,45 @@ class ClearViewForPerception:
         """Every trial/retrial needs a clear, open, stationary measured state."""
         return self.verify_state(self.read_state(), phase="before_key_capture")
 
+    def prepare_failed_grasp_for_capture(
+        self, *, pickup_plan, planner, trial_scene: dict,
+    ) -> LiveRobotState:
+        """Reuse AutoDex release/reset after an observed *missed* grasp.
+
+        AutoDex's reset plans a vertical clearance then a retract to
+        ``FR3_CLEAR_VIEW``. Its stock scene moves ``target`` to the predicted
+        release site; on a miss the real key may instead remain at its original
+        tabletop pose. Preserve that original target as a second obstacle in
+        the copied world, while retaining the frozen socket. Never execute a
+        free-space home here. A slip/unknown held-key state is not a miss and
+        must not call this path.
+        """
+        state = self.read_state()
+        self._validate_feedback(state, phase="failed_grasp_recovery")
+        if (np.max(np.abs(state.full_q[:7] - FR3_CLEAR_VIEW)) <=
+                self.max_arm_error_rad and
+                np.max(np.abs(state.full_q[7:] - INSPIRE_INIT)) <=
+                self.max_hand_error_rad):
+            return state
+        if (not getattr(pickup_plan, "success", False) or planner is None or
+                not callable(getattr(self.executor, "release", None)) or
+                not callable(getattr(self.executor, "reset", None)) or
+                not isinstance(trial_scene, dict) or
+                not isinstance(trial_scene.get("mesh"), dict) or
+                not isinstance(trial_scene["mesh"].get("target"), dict) or
+                "fixture_socket" not in trial_scene["mesh"]):
+            raise ValueError("failed-grasp clear view needs the selected AutoDex plan and frozen world")
+        scene = copy.deepcopy(trial_scene)
+        if "failed_grasp_original_key" in scene["mesh"]:
+            raise ValueError("failed-grasp scene already has a reserved key obstacle")
+        scene["mesh"]["failed_grasp_original_key"] = copy.deepcopy(
+            scene["mesh"]["target"])
+        # Stock AutoDex release uses the selected grasp/pregrasp ramp. Full
+        # opening here is appropriate only after a judged miss, not a slip.
+        self.executor.release(pickup_plan, open_to_init=True)
+        self.executor.reset(pickup_plan, planner, scene)
+        return self.before_key_capture()
+
     def finish_planned_release_exit(
         self, *, release_plan: ReposeReleasePreflight,
         open_hand: Callable[[np.ndarray], None],
@@ -151,3 +192,94 @@ class ClearViewForPerception:
                                       require_open=True)
         follow_joint_trajectory(retract.copy())
         return self.verify_state(self.read_state(), phase="after_release_exit")
+
+    def finish_planned_release_exit_with_autodex(
+        self, *, release_plan: ReposeReleasePreflight,
+    ) -> LiveRobotState:
+        """Execute the checked exit through the existing FrankaExecutor.
+
+        The stock public trajectory method accepts arm joints plus a separate
+        Inspire controller-unit trajectory. Reuse its own conversion and
+        release ramp so the full 13-DOF plan is actually followed; passing
+        only the 13-column array would silently leave the hand untouched.
+        """
+        if (not callable(getattr(self.executor, "release", None)) or
+                not callable(getattr(self.executor, "follow_joint_trajectory", None)) or
+                not callable(getattr(self.executor, "_convert", None))):
+            raise TypeError("planned release needs the stock FrankaExecutor")
+
+        def open_hand(_open_q: np.ndarray) -> None:
+            self.executor.release(None, open_to_init=True)
+
+        return self.finish_planned_release_exit(
+            release_plan=release_plan, open_hand=open_hand,
+            follow_joint_trajectory=self._follow_autodex)
+
+    def _follow_autodex(self, path: np.ndarray) -> None:
+        hand_actions = np.asarray([
+            self.executor._convert(row[7:]) for row in path],
+            dtype=np.float64)
+        self.executor.follow_joint_trajectory(
+            path, hand_traj=hand_actions)
+
+    def complete_failed_insertion_return_with_autodex(
+        self, *, held_plan: ReposeHeldPreflight,
+        release_plan: ReposeReleasePreflight,
+    ) -> LiveRobotState:
+        """From withdrawn hold, return key to table and park for recapture.
+
+        This does not perform the preceding guarded axial withdrawal or infer
+        where the key actually landed. It follows only the already-audited
+        held transfer/descent; release and empty-hand exit use the same stock
+        FrankaExecutor as the v8 pipeline.
+        """
+        if (not isinstance(held_plan, ReposeHeldPreflight) or
+                held_plan.status != "sampled_held_path_pass_release_unplanned" or
+                not isinstance(held_plan.sampled_held_path_audit, dict) or
+                held_plan.sampled_held_path_audit.get("sampled_clear") is not True or
+                held_plan.transfer_trajectory is None or
+                held_plan.descent_trajectory is None or
+                not callable(getattr(self.executor, "follow_joint_trajectory", None)) or
+                not callable(getattr(self.executor, "_convert", None))):
+            raise ValueError("failed insertion return needs passed held paths and AutoDex executor")
+        transfer = np.asarray(held_plan.transfer_trajectory, dtype=float)
+        descent = np.asarray(held_plan.descent_trajectory, dtype=float)
+        if (transfer.ndim != 2 or descent.ndim != 2 or
+                transfer.shape[1] != 13 or descent.shape[1] != 13 or
+                len(transfer) < 2 or len(descent) < 2 or
+                not np.all(np.isfinite(transfer)) or
+                not np.all(np.isfinite(descent)) or
+                not np.allclose(transfer[-1], descent[0], atol=1e-4, rtol=0) or
+                not np.allclose(transfer[:, 7:], held_plan.held_hand_q,
+                                atol=1e-8, rtol=0) or
+                not np.allclose(descent[:, 7:], held_plan.held_hand_q,
+                                atol=1e-8, rtol=0)):
+            raise ValueError("failed insertion held paths are discontinuous")
+        if (not isinstance(release_plan, ReposeReleasePreflight) or
+                release_plan.status !=
+                "nominal_release_exit_path_pass_drop_unobserved" or
+                not isinstance(release_plan.release_geometry_audit, dict) or
+                release_plan.release_geometry_audit.get("sampled_clear") is not True or
+                release_plan.post_release_lift_trajectory is None or
+                release_plan.retract_trajectory is None or
+                not np.allclose(
+                    np.asarray(release_plan.post_release_lift_trajectory)[0, :7],
+                    descent[-1, :7], atol=1e-4, rtol=0)):
+            raise ValueError("failed insertion return lacks a continuous release/exit plan")
+        self._verify_return_endpoint(transfer[0], phase="withdrawn_held_start")
+        self._follow_autodex(transfer.copy())
+        self._verify_return_endpoint(transfer[-1], phase="held_transfer_end")
+        self._follow_autodex(descent.copy())
+        self._verify_return_endpoint(descent[-1], phase="held_descent_end")
+        return self.finish_planned_release_exit_with_autodex(
+            release_plan=release_plan)
+
+    def _verify_return_endpoint(self, expected: np.ndarray, *, phase: str):
+        state = self.read_state()
+        self._validate_feedback(state, phase=phase)
+        if (np.max(np.abs(state.full_q[:7] - expected[:7])) >
+                self.max_arm_error_rad or
+                np.max(np.abs(state.full_q[7:] - expected[7:])) >
+                self.max_hand_error_rad):
+            raise ValueError(f"{phase}: measured robot missed the held-return waypoint")
+        return state

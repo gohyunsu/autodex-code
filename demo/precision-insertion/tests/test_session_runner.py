@@ -961,6 +961,155 @@ def test_supervised_reset_rejects_wrong_class_or_displaced_key(
     assert runner.current_decision().action == "stop_for_review"
 
 
+def test_failed_insertion_auto_return_observation_restarts_with_fresh_key(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    runner.max_xy_retries = 0
+    monkeypatch.setattr(
+        session_runner, "plan_admitted_key_trial",
+        lambda **kwargs: _report(runner, kwargs["key_observation"]))
+    _plan(runner, _observation("key_1", 10.0))
+    runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
+    runner.observe_stage("grasp_success", True, timestamp_s=10.3,
+                         evidence_refs=_bind_lift(runner))
+    postlift = Path(_bind_postlift(runner))
+    runner.observe_stage(
+        "preinsert_reached", True, timestamp_s=10.4,
+        evidence_refs=_bind_preinsert(runner, monkeypatch))
+    runner._record(lambda row: row.record_insertion_evidence(
+        InsertionEvidence("partial", (0.005, 0.008),
+                          "key_pose_multiview", True, False, True),
+        timestamp_s=10.5,
+        evidence_refs={"vlm_observation": "vlm/insert.json",
+                       "key_depth": "pose/depth.json",
+                       "alignment": "pose/axis.json",
+                       "force_trace": "wrench/trace.json"}))
+    assert runner.current_decision().action == "recover_held_key_then_reobserve"
+    report = tmp_path / "return_plan.json"
+    report.write_text(json.dumps({
+        "sources": {"postlift_report": {
+            "path": str(postlift.resolve()),
+            "sha256": hashlib.sha256(postlift.read_bytes()).hexdigest()}}
+    }), encoding="utf-8")
+    execution = tmp_path / "return_execution.json"
+    execution.write_text(json.dumps({
+        "schema": "precision_insertion_failed_return_execution_v1"
+    }), encoding="utf-8")
+    monkeypatch.setattr(
+        session_runner, "verify_failed_return_execution",
+        lambda **_kwargs: {
+            "plan_report": {"path": str(report)},
+            "exit_completed_at_s": 10.7})
+    monkeypatch.setattr(
+        session_runner, "classify_key_tabletop_pose",
+        lambda **_kwargs: {"stem": "000", "rotation_error_deg": 0.0})
+    monkeypatch.setattr(
+        session_runner, "validate_repose_rest_target",
+        lambda **_kwargs: {"key_socket_clearance_m": 0.1})
+    monkeypatch.setattr(
+        session_runner, "_load_mesh",
+        lambda _path: SimpleNamespace(bounds=np.array([
+            [-0.01, -0.01, 0.0], [0.01, 0.01, 0.08]])))
+    landed = _observation("reset_key", 11.0)
+    evidence_dir = _save_evidence(runner, landed)
+    result = runner.observe_reset_landing(
+        key_observation=landed, key_evidence_dir=evidence_dir,
+        recovery_log_path=execution, timestamp_s=11.05,
+        max_pose_error_deg=5.0, max_return_center_shift_m=0.01,
+        support_tolerance_m=0.002,
+        minimum_rest_socket_clearance_m=0.005,
+        minimum_board_edge_clearance_m=0.005)
+    assert result.labels["reset_success"] is True
+    assert runner.current_decision().action == "reobserve_key_and_preflight"
+    saved = json.loads((runner._attempt_dir / "reset_landing.json").read_text())
+    assert saved["recovery_mode"] == "planned_held_return"
+
+
+def test_failed_return_plan_reuses_postlift_relation_and_frozen_world(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    runner.max_xy_retries = 0
+    monkeypatch.setattr(
+        session_runner, "plan_admitted_key_trial",
+        lambda **kwargs: _report(runner, kwargs["key_observation"]))
+    _plan(runner, _observation("key_1", 10.0))
+    runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
+    runner.observe_stage("grasp_success", True, timestamp_s=10.3,
+                         evidence_refs=_bind_lift(runner))
+    _bind_postlift(runner)
+    runner._postlift_preflight.relation = SimpleNamespace(T_key_hand=np.eye(4))
+    runner.observe_stage("preinsert_reached", True, timestamp_s=10.4,
+                         evidence_refs=_bind_preinsert(runner, monkeypatch))
+    runner._record(lambda row: row.record_insertion_evidence(
+        InsertionEvidence("partial", (0.005, 0.008),
+                          "key_pose_multiview", True, False, True),
+        timestamp_s=10.5,
+        evidence_refs={"vlm_observation": "vlm/insert.json",
+                       "key_depth": "pose/depth.json",
+                       "alignment": "pose/axis.json",
+                       "force_trace": "wrench/trace.json"}))
+    withdrawal = tmp_path / "withdrawal.json"
+    withdrawal.write_text(json.dumps({
+        "schema": "precision_insertion_guarded_withdrawal_v1",
+        "attempt_id": "attempt_1", "candidate_id": "table/0/3",
+        "status": "withdrawn_to_preinsert_hold",
+        "source": "commissioned_guarded_controller",
+        "key_still_held": True, "safety_abort": False,
+        "completed_at_s": 10.6,
+    }), encoding="utf-8")
+    raw = np.full(6, 500.)
+    q = np.r_[np.zeros(7), convert_inspire_raw(raw[None])[0]]
+    state = LiveRobotState(q, np.zeros(7), 10.7, 10.7, 100., 10.7,
+                           raw, raw.copy(), 0., np.zeros(6))
+    limits = PathAuditLimits(.1, .01, 5., .001, 2., .001, 2., .001)
+    held = SimpleNamespace(status="sampled_held_path_pass_release_unplanned")
+    release = SimpleNamespace(
+        status="nominal_release_exit_path_pass_drop_unobserved")
+    calls = []
+
+    def plan_held(**kwargs):
+        calls.append(("held", kwargs))
+        return held
+
+    def plan_release(**kwargs):
+        calls.append(("release", kwargs))
+        return release
+
+    report = tmp_path / "saved_return_plan.json"
+    monkeypatch.setattr(session_runner, "plan_repose_held_from_state", plan_held)
+    monkeypatch.setattr(session_runner, "plan_repose_release_exit", plan_release)
+    monkeypatch.setattr(
+        session_runner, "write_failed_return_plan",
+        lambda **kwargs: calls.append(("write", kwargs)) or report)
+    result = runner.prepare_failed_insertion_return(
+        planner=object(), withdrawn_state=state,
+        withdrawal_evidence_path=withdrawal, limits=limits,
+        release_height_m=.03, minimum_rest_socket_clearance_m=.005,
+        minimum_board_edge_clearance_m=.005,
+        minimum_release_key_clearance_m=.001,
+        max_withdrawal_state_gap_s=.2,
+        max_arm_hand_skew_s=.02, max_hand_command_error_raw=20.,
+        max_arm_velocity_rad_s=.05)
+    assert result == (held, release, report)
+    assert [name for name, _ in calls] == ["held", "release", "write"]
+    np.testing.assert_allclose(calls[0][1]["T_key_hand"], np.eye(4))
+    np.testing.assert_allclose(calls[0][1]["T_robot_key_rest"], np.eye(4))
+    assert calls[0][1]["trial_scene"] is runner._preflight.trial_scene
+    assert calls[2][1]["postlift_report_path"] == runner._postlift_report_path
+    withdrawal.write_text(withdrawal.read_text(encoding="utf-8").replace(
+        '"key_still_held": true', '"key_still_held": false'), encoding="utf-8")
+    with pytest.raises(ValueError, match="held withdrawal"):
+        runner.prepare_failed_insertion_return(
+            planner=object(), withdrawn_state=state,
+            withdrawal_evidence_path=withdrawal, limits=limits,
+            release_height_m=.03, minimum_rest_socket_clearance_m=.005,
+            minimum_board_edge_clearance_m=.005,
+            minimum_release_key_clearance_m=.001,
+            max_withdrawal_state_gap_s=.2,
+            max_arm_hand_skew_s=.02, max_hand_command_error_raw=20.,
+            max_arm_velocity_rad_s=.05)
+
+
 def test_retry_requires_matching_two_view_vote_and_live_replan(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)

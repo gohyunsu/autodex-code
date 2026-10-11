@@ -13,7 +13,7 @@ using the existing demo functions before returning. For example:
 
 | Runner action | Handler's existing boundary |
 | --- | --- |
-| `capture_fresh_key`, `reobserve_key_and_preflight` | `prepare_next_live_key()` with the open camera context, exposure-time robot feedback and the same frozen runner. A failed physical grasp appears in `runner.attempted_candidates`, so the next preflight excludes it. |
+| `capture_fresh_key`, `reobserve_key_and_preflight` | Move to measured clear view, then `prepare_next_live_key()` with the same cameras and frozen runner. For a judged grasp miss, reuse AutoDex `release(..., open_to_init=True)` and `reset()` before recapture. The attempted grasp is excluded. |
 | `continue_candidate_preflight` | `runner.preflight_next_key()` on the *same* saved key capture and measured state, continuing a budget-limited prefix rather than falsely declaring pose exhaustion. |
 | `execution_gate_required` | `runner.begin_selected_attempt()` and the separately commissioned `execute_bound_pickup()` boundary. A planning pass itself never writes a positive grasp label. |
 | `await_lift_observation` | Complete the measured lift, paired-camera Qwen lift checkpoint and `runner.observe_stage("grasp_success", ...)`. |
@@ -22,6 +22,8 @@ using the existing demo functions before returning. For example:
 | `await_guarded_insertion_and_observation` | Prepare the bound axial handoff, run a commissioned guarded stroke, then use paired Qwen views plus measured depth/alignment/force in `runner.prepare_observed_insertion_label()`; only its checkpoint may set `insertion_success`. |
 | `guarded_withdrawal_then_xy_assessment` | Withdraw the still-held key and use the existing native-pixel multi-view cylinder landmark/XY diagnostic; replan and record a bounded retry. Do not turn a VLM suggestion directly into a motor command. |
 | `await_retry_execution_and_observation` | Execute the bound retry path and record a *new* insertion checkpoint. |
+| `recover_held_key_then_reobserve` | After logged guarded withdrawal, `runner.prepare_failed_insertion_return()` plans a held tabletop return and clear-view exit. Follow it with stock Franka motion, record the controller phases, recapture the landed key and call `runner.observe_reset_landing()` with the bound execution log. This full action handler is still AutoDex-PC integration work. |
+| `recover_key_then_reobserve` | Transfer/hold failure may leave the key in an unknown state. Do not use the held-key or grasp-miss motion blindly; require observed recovery or operator intervention before a new capture. |
 | `preflight_repose`, `continue_repose_seed_preflight`, `preflight_repose_release`, `preflight_alternative_repose_cell` | Use the same captured key and `runner.preflight_repose()` with directed v8 reset seeds; a staged seed alone is not a plan. |
 | `repose_execution_gate_required`, `await_repose_observation` | Execute a commissioned reset plan, observe the landed tabletop pose, and record `reorient_success` before a fresh key capture. |
 
@@ -41,10 +43,13 @@ ChArUco/socket image: Inspire opens and FR3 parks at `FR3_CLEAR_VIEW`.
 Measured stationary joints must agree. Every fresh key capture, including
 `reobserve_key_and_preflight`, independently checks the arm and open hand
 before capture and at camera exposure time. Same-capture candidate
-continuation needs no new image. After a trial, this gate never invokes the
-free-space `home`: the release handler must execute its preflighted vertical
-exit and retract first. If it does not, key recapture fails rather than
-imaging an occluded key.
+continuation needs no new image. For a judged grasp miss,
+`LiveKeyPlanningHandlers` calls the stock AutoDex release/reset with the
+selected v8 pickup plan. Its copied reset world preserves the fixed socket
+and original tabletop key as obstacles. For a still-held insertion failure,
+the checked held return and release/exit are required instead. Neither path
+uses free-space `home` after a trial. If measured clear view is not reached,
+key recapture stops.
 
 `stop_for_review` is a non-success terminal result. A verified positive
 `insertion_success` produces `session_success`, which immediately returns
@@ -119,8 +124,10 @@ camera, planner, prompt and limit objects supplied above, for example
 `max_key_state_skew_s`, `max_pose_error_deg` and
 `axial_waypoint_step_m`. With only these three handlers the loop stops at
 `execution_gate_required` (or a repose decision) and reports
-`needs_handler`; it **does not** pick up the key. The motion/VLM/reset
-handlers are still AutoDex-PC integration work. Returning from
+`needs_handler`; it **does not** pick up the key. Pickup, insertion, held-key
+recovery logging, VLM observation and repose execution handlers remain
+AutoDex-PC integration work. The judged grasp-miss clear-view reset above is
+already connected. Returning from
 `run_live_precision_session()` closes the cameras and loses the in-memory
 runner, so `needs_handler` is a diagnostic stop, **not** a resumable paused
 trial. Supply the remaining handlers before starting a physical session.
@@ -128,12 +135,12 @@ A passing offline endpoint
 catalogue and synthetic plan are not physical-success evidence.
 
 For a failed still-held insertion, the held-key return preflight targets the
-original tabletop area, not the socket. After an external controller has
-followed that checked held trajectory, use
-`clear_view.finish_planned_release_exit(release_plan=..., open_hand=...,
-follow_joint_trajectory=...)`: it checks the release-site state, sends full
-hand opening, checks measured open fingers, follows the planned vertical
-exit and retract, then checks final clear-view feedback. Motion callbacks
-must be blocking and report errors. Automatic return execution/landing
-evidence and the reset-label adapter are still missing; the current
-`observe_reset_landing()` accepts supervised manual recovery only.
+original tabletop area, not the socket. After a commissioned guarded axial
+withdrawal, `clear_view.complete_failed_insertion_return_with_autodex()`
+reuses the stock Franka executor for held transfer/descent, full hand
+release, vertical exit and retract. It checks measured joints at each
+boundary. The [`failed-return evidence`](precision_insertion/failed_return_evidence.py)
+binds the plan and ordered external controller log; `observe_reset_landing()`
+then accepts a new camera-observed tabletop pose to label the reset. A robot
+PC still needs to supply the guarded withdrawal, independent controller
+records and the action handler that invokes these pieces in sequence.

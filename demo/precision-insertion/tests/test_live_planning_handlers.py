@@ -61,7 +61,8 @@ def _live(runner):
         acquisition_metadata_for_request=lambda request_id: {})
     clear_view = SimpleNamespace(
         before_key_capture=lambda: None,
-        verify_state=lambda state, **_kwargs: state)
+        verify_state=lambda state, **_kwargs: state,
+        prepare_failed_grasp_for_capture=lambda **_kwargs: None)
     return SimpleNamespace(
         opened=SimpleNamespace(runner=runner), cameras=cameras,
         clear_view=clear_view)
@@ -114,6 +115,9 @@ def test_failed_grasp_reobserves_with_new_capture(tmp_path, monkeypatch):
     runner = Runner(tmp_path / "session")
     live = _live(runner)
     captured = []
+    recovery = []
+    live.clear_view.prepare_failed_grasp_for_capture = (
+        lambda **kwargs: recovery.append(kwargs))
 
     def prepare_next_live_key(**kwargs):
         captured.append(kwargs["capture_id"])
@@ -122,7 +126,10 @@ def test_failed_grasp_reobserves_with_new_capture(tmp_path, monkeypatch):
         return PreparedLiveKeyTrial(
             SimpleNamespace(capture_id=kwargs["capture_id"]),
             SimpleNamespace(full_q=np.zeros(13), sample_timestamp_s=10.),
-            SimpleNamespace(status="sampled_planning_pass"),
+            SimpleNamespace(status="sampled_planning_pass",
+                            pickup_plan=SimpleNamespace(success=True),
+                            trial_scene={"mesh": {"target": {},
+                                                  "fixture_socket": {}}}),
             kwargs["key_evidence_dir"])
 
     monkeypatch.setattr(live_planning_handlers, "prepare_next_live_key",
@@ -140,6 +147,10 @@ def test_failed_grasp_reobserves_with_new_capture(tmp_path, monkeypatch):
         "table/0/1")
     bound.capture_and_preflight(runner, runner.current_decision())
     assert captured == ["key_001", "key_002"]
+    assert len(recovery) == 1
+    assert recovery[0]["planner"] is bound.planner
+    assert recovery[0]["pickup_plan"].success is True
+    assert "fixture_socket" in recovery[0]["trial_scene"]["mesh"]
     assert bound.latest.observation.capture_id == "key_002"
 
 
@@ -163,7 +174,10 @@ def test_fresh_and_reobserved_key_check_clear_view_before_capture_and_exposure(
         assert kwargs["state_for_observation"](object()) is state
         return PreparedLiveKeyTrial(
             SimpleNamespace(capture_id=kwargs["capture_id"]), state,
-            SimpleNamespace(status="sampled_planning_pass"),
+            SimpleNamespace(status="sampled_planning_pass",
+                            pickup_plan=SimpleNamespace(success=True),
+                            trial_scene={"mesh": {"target": {},
+                                                  "fixture_socket": {}}}),
             kwargs["key_evidence_dir"])
 
     monkeypatch.setattr(live_planning_handlers, "prepare_next_live_key",

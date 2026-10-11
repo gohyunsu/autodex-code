@@ -2425,17 +2425,25 @@ measured open hand and arm at clear view. See the
 [failure-return sequence](FAILURE_RETURN.md). A successful camera/catalogue
 preflight is not motor authorization for pickup or insertion.
 
+For a judged grasp miss, the live key handler reuses stock AutoDex
+`release(..., open_to_init=True)` and `reset()` with the selected v8 pickup
+plan. The copied collision world retains the fixed socket and original
+tabletop key; only after measured clear-view feedback does the next key
+capture begin. A still-held insertion failure follows the distinct held-key
+return and planned release/exit path.
+
 For a repeated session, [`run_live_precision_session()`](precision_insertion/live_orchestration.py)
 now keeps this same camera context open while the demo-local
 [`run_session_actions()`](precision_insertion/action_loop.py) dispatches the
 runner's existing decisions. See [action-loop integration](ACTION_LOOP.md)
 for the handler contract and routing. The new
 [`LiveKeyPlanningHandlers`](precision_insertion/live_planning_handlers.py)
-connects fresh key capture, complete v8 preflight and same-capture candidate
-continuation without additional camera or robot-policy code. A missing handler returns
-`needs_handler` at the exact pending phase; no trial result or robot command
-is invented. The AutoDex-PC physical motion, post-motion VLM observation and
-reset handlers are **not bundled**, so this is not yet an unattended robot loop.
+connects fresh key capture, complete v8 preflight, same-capture candidate
+continuation and stock AutoDex clear-view reset after a judged grasp miss.
+A missing handler returns `needs_handler` at the exact pending phase; no
+trial result is invented. Pickup, insertion, held-key recovery logging,
+post-motion VLM observation and repose handlers are **not bundled**, so this
+is not yet an unattended robot loop.
 
 `board_snap` and `init` are the metadata-preserving adapters described in
 [CAMERA_FRAME_HANDOFF.md](CAMERA_FRAME_HANDOFF.md); all `commissioned_*`
