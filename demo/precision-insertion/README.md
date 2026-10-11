@@ -2450,6 +2450,12 @@ measured lift to a fresh raw capture on the same AutoDex cameras and the
 existing read-only Qwen lift checkpoint. It requires a commissioned lift
 adapter, camera-side exposure metadata and exposure-aligned robot feedback;
 unknown VLM outcomes do not become positive grasp labels.
+[`LiveHeldRelationHandlers`](precision_insertion/live_held_relation_handlers.py)
+handles the likely occluded-key case after visual grasp success: it reads a
+grasp-specific *physical* key/hand calibration, measures current joints and
+invokes the existing uncertainty-bounded held-transfer preflight. No such
+physical calibration artifact is present locally, so a MuJoCo squeeze pose
+cannot be used to advance this branch.
 [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py)
 connects a failed still-held insertion to logged axial withdrawal, the
 runner's held tabletop-return plan, stock Franka held transfer/release/clear-
@@ -2461,7 +2467,8 @@ PC; the handler refuses recapture if the return was not executed and
 verified.
 A missing handler returns `needs_handler` at the exact pending phase; no
 trial result is invented. The guarded pickup/lift hardware adapters, raw
-post-lift camera producer, held-relation calibration, transfer, insertion,
+post-lift camera producer, physical held-relation calibration data, transfer,
+insertion,
 guarded withdrawal, independent controller logging, later VLM observations
 and repose execution are **not bundled**, so this is not yet an unattended
 robot loop.
