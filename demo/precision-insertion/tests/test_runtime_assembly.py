@@ -1,0 +1,66 @@
+"""The robot-PC configuration is wired once, without stage duplication."""
+
+from dataclasses import dataclass
+from pathlib import Path
+import sys
+
+import pytest
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from precision_insertion import runtime_assembly  # noqa: E402
+
+
+@dataclass
+class _Stage:
+    live: object
+    planner: object
+    enable_robot_motion: bool = False
+
+
+@dataclass
+class _ReposeStage:
+    live: object
+    planner: object
+    key_planning: object
+
+
+def _fake_classes(monkeypatch):
+    classes = {name: _Stage for name in runtime_assembly.STAGE_CLASSES}
+    classes["repose_planning"] = _ReposeStage
+    monkeypatch.setattr(runtime_assembly, "STAGE_CLASSES", classes)
+
+
+def test_shared_planner_and_session_are_reused_for_every_stage(monkeypatch):
+    _fake_classes(monkeypatch)
+    live, planner = object(), object()
+    stages = {name: {} for name in runtime_assembly.STAGE_CLASSES}
+    result = runtime_assembly.assemble_live_components(
+        live, shared={"planner": planner}, stages=stages,
+        enable_robot_motion=True)
+    assert len(result) == 10
+    assert all(stage.live is live and stage.planner is planner
+               for stage in result)
+    assert result[8].key_planning is result[0]
+    assert result[1].enable_robot_motion is True
+
+
+def test_assembly_rejects_split_session_or_missing_stage(monkeypatch):
+    _fake_classes(monkeypatch)
+    stages = {name: {} for name in runtime_assembly.STAGE_CLASSES}
+    with pytest.raises(ValueError, match="missing"):
+        runtime_assembly.assemble_live_components(
+            object(), shared={"planner": object()},
+            stages={name: value for name, value in stages.items()
+                    if name != "retry"}, enable_robot_motion=True)
+    stages["lift"] = {"planner": object()}
+    with pytest.raises(ValueError, match="shared overrides"):
+        runtime_assembly.assemble_live_components(
+            object(), shared={"planner": object()}, stages=stages,
+            enable_robot_motion=True)
+    stages["lift"] = {}
+    stages["repose_planning"] = {"key_planning": object()}
+    with pytest.raises(ValueError, match="CLI-owned"):
+        runtime_assembly.assemble_live_components(
+            object(), shared={"planner": object()}, stages=stages,
+            enable_robot_motion=True)

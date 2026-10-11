@@ -9,15 +9,18 @@ one post-inference read, but is not a contact-control safety certificate.
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import replace
 import math
 import threading
+import time
 from typing import Callable
 
 import numpy as np
 
 from .key_perception import KeyPoseObservation
 from .live_robot_state import LiveRobotState
+from .raw_camera_capture import RawCameraCapture
 
 
 def _copy_state(state: LiveRobotState) -> LiveRobotState:
@@ -122,6 +125,77 @@ class ExposureStateBuffer:
             maximum_skew_s=self.max_key_state_skew_s)
         return _copy_state(selected)
 
+    def latest(self, *, max_age_s: float) -> LiveRobotState:
+        """Return a recent measured state for live motion/planning handlers."""
+        if not math.isfinite(max_age_s) or max_age_s <= 0:
+            raise ValueError("latest feedback age must be positive")
+        with self._lock:
+            if not self._samples:
+                raise ValueError("no measured robot feedback is buffered")
+            selected = _copy_state(self._samples[-1])
+        age = time.time() - selected.sample_timestamp_s
+        if age < -max_age_s or age > max_age_s:
+            raise ValueError("latest measured robot feedback is stale")
+        return selected
+
+    def state_for_capture(self, capture: RawCameraCapture) -> LiveRobotState:
+        """Bracket all raw VLM frame exposures with a stationary robot hold.
+
+        A post-inference joint read is never substituted for missing feedback
+        at acquisition. The same hold-drift bounds used for key perception
+        apply to lift, pre-insertion and final checkpoint images.
+        """
+        if not isinstance(capture, RawCameraCapture):
+            raise TypeError("feedback lookup needs a RawCameraCapture")
+        metadata = capture.acquisition_metadata
+        frames = metadata.get("frames") if isinstance(metadata, Mapping) else None
+        if (not isinstance(frames, Mapping) or
+                metadata.get("request_id") != capture.request_id or
+                set(frames) != set(capture.images_bgr) or len(frames) < 2):
+            raise ValueError("raw checkpoint lacks same-request camera exposures")
+        lower, upper = math.inf, -math.inf
+        for row in frames.values():
+            if not isinstance(row, Mapping):
+                raise ValueError("raw checkpoint has invalid exposure metadata")
+            stamp, error = row.get("timestamp_s"), row.get("max_error_s")
+            if (type(stamp) not in (int, float) or
+                    not math.isfinite(stamp) or stamp <= 0 or
+                    type(error) not in (int, float) or
+                    not math.isfinite(error) or error < 0):
+                raise ValueError("raw checkpoint has invalid exposure time")
+            lower = min(lower, stamp - error)
+            upper = max(upper, stamp + error)
+        with self._lock:
+            samples = tuple(self._samples)
+        before = [index for index, row in enumerate(samples)
+                  if row.sample_timestamp_s <= lower]
+        after = [index for index, row in enumerate(samples)
+                 if row.sample_timestamp_s >= upper]
+        if not before or not after:
+            raise ValueError("robot feedback does not bracket raw exposure")
+        segment = samples[before[-1]:after[0] + 1]
+        if (segment[-1].sample_timestamp_s - segment[0].sample_timestamp_s >
+                self.max_bracket_span_s):
+            raise ValueError("raw exposure feedback bracket is too wide")
+        reference = segment[0]
+        for row in segment:
+            if (np.max(np.abs(row.full_q[:7] - reference.full_q[:7])) >
+                    self.max_arm_hold_drift_rad or
+                    np.max(np.abs(row.hand_raw_measured -
+                                  reference.hand_raw_measured)) >
+                    self.max_hand_hold_drift_raw or
+                    np.max(np.abs(row.hand_raw_commanded -
+                                  reference.hand_raw_commanded)) >
+                    self.max_hand_hold_drift_raw):
+                raise ValueError("Franka/Inspire moved during raw exposure")
+        midpoint = (lower + upper) / 2.0
+        selected = min(segment, key=lambda row: abs(
+            row.sample_timestamp_s - midpoint))
+        if max(abs(selected.sample_timestamp_s - lower),
+               abs(selected.sample_timestamp_s - upper)) > self.max_key_state_skew_s:
+            raise ValueError("raw exposure and robot feedback are too far apart")
+        return _copy_state(selected)
+
 
 class RobotFeedbackSampler:
     """Background read-only sampling into an ``ExposureStateBuffer``.
@@ -195,6 +269,20 @@ class RobotFeedbackSampler:
         if self._failure is not None:
             raise RuntimeError("feedback sampling failed") from self._failure
         return state
+
+    def read_state(self, *, max_age_s: float) -> LiveRobotState:
+        if self._thread is None or self._stop.is_set() or not self._thread.is_alive():
+            raise RuntimeError("feedback sampler is not running")
+        if self._failure is not None:
+            raise RuntimeError("feedback sampling failed") from self._failure
+        return self.buffer.latest(max_age_s=max_age_s)
+
+    def state_for_capture(self, capture: RawCameraCapture) -> LiveRobotState:
+        if self._thread is None or self._stop.is_set() or not self._thread.is_alive():
+            raise RuntimeError("feedback sampler is not running")
+        if self._failure is not None:
+            raise RuntimeError("feedback sampling failed") from self._failure
+        return self.buffer.state_for_capture(capture)
 
     def close(self, *, timeout_s: float = 5.0) -> None:
         if not math.isfinite(timeout_s) or timeout_s <= 0:

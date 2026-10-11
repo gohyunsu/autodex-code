@@ -37,6 +37,58 @@ parameters and the exact decision-to-handler mapping. The `close` callback
 must release robot-side resources even if a handler raises. The demo closes
 its own camera context first.
 
+To avoid writing ten separate constructor calls on the robot PC, use
+`assemble_live_components` from `precision_insertion.runtime_assembly` in
+`build_components(live)`. Supply a `shared` mapping for the single planner,
+feedback sampler, Qwen backend and other identical dependencies, plus a
+`stages` mapping with exactly these keys: `key_planning`, `pickup`, `lift`,
+`held_relation`, `task`, `retry`, `held_return`, `transfer_recovery`,
+`repose_planning`, `repose_execution`. Each stage mapping contains only that
+handler's remaining constructor fields. The assembler injects `live` and the
+CLI motion opt-in into every applicable handler, and connects
+`repose_planning.key_planning` to the same instance used for key capture.
+It rejects missing stages, unknown fields and an accidental override of a
+shared dependency. For example, the factory's `build_components` can end with:
+
+```python
+from precision_insertion.runtime_assembly import assemble_live_components
+
+def build_components(live):
+    return assemble_live_components(
+        live, shared=shared_robot_objects,
+        stages=stage_specific_callbacks_and_limits,
+        enable_robot_motion=options.enable_robot_motion)
+```
+
+This removes integration boilerplate; it does not synthesize camera frames,
+robot feedback, physical grasp calibration or an insertion controller.
+
+For VLM checkpoints, `make_checkpoint_capture` in
+`precision_insertion.checkpoint_camera` supplies the existing handlers'
+`(live, runner, decision)` callback using the **same open AutoDex init
+camera transport** and its undistorted, request-bound images. Instantiate a
+callback per phase (`after_lift`, `preinsert`, `post_lateral_hold`,
+`final_or_abort`); repeated calls create fresh capture IDs. The wrapper
+ignores FoundPose's pose estimate, but the current AutoDex init transport
+must still return frame metadata and saved images for every calibrated view.
+If segmentation/pose transport emits no payload for a heavily occluded key,
+the robot PC must supply a raw-only camera capture callback instead.
+`state_for_capture` remains a separate exposure-aligned robot feedback
+sampler; reading joints after Qwen inference is not equivalent.
+
+The existing `ExposureStateBuffer`/`RobotFeedbackSampler` in
+`precision_insertion.feedback_buffer` now also supply the two callbacks used
+at VLM checkpoints: `read_state(max_age_s=...)` for a recent measured hold
+and `state_for_capture(raw_capture)` for feedback bracketing **all** camera
+exposure times. Start the sampler before the first camera request, using a
+reader based on `read_live_franka_inspire_state` and the same
+`FrankaExecutor.arm`/`.hand`; close it in the integration's `close` callback.
+The pre-existing `state_for_observation(key_observation)` remains the input
+to key FoundPose planning. No joint state is inferred from a planned path or
+read only after Qwen inference. These are robot-PC receipt timestamps, not
+hardware-latched encoder times; the camera/robot clock assumptions still
+need validation on the recipient PC.
+
 From the repository root, after the integration module and assets are
 installed on the AutoDex PC:
 
