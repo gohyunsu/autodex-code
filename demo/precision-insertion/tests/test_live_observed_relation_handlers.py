@@ -108,6 +108,71 @@ def test_observed_relation_uses_fresh_foundpose_and_measured_feedback(
     assert received["verify"] == tmp_path / "held_key_captures" / "held_1"
 
 
+def test_observed_relation_exports_sample_only_when_configured_and_planned(
+        monkeypatch, tmp_path):
+    exported = []
+    monkeypatch.setattr(module, "write_observed_physical_pickup_sample",
+                        lambda **kwargs: exported.append(kwargs))
+    decision = SessionDecision("held_relation_evidence_required", "test",
+                               "table/0/1")
+    capture = SimpleNamespace(
+        capture_id="held_1", request_id=17,
+        images_bgr={"cam_a": np.zeros((2, 2, 3), dtype=np.uint8)},
+        frame_evidence={"cam_a": {"frame_id": 1}})
+    monkeypatch.setattr(module, "collect_key_capture", lambda **kw: capture)
+    monkeypatch.setattr(module, "admit_postlift_key_capture",
+                        lambda **kw: SimpleNamespace(capture_id="held_1"))
+    monkeypatch.setattr(module, "write_key_capture_artifacts",
+                        lambda *args: None)
+    monkeypatch.setattr(module, "verify_key_capture_artifacts",
+                        lambda *args: None)
+
+    class Runner:
+        mode = SimpleNamespace(key_object="key")
+        shared_root = tmp_path
+        output_dir = tmp_path
+        calibration = object()
+        active_attempt = SimpleNamespace(attempt_id="trial_1",
+                                         candidate_id="table/0/1")
+
+        def current_decision(self):
+            return decision
+
+        def postlift_candidate_pose_prior(self, **kwargs):
+            return np.eye(4)
+
+        def prepare_postlift_transfer(self, **kwargs):
+            return SimpleNamespace(status="sampled_postlift_preflight_pass")
+
+    runner = Runner()
+    live = SimpleNamespace(
+        opened=SimpleNamespace(runner=runner),
+        cameras=SimpleNamespace(
+            init_orchestrator=object(),
+            acquisition_metadata_for_request=lambda request: None,
+            launch=SimpleNamespace(camera_ids=("cam_a",),
+                                   capture_root=tmp_path,
+                                   view_limits=object())))
+    bounds = {
+        "key_translation_error_bound_m": .001,
+        "key_rotation_error_bound_deg": 1.,
+        "wrist_translation_error_bound_m": .001,
+        "wrist_rotation_error_bound_deg": 1.,
+    }
+    handler = module.LiveObservedHeldRelationHandlers(
+        live=live, planner=object(),
+        state_for_capture=lambda raw: _sample(),
+        key_prompt="blue key", path_limits=object(),
+        capture_parameters=_capture_parameters(), parameters=_parameters(),
+        calibration_sample_bounds=bounds,
+        capture_id_factory=lambda: "held_1")
+    handler.observe_and_plan(runner, decision)
+    assert len(exported) == 1
+    assert exported[0]["candidate_id"] == "table/0/1"
+    assert exported[0]["output_path"] == (
+        tmp_path / "physical_pickup_samples/trial_1.json")
+
+
 def test_occluded_held_key_does_not_advance_to_transfer(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "collect_key_capture",
                         lambda **kwargs: (_ for _ in ()).throw(

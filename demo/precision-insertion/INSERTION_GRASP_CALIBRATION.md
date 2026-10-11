@@ -15,6 +15,20 @@ file. The sample fields and example schema are in
 candidate key, such as `["table", "0", "184"]`, instead of a reset seed key.
 Do not substitute the MuJoCo post-squeeze pose or the nominal BODex relation.
 
+For commissioning with a visible lifted key, set
+`held_relation_route="observed"` and give the `held_relation` stage a
+`calibration_sample_bounds` mapping with all four fields:
+`key_translation_error_bound_m`, `key_rotation_error_bound_deg`,
+`wrist_translation_error_bound_m`, and `wrist_rotation_error_bound_deg`.
+After a successful post-lift key observation and transfer preflight, the demo
+writes one non-overwriting
+`<run-output>/physical_pickup_samples/<attempt-id>.json`. Its key pose comes
+from fresh multi-view SAM3/FoundPose images; its wrist pose comes from the
+synchronized measured FR3 state and planner FK. It also records the source
+camera manifest. The four error bounds are **operator-supplied**, not inferred
+by the exporter. An occluded or rejected key produces no sample. These sample
+files can be passed directly as repeated `--sample` arguments below.
+
 From the repository root on the AutoDex PC, for example:
 
 ```bash

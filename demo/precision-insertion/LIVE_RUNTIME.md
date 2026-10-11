@@ -196,7 +196,11 @@ loose search prior; the wrist sample is selected from the buffered feedback
 at the new images' exposure time, not before the camera request. It then
 replans from the observed key–hand relation. Failed pose admission stops that
 attempt; it does not silently substitute the nominal BODex transform. The
-grounded 1 mm XY retry now accepts this same observed relation through the
+optional `held_relation.calibration_sample_bounds` exports that accepted
+physical key/wrist pair for later grasp-specific commissioning; see
+[`INSERTION_GRASP_CALIBRATION.md`](INSERTION_GRASP_CALIBRATION.md). The bounds
+must be supplied from rig measurements, not chosen to make a sample pass.
+The grounded 1 mm XY retry now accepts this same observed relation through the
 existing lateral, re-observation and 20 mm endpoint/path stages. The observed
 route still requires an **independently commissioned** `SurfaceDeviationBounds`
 from the retry stage's `deviation_bounds`, covering the entire visible held

@@ -20,6 +20,9 @@ from .key_perception import (
 )
 from .live_capture import collect_key_capture
 from .live_robot_state import LiveRobotState
+from .physical_pickup_sample import (
+    BOUND_FIELDS, write_observed_physical_pickup_sample,
+)
 from .raw_camera_capture import RawCameraCapture
 from .session_policy import SessionDecision
 
@@ -54,6 +57,7 @@ class LiveObservedHeldRelationHandlers:
     path_limits: object
     capture_parameters: Mapping[str, object]
     parameters: Mapping[str, object]
+    calibration_sample_bounds: Mapping[str, float] | None = None
     capture_id_factory: Callable[[], str] = lambda: f"held_{uuid4().hex}"
 
     def __post_init__(self) -> None:
@@ -74,6 +78,10 @@ class LiveObservedHeldRelationHandlers:
                 raise ValueError(
                     f"held-relation {label} missing {sorted(missing)} or "
                     f"unknown {sorted(unknown)}")
+        if self.calibration_sample_bounds is not None and (
+                not isinstance(self.calibration_sample_bounds, Mapping) or
+                set(self.calibration_sample_bounds) != BOUND_FIELDS):
+            raise ValueError("physical sample export needs four error bounds")
 
     def observe_and_plan(self, runner, decision: SessionDecision) -> None:
         if (runner is not self.live.opened.runner or
@@ -136,6 +144,21 @@ class LiveObservedHeldRelationHandlers:
         if result.status != "sampled_postlift_preflight_pass":
             raise ValueError(
                 f"observed held relation has no passing transfer: {result.status}")
+        if self.calibration_sample_bounds is not None:
+            attempt = runner.active_attempt
+            if attempt is None or attempt.candidate_id != decision.candidate_id:
+                raise ValueError("physical sample lost its selected attempt")
+            write_observed_physical_pickup_sample(
+                mode=runner.mode, calibration=runner.calibration,
+                planner=self.planner, observation=observation,
+                evidence_dir=evidence_dir, joint_sample=measured,
+                candidate_id=decision.candidate_id,
+                trial_id=attempt.attempt_id,
+                error_bounds=self.calibration_sample_bounds,
+                max_state_skew_s=self.parameters["max_state_skew_s"],
+                output_path=(Path(runner.output_dir) /
+                             "physical_pickup_samples" /
+                             f"{attempt.attempt_id}.json"))
 
     def handlers(self) -> dict[str, ActionHandler]:
         return {"held_relation_evidence_required": self.observe_and_plan}
