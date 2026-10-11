@@ -2167,7 +2167,7 @@ returned `ReposeTransitionPreflight.to_record()` can be saved alongside the
 trial report. With no release goal, its best status is
 `held_reset_path_available_release_unplanned`. Supplying both an explicit
 7-joint `retreat_goal_arm_q` and `minimum_release_key_clearance_m` additionally
-preflights opening to AutoDex's pregrasp hand pose, a +10 cm vertical exit and
+preflights fully opening Inspire to `INSPIRE_INIT`, a +10 cm vertical exit and
 the original planner's joint-space retract. The conservative world contains
 both a key left at the release height and a key at the selected tabletop rest
 pose; the hand is screened against both after opening. Its strongest status is

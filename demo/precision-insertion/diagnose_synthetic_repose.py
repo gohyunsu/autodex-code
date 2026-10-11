@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import asdict
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -18,6 +19,7 @@ import tempfile
 import traceback
 
 import numpy as np
+from autodex.utils.robot_config import FR3_CLEAR_VIEW
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -171,10 +173,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-seed-attempts", type=int, default=1)
     parser.add_argument("--diagnose-collision-obstacle", action="store_true",
                         help="offline counterfactual collision check at rejected q")
-    parser.add_argument("--retreat-goal-q-npy", type=Path,
-                        help="optional explicit seven-joint post-release arm goal")
+    retreat_group = parser.add_mutually_exclusive_group()
+    retreat_group.add_argument(
+        "--retreat-goal-q-npy", type=Path,
+        help="explicit seven-joint post-release arm goal")
+    retreat_group.add_argument(
+        "--retreat-to-clear-view", action="store_true",
+        help="use AutoDex FR3_CLEAR_VIEW as the post-release arm goal")
     parser.add_argument("--min-release-key-clearance-mm", type=_finite,
-                        help="required with --retreat-goal-q-npy")
+                        help="required with either post-release retreat goal")
     parser.add_argument("--planner-mode",
                         choices=("default", "native-locked-experimental"),
                         default="default")
@@ -195,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
             args.max_reset_drift_mm, args.max_reset_axis_tilt_deg)
     except ValueError as exc:
         parser.error(str(exc))
-    if ((args.retreat_goal_q_npy is None) !=
+    if ((args.retreat_goal_q_npy is None and not args.retreat_to_clear_view) !=
             (args.min_release_key_clearance_mm is None)):
         parser.error("release exit needs both retreat goal and key clearance")
     if (args.min_release_key_clearance_mm is not None and
@@ -214,7 +221,9 @@ def main(argv: list[str] | None = None) -> int:
     reset_root = args.reset_candidate_dir.expanduser().resolve()
     retreat_path = (None if args.retreat_goal_q_npy is None else
                     args.retreat_goal_q_npy.expanduser().resolve())
-    retreat_q = (None if retreat_path is None else
+    retreat_q = (np.asarray(FR3_CLEAR_VIEW, dtype=float).copy()
+                 if args.retreat_to_clear_view else
+                 None if retreat_path is None else
                  np.asarray(np.load(retreat_path, allow_pickle=False), dtype=float))
     if retreat_q is not None and (
             retreat_q.shape != (7,) or not np.all(np.isfinite(retreat_q))):
@@ -353,7 +362,12 @@ def main(argv: list[str] | None = None) -> int:
         "source_catalog_sha256": _sha(catalog_path),
         "source_tabletop_pose_sha256": _sha(tabletop_path),
         "retreat_goal_arm_q_sha256": (
+            hashlib.sha256(np.asarray(retreat_q, dtype=np.float64).tobytes())
+            .hexdigest() if args.retreat_to_clear_view else
             None if retreat_path is None else _sha(retreat_path)),
+        "retreat_goal_arm_q_source": (
+            "autodex_FR3_CLEAR_VIEW" if args.retreat_to_clear_view else
+            None if retreat_path is None else str(retreat_path)),
         "start_q_source": "stock_FR3_Inspire_diagnostic_home_not_measured",
         "board_source": "hypothetical_rectangle_not_measured_charuco",
         "limits_source": "exploratory_not_commissioned",

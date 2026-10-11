@@ -15,6 +15,7 @@ from typing import Any, Iterable
 import numpy as np
 
 from autodex.utils.conversion import cart2se3
+from autodex.utils.robot_config import INSPIRE_INIT
 
 from .candidates import select_pose_candidates, validate_catalog_session
 from .config import TaskMode
@@ -218,6 +219,8 @@ def preflight_v8_repose_transition(
         if not pickup.success or pickup.lift_preflight is None:
             attempts.append({**seed_record, "status": "pickup_unreachable"})
             continue
+        if tuple(pickup.scene_info) != override[3][0]:
+            raise ValueError("reset planner selected a different v8 grasp")
         hold = nominal_inspire_hold_poses(
             seeds["pregrasp"][i], seeds["grasp"][i]
         )["autodex_default_controller_hold"]
@@ -243,8 +246,7 @@ def preflight_v8_repose_transition(
                     planner=planner, trial_scene=trial_scene,
                     shared_root=root, calibration=calibration, mode=mode,
                     held_plan=planned,
-                    release_hand_q=np.asarray(
-                        pickup.pregrasp_pose, dtype=np.float64),
+                    release_hand_q=np.asarray(INSPIRE_INIT, dtype=np.float64),
                     retreat_goal_arm_q=retreat,
                     minimum_release_key_clearance_m=release_clearance,
                     limits=limits)

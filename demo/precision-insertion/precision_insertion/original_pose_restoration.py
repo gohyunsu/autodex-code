@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from autodex.utils.conversion import cart2se3
+from autodex.utils.robot_config import INSPIRE_INIT
 
 from .candidates import planner_candidate_override, select_pose_candidates
 from .assets import AssetPaths
@@ -134,6 +135,8 @@ def plan_original_pose_restoration(
         if not pickup.success or pickup.lift_preflight is None:
             attempts.append({**seed, "status": "pickup_unreachable"})
             continue
+        if tuple(pickup.scene_info) != key:
+            raise ValueError("restoration planner selected a different v8 grasp")
         T_key_hand = validate_se3(np.load(
             Path(row["candidate_dir"]) / "wrist_se3.npy",
             allow_pickle=False), name="v8 candidate T_key_hand")
@@ -155,7 +158,7 @@ def plan_original_pose_restoration(
         release = plan_repose_release_exit(
             planner=planner, trial_scene=scene, shared_root=shared_root,
             calibration=calibration, mode=mode, held_plan=held,
-            release_hand_q=np.asarray(pickup.pregrasp_pose, dtype=float),
+            release_hand_q=np.asarray(INSPIRE_INIT, dtype=float),
             retreat_goal_arm_q=np.asarray(retreat_goal_arm_q, dtype=float),
             minimum_release_key_clearance_m=minimum_release_key_clearance_m,
             limits=limits)

@@ -1,6 +1,6 @@
 """Planning-only reset release and retreat under two key-pose hypotheses.
 
-This follows AutoDex Franka's release-to-pregrasp, +10 cm clearance and
+This follows AutoDex Franka's hand-opening, +10 cm clearance and
 joint-space retract primitives without importing its hardware executor. The
 key may remain at the release height or fall to the selected tabletop rest
 pose; both static meshes are kept in the conservative planning world. Real

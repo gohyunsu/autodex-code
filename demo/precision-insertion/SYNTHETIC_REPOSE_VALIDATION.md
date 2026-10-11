@@ -132,7 +132,7 @@ PYTHONPATH="$PWD/demo/precision-insertion/compat" \
 ~/miniconda3/envs/autodex_bodex/bin/python \
   demo/precision-insertion/diagnose_synthetic_repose.py \
   --shared-root /home/hyunsu/shared_data \
-  --catalog /home/hyunsu/shared_data/AutoDex/precision_insertion/endpoint_catalogs/square_1p5mm_20261011_v8_8_nominal_r2.json \
+  --catalog /home/hyunsu/shared_data/AutoDex/precision_insertion/endpoint_catalogs/square_1p5mm_20261011_collision_only.json \
   --reset-candidate-dir /home/hyunsu/shared_data/AutoDex/precision_insertion/square/reorient_curated_handoff_20261011/reset_12 \
   --mode square --gap-mm 1.5 \
   --from-pose-stem 000 --to-pose-stem 004 --height-cm 12 \
@@ -141,13 +141,23 @@ PYTHONPATH="$PWD/demo/precision-insertion/compat" \
   --release-x-m 0.45 --release-y-m 0.08 \
   --board-x-min-m 0.2 --board-x-max-m 0.8 \
   --board-y-min-m -0.25 --board-y-max-m 0.25 \
-  --max-reset-drift-mm 10 --max-reset-axis-tilt-deg 30 \
   --min-rest-socket-clearance-mm 10 --min-board-edge-clearance-mm 10 \
   --max-seed-attempts 1 --planner-mode native-locked-experimental \
-  --retreat-goal-q-npy /home/hyunsu/shared_data/AutoDex/precision_insertion/square/synthetic_repose_0_4_seed7_20261011_retreat_home_q.npy \
+  --retreat-to-clear-view \
   --min-release-key-clearance-mm 1 \
   --output-dir /absolute/new_square_repose_probe
 ```
+
+With the current source-bound catalog, no optional grasp-fidelity screen, full
+Inspire opening to `INSPIRE_INIT`, and the AutoDex `FR3_CLEAR_VIEW` retreat
+goal, seed `000→004/7` again passed the hypothetical pickup, held lift,
+transfer, descent, open-hand release geometry, vertical exit and retract.
+The [current report](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/synthetic_repose_full_open_clear_view_0_4_seed7_20261011/report.json)
+records `nominal_reset_preflight_pass_drop_unobserved`; its
+[context](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/synthetic_repose_full_open_clear_view_0_4_seed7_20261011/synthetic_context.json)
+names `autodex_FR3_CLEAR_VIEW`. The report's planned-trajectory and scene
+SHA256 values were read back and matched the saved files. The earlier report
+used a diagnostic home arm goal, not the clear-view goal, and is historical.
 
 This is **not** a canonical reset candidate, measured session, observed
 post-squeeze key/hand pose, physically detached key, observed tabletop

@@ -179,7 +179,8 @@ def _fixture(tmp_path, monkeypatch):
     pickup_q[:, 2] = 0.003
     pickup = SimpleNamespace(
         success=True, lift_preflight=object(), traj=pickup_q,
-        wrist_se3=initial, pregrasp_pose=np.zeros(6))
+        wrist_se3=initial, pregrasp_pose=np.zeros(6),
+        scene_info=("reset", "0_1", "191"))
     limits = PathAuditLimits(
         max_joint_step_rad=0.02, max_wrist_step_m=0.02,
         max_wrist_rotation_deg=1.0,
@@ -465,6 +466,7 @@ def test_v8_reset_seed_requires_release_exit_when_requested(
     tmp_path, monkeypatch,
 ):
     calibration, scene, pickup, _, limits = _fixture(tmp_path, monkeypatch)
+    pickup.pregrasp_pose = np.full(6, 0.2)
     planner = _Planner()
     planner.pickup_plan = pickup
     monkeypatch.setattr(
@@ -492,6 +494,7 @@ def test_v8_reset_seed_requires_release_exit_when_requested(
     assert result.status == "nominal_reset_preflight_pass_drop_unobserved"
     assert result.release_plan.status == (
         "nominal_release_exit_path_pass_drop_unobserved")
+    assert np.array_equal(result.release_plan.release_hand_q, np.zeros(6))
     assert result.to_record()["robot_ready"] is False
     assert result.attempted_seeds[0]["release_status"] == result.release_plan.status
 
@@ -622,3 +625,9 @@ def test_repose_cli_exposes_planning_only_command():
     assert completed.returncode == 0
     assert "--reset-candidate-dir" in completed.stdout
     assert "--retreat-goal-q-npy" in completed.stdout
+    synthetic = Path(__file__).resolve().parents[1] / "diagnose_synthetic_repose.py"
+    diagnostic = subprocess.run(
+        [sys.executable, str(synthetic), "--help"],
+        capture_output=True, text=True, check=False)
+    assert diagnostic.returncode == 0
+    assert "--retreat-to-clear-view" in diagnostic.stdout
