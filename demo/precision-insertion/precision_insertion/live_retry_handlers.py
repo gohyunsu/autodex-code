@@ -116,6 +116,13 @@ class LiveGroundedRetryHandlers:
             timestamp_s=self.decision_time())
         self._pending = None
 
+    def _unreliable_held_relation(self, runner, report: Path) -> None:
+        """Do not execute a held return from a visibly inconsistent grasp."""
+        runner.record_failure(
+            "perception_unreliable", timestamp_s=self.decision_time(),
+            evidence_refs={"postshift_checkpoint": str(report)})
+        self._pending = None
+
     def assess_and_shift(self, runner, decision: SessionDecision) -> None:
         self._require(runner, decision,
                       "guarded_withdrawal_then_xy_assessment")
@@ -202,6 +209,9 @@ class LiveGroundedRetryHandlers:
             **dict(self.checkpoint_parameters))
         checkpoint_path = self._report(
             runner, "postshift_checkpoints", checkpoint_index)
+        if checkpoint.status in {"held_relation_inconsistent", "visual_abstain"}:
+            self._unreliable_held_relation(runner, checkpoint_path)
+            return
         if checkpoint.status != "visual_alignment_within_budget":
             self._unavailable(runner, "postshift_alignment_failed",
                               checkpoint_path)
@@ -257,6 +267,9 @@ class LiveGroundedRetryHandlers:
             **dict(self.arrival_parameters))
         arrival_path = self._report(
             runner, "postshift_arrival_checkpoints", arrival_index)
+        if arrival.status in {"held_relation_inconsistent", "visual_abstain"}:
+            self._unreliable_held_relation(runner, arrival_path)
+            return
         if arrival.status != "visual_alignment_within_budget":
             self._unavailable(runner, "arrival_preflight_failed", arrival_path)
             return

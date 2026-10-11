@@ -85,7 +85,9 @@ observation, renewed cuRobo/endpoint preflight, transfer, and guarded retry
 in that order. It only supports the first cylinder XY correction; even if a
 higher retry budget was configured, a second failed grounded retry returns
 the held key instead of reusing the first-shift hypothesis. Square mode's
-two-landmark XY diagnostic abstains because it cannot resolve key yaw.
+two-landmark XY diagnostic abstains because it cannot resolve key yaw. A
+post-shift view that makes the held key/hand relation unreliable stops for
+review rather than planning a return from a possibly slipped grasp.
 
 [`LiveReposePlanningHandlers`](precision_insertion/live_repose_handlers.py)
 handles pose exhaustion without another key exposure. Its target selector
