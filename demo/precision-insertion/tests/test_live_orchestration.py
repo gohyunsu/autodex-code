@@ -18,6 +18,8 @@ def _patch_camera_lifetime(monkeypatch, events):
     launch = SimpleNamespace(mode="square", shared_root=Path("/shared"))
     monkeypatch.setattr(orchestration, "load_session_launch",
                         lambda _path: launch)
+    monkeypatch.setattr(orchestration, "preflight_endpoint_catalog_file",
+                        lambda **_kwargs: events.append("catalog_preflight"))
 
     @contextmanager
     def cameras(received):
@@ -58,7 +60,8 @@ def test_live_session_keeps_same_camera_transport_for_next_key(
             launch_config_path=tmp_path / "launch.json",
             endpoint_catalog_path=catalog, run_output_dir=tmp_path / "new_run",
             max_xy_retries=2) as live:
-        assert events == ["camera_open", "socket_frozen", "ledger_open"]
+        assert events == ["catalog_preflight", "camera_open",
+                          "socket_frozen", "ledger_open"]
         assert live.opened is opened
         assert live.cameras.init_orchestrator == "same_init"
         assert live.cameras.acquisition_metadata_for_request == "same_provider"
@@ -107,5 +110,29 @@ def test_failed_session_catalog_binding_closes_camera_but_keeps_capture(
                 endpoint_catalog_path=catalog, run_output_dir=tmp_path / "run",
                 max_xy_retries=1):
             pytest.fail("catalog rejection must not yield")
-    assert events == ["camera_open", "socket_frozen", "catalog_rejected",
-                      "camera_close"]
+    assert events == ["catalog_preflight", "camera_open", "socket_frozen",
+                      "catalog_rejected", "camera_close"]
+
+
+def test_stale_catalog_preflight_does_not_connect_cameras(tmp_path, monkeypatch):
+    events = []
+    _patch_camera_lifetime(monkeypatch, events)
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text("{}", encoding="utf-8")
+
+    def stale(**kwargs):
+        assert kwargs == {
+            "mode": "square", "shared_root": Path("/shared"),
+            "catalog_path": catalog,
+        }
+        raise ValueError("v8 catalog is stale for pose 000")
+
+    monkeypatch.setattr(orchestration, "preflight_endpoint_catalog_file", stale)
+    with pytest.raises(ValueError, match="stale for pose 000"):
+        with orchestration.open_live_precision_session(
+                launch_config_path=tmp_path / "launch.json",
+                endpoint_catalog_path=catalog,
+                run_output_dir=tmp_path / "run",
+                max_xy_retries=1):
+            pytest.fail("stale catalogue must not yield a live session")
+    assert events == []

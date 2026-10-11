@@ -13,7 +13,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
-from .live_session_runner import OpenedPrecisionSession, open_verified_session
+from .live_session_runner import (
+    OpenedPrecisionSession, open_verified_session,
+    preflight_endpoint_catalog_file,
+)
 from .live_session_start import StartedPrecisionSession
 from .session_launch import (
     OpenSessionCameras, load_session_launch, open_session_cameras,
@@ -54,6 +57,12 @@ def open_live_precision_session(
         raise FileNotFoundError("session run output parent is missing")
     if type(max_xy_retries) is not int or max_xy_retries < 0:
         raise ValueError("max_xy_retries must be a nonnegative integer")
+    # Reject a stale/incomplete v8 pool before a slow board/socket capture.
+    # ``open_verified_session`` repeats this check after capture and binds the
+    # measured fixture to the catalogue's exact socket mesh.
+    preflight_endpoint_catalog_file(
+        mode=launch.mode, shared_root=launch.shared_root,
+        catalog_path=catalog)
     with open_session_cameras(launch) as cameras:
         started = cameras.start()
         opened = open_verified_session(

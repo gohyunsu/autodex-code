@@ -2338,14 +2338,17 @@ after `open_verified_session()`, as documented below. That path requires
 measured robot feedback buffered across the actual camera exposures; a
 single joint read after SAM/FoundPose inference is not equivalent. On this
 workstation, canonical FoundPose files are now present for the square 1.5 mm
-first-test pair. Their physical pose accuracy, a complete catalogue,
-commissioned camera timestamps and robot motion path are still missing;
-file presence does not make the session runnable.
+first-test pair. A complete offline endpoint catalogue is also present for
+square 1.5 mm, but physical pose accuracy, commissioned camera timestamps and
+the robot motion path are still missing; file presence does not make the
+session runnable.
 
 For a **single long-running, non-motion process**, use
 [`open_live_precision_session`](precision_insertion/live_orchestration.py).
-It validates the launch files and obvious catalogue/output mistakes before
-opening camera connections, collects ChArUco then repeated socket captures,
+It validates the launch files and the complete v8 endpoint catalogue,
+including every indexed pose's source hashes and screening-implementation
+hashes, before opening camera connections. It then collects ChArUco followed
+by repeated socket captures,
 opens the source-bound `SessionRunner`, and keeps the **same** initialized
 AutoDex camera transport and acquisition-time provider alive for fresh key
 captures until the context exits:
@@ -2368,7 +2371,9 @@ with open_live_precision_session(
 ```
 
 This joins existing boundaries; it does not duplicate FoundPose, v8 filtering,
-or trial planning. The context closes every camera connection on normal exit
+or trial planning. The catalogue is checked again after capture, then bound
+to the measured socket CAD; a file changed mid-capture cannot bypass that
+check. The context closes every camera connection on normal exit
 or failure, retaining already written capture evidence for diagnosis. It does
 not construct or command a robot controller, launch a full trial loop, or
 turn a successful camera/catalogue preflight into motor authorization.

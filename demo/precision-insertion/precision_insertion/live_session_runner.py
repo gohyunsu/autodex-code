@@ -37,6 +37,43 @@ def _sha(path: Path) -> str:
     return digest.hexdigest()
 
 
+def preflight_endpoint_catalog_file(
+    *, mode: TaskMode, shared_root: Path, catalog_path: Path,
+) -> dict:
+    """Check the complete v8 catalogue without needing camera evidence.
+
+    The measured socket/CAD binding still requires a captured session and is
+    checked separately by ``validate_catalog_session``. Call this again when
+    opening the ledger so a file changed during capture cannot slip through.
+    """
+    root = Path(shared_root).expanduser().resolve()
+    source = Path(catalog_path).expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"v8 endpoint catalog is missing: {source}")
+    catalog = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(catalog, dict):
+        raise ValueError("v8 endpoint catalog must be a JSON object")
+    if (Path(catalog.get("shared_root", "")).expanduser().resolve() != root or
+            not catalog.get("complete_scan")):
+        raise ValueError("v8 catalog is incomplete or belongs to another shared root")
+    rows = catalog.get("candidates")
+    if (not isinstance(rows, list) or not rows or
+            any(not isinstance(row, dict) or
+                not isinstance(row.get("tabletop_pose_stem"), str) or
+                not row["tabletop_pose_stem"] for row in rows)):
+        raise ValueError("complete v8 catalog needs pose-indexed candidate rows")
+    # Verify every indexed pose, including poses with no eligible grasp.
+    # This reuses the existing v8 source-hash and endpoint-algorithm checks.
+    for stem in sorted({row["tabletop_pose_stem"] for row in rows}):
+        selection = select_pose_candidates(
+            catalog, expected_mode=mode, tabletop_pose_stem=stem)
+        if selection["status"] not in {
+                "candidates_available", "no_eligible_in_screened_pool"}:
+            raise ValueError(f"v8 catalog is stale for pose {stem}: "
+                             f"{selection['status']}")
+    return catalog
+
+
 def open_verified_session(
     *, mode: TaskMode, shared_root: Path, evidence_dir: Path,
     catalog_path: Path, output_dir: Path, max_xy_retries: int,
@@ -84,30 +121,10 @@ def open_verified_session(
     calibration_path = source / "session_calibration.json"
     calibration = load_session_calibration(
         calibration_path, mode=mode, shared_root=root)
-    catalog = json.loads(catalog_file.read_text(encoding="utf-8"))
-    if not isinstance(catalog, dict):
-        raise ValueError("v8 endpoint catalog must be a JSON object")
+    catalog = preflight_endpoint_catalog_file(
+        mode=mode, shared_root=root, catalog_path=catalog_file)
     validate_catalog_session(catalog, mode=mode,
                              session_record=calibration.record)
-    if (Path(catalog.get("shared_root", "")).expanduser().resolve() != root or
-            not catalog.get("complete_scan")):
-        raise ValueError("v8 catalog is incomplete or belongs to another shared root")
-    rows = catalog.get("candidates")
-    if (not isinstance(rows, list) or not rows or
-            any(not isinstance(row, dict) or
-                not isinstance(row.get("tabletop_pose_stem"), str) or
-                not row["tabletop_pose_stem"] for row in rows)):
-        raise ValueError("complete v8 catalog needs pose-indexed candidate rows")
-    # Reuse the existing source-hash and endpoint-implementation checks for
-    # every indexed pose, including poses with no eligible grasp.  A stale
-    # catalogue must fail before any fresh camera request is scheduled.
-    for stem in sorted({row["tabletop_pose_stem"] for row in rows}):
-        selection = select_pose_candidates(
-            catalog, expected_mode=mode, tabletop_pose_stem=stem)
-        if selection["status"] not in {
-                "candidates_available", "no_eligible_in_screened_pool"}:
-            raise ValueError(f"v8 catalog is stale for pose {stem}: "
-                             f"{selection['status']}")
     source_hashes = {
         "session_manifest_sha256": _sha(source / "evidence_manifest.json"),
         "session_calibration_sha256": _sha(calibration_path),
