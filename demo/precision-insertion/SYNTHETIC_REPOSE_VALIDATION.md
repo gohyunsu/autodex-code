@@ -94,3 +94,64 @@ commissioned release location and a successful fixture-aware pickup → held
 lift → transfer → descent → release/retreat preflight, followed by observed
 landing/reorientation. A synthetic planner pass, if found, would still not
 establish physical reset success.
+
+## Square 1.5 mm `000→004` exploratory reset path (2026-10-11)
+
+An independent hypothetical board/key/socket layout was tested against the
+curated, non-runtime 12 cm square reset handoff. The selected seed was `7`.
+With table Z `0.04 m`, key XY `(0.40, 0.00) m`, socket XY `(0.60, 0.00) m`,
+release XY `(0.45, 0.08) m`, and board XY bounds
+`[0.20, 0.80] × [-0.25, 0.25] m`, unchanged v8 pickup, held lift,
+fixture-aware transfer and descent passed the sampled planner audit. The
+first held-only report correctly said
+`held_reset_path_available_release_unplanned`.
+
+Adding hand opening, a 10 cm vertical exit and retreat to the diagnostic
+home pose at an *illustrative* 10 mm key/hand clearance rejected the reset.
+The 10 mm diagnostic recorded no actual hand/key collision at the rejected
+samples, but some
+fully-open finger/key separations were about 7.6–10.0 mm, below that chosen
+threshold. No production threshold was changed. Re-running the same nominal
+scene with a separately labelled, **uncommissioned 1 mm** clearance passed
+the complete sampled pickup → lift → transfer → descent → opening → upward
+exit → retreat preflight. The durable
+[report](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/synthetic_repose_0_4_seed7_20261011/report.json)
+and [planned trajectories](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/synthetic_repose_0_4_seed7_20261011/planned_trajectories.npz)
+are under the square diagnostic folder; its companion `_synthetic_inputs`
+folder preserves the hypothetical session/start/pose inputs. Seven saved
+input, scene and trajectory SHA256 references were read back and matched.
+The release retreat goal is the
+[saved diagnostic home arm pose](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/synthetic_repose_0_4_seed7_20261011_retreat_home_q.npy).
+
+To reproduce without overwriting that evidence, run from the repository root
+with a **new** output path:
+
+```bash
+AUTODEX_ENABLE_NATIVE_POSE_CONSTRAINTS=1 \
+PYTHONPATH="$PWD/demo/precision-insertion/compat" \
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/diagnose_synthetic_repose.py \
+  --shared-root /home/hyunsu/shared_data \
+  --catalog /home/hyunsu/shared_data/AutoDex/precision_insertion/endpoint_catalogs/square_1p5mm_20261011_v8_8_nominal_r2.json \
+  --reset-candidate-dir /home/hyunsu/shared_data/AutoDex/precision_insertion/square/reorient_curated_handoff_20261011/reset_12 \
+  --mode square --gap-mm 1.5 \
+  --from-pose-stem 000 --to-pose-stem 004 --height-cm 12 \
+  --table-z-m 0.04 --key-x-m 0.4 --key-y-m 0 \
+  --socket-x-m 0.6 --socket-y-m 0 \
+  --release-x-m 0.45 --release-y-m 0.08 \
+  --board-x-min-m 0.2 --board-x-max-m 0.8 \
+  --board-y-min-m -0.25 --board-y-max-m 0.25 \
+  --max-reset-drift-mm 10 --max-reset-axis-tilt-deg 30 \
+  --min-rest-socket-clearance-mm 10 --min-board-edge-clearance-mm 10 \
+  --max-seed-attempts 1 --planner-mode native-locked-experimental \
+  --retreat-goal-q-npy /home/hyunsu/shared_data/AutoDex/precision_insertion/square/synthetic_repose_0_4_seed7_20261011_retreat_home_q.npy \
+  --min-release-key-clearance-mm 1 \
+  --output-dir /absolute/new_square_repose_probe
+```
+
+This is **not** a canonical reset candidate, measured session, observed
+post-squeeze key/hand pose, physically detached key, observed tabletop
+landing, or robot-ready command. It demonstrates that the current software
+can find one complete *nominal* square reorientation path for one hypothetical
+layout. The seed remains in staging until a measured session, commissioned
+release/clearance policy and fresh landing observation support it.
