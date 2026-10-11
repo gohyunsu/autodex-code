@@ -125,6 +125,22 @@ def test_replans_fresh_arrival_endpoint_and_axial_only(tmp_path, monkeypatch):
     assert saved["old_axial_path_reusable"] is False
 
 
+def test_observed_route_reuses_total_commissioned_bound_at_arrival(
+        tmp_path, monkeypatch):
+    call, seen = _setup(tmp_path, monkeypatch)
+    source = call["previous"].postlift_report_path
+    source.write_text(json.dumps({
+        "schema": "precision_insertion_postlift_preflight_v1"}))
+    prior = call["previous"].bounds
+    call["bounds"] = SurfaceDeviationBounds(
+        prior.key_surface_m, prior.hand_surface_m,
+        "commissioned_future_trial_surface_bound")
+    result = replan.plan_postshift_arrival_axial(**call)
+    assert result.status == "sampled_arrival_20mm_axial_preflight_pass"
+    assert seen["screen"]["override_source"] == (
+        "fresh_arrival_tip_axis_observed_relation_yaw_gauge")
+
+
 def test_arrival_abstain_or_underbounded_error_cannot_replan(
         tmp_path, monkeypatch):
     call, seen = _setup(tmp_path, monkeypatch)

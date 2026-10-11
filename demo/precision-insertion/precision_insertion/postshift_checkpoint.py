@@ -34,6 +34,7 @@ from .grounded_lateral import (
 )
 from .live_robot_state import LiveRobotState
 from .observer import ImageVLM
+from .observed_postlift_source import verify_observed_postlift_source
 from .raw_camera_capture import verify_raw_camera_capture
 from .session_bootstrap import _safe_id
 from .xy_overlay import CalibratedXYFrame, camera_socket_transform
@@ -173,10 +174,16 @@ def assess_postshift_alignment(
     candidate_key = plan.candidate_id.split("/")
     if len(candidate_key) != 3:
         raise ValueError("post-shift grasp candidate ID is invalid")
-    verify_bounded_postlift_preflight(
-        plan.postlift_report_path, mode=mode, shared_root=root,
-        candidate_dir=AssetPaths(root, mode).candidate_dir /
-        Path(*candidate_key))
+    candidate_dir = AssetPaths(root, mode).candidate_dir / Path(*candidate_key)
+    postlift_record = json.loads(plan.postlift_report_path.read_text(
+        encoding="utf-8"))
+    if postlift_record.get("schema") == "precision_insertion_postlift_preflight_v1":
+        verify_observed_postlift_source(
+            plan.postlift_report_path, mode=mode, candidate_dir=candidate_dir)
+    else:
+        verify_bounded_postlift_preflight(
+            plan.postlift_report_path, mode=mode, shared_root=root,
+            candidate_dir=candidate_dir)
     socket = validated_frozen_socket_pose(
         mode=mode, shared_root=root, calibration=calibration)
     geometry_path = AssetPaths(root, mode).task_geometry

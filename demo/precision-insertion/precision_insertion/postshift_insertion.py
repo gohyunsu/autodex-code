@@ -24,6 +24,7 @@ from .config import TaskMode
 from .endpoint import _load_mesh, screen_grasp_endpoint
 from .geometry import pose_angle_deg, validate_se3
 from .grounded_lateral import GroundedLateralPreflight
+from .observed_postlift_source import verify_observed_postlift_source
 from .postshift_checkpoint import (
     PostShiftCheckpoint, verify_postshift_checkpoint,
 )
@@ -111,7 +112,7 @@ def plan_postshift_insertion_preflight(
     max_preinsert_hand_rotation_deg: float,
     screen: Callable = screen_grasp_endpoint,
 ) -> PostShiftInsertionPreflight:
-    """Recheck saved physical sources, then plan held 20 mm geometry.
+    """Recheck the saved held relation, then plan held 20 mm geometry.
 
     Error inputs must be conservative commissioned *worst-case* quantities,
     not a 95% covariance or one VLM answer. A positive result only clears
@@ -142,23 +143,34 @@ def plan_postshift_insertion_preflight(
             mode=mode, shared_root=shared_root, calibration=calibration,
             catalog=catalog, trial=trial, attempt=attempt,
             postlift_preflight_report_path=shift_plan.postlift_report_path))
-    if (postlift_path != shift_plan.postlift_report_path.resolve() or
-            postlift.get("schema") !=
-            "precision_insertion_bounded_postlift_preflight_v1" or
-            postlift.get("bounded_held_relation", {}).get("source") !=
+    physical = postlift_path == shift_plan.postlift_report_path.resolve() and (
+        postlift.get("schema") ==
+        "precision_insertion_bounded_postlift_preflight_v1")
+    observed = postlift_path == shift_plan.postlift_report_path.resolve() and (
+        postlift.get("schema") == "precision_insertion_postlift_preflight_v1")
+    if not (physical or observed):
+        raise ValueError("post-shift replan lacks a verified post-lift relation")
+    relation_record = postlift[
+        "bounded_held_relation" if physical else "observed_held_relation"]
+    if physical and relation_record.get("source") != (
             "physical_grasp_calibration_medoid_not_runtime_key_pose"):
-        raise ValueError("post-shift replan lacks the verified physical medoid")
-    medoid = validate_se3(postlift["bounded_held_relation"]["T_key_hand"],
-                          name="verified physical grasp medoid")
-    if not np.allclose(medoid, shift_plan.lateral.T_key_hand,
+        raise ValueError("post-shift physical medoid source changed")
+    relation = validate_se3(relation_record["T_key_hand"],
+                            name="verified post-lift held relation")
+    if not np.allclose(relation, shift_plan.lateral.T_key_hand,
                        atol=1e-8, rtol=0):
-        raise ValueError("shift and insertion use different held grasp medoids")
-    original_bounds = postlift["bounded_held_relation"]["surface_bounds"]
-    key_prior = float(original_bounds["key_surface_m"])
-    hand_prior = float(original_bounds["hand_surface_m"])
+        raise ValueError("shift and insertion use different held relations")
+    if physical:
+        original_bounds = relation_record["surface_bounds"]
+        key_prior = float(original_bounds["key_surface_m"])
+        hand_prior = float(original_bounds["hand_surface_m"])
+    else:
+        limits_record = shift_plan.lateral.sampled_audit["limits"]
+        key_prior = float(limits_record["key_surface_bound_m"])
+        hand_prior = float(limits_record["hand_surface_bound_m"])
     if (not math.isfinite(key_prior) or not math.isfinite(hand_prior) or
             key_prior <= 0 or hand_prior <= 0):
-        raise ValueError("physical medoid has no valid surface bounds")
+        raise ValueError("post-lift relation has no valid surface bounds")
 
     capture = verify_raw_camera_capture(
         checkpoint.capture_dir, phase="post_lateral_hold")
@@ -194,7 +206,12 @@ def plan_postshift_insertion_preflight(
         key_vertices_m=np.asarray(key_mesh.vertices), tip_key_m=tip_key,
         max_tip_error_m=max_visual_tip_error_m,
         max_axis_error_deg=max_visual_axis_error_deg)
-    required_key = key_prior + visual_extra
+    # Physical-medoid bounds describe pickup scatter before this new visual
+    # fit, so add its error. The observed-route bound is commissioned for the
+    # whole visible held motion and already includes visual estimation; adding
+    # the same error again would make the live route impossible by definition.
+    required_key = (key_prior + visual_extra if physical else
+                    max(key_prior, visual_extra))
     if (bounds.key_surface_m < required_key or
             bounds.hand_surface_m < hand_prior):
         raise ValueError("future surface bounds omit post-shift visual error")
@@ -205,7 +222,7 @@ def plan_postshift_insertion_preflight(
                          name="post-shift measured wrist FK")
     hypothesis = reconstruct_axisymmetric_held_hypothesis(
         T_robot_socket=socket, T_robot_hand_measured=wrist,
-        T_key_hand_prior=medoid, tip_key_m=tip_key,
+        T_key_hand_prior=relation, tip_key_m=tip_key,
         insertion_axis_key=axis_key,
         tip_socket_m=alignment["tip_socket_m"],
         insertion_axis_socket=alignment["insertion_axis_socket"],
@@ -239,7 +256,9 @@ def plan_postshift_insertion_preflight(
         T_key_hand_override=hypothesis.T_key_hand,
         hand_poses_override={"measured_postshift":
                              checkpoint.joint_sample.full_q[7:]},
-        override_source="postshift_tip_axis_physical_medoid_yaw_gauge",
+        override_source=("postshift_tip_axis_physical_medoid_yaw_gauge" if
+                         physical else
+                         "postshift_tip_axis_observed_relation_yaw_gauge"),
         cylinder_yaw_gauge_socket_rad=yaw)
     screened = validate_se3(endpoint.get("T_socket_key_tested"),
                             name="screened cylinder endpoint")
@@ -349,12 +368,17 @@ def verify_postshift_insertion_preflight(
     if (not postlift.is_file() or
             _sha(postlift) != expected.postlift_report_sha256 or
             postlift != shift_plan.postlift_report_path.resolve()):
-        raise ValueError("post-shift physical medoid source changed")
+        raise ValueError("post-shift held-relation source changed")
     expected.candidate_dir.resolve().relative_to(
         AssetPaths(root, mode).candidate_dir.resolve())
-    verify_bounded_postlift_preflight(
-        postlift, mode=mode, shared_root=root,
-        candidate_dir=expected.candidate_dir)
+    postlift_record = json.loads(postlift.read_text(encoding="utf-8"))
+    if postlift_record.get("schema") == "precision_insertion_postlift_preflight_v1":
+        verify_observed_postlift_source(
+            postlift, mode=mode, candidate_dir=expected.candidate_dir)
+    else:
+        verify_bounded_postlift_preflight(
+            postlift, mode=mode, shared_root=root,
+            candidate_dir=expected.candidate_dir)
     validated_frozen_socket_pose(
         mode=mode, shared_root=root, calibration=calibration)
 

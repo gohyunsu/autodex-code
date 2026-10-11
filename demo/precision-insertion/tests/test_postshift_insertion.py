@@ -140,6 +140,35 @@ def test_postshift_replan_reuses_measured_hand_and_saved_sources(
         saved["planned_trajectories_sha256"])
 
 
+def test_postshift_replan_accepts_observed_held_relation_without_medoid(
+        tmp_path, monkeypatch):
+    args, seen = _setup(tmp_path, monkeypatch)
+    original = args["shift_plan"]
+    audit = dict(original.lateral.sampled_audit)
+    audit["limits"] = {**audit["limits"],
+                       "hand_surface_bound_m": .001}
+    lateral = replace(original.lateral, sampled_audit=audit)
+    args["shift_plan"] = replace(original, lateral=lateral)
+    postlift = {
+        "schema": "precision_insertion_postlift_preflight_v1",
+        "observed_held_relation": {
+            "T_key_hand": lateral.T_key_hand.tolist()},
+    }
+    monkeypatch.setattr(
+        postshift_insertion, "_validated_retry_trial_context",
+        lambda **_kwargs: ({}, postlift, original.postlift_report_path,
+                           tmp_path))
+    monkeypatch.setattr(postshift_insertion,
+                        "verify_postshift_checkpoint",
+                        lambda *_args, **_kwargs: {})
+    args["bounds"] = SurfaceDeviationBounds(
+        .003, .001, "commissioned_future_trial_surface_bound")
+    result = postshift_insertion.plan_postshift_insertion_preflight(**args)
+    assert result.status == "sampled_postshift_20mm_preflight_pass"
+    assert seen["screen"]["override_source"] == (
+        "postshift_tip_axis_observed_relation_yaw_gauge")
+
+
 def test_postshift_replan_rejects_visual_abstain_and_small_bound(
         tmp_path, monkeypatch):
     args, seen = _setup(tmp_path, monkeypatch)

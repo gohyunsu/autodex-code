@@ -69,12 +69,18 @@ for a **new** multi-view FoundPose measurement after Qwen's positive lift
 label. This route uses the measured wrist plus selected v8 grasp solely as a
 loose search prior; the wrist sample is selected from the buffered feedback
 at the new images' exposure time, not before the camera request. It then
-replans from the observed key–hand relation. Failed
-pose admission stops that attempt; it does not silently substitute the
-nominal BODex transform. The current grounded XY **retry** route still uses
-physical bounded-relation evidence, so run the observed route with
-`--max-xy-retries 0` until that retry path is extended. The default remains
-the physical relation route for the intended VLM correction experiment.
+replans from the observed key–hand relation. Failed pose admission stops that
+attempt; it does not silently substitute the nominal BODex transform. The
+grounded 1 mm XY retry now accepts this same observed relation through the
+existing lateral, re-observation and 20 mm endpoint/path stages. The observed
+route still requires an **independently commissioned** `SurfaceDeviationBounds`
+from the retry stage's `deviation_bounds`, covering the entire visible held
+motion **including** the VLM tip/axis estimation error at subsequent holds;
+a visual point estimate is not a future-trial error bound. The post-shift
+endpoint checks that the supplied bound covers the stated visual error.
+An unavailable or under-bounded input stops the
+retry. The physical-calibration route remains the default and retains its
+separate medoid evidence.
 
 `LiveReposePlanningHandlers` now uses `DirectedReposeTargetSelector` by
 default. When a tabletop pose has no remaining usable grasp, it ranks the

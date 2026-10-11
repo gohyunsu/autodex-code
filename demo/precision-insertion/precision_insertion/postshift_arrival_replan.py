@@ -167,14 +167,25 @@ def plan_postshift_arrival_axial(
         max_axis_error_deg=max_visual_axis_error_deg)
     postlift = json.loads(previous.postlift_report_path.read_text(
         encoding="utf-8"))
-    physical_bounds = postlift["bounded_held_relation"]["surface_bounds"]
-    physical_key = float(physical_bounds["key_surface_m"])
-    physical_hand = float(physical_bounds["hand_surface_m"])
-    required_key = max(previous.bounds.key_surface_m,
-                       physical_key + visual_extra)
+    physical = postlift.get("schema") == (
+        "precision_insertion_bounded_postlift_preflight_v1")
+    if physical:
+        source_bounds = postlift["bounded_held_relation"]["surface_bounds"]
+        source_key = float(source_bounds["key_surface_m"])
+        source_hand = float(source_bounds["hand_surface_m"])
+    elif postlift.get("schema") == "precision_insertion_postlift_preflight_v1":
+        # The previous plan already carried the commissioned observed-route
+        # surface bound. Do not silently replace it with a physical medoid.
+        source_key = previous.bounds.key_surface_m
+        source_hand = previous.bounds.hand_surface_m
+    else:
+        raise ValueError("arrival replan has an unknown held-relation source")
+    required_key = (max(previous.bounds.key_surface_m,
+                        source_key + visual_extra) if physical else
+                    max(previous.bounds.key_surface_m, visual_extra))
     if (bounds.key_surface_m < required_key or
             bounds.hand_surface_m < max(previous.bounds.hand_surface_m,
-                                        physical_hand)):
+                                        source_hand)):
         raise ValueError("arrival surface bounds omit prior or fresh visual error")
 
     socket = validated_frozen_socket_pose(
@@ -210,7 +221,9 @@ def plan_postshift_arrival_axial(
         T_key_hand_override=hypothesis.T_key_hand,
         hand_poses_override={"measured_arrival":
                              arrival.joint_sample.full_q[7:]},
-        override_source="fresh_arrival_tip_axis_physical_medoid_yaw_gauge",
+        override_source=("fresh_arrival_tip_axis_physical_medoid_yaw_gauge" if
+                         physical else
+                         "fresh_arrival_tip_axis_observed_relation_yaw_gauge"),
         cylinder_yaw_gauge_socket_rad=yaw)
     tested = validate_se3(endpoint.get("T_socket_key_tested"),
                           name="arrival screened cylinder endpoint")

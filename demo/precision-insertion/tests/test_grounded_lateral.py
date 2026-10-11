@@ -24,6 +24,7 @@ from precision_insertion.grounded_alignment import (  # noqa: E402
     observe_grounded_cylinder_axis_cropped,
 )
 from precision_insertion.lateral_preflight import LateralHoldPreflight  # noqa: E402
+from precision_insertion.uncertainty_margin import SurfaceDeviationBounds  # noqa: E402
 from precision_insertion.retry_session import (  # noqa: E402
     GroundedXYDiagnostic, write_retry_session_artifacts,
 )
@@ -170,6 +171,38 @@ def test_grounded_lateral_binds_diagnostic_and_medoid_without_retry(
     with pytest.raises(ValueError, match="trajectory bytes changed"):
         grounded_lateral.verify_grounded_lateral_preflight(
             result, saved_dir / "report.json")
+
+
+def test_grounded_lateral_accepts_observed_relation_with_explicit_bound(
+        tmp_path, monkeypatch):
+    call, seen = _setup(tmp_path, monkeypatch)
+    source = call["diagnostic"].postlift_preflight_path
+    postlift = json.loads(source.read_text())
+    postlift["schema"] = "precision_insertion_postlift_preflight_v1"
+    postlift["observed_held_relation"] = {
+        "T_key_hand": postlift.pop("bounded_held_relation")["T_key_hand"]}
+    source.write_text(json.dumps(postlift), encoding="utf-8")
+    diagnostic = replace(
+        call["diagnostic"],
+        postlift_preflight_sha256=hashlib.sha256(source.read_bytes()).hexdigest())
+    report = call["diagnostic_report_path"]
+    saved = json.loads(report.read_text())
+    saved["postlift_preflight_sha256"] = diagnostic.postlift_preflight_sha256
+    report.write_text(json.dumps(saved), encoding="utf-8")
+    call["diagnostic"] = diagnostic
+    monkeypatch.setattr(
+        grounded_lateral, "_validated_retry_trial_context",
+        lambda **_kwargs: (
+            next(event for event in call["attempt"].events
+                 if event["stage"] == "insertion_success"),
+            postlift, source, tmp_path))
+    with pytest.raises(ValueError, match="observed lateral needs"):
+        grounded_lateral.plan_grounded_lateral_from_withdrawal(**call)
+    result = grounded_lateral.plan_grounded_lateral_from_withdrawal(
+        **call, observed_bounds=SurfaceDeviationBounds(
+            .003, .001, "commissioned_future_trial_surface_bound"))
+    assert result.lateral.status == "sampled_lateral_hold_shift_pass"
+    assert seen[-1]["bounds"].key_surface_m == .003
 
 
 def test_grounded_lateral_rejects_changed_pixels_and_relation_mismatch(

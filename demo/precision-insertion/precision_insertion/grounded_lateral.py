@@ -1,8 +1,8 @@
 """Bind a saved cylinder VLM diagnostic to a read-only lateral hold plan.
 
-Only the first withdrawn hold from a source-verified physical grasp medoid is
-supported. The result is deliberately not a pending retry or an executor
-command: a later image, new endpoint screen and guarded insertion are absent.
+The held relation comes from either a physical grasp medoid or a fresh
+post-lift multi-view key observation. The latter needs explicit commissioned
+surface bounds; it is never treated as a physically calibrated grasp.
 """
 
 from __future__ import annotations
@@ -157,10 +157,11 @@ def plan_grounded_lateral_from_withdrawal(
     max_hold_joint_drift_rad: float, max_grounded_tip_error_m: float,
     max_grounded_axis_error_deg: float, max_path_deviation_m: float,
     max_hold_height_deviation_m: float, max_hold_rotation_deg: float,
+    observed_bounds: SurfaceDeviationBounds | None = None,
 ) -> GroundedLateralPreflight:
     """Recheck sources and preflight only the lateral hold displacement.
 
-    The VLM tip/axis is compared with the medoid prediction at the measured
+    The VLM tip/axis is compared with the prior relation at the measured
     wrist. Future-trial key surface bounds plus *separately commissioned*
     visual tip/axis errors limit the allowed discrepancy. This is a veto,
     not proof that the VLM has found the correct physical key feature.
@@ -192,8 +193,10 @@ def plan_grounded_lateral_from_withdrawal(
         mode=mode, shared_root=shared_root, calibration=calibration,
         catalog=catalog, trial=trial, attempt=attempt,
         postlift_preflight_report_path=diagnostic.postlift_preflight_path)
-    if postlift["schema"] != "precision_insertion_bounded_postlift_preflight_v1":
-        raise ValueError("grounded lateral requires physical grasp calibration")
+    physical = (postlift["schema"] ==
+                "precision_insertion_bounded_postlift_preflight_v1")
+    if not physical and observed_bounds is None:
+        raise ValueError("observed lateral needs commissioned surface bounds")
     geometry_path = AssetPaths(root, mode).task_geometry
     if (diagnostic.attempt_id != attempt.attempt_id or
             diagnostic.candidate_id != attempt.candidate_id or
@@ -237,13 +240,17 @@ def plan_grounded_lateral_from_withdrawal(
                           diagnostic.joint_sample.full_q)) >
             max_hold_joint_drift_rad):
         raise ValueError("lateral start joints or camera diagnostic became stale")
-    relation_record = postlift["bounded_held_relation"]
+    relation_record = postlift[
+        "bounded_held_relation" if physical else "observed_held_relation"]
     relation = validate_se3(relation_record["T_key_hand"],
-                            name="physical grasp medoid")
-    bound_record = relation_record["surface_bounds"]
-    bounds = SurfaceDeviationBounds(
-        bound_record["key_surface_m"], bound_record["hand_surface_m"],
-        bound_record["source"])
+                            name="post-lift held relation")
+    if physical:
+        bound_record = relation_record["surface_bounds"]
+        bounds = SurfaceDeviationBounds(
+            bound_record["key_surface_m"], bound_record["hand_surface_m"],
+            bound_record["source"])
+    else:
+        bounds = observed_bounds
     bounds.validate()
     alignment = diagnostic.alignment
     increment = np.asarray(alignment["bounded_xy_increment_socket_m"],

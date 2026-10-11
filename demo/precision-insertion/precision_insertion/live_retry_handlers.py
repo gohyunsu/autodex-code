@@ -183,7 +183,9 @@ class LiveGroundedRetryHandlers:
             diagnostic_report_path=diagnostic_path,
             joint_sample=self.read_state(),
             decision_timestamp_s=self.decision_time(),
-            limits=self.retry_limits, **dict(self.lateral_parameters))
+            limits=self.retry_limits,
+            observed_bounds=self.deviation_bounds,
+            **dict(self.lateral_parameters))
         plan_path = self._report(runner, "lateral_hold_preflights", lateral_index)
         if plan.lateral.status != "sampled_lateral_hold_shift_pass":
             self._unavailable(runner, "lateral_preflight_failed", plan_path)

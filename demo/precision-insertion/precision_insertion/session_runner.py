@@ -2431,6 +2431,7 @@ class SessionRunner:
         max_path_deviation_m: float,
         max_hold_height_deviation_m: float,
         max_hold_rotation_deg: float,
+        observed_bounds: SurfaceDeviationBounds | None = None,
     ) -> GroundedLateralPreflight:
         """Save a source-bound first hold-shift plan, never a robot retry."""
         if (self.current_decision().action !=
@@ -2460,7 +2461,8 @@ class SessionRunner:
             max_grounded_axis_error_deg=max_grounded_axis_error_deg,
             max_path_deviation_m=max_path_deviation_m,
             max_hold_height_deviation_m=max_hold_height_deviation_m,
-            max_hold_rotation_deg=max_hold_rotation_deg)
+            max_hold_rotation_deg=max_hold_rotation_deg,
+            observed_bounds=observed_bounds)
         output = (self._attempt_dir / "lateral_hold_preflights" /
                   f"{self._lateral_preflight_index:03d}")
         write_grounded_lateral_preflight(result, output)
