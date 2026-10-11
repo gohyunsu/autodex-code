@@ -51,13 +51,13 @@ class LiveReposePlanningHandlers:
         parameters = dict(self.parameters)
         try:
             if isinstance(self.select_target, DirectedReposeTargetSelector):
-                drift = parameters["max_center_in_hand_drift_m"]
-                tilt = parameters["max_symmetry_axis_tilt_deg"]
+                drift = parameters.get("max_center_in_hand_drift_m")
+                tilt = parameters.get("max_symmetry_axis_tilt_deg")
                 source = latest.preflight.pose_class["stem"]
 
                 def seed_available(stem: str, height: int) -> bool:
-                    # The loader performs the same source/MuJoCo/fidelity
-                    # checks as the later preflight. Identity only avoids
+                    # The loader performs the same source/MuJoCo checks as
+                    # later preflight; fidelity filtering is opt-in. Identity avoids
                     # inventing a second key pose for this availability query.
                     return load_v8_reset_seeds(
                         shared_root=runner.shared_root, mode=runner.mode,

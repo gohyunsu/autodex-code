@@ -282,8 +282,6 @@ def plan_fresh_key_trial(
     if ((max_reset_center_drift_m is None) !=
             (max_reset_axis_tilt_deg is None)):
         raise ValueError("both reset pose-fidelity limits must be supplied")
-    if reset_candidate_root is not None and max_reset_center_drift_m is None:
-        raise ValueError("reset candidate root requires pose-fidelity limits")
     if max_reset_center_drift_m is not None and (
             not math.isfinite(float(max_reset_center_drift_m)) or
             float(max_reset_center_drift_m) <= 0 or
@@ -425,7 +423,8 @@ def plan_fresh_key_trial(
                 status = ("repose_required_unplanned" if repose
                           else "planning_exhausted_current_pose")
 
-    if repose and max_reset_center_drift_m is not None:
+    if repose and (reset_candidate_root is not None or
+                   max_reset_center_drift_m is not None):
         repose_assessment = assess_repose_options(
             shared_root=root, mode=mode, catalog=catalog,
             current_pose_stem=stem, target_stems=repose,

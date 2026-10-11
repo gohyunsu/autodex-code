@@ -220,10 +220,11 @@ def main(argv: list[str] | None = None) -> int:
     repose.add_argument("--min-board-edge-clearance-mm", type=float,
                         required=True)
     repose.add_argument("--max-pose-error-deg", type=float, required=True)
-    repose.add_argument("--max-reset-drift-mm", type=float, required=True)
+    repose.add_argument("--max-reset-drift-mm", type=float,
+                        help="optional extra reset-fidelity gate; diagnostic only if omitted")
     repose.add_argument("--max-reset-axis-tilt-deg", "--max-reset-rotation-deg",
                         dest="max_reset_axis_tilt_deg", type=float,
-                        required=True)
+                        help="optional extra reset-fidelity gate; supply with drift")
     repose.add_argument("--attempted-insertion", action="append", default=[],
                         metavar="TYPE/SID/GID")
     repose.add_argument("--covered-scene", type=int, action="append", default=[])
@@ -602,7 +603,9 @@ def main(argv: list[str] | None = None) -> int:
                 start_q_acquisition_timestamp_s=args.start_q_time_s,
                 max_state_skew_s=args.max_key_state_skew_s,
                 max_pose_error_deg=args.max_pose_error_deg,
-                max_center_in_hand_drift_m=args.max_reset_drift_mm / 1000.0,
+                max_center_in_hand_drift_m=(
+                    None if args.max_reset_drift_mm is None else
+                    args.max_reset_drift_mm / 1000.0),
                 max_symmetry_axis_tilt_deg=args.max_reset_axis_tilt_deg,
                 minimum_rest_socket_clearance_m=(
                     args.min_rest_socket_clearance_mm / 1000.0),

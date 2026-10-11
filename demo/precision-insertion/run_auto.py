@@ -30,7 +30,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--session-evidence", type=Path, required=True)
     parser.add_argument("--endpoint-catalog", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--max-xy-retries", type=int, required=True)
+    parser.add_argument("--max-xy-retries", type=int,
+                        help="optional cap; omitted means no arbitrary count cap")
     args = parser.parse_args(argv)
     opened = open_verified_session(
         mode=select_mode(args.mode, args.gap_mm),

@@ -67,7 +67,7 @@ class AlignmentLimits:
     # Empirical floor for calibration, socket pose and correlated point bias.
     systematic_lateral_sigma_m: float
     cad_spacing_sigma_m: float
-    minimum_views: int = 3
+    minimum_views: int = 2
 
     def validate(self) -> None:
         positive = (self.pixel_sigma_px, self.max_reprojection_px,

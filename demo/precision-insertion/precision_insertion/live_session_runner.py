@@ -76,7 +76,7 @@ def preflight_endpoint_catalog_file(
 
 def open_verified_session(
     *, mode: TaskMode, shared_root: Path, evidence_dir: Path,
-    catalog_path: Path, output_dir: Path, max_xy_retries: int,
+    catalog_path: Path, output_dir: Path, max_xy_retries: int | None,
     xy_update_weight: float = 1.0,
 ) -> OpenedPrecisionSession:
     """Fail before creating a run if camera/fixture/candidate evidence is stale.
@@ -99,8 +99,9 @@ def open_verified_session(
     target = output_input.resolve()
     if target.exists():
         raise FileExistsError(f"session output already exists: {target}")
-    if type(max_xy_retries) is not int or max_xy_retries < 0:
-        raise ValueError("max_xy_retries must be a nonnegative integer")
+    if max_xy_retries is not None and (
+            type(max_xy_retries) is not int or max_xy_retries < 0):
+        raise ValueError("max_xy_retries must be a nonnegative integer or None")
     if not root.is_dir() or not source.is_dir() or not catalog_file.is_file():
         raise FileNotFoundError("shared root, session evidence or catalog is missing")
     paths = AssetPaths(root, mode)

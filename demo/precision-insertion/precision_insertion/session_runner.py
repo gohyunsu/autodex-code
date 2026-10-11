@@ -137,10 +137,11 @@ class SessionRunner:
     def __init__(
         self, *, mode: TaskMode, calibration: SessionCalibration,
         catalog: dict, shared_root: Path, output_dir: Path,
-        max_xy_retries: int, xy_update_weight: float = 1.0,
+        max_xy_retries: int | None, xy_update_weight: float = 1.0,
     ) -> None:
-        if type(max_xy_retries) is not int or max_xy_retries < 0:
-            raise ValueError("max_xy_retries must be a nonnegative integer")
+        if max_xy_retries is not None and (
+                type(max_xy_retries) is not int or max_xy_retries < 0):
+            raise ValueError("max_xy_retries must be a nonnegative integer or None")
         if (not math.isfinite(float(xy_update_weight)) or
                 not (0 < xy_update_weight <= 1 if mode.family == "cylinder"
                      else 0 <= xy_update_weight <= 1)):
@@ -325,8 +326,10 @@ class SessionRunner:
                     ("fresh_visible_key_pose_or_commissioned_grasp_relation",
                      "uncertainty_bounded_socket_endpoint_and_path_preflight"))
             return decide_after_attempt(
-                self._attempt, max_xy_retries=max(
-                    0, self.max_xy_retries - self._future_xy_corrections_used))
+                self._attempt, max_xy_retries=(
+                    None if self.max_xy_retries is None else max(
+                        0, self.max_xy_retries -
+                        self._future_xy_corrections_used)))
         if self._repose_search_exhausted:
             return SessionDecision(
                 "stop_for_review", "directed_repose_targets_exhausted", None)
@@ -681,8 +684,9 @@ class SessionRunner:
         to_pose_stem: str, height_cm: int,
         release_xy_robot_m: tuple[float, float], live_start_q,
         start_q_acquisition_timestamp_s: float, max_state_skew_s: float,
-        max_pose_error_deg: float, max_center_in_hand_drift_m: float,
-        max_symmetry_axis_tilt_deg: float,
+        max_pose_error_deg: float,
+        max_center_in_hand_drift_m: float | None = None,
+        max_symmetry_axis_tilt_deg: float | None = None,
         minimum_rest_socket_clearance_m: float,
         minimum_board_edge_clearance_m: float, limits,
         reset_candidate_root: Path | None = None,
@@ -2743,7 +2747,8 @@ class SessionRunner:
                 "guarded_withdrawal_then_xy_assessment" or
                 self._attempt is None or self._attempt_dir is None or
                 self._pending_next_trial_xy is not None or
-                self._future_xy_corrections_used >= self.max_xy_retries or
+                (self.max_xy_retries is not None and
+                 self._future_xy_corrections_used >= self.max_xy_retries) or
                 not isinstance(diagnostic, GroundedXYDiagnostic) or
                 diagnostic.status != "diagnostic_metric_xy_correction" or
                 diagnostic.attempt_id != self._attempt.attempt_id or

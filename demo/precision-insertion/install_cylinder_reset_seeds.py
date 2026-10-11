@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install only verified, fidelity-eligible cylinder reset seeds into v8.
+"""Install source-verified v8 cylinder reset seeds without inventing a drift gate.
 
 This is an asset installation, not a Franka reset-path or physical-success
 claim. Existing canonical candidates are never overwritten.
@@ -33,10 +33,17 @@ def _sha(path: Path) -> str:
 def install(
     *, shared_root: Path, source_reset_root: Path, gap_mm: float,
     from_pose_stem: int, to_pose_stem: int,
-    max_center_drift_m: float, max_axis_tilt_deg: float,
+    max_center_drift_m: float | None = None,
+    max_axis_tilt_deg: float | None = None,
+    selected_seed_ids: tuple[str, ...] | None = None,
     output_manifest: Path,
 ) -> dict:
-    """Prevalidate a directed cell, then copy eligible seeds without overwrite."""
+    """Prevalidate a directed cell, then copy selected seeds without overwrite.
+
+    Pose drift is always recorded by the provenance verifier. A pair of
+    caller-supplied fidelity limits is an optional extra screen, never an
+    implicit qualification inherited from stock AutoDex v8.
+    """
     root = Path(shared_root).expanduser().resolve()
     source = Path(source_reset_root).expanduser().resolve()
     manifest = Path(output_manifest).expanduser().resolve()
@@ -52,18 +59,30 @@ def install(
     source_cell = source / mode.key_object / "reorient_12" / cell
     if not source_cell.is_dir() or source_cell.is_symlink():
         raise FileNotFoundError(f"staged cylinder reset cell is missing: {source_cell}")
+    if (max_center_drift_m is None) != (max_axis_tilt_deg is None):
+        raise ValueError("optional drift and tilt limits must be supplied together")
+    if selected_seed_ids is not None and (
+            not selected_seed_ids or
+            any(not seed.isdigit() or seed != str(int(seed))
+                for seed in selected_seed_ids) or
+            len(set(selected_seed_ids)) != len(selected_seed_ids)):
+        raise ValueError("selected seed IDs must be unique canonical numbers")
     verified_rows = []
     rejected = []
+    found_ids = set()
     for seed in sorted(source_cell.iterdir(), key=lambda path: path.name):
         if not seed.is_dir() or not seed.name.isdigit():
             continue
+        if selected_seed_ids is not None and seed.name not in selected_seed_ids:
+            continue
+        found_ids.add(seed.name)
         if seed.is_symlink() or any(path.is_symlink() for path in seed.rglob("*")):
             raise ValueError(f"reset seed has a symlink: {seed}")
         evidence = verify_v8_reset_seed(
             shared_root=root, mode=mode, height_cm=12,
             from_pose_stem=from_pose_stem, to_pose_stem=to_pose_stem,
             seed_id=seed.name, candidate_root=source)
-        if fidelity_within_limits(
+        if max_center_drift_m is None or fidelity_within_limits(
                 evidence["fidelity"],
                 max_center_in_hand_drift_m=max_center_drift_m,
                 max_symmetry_axis_tilt_deg=max_axis_tilt_deg,
@@ -77,8 +96,11 @@ def install(
             verified_rows.append((seed, target, source_hashes))
         else:
             rejected.append(seed.name)
+    if selected_seed_ids is not None and found_ids != set(selected_seed_ids):
+        raise FileNotFoundError(
+            f"selected reset seeds missing: {sorted(set(selected_seed_ids) - found_ids)}")
     if not verified_rows:
-        raise ValueError(f"no fidelity-eligible reset seed for {cell}")
+        raise ValueError(f"no selected eligible reset seed for {cell}")
     for seed, target, source_hashes in verified_rows:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(seed, target)
@@ -97,12 +119,14 @@ def install(
         "canonical_reset_root": str(canonical),
         "max_center_drift_m": max_center_drift_m,
         "max_axis_tilt_deg": max_axis_tilt_deg,
+        "selected_seed_ids": (None if selected_seed_ids is None else
+                              list(selected_seed_ids)),
         "installed": [
             {"seed_id": seed.name, "canonical_path": str(target),
              "source_sha256": source_hashes}
             for seed, target, source_hashes in verified_rows],
         "fidelity_rejected_seed_ids": rejected,
-        "scope": "v8_full_key_MuJoCo_and_fidelity_seed_not_Franka_path",
+        "scope": "v8_full_key_MuJoCo_seed_not_Franka_path",
         "robot_ready": False,
     }
     manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -119,8 +143,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gap-mm", type=float, required=True)
     parser.add_argument("--from-pose-stem", type=int, required=True)
     parser.add_argument("--to-pose-stem", type=int, required=True)
-    parser.add_argument("--max-center-drift-mm", type=float, required=True)
-    parser.add_argument("--max-axis-tilt-deg", type=float, required=True)
+    parser.add_argument("--max-center-drift-mm", type=float,
+                        help="optional additional key-in-hand drift screen")
+    parser.add_argument("--max-axis-tilt-deg", type=float,
+                        help="optional additional axis-tilt screen")
+    parser.add_argument("--seed-id", action="append",
+                        help="install only an explicitly selected source-verified ID")
     parser.add_argument("--output-manifest", type=Path, required=True)
     args = parser.parse_args(argv)
     result = install(
@@ -128,8 +156,11 @@ def main(argv: list[str] | None = None) -> int:
         source_reset_root=args.source_reset_root,
         gap_mm=args.gap_mm, from_pose_stem=args.from_pose_stem,
         to_pose_stem=args.to_pose_stem,
-        max_center_drift_m=args.max_center_drift_mm / 1000.0,
+        max_center_drift_m=(None if args.max_center_drift_mm is None else
+                            args.max_center_drift_mm / 1000.0),
         max_axis_tilt_deg=args.max_axis_tilt_deg,
+        selected_seed_ids=(None if args.seed_id is None else
+                           tuple(args.seed_id)),
         output_manifest=args.output_manifest)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0

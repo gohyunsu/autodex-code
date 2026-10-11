@@ -1046,7 +1046,8 @@ The first independent helpers are in `precision_insertion/`:
 - `reset_candidates.py` reads only provenance-bound, full-key MuJoCo-stable
   directed v8 reset seeds. `repose_policy.py` cross-checks alternative poses
   with insertion-eligible grasps and reset seed availability at each AutoDex
-  release height. Both require explicit pose-fidelity limits. They report
+  release height. Key-in-hand drift/tilt is recorded; an extra fidelity gate
+  is applied only when the caller supplies both limits. They report
   seeds for a later socket-aware Franka preflight, never a runnable reset.
 - `outcome.py` defines a VLM-led, sensor-vetoed tri-state task label. A
   multi-view `normal_appearance` assessment is required for `true`, together with
@@ -1072,8 +1073,9 @@ The first independent helpers are in `precision_insertion/`:
   the next **evidence gate**. It routes failed grasp to fresh key observation
   and candidate exclusion, failed transfer to recovery, held/no-abort
   insertion failure to guarded withdrawal and 1 mm XY assessment, and pose
-  exhaustion to a separate repose preflight. An explicit retry-count limit
-  is required. Its `execution_gate_required` result does not authorize a
+  exhaustion to a separate repose preflight. A retry-count cap is optional;
+  the cumulative XY distance has its own configured bound. Its
+  `execution_gate_required` result does not authorize a
   robot command; the live capture/executor and commissioned F/T gates are
   still absent.
 
@@ -1812,8 +1814,9 @@ v8 cell, converts each object-frame wrist transform using the *fresh* key
 pose, honors the original AutoDex reset-grasp success-rate ordering, and
 rejects changed seed/scene/key-mesh evidence. It also recomputes the MuJoCo
 post-squeeze key-in-hand displacement and symmetry-reduced axis tilt from the
-saved trajectory. The caller **must** supply commissioned maximum drift and
-tilt limits; a seed outside either limit is omitted. It is only a seed loader;
+saved trajectory. Drift/tilt limits are **optional**, not part of the stock
+v8 acceptance rule; when supplied, a seed outside either limit is omitted.
+Without them the values remain diagnostics. It is only a seed loader;
 it does not
 inherit the stock reset runner's legacy pose map, and it does not establish a
 socket-aware Franka path or authorize any motor command.
@@ -1909,8 +1912,11 @@ limits**. In [this local diagnostic](/home/hyunsu/shared_data/AutoDex/precision_
 `0_1/191` passes and `1_0/631` fails the pose-fidelity gate despite both
 passing the original MuJoCo gravity test. Neither has a verified socket-aware
 Franka reset trajectory or a physical repose result. A runtime with these
-limits would therefore have no eligible `1 -> 0` reset seed; it must not
-assume that the original two MuJoCo passes provide bidirectional coverage.
+limits would therefore have no eligible `1 -> 0` seed *in that historical
+two-seed pool*. The default loader now imposes no uncommissioned drift gate.
+The later full-key run and source-verified `1_0/1687` canonical installation
+are documented in [OFFLINE_ASSET_STATUS.md](OFFLINE_ASSET_STATUS.md); neither
+seed yet has a verified Franka repose trajectory or physical landing.
 The 999 KB [local handoff bundle](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_handoff_bundle_20261010.tar.gz)
 contains both candidates, audit reports, v8 key scenes, key and six cylinder
 socket object-processing assets, fixture geometries, and a handoff README.
@@ -2124,7 +2130,7 @@ complete insertion endpoint catalog and the unchanged
 `GraspPlanner(hand="fr3_inspire")`. Supply the observed source and desired
 target three-digit v8 tabletop stems, a commissioned release XY in robot
 meters, one of the 4/8/12 cm v8 release-height cells, measured 13-joint start
-state plus acquisition timestamps, reset-grasp fidelity limits, frozen-socket
+state plus acquisition timestamps, optional reset-grasp fidelity limits, frozen-socket
 clearance, a measured ChArUco interior-edge clearance and path-audit limits.
 The entire key footprint must lie inside the measured ChArUco corner hull;
 the broad cuRobo table cuboid alone is insufficient. The function first
@@ -2352,8 +2358,7 @@ creating the output directory. It never moves Franka/Inspire:
   --mode square --gap-mm 1.5 \
   --session-evidence /path/to/new_session_evidence \
   --endpoint-catalog /path/to/current_recipient_catalog.json \
-  --output-dir /path/to/new_trial_run \
-  --max-xy-retries 2
+  --output-dir /path/to/new_trial_run
 ```
 
 The output contains frozen session/catalog snapshots and

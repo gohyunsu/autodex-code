@@ -83,7 +83,7 @@ def compose_live_handlers(
 @contextmanager
 def open_live_precision_session(
     *, launch_config_path: Path, endpoint_catalog_path: Path,
-    run_output_dir: Path, max_xy_retries: int,
+    run_output_dir: Path, max_xy_retries: int | None,
     clear_view: ClearViewForPerception, xy_update_weight: float = 1.0,
 ) -> Iterator[LivePrecisionSession]:
     """Capture once, open the bound ledger, and retain camera connections.
@@ -108,8 +108,9 @@ def open_live_precision_session(
         raise FileExistsError(f"session run output already exists: {output}")
     if not output.parent.is_dir():
         raise FileNotFoundError("session run output parent is missing")
-    if type(max_xy_retries) is not int or max_xy_retries < 0:
-        raise ValueError("max_xy_retries must be a nonnegative integer")
+    if max_xy_retries is not None and (
+            type(max_xy_retries) is not int or max_xy_retries < 0):
+        raise ValueError("max_xy_retries must be a nonnegative integer or None")
     if not math.isfinite(float(xy_update_weight)) or not 0 < xy_update_weight <= 1:
         raise ValueError("XY update weight must be in (0, 1]")
     if not isinstance(clear_view, ClearViewForPerception):
@@ -135,7 +136,7 @@ def open_live_precision_session(
 
 def run_live_precision_session(
     *, launch_config_path: Path, endpoint_catalog_path: Path,
-    run_output_dir: Path, max_xy_retries: int,
+    run_output_dir: Path, max_xy_retries: int | None,
     clear_view: ClearViewForPerception,
     build_handlers: Callable[[LivePrecisionSession], Mapping[str, ActionHandler]],
     max_steps: int = 100, xy_update_weight: float = 1.0,

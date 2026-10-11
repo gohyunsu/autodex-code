@@ -1,6 +1,6 @@
 {
   "schema": "precision_insertion_live_session_launch_v1",
-  "mode": {"family": "square", "gap_mm": 1.5},
+  "mode": {"family": "cylinder", "gap_mm": 20},
   "shared_root": "/absolute/path/to/shared_data",
   "capture_root": "/absolute/shared/path/for/init_captures",
   "evidence_dir": "/absolute/new/path/for/one_session_evidence",

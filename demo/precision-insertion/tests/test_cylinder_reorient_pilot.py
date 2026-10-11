@@ -223,6 +223,13 @@ def test_promotes_only_stock_mujoco_pass_and_loads_direct_v8_cell(
     assert np.allclose(seeds["wrist_se3"][0], T_robot_key @ raw_wrist)
     assert seeds["scene_info"][0]["v8_cell"] == "0_1"
     assert seeds["robot_ready"] is False
+    stock_only = load_v8_reset_seeds(
+        shared_root=tmp_path, mode=mode, height_cm=12,
+        from_pose_stem="000", to_pose_stem="001", T_robot_key=T_robot_key)
+    assert stock_only["n_total"] == 1
+    assert stock_only["fidelity_limits"] is None
+    assert "end_gravity" in stock_only["scene_info"][0][
+        "post_squeeze_fidelity_diagnostic"]
     assert load_v8_reset_seeds(
         shared_root=tmp_path, mode=mode, height_cm=12,
         from_pose_stem=0, to_pose_stem=1, T_robot_key=T_robot_key,

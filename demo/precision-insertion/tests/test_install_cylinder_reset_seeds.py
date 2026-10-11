@@ -71,10 +71,39 @@ def test_no_eligible_seed_does_not_create_canonical_asset(tmp_path, monkeypatch)
     monkeypatch.setattr(
         installer, "verify_v8_reset_seed",
         lambda **_kwargs: {"fidelity": _fidelity(0.015, 30.0)})
-    with pytest.raises(ValueError, match="no fidelity-eligible"):
+    with pytest.raises(ValueError, match="no selected eligible"):
         installer.install(
             shared_root=shared, source_reset_root=source, gap_mm=20,
             from_pose_stem=1, to_pose_stem=0,
             max_center_drift_m=0.005, max_axis_tilt_deg=10.0,
             output_manifest=tmp_path / "rejected.json")
     assert not (shared / "AutoDex/candidates").exists()
+
+
+def test_explicit_seed_can_be_installed_without_arbitrary_fidelity_gate(
+    tmp_path, monkeypatch,
+):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    source = tmp_path / "staging" / "reset_12"
+    key = installer.select_mode("cylinder", 20).key_object
+    cell = source / key / "reorient_12" / "1_0"
+    for name in ("1487", "1687"):
+        seed = cell / name
+        seed.mkdir(parents=True)
+        (seed / "sim_eval.json").write_text(name, encoding="utf-8")
+    monkeypatch.setattr(
+        installer, "verify_v8_reset_seed",
+        lambda **_kwargs: {"fidelity": _fidelity(0.008, 5.0)})
+    report = installer.install(
+        shared_root=shared, source_reset_root=source, gap_mm=20,
+        from_pose_stem=1, to_pose_stem=0,
+        selected_seed_ids=("1687",),
+        output_manifest=tmp_path / "installed.json")
+    assert [row["seed_id"] for row in report["installed"]] == ["1687"]
+    assert report["max_center_drift_m"] is None
+    assert report["max_axis_tilt_deg"] is None
+    assert not (shared / "AutoDex/candidates/inspire/reset_12" / key /
+                "reorient_12/1_0/1487").exists()
+    assert (shared / "AutoDex/candidates/inspire/reset_12" / key /
+            "reorient_12/1_0/1687").is_dir()

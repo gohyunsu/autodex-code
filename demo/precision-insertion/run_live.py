@@ -35,8 +35,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--robot-config", type=Path,
                         help="FR3 config for precision_insertion.franka_integration:factory")
     parser.add_argument(
-        "--max-xy-retries", type=int, default=1,
-        help="number of failed-trial XY advisories allowed for fresh physical pickups")
+        "--max-xy-retries", type=int,
+        help="optional cap on failed-trial XY advisories; default has no arbitrary count cap")
     parser.add_argument(
         "--xy-update-weight", type=float, default=1.0,
         help="gain applied to each failed-trial XY residual before adding to the next trial (default: 1.0)")

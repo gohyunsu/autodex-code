@@ -175,6 +175,18 @@ def test_failed_insertion_advice_returns_key_before_next_physical_attempt():
             "recover_held_key_then_reobserve")
 
 
+def test_retry_count_cap_is_optional_not_an_implicit_single_trial_limit():
+    record = _attempt()
+    _grasp(record)
+    _hold(record)
+    _insert(record)
+    assert decide_after_attempt(
+        record, max_xy_retries=None).action == (
+            "guarded_withdrawal_then_xy_assessment")
+    assert decide_after_attempt(
+        record, max_xy_retries=0).reason == "xy_retry_budget_exhausted"
+
+
 def test_square_failed_insertion_returns_without_xy_advice():
     square = select_mode("square", 1.5)
     session = {"schema": "precision_insertion_session_calibration_v1",

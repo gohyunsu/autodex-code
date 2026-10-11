@@ -25,8 +25,9 @@ from .reset_candidates import load_v8_reset_seeds
 def assess_repose_options(
     *, shared_root: Path, mode: TaskMode, catalog: dict,
     current_pose_stem: str, target_stems: Iterable[str],
-    T_robot_key: np.ndarray, max_center_in_hand_drift_m: float,
-    max_symmetry_axis_tilt_deg: float,
+    T_robot_key: np.ndarray,
+    max_center_in_hand_drift_m: float | None = None,
+    max_symmetry_axis_tilt_deg: float | None = None,
     attempted_insertion: Iterable[tuple[str, str, str]] = (),
     covered_scenes: Iterable[int] = (),
     attempted_reset: Iterable[tuple[int, str, str]] = (),
@@ -43,11 +44,16 @@ def assess_repose_options(
     if Path(catalog.get("shared_root", "")).expanduser().resolve() != root:
         raise ValueError("repose catalog and reset assets use different shared roots")
     pose = validate_se3(T_robot_key, name="fresh reset T_robot_key")
-    drift = float(max_center_in_hand_drift_m)
-    tilt = float(max_symmetry_axis_tilt_deg)
-    if (not math.isfinite(drift) or drift <= 0 or
-            not math.isfinite(tilt) or tilt <= 0):
-        raise ValueError("commissioned reset drift and tilt limits are required")
+    if ((max_center_in_hand_drift_m is None) !=
+            (max_symmetry_axis_tilt_deg is None)):
+        raise ValueError("reset drift and tilt limits must be supplied together")
+    drift = (None if max_center_in_hand_drift_m is None else
+             float(max_center_in_hand_drift_m))
+    tilt = (None if max_symmetry_axis_tilt_deg is None else
+            float(max_symmetry_axis_tilt_deg))
+    if drift is not None and (not math.isfinite(drift) or drift <= 0 or
+                              not math.isfinite(tilt) or tilt <= 0):
+        raise ValueError("reset drift and tilt limits must be finite and positive")
     current_raw = str(current_pose_stem)
     if not current_raw.isdigit():
         raise ValueError("current tabletop pose must be a numeric v8 stem")
@@ -135,7 +141,7 @@ def assess_repose_options(
         "candidate_root": (str(base) if base is not None else
                            str(root / "AutoDex/candidates/inspire")),
         "candidate_root_is_canonical": base is None,
-        "fidelity_limits": {
+        "fidelity_limits": None if drift is None else {
             "max_center_in_hand_drift_m": drift,
             "max_symmetry_axis_tilt_deg": tilt,
             "rotation_measure": ("full_relative_rotation_deg"

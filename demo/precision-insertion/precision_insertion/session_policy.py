@@ -78,7 +78,7 @@ def decide_after_trial_preflight(report: Mapping) -> SessionDecision:
 
 
 def decide_after_attempt(
-    attempt: AttemptRecord, *, max_xy_retries: int,
+    attempt: AttemptRecord, *, max_xy_retries: int | None,
 ) -> SessionDecision:
     """Choose the next *evidence gate* after one observed physical phase.
 
@@ -87,8 +87,9 @@ def decide_after_attempt(
     reinsert during the same physical attempt. The key is returned before a
     fresh key observation and new pickup can use the proposal.
     """
-    if type(max_xy_retries) is not int or max_xy_retries < 0:
-        raise ValueError("max_xy_retries must be a nonnegative integer")
+    if max_xy_retries is not None and (
+            type(max_xy_retries) is not int or max_xy_retries < 0):
+        raise ValueError("max_xy_retries must be a nonnegative integer or None")
     if not isinstance(attempt, AttemptRecord):
         raise TypeError("expected an observed AttemptRecord")
     labels = attempt.labels
@@ -170,7 +171,8 @@ def decide_after_attempt(
             event["stage"] == "xy_retry" and
             event["value"] == "grounded_continuous_xy"
             for event in attempt.events)
-        if retry_count >= max_xy_retries or grounded_retry_used:
+        if ((max_xy_retries is not None and retry_count >= max_xy_retries) or
+                grounded_retry_used):
             return result(
                 "recover_held_key_then_reobserve",
                 ("grounded_retry_step_exhausted" if grounded_retry_used else

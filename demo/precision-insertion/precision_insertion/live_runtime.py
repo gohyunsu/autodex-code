@@ -22,7 +22,7 @@ class RunLiveOptions:
     launch_config_path: Path
     endpoint_catalog_path: Path
     run_output_dir: Path
-    max_xy_retries: int = 1
+    max_xy_retries: int | None = None
     max_steps: int = 100
     enable_robot_motion: bool = False
     robot_config_path: Path | None = None
@@ -78,8 +78,10 @@ def run_integrated_live_session(
         raise TypeError("live run needs RunLiveOptions")
     if options.enable_robot_motion is not True:
         raise PermissionError("live session requires explicit robot-motion opt-in")
-    if type(options.max_xy_retries) is not int or options.max_xy_retries < 0:
-        raise ValueError("max_xy_retries must be a nonnegative integer")
+    if options.max_xy_retries is not None and (
+            type(options.max_xy_retries) is not int or
+            options.max_xy_retries < 0):
+        raise ValueError("max_xy_retries must be a nonnegative integer or None")
     if (not math.isfinite(float(options.xy_update_weight)) or
             not 0 < options.xy_update_weight <= 1):
         raise ValueError("XY update weight must be in (0, 1]")

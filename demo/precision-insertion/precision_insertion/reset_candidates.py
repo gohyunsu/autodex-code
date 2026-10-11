@@ -2,6 +2,8 @@
 
 This is a read-only seed loader, not a reset trajectory or execution policy.
 Only explicitly provenance-bound, MuJoCo-stable full-key candidates enter it.
+Post-squeeze drift and tilt are recorded diagnostics; an additional numeric
+fidelity gate is opt-in, not part of the stock v8 acceptance rule.
 """
 
 from __future__ import annotations
@@ -213,8 +215,9 @@ def verify_v8_reset_seed(
 def load_v8_reset_seeds(
     *, shared_root: Path, mode: TaskMode, height_cm: int,
     from_pose_stem: int | str, to_pose_stem: int | str,
-    T_robot_key: np.ndarray, max_center_in_hand_drift_m: float,
-    max_symmetry_axis_tilt_deg: float,
+    T_robot_key: np.ndarray,
+    max_center_in_hand_drift_m: float | None = None,
+    max_symmetry_axis_tilt_deg: float | None = None,
     attempted_ids: tuple[str, ...] = (),
     candidate_root: Path | None = None,
 ) -> dict | None:
@@ -222,6 +225,7 @@ def load_v8_reset_seeds(
 
     The wrist transforms stored by BODex are key-frame transforms; this
     loader transforms them to robot frame from the *freshly observed* key.
+    Without both optional fidelity limits, no drift/tilt cutoff is applied.
     ``None`` means this cell has no unattempted stable seed, not that repose
     is impossible. The caller still owes socket-aware full-chain preflight.
     ``candidate_root`` is an explicit reset_<height> staging override for
@@ -235,11 +239,17 @@ def load_v8_reset_seeds(
         raise ValueError("reset transition needs two different tabletop poses")
     if type(height_cm) is not int or height_cm not in RESET_RELEASE_HEIGHTS_CM:
         raise ValueError("unsupported AutoDex reset release height")
-    drift_limit = float(max_center_in_hand_drift_m)
-    tilt_limit = float(max_symmetry_axis_tilt_deg)
-    if (not math.isfinite(drift_limit) or drift_limit <= 0 or
+    if ((max_center_in_hand_drift_m is None) !=
+            (max_symmetry_axis_tilt_deg is None)):
+        raise ValueError("reset fidelity limits must be supplied together")
+    drift_limit = (None if max_center_in_hand_drift_m is None else
+                   float(max_center_in_hand_drift_m))
+    tilt_limit = (None if max_symmetry_axis_tilt_deg is None else
+                  float(max_symmetry_axis_tilt_deg))
+    if drift_limit is not None and (
+            not math.isfinite(drift_limit) or drift_limit <= 0 or
             not math.isfinite(tilt_limit) or tilt_limit <= 0):
-        raise ValueError("commissioned reset pose-fidelity limits are required")
+        raise ValueError("reset fidelity limits must be finite and positive")
     pose = validate_se3(T_robot_key, name="fresh T_robot_key")
     if any(not str(seed).isdigit() for seed in attempted_ids):
         raise ValueError("attempted reset seed IDs must be numeric")
@@ -264,11 +274,12 @@ def load_v8_reset_seeds(
     checked = [(seed, _candidate_arrays(seed, mode=mode, cell=cell,
                                         h_cm=height_cm, scenes=scenes))
                for seed in seeds]
-    checked = [(seed, row) for seed, row in checked if
-               fidelity_within_limits(
-                   row[5], max_center_in_hand_drift_m=drift_limit,
-                   max_symmetry_axis_tilt_deg=tilt_limit,
-                   family=mode.family)]
+    if drift_limit is not None:
+        checked = [(seed, row) for seed, row in checked if
+                   fidelity_within_limits(
+                       row[5], max_center_in_hand_drift_m=drift_limit,
+                       max_symmetry_axis_tilt_deg=tilt_limit,
+                       family=mode.family)]
     if not checked:
         return None
     seeds = [seed for seed, _ in checked]
@@ -284,15 +295,16 @@ def load_v8_reset_seeds(
             "grasp_idx": seed.name, "cell": cell, "v8_cell": cell,
             "candidate_contract": "precision_insertion_v8_direct_reset",
             "h_cm": height_cm, "source": str(seed),
+            "post_squeeze_fidelity_diagnostic": row[5],
             "robot_ready": False,
-        } for seed in seeds],
+        } for seed, row in zip(seeds, rows)],
         "n_total": len(seeds), "v8_i": i, "v8_j": j,
-        "fidelity_limits": {
+        "fidelity_limits": (None if drift_limit is None else {
             "max_center_in_hand_drift_m": drift_limit,
             "max_symmetry_axis_tilt_deg": tilt_limit,
             "rotation_measure": ("full_relative_rotation_deg"
                                  if mode.family == "square" else
                                  "symmetry_reduced_axis_tilt_deg"),
-        },
+        }),
         "robot_ready": False,
     }
