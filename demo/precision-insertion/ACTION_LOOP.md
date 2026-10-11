@@ -3,6 +3,9 @@
 The current insertion-failure route stores XY advice for a **new physical
 attempt**, never a same-held-key reinsert. See
 [`NEXT_TRIAL_XY.md`](NEXT_TRIAL_XY.md).
+The active handler contract does not require the historical
+`await_retry_execution_and_observation` same-held-key action. The cylinder
+runner returns the key and starts a new pickup before applying any XY advice.
 
 `run_live_precision_session()` joins the already implemented AutoDex-camera
 ChArUco→socket startup to `SessionRunner`'s existing trial policy. It keeps

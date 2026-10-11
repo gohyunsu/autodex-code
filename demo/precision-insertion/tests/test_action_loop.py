@@ -32,11 +32,12 @@ class Runner:
         self.index += 1
 
 
-def test_repeated_grasp_failure_uses_new_capture_and_next_candidate():
+def test_repeated_grasp_failure_restores_before_new_capture_and_candidate():
     runner = Runner([
         _decision("capture_fresh_key"),
         _decision("execution_gate_required", "table/0/1"),
         _decision("await_lift_observation", "table/0/1"),
+        _decision("recover_key_then_reobserve", "table/0/1"),
         _decision("reobserve_key_and_preflight", "table/0/1"),
         _decision("execution_gate_required", "table/0/2"),
         _decision("session_success", "table/0/2"),
@@ -53,7 +54,8 @@ def test_repeated_grasp_failure_uses_new_capture_and_next_candidate():
     result = run_session_actions(runner, handlers={
         name: advance(name) for name in (
             "capture_fresh_key", "execution_gate_required",
-            "await_lift_observation", "reobserve_key_and_preflight")},
+            "await_lift_observation", "recover_key_then_reobserve",
+            "reobserve_key_and_preflight")},
         max_steps=10)
     assert result.status == "success"
     assert result.decision.action == "session_success"
@@ -61,17 +63,20 @@ def test_repeated_grasp_failure_uses_new_capture_and_next_candidate():
         ("capture_fresh_key", None),
         ("execution_gate_required", "table/0/1"),
         ("await_lift_observation", "table/0/1"),
+        ("recover_key_then_reobserve", "table/0/1"),
         ("reobserve_key_and_preflight", "table/0/1"),
         ("execution_gate_required", "table/0/2"),
     ]
     assert result.to_record()["robot_ready"] is False
 
 
-def test_insertion_failure_routes_to_xy_retry_without_implicit_execution():
+def test_insertion_failure_saves_next_trial_xy_then_returns_key():
     runner = Runner([
         _decision("await_guarded_insertion_and_observation", "table/0/1"),
         _decision("guarded_withdrawal_then_xy_assessment", "table/0/1"),
-        _decision("await_retry_execution_and_observation", "table/0/1"),
+        _decision("recover_held_key_then_reobserve", "table/0/1"),
+        _decision("reobserve_key_and_preflight", "table/0/1"),
+        _decision("execution_gate_required", "table/0/1"),
         _decision("session_success", "table/0/1"),
     ])
     result = run_session_actions(runner, handlers={
@@ -83,12 +88,16 @@ def test_insertion_failure_routes_to_xy_retry_without_implicit_execution():
 
     result = run_session_actions(runner, handlers={
         "guarded_withdrawal_then_xy_assessment": lambda row, _: row.advance(),
-        "await_retry_execution_and_observation": lambda row, _: row.advance(),
+        "recover_held_key_then_reobserve": lambda row, _: row.advance(),
+        "reobserve_key_and_preflight": lambda row, _: row.advance(),
+        "execution_gate_required": lambda row, _: row.advance(),
     })
     assert result.status == "success"
     assert [step.action for step in result.visited] == [
         "guarded_withdrawal_then_xy_assessment",
-        "await_retry_execution_and_observation",
+        "recover_held_key_then_reobserve",
+        "reobserve_key_and_preflight",
+        "execution_gate_required",
         "session_success",
     ]
 
@@ -172,6 +181,27 @@ def test_complete_live_handler_composition_rejects_missing_or_duplicate_stages()
         compose_live_handlers(
             live, Component(_LIVE_ACTIONS), Component({"capture_fresh_key"}))
     assert set(compose_live_handlers(live, Component(_LIVE_ACTIONS))) == _LIVE_ACTIONS
+
+
+def test_real_cylinder_stage_handlers_cover_exactly_the_active_live_actions():
+    """Catch stale mandatory actions that no assembled stage can execute."""
+    from precision_insertion import runtime_assembly
+    from precision_insertion.live_nominal_relation_handlers import (
+        LiveNominalRelationHandlers,
+    )
+    from precision_insertion.live_orchestration import _LIVE_ACTIONS
+
+    live = object()
+    classes = dict(runtime_assembly.STAGE_CLASSES)
+    classes["held_relation"] = LiveNominalRelationHandlers
+    components = []
+    for cls in classes.values():
+        component = cls.__new__(cls)
+        component.live = live
+        components.append(component)
+    handlers = compose_live_handlers(live, *components)
+    assert set(handlers) == _LIVE_ACTIONS
+    assert "await_retry_execution_and_observation" not in handlers
 
 
 def test_live_wrapper_keeps_cameras_open_for_repeated_actions(monkeypatch):
