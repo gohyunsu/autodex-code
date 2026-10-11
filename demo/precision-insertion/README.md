@@ -2342,6 +2342,37 @@ first-test pair. Their physical pose accuracy, a complete catalogue,
 commissioned camera timestamps and robot motion path are still missing;
 file presence does not make the session runnable.
 
+For a **single long-running, non-motion process**, use
+[`open_live_precision_session`](precision_insertion/live_orchestration.py).
+It validates the launch files and obvious catalogue/output mistakes before
+opening camera connections, collects ChArUco then repeated socket captures,
+opens the source-bound `SessionRunner`, and keeps the **same** initialized
+AutoDex camera transport and acquisition-time provider alive for fresh key
+captures until the context exits:
+
+```python
+from pathlib import Path
+from precision_insertion.live_orchestration import open_live_precision_session
+
+with open_live_precision_session(
+    launch_config_path=Path("/absolute/commissioned_session_launch.json"),
+    endpoint_catalog_path=Path("/absolute/complete_endpoint_catalog.json"),
+    run_output_dir=Path("/absolute/new_trial_run"),
+    max_xy_retries=2,
+) as live:
+    runner = live.opened.runner
+    init = live.cameras.init_orchestrator
+    acquisition_metadata = live.cameras.acquisition_metadata_for_request
+    # Supply runner, init and acquisition_metadata to prepare_next_live_key()
+    # together with commissioned feedback sampling, planner and limits below.
+```
+
+This joins existing boundaries; it does not duplicate FoundPose, v8 filtering,
+or trial planning. The context closes every camera connection on normal exit
+or failure, retaining already written capture evidence for diagnosis. It does
+not construct or command a robot controller, launch a full trial loop, or
+turn a successful camera/catalogue preflight into motor authorization.
+
 `board_snap` and `init` are the metadata-preserving adapters described in
 [CAMERA_FRAME_HANDOFF.md](CAMERA_FRAME_HANDOFF.md); all `commissioned_*`
 variables need measured values from the AutoDex rig. A later NAS addendum now

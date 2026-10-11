@@ -174,3 +174,59 @@ def test_capture_closes_all_camera_connections_even_on_failure(
         launch.capture_session(loaded)
     assert events == ["snapshot_open", "tap_open", "init_open",
                       "init_close", "tap_close", "snapshot_close"]
+
+
+def test_open_camera_context_survives_socket_start_until_trial_is_done(
+        tmp_path, monkeypatch):
+    config, _record = _config(tmp_path)
+    _stub_time(monkeypatch)
+    loaded = launch.load_session_launch(config)
+    events = []
+
+    class Snapshot:
+        def __init__(self, *_args):
+            events.append("snapshot_open")
+
+        def close(self):
+            events.append("snapshot_close")
+
+    class Init:
+        def __init__(self, *_args):
+            events.append("init_open")
+
+        def close(self):
+            events.append("init_close")
+
+    class Tap:
+        def __init__(self, *_args):
+            events.append("tap_open")
+            self.buffer = object()
+
+        def close(self):
+            events.append("tap_close")
+
+    monkeypatch.setattr(
+        "autodex.perception.snapshot_orchestrator.SnapshotOrchestrator",
+        Snapshot)
+    monkeypatch.setattr(
+        "autodex.perception.init_orchestrator.InitOrchestrator", Init)
+    monkeypatch.setattr(launch, "SnapshotMetadataTap", Tap)
+    monkeypatch.setattr(launch, "PrecisionInitOrchestrator",
+                        lambda stock, _registry: stock)
+    monkeypatch.setattr(launch, "AcquisitionTimeProvider",
+                        lambda _registry, _times: object())
+
+    def start(**kwargs):
+        events.append("socket_frozen")
+        assert isinstance(kwargs["init_orchestrator"], Init)
+        return object()
+
+    monkeypatch.setattr(launch, "start_precision_session", start)
+    with launch.open_session_cameras(loaded) as cameras:
+        assert cameras.start() is not None
+        assert isinstance(cameras.init_orchestrator, Init)
+        assert events == ["snapshot_open", "tap_open", "init_open",
+                          "socket_frozen"]
+    assert events == ["snapshot_open", "tap_open", "init_open",
+                      "socket_frozen", "init_close", "tap_close",
+                      "snapshot_close"]

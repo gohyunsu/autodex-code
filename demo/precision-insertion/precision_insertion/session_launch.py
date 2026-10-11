@@ -7,7 +7,7 @@ adapters; it never connects to or commands Franka/Inspire.
 
 from __future__ import annotations
 
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 import ipaddress
 import json
@@ -15,6 +15,7 @@ import math
 from pathlib import Path
 import re
 import time
+from typing import Iterator
 
 import numpy as np
 
@@ -76,6 +77,44 @@ class SessionLaunch:
             "scope": "file_preflight_not_live_camera_or_pose_accuracy",
             "robot_ready": False,
         }
+
+
+@dataclass(frozen=True)
+class OpenSessionCameras:
+    """Keep one provenance-bound camera transport alive across trial captures.
+
+    The owner must hold ``open_session_cameras``' context open while using the
+    init orchestrator or acquisition provider. Neither object commands a
+    robot, and a returned ``StartedPrecisionSession`` is not motion approval.
+    """
+
+    launch: SessionLaunch
+    snapshot_orchestrator: object
+    init_orchestrator: object
+    acquisition_metadata_for_request: AcquisitionTimeProvider
+
+    def start(self) -> StartedPrecisionSession:
+        """Capture ChArUco then repeated socket observations once."""
+        launch = self.launch
+        return start_precision_session(
+            mode=launch.mode, shared_root=launch.shared_root,
+            snapshot_orchestrator=self.snapshot_orchestrator,
+            init_orchestrator=self.init_orchestrator,
+            acquisition_metadata_for_request=self.acquisition_metadata_for_request,
+            capture_root=launch.capture_root, evidence_dir=launch.evidence_dir,
+            calibrated_camera_ids=launch.camera_ids,
+            intrinsics_full=launch.intrinsics_full,
+            extrinsics_full=launch.extrinsics_full,
+            image_hw=launch.image_hw, c2r=launch.c2r,
+            base_scene=launch.base_scene, view_limits=launch.view_limits,
+            socket_prompt=launch.socket_prompt,
+            socket_capture_count=launch.socket_capture_count,
+            board_timeout_s=launch.board_timeout_s,
+            socket_timeout_s=launch.socket_timeout_s,
+            image_write_timeout_s=launch.image_write_timeout_s,
+            max_socket_translation_mm=launch.max_socket_translation_mm,
+            max_socket_angle_deg=launch.max_socket_angle_deg,
+            minimum_socket_refined_iou=launch.minimum_socket_refined_iou)
 
 
 def _path(value, *, name: str, kind: str) -> Path:
@@ -237,8 +276,19 @@ def load_session_launch(path: Path) -> SessionLaunch:
         limits, prompt, count, **values)
 
 
-def capture_session(launch: SessionLaunch) -> StartedPrecisionSession:
-    """Trigger only board/socket cameras; explicitly no robot connection."""
+@contextmanager
+def open_session_cameras(
+    launch: SessionLaunch,
+) -> Iterator[OpenSessionCameras]:
+    """Own AutoDex camera connections until the caller leaves the context.
+
+    A long-running trial process can call ``cameras.start()`` and then reuse
+    ``cameras.init_orchestrator`` and
+    ``cameras.acquisition_metadata_for_request`` for each fresh key capture.
+    All connections close on normal exit or any exception.
+    """
+    if not isinstance(launch, SessionLaunch):
+        raise TypeError("camera session needs a validated launch")
     from autodex.perception.init_orchestrator import InitOrchestrator
     from autodex.perception.snapshot_orchestrator import SnapshotOrchestrator
 
@@ -255,21 +305,10 @@ def capture_session(launch: SessionLaunch) -> StartedPrecisionSession:
         stack.callback(stock_init.close)
         init = PrecisionInitOrchestrator(stock_init, registry)
         provider = AcquisitionTimeProvider(registry, launch.camera_times)
-        return start_precision_session(
-            mode=launch.mode, shared_root=launch.shared_root,
-            snapshot_orchestrator=board, init_orchestrator=init,
-            acquisition_metadata_for_request=provider,
-            capture_root=launch.capture_root, evidence_dir=launch.evidence_dir,
-            calibrated_camera_ids=launch.camera_ids,
-            intrinsics_full=launch.intrinsics_full,
-            extrinsics_full=launch.extrinsics_full,
-            image_hw=launch.image_hw, c2r=launch.c2r,
-            base_scene=launch.base_scene, view_limits=launch.view_limits,
-            socket_prompt=launch.socket_prompt,
-            socket_capture_count=launch.socket_capture_count,
-            board_timeout_s=launch.board_timeout_s,
-            socket_timeout_s=launch.socket_timeout_s,
-            image_write_timeout_s=launch.image_write_timeout_s,
-            max_socket_translation_mm=launch.max_socket_translation_mm,
-            max_socket_angle_deg=launch.max_socket_angle_deg,
-            minimum_socket_refined_iou=launch.minimum_socket_refined_iou)
+        yield OpenSessionCameras(launch, board, init, provider)
+
+
+def capture_session(launch: SessionLaunch) -> StartedPrecisionSession:
+    """One-shot board/socket CLI capture; explicitly no robot connection."""
+    with open_session_cameras(launch) as cameras:
+        return cameras.start()
