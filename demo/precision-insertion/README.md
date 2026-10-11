@@ -1287,8 +1287,10 @@ v8 `execute(..., skip_lift=True, start_from_current=True)` contract and
 verifies the saved approach, measured 13-DOF start, live interlock and
 post-squeeze feedback. It now **rejects the unchanged stock
 `FrankaExecutor`**: its follower may make a blocking final move after a
-stream stall. A replacement still requires hardware-side velocity-command
-expiry and commissioning. The boundary commands **no lift, transfer or
+stream stall. The [demo-local completion-checked subclass](FRANKA_COMPLETION_CHECK.md)
+reuses stock streaming but removes that blocking landing and defers the last
+hand ramp until measured arrival. It still requires hardware-side
+velocity-command expiry and commissioning. The boundary commands **no lift, transfer or
 insertion** and does not set `grasp_success`. It has fake-executor tests only,
 not a commissioned live-robot launch path.
 

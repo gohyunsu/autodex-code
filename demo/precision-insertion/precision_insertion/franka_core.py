@@ -1,7 +1,8 @@
 """Construct the existing AutoDex FR3/Inspire runtime for the demo.
 
 The robot-PC integration still supplies camera timing, contact controllers,
-and per-stage callbacks. This module owns only the stock Franka executor,
+and per-stage callbacks. This module owns the demo's completion-checked
+subclass of the stock Franka executor,
 FR3 cuRobo planner, measured feedback reader and clear-view gate. Importing
 it does not connect to or move the robot; ``open_franka_core`` does connect.
 """
@@ -133,9 +134,10 @@ def open_franka_core(
             getattr(planner, "_hand", None) != "fr3_inspire"):
         raise TypeError("FR3 runtime needs GraspPlanner(hand='fr3_inspire')")
     if executor_factory is None:
-        from src.execution.franka_executor import FrankaExecutor
+        from .franka_completion_checked import completion_checked_franka_class
 
-        executor_factory = lambda: FrankaExecutor(hand_name="inspire")
+        executor_factory = lambda: completion_checked_franka_class()(
+            hand_name="inspire")
     executor = executor_factory()
     try:
         if (getattr(executor, "arm_dof", None) != 7 or

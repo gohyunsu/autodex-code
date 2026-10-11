@@ -7,8 +7,11 @@ start_from_current=True)` call, but the **unchanged** stock `FrankaExecutor`
 is now rejected before the start marker or any command. Stock `_follow()`
 breaks on a stalled stream, then may make a blocking move to the *unreached*
 final waypoint. `abort_on_contact=True` covers a reflex, not that stall path.
-Subclasses of that stock class are rejected too. This check is only negative:
-passing it does not certify a replacement safe.
+Other subclasses of that stock class are rejected too. The demo's
+[completion-checked subclass](FRANKA_COMPLETION_CHECK.md) is the sole
+exception: it prevents the stock blocking landing and final hand ramp after
+an uncompleted stream. Passing this check still does not supply a robot-side
+watchdog or certify physical safety.
 
 The function refuses to call the executor unless:
 
@@ -23,9 +26,10 @@ The function refuses to call the executor unless:
   it reports a commanded nominal hand pose.
 - The caller opts into physical motion and a separately commissioned live
   hardware/intervention interlock returns `True`.
-- The executor is not the unchanged stock `FrankaExecutor`; a replacement
-  still needs independently reviewed fail-closed stall/reflex behavior and
-  an actual controller-side command-expiry watchdog.
+- The executor is not the unchanged stock `FrankaExecutor`. The demo's
+  completion-checked subclass may satisfy this software boundary, but an
+  actual controller-side command-expiry watchdog and physical review remain
+  necessary.
 
 After the commissioned executor returns, fresh measured feedback must match the
 approach arm endpoint and final raw Inspire squeeze command. Before motor

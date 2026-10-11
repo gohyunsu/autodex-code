@@ -39,15 +39,16 @@ socket capture and must return these ten components, all bound to that same
 
 The demo provides `open_franka_core(FrankaFeedbackSettings(...))` in
 `precision_insertion.franka_core` for the common robot resources. It creates
-the existing `src.execution.franka_executor.FrankaExecutor(hand_name="inspire")`,
+a [demo-local completion-checked subclass](FRANKA_COMPLETION_CHECK.md) of the
+unchanged `src.execution.franka_executor.FrankaExecutor(hand_name="inspire")`,
 `GraspPlanner(hand="fr3_inspire")`, measured FR3/Inspire state reader and
 clear-view gate. The integration factory can pass `core.clear_view` and
 `core.close` to `LiveRuntimeIntegration`, and share `core.planner` and
 `core.read_state` across stages. Construction connects to the robot but does
 not command `home()`; the live session does that after explicit motion opt-in.
 Do not use `autodex.executor.real.RealExecutor`: it controls xArm, and the
-clear-view gate rejects it. This core does not supply guarded contact,
-camera timestamps or the remaining hardware callbacks.
+clear-view gate rejects it. This core does not supply a robot-side watchdog,
+guarded contact, camera timestamps or the remaining hardware callbacks.
 
 For the first-party FR3 resource path, create a robot-PC JSON file such as:
 

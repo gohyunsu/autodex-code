@@ -1,6 +1,8 @@
 """The runnable entry point composes one complete camera-session pipeline."""
 
+import os
 from pathlib import Path
+import subprocess
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -10,6 +12,17 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion import live_runtime  # noqa: E402
 from precision_insertion.live_orchestration import _LIVE_ACTIONS  # noqa: E402
+
+
+def test_live_cli_imports_stock_and_demo_packages_from_another_cwd(tmp_path):
+    script = Path(__file__).resolve().parents[1] / "run_live.py"
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"], cwd=tmp_path, env=env,
+        capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert "--enable-robot-motion" in result.stdout
 
 
 def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path):

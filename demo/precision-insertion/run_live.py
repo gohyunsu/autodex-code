@@ -14,8 +14,11 @@ from pathlib import Path
 import sys
 
 DEMO_DIR = Path(__file__).resolve().parent
-if str(DEMO_DIR) not in sys.path:
-    sys.path.insert(0, str(DEMO_DIR))
+REPO_ROOT = DEMO_DIR.parents[1]
+SRC_DIR = REPO_ROOT / "src"
+for module_root in (str(REPO_ROOT), str(SRC_DIR), str(DEMO_DIR)):
+    if module_root not in sys.path:
+        sys.path.insert(0, module_root)
 
 from precision_insertion.live_runtime import (  # noqa: E402
     RunLiveOptions, run_integrated_live_session,

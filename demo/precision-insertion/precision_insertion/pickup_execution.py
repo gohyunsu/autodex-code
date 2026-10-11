@@ -65,6 +65,12 @@ def _reject_known_stock_follower(executor) -> None:
     if any(kind.__name__ == "FrankaExecutor" and
            kind.__module__.endswith("franka_executor")
            for kind in type(executor).__mro__):
+        from .franka_completion_checked import (
+            is_demo_completion_checked_executor,
+        )
+
+        if is_demo_completion_checked_executor(executor):
+            return
         raise RuntimeError(
             "unchanged FrankaExecutor is not a fail-closed pickup follower: "
             "a stalled stream may make a blocking final landing move")
