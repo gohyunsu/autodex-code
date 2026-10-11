@@ -98,4 +98,10 @@ def assemble_live_components(
         if "enable_robot_motion" in accepted:
             arguments["enable_robot_motion"] = enable_robot_motion
         components.append(cls(**arguments))
+    retry = components[list(classes).index("retry")]
+    held_return = components[list(classes).index("held_return")]
+    if (isinstance(retry, LiveGroundedRetryHandlers) and
+            isinstance(held_return, LiveHeldReturnHandlers) and
+            held_return.reuse_withdrawal is None):
+        held_return.reuse_withdrawal = retry.withdrawn_for_return
     return tuple(components)

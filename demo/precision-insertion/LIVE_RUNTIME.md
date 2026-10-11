@@ -220,6 +220,17 @@ limits; `1→4`, `2→4`, and `3→4` have none. Set the root for the chosen tas
 mode explicitly—these incomplete directed graphs are not universal reset
 coverage.
 
+If the first XY-retry diagnostic abstains or its lateral preflight fails,
+the key is already at the withdrawn hold. The assembled held-return handler
+reuses that withdrawal record and fresh measured joint state, instead of
+commanding a second axial withdrawal. It accepts reuse only before any
+lateral motion starts and only if the joints remain at the withdrawn hold.
+`max_withdrawal_state_gap_s` in the held-return settings must cover the
+elapsed VLM/planning time; otherwise the return raises before motion.
+After a lateral command, the normal guarded-withdrawal adapter is still
+required. The robot-PC integration must supply a real `read_state` and the
+original guarded withdrawal controller; this wiring does not implement it.
+
 For VLM checkpoints, `make_checkpoint_capture` in
 `precision_insertion.checkpoint_camera` supplies the existing handlers'
 `(live, runner, decision)` callback. Its default `snapshot` transport uses

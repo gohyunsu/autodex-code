@@ -1,5 +1,6 @@
 """A failed held insertion must return, clear the camera, then observe reset."""
 
+from dataclasses import replace
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -150,6 +151,45 @@ def test_held_return_clears_view_then_recaptures_same_session(
     assert runner.events[1][1]["key_observation"] is observation
     assert runner.events[1][1]["recovery_log_path"] == tmp_path / "execution.json"
     assert runner.current_decision().action == "reobserve_key_and_preflight"
+
+
+def test_held_return_reuses_stationary_retry_withdrawal_without_second_command(
+        tmp_path, monkeypatch):
+    bound, runner, events = _setup(tmp_path)
+    earlier = _state()
+    current = replace(_state(), sample_timestamp_s=21.,
+                      arm_timestamp_s=21., hand_timestamp_s=21.)
+    bound.read_state = lambda: current
+    bound.reuse_withdrawal = lambda: (
+        "attempt_001", earlier, tmp_path / "withdrawal.json")
+    observation = SimpleNamespace(acquisition_interval_s=(30., 31.))
+    monkeypatch.setattr(
+        live_recovery_handlers, "verify_failed_return_execution",
+        lambda **_kwargs: {"plan_report": {
+            "path": str((tmp_path / "return_plan.json").resolve())}})
+    monkeypatch.setattr(
+        live_recovery_handlers, "capture_returned_key_for_reset",
+        lambda **kwargs: ReturnedKeyCapture(
+            observation, current, kwargs["key_evidence_dir"]))
+    bound.recover(runner, runner.current_decision())
+    assert "withdraw" not in events
+    assert runner.events[0][1]["withdrawn_state"] is current
+    assert runner.events[0][1]["withdrawal_evidence_path"] == (
+        tmp_path / "withdrawal.json")
+
+
+def test_reused_withdrawal_rejects_a_moved_arm_before_return(tmp_path):
+    bound, runner, events = _setup(tmp_path)
+    current = replace(_state(), sample_timestamp_s=21.,
+                      arm_timestamp_s=21., hand_timestamp_s=21.)
+    current.full_q[0] = .1
+    bound.read_state = lambda: current
+    bound.reuse_withdrawal = lambda: (
+        "attempt_001", _state(), tmp_path / "withdrawal.json")
+    with pytest.raises(ValueError, match="robot moved"):
+        bound.recover(runner, runner.current_decision())
+    assert "withdraw" not in events
+    assert not runner.events
 
 
 def test_controller_must_invoke_return_before_any_camera_capture(

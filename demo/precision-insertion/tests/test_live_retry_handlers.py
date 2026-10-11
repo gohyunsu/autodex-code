@@ -101,6 +101,8 @@ def test_live_grounded_retry_abstain_routes_to_held_return(tmp_path, monkeypatch
     handler.assess_and_shift(runner, decision)
     assert events == [("diagnostic", 1), ("unavailable", "vlm_abstain")]
     assert handler._pending is None
+    assert handler.withdrawn_for_return() == (
+        "attempt_1", handler._withdrawn[1], withdrawal.resolve())
     assert set(handler.handlers()) == {
         "guarded_withdrawal_then_xy_assessment",
         "await_retry_execution_and_observation"}

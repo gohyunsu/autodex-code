@@ -82,6 +82,16 @@ class LiveGroundedRetryHandlers:
     enable_robot_motion: bool = False
     decision_time: Callable[[], float] = time.time
     _pending: dict | None = field(default=None, init=False)
+    _withdrawn: tuple[str, LiveRobotState, Path] | None = field(
+        default=None, init=False)
+
+    def withdrawn_for_return(self):
+        """Expose a completed, still-stationary withdrawal to held return.
+
+        Once lateral motion begins, the old endpoint is no longer a valid
+        return start and the normal guarded-withdrawal callback is required.
+        """
+        return self._withdrawn
 
     def _require(self, runner, decision: SessionDecision, action: str) -> None:
         if (runner is not self.live.opened.runner or
@@ -141,6 +151,8 @@ class LiveGroundedRetryHandlers:
         withdrawal_path = Path(withdrawal[1]).expanduser().resolve()
         completed = float(json.loads(withdrawal_path.read_text(
             encoding="utf-8"))["completed_at_s"])
+        self._withdrawn = (runner.active_attempt.attempt_id,
+                           withdrawal[0], withdrawal_path)
         capture = self.capture_withdrawn(self.live, runner, decision)
         if not isinstance(capture, RawCameraCapture):
             raise TypeError("withdrawn hold needs same-session camera frames")
@@ -190,6 +202,9 @@ class LiveGroundedRetryHandlers:
         if plan.lateral.status != "sampled_lateral_hold_shift_pass":
             self._unavailable(runner, "lateral_preflight_failed", plan_path)
             return
+        # Even a failed command may have moved the arm. The original
+        # withdrawal can only be reused if no lateral command was attempted.
+        self._withdrawn = None
         execute_bound_lateral_shift(
             runner=runner, plan=plan, plan_report_path=plan_path,
             adapter=self.lateral_adapter, pre_state=self.read_state(),

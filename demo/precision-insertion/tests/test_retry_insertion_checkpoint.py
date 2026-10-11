@@ -147,6 +147,38 @@ def test_retry_observation_replays_new_frames_but_cannot_claim_success(
         path, **_verify_kwargs(call)) == observed
 
 
+def test_retry_observation_replays_local_per_camera_qwen_contract(
+        tmp_path, monkeypatch):
+    call, _, _ = _case(tmp_path, monkeypatch)
+
+    class PerCameraBackend:
+        model = "local-pair-model"
+        preferred_image_batch_size = 2
+
+        def __init__(self):
+            self.calls = []
+
+        def infer(self, images, prompt):
+            assert len(images) == 2
+            camera = "a" if "preinsert/a@" in prompt else "b"
+            self.calls.append(camera)
+            return json.dumps({
+                "visual_class": "normal_appearance",
+                "evidence_views": [camera],
+                "evidence": "visible key and rim",
+            })
+
+    backend = PerCameraBackend()
+    call["backend"] = backend
+    observed = assess_retry_insertion_checkpoint(**call)
+    assert backend.calls == ["a", "b"]
+    assert observed["effective_vlm_class"] == "normal_appearance"
+    path = write_retry_insertion_checkpoint(
+        observed, tmp_path / "local_pair_retry")
+    assert verify_retry_insertion_checkpoint(
+        path, **_verify_kwargs(call)) == observed
+
+
 def test_reviewed_depth_allows_successful_retry_to_end_session(
         tmp_path, monkeypatch):
     from precision_insertion import depth_admission

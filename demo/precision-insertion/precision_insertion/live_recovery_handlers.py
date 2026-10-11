@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Callable, Mapping
 from uuid import uuid4
 
+import numpy as np
+
 from .action_loop import ActionHandler
 from .failed_return_evidence import verify_failed_return_execution
 from .live_key_trial import capture_returned_key_for_reset
@@ -36,6 +38,7 @@ _RETURN_KEYS = frozenset({
     "max_withdrawal_state_gap_s", "max_arm_hand_skew_s",
     "max_hand_command_error_raw", "max_arm_velocity_rad_s",
 })
+_RETURN_OPTIONAL = frozenset({"max_reused_withdrawal_joint_drift_rad"})
 _LANDING_KEYS = frozenset({
     "max_pose_error_deg", "max_return_center_shift_m",
     "support_tolerance_m", "minimum_rest_socket_clearance_m",
@@ -65,6 +68,8 @@ class LiveHeldReturnHandlers:
     return_parameters: Mapping[str, object]
     landing_parameters: Mapping[str, object]
     capture_id_factory: Callable[[], str] = lambda: f"reset_{uuid4().hex}"
+    read_state: Callable[[], LiveRobotState] | None = None
+    reuse_withdrawal: Callable[[], tuple[str, LiveRobotState, Path] | None] | None = None
 
     def __post_init__(self) -> None:
         if (not callable(self.state_for_observation) or
@@ -77,7 +82,8 @@ class LiveHeldReturnHandlers:
         for name, provided, required, optional in (
                 ("capture", self.capture_parameters, _CAPTURE_KEYS,
                  _CAPTURE_OPTIONAL),
-                ("return", self.return_parameters, _RETURN_KEYS, frozenset()),
+                ("return", self.return_parameters, _RETURN_KEYS,
+                 _RETURN_OPTIONAL),
                 ("landing", self.landing_parameters, _LANDING_KEYS, frozenset())):
             if not isinstance(provided, Mapping):
                 raise TypeError(f"{name} limits must be a mapping")
@@ -94,15 +100,39 @@ class LiveHeldReturnHandlers:
                 decision.action != "recover_held_key_then_reobserve" or
                 runner.current_decision() != decision):
             raise ValueError("held return belongs to another session or decision")
-        withdrawal = self.withdraw_guarded(runner, decision)
+        withdrawal = None
+        if callable(self.reuse_withdrawal) and callable(self.read_state):
+            previous = self.reuse_withdrawal()
+            if previous is not None:
+                if (not isinstance(previous, tuple) or len(previous) != 3 or
+                        previous[0] != runner.active_attempt.attempt_id or
+                        not isinstance(previous[1], LiveRobotState)):
+                    raise ValueError("reused withdrawal belongs to another attempt")
+                current = self.read_state()
+                if not isinstance(current, LiveRobotState):
+                    raise TypeError("reused withdrawal needs measured robot state")
+                drift = self.return_parameters.get(
+                    "max_reused_withdrawal_joint_drift_rad", .02)
+                if (type(drift) not in (int, float) or drift <= 0 or
+                        not np.isfinite(drift) or
+                        current.sample_timestamp_s <=
+                        previous[1].sample_timestamp_s or
+                        np.max(np.abs(current.full_q - previous[1].full_q)) >
+                        drift):
+                    raise ValueError("robot moved after the reusable withdrawal")
+                withdrawal = (current, previous[2])
+        if withdrawal is None:
+            withdrawal = self.withdraw_guarded(runner, decision)
         if (not isinstance(withdrawal, tuple) or len(withdrawal) != 2 or
                 not isinstance(withdrawal[0], LiveRobotState)):
             raise TypeError("guarded withdrawal must return measured state and log")
         withdrawn_state, withdrawal_path = withdrawal
+        return_parameters = dict(self.return_parameters)
+        return_parameters.pop("max_reused_withdrawal_joint_drift_rad", None)
         held, release, report_path = runner.prepare_failed_insertion_return(
             planner=self.planner, withdrawn_state=withdrawn_state,
             withdrawal_evidence_path=Path(withdrawal_path),
-            limits=self.limits, **dict(self.return_parameters))
+            limits=self.limits, **return_parameters)
         invoked = False
 
         def run_planned_return():
