@@ -139,6 +139,18 @@ def test_rehydrates_exact_scenes_and_keeps_original_evidence(tmp_path):
             source_audit_path=audit)
 
 
+def test_separate_source_run_uses_distinct_staging_root(tmp_path):
+    source, target, incoming, _output, audit, _ = _case(tmp_path)
+    output = (target / "AutoDex/precision_insertion/cylindrical/"
+              "reorient_handoff_seed11012/reset_12")
+    report = rehydrate(
+        source_shared_root=source, target_shared_root=target,
+        source_candidate_root=incoming, target_candidate_root=output,
+        source_audit_path=audit)
+    assert report["target_candidate_root"] == str(output)
+    assert (output / KEY / "reorient_12/0_1/7/source_evidence.json").is_file()
+
+
 def test_rejects_modified_recipient_key_before_writes(tmp_path):
     source, target, incoming, output, audit, _ = _case(tmp_path)
     raw = target / "object_processing" / KEY / "raw_mesh" / f"{KEY}.obj"

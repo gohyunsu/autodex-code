@@ -1,5 +1,8 @@
 # Offline asset/use status (2026-10-11)
 
+For the newer ten-mode inventory and AutoDex-PC/NAS handoff order, see
+[ROBOT_PC_HANDOFF_20261012.md](ROBOT_PC_HANDOFF_20261012.md).
+
 This page answers **which files the current demo can use for offline
 development**. It deliberately does not grade live camera timing, robot
 controllers, force control, or physical insertion. `audit_assets()` reports

@@ -114,8 +114,15 @@ def rehydrate(
     incoming = Path(source_candidate_root).expanduser().resolve()
     output = Path(target_candidate_root).expanduser().resolve()
     audit_file = Path(source_audit_path).expanduser().resolve()
-    expected_parent = target / "AutoDex/precision_insertion/cylindrical/reorient_handoff"
-    if (source == target or output != expected_parent / "reset_12" or
+    staging_parent = target / "AutoDex/precision_insertion/cylindrical"
+    # Separate source runs can carry different provenance audits. Keep each
+    # relocated run in its own non-overwriting staging root before selecting
+    # and installing canonical seeds from those roots.
+    valid_stage = (output.name == "reset_12" and
+                   output.parent.parent == staging_parent and
+                   (output.parent.name == "reorient_handoff" or
+                    output.parent.name.startswith("reorient_handoff_")))
+    if (source == target or not valid_stage or
             output.exists() or not incoming.is_dir() or
             not output.is_relative_to(target)):
         raise ValueError("source/recipient or non-overwriting staged reset_12 path is invalid")
@@ -295,7 +302,7 @@ def main() -> int:
                         help="exact staged reset_12 directory")
     parser.add_argument("--target-candidate-root", type=Path, required=True,
                         help="new target shared_data/AutoDex/precision_insertion/"
-                             "cylindrical/reorient_handoff/reset_12")
+                             "cylindrical/reorient_handoff[_RUN]/reset_12")
     parser.add_argument("--source-audit", type=Path, required=True)
     parser.add_argument("--archive-source-bound-scenes", action="store_true",
                         help="move only byte-identical historical scene JSONs "
