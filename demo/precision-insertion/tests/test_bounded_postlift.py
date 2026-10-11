@@ -143,30 +143,12 @@ def test_physical_relation_replans_and_verifies_saved_bundle(tmp_path, monkeypat
             candidate_dir=candidate_dir)
 
 
-def test_next_trial_xy_compensates_hand_relation_not_key_goal(tmp_path, monkeypatch):
-    args, candidate_dir, screens = _case(tmp_path, monkeypatch)
+def test_square_bounded_relation_rejects_xy_error_correction(tmp_path, monkeypatch):
+    args, _, screens = _case(tmp_path, monkeypatch)
     args["attempt"].wrist_correction_socket_m = (0.0006, -0.0008)
-    AssetPaths(tmp_path, args["mode"]).task_geometry.write_text(
-        json.dumps({"T_socket_key_verification": np.eye(4).tolist()}),
-        encoding="utf-8")
-    monkeypatch.setattr(bounded_module, "select_pose_candidates", lambda *_a, **_kw: {
-        "status": "candidates_available",
-        "candidates": [{"key": list(args["trial"].selected_candidate_key),
-                        "candidate_dir": str(candidate_dir)}],
-    })
-    result = plan_bounded_postlift_transfer(**args)
-    assert result.status == "sampled_postlift_preflight_pass"
-    assert result.targets.xy_offset_socket_m == (0.0, 0.0)
-    assert result.relation.wrist_correction_socket_m == (0.0006, -0.0008)
-    assert not np.allclose(result.relation.T_key_hand,
-                           result.relation.T_key_hand_command)
-    np.testing.assert_allclose(
-        screens[0]["T_key_hand_override"], result.targets.T_key_hand)
-    output = write_bounded_postlift_preflight(result, tmp_path / "corrected")
-    saved = verify_bounded_postlift_preflight(
-        output / "report.json", mode=args["mode"], shared_root=tmp_path,
-        candidate_dir=candidate_dir)
-    assert saved["targets"]["xy_offset_socket_m"] == [0.0, 0.0]
+    with pytest.raises(ValueError, match="square mode has no XY"):
+        plan_bounded_postlift_transfer(**args)
+    assert screens == []
 
 
 def test_empirical_scatter_or_unmatched_hand_cannot_be_promoted(tmp_path, monkeypatch):

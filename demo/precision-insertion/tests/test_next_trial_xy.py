@@ -16,9 +16,8 @@ from precision_insertion.next_trial_xy import (  # noqa: E402
 )
 
 
-@pytest.mark.parametrize("family,gap", [("square", 1.5), ("cylinder", 20)])
-def test_socket_xy_error_becomes_wrist_only_compensation(tmp_path, family, gap):
-    mode = select_mode(family, gap)
+def test_socket_xy_error_becomes_wrist_only_compensation(tmp_path):
+    mode = select_mode("cylinder", 20)
     angle = np.pi / 2
     T_socket_key = np.eye(4)
     T_socket_key[:3, :3] = [
@@ -48,3 +47,15 @@ def test_socket_xy_error_becomes_wrist_only_compensation(tmp_path, family, gap):
     displacement = (T_socket_key @ accumulated)[:3, 3] - (
         T_socket_key @ held)[:3, 3]
     assert displacement == pytest.approx([0.0011, 0.0, 0.0])
+
+
+def test_square_relation_cannot_receive_xy_error_correction(tmp_path):
+    mode = select_mode("square", 1.5)
+    relation = np.eye(4)
+    assert compensated_key_hand_relation(
+        mode=mode, shared_root=tmp_path, T_key_hand=relation,
+        wrist_correction_socket_m=(0.0, 0.0)) == pytest.approx(relation)
+    with pytest.raises(ValueError, match="square mode has no XY"):
+        compensated_key_hand_relation(
+            mode=mode, shared_root=tmp_path, T_key_hand=relation,
+            wrist_correction_socket_m=(0.001, 0.0))

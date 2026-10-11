@@ -41,7 +41,7 @@ does not install those assets into the local runtime.
 | FoundPose representations | All 10 modes now have their key/socket PTHs at canonical local paths. Seven formerly missing objects (square keys 0.3/0.5/1.0 mm and cylinder sockets 1/3/5/10 mm) were rendered with the isolated MV-GoTrack generator on RTX 3090, reloaded and bound to exact raw-mesh hashes. The older NAS [pending candidates](/mnt/paradex2/hyunsu/autodex_precision_insertion_handoff_20261010_652ac909/pending_foundpose) were not promoted. | File generation and reload are **not** independent metric pose-accuracy evidence; the 2026-10-10 captured-frame evaluation still reports key-mask problems, and no physical socket-pose qualification is implied. |
 | Square tabletop grasp pools | The [full-key 1,000-per-scene scan and supplemental pose-`000` scan](SQUARE_TABLETOP_1000.md) and source-verified current-pool catalogs have 31/24/24/41 nominal 20 mm endpoint-eligible grasps for gaps 0.3/0.5/1.0/1.5 mm respectively. All five tabletop poses have a candidate for 0.3, 1.0 and 1.5 mm. | The 0.5 mm pose `000` has **zero** eligible grasp after 1,000 initial plus 5,000 supplemental proposals; the 277 additionally MuJoCo-stable candidates all failed whole-hand/socket clearance at 20 mm. This finite scan is not a geometric impossibility proof or full Franka-path evidence. |
 | Cylinder grasp pool | Current local [catalogs](CYLINDER_ENDPOINT_CATALOGS.md) for radial gaps 1/3/5/10/15/20 mm each contain 12 source-verified nominally eligible grasps (11 pose `000`, one pose `001`). For the 15 mm gap, candidate `table/0/194` also passed one hypothetical pickup→lift→transfer→20 mm sampled-plan replay and its saved trajectory verifier. | Older `endpoint_catalog_staged*` files are stale against the current `candidates.py` hash. The other 11 cylinder-15 candidates and other gaps have not passed that full-chain replay. |
-| Reset/reorient | Curated **staging** seeds exist for square 1.5 mm `000→004` (10 MuJoCo passes, one illustrative 5 mm/10° fidelity pass), cylinder `000→001` (one pass), and now square 0.5 mm `000→004` ([33 MuJoCo passes, two illustrative fidelity passes](SQUARE_TABLETOP_1000.md)). The 0.5 mm source and candidates are also [on NAS](/mnt/paradex2/hyunsu/autodex_precision_insertion_reorient_square_0p5_5000_20261011_10c455d). | Three hypothetical layouts did not yield a complete 0.5 mm Franka repose path; one rejected state implicated the synthetic table obstacle. Other directed cells are incomplete; canonical v8 reset directories still have zero precision-key seeds. No staged seed is a measured landing. |
+| Reset/reorient | The cylinder `000→001` seed `191` is installed in the canonical v8 reset tree after source, MuJoCo and illustrative 5 mm/10° fidelity checks; see its [installation manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/cylinder_reset_install_0_1_20261011.json). Curated **staging** seeds also exist for square 1.5 mm `000→004` and square 0.5 mm `000→004` ([detail](SQUARE_TABLETOP_1000.md)). | The staged cylinder `001→000` seed `631` fails 5 mm/10° key-in-hand fidelity, so that directed cell has no canonical eligible seed. A complete socket-aware Franka repose path and measured landing remain unverified. Other directed square cells are incomplete. |
 
 For a minimal file-backed prototype, choose **square 1.5 mm** (all five
 tabletop poses now have an eligible endpoint grasp) or **any cylinder gap**
@@ -94,7 +94,8 @@ rebuilt all four catalogs with identical 31/24/24/41 eligibility counts;
 the source catalogs inside the handoff remain audit-only on another PC.
 
 The **code** now has a demo-local live action loop and stage handlers for
-pickup, lift, transfer, first guarded insertion, one grounded XY retry,
+pickup, lift, transfer, first guarded insertion, cumulative cylinder
+next-trial XY advice,
 held-key return, transfer-recovery observation and directed repose. The
 `run_auto.py` CLI itself still only opens an evidence ledger; the new
 [`run_live.py`](run_live.py) CLI drives the live loop through an explicit
@@ -102,3 +103,25 @@ AutoDex-PC integration module and independently commissioned controllers.
 An optional replayable depth-admission path exists, but no real
 held-out depth audit or reviewed calibration is installed. These are runtime
 integration/measurement gaps, not missing 3D meshes.
+
+Square remains an offline asset/planning mode. It has no active XY
+error-correction branch (effective update weight and retry budget zero), and
+the live CLI rejects square launch mode before robot integration is created.
+
+The canonical cylinder `000→001` seed can be reproduced on another writable
+AutoDex shared-data mount with the demo-local
+[`install_cylinder_reset_seeds.py`](install_cylinder_reset_seeds.py) command:
+
+```bash
+python demo/precision-insertion/install_cylinder_reset_seeds.py \
+  --shared-root /absolute/shared_data \
+  --source-reset-root /absolute/shared_data/AutoDex/precision_insertion/cylindrical/reorient_curated_handoff_20261011/reset_12 \
+  --gap-mm 20 --from-pose-stem 0 --to-pose-stem 1 \
+  --max-center-drift-mm 5 --max-axis-tilt-deg 10 \
+  --output-manifest /absolute/shared_data/AutoDex/precision_insertion/cylindrical/NEW_reset_install_manifest.json
+```
+
+The installer verifies source hashes, MuJoCo evidence and the stated
+fidelity thresholds before copying; it refuses to overwrite an installed
+seed or manifest. It does not turn the seed into a completed Franka repose
+trajectory. Do not install `001→000/631` with these thresholds.

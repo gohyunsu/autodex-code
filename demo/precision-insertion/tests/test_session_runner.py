@@ -107,6 +107,33 @@ def _runner(monkeypatch, tmp_path):
         max_xy_retries=1)
 
 
+def test_square_session_effective_xy_weight_and_budget_are_zero(
+        monkeypatch, tmp_path):
+    monkeypatch.setattr(session_runner, "validate_catalog_session",
+                        lambda *_args, **_kwargs: None)
+    square = select_mode("square", 1.5)
+    record = {
+        "schema": "precision_insertion_session_calibration_v1",
+        "mode": {"family": square.family, "gap_mm": square.gap_mm,
+                 "key_object": square.key_object,
+                 "socket_object": square.socket_object},
+        "c2r": np.eye(4).tolist(),
+    }
+    calibration = SessionCalibration(
+        board={}, socket_pose_robot=np.eye(4), socket_diagnostics={},
+        collision_scene={}, record=record)
+    runner = session_runner.SessionRunner(
+        mode=square, calibration=calibration,
+        catalog={"shared_root": str(tmp_path), "complete_scan": True},
+        shared_root=tmp_path, output_dir=tmp_path / "square_session",
+        max_xy_retries=5, xy_update_weight=0.0)
+    assert runner.max_xy_retries == 0
+    assert runner.xy_update_weight == 0.0
+    saved = json.loads((runner.output_dir / "session_run.json").read_text())
+    assert saved["max_xy_retries"] == 0
+    assert saved["xy_update_weight"] == 0.0
+
+
 def _save_evidence(runner, observation):
     evidence_dir = runner.output_dir.parent / "key_evidence" / observation.capture_id
     if not evidence_dir.exists():

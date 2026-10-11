@@ -1,8 +1,9 @@
 # Next-physical-trial XY correction
 
 This document describes the live `run_live.py` route for `cylinder` only.
-The `square` mode remains available for offline assets and planning, but the
-live entry point rejects it before creating robot integration objects. This
+The `square` mode remains available for offline assets and planning but has
+effective XY update weight and retry budget zero. The live entry point also
+rejects it before creating robot integration objects. This
 is a correction of the earlier *same-held-attempt* retry
 design. The first failed insertion is **not** followed by a lateral command
 or second insertion while the same key remains in the hand.

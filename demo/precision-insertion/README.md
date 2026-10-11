@@ -475,75 +475,20 @@ that session and catalogue. For each new key observation:
    session, not `observe_reset_landing` on the successful one. For a failed
    insertion, a supervised return remains evidence-only, not automatic
    extraction or reset motion.
-4. After an observed insertion failure and an externally logged guarded
-   withdrawal, call `prepare_observed_xy_retry` with a **held-preinsert** key
-   capture, the exact same full-frame VLM images, measured Franka/Inspire
-   state and explicit commissioning limits. It derives the key–hand relation,
-   screens 1 mm offsets with the measured finger joints, votes across views,
-   replans from the withdrawn live state and saves source images/overlays.
-   Pass the exact saved **passing post-lift preflight report** referenced by
-   the observed pre-insertion stage: its held relation, current wrist FK and
-   the held-key admission prior must agree before the VLM is consulted.
-   Only a passing result calls `record_retry` to log a pending retry; neither
-   method sends the robot an XY command.
-   For a visible square key, the pending retry's saved non-contact transfer
-   can now be executed through
-   `execute_bound_observed_retry_transfer(...)`. It uses the same external
-   `follow_transfer` result contract as the first transfer and checks the
-   selected retry event, archive and measured arrival. After it finishes,
-   `SessionRunner.assess_observed_xy_retry_arrival(...)` consumes a **new**
-   preinsert camera capture and exposure-aligned measured joints, then uses
-   the same raw-versus-rendered multiview VLM comparison as the first
-   transfer. It saves `observed_retry_arrivals/NNN/report.json` and overlay
-   images. An occluded key remains unknown. If arrival is positive,
-   `SessionRunner.prepare_observed_xy_retry_axial_handoff(...)` binds its
-   saved 20 mm axial-only trajectory to that fresh camera observation and a
-   newer measured held state; it never replays the old failed stroke.
-   The square-mode `LiveObservedXYRetryHandlers` now connects withdrawal,
-   a same-request held-key capture, observed XY preflight, corrected transfer,
-   fresh arrival, axial handoff, guarded retry, and a second insertion label.
-   Its first transfer may use `held_relation_route="observed"` or a
-   grasp-specific `"physical"` calibration. The retry requires a *new*
-   visible held-key observation, a key prompt, admitted held-key capture
-   parameters (or an injected `capture_withdrawn_key`),
-   exposure-aligned measured joints, and the same independently commissioned
-   robot/contact adapters as the first stroke. This is code wiring, not a
-   physically commissioned retry. If the withdrawn key is occluded or pose
-   admission fails, the handler records an unavailable retry and routes to
-   held-key return without an XY command.
-   Neither a completed transfer nor a visual arrival is an insertion-success
-   label.
-   If the withdrawn key is too occluded for another FoundPose estimate,
-   `prepare_unobserved_xy_diagnostic` can instead save same-request raw
-   camera frames, a measured 13-joint sample, the matching failed attempt,
-   guarded withdrawal and a multi-view VLM direction under
-   `xy_retry_assessments/NNN/`. It shares the failed-attempt and withdrawal
-   checks with the observed retry route, but does **not** produce a live
-   preflight, a pending `xy_retry` event or a robot command. Its nominal
-   key/socket collision is diagnostic only because squeeze may have shifted
-   the actual key relative to the commanded hand target.
-   For the cylindrical key, `prepare_grounded_xy_diagnostic` accepts either
-   the observed post-lift plan or a re-verified bounded physical-calibration
-   plan after the same guarded-withdrawal and camera checks. It asks each
-   native-pixel view for a visible tip centre and shaft axis line, triangulates
-   the tip/axis, and calculates a continuous socket-frame correction with an
-   at-most-1 mm increment. Missing landmarks, weak parallax, tilt, or high
-   uncertainty abstain. For the local Qwen backend, an optional explicit
-   `roi_xyxy_by_camera` map uses lossless crops of the same raw undistorted
-   frames. The raw answer, exact crop-to-full pixel mapping and source frames
-   are saved and replayed by the lateral preflight verifier; see
-   [the ROI contract](GROUNDING_PROBE.md). This is still a **diagnostic**, not a pending retry:
-   a passing, saved cylinder diagnostic can now be source-bound to the
-   first withdrawn-hold lateral cuRobo/CAD preflight with physical-medoid
-   surface bounds. This is still not an execution or renewed contact retry:
-   post-shift observation and the new 20 mm endpoint must be checked first.
-   The square key additionally needs insertion yaw and therefore abstains
-   with only an axial line.
-   The opt-in [held XY execution boundary](LATERAL_EXECUTION.md) now binds a
-   passing grounded shift to a fresh robot state, reviewed watchdog/interlock
-   and an injected external controller, producing the exact execution log
-   needed by `assess_postshift_lateral_alignment`. It defaults to no motion;
-   no commissioned controller or post-shift contact retry is shipped.
+4. After an observed **cylinder** insertion failure, withdraw axially and
+   capture the still-held key with the same AutoDex cameras. The saved
+   multi-view tip/axis diagnostic gives a socket-frame residual `d_n`, capped
+   at 1 mm. Do not move laterally or insert again in this attempt. Return the
+   key to the tabletop, clear the view and recognize it again. A new pickup
+   of the same grasp and tabletop class uses the accumulated wrist correction
+   `p_(n+1)=p_n+w*d_n`, initially zero, with default `w=1.0`. The grasp and
+   held-path preflights run again. See [NEXT_TRIAL_XY.md](NEXT_TRIAL_XY.md).
+   If the VLM abstains or the cumulative budget is exhausted, return without
+   updating the parameter. **Square mode has no XY error-correction branch**:
+   after insertion failure it returns/reobserves the key with effective
+   update weight zero. Historical same-held-attempt retry helpers remain in
+   source for audit of old experiments but are not assembled into the
+   current action loop.
 5. If the pose's candidate pool is exhausted, `current_decision()` returns
    `preflight_repose`. Call `preflight_repose` with the **same saved key capture**,
    synchronized measured joints, a listed target tabletop stem, directed v8

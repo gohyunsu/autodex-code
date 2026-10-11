@@ -173,6 +173,38 @@ def test_failed_insertion_advice_returns_key_before_next_physical_attempt():
     assert decide_after_attempt(
         record, max_xy_retries=1).action == (
             "recover_held_key_then_reobserve")
+
+
+def test_square_failed_insertion_returns_without_xy_advice():
+    square = select_mode("square", 1.5)
+    session = {"schema": "precision_insertion_session_calibration_v1",
+               "mode": {"family": square.family, "gap_mm": square.gap_mm,
+                        "key_object": square.key_object,
+                        "socket_object": square.socket_object}}
+    record = begin_attempt(
+        attempt_id="square_001", mode=square, session_record=session,
+        candidate_id="table/0/3", tabletop_pose_stem="000",
+        xy_offset_socket_m=(0.0, 0.0), started_at_s=1.0)
+    _grasp(record)
+    _hold(record)
+    _insert(record)
+    decision = decide_after_attempt(record, max_xy_retries=5)
+    assert decision.action == "recover_held_key_then_reobserve"
+    assert decision.reason == "square_mode_no_xy_error_correction"
+    with pytest.raises(ValueError, match="square mode has no XY"):
+        record.record_next_trial_xy_advice(
+            increment_socket_xy_m=(0.001, 0.0), update_weight=1.0,
+            applied_step_socket_xy_m=(0.001, 0.0),
+            next_wrist_correction_socket_m=(0.001, 0.0),
+            supporting_cameras=("cam0", "cam1"), timestamp_s=5.0,
+            evidence_refs={"axial_withdrawal": "robot/withdrawal.json",
+                           "grounded_xy": "vlm/tip_axis.json"})
+    with pytest.raises(ValueError, match="square mode has no XY"):
+        begin_attempt(
+            attempt_id="square_002", mode=square, session_record=session,
+            candidate_id="table/0/3", tabletop_pose_stem="000",
+            xy_offset_socket_m=(0.0, 0.0), started_at_s=1.0,
+            wrist_correction_socket_m=(0.001, 0.0))
     assert record.xy_offset_socket_m == (0.0, 0.0)
     assert not record._pending_retry
 

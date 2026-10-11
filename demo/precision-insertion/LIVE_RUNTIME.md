@@ -225,13 +225,10 @@ guarded axial withdrawal, fresh raw AutoDex multi-view images, metric
 tip/axis reconstruction, save an at-most-1-mm socket-XY increment, return
 the key to the tabletop, clear view, and start a new perception/pickup
 attempt. There is no lateral hold shift or second insertion in the failed
-attempt. The cylinder VLM marks a tip and
-visible shaft-axis line. Offline square diagnostic code marks the insertion tip and CAD
-handle/shaft shoulder centre; triangulation estimates tip, shaft tilt and
-socket-frame XY. Two collinear marks **do not observe square yaw**: the
-post-lift bounded key/hand relation supplies its yaw prior, carried through
-minimum-axis-rotation reconstruction. Exact square-mesh endpoint screening
-and the held-relation uncertainty bound remain required for offline square evaluation.
+attempt. The cylinder VLM marks a tip and visible shaft-axis line.
+Square remains an offline asset/planning mode with **no XY correction**;
+its effective update weight and retry budget are zero. Historical square
+diagnostic helpers are not assembled into the active pipeline.
 If the marks are hidden or disagree across views, the diagnostic abstains
 and follows held-key return without saving compensation. The older
 `LiveObservedXYRetryHandlers` is not selected by runtime assembly and its

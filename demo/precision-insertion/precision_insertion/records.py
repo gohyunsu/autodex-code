@@ -241,6 +241,8 @@ class AttemptRecord:
         evidence_refs: Mapping[str, str],
     ) -> None:
         """Record advice for a *new pickup*, without moving this held grasp."""
+        if self.mode.family != "cylinder":
+            raise ValueError("square mode has no XY error correction")
         self._require_retryable_failure()
         if any(event["stage"] == "next_trial_xy_advice" for event in self.events):
             raise ValueError("this failure already produced next-trial advice")
@@ -453,6 +455,8 @@ def begin_attempt(
     if (len(wrist_correction_socket_m) != 2 or
             not all(math.isfinite(float(v)) for v in wrist_correction_socket_m)):
         raise ValueError("next-attempt wrist correction needs finite socket XY")
+    if mode.family != "cylinder" and any(wrist_correction_socket_m):
+        raise ValueError("square mode has no XY wrist correction")
     canonical_session = json.dumps(
         dict(session_record), sort_keys=True, separators=(",", ":"),
         allow_nan=False).encode("utf-8")

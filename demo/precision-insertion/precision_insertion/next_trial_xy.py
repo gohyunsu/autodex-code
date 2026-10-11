@@ -32,6 +32,8 @@ def compensated_key_hand_relation(
     offset = np.asarray(wrist_correction_socket_m, dtype=np.float64)
     if offset.shape != (2,) or not np.all(np.isfinite(offset)):
         raise ValueError("new-attempt wrist correction needs finite socket XY")
+    if mode.family != "cylinder" and np.any(offset):
+        raise ValueError("square mode has no XY wrist correction")
     if not np.any(offset):
         return relation
     geometry = json.loads(AssetPaths(Path(shared_root), mode).task_geometry.read_text(

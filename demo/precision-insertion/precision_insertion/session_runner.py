@@ -142,8 +142,9 @@ class SessionRunner:
         if type(max_xy_retries) is not int or max_xy_retries < 0:
             raise ValueError("max_xy_retries must be a nonnegative integer")
         if (not math.isfinite(float(xy_update_weight)) or
-                not 0 < xy_update_weight <= 1):
-            raise ValueError("XY update weight must be in (0, 1]")
+                not (0 < xy_update_weight <= 1 if mode.family == "cylinder"
+                     else 0 <= xy_update_weight <= 1)):
+            raise ValueError("XY update weight must be in (0, 1] for cylinder; square uses effective 0")
         if not isinstance(calibration, SessionCalibration):
             raise TypeError("session needs a frozen SessionCalibration")
         validate_catalog_session(catalog, mode=mode,
@@ -161,8 +162,10 @@ class SessionRunner:
         self.catalog = catalog
         self.shared_root = root
         self.output_dir = target
-        self.max_xy_retries = max_xy_retries
-        self.xy_update_weight = float(xy_update_weight)
+        # Square remains an offline planning mode, not an XY-learning mode.
+        self.max_xy_retries = max_xy_retries if mode.family == "cylinder" else 0
+        self.xy_update_weight = (float(xy_update_weight)
+                                 if mode.family == "cylinder" else 0.0)
         self.session_sha256 = _digest(calibration.record)
         self.catalog_sha256 = _digest(catalog)
         self._preflight: TrialPreflight | None = None
@@ -245,7 +248,7 @@ class SessionRunner:
                      "socket_object": mode.socket_object},
             "session_calibration_sha256": self.session_sha256,
             "catalog_sha256": self.catalog_sha256,
-            "max_xy_retries": max_xy_retries,
+            "max_xy_retries": self.max_xy_retries,
             "xy_update_weight": self.xy_update_weight,
             "scope": "evidence_and_preflight_only_not_robot_motion_authorization",
             "robot_ready": False,
@@ -2542,7 +2545,8 @@ class SessionRunner:
         This consumes a caller-logged guarded withdrawal and never sends a
         robot command. Only a passing result records a pending 1 mm retry.
         """
-        if (self.current_decision().action !=
+        if (self.mode.family != "cylinder" or
+                self.current_decision().action !=
                 "guarded_withdrawal_then_xy_assessment" or
                 self._attempt is None or self._preflight is None or
                 self._attempt_dir is None):
@@ -2699,7 +2703,8 @@ class SessionRunner:
         square_translation_only: bool = False,
     ) -> GroundedXYDiagnostic:
         """Save camera-grounded metric 1 mm advice without scheduling motion."""
-        if (self.current_decision().action !=
+        if (self.mode.family != "cylinder" or
+                self.current_decision().action !=
                 "guarded_withdrawal_then_xy_assessment" or
                 self._attempt is None or self._preflight is None or
                 self._attempt_dir is None):
@@ -2733,7 +2738,8 @@ class SessionRunner:
         max_total_offset_m: float,
     ) -> AttemptRecord:
         """Queue one measured XY wrist correction for a new pickup only."""
-        if (self.current_decision().action !=
+        if (self.mode.family != "cylinder" or
+                self.current_decision().action !=
                 "guarded_withdrawal_then_xy_assessment" or
                 self._attempt is None or self._attempt_dir is None or
                 self._pending_next_trial_xy is not None or

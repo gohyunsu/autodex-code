@@ -159,6 +159,11 @@ def decide_after_attempt(
                 evidence["safety_abort"] is not False or
                 attempt.failure_code == "slip"):
             return result("stop_for_review", "grasp_lost_or_insertion_abort")
+        if attempt.mode.family == "square":
+            return result(
+                "recover_held_key_then_reobserve",
+                "square_mode_no_xy_error_correction",
+                "guarded_axial_withdrawal", "verified_key_rest_or_human_recovery")
         retry_count = sum(event["stage"] == "xy_retry"
                           for event in attempt.events)
         grounded_retry_used = any(
