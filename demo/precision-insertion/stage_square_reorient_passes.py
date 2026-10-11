@@ -20,6 +20,7 @@ import numpy as np
 from precision_insertion.config import select_mode
 from precision_insertion.geometry import validate_se3
 from precision_insertion.grasp_fidelity import trajectory_rigid_closure_audit
+from autodex.utils.path import RESET_RELEASE_HEIGHTS_CM
 from precision_insertion.reset_candidates import (
     EVIDENCE_SCHEMA, GRASP_FILES, _candidate_arrays, _valid_scene_pair,
 )
@@ -36,9 +37,9 @@ def _sha(path: Path) -> str:
 def stage_passes(
     *, shared_root: Path, gap_mm: float, raw_root: Path,
     stock_candidate_root: Path, cell: str, expected_seed_count: int,
-    output_root: Path,
+    output_root: Path, height_cm: int = 12,
 ) -> dict:
-    """Verify complete stock filtering before writing a new reset_12 tree."""
+    """Verify complete stock filtering before writing a new v8 reset tree."""
     mode = select_mode("square", gap_mm)
     shared = Path(shared_root).expanduser().resolve()
     raw = Path(raw_root).expanduser().resolve()
@@ -53,16 +54,19 @@ def stage_passes(
     i, j = (int(part) for part in cell.split("_"))
     if i == j or type(expected_seed_count) is not int or expected_seed_count < 1:
         raise ValueError("different tabletop poses and positive seed count required")
+    if type(height_cm) is not int or height_cm not in RESET_RELEASE_HEIGHTS_CM:
+        raise ValueError("height must be an AutoDex v8 reset release height")
     object_dir = shared / "object_processing" / mode.key_object
-    scenes = _valid_scene_pair(shared, object_dir, mode, 12, i, j)
+    scenes = _valid_scene_pair(shared, object_dir, mode, height_cm, i, j)
     info_path = object_dir / "processed_data/info/simplified.json"
     mesh_path = object_dir / "processed_data/mesh/simplified.obj"
     center = np.asarray(json.loads(info_path.read_text(encoding="utf-8"))[
         "gravity_center"], dtype=np.float64)
     if center.shape != (3,) or not np.all(np.isfinite(center)):
         raise ValueError("full-key local center is invalid")
-    raw_cell = raw / mode.key_object / "reorient_12" / cell
-    stock_cell = stock / mode.key_object / "reorient_12" / cell
+    scene_type = f"reorient_{height_cm}"
+    raw_cell = raw / mode.key_object / scene_type / cell
+    stock_cell = stock / mode.key_object / scene_type / cell
     expected = {str(seed) for seed in range(expected_seed_count)}
     found = {path.name for path in raw_cell.iterdir() if path.is_dir()}
     if found != expected:
@@ -129,7 +133,7 @@ def stage_passes(
     output.mkdir(exist_ok=False)
     rows = []
     for seed_id, seed, copied, fidelity in stable:
-        target = (output / "reset_12" / mode.key_object / "reorient_12" /
+        target = (output / f"reset_{height_cm}" / mode.key_object / scene_type /
                   cell / str(seed_id))
         target.mkdir(parents=True, exist_ok=False)
         for name in STOCK_FILES:
@@ -138,7 +142,7 @@ def stage_passes(
             shutil.copy2(seed / name, target / name)
         evidence = {
             "schema": EVIDENCE_SCHEMA, "full_key_object": mode.key_object,
-            "height_cm": 12, "cell": cell, "seed_id": str(seed_id),
+            "height_cm": height_cm, "cell": cell, "seed_id": str(seed_id),
             "candidate_sha256": {name: _sha(target / name)
                                  for name in GRASP_FILES},
             "scene_sha256": scene_hashes,
@@ -152,7 +156,7 @@ def stage_passes(
         with (target / "source_evidence.json").open("x", encoding="utf-8") as stream:
             json.dump(evidence, stream, indent=2, allow_nan=False)
             stream.write("\n")
-        _candidate_arrays(target, mode=mode, cell=cell, h_cm=12,
+        _candidate_arrays(target, mode=mode, cell=cell, h_cm=height_cm,
                           scenes=scenes)
         rows.append({"seed_id": seed_id, "candidate_dir": str(target),
                      "post_squeeze_fidelity": fidelity})
@@ -160,9 +164,10 @@ def stage_passes(
         "schema": "precision_insertion_square_reorient_stock_handoff_v1",
         "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
                  "key_object": mode.key_object},
-        "height_cm": 12, "cell": cell, "expected_seed_count": expected_seed_count,
+        "height_cm": height_cm, "cell": cell,
+        "expected_seed_count": expected_seed_count,
         "raw_root": str(raw), "stock_candidate_root": str(stock),
-        "candidate_root": str(output / "reset_12"),
+        "candidate_root": str(output / f"reset_{height_cm}"),
         "scene_sha256": scene_hashes, "key_mesh_sha256": _sha(mesh_path),
         "key_info_sha256": _sha(info_path), "counts": counts,
         "stable_seeds": rows,
@@ -183,6 +188,8 @@ def main() -> int:
     parser.add_argument("--raw-root", type=Path, required=True)
     parser.add_argument("--stock-candidate-root", type=Path, required=True)
     parser.add_argument("--cell", required=True)
+    parser.add_argument("--height-cm", type=int, default=12,
+                        choices=RESET_RELEASE_HEIGHTS_CM)
     parser.add_argument("--expected-seed-count", type=int, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     args = parser.parse_args()

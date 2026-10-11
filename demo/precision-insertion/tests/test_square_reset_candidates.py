@@ -26,7 +26,7 @@ MODE = select_mode("square", 1.5)
 CELL = "0_1"
 
 
-def _fixture(root: Path) -> tuple[Path, Path]:
+def _fixture(root: Path, *, height_cm: int = 12) -> tuple[Path, Path]:
     object_dir = root / "object_processing" / MODE.key_object
     tabletop = object_dir / "processed_data/info/tabletop"
     tabletop.mkdir(parents=True)
@@ -45,19 +45,20 @@ def _fixture(root: Path) -> tuple[Path, Path]:
     urdf.parent.mkdir()
     urdf.write_text("<robot name='key'/>\n", encoding="utf-8")
     scene = {
-        "meta": {"scene_type": "reorient_12", "pose_i": "000",
-                 "pose_j": "001", "h": .12, "thickness": .01,
+        "meta": {"scene_type": f"reorient_{height_cm}", "pose_i": "000",
+                 "pose_j": "001", "h": height_cm / 100., "thickness": .01,
                  "version": "v8"},
         "scene": {"mesh": {"target": {
             "file_path": str(mesh), "urdf_path": str(urdf),
             "pose": [0, 0, 0, 1, 0, 0, 0], "scale": [1, 1, 1],
         }}, "cuboid": {"table_i": {}, "table_j": {}}},
     }
-    bodex_scene = object_dir / "scene/reorient_12" / f"{CELL}.json"
+    scene_type = f"reorient_{height_cm}"
+    bodex_scene = object_dir / "scene" / scene_type / f"{CELL}.json"
     bodex_scene.parent.mkdir(parents=True)
     bodex_scene.write_text(json.dumps(scene), encoding="utf-8")
     sim_scene = (root / "AutoDex/scene/inspire" / MODE.key_object /
-                 "reorient_12" / f"{CELL}.json")
+                 scene_type / f"{CELL}.json")
     sim_scene.parent.mkdir(parents=True)
     sim_scene.write_text(json.dumps(scene), encoding="utf-8")
 
@@ -72,7 +73,7 @@ def _fixture(root: Path) -> tuple[Path, Path]:
         "robot_qpos": [initial + [0.] * 6] * 3,
     }
     for seed_id in (0, 1):
-        seed = raw / MODE.key_object / "reorient_12" / CELL / str(seed_id)
+        seed = raw / MODE.key_object / scene_type / CELL / str(seed_id)
         seed.mkdir(parents=True)
         np.save(seed / "wrist_se3.npy", np.eye(4))
         np.save(seed / "pregrasp_pose.npy", np.zeros(6))
@@ -86,7 +87,7 @@ def _fixture(root: Path) -> tuple[Path, Path]:
         if seed_id == 0:
             (seed / "sim_traj.json").write_text(json.dumps(trajectory),
                                                 encoding="utf-8")
-            target = stock / MODE.key_object / "reorient_12" / CELL / "0"
+            target = stock / MODE.key_object / scene_type / CELL / "0"
             target.mkdir(parents=True)
             for name in ("wrist_se3.npy", "pregrasp_pose.npy",
                          "grasp_pose.npy", "bodex_info.npy"):
@@ -151,6 +152,27 @@ def test_square_reset_stage_rejects_changed_stock_copy_before_writes(tmp_path):
             stock_candidate_root=stock, cell=CELL, expected_seed_count=2,
             output_root=output)
     assert not output.exists()
+
+
+def test_square_reset_stage_supports_other_v8_release_height(tmp_path):
+    raw, stock = _fixture(tmp_path, height_cm=8)
+    output = tmp_path / "handoff_8"
+    result = stage_passes(
+        shared_root=tmp_path, gap_mm=1.5, raw_root=raw,
+        stock_candidate_root=stock, cell=CELL, expected_seed_count=2,
+        output_root=output, height_cm=8)
+    assert result["height_cm"] == 8
+    assert result["candidate_root"] == str(output / "reset_8")
+    selected = verify_v8_reset_seed(
+        shared_root=tmp_path, mode=MODE, height_cm=8,
+        from_pose_stem=0, to_pose_stem=1, seed_id="0",
+        candidate_root=output / "reset_8")
+    assert selected["candidate_key"] == ("reset", "0_1", "0")
+    with pytest.raises(ValueError, match="reset release height"):
+        stage_passes(
+            shared_root=tmp_path, gap_mm=1.5, raw_root=raw,
+            stock_candidate_root=stock, cell=CELL, expected_seed_count=2,
+            output_root=tmp_path / "invalid", height_cm=7)
 
 
 def test_reset_physical_calibration_reuses_v8_seed_and_real_sample_contract(

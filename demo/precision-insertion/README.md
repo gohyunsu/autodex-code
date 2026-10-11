@@ -1772,6 +1772,13 @@ Thus these are early stability failures, not merely a shortage of contact.
 They do not justify labeling either pose impossible, nor do they establish
 automatic repose to pose `004`.
 
+An additional [8 cm release-height scan](SQUARE_H8_REORIENT_SCAN.md) uses
+the same v8 scene generator, 1,000 proposals per scene, and stock filter for
+`001→004` and `002→004`. It found one MuJoCo-stable `001→004` seed but no
+fidelity-eligible or robot-ready reset; `002→004` again had no stable seed.
+The staging command accepts `--height-cm 8` without changing its historical
+12 cm default.
+
 The 10 mm ablation is reproducible by replacing `-c` in the BODex command
 above with the absolute path to the demo-only YAML, adding
 `--task_gamma 180`, and using fresh `--exp_name`, raw, filter and handoff
