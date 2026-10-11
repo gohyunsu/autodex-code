@@ -36,6 +36,7 @@ The manifest has schema `precision_insertion_saved_grounding_probe_v1`:
         "timestamp_s": 1791600000.0
       },
       "intrinsics": [[1000, 0, 1024], [0, 1000, 768], [0, 0, 1]],
+      "roi_xyxy": [800, 500, 1200, 900],
       "T_camera_socket": [[1, 0, 0, 0], [0, 1, 0, 0],
                           [0, 0, 1, 0.5], [0, 0, 0, 1]]
     }
@@ -54,6 +55,22 @@ calibration provenance from this manifest. Obtain commissioned values from
 held-out localization errors and the actual AutoDex session; do not copy the
 example numbers into runtime safety gates.
 
+`roi_xyxy` is **optional**, but if used it is required for every view. It is
+an integer `[x0,y0,x1,y1]` box in the original undistorted image, with the
+last coordinates exclusive. Choose it from an independent key/socket region
+proposal with enough margin to include the *actual* visible tip and shaft;
+a crop based only on a rigid squeeze assumption can hide a slipped key. The
+probe copies these raw pixels without resampling and pads only the right and
+bottom to the local Qwen processor's 32-pixel grid (at least 256 pixels per
+side). It rejects marks on that padding. The model's raw JSON and parsed
+marks remain crop-local, while `pixel_mapping.mapped_full_pixels` and the 3D
+estimator use exact full-frame coordinates `u_full=u_crop+x0`,
+`v_full=v_crop+y0` with the original camera intrinsics. The source-image hash
+still binds the *whole* original frame. This avoids treating a resized pixel
+as a metric observation; it does not establish that the VLM's mark is
+accurate. The current live checkpoint verifiers still use full frames, not
+this saved-image ROI experiment.
+
 From the repository root, after the [local VLM setup](README.md):
 
 ```bash
@@ -69,7 +86,8 @@ The script refuses to overwrite a report or load the model if hashes,
 transforms or claimed cross-camera times fail. Local metric grounding uses
 `require_native_pixels=True`: Qwen/ZeroDex resizing is rejected, since
 resized pixel coordinates cannot be triangulated against original camera
-intrinsics. The inspected Qwen processor requires image dimensions to be
+intrinsics. For an ROI the padded input is checked against the model's actual
+processor geometry as well. The inspected Qwen processor requires image dimensions to be
 multiples of 32; latest *saved* AutoDex calibration lists 2048×1536, but a
 live session must check its actual frames. `--allow-cpu` is only for a slow
 offline smoke test.
@@ -82,3 +100,11 @@ abstention. Even a non-abstaining result is not a measured 20 mm insertion
 outcome or permission to move: validate the local model against independent
 real held-key annotations, current camera-time provenance, fixture
 calibration, trajectory/collision checks and guarded force control first.
+
+In a 2026-10-11 RTX 3090 transport smoke test, cached Qwen3-VL-2B received a
+256×256 crop of a **presentation panel**, not a real held-key frame. It
+returned `[256,256]` for the tip and both line points—exactly outside the
+displayed pixel range. The parser rejected all marks and produced no metric
+landmark. This confirms model/crop transport and fail-closed bounds, **not**
+localization ability; real synchronized AutoDex frames with independent
+tip/axis labels remain necessary.

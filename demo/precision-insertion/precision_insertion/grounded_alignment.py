@@ -15,11 +15,11 @@ contact gates and cannot command the Franka.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import combinations
 import math
 import time
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
 from PIL import Image
@@ -27,6 +27,7 @@ from scipy.optimize import least_squares
 from scipy.stats import chi2
 
 from .geometry import validate_se3
+from .grounding_crop import make_native_grounding_crop
 from .observer import ImageVLM, VLMObservation, _backend_model, _parse_object
 from .xy_overlay import CalibratedXYFrame
 from .xy_voting import VLM_XY_STEP_M
@@ -654,6 +655,7 @@ def estimate_grounded_line_alignment(
 def _observe_grounded_axis_line(
     backend: ImageVLM, frames: Sequence[CalibratedXYFrame], *,
     point_field: str, point_description: str, phase: str, stage: str,
+    crop_context_by_camera: Mapping[str, str] | None = None,
 ) -> tuple[list[GroundedLineView], list[VLMObservation]]:
     """Shared original-pixel parser for a visible key point and axis line."""
     views, records = [], []
@@ -666,9 +668,20 @@ def _observe_grounded_axis_line(
         if not isinstance(frame.raw, Image.Image) or frame.raw.mode != "RGB":
             raise ValueError("line grounding needs original undistorted RGB")
         width, height = frame.raw.size
+        crop_context = (None if crop_context_by_camera is None else
+                        crop_context_by_camera[frame.camera_id])
+        image_description = (
+            f"ORIGINAL UNDISTORTED image {width}x{height} pixels. "
+            if crop_context is None else crop_context)
+        coordinate_description = (
+            "Coordinates are original-image pixels, origin top-left."
+            if crop_context is None else
+            "Coordinates are displayed CROP-CANVAS pixels, origin top-left; "
+            "never report a mark in the gray padded region or add the "
+            "crop origin yourself.")
         prompt = (
-            f"Camera {frame.camera_id}. ORIGINAL UNDISTORTED image "
-            f"{width}x{height} pixels. From visible raw key pixels only, "
+            f"Camera {frame.camera_id}. {image_description}"
+            "From visible raw key pixels only, "
             f"mark {point_description} and TWO separated points along "
             "the image-projected centreline of the visible straight key "
             "shaft. The line points need not mark the same physical shaft "
@@ -679,7 +692,7 @@ def _observe_grounded_axis_line(
             f'{{"{point_field}":[x,y]|null,'
             '"axis_line_px":[[x1,y1],[x2,y2]]|null,'
             '"evidence":"visible image features only"}. '
-            "Coordinates are original-image pixels, origin top-left."
+            f"{coordinate_description}"
         )
         started = time.perf_counter()
         answer = backend.infer([frame.raw], prompt)
@@ -732,6 +745,75 @@ def observe_grounded_cylinder_axis(
         point_description="the insertion-tip centre",
         phase="raw_preinsert_hold",
         stage="cylinder_tip_axis_line_grounding")
+
+
+def observe_grounded_cylinder_axis_cropped(
+    backend: ImageVLM, frames: Sequence[CalibratedXYFrame], *,
+    roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]],
+) -> tuple[list[GroundedLineView], list[VLMObservation]]:
+    """Ground visible cylinder marks in lossless ROIs, return full pixels.
+
+    This is a **saved-image/read-only** experiment. The raw VLM answer and
+    parsed marks stay crop-local in ``VLMObservation``; its pixel_mapping
+    records the exact translation. Returned ``GroundedLineView`` marks are
+    original full-frame pixels for unchanged calibration/triangulation.
+    Live checkpoint verifiers intentionally continue to use full frames.
+    """
+    if getattr(backend, "native_pixel_coordinates", False) is not True:
+        raise ValueError("cropped metric grounding needs a native-pixel backend")
+    ids = [frame.camera_id for frame in frames]
+    if (len(ids) != len(set(ids)) or
+            not isinstance(roi_xyxy_by_camera, Mapping) or
+            set(roi_xyxy_by_camera) != set(ids)):
+        raise ValueError("every unique grounding camera needs one explicit ROI")
+    crops, cropped_frames, contexts = {}, [], {}
+    for frame in frames:
+        crop = make_native_grounding_crop(
+            frame.raw, roi_xyxy_by_camera[frame.camera_id])
+        x0, y0, _, _ = crop.roi_xyxy_full_px
+        intrinsics = _K(frame.intrinsics).copy()
+        intrinsics[0, 2] -= x0
+        intrinsics[1, 2] -= y0
+        cropped_frames.append(CalibratedXYFrame(
+            frame.camera_id, frame.timestamp_s, crop.image,
+            frame.T_camera_socket, intrinsics))
+        crops[frame.camera_id] = crop
+        contexts[frame.camera_id] = (
+            f"PIXEL-PRESERVING RAW UNDISTORTED CROP from original "
+            f"{frame.raw.width}x{frame.raw.height} frame. Displayed canvas "
+            f"{crop.image.width}x{crop.image.height}; real image content "
+            f"{crop.content_size_px[0]}x{crop.content_size_px[1]} from "
+            f"full-frame origin ({x0},{y0}); gray padding only at right/bottom. ")
+    local_views, observations = _observe_grounded_axis_line(
+        backend, cropped_frames, point_field="tip_px",
+        point_description="the insertion-tip centre",
+        phase="raw_preinsert_hold", stage="cylinder_tip_axis_line_grounding",
+        crop_context_by_camera=contexts)
+    mapped_views, mapped_observations = [], []
+    for original, local, observation in zip(frames, local_views, observations):
+        crop = crops[original.camera_id]
+        mapping = crop.mapping_record()
+        try:
+            tip = (None if local.tip_uv_px is None else
+                   crop.to_full_pixel(local.tip_uv_px))
+            segment = (None if local.axis_line_uv_px is None else
+                       tuple(crop.to_full_pixel(point)
+                             for point in local.axis_line_uv_px))
+            mapping["mapped_full_pixels"] = {
+                "tip_px": None if tip is None else list(tip),
+                "axis_line_px": None if segment is None else
+                [list(point) for point in segment],
+            }
+            error = observation.parse_error
+        except ValueError as exc:
+            tip, segment = None, None
+            error = str(exc)
+            mapping["mapped_full_pixels"] = None
+        mapped_views.append(GroundedLineView(
+            original, tip, segment, local.evidence))
+        mapped_observations.append(replace(
+            observation, parse_error=error, pixel_mapping=mapping))
+    return mapped_views, mapped_observations
 
 
 def observe_exposed_key_rear_axis(

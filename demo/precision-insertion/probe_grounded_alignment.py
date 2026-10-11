@@ -30,8 +30,9 @@ if str(DEMO_DIR) not in sys.path:
 from precision_insertion.geometry import validate_se3  # noqa: E402
 from precision_insertion.grounded_alignment import (  # noqa: E402
     AlignmentLimits, estimate_grounded_line_alignment,
-    observe_grounded_cylinder_axis,
+    observe_grounded_cylinder_axis, observe_grounded_cylinder_axis_cropped,
 )
+from precision_insertion.grounding_crop import make_native_grounding_crop  # noqa: E402
 from precision_insertion.observer import load_vlm_backend  # noqa: E402
 from precision_insertion.xy_overlay import CalibratedXYFrame  # noqa: E402
 
@@ -104,6 +105,9 @@ def _load_manifest(
             image_record.get("sha256"))
         with Image.open(io.BytesIO(raw)) as image:
             rgb = image.convert("RGB")
+        crop = None
+        if "roi_xyxy" in row:
+            crop = make_native_grounding_crop(rgb, row["roi_xyxy"])
         transform = validate_se3(
             row.get("T_camera_socket"), name=f"{camera_id} T_camera_socket")
         intrinsics = np.asarray(row.get("intrinsics"), dtype=float)
@@ -119,6 +123,8 @@ def _load_manifest(
             "sha256": image_record["sha256"],
             "timestamp_s_claimed": float(timestamp),
             "size_px": list(rgb.size),
+            **({} if crop is None else {
+                "pixel_mapping": crop.mapping_record()}),
         })
     if len(frames) < limits.minimum_views:
         raise ValueError("fewer views than the alignment limit requires")
@@ -146,13 +152,27 @@ def main(argv: list[str] | None = None) -> int:
     raw_manifest = source.read_bytes()
     manifest_sha = hashlib.sha256(raw_manifest).hexdigest()
     record, frames, sources = _load_manifest(source, raw_manifest)
+    roi_by_camera = {
+        row["camera_id"]: tuple(row["roi_xyxy"])
+        for row in record["views"] if "roi_xyxy" in row
+    }
+    if roi_by_camera and len(roi_by_camera) != len(frames):
+        raise ValueError("cropped grounding requires one ROI for every camera")
+    input_sizes = (
+        [make_native_grounding_crop(
+            frame.raw, roi_by_camera[frame.camera_id]).model_size_px
+         for frame in frames] if roi_by_camera else
+        [frame.raw.size for frame in frames])
     backend = load_vlm_backend(
         mode="local", model_id=args.model_id,
-        max_input_size=(max(frame.raw.width for frame in frames),
-                        max(frame.raw.height for frame in frames)),
+        max_input_size=(max(size[0] for size in input_sizes),
+                        max(size[1] for size in input_sizes)),
         max_new_tokens=args.max_new_tokens,
         require_cuda=not args.allow_cpu, require_native_pixels=True)
-    grounded, observations = observe_grounded_cylinder_axis(backend, frames)
+    grounded, observations = (
+        observe_grounded_cylinder_axis_cropped(
+            backend, frames, roi_xyxy_by_camera=roi_by_camera)
+        if roi_by_camera else observe_grounded_cylinder_axis(backend, frames))
     limits = AlignmentLimits(**record["alignment_limits"])
     alignment = estimate_grounded_line_alignment(
         grounded, socket_rim_z_m=float(record["socket_rim_z_m"]),
@@ -163,6 +183,8 @@ def main(argv: list[str] | None = None) -> int:
         "backend": "local", "model_id": args.model_id,
         "manifest_path": str(source), "manifest_sha256": manifest_sha,
         "source_images": sources,
+        "grounding_input": ("lossless_raw_roi" if roi_by_camera else
+                            "full_undistorted_frames"),
         "observations": [observation.to_record() for observation in observations],
         "alignment": alignment,
         "timestamp_source": "manifest_claim_not_verified_acquisition_evidence",

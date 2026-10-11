@@ -69,9 +69,10 @@ class VLMObservation:
     parse_error: str | None
     backend_model: str
     latency_s: float
+    pixel_mapping: dict | None = None
 
     def to_record(self) -> dict:
-        return {
+        record = {
             "stage": self.stage,
             "parsed": self.parsed,
             "raw_answer": self.raw_answer,
@@ -82,6 +83,9 @@ class VLMObservation:
             "latency_s": self.latency_s,
             "scope": "read_only_vlm_observation_not_motion_authorization",
         }
+        if self.pixel_mapping is not None:
+            record["pixel_mapping"] = self.pixel_mapping
+        return record
 
 
 @dataclass(frozen=True)

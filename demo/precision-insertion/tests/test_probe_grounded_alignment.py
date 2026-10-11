@@ -147,6 +147,61 @@ def test_unobservable_local_landmarks_abstain_without_xy_command(
     assert report["robot_ready"] is False
 
 
+def test_lossless_roi_marks_map_to_full_camera_pixels(tmp_path, monkeypatch):
+    manifest_path, manifest, truth = _manifest(tmp_path)
+    for row in manifest["views"]:
+        row["roi_xyxy"] = [100, 50, 540, 430]
+    manifest_path.write_text(json.dumps(manifest))
+    loads = []
+
+    class Backend:
+        native_pixel_coordinates = True
+
+        def infer(self, images, prompt):
+            assert images[0].size == (448, 384)
+            assert "CROP-CANVAS" in prompt
+            name = re.search(r"Camera (\w+)\.", prompt).group(1)
+            marks = json.loads(json.dumps(truth[name]))
+            marks["tip_px"] = [marks["tip_px"][0] - 100,
+                               marks["tip_px"][1] - 50]
+            marks["axis_line_px"] = [
+                [point[0] - 100, point[1] - 50]
+                for point in marks["axis_line_px"]]
+            return json.dumps(marks)
+
+    def load(**kwargs):
+        loads.append(kwargs)
+        return Backend()
+
+    monkeypatch.setattr(probe, "load_vlm_backend", load)
+    output = tmp_path / "cropped_result.json"
+    assert probe.main(["--manifest", str(manifest_path),
+                       "--output", str(output)]) == 0
+    report = json.loads(output.read_text())
+    assert loads[0]["max_input_size"] == (448, 384)
+    assert report["grounding_input"] == "lossless_raw_roi"
+    assert report["alignment"]["status"] == "diagnostic_metric_xy_correction"
+    assert report["alignment"]["xy_correction_socket_m"] == pytest.approx(
+        [-.0016, .0002], abs=1e-7)
+    assert report["observations"][0]["parsed"]["tip_px"] == pytest.approx(
+        [truth["front"]["tip_px"][0] - 100,
+         truth["front"]["tip_px"][1] - 50])
+    assert report["observations"][0]["pixel_mapping"][
+        "mapped_full_pixels"]["tip_px"] == pytest.approx(
+            truth["front"]["tip_px"])
+
+
+def test_partial_roi_fails_before_model_load(tmp_path, monkeypatch):
+    manifest_path, manifest, _truth = _manifest(tmp_path)
+    manifest["views"][0]["roi_xyxy"] = [100, 50, 540, 430]
+    manifest_path.write_text(json.dumps(manifest))
+    monkeypatch.setattr(probe, "load_vlm_backend",
+                        lambda **_kw: pytest.fail("model loaded before ROI QA"))
+    with pytest.raises(ValueError, match="one ROI for every camera"):
+        probe.main(["--manifest", str(manifest_path),
+                    "--output", str(tmp_path / "partial.json")])
+
+
 @pytest.mark.parametrize("mutation,problem", [
     ("bad_hash", "saved image changed"),
     ("bad_skew", "exposures exceed skew"),
