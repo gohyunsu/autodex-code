@@ -115,10 +115,12 @@ completion-checked FR3 executor used for clear-view and feedback. It must
 still supply pickup limits and a real motion interlock; the subclass does
 not replace a robot-side watchdog or physical review. The stage factory
 supplies the remaining commissioned contact, recovery and repose callbacks.
-An optional [`lift_monitor` block](MEASURED_LIFT_ADAPTER.md) likewise builds
-a measured non-contact lift adapter when the factory omits `lift.adapter`.
-It does **not** supply the reviewed daemon watchdog record, lift limits,
-interlock or real-robot validation.
+An optional [`held_motion_monitor` block](MEASURED_LIFT_ADAPTER.md) builds
+one measured non-contact adapter for lift, first transfer and retry transfer;
+for cylinder mode it also fills the retry lateral shift. The older
+`lift_monitor` block still fills only `lift.adapter`. The factory may override
+each field. Neither setting supplies a reviewed daemon watchdog record,
+stage limits, interlock, contact controller or real-robot validation.
 
 For the default physical held-relation route, the stage factory may omit
 `held_relation.calibration_for_candidate`: assembly then looks for the exact

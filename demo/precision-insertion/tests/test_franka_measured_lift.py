@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 import sys
 import time
@@ -84,6 +85,7 @@ def test_lift_adapter_records_actual_arm_and_hand_samples(tmp_path, monkeypatch)
     assert result["trajectory_complete"] is True
     assert result["force_abort"] is False
     assert result["terminal_hold_acknowledged"] is True
+    assert executor.stop_calls == 1
     assert executor.arm.__class__ is _Arm  # proxy restored
     trace = json.loads(Path(result["controller_trace_path"]).read_text())
     assert trace["status"] == "completed"
@@ -127,3 +129,87 @@ def test_lift_requires_prior_squeeze_and_checked_executor(tmp_path, monkeypatch)
         measured.FrankaMeasuredLiftAdapter(
             executor=object(), daemon_binary_path=tmp_path / "daemon",
             trace_root=tmp_path / "other", limits=adapter.limits)
+
+
+@pytest.mark.parametrize("stage", ["transfer", "lateral"])
+def test_held_motion_writes_three_measured_source_records(
+    tmp_path, monkeypatch, stage,
+):
+    executor = _Executor()
+    adapter = _adapter(tmp_path, monkeypatch, executor)
+    result = getattr(adapter, f"follow_{stage}")(
+        np.zeros((3, 13)), max_duration_s=1.,
+        expected_hand_raw=np.full(6, 500.),
+        trajectory_sha256="a" * 64)
+    assert result["schema"] == f"precision_insertion_external_{stage}_result_v1"
+    assert result["trajectory_complete"] is True
+    assert result["safety_abort"] is False
+    assert result["grasp_held"] is True
+    assert result["grasp_held_scope"].endswith("not_key_presence")
+    assert result["terminal_hold_acknowledged"] is True
+    assert executor.stop_calls == 1
+    assert executor.arm.__class__ is _Arm
+    assert set(result["source_records"]) == {
+        "trajectory_feedback", "safety", "grasp_state"}
+    paths = set()
+    for name, source in result["source_records"].items():
+        path = Path(source["path"])
+        paths.add(path)
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == source["sha256"]
+        record = json.loads(path.read_text())
+        assert record["source"] == name
+        assert len(record["samples"]) == 3
+    assert len(paths) == 3
+    assert json.loads(
+        Path(result["source_records"]["trajectory_feedback"]["path"])
+        .read_text())["samples"][0]["arm_q"] == [0.] * 7
+    assert json.loads(
+        Path(result["source_records"]["safety"]["path"])
+        .read_text())["samples"][0]["force_norm_n"] == 1.
+    grasp = json.loads(
+        Path(result["source_records"]["grasp_state"]["path"]).read_text())
+    assert grasp["samples"][0]["hand_raw_measured"] == [500.] * 6
+    assert grasp["grasp_held_scope"].endswith("not_key_presence")
+
+
+def test_held_transfer_force_abort_writes_no_positive_result(
+    tmp_path, monkeypatch,
+):
+    executor = _Executor(force=10.)
+    adapter = _adapter(tmp_path, monkeypatch, executor)
+    with pytest.raises(RuntimeError, match="measured FR3 transfer aborted"):
+        adapter.follow_transfer(
+            np.zeros((3, 13)), max_duration_s=1.,
+            expected_hand_raw=np.full(6, 500.),
+            trajectory_sha256="a" * 64)
+    assert executor.stop_calls == 1
+    trace = next((tmp_path / "traces").glob("transfer_*/controller_trace.json"))
+    assert json.loads(trace.read_text())["status"] == "aborted"
+    assert not list((tmp_path / "traces").glob("transfer_*/safety.json"))
+
+
+def test_held_motion_rejects_changing_hand_path(tmp_path, monkeypatch):
+    adapter = _adapter(tmp_path, monkeypatch, _Executor())
+    path = np.zeros((3, 13))
+    path[-1, 7] = .1
+    with pytest.raises(ValueError, match="finite held path"):
+        adapter.follow_lateral(
+            path, max_duration_s=1.,
+            expected_hand_raw=np.full(6, 500.),
+            trajectory_sha256="a" * 64)
+
+
+def test_held_motion_rejects_unacknowledged_terminal_stop(
+    tmp_path, monkeypatch,
+):
+    executor = _Executor()
+    executor.stop_and_acknowledge = lambda: {"acknowledged": False}
+    adapter = _adapter(tmp_path, monkeypatch, executor)
+    with pytest.raises(RuntimeError, match="measured FR3 transfer aborted"):
+        adapter.follow_transfer(
+            np.zeros((3, 13)), max_duration_s=1.,
+            expected_hand_raw=np.full(6, 500.),
+            trajectory_sha256="a" * 64)
+    trace = next((tmp_path / "traces").glob("transfer_*/controller_trace.json"))
+    assert json.loads(trace.read_text())["status"] == "aborted"
+    assert not list((tmp_path / "traces").glob("transfer_*/grasp_state.json"))

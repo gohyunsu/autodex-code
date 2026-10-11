@@ -140,6 +140,72 @@ def test_franka_integration_builds_measured_lift_adapter_when_configured(
     assert received[0]["limits"].minimum_samples == 3
 
 
+@pytest.mark.parametrize("family", ["square", "cylinder"])
+def test_franka_integration_reuses_held_motion_adapter_across_stages(
+        monkeypatch, tmp_path, family):
+    core = SimpleNamespace(
+        clear_view=object(), planner=object(), executor=object(),
+        read_state=lambda: None, sampler=None, close=lambda: None)
+    monkeypatch.setattr(franka_integration, "open_franka_core", lambda _: core)
+    module = ModuleType("robot_pc_stages")
+    custom = object()
+    module.configure = lambda *_: {
+        "shared": {"backend": object()},
+        "stages": {"lift": {}, "task": {},
+                   "retry": {"insertion_adapter": custom}}}
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    created = []
+
+    def build_adapter(**kwargs):
+        created.append(kwargs)
+        return held_adapter
+
+    held_adapter = object()
+    monkeypatch.setattr(franka_integration, "FrankaMeasuredLiftAdapter",
+                        build_adapter)
+
+    def assemble(_live, **kwargs):
+        stages = kwargs["stages"]
+        assert stages["lift"]["adapter"] is held_adapter
+        assert stages["task"]["transfer_adapter"] is held_adapter
+        assert stages["retry"]["transfer_adapter"] is held_adapter
+        assert stages["retry"]["insertion_adapter"] is custom
+        assert ("lateral_adapter" in stages["retry"]) == (family == "cylinder")
+        if family == "cylinder":
+            assert stages["retry"]["lateral_adapter"] is held_adapter
+        return ()
+
+    monkeypatch.setattr(franka_integration, "assemble_live_components", assemble)
+    config = _config()
+    config["held_motion_monitor"] = {
+        "daemon_binary_path": str(tmp_path / "franka_daemon"),
+        "max_force_norm_n": 20., "max_torque_norm_nm": 3.,
+        "max_hand_tracking_error_raw": 25., "max_state_gap_s": .05,
+        "minimum_samples": 3}
+    live = SimpleNamespace(opened=SimpleNamespace(
+        runner=SimpleNamespace(mode=SimpleNamespace(family=family))))
+    franka_integration.factory(_options(tmp_path, config)).build_components(live)
+    assert len(created) == 1
+
+
+def test_duplicate_motion_monitor_config_fails_before_robot_connection(
+        monkeypatch, tmp_path):
+    connected = []
+    monkeypatch.setattr(franka_integration, "open_franka_core",
+                        lambda _: connected.append(True))
+    monitor = {
+        "daemon_binary_path": str(tmp_path / "franka_daemon"),
+        "max_force_norm_n": 20., "max_torque_norm_nm": 3.,
+        "max_hand_tracking_error_raw": 25., "max_state_gap_s": .05,
+        "minimum_samples": 3}
+    config = _config()
+    config["lift_monitor"] = monitor
+    config["held_motion_monitor"] = monitor
+    with pytest.raises(ValueError, match="not both"):
+        franka_integration.factory(_options(tmp_path, config))
+    assert connected == []
+
+
 def test_invalid_lift_monitor_fails_before_robot_connection(monkeypatch, tmp_path):
     connected = []
     monkeypatch.setattr(franka_integration, "open_franka_core",

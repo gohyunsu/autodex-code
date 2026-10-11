@@ -139,7 +139,8 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     if (not isinstance(record, dict) or record.get("schema") != _SCHEMA or
             not {"schema", "feedback", "stages_factory"} <= set(record) or
             set(record) - {"schema", "feedback", "sampling",
-                           "stages_factory", "vlm", "lift_monitor"} or
+                           "stages_factory", "vlm", "lift_monitor",
+                           "held_motion_monitor"} or
             not isinstance(record["feedback"], dict) or
             set(record["feedback"]) != _FEEDBACK_KEYS):
         raise ValueError("FR3 robot config needs schema, feedback and stages_factory")
@@ -150,6 +151,11 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     sampling = None
     vlm = _vlm_settings(record.get("vlm"))
     lift_monitor = _lift_monitor_settings(record.get("lift_monitor"))
+    held_motion_monitor = _lift_monitor_settings(
+        record.get("held_motion_monitor"))
+    if lift_monitor is not None and held_motion_monitor is not None:
+        raise ValueError(
+            "use held_motion_monitor or legacy lift_monitor, not both")
     if "sampling" in record:
         supplied = record["sampling"]
         if (not isinstance(supplied, dict) or
@@ -206,23 +212,35 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             shared.update(
                 state_for_observation=core.sampler.state_for_observation,
                 state_for_capture=core.sampler.state_for_capture)
+        family = getattr(getattr(getattr(
+            getattr(live, "opened", None), "runner", None),
+            "mode", None), "family", None)
         stages = _with_checkpoint_captures(
             parameters["stages"], vlm["capture_timeout_s"],
-            family=getattr(getattr(getattr(
-                getattr(live, "opened", None), "runner", None),
-                "mode", None), "family", None))
+            family=family)
         if "pickup" in stages and "executor" not in stages["pickup"]:
             # Use the same FR3 connection as clear-view and measured state.
             # This is the demo's completion-checked stock subclass; the
             # robot-PC factory still supplies the motion interlock and limits.
             stages["pickup"]["executor"] = core.executor
-        if (lift_monitor is not None and "lift" in stages and
-                "adapter" not in stages["lift"]):
-            binary, limits = lift_monitor
-            stages["lift"]["adapter"] = FrankaMeasuredLiftAdapter(
+        assignments = (
+            [("lift", "adapter"), ("task", "transfer_adapter"),
+             ("retry", "transfer_adapter")]
+            if held_motion_monitor is not None else
+            [("lift", "adapter")])
+        if held_motion_monitor is not None and family == "cylinder":
+            assignments.append(("retry", "lateral_adapter"))
+        monitor = held_motion_monitor or lift_monitor
+        missing = [(stage, field) for stage, field in assignments
+                   if stage in stages and field not in stages[stage]]
+        if monitor is not None and missing:
+            binary, limits = monitor
+            adapter = FrankaMeasuredLiftAdapter(
                 executor=core.executor, daemon_binary_path=binary,
                 trace_root=options.run_output_dir / "controller_traces",
                 limits=limits)
+            for stage, field in missing:
+                stages[stage][field] = adapter
         return assemble_live_components(
             live, shared=shared,
             stages=stages,
