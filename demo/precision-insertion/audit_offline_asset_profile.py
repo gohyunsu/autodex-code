@@ -27,10 +27,12 @@ def _catalog_path(root: Path, family: str, gap: float) -> Path:
     if family == "cylinder":
         return (base / "cylindrical" /
                 f"endpoint_catalog_current_gap_{int(gap)}mm_20261011.json")
+    name = str(gap).replace(".", "p")
     if gap == 1.5:
         return (base / "endpoint_catalogs" /
                 "square_1p5mm_20261011_v8_8_nominal_r2.json")
-    return base / "endpoint_catalogs" / f"square_{gap}mm_NOT_GENERATED.json"
+    return (base / "endpoint_catalogs" /
+            f"square_{name}mm_20261011_nominal_r2.json")
 
 
 def _reset_root(root: Path, family: str) -> Path:
