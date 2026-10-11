@@ -21,6 +21,9 @@ from autodex.utils.robot_config import FR3_CLEAR_VIEW  # noqa: E402
 
 def _clear_view(events):
     class Executor:
+        arm_dof = 7
+        hand_name = "inspire"
+
         def home(self, *, clear_view):
             assert clear_view
             events.append("home_clear_view")

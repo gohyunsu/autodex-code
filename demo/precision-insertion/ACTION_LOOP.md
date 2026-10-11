@@ -155,6 +155,12 @@ context closes, leaving the runner's already written evidence intact.
 Programmatic use from the repository root (after providing commissioned
 camera, planner, feedback, Qwen and motion adapters):
 
+`franka_executor` below must be `src.execution.franka_executor.FrankaExecutor`
+with the Inspire hand. `autodex.executor.real.RealExecutor` is the xArm
+executor even though stock `run_auto.py` can select Franka through its
+`--arm franka` branch. The demo clear-view gate now rejects the xArm
+executor before its first `home()` command.
+
 ```python
 from pathlib import Path
 from precision_insertion.live_orchestration import run_live_precision_session
@@ -163,27 +169,17 @@ from precision_insertion.live_pickup_handlers import LivePickupHandlers
 from precision_insertion.live_lift_handlers import LiveLiftHandlers
 from precision_insertion.live_held_relation_handlers import LiveHeldRelationHandlers
 from precision_insertion.observer import load_vlm_backend
-from precision_insertion.clear_view import ClearViewForPerception
-from precision_insertion.live_robot_state import read_live_franka_inspire_state
+from precision_insertion.franka_core import FrankaFeedbackSettings, open_franka_core
 
-def read_current_state():
-    return read_live_franka_inspire_state(
-        arm=franka_executor.arm, hand=franka_executor.hand,
-        max_arm_hand_skew_s=commissioned_key_parameters["max_arm_hand_skew_s"],
-        max_sample_age_s=commissioned_feedback_age_s,
-        max_hand_command_error_raw=commissioned_key_parameters["max_hand_command_error_raw"],
-        max_arm_update_wait_s=commissioned_arm_update_wait_s,
-        max_arm_velocity_rad_s=commissioned_key_parameters["max_arm_velocity_rad_s"],
-    )
-
-clear_view = ClearViewForPerception(
-    executor=franka_executor,
-    read_state=read_current_state,
+core = open_franka_core(FrankaFeedbackSettings(
     max_arm_hand_skew_s=commissioned_key_parameters["max_arm_hand_skew_s"],
-    max_hand_command_error_raw=commissioned_key_parameters["max_hand_command_error_raw"],
-    max_arm_velocity_rad_s=commissioned_key_parameters["max_arm_velocity_rad_s"],
     max_sample_age_s=commissioned_feedback_age_s,
-)
+    max_hand_command_error_raw=commissioned_key_parameters["max_hand_command_error_raw"],
+    max_arm_update_wait_s=commissioned_arm_update_wait_s,
+    max_arm_velocity_rad_s=commissioned_key_parameters["max_arm_velocity_rad_s"],
+))
+franka_executor, planner = core.executor, core.planner
+read_current_state, clear_view = core.read_state, core.clear_view
 qwen_backend = load_vlm_backend(
     mode="local", max_input_size=commissioned_native_image_size)
 
@@ -225,17 +221,20 @@ def build_handlers(live):
     return {**planning.handlers(), **pickup.handlers(), **lift.handlers(),
             **held.handlers()}
 
-result = run_live_precision_session(
-    launch_config_path=Path("/absolute/commissioned_session_launch.json"),
-    endpoint_catalog_path=Path("/absolute/current_endpoint_catalog.json"),
-    run_output_dir=Path("/absolute/new_trial_run"),
-    max_xy_retries=1, clear_view=clear_view,
-    build_handlers=build_handlers,
-)
-print(result.to_record())
+try:
+    result = run_live_precision_session(
+        launch_config_path=Path("/absolute/commissioned_session_launch.json"),
+        endpoint_catalog_path=Path("/absolute/current_endpoint_catalog.json"),
+        run_output_dir=Path("/absolute/new_trial_run"),
+        max_xy_retries=1, clear_view=clear_view,
+        build_handlers=build_handlers,
+    )
+    print(result.to_record())
+finally:
+    core.close()
 ```
 
-`planner`, `feedback_sampler`, `path_audit_limits`, execution limits and
+`feedback_sampler`, `path_audit_limits`, execution limits and
 `commissioned_key_parameters` are **operator-supplied values**. The feedback
 sampler must already run before the key exposure; configure it as shown in
 the main [README](README.md). `commissioned_key_parameters` contains the

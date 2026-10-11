@@ -1,6 +1,8 @@
 """Keep the FR3 and open Inspire out of AutoDex's perception views.
 
-The stock FrankaExecutor owns the initial free-space ``home(clear_view=True)``
+AutoDex's ``src.execution.franka_executor.FrankaExecutor`` owns the initial
+free-space ``home(clear_view=True)``; ``autodex.executor.real.RealExecutor``
+is the xArm executor and must never be used for this demo. The Franka executor
 motion. After any trial, a release handler must instead execute its planned
 vertical exit and socket-aware retract before this gate admits a new image.
 """
@@ -45,6 +47,12 @@ class ClearViewForPerception:
         if not callable(self.read_state) or not callable(
                 getattr(self.executor, "home", None)):
             raise TypeError("clear view needs Franka home and measured feedback")
+        if (getattr(self.executor, "arm_dof", None) != 7 or
+                getattr(self.executor, "hand_name", None) not in
+                {"inspire", "inspire_left"}):
+            raise TypeError(
+                "precision insertion needs the 7-DOF FrankaExecutor with Inspire; "
+                "AutoDex RealExecutor controls xArm")
         for value in (
                 self.max_arm_hand_skew_s, self.max_hand_command_error_raw,
                 self.max_arm_velocity_rad_s, self.max_sample_age_s,

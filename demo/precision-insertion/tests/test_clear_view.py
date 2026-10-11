@@ -24,6 +24,9 @@ def _fixture():
     events = []
 
     class Executor:
+        arm_dof = 7
+        hand_name = "inspire"
+
         def home(self, *, clear_view):
             assert clear_view is True
             events.append("initial_home")
@@ -40,6 +43,14 @@ def _fixture():
 
     guard = ClearViewForPerception(Executor(), read_state, .1, 20., .05, 1.)
     return guard, actual, events
+
+
+def test_clear_view_rejects_xarm_executor_before_any_motion():
+    guard, _, _ = _fixture()
+    guard.executor.arm_dof = 6
+    with pytest.raises(TypeError, match="7-DOF FrankaExecutor"):
+        ClearViewForPerception(guard.executor, guard.read_state,
+                               .1, 20., .05, 1.)
 
 
 def test_initial_home_and_each_key_capture_require_measured_open_clear_view():

@@ -182,7 +182,8 @@ def test_reset_landing_reuses_same_camera_key_capture_without_grasp_preflight(
     runner.current_decision = lambda: SimpleNamespace(
         action="recover_held_key_then_reobserve")
     clear = ClearViewForPerception(
-        SimpleNamespace(home=lambda **_kwargs: None),
+        SimpleNamespace(home=lambda **_kwargs: None,
+                        arm_dof=7, hand_name="inspire"),
         lambda: _measured_state(), .02, 20., .1, 1.)
     clear.before_key_capture = lambda: events.append("clear_view_before")
     clear.verify_state = lambda state, **_kwargs: (
@@ -210,7 +211,8 @@ def test_reset_key_capture_does_not_start_before_recovery_decision(
         tmp_path, monkeypatch):
     arguments, events, _ = _setup(tmp_path, monkeypatch)
     clear = ClearViewForPerception(
-        SimpleNamespace(home=lambda **_kwargs: None),
+        SimpleNamespace(home=lambda **_kwargs: None,
+                        arm_dof=7, hand_name="inspire"),
         lambda: _measured_state(), .02, 20., .1, 1.)
     omitted = {
         "planner", "limits", "max_pose_error_deg", "axial_waypoint_step_m",
