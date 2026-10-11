@@ -2440,6 +2440,11 @@ for the handler contract and routing. The new
 [`LiveKeyPlanningHandlers`](precision_insertion/live_planning_handlers.py)
 connects fresh key capture, complete v8 preflight, same-capture candidate
 continuation and stock AutoDex clear-view reset after a judged grasp miss.
+[`LivePickupHandlers`](precision_insertion/live_pickup_handlers.py) connects
+the selected attempt to the existing pickup execution boundary and a
+measured-squeeze lift preflight. It requires a commissioned pickup executor;
+the unmodified stock follower is explicitly rejected by that execution
+boundary. A passing lift preflight is not a lift command or grasp label.
 [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py)
 connects a failed still-held insertion to logged axial withdrawal, the
 runner's held tabletop-return plan, stock Franka held transfer/release/clear-

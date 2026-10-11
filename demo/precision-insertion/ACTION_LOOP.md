@@ -15,7 +15,7 @@ using the existing demo functions before returning. For example:
 | --- | --- |
 | `capture_fresh_key`, `reobserve_key_and_preflight` | Move to measured clear view, then `prepare_next_live_key()` with the same cameras and frozen runner. For a judged grasp miss, reuse AutoDex `release(..., open_to_init=True)` and `reset()` before recapture. The attempted grasp is excluded. |
 | `continue_candidate_preflight` | `runner.preflight_next_key()` on the *same* saved key capture and measured state, continuing a budget-limited prefix rather than falsely declaring pose exhaustion. |
-| `execution_gate_required` | `runner.begin_selected_attempt()` and the separately commissioned `execute_bound_pickup()` boundary. A planning pass itself never writes a positive grasp label. |
+| `execution_gate_required` | [`LivePickupHandlers`](precision_insertion/live_pickup_handlers.py) starts the selected v8 attempt, calls the existing `execute_bound_pickup()` through a commissioned executor, and preflights lift from *measured* post-squeeze joints. It does not execute lift or write a grasp-success label. |
 | `await_lift_observation` | Complete the measured lift, paired-camera Qwen lift checkpoint and `runner.observe_stage("grasp_success", ...)`. |
 | `postlift_observed_preflight_required`, `held_relation_evidence_required` | Obtain the post-squeeze key/hand relation or its explicit uncertainty bound, then call the matching `runner.prepare_*postlift_transfer()` method. |
 | `transfer_execution_gate_required` | Execute the bound held transfer, capture the pre-insertion hold, and record the separate `preinsert_reached` label. |
@@ -36,6 +36,19 @@ its exclusions and checks that the key/state record is the same. The caller
 must supply a running exposure-time feedback sampler, AutoDex planner,
 `PathAuditLimits`, a specific key prompt and the numeric keyword arguments
 of `prepare_next_live_key()`. No default measurement thresholds are invented.
+
+[`LivePickupHandlers`](precision_insertion/live_pickup_handlers.py) is the
+next action boundary. It calls `SessionRunner.begin_selected_attempt()`,
+`execute_bound_pickup()`, then
+`SessionRunner.prepare_measured_lift_chain()` in that order. The selected
+candidate and saved v8 trajectory are checked by the existing pickup
+boundary. The measured post-squeeze state—not the nominal BODex hand pose—is
+fed to the lift planner. Pickup needs an explicitly enabled, separately
+commissioned executor and motion interlock. The stock `FrankaExecutor`
+cannot be supplied unchanged to `execute_bound_pickup()` because that
+function rejects its non-fail-closed trajectory follower. A passing chain
+only unlocks the next `await_lift_observation` boundary; it is not evidence
+that lift or grasp succeeded.
 
 The required [`ClearViewForPerception`](precision_insertion/clear_view.py)
 calls stock `FrankaExecutor.home(clear_view=True)` **before** the initial
@@ -77,6 +90,7 @@ camera, planner, feedback, Qwen and motion adapters):
 from pathlib import Path
 from precision_insertion.live_orchestration import run_live_precision_session
 from precision_insertion.live_planning_handlers import LiveKeyPlanningHandlers
+from precision_insertion.live_pickup_handlers import LivePickupHandlers
 from precision_insertion.clear_view import ClearViewForPerception
 from precision_insertion.live_robot_state import read_live_franka_inspire_state
 
@@ -107,7 +121,16 @@ def build_handlers(live):
         key_prompt="blue precision key on the board, excluding the fixed red socket",
         key_parameters=commissioned_key_parameters,
     )
-    return planning.handlers()
+    pickup = LivePickupHandlers(
+        live=live, planner=planner, executor=commissioned_pickup_executor,
+        read_state=read_current_state, motion_interlock=motion_interlock,
+        pickup_limits=pickup_execution_limits,
+        lift_bounds=measured_surface_deviation_bounds,
+        path_limits=path_audit_limits,
+        measured_lift_parameters=commissioned_measured_lift_parameters,
+        enable_robot_motion=True,
+    )
+    return {**planning.handlers(), **pickup.handlers()}
 
 result = run_live_precision_session(
     launch_config_path=Path("/absolute/commissioned_session_launch.json"),
@@ -119,16 +142,20 @@ result = run_live_precision_session(
 print(result.to_record())
 ```
 
-`planner`, `feedback_sampler`, `path_audit_limits` and
+`planner`, `feedback_sampler`, `path_audit_limits`, execution limits and
 `commissioned_key_parameters` are **operator-supplied values**. The feedback
 sampler must already run before the key exposure; configure it as shown in
 the main [README](README.md). `commissioned_key_parameters` contains the
 threshold arguments of `prepare_next_live_key()` other than the session,
 camera, planner, prompt and limit objects supplied above, for example
 `max_key_state_skew_s`, `max_pose_error_deg` and
-`axial_waypoint_step_m`. With only these three handlers the loop stops at
-`execution_gate_required` (or a repose decision) and reports
-`needs_handler`; it **does not** pick up the key. Pickup, insertion, guarded
+`axial_waypoint_step_m`. The example deliberately requires
+`commissioned_pickup_executor`, `motion_interlock`,
+`pickup_execution_limits`, `measured_surface_deviation_bounds` and
+`commissioned_measured_lift_parameters` from the robot PC. Without them,
+omit `pickup.handlers()` and the loop stops at `execution_gate_required`.
+With them, the next unimplemented boundary is `await_lift_observation`;
+the example still does **not** lift the key. Lift, transfer, insertion, guarded
 withdrawal, independent controller logging, VLM observation and repose
 execution remain AutoDex-PC integration work. The judged grasp-miss clear-view
 reset is connected; the held-key return handler can be composed as shown
