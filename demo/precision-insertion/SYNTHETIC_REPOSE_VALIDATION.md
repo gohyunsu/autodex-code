@@ -165,3 +165,17 @@ landing, or robot-ready command. It demonstrates that the current software
 can find one complete *nominal* square reorientation path for one hypothetical
 layout. The seed remains in staging until a measured session, commissioned
 release/clearance policy and fresh landing observation support it.
+
+## Current cylinder 20 mm-gap reverse reset
+
+The canonical cylinder `001→000/1687` seed was also replanned with the
+current full-length, collision-only endpoint catalog, no optional
+drift/tilt filter, `INSPIRE_INIT` opening and `FR3_CLEAR_VIEW` retreat.
+For a hypothetical key at `(0.40, 0.00)` m and socket at `(0.60, 0.00)` m,
+the [report](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/synthetic_repose_full_open_clear_view_gap20_1to0_20261011/report.json)
+records `nominal_reset_preflight_pass_drop_unobserved` through release/exit.
+Its planned trajectory and frozen scene SHA256 values matched the saved
+files when reopened. This is a **single synthetic path**, not a measured
+reset, observed landing, or guarantee for another tabletop location. The
+opposite `000→001/191` seed previously failed held descent in one such
+layout; that direction remains unproven.
