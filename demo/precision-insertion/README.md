@@ -2465,8 +2465,12 @@ additional release/reset is initiated on that success path.
 [`LiveReposePlanningHandlers`](precision_insertion/live_repose_handlers.py)
 reuses the exhausted tabletop pose's saved key capture for the existing
 directed v8 reset preflight, including seed/cell continuation. It needs a
-target-pose/release-cell selector; execution and landing observation are not
-yet connected.
+target-pose/release-cell selector.
+[`LiveReposeExecutionHandlers`](precision_insertion/live_repose_execution.py)
+connects that plan to an injected physical reset executor and then reuses
+the AutoDex key capture and clear-view gate to label the observed landing.
+The physical reset controller and its independent execution log remain
+AutoDex-PC inputs.
 [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py)
 connects a failed still-held insertion to logged axial withdrawal, the
 runner's held tabletop-return plan, stock Franka held transfer/release/clear-
@@ -2481,7 +2485,7 @@ trial result is invented. The guarded pickup/lift hardware adapters, raw
 post-lift camera producer, physical held-relation calibration data, real
 transfer/insertion controllers and camera callbacks,
 guarded withdrawal, independent controller logging, later VLM observations
-and repose execution are **not bundled**, so this is not yet an unattended
+and the real repose executor are **not bundled**, so this is not yet an unattended
 robot loop.
 
 `board_snap` and `init` are the metadata-preserving adapters described in

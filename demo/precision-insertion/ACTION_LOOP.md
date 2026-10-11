@@ -25,7 +25,7 @@ using the existing demo functions before returning. For example:
 | `recover_held_key_then_reobserve` | [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py) joins logged guarded withdrawal, `runner.prepare_failed_insertion_return()`, stock Franka held return/release/clear-view motion, independently recorded controller phases, a fresh key capture on the same cameras, and `runner.observe_reset_landing()`. Guarded withdrawal and independent logging remain commissioned robot-PC callbacks. |
 | `recover_key_then_reobserve` | Transfer/hold failure may leave the key in an unknown state. Do not use the held-key or grasp-miss motion blindly; require observed recovery or operator intervention before a new capture. |
 | `preflight_repose`, `continue_repose_seed_preflight`, `preflight_repose_release`, `preflight_alternative_repose_cell` | [`LiveReposePlanningHandlers`](precision_insertion/live_repose_handlers.py) reuses the exhausted pose's saved key capture and measured joints, selects a target pose/release cell, and invokes `runner.preflight_repose()` with directed v8 reset seeds. |
-| `repose_execution_gate_required`, `await_repose_observation` | Execute a commissioned reset plan, observe the landed tabletop pose, and record `reorient_success` before a fresh key capture. |
+| `repose_execution_gate_required`, `await_repose_observation` | [`LiveReposeExecutionHandlers`](precision_insertion/live_repose_execution.py) begins a separate reset attempt, invokes a commissioned executor for the planned pickup/place/clear-view exit, checks its log, recaptures the landed key on the same AutoDex cameras and records `reorient_success`. |
 
 The first two rows are implemented as
 [`LiveKeyPlanningHandlers`](precision_insertion/live_planning_handlers.py).
@@ -84,8 +84,12 @@ injected on the AutoDex PC. It does not implement the XY-retry branch yet.
 handles pose exhaustion without another key exposure. Its target selector
 chooses an eligible tabletop pose, release height and robot-frame XY cell;
 the existing v8 reset planner decides whether that target is feasible.
-Physical repose execution and its observed landing remain separate robot-PC
-steps to connect.
+[`LiveReposeExecutionHandlers`](precision_insertion/live_repose_execution.py)
+connects the resulting plan to an injected robot-PC execution callback and
+then reuses the *same* key SAM/FoundPose capture for the observed landing.
+The callback must execute the selected reset plan and supply an independent
+`precision_insertion_repose_execution_evidence_v1` log; no local physical
+reset controller or measured landing can be fabricated here.
 
 The required [`ClearViewForPerception`](precision_insertion/clear_view.py)
 calls stock `FrankaExecutor.home(clear_view=True)` **before** the initial

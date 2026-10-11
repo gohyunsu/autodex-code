@@ -198,16 +198,18 @@ def capture_returned_key_for_reset(
     silhouette_loss_threshold: float = 0.003,
     request_id_factory: Callable[[], int] | None = None,
     registered_key_assistance: RegisteredKeyAssistance | None = None,
+    expected_action: str = "recover_held_key_then_reobserve",
 ) -> ReturnedKeyCapture:
-    """Use the stock key perception for reset landing, without grasp planning.
+    """Use the stock key perception for reset/repose landing, without planning.
 
     This runs while the *old* attempt remains active. Only after the admitted
     fresh tabletop pose is recorded by ``observe_reset_landing`` may the
     runner advance to next-trial v8 candidate filtering.
     """
-    if (not isinstance(runner, SessionRunner) or
-            runner.current_decision().action !=
-            "recover_held_key_then_reobserve" or
+    if (expected_action not in {
+            "recover_held_key_then_reobserve", "await_repose_observation"} or
+            not isinstance(runner, SessionRunner) or
+            runner.current_decision().action != expected_action or
             not isinstance(clear_view, ClearViewForPerception) or
             not callable(state_for_observation) or
             not math.isfinite(max_key_state_skew_s) or
