@@ -13,6 +13,10 @@ from precision_insertion.live_key_trial import PreparedLiveKeyTrial  # noqa: E40
 from precision_insertion.live_repose_handlers import (  # noqa: E402
     LiveReposePlanningHandlers,
 )
+from precision_insertion import live_repose_handlers  # noqa: E402
+from precision_insertion.repose_target_selector import (  # noqa: E402
+    DirectedReposeTargetSelector,
+)
 from precision_insertion.session_policy import SessionDecision  # noqa: E402
 
 
@@ -70,3 +74,41 @@ def test_wrong_session_does_not_plan_repose():
     with pytest.raises(ValueError, match="another session or decision"):
         bound.plan(object(), runner.current_decision())
     assert runner.calls == []
+
+
+def test_default_repose_selector_uses_verified_seed_availability(
+        monkeypatch, tmp_path):
+    bound, runner, latest, *_ = _handler()
+    runner.shared_root = tmp_path
+    runner.mode = object()
+    runner.catalog = {"candidates": [
+        {"tabletop_pose_stem": "001", "eligible": True},
+        {"tabletop_pose_stem": "002", "eligible": True},
+        {"tabletop_pose_stem": "002", "eligible": True}]}
+    bound.key_planning.latest = PreparedLiveKeyTrial(
+        observation=SimpleNamespace(capture_id="key_1"),
+        state=latest.state,
+        preflight=SimpleNamespace(
+            pose_class={"stem": "000"},
+            repose_target_stems=("001", "002"),
+            trial_scene={"mesh": {"target": {
+                "pose": [.4, .2, .05, 1., 0., 0., 0.]}}}),
+        key_evidence_dir=latest.key_evidence_dir)
+    bound.select_target = DirectedReposeTargetSelector(
+        heights_cm=(12,), xy_offsets_m=((0., 0.),))
+    bound.parameters = {
+        "max_state_skew_s": .02, "max_pose_error_deg": 10.,
+        "max_center_in_hand_drift_m": .005,
+        "max_symmetry_axis_tilt_deg": 10.,
+        "reset_candidate_root": tmp_path / "reset_12"}
+    checked = []
+
+    def load(**kwargs):
+        checked.append(kwargs["to_pose_stem"])
+        return {"n_total": 1} if kwargs["to_pose_stem"] == "001" else None
+
+    monkeypatch.setattr(live_repose_handlers, "load_v8_reset_seeds", load)
+    bound.plan(runner, runner.current_decision())
+    assert checked == ["002", "001"]
+    assert runner.calls[0]["to_pose_stem"] == "001"
+    assert runner.calls[0]["reset_candidate_root"] == tmp_path / "reset_12"

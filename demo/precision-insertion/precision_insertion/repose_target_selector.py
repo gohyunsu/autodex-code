@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
+from typing import Callable
 
 import numpy as np
 
@@ -44,7 +45,10 @@ class DirectedReposeTargetSelector:
                     for offset in self.xy_offsets_m)):
             raise ValueError("repose selector needs distinct v8 heights and finite XY cells")
 
-    def _start_capture(self, runner, latest) -> None:
+    def _start_capture(
+        self, runner, latest,
+        seed_available: Callable[[str, int], bool] | None = None,
+    ) -> None:
         trial = latest.preflight
         source = trial.pose_class["stem"]
         targets = tuple(trial.repose_target_stems)
@@ -66,15 +70,19 @@ class DirectedReposeTargetSelector:
             {"to_pose_stem": stem, "height_cm": height,
              "release_xy_robot_m": (float(xy[0] + dx), float(xy[1] + dy))}
             for stem in ordered for height in self.heights_cm
+            if seed_available is None or seed_available(stem, height)
             for dx, dy in self.xy_offsets_m]
         self._capture_id = latest.observation.capture_id
         self._index = -1
         self._attempted = []
 
-    def __call__(self, runner, decision, latest) -> dict:
+    def __call__(
+        self, runner, decision, latest, *,
+        seed_available: Callable[[str, int], bool] | None = None,
+    ) -> dict:
         capture_id = latest.observation.capture_id
         if self._capture_id != capture_id:
-            self._start_capture(runner, latest)
+            self._start_capture(runner, latest, seed_available=seed_available)
         if decision.action in {"continue_repose_seed_preflight",
                                "preflight_repose_release"}:
             if self._index < 0:

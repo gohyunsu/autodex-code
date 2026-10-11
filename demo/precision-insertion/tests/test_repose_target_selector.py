@@ -85,6 +85,34 @@ def test_missing_directed_seed_skips_other_xy_cells_at_same_height():
     assert len(selector.attempted_choices()) == 2
 
 
+def test_selector_skips_pose_without_eligible_reset_seed():
+    runner, latest = _inputs()
+    selector = DirectedReposeTargetSelector(
+        heights_cm=(12,), xy_offsets_m=((0., 0.), (.03, 0.)))
+    seen = []
+
+    def available(stem, height):
+        seen.append((stem, height))
+        return stem == "001"
+
+    first = selector(runner, _decision("preflight_repose"), latest,
+                     seed_available=available)
+    assert first["to_pose_stem"] == "001"
+    assert seen == [("002", 12), ("001", 12)]
+    selector(runner, _decision("preflight_alternative_repose_cell"), latest)
+    with pytest.raises(ReposeTargetsExhausted, match="all 2"):
+        selector(runner, _decision("preflight_alternative_repose_cell"), latest)
+
+
+def test_selector_stops_without_repeating_unavailable_reset_cells():
+    runner, latest = _inputs()
+    selector = DirectedReposeTargetSelector()
+    with pytest.raises(ReposeTargetsExhausted, match="all 0"):
+        selector(runner, _decision("preflight_repose"), latest,
+                 seed_available=lambda _stem, _height: False)
+    assert selector.attempted_choices() == ()
+
+
 def test_exhausted_repose_search_ends_session_with_saved_reason(tmp_path):
     runner = SessionRunner.__new__(SessionRunner)
     runner._attempt = None
