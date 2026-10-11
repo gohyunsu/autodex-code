@@ -176,6 +176,151 @@ def validate_repose_rest_target(
             "minimum_required_socket_clearance_m": clearance}
 
 
+def _plan_held_return_to_table(
+    *, planner, trial_scene: dict, shared_root: Path, calibration,
+    mode: TaskMode, key_hand: np.ndarray, initial: np.ndarray,
+    rest: np.ndarray, height: float, travel: float, held: np.ndarray,
+    held_hand_source: str, limits: PathAuditLimits, lift: np.ndarray,
+    queries: list[dict[str, Any]],
+) -> ReposeHeldPreflight:
+    """Share the socket-aware held transfer/descent for reset and recovery."""
+    carried_scene = build_held_scene_from_trial(
+        trial_scene=trial_scene, calibration=calibration)
+
+    def result(status: str, *, transfer=None, descent=None,
+               audit=None) -> ReposeHeldPreflight:
+        return ReposeHeldPreflight(
+            status, lift, transfer, descent, audit, tuple(queries), rest.copy(),
+            height, held.copy(), held_hand_source)
+
+    release_key = rest.copy()
+    release_key[2, 3] += height
+    preplace_key = release_key.copy()
+    preplace_key[2, 3] += travel
+    release_wrist = release_key @ key_hand
+    preplace_wrist = preplace_key @ key_hand
+    transfer_plan = planner.plan_cartesian_pose(
+        lift[-1], preplace_wrist, scene_cfg=carried_scene,
+        include_obj_obstacle=False, return_result=True, lock_hand=True,
+        timing_phase="precision_insertion_repose_preflight")
+    queries.append({
+        "stage": "held_transfer", "planner_api": "plan_cartesian_pose",
+        "success": bool(transfer_plan.success),
+        "constraint_mode": getattr(transfer_plan, "constraint_mode", None),
+        "failure_stage": getattr(transfer_plan, "failure_stage", None),
+    })
+    if not transfer_plan.success or transfer_plan.trajectory is None:
+        return result("held_transfer_unreachable")
+    transfer = _path(transfer_plan.trajectory, "repose held transfer",
+                     lift[-1], held)
+    if not _goal_met(validate_se3(planner.fk_wrist(transfer[-1]),
+                                  name="reset preplace FK"),
+                     preplace_wrist, limits):
+        return result("held_transfer_goal_residual", transfer=transfer)
+
+    stroke = planner.plan_vertical_stroke(
+        transfer[-1], preplace_wrist, release_wrist,
+        expected_travel_m=travel, travel_tolerance_m=1e-5,
+        scene_cfg=trial_scene, include_obj_obstacle=False,
+        attached_object_pose_at_start=(
+            validate_se3(planner.fk_wrist(transfer[-1]),
+                         name="reset preplace actual FK") @
+            np.linalg.inv(key_hand)),
+        label="precision insertion repose held descent",
+        timing_phase="precision_insertion_repose_preflight",
+        return_result=True)
+    queries.append({
+        "stage": "held_descent", "planner_api": "plan_vertical_stroke",
+        "success": bool(stroke.success),
+        "failure_code": getattr(stroke, "failure_code", None),
+        "failure_detail": getattr(stroke, "failure_detail", None),
+        "failed_step": (
+            None if stroke.success or not getattr(stroke, "step_records", None)
+            else stroke.step_records[-1].get("step")),
+        "failed_target_z_m": (
+            None if stroke.success or not getattr(stroke, "step_records", None)
+            else stroke.step_records[-1].get("target_z_m")),
+    })
+    if not stroke.success or stroke.trajectory is None:
+        return result("held_descent_unreachable", transfer=transfer)
+    descent = _path(stroke.trajectory, "repose held descent",
+                    transfer[-1], held)
+    if not _goal_met(validate_se3(planner.fk_wrist(descent[-1]),
+                                  name="reset release FK"),
+                     release_wrist, limits):
+        return result("held_descent_goal_residual", transfer=transfer,
+                      descent=descent)
+
+    audit = audit_repose_held_paths(
+        shared_root=shared_root, mode=mode, calibration=calibration,
+        planner=planner, lift_trajectory=lift,
+        transfer_trajectory=transfer, descent_trajectory=descent,
+        held_hand_q=held, T_key_hand=key_hand,
+        T_robot_key_initial=initial, T_robot_key_rest=rest,
+        release_height_m=height, limits=limits)
+    if not audit["sampled_clear"]:
+        return result("sampled_held_path_rejected", transfer=transfer,
+                      descent=descent, audit=audit)
+    return result("sampled_held_path_pass_release_unplanned",
+                  transfer=transfer, descent=descent, audit=audit)
+
+
+def plan_repose_held_from_state(
+    *, planner, trial_scene: dict, shared_root: Path, calibration,
+    mode: TaskMode, T_key_hand: np.ndarray, measured_start_q: np.ndarray,
+    T_robot_key_rest: np.ndarray, release_height_m: float,
+    minimum_rest_socket_clearance_m: float,
+    minimum_board_edge_clearance_m: float, limits: PathAuditLimits,
+    preplace_vertical_travel_m: float = 0.10,
+) -> ReposeHeldPreflight:
+    """Plan a failed trial's held-key return after an external withdrawal.
+
+    The start is a *measured* held state already clear of the socket. The
+    caller must separately bind that state to a completed withdrawal and
+    establish the post-squeeze key/hand relation. The two identical first
+    rows are an audit-only hold, not a second lift or an executable path.
+    """
+    limits.validate()
+    if (getattr(planner, "_n_arm", None) != 7 or
+            getattr(planner, "_hand", None) != "fr3_inspire" or
+            getattr(planner, "_robot_cfg", {}).get(
+                "kinematics", {}).get("ee_link") != "base_link"):
+        raise ValueError("held return needs the original FR3/Inspire planner")
+    start = np.asarray(measured_start_q, dtype=np.float64)
+    if start.shape != (13,) or not np.all(np.isfinite(start)):
+        raise ValueError("held return needs a measured finite 13-DOF state")
+    height = float(release_height_m)
+    travel = float(preplace_vertical_travel_m)
+    if (not math.isfinite(height) or height <= 0 or
+            not math.isfinite(travel) or travel <= 0):
+        raise ValueError("held return heights must be positive")
+    root = Path(shared_root).expanduser().resolve()
+    validated_frozen_socket_pose(mode=mode, shared_root=root,
+                                 calibration=calibration)
+    rest = validate_se3(T_robot_key_rest, name="failed-trial tabletop target")
+    validate_repose_rest_target(
+        shared_root=root, mode=mode, calibration=calibration,
+        T_robot_key_rest=rest,
+        support_tolerance_m=limits.goal_position_tolerance_m,
+        minimum_rest_socket_clearance_m=minimum_rest_socket_clearance_m,
+        minimum_board_edge_clearance_m=minimum_board_edge_clearance_m)
+    key_hand = validate_se3(T_key_hand, name="failed-trial T_key_hand")
+    initial = validate_se3(
+        validate_se3(planner.fk_wrist(start), name="measured held wrist") @
+        np.linalg.inv(key_hand), name="inferred held key start")
+    hold = np.repeat(start[None, :], 2, axis=0)
+    return _plan_held_return_to_table(
+        planner=planner, trial_scene=trial_scene, shared_root=root,
+        calibration=calibration, mode=mode, key_hand=key_hand,
+        initial=initial, rest=rest, height=height, travel=travel,
+        held=start[7:].copy(), held_hand_source="measured", limits=limits,
+        lift=hold, queries=[{
+            "stage": "measured_held_start", "success": True,
+            "planner_api": "measured_state_no_lift",
+            "executable_lift": False,
+        }])
+
+
 def plan_repose_held_chain(
     *, planner, pickup_plan, trial_scene: dict, shared_root: Path,
     calibration, mode: TaskMode, T_key_hand: np.ndarray,
@@ -220,8 +365,6 @@ def plan_repose_held_chain(
     root = Path(shared_root).expanduser().resolve()
     validated_frozen_socket_pose(mode=mode, shared_root=root,
                                  calibration=calibration)
-    carried_scene = build_held_scene_from_trial(
-        trial_scene=trial_scene, calibration=calibration)
     target = trial_scene["mesh"]["target"]
     initial = validate_se3(cart2se3(np.asarray(target["pose"], dtype=float)),
                            name="fresh reset T_robot_key")
@@ -282,74 +425,9 @@ def plan_repose_held_chain(
                                   name="reset lift FK"), expected_lift, limits):
         return result("held_lift_goal_residual", lift=lift)
 
-    release_key = rest.copy()
-    release_key[2, 3] += height
-    preplace_key = release_key.copy()
-    preplace_key[2, 3] += travel
-    release_wrist = release_key @ key_hand
-    preplace_wrist = preplace_key @ key_hand
-    transfer_plan = planner.plan_cartesian_pose(
-        lift[-1], preplace_wrist, scene_cfg=carried_scene,
-        include_obj_obstacle=False, return_result=True, lock_hand=True,
-        timing_phase="precision_insertion_repose_preflight")
-    queries.append({
-        "stage": "held_transfer", "planner_api": "plan_cartesian_pose",
-        "success": bool(transfer_plan.success),
-        "constraint_mode": getattr(transfer_plan, "constraint_mode", None),
-        "failure_stage": getattr(transfer_plan, "failure_stage", None),
-    })
-    if not transfer_plan.success or transfer_plan.trajectory is None:
-        return result("held_transfer_unreachable", lift=lift)
-    transfer = _path(transfer_plan.trajectory, "repose held transfer",
-                     lift[-1], held)
-    if not _goal_met(validate_se3(planner.fk_wrist(transfer[-1]),
-                                  name="reset preplace FK"),
-                     preplace_wrist, limits):
-        return result("held_transfer_goal_residual", lift=lift,
-                      transfer=transfer)
-
-    stroke = planner.plan_vertical_stroke(
-        transfer[-1], preplace_wrist, release_wrist,
-        expected_travel_m=travel, travel_tolerance_m=1e-5,
-        scene_cfg=trial_scene, include_obj_obstacle=False,
-        attached_object_pose_at_start=(
-            validate_se3(planner.fk_wrist(transfer[-1]),
-                         name="reset preplace actual FK") @
-            np.linalg.inv(key_hand)),
-        label="precision insertion repose held descent",
-        timing_phase="precision_insertion_repose_preflight",
-        return_result=True)
-    queries.append({
-        "stage": "held_descent", "planner_api": "plan_vertical_stroke",
-        "success": bool(stroke.success),
-        "failure_code": getattr(stroke, "failure_code", None),
-        "failure_detail": getattr(stroke, "failure_detail", None),
-        "failed_step": (
-            None if stroke.success or not getattr(stroke, "step_records", None)
-            else stroke.step_records[-1].get("step")),
-        "failed_target_z_m": (
-            None if stroke.success or not getattr(stroke, "step_records", None)
-            else stroke.step_records[-1].get("target_z_m")),
-    })
-    if not stroke.success or stroke.trajectory is None:
-        return result("held_descent_unreachable", lift=lift,
-                      transfer=transfer)
-    descent = _path(stroke.trajectory, "repose held descent",
-                    transfer[-1], held)
-    if not _goal_met(validate_se3(planner.fk_wrist(descent[-1]),
-                                  name="reset release FK"),
-                     release_wrist, limits):
-        return result("held_descent_goal_residual", lift=lift,
-                      transfer=transfer, descent=descent)
-
-    audit = audit_repose_held_paths(
-        shared_root=root, mode=mode, calibration=calibration, planner=planner,
-        lift_trajectory=lift, transfer_trajectory=transfer,
-        descent_trajectory=descent, held_hand_q=held, T_key_hand=key_hand,
-        T_robot_key_initial=initial, T_robot_key_rest=rest,
-        release_height_m=height, limits=limits)
-    if not audit["sampled_clear"]:
-        return result("sampled_held_path_rejected", lift=lift,
-                      transfer=transfer, descent=descent, audit=audit)
-    return result("sampled_held_path_pass_release_unplanned", lift=lift,
-                  transfer=transfer, descent=descent, audit=audit)
+    return _plan_held_return_to_table(
+        planner=planner, trial_scene=trial_scene, shared_root=root,
+        calibration=calibration, mode=mode, key_hand=key_hand,
+        initial=initial, rest=rest, height=height, travel=travel,
+        held=held, held_hand_source=held_hand_source, limits=limits,
+        lift=lift, queries=queries)

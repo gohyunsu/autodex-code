@@ -1,9 +1,10 @@
-"""Own one non-motion session startup and its subsequent key-camera lifetime.
+"""Own one camera session startup and its subsequent key-camera lifetime.
 
 This joins existing demo boundaries without duplicating board/socket capture,
 FoundPose, v8 candidate validation or trial planning. The returned runner can
 be passed to ``prepare_next_live_key`` while the camera context remains open.
-No robot controller is constructed or commanded here.
+The supplied stock executor moves to clear view before perception; no new
+robot controller or trial-motion policy is constructed here.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Callable, Iterator, Mapping
 
 from .action_loop import ActionHandler, ActionLoopResult, run_session_actions
+from .clear_view import ClearViewForPerception
 
 from .live_session_runner import (
     OpenedPrecisionSession, open_verified_session,
@@ -30,12 +32,14 @@ class LivePrecisionSession:
     started: StartedPrecisionSession
     opened: OpenedPrecisionSession
     cameras: OpenSessionCameras
+    clear_view: ClearViewForPerception
 
 
 @contextmanager
 def open_live_precision_session(
     *, launch_config_path: Path, endpoint_catalog_path: Path,
     run_output_dir: Path, max_xy_retries: int,
+    clear_view: ClearViewForPerception,
 ) -> Iterator[LivePrecisionSession]:
     """Capture once, open the bound ledger, and retain camera connections.
 
@@ -59,24 +63,30 @@ def open_live_precision_session(
         raise FileNotFoundError("session run output parent is missing")
     if type(max_xy_retries) is not int or max_xy_retries < 0:
         raise ValueError("max_xy_retries must be a nonnegative integer")
+    if not isinstance(clear_view, ClearViewForPerception):
+        raise TypeError("live perception needs a measured clear-view controller")
     # Reject a stale/incomplete v8 pool before a slow board/socket capture.
     # ``open_verified_session`` repeats this check after capture and binds the
     # measured fixture to the catalogue's exact socket mesh.
     preflight_endpoint_catalog_file(
         mode=launch.mode, shared_root=launch.shared_root,
         catalog_path=catalog)
+    # Stock AutoDex free-space home is appropriate only before the session's
+    # first exposure, not after a failed insertion or tabletop release.
+    clear_view.prepare_initial()
     with open_session_cameras(launch) as cameras:
         started = cameras.start()
         opened = open_verified_session(
             mode=launch.mode, shared_root=launch.shared_root,
             evidence_dir=started.evidence_dir, catalog_path=catalog,
             output_dir=output, max_xy_retries=max_xy_retries)
-        yield LivePrecisionSession(started, opened, cameras)
+        yield LivePrecisionSession(started, opened, cameras, clear_view)
 
 
 def run_live_precision_session(
     *, launch_config_path: Path, endpoint_catalog_path: Path,
     run_output_dir: Path, max_xy_retries: int,
+    clear_view: ClearViewForPerception,
     build_handlers: Callable[[LivePrecisionSession], Mapping[str, ActionHandler]],
     max_steps: int = 100,
 ) -> ActionLoopResult:
@@ -97,7 +107,8 @@ def run_live_precision_session(
             launch_config_path=launch_config_path,
             endpoint_catalog_path=endpoint_catalog_path,
             run_output_dir=run_output_dir,
-            max_xy_retries=max_xy_retries) as live:
+            max_xy_retries=max_xy_retries,
+            clear_view=clear_view) as live:
         return run_session_actions(
             live.opened.runner, handlers=build_handlers(live),
             max_steps=max_steps)

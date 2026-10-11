@@ -168,7 +168,7 @@ def test_live_wrapper_keeps_cameras_open_for_repeated_actions(monkeypatch):
             launch_config_path=Path("/unused/launch.json"),
             endpoint_catalog_path=Path("/unused/catalog.json"),
             run_output_dir=Path("/unused/run"), max_xy_retries=2,
-            build_handlers=lambda _: {}, max_steps=0)
+            clear_view=object(), build_handlers=lambda _: {}, max_steps=0)
     assert calls == []  # invalid loop configuration does not start cameras
 
     def build_handlers(received):
@@ -186,6 +186,7 @@ def test_live_wrapper_keeps_cameras_open_for_repeated_actions(monkeypatch):
         launch_config_path=Path("/unused/launch.json"),
         endpoint_catalog_path=Path("/unused/catalog.json"),
         run_output_dir=Path("/unused/run"), max_xy_retries=2,
+        clear_view=object(),
         build_handlers=build_handlers)
     assert result.status == "terminal"
     assert calls == ["camera_open", "capture_fresh_key",
@@ -220,6 +221,7 @@ def test_live_wrapper_closes_cameras_immediately_on_success(monkeypatch):
         launch_config_path=Path("/unused/launch.json"),
         endpoint_catalog_path=Path("/unused/catalog.json"),
         run_output_dir=Path("/unused/run"), max_xy_retries=2,
+        clear_view=object(),
         build_handlers=lambda _live: {
             "await_guarded_insertion_and_observation": observe,
         },

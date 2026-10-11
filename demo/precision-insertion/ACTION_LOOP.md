@@ -35,6 +35,17 @@ must supply a running exposure-time feedback sampler, AutoDex planner,
 `PathAuditLimits`, a specific key prompt and the numeric keyword arguments
 of `prepare_next_live_key()`. No default measurement thresholds are invented.
 
+The required [`ClearViewForPerception`](precision_insertion/clear_view.py)
+calls stock `FrankaExecutor.home(clear_view=True)` **before** the initial
+ChArUco/socket image: Inspire opens and FR3 parks at `FR3_CLEAR_VIEW`.
+Measured stationary joints must agree. Every fresh key capture, including
+`reobserve_key_and_preflight`, independently checks the arm and open hand
+before capture and at camera exposure time. Same-capture candidate
+continuation needs no new image. After a trial, this gate never invokes the
+free-space `home`: the release handler must execute its preflighted vertical
+exit and retract first. If it does not, key recapture fails rather than
+imaging an occluded key.
+
 `stop_for_review` is a non-success terminal result. A verified positive
 `insertion_success` produces `session_success`, which immediately returns
 `status="success"` without release, reset, repose, or another grasp attempt.
@@ -57,6 +68,27 @@ camera, planner, feedback, Qwen and motion adapters):
 from pathlib import Path
 from precision_insertion.live_orchestration import run_live_precision_session
 from precision_insertion.live_planning_handlers import LiveKeyPlanningHandlers
+from precision_insertion.clear_view import ClearViewForPerception
+from precision_insertion.live_robot_state import read_live_franka_inspire_state
+
+def read_current_state():
+    return read_live_franka_inspire_state(
+        arm=franka_executor.arm, hand=franka_executor.hand,
+        max_arm_hand_skew_s=commissioned_key_parameters["max_arm_hand_skew_s"],
+        max_sample_age_s=commissioned_feedback_age_s,
+        max_hand_command_error_raw=commissioned_key_parameters["max_hand_command_error_raw"],
+        max_arm_update_wait_s=commissioned_arm_update_wait_s,
+        max_arm_velocity_rad_s=commissioned_key_parameters["max_arm_velocity_rad_s"],
+    )
+
+clear_view = ClearViewForPerception(
+    executor=franka_executor,
+    read_state=read_current_state,
+    max_arm_hand_skew_s=commissioned_key_parameters["max_arm_hand_skew_s"],
+    max_hand_command_error_raw=commissioned_key_parameters["max_hand_command_error_raw"],
+    max_arm_velocity_rad_s=commissioned_key_parameters["max_arm_velocity_rad_s"],
+    max_sample_age_s=commissioned_feedback_age_s,
+)
 
 def build_handlers(live):
     planning = LiveKeyPlanningHandlers(
@@ -72,7 +104,8 @@ result = run_live_precision_session(
     launch_config_path=Path("/absolute/commissioned_session_launch.json"),
     endpoint_catalog_path=Path("/absolute/current_endpoint_catalog.json"),
     run_output_dir=Path("/absolute/new_trial_run"),
-    max_xy_retries=2, build_handlers=build_handlers,
+    max_xy_retries=2, clear_view=clear_view,
+    build_handlers=build_handlers,
 )
 print(result.to_record())
 ```
@@ -93,3 +126,14 @@ runner, so `needs_handler` is a diagnostic stop, **not** a resumable paused
 trial. Supply the remaining handlers before starting a physical session.
 A passing offline endpoint
 catalogue and synthetic plan are not physical-success evidence.
+
+For a failed still-held insertion, the held-key return preflight targets the
+original tabletop area, not the socket. After an external controller has
+followed that checked held trajectory, use
+`clear_view.finish_planned_release_exit(release_plan=..., open_hand=...,
+follow_joint_trajectory=...)`: it checks the release-site state, sends full
+hand opening, checks measured open fingers, follows the planned vertical
+exit and retract, then checks final clear-view feedback. Motion callbacks
+must be blocking and report errors. Automatic return execution/landing
+evidence and the reset-label adapter are still missing; the current
+`observe_reset_landing()` accepts supervised manual recovery only.

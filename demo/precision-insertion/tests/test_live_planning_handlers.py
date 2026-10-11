@@ -59,8 +59,12 @@ def _live(runner):
     cameras = SimpleNamespace(
         launch=launch, init_orchestrator=object(),
         acquisition_metadata_for_request=lambda request_id: {})
+    clear_view = SimpleNamespace(
+        before_key_capture=lambda: None,
+        verify_state=lambda state, **_kwargs: state)
     return SimpleNamespace(
-        opened=SimpleNamespace(runner=runner), cameras=cameras)
+        opened=SimpleNamespace(runner=runner), cameras=cameras,
+        clear_view=clear_view)
 
 
 def test_capture_then_continue_uses_same_key_and_measured_state(
@@ -137,6 +141,44 @@ def test_failed_grasp_reobserves_with_new_capture(tmp_path, monkeypatch):
     bound.capture_and_preflight(runner, runner.current_decision())
     assert captured == ["key_001", "key_002"]
     assert bound.latest.observation.capture_id == "key_002"
+
+
+def test_fresh_and_reobserved_key_check_clear_view_before_capture_and_exposure(
+        tmp_path, monkeypatch):
+    runner = Runner(tmp_path / "session")
+    live = _live(runner)
+    events = []
+    state = object()
+    live.clear_view.before_key_capture = lambda: events.append("before")
+
+    def verify_state(value, **kwargs):
+        events.append(("exposure", kwargs["phase"], kwargs["require_fresh"]))
+        assert value is state
+        return value
+
+    live.clear_view.verify_state = verify_state
+
+    def capture(**kwargs):
+        events.append("capture")
+        assert kwargs["state_for_observation"](object()) is state
+        return PreparedLiveKeyTrial(
+            SimpleNamespace(capture_id=kwargs["capture_id"]), state,
+            SimpleNamespace(status="sampled_planning_pass"),
+            kwargs["key_evidence_dir"])
+
+    monkeypatch.setattr(live_planning_handlers, "prepare_next_live_key",
+                        capture)
+    bound = live_planning_handlers.LiveKeyPlanningHandlers(
+        live=live, planner=object(), state_for_observation=lambda _: state,
+        limits=object(), key_prompt="blue key excluding socket",
+        key_parameters=PARAMETERS)
+    bound.capture_and_preflight(runner, runner.current_decision())
+    runner.decision = SessionDecision(
+        "reobserve_key_and_preflight", "grasp_failed_try_next_candidate",
+        "table/0/1")
+    bound.capture_and_preflight(runner, runner.current_decision())
+    assert events == ["before", "capture", ("exposure", "key_exposure", False),
+                      "before", "capture", ("exposure", "key_exposure", False)]
 
 
 def test_continuation_without_saved_capture_and_parameter_override_rejected(

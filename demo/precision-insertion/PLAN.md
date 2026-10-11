@@ -651,6 +651,14 @@ edge margin are required; the full key footprint is checked against the
 measured ChArUco corner hull, not the broad cuRobo table cuboid. The current held descent only
 supports nonzero v8 drop heights 4/8/12 cm; the original 0 cm reset cell is
 not yet planned by this module.
+For a failed insertion whose key is still held after a separately evidenced
+axial withdrawal, `plan_repose_held_from_state` reuses the same held
+transfer/descent and `plan_repose_release_exit` checks from the measured
+withdrawn joints. It rejects a tabletop target on the socket; the original
+trial-start location is a candidate target only if its footprint is valid.
+This is planning-only: withdrawal provenance, physical drop, new landing
+perception and action-loop reset integration remain outstanding. See
+[FAILURE_RETURN](FAILURE_RETURN.md).
 The independent `preflight-repose` CLI replays saved calibration/key/joint
 evidence and writes an exclusive provenance-bound report plus dense paths.
 It does not capture new images, move the robot or verify the landed pose.

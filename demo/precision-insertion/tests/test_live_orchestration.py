@@ -5,13 +5,35 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 import sys
+import time
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion import live_orchestration as orchestration  # noqa: E402
+from precision_insertion.clear_view import ClearViewForPerception  # noqa: E402
+from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
+from autodex.utils.robot_config import FR3_CLEAR_VIEW  # noqa: E402
+
+
+def _clear_view(events):
+    class Executor:
+        def home(self, *, clear_view):
+            assert clear_view
+            events.append("home_clear_view")
+
+    def read_state():
+        now = time.time()
+        raw = np.full(6, 1000., dtype=float)
+        return LiveRobotState(
+            np.r_[FR3_CLEAR_VIEW, np.zeros(6)], np.zeros(7), now, now,
+            10., now, raw, raw.copy(), 0., np.zeros(6))
+
+    return ClearViewForPerception(
+        Executor(), read_state, .1, 20., .05, 1.)
 
 
 def _patch_camera_lifetime(monkeypatch, events):
@@ -59,8 +81,8 @@ def test_live_session_keeps_same_camera_transport_for_next_key(
     with orchestration.open_live_precision_session(
             launch_config_path=tmp_path / "launch.json",
             endpoint_catalog_path=catalog, run_output_dir=tmp_path / "new_run",
-            max_xy_retries=2) as live:
-        assert events == ["catalog_preflight", "camera_open",
+            max_xy_retries=2, clear_view=_clear_view(events)) as live:
+        assert events == ["catalog_preflight", "home_clear_view", "camera_open",
                           "socket_frozen", "ledger_open"]
         assert live.opened is opened
         assert live.cameras.init_orchestrator == "same_init"
@@ -87,7 +109,7 @@ def test_live_session_static_failures_do_not_connect(
         with orchestration.open_live_precision_session(
                 launch_config_path=tmp_path / "launch.json",
                 endpoint_catalog_path=catalog, run_output_dir=output,
-                max_xy_retries=retries):
+                max_xy_retries=retries, clear_view=_clear_view(events)):
             pytest.fail("static failure must not yield a live session")
     assert events == []
 
@@ -108,9 +130,9 @@ def test_failed_session_catalog_binding_closes_camera_but_keeps_capture(
         with orchestration.open_live_precision_session(
                 launch_config_path=tmp_path / "launch.json",
                 endpoint_catalog_path=catalog, run_output_dir=tmp_path / "run",
-                max_xy_retries=1):
+                max_xy_retries=1, clear_view=_clear_view(events)):
             pytest.fail("catalog rejection must not yield")
-    assert events == ["catalog_preflight", "camera_open", "socket_frozen",
+    assert events == ["catalog_preflight", "home_clear_view", "camera_open", "socket_frozen",
                       "catalog_rejected", "camera_close"]
 
 
@@ -133,6 +155,23 @@ def test_stale_catalog_preflight_does_not_connect_cameras(tmp_path, monkeypatch)
                 launch_config_path=tmp_path / "launch.json",
                 endpoint_catalog_path=catalog,
                 run_output_dir=tmp_path / "run",
-                max_xy_retries=1):
+                max_xy_retries=1, clear_view=_clear_view(events)):
             pytest.fail("stale catalogue must not yield a live session")
     assert events == []
+
+
+def test_initial_clear_view_mismatch_prevents_camera_capture(tmp_path, monkeypatch):
+    events = []
+    _patch_camera_lifetime(monkeypatch, events)
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text("{}", encoding="utf-8")
+    guard = _clear_view(events)
+    guard.read_state = lambda: None
+    with pytest.raises(TypeError, match="measured LiveRobotState"):
+        with orchestration.open_live_precision_session(
+                launch_config_path=tmp_path / "launch.json",
+                endpoint_catalog_path=catalog,
+                run_output_dir=tmp_path / "run", max_xy_retries=1,
+                clear_view=guard):
+            pytest.fail("invalid clear-view feedback must prevent capture")
+    assert events == ["catalog_preflight", "home_clear_view"]

@@ -542,6 +542,12 @@ that session and catalogue. For each new key observation:
    The [reset grasp calibration CLI](RESET_GRASP_CALIBRATION.md) now provides
    a source-bound path to create that grasp-specific physical relation from
    independent real pickups; there are no real calibration samples yet.
+   For an insertion failure with the key still held, the separate
+   [failed-trial held-key return](FAILURE_RETURN.md) preflight starts after
+   axial withdrawal from measured joints and reuses the same socket-aware
+   transfer/descent and release checks. It requires an explicit tabletop
+   destination; opening above the socket is not a reset. Controller execution
+   and fresh landing verification are still integration work.
 
 A supervised reset log is JSON with schema
 `precision_insertion_supervised_reset_v1`, the exact `attempt_id`,
@@ -2398,6 +2404,7 @@ with open_live_precision_session(
     endpoint_catalog_path=Path("/absolute/complete_endpoint_catalog.json"),
     run_output_dir=Path("/absolute/new_trial_run"),
     max_xy_retries=2,
+    clear_view=clear_view,  # commissioned ClearViewForPerception adapter
 ) as live:
     runner = live.opened.runner
     init = live.cameras.init_orchestrator
@@ -2410,9 +2417,13 @@ This joins existing boundaries; it does not duplicate FoundPose, v8 filtering,
 or trial planning. The catalogue is checked again after capture, then bound
 to the measured socket CAD; a file changed mid-capture cannot bypass that
 check. The context closes every camera connection on normal exit
-or failure, retaining already written capture evidence for diagnosis. It does
-not construct or command a robot controller, launch a full trial loop, or
-turn a successful camera/catalogue preflight into motor authorization.
+or failure, retaining already written capture evidence for diagnosis. The
+required `clear_view` adapter calls the supplied stock Franka executor to
+open Inspire and park before the first board/socket exposure; it does not
+construct a controller. After any trial, fresh key perception requires a
+measured open hand and arm at clear view. See the
+[failure-return sequence](FAILURE_RETURN.md). A successful camera/catalogue
+preflight is not motor authorization for pickup or insertion.
 
 For a repeated session, [`run_live_precision_session()`](precision_insertion/live_orchestration.py)
 now keeps this same camera context open while the demo-local

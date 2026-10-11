@@ -24,6 +24,7 @@ from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.path_audit import PathAuditLimits  # noqa: E402
 from precision_insertion.repose_preflight import (  # noqa: E402
     build_v8_repose_rest_pose, plan_repose_held_chain,
+    plan_repose_held_from_state,
     validate_repose_rest_target,
 )
 from precision_insertion.repose_transition import (  # noqa: E402
@@ -58,6 +59,7 @@ class _Planner:
         self.reject_descent = False
         self.reject_postrelease = False
         self.pickup_plan = None
+        self.transfer_samples = 11
 
     def set_start_state(self, q):
         self.calls.append(("start", tuple(np.asarray(q).shape)))
@@ -83,9 +85,12 @@ class _Planner:
             return SimpleNamespace(success=False, trajectory=None,
                                    constraint_mode="test",
                                    failure_stage="blocked")
-        path = np.repeat(np.asarray(start)[None], 11, axis=0)
-        path[:, 0] = np.linspace(start[0], goal[0, 3], 11)
-        path[:, 2] = np.linspace(start[2], goal[2, 3], 11)
+        path = np.repeat(
+            np.asarray(start)[None], self.transfer_samples, axis=0)
+        path[:, 0] = np.linspace(start[0], goal[0, 3],
+                                 self.transfer_samples)
+        path[:, 2] = np.linspace(start[2], goal[2, 3],
+                                 self.transfer_samples)
         return SimpleNamespace(success=True, trajectory=path,
                                constraint_mode="test", failure_stage=None)
 
@@ -203,7 +208,8 @@ def test_repose_held_chain_keeps_socket_and_does_not_authorize_release(
     calibration, scene, pickup, rest, limits = _fixture(tmp_path, monkeypatch)
     planner = _Planner()
     result = _plan(tmp_path, calibration, scene, pickup, rest, limits, planner)
-    assert result.status == "sampled_held_path_pass_release_unplanned"
+    assert result.status == "sampled_held_path_pass_release_unplanned", (
+        result.sampled_held_path_audit["failures"])
     assert result.sampled_held_path_audit["sampled_clear"] is True
     assert result.to_record()["robot_ready"] is False
     assert result.to_record()["sampled_held_path_pass"] is True
@@ -213,6 +219,63 @@ def test_repose_held_chain_keeps_socket_and_does_not_authorize_release(
         ("descent", ["fixture_socket", "target"]),
     ]
     assert "target" not in calibration.collision_scene["mesh"]
+
+
+def test_failed_insertion_can_plan_return_from_withdrawn_held_state(
+    tmp_path, monkeypatch,
+):
+    calibration, scene, _, _, limits = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    planner.transfer_samples = 25
+    measured = np.zeros(13)
+    measured[0], measured[2] = 0.30, 0.15  # over socket, after withdrawal
+    original_rest = _pose(-0.10, 0.003)
+    result = plan_repose_held_from_state(
+        planner=planner, trial_scene=scene, shared_root=tmp_path,
+        calibration=calibration, mode=MODE, T_key_hand=np.eye(4),
+        measured_start_q=measured, T_robot_key_rest=original_rest,
+        release_height_m=0.10, minimum_rest_socket_clearance_m=0.01,
+        minimum_board_edge_clearance_m=0.01, limits=limits)
+    assert result.status == "sampled_held_path_pass_release_unplanned", (
+        result.sampled_held_path_audit["failures"])
+    assert result.sampled_held_path_audit["sampled_clear"] is True
+    assert result.to_record()["robot_ready"] is False
+    assert result.planner_query_records[0]["executable_lift"] is False
+    assert np.array_equal(result.lift_trajectory[0], measured)
+    assert np.array_equal(result.lift_trajectory[1], measured)
+    assert [call[0] for call in planner.calls] == ["transfer", "descent"]
+    assert planner.calls[0] == ("transfer", ["fixture_socket"])
+    assert planner.calls[1] == ("descent", ["fixture_socket", "target"])
+    retreat = np.zeros(7)
+    retreat[0], retreat[2] = -0.10, 0.30
+    release = plan_repose_release_exit(
+        planner=planner, trial_scene=scene, shared_root=tmp_path,
+        calibration=calibration, mode=MODE, held_plan=result,
+        release_hand_q=np.zeros(6), retreat_goal_arm_q=retreat,
+        minimum_release_key_clearance_m=0.001, limits=limits)
+    assert release.status == "nominal_release_exit_path_pass_drop_unobserved"
+    assert release.to_record()["robot_ready"] is False
+
+
+def test_failed_insertion_return_rejects_socket_drop_and_bad_start(
+    tmp_path, monkeypatch,
+):
+    calibration, scene, _, _, limits = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    measured = np.zeros(13)
+    measured[0], measured[2] = 0.30, 0.15
+    kwargs = dict(
+        planner=planner, trial_scene=scene, shared_root=tmp_path,
+        calibration=calibration, mode=MODE, T_key_hand=np.eye(4),
+        measured_start_q=measured, T_robot_key_rest=_pose(0.30, 0.003),
+        release_height_m=0.10, minimum_rest_socket_clearance_m=0.01,
+        minimum_board_edge_clearance_m=0.01, limits=limits)
+    with pytest.raises(ValueError, match="collides with or approaches socket"):
+        plan_repose_held_from_state(**kwargs)
+    assert planner.calls == []
+    with pytest.raises(ValueError, match="measured finite 13-DOF"):
+        plan_repose_held_from_state(
+            **{**kwargs, "measured_start_q": np.zeros(12)})
 
 
 def test_measured_repose_lift_starts_from_entire_post_squeeze_state(

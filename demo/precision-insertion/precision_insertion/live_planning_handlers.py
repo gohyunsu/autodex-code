@@ -61,6 +61,10 @@ class LiveKeyPlanningHandlers:
                 not self.key_prompt.strip() or
                 not isinstance(self.key_parameters, Mapping)):
             raise TypeError("key planning needs feedback, IDs, prompt and parameters")
+        if not callable(getattr(getattr(self.live, "clear_view", None),
+                                "before_key_capture", None)) or not callable(
+                getattr(self.live.clear_view, "verify_state", None)):
+            raise TypeError("key planning needs a measured clear-view gate")
         parameters = dict(self.key_parameters)
         missing = _CONTINUATION_PARAMETERS - parameters.keys()
         reserved = _OWNED_CAPTURE_PARAMETERS & parameters.keys()
@@ -83,14 +87,21 @@ class LiveKeyPlanningHandlers:
         self._require_decision(
             runner, decision,
             frozenset({"capture_fresh_key", "reobserve_key_and_preflight"}))
+        self.live.clear_view.before_key_capture()
         capture_id = self.capture_id_factory()
         launch = self.live.cameras.launch
+
+        def measured_clear_exposure(observation):
+            state = self.state_for_observation(observation)
+            return self.live.clear_view.verify_state(
+                state, phase="key_exposure", require_fresh=False)
+
         prepared = prepare_next_live_key(
             runner=runner,
             init_orchestrator=self.live.cameras.init_orchestrator,
             acquisition_metadata_for_request=(
                 self.live.cameras.acquisition_metadata_for_request),
-            state_for_observation=self.state_for_observation,
+            state_for_observation=measured_clear_exposure,
             capture_root=launch.capture_root,
             key_evidence_dir=(runner.output_dir / "key_captures" / capture_id),
             capture_id=capture_id,
