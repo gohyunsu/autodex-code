@@ -2411,6 +2411,15 @@ or failure, retaining already written capture evidence for diagnosis. It does
 not construct or command a robot controller, launch a full trial loop, or
 turn a successful camera/catalogue preflight into motor authorization.
 
+For a repeated session, [`run_live_precision_session()`](precision_insertion/live_orchestration.py)
+now keeps this same camera context open while the demo-local
+[`run_session_actions()`](precision_insertion/action_loop.py) dispatches the
+runner's existing decisions. See [action-loop integration](ACTION_LOOP.md)
+for the handler contract and routing. A missing handler returns
+`needs_handler` at the exact pending phase; no trial result or robot command
+is invented. The AutoDex-PC motion, capture and observation handlers are
+**not bundled**, so this is not yet an unattended robot loop.
+
 `board_snap` and `init` are the metadata-preserving adapters described in
 [CAMERA_FRAME_HANDOFF.md](CAMERA_FRAME_HANDOFF.md); all `commissioned_*`
 variables need measured values from the AutoDex rig. A later NAS addendum now
