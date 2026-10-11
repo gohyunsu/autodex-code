@@ -1527,6 +1527,14 @@ be invoked as this demo's executable repose path. The demo's
 from MuJoCo-stable reset grasp seeds and staged diagnostics. An available
 BODex scene is *not* an executable reorientation trajectory.
 
+The newer [curated staged handoff](REORIENT_CURATED_HANDOFF.md) combines
+individually verified offline reset seeds from selected square and cylinder
+directed cells without touching the canonical tree. It is also copied to the
+personal ParaDex2 NAS for transfer. It does **not** fill the missing pose
+directions, commission pose-fidelity limits, or supply a socket-aware Franka
+repose trajectory. The older scan counts below describe their respective
+experiments; they are not the contents of that curated staging root.
+
 ```bash
 ~/miniconda3/envs/autodex_bodex/bin/python \
   demo/precision-insertion/run_pipeline.py audit-reorient \

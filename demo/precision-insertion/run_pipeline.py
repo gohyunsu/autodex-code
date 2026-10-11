@@ -82,6 +82,20 @@ def main(argv: list[str] | None = None) -> int:
                                  help="new output manifest path; no overwrite")
     reorient_scenes.add_argument("--height-cm", type=int, action="append",
                                  help="release-height subset; default 0,4,8,12")
+    reorient_handoff = command.add_parser(
+        "assemble-reorient-handoff",
+        help="copy verified directed v8 reset seeds into one new staging root",
+    )
+    reorient_handoff.add_argument("--shared-root", type=Path, required=True)
+    reorient_handoff.add_argument("--mode", choices=("square", "cylinder"),
+                                  required=True)
+    reorient_handoff.add_argument("--gap-mm", type=float, required=True)
+    reorient_handoff.add_argument(
+        "--cell", nargs=4, action="append", required=True,
+        metavar=("HEIGHT_CM", "FROM_POSE", "TO_POSE", "SOURCE_ROOT"),
+        help="repeat for each directed cell; source root is parent of reset_<h>")
+    reorient_handoff.add_argument("--output-root", type=Path, required=True,
+                                  help="new staging root; canonical candidates refused")
     endpoint = command.add_parser(
         "screen-endpoint",
         help="offline exact-mesh grasp-only 20 mm endpoint screen",
@@ -332,6 +346,32 @@ def main(argv: list[str] | None = None) -> int:
             "directed_scene_count": report["directed_scene_count"],
             "scope": report["scope"], "robot_ready": False,
         }, indent=2))
+        return 0
+    if args.command == "assemble-reorient-handoff":
+        from precision_insertion.reorient_handoff import (
+            assemble_v8_reorient_handoff,
+        )
+
+        try:
+            mode = select_mode(args.mode, args.gap_mm)
+            cells = {}
+            for height, pose_i, pose_j, source in args.cell:
+                key = (int(height), int(pose_i), int(pose_j))
+                if key in cells:
+                    raise ValueError(f"duplicate directed reset cell: {key}")
+                cells[key] = Path(source)
+            report = assemble_v8_reorient_handoff(
+                shared_root=args.shared_root, mode=mode,
+                sources_by_cell=cells, output_root=args.output_root)
+        except (FileExistsError, FileNotFoundError, KeyError, TypeError,
+                ValueError, OSError) as exc:
+            parser.error(str(exc))
+        print(json.dumps({
+            "output_root": report["output_root"],
+            "candidate_count": report["candidate_count"],
+            "cells": report["cells"],
+            "scope": report["scope"], "robot_ready": False,
+        }, indent=2, sort_keys=True))
         return 0
     if args.command == "screen-endpoint":
         from precision_insertion.endpoint import screen_grasp_endpoint
