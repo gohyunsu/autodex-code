@@ -101,8 +101,13 @@ def decide_after_attempt(
     if labels["reset_success"] is False or attempt.failure_code in {
             "force_abort", "reset_failed"}:
         return result("stop_for_review", "safety_or_reset_failure")
-    if attempt.failure_code in {"perception_unreliable", "slip"}:
-        return result("stop_for_review", "key_state_unreliable_or_grasp_lost")
+    if attempt.failure_code == "perception_unreliable":
+        return result("stop_for_review", "key_state_unobservable")
+    if attempt.failure_code == "slip":
+        return result(
+            "recover_key_then_reobserve", "slipped_key_restore_original_pose",
+            "supervised_key_recovery", "fresh_key_pose",
+            "restore_original_pose_and_position")
     failure_stage = {
         "grasp_miss": "grasp_success",
         "transfer_unreachable": "preinsert_reached",
@@ -199,8 +204,9 @@ def decide_after_attempt(
             "supervised_key_recovery", "fresh_key_pose")
     if labels["grasp_success"] is False:
         return result(
-            "reobserve_key_and_preflight", "grasp_failed_try_next_candidate",
-            "fresh_key_pose", "fresh_robot_state", "exclude_attempted_grasp")
+            "recover_key_then_reobserve", "grasp_miss_restore_original_pose",
+            "clear_view_open_hand", "fresh_key_pose",
+            "restore_original_pose_and_position", "exclude_attempted_grasp")
     if labels["grasp_success"] is True:
         return result(
             "postlift_observed_preflight_required", "lifted_key_observed",

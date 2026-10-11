@@ -27,10 +27,14 @@ For a **still-held key after insertion failure**, the intended common tail is:
    neither a commanded drop nor a planned trajectory proves the landing.
 
 For a **judged missed grasp**, there is no held key to withdraw or drop.
-`LiveKeyPlanningHandlers` calls stock AutoDex
+`LiveTransferRecoveryHandlers` calls stock AutoDex
 `FrankaExecutor.release(..., open_to_init=True)` and `reset()` before
 recapture. The reset scene preserves the original tabletop key and frozen
 socket as obstacles, then checks measured open-hand/clear-view feedback.
+The new key capture is compared against that attempt's original tabletop
+pose and CAD-centre XY. If the key moved, the same attempt plans and executes
+an additional v8 pickup/place restoration and recaptures again; it cannot
+advance to another grasp until the landing is verified.
 If reset planning or execution fails, key perception does not restart. A
 lost grasp or ambiguous abort cannot use this missed-grasp path or the
 held-key return path automatically.
@@ -126,5 +130,7 @@ hold, **not** an executable lift. Only `held.transfer_trajectory` and
 verify the withdrawal log, measured-state timestamp and key/hand relation;
 the new primitive does not bind these sources itself. Collision checks are
 sampled, and release/drop dynamics and the actual landing pose are unknown.
-An XY correction learned during the failed attempt is not yet carried into
-the next `SessionRunner` attempt; its initial offset remains zero.
+For an eligible cylinder insertion failure, an XY correction learned after
+withdrawal is stored for the **next** physical attempt. It is weighted and
+added to the previous correction, with a 10 mm limit per update and no
+separate cumulative cap. A judged grasp miss does not generate XY advice.

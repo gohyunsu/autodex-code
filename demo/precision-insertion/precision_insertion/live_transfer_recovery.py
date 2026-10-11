@@ -9,6 +9,7 @@ record for an unknown key state after pickup, lift or transfer.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Callable, Mapping
 from uuid import uuid4
@@ -35,6 +36,44 @@ class LiveTransferRecoveryHandlers:
     return_parameters: Mapping[str, object] | None = None
     capture_id_factory: Callable[[], str] = lambda: f"transfer_reset_{uuid4().hex}"
     restore_original: Callable | None = None
+    key_planning: object | None = None
+
+    def _recover_missed_grasp(self, runner) -> Path:
+        """Use AutoDex's selected-grasp release/reset, then observe the key.
+
+        A visual miss does not establish that the key stayed at its start
+        position. The subsequent fresh capture and original-pose restoration
+        are part of this same failed attempt.
+        """
+        selected = getattr(self.key_planning, "latest", None)
+        preflight = getattr(selected, "preflight", None)
+        attempt = runner.active_attempt
+        if (preflight is None or getattr(preflight, "pickup_plan", None) is None or
+                getattr(preflight, "trial_scene", None) is None or
+                getattr(preflight, "selected_candidate_key", None) !=
+                tuple(attempt.candidate_id.split("/")) or
+                self.planner is None):
+            raise ValueError("missed grasp needs its selected AutoDex pickup plan")
+        state = self.live.clear_view.prepare_failed_grasp_for_capture(
+            pickup_plan=preflight.pickup_plan, planner=self.planner,
+            trial_scene=preflight.trial_scene)
+        completed = float(state.sample_timestamp_s)
+        if completed <= attempt.events[-1]["timestamp_s"]:
+            raise ValueError("missed-grasp clear view must follow the lift verdict")
+        path = Path(runner._attempt_dir) / "missed_grasp_recovery.json"
+        with path.open("x", encoding="utf-8") as output:
+            json.dump({
+                "schema": "precision_insertion_missed_grasp_clear_view_v1",
+                "attempt_id": attempt.attempt_id,
+                "candidate_id": attempt.candidate_id,
+                "completed_at_s": completed,
+                "clear_view_reached": True,
+                "hand_open": True,
+                "measured_state": state.to_record(),
+                "scope": "robot_clear_view_only_key_landing_requires_fresh_capture",
+            }, output, indent=2)
+            output.write("\n")
+        return path
 
     def _completed_held_transfer(self, runner) -> bool:
         attempt = runner.active_attempt
@@ -98,7 +137,9 @@ class LiveTransferRecoveryHandlers:
                          callable(self.read_state),
                          callable(self.record_execution),
                          isinstance(self.return_parameters, Mapping)))
-        if automatic and self._completed_held_transfer(runner):
+        if runner.active_attempt.labels["grasp_success"] is False:
+            recovery_log = self._recover_missed_grasp(runner)
+        elif automatic and self._completed_held_transfer(runner):
             recovery_log = self._return_held_key(runner, decision)
         else:
             recovery_log = Path(self.recover_to_tabletop(

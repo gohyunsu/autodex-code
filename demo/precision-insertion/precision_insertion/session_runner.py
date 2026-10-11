@@ -2093,6 +2093,25 @@ class SessionRunner:
             recovery_mode = (
                 "planned_held_transfer_return" if expected_origin == "transfer"
                 else "planned_held_return")
+        elif recovery.get("schema") == "precision_insertion_missed_grasp_clear_view_v1":
+            try:
+                completed = float(recovery.get("completed_at_s", float("nan")))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("invalid missed-grasp recovery completion time") from exc
+            if (self.current_decision().action != "recover_key_then_reobserve" or
+                    self._attempt.labels["grasp_success"] is not False or
+                    recovery.get("attempt_id") != self._attempt.attempt_id or
+                    recovery.get("candidate_id") != self._attempt.candidate_id or
+                    recovery.get("clear_view_reached") is not True or
+                    recovery.get("hand_open") is not True or
+                    not isinstance(recovery.get("measured_state"), dict) or
+                    recovery["measured_state"].get("schema") !=
+                    "precision_insertion_live_robot_state_v1" or
+                    recovery["measured_state"].get("sample_timestamp_s") !=
+                    completed or
+                    not math.isfinite(completed)):
+                raise ValueError("missed-grasp recovery lacks measured clear view")
+            recovery_mode = "autodex_missed_grasp_clear_view"
         else:
             try:
                 completed = float(recovery.get("completed_at_s", float("nan")))

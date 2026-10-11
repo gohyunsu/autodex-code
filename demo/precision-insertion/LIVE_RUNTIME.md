@@ -42,7 +42,9 @@ socket capture and must return these ten components, all bound to that same
    not a same-held-attempt movement. Square live execution is disabled.
 7. `LiveHeldReturnHandlers` — held-key return, clear-view recapture and, if
    misplaced, original-pose pick/place restoration in the same attempt.
-8. `LiveTransferRecoveryHandlers` — optional planned held return when a
+8. `LiveTransferRecoveryHandlers` — judged grasp-miss AutoDex clear-view
+   reset, fresh key capture and same-attempt original-pose restoration;
+   optional planned held return when a
    completed transfer has measured hand-pose error but the pre-insertion VLM
    still sees the key matching the held prediction; supervised recovery for
    stopped pickup/lift/transfer, Qwen abstention, suspected slip or other

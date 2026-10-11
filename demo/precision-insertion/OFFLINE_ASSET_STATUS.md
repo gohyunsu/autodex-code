@@ -123,7 +123,8 @@ The **code** now has a demo-local live action loop and stage handlers for
 pickup, lift, transfer, first guarded insertion, cumulative cylinder
 next-trial XY advice,
 held-key return, same-trial original-pose restoration after a misplaced
-return, transfer-recovery observation and directed repose. The default
+return, grasp-miss clear-view/reobservation and same-trial original-pose
+restoration, transfer-recovery observation and directed repose. The default
 `held_relation_route="auto"` selects `nominal` for cylinder live execution;
 physical/observed post-grasp key–hand relation routes are rejected there.
 This explicitly runs that cylinder loop

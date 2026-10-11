@@ -108,7 +108,8 @@ def test_grasp_transfer_and_unknown_observations_branch_separately():
     missed = _attempt()
     _grasp(missed, False)
     decision = decide_after_attempt(missed, max_xy_retries=2)
-    assert decision.action == "reobserve_key_and_preflight"
+    assert decision.action == "recover_key_then_reobserve"
+    assert "restore_original_pose_and_position" in decision.required_before_motion
     assert "exclude_attempted_grasp" in decision.required_before_motion
     assert missed.labels["preinsert_reached"] is None
     failed_transfer = _attempt()
@@ -365,7 +366,7 @@ def test_unmatched_failure_codes_cannot_resolve_to_a_motion_phase():
         "slip", timestamp_s=3.0,
         evidence_refs={"camera": "images/slip.json"})
     assert decide_after_attempt(
-        slipped, max_xy_retries=2).action == "stop_for_review"
+        slipped, max_xy_retries=2).action == "recover_key_then_reobserve"
 
 
 def test_repose_has_separate_observed_landing_label():

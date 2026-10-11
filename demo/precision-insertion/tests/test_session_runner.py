@@ -730,20 +730,50 @@ def test_observed_failed_grasp_is_excluded_only_after_saved_event(
     runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
     assert runner.attempted_candidates == ()
     with pytest.raises(ValueError, match="no verified return"):
-        _plan(runner, _observation("key_2", 11.0))
+        _plan(runner, _observation("premature_key_2", 11.0))
     runner.observe_stage(
         "grasp_success", False, timestamp_s=10.5,
         evidence_refs={"vlm_observation": "vlm/miss.json"})
     assert runner.attempted_candidates == (KEY_A,)
-    assert runner.current_decision().action == "reobserve_key_and_preflight"
+    assert runner.current_decision().action == "recover_key_then_reobserve"
     snapshot = tmp_path / "session/attempts/attempt_1/state_001.json"
     assert json.loads(snapshot.read_text())["grasp_success"] is False
     binding = json.loads((tmp_path / "session/attempts/attempt_1/"
                           "preflight_binding.json").read_text())
     assert binding["candidate_id"] == "table/0/3"
+    with pytest.raises(ValueError, match="no verified return"):
+        _plan(runner, _observation("still_premature_key_2", 11.0))
+    monkeypatch.setattr(
+        session_runner, "classify_key_tabletop_pose",
+        lambda **_kwargs: {"stem": "000", "rotation_error_deg": 0.0})
+    monkeypatch.setattr(
+        session_runner, "validate_repose_rest_target",
+        lambda **_kwargs: {"key_socket_clearance_m": 0.1})
+    monkeypatch.setattr(
+        session_runner, "_load_mesh",
+        lambda _path: SimpleNamespace(bounds=np.array([
+            [-0.01, -0.01, 0.0], [0.01, 0.01, 0.08]])))
+    recovery = tmp_path / "missed_grasp_recovery.json"
+    recovery.write_text(json.dumps({
+        "schema": "precision_insertion_missed_grasp_clear_view_v1",
+        "attempt_id": "attempt_1", "candidate_id": "table/0/3",
+        "completed_at_s": 10.7, "clear_view_reached": True,
+        "hand_open": True, "measured_state": {
+            "schema": "precision_insertion_live_robot_state_v1",
+            "sample_timestamp_s": 10.7},
+    }), encoding="utf-8")
+    landed = _observation("reset_key", 11.0)
+    runner.observe_reset_landing(
+        key_observation=landed, key_evidence_dir=_save_evidence(runner, landed),
+        recovery_log_path=recovery, timestamp_s=11.05,
+        max_pose_error_deg=5.0, max_return_center_shift_m=0.01,
+        support_tolerance_m=0.002,
+        minimum_rest_socket_clearance_m=0.005,
+        minimum_board_edge_clearance_m=0.005)
+    assert runner.current_decision().action == "reobserve_key_and_preflight"
     with pytest.raises(ValueError, match="predates the previous attempt"):
         _plan(runner, _observation("stale_key_2", 10.3))
-    _plan(runner, _observation("key_2", 11.0))
+    _plan(runner, _observation("key_2", 12.0))
     assert seen == [(), (KEY_A,)]
     assert runner.current_decision().candidate_id == "table/0/4"
     assert json.loads((tmp_path / "session/session_run.json").read_text())[
@@ -1108,6 +1138,54 @@ def test_supervised_reset_rejects_wrong_class_or_displaced_key(
         minimum_board_edge_clearance_m=0.005)
     assert result.labels["reset_success"] is False
     assert runner.current_decision().action == "stop_for_review"
+
+
+def test_missed_grasp_clear_view_still_requires_original_landing(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        session_runner, "plan_admitted_key_trial",
+        lambda **kwargs: _report(runner, kwargs["key_observation"]))
+    _plan(runner, _observation("key_1", 10.0))
+    runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
+    runner.observe_stage(
+        "grasp_success", False, timestamp_s=10.3,
+        evidence_refs={"vlm_observation": "vlm/miss.json"})
+    assert runner.current_decision().action == "recover_key_then_reobserve"
+    monkeypatch.setattr(
+        session_runner, "classify_key_tabletop_pose",
+        lambda **_kwargs: {"stem": "000", "rotation_error_deg": 0.0})
+    monkeypatch.setattr(
+        session_runner, "validate_repose_rest_target",
+        lambda **_kwargs: {"key_socket_clearance_m": 0.1})
+    monkeypatch.setattr(
+        session_runner, "_load_mesh",
+        lambda _path: SimpleNamespace(bounds=np.array([
+            [-0.01, -0.01, 0.0], [0.01, 0.01, 0.08]])))
+    recovery = tmp_path / "missed_grasp_recovery.json"
+    recovery.write_text(json.dumps({
+        "schema": "precision_insertion_missed_grasp_clear_view_v1",
+        "attempt_id": "attempt_1",
+        "candidate_id": runner.active_attempt.candidate_id,
+        "completed_at_s": 10.7,
+        "clear_view_reached": True, "hand_open": True,
+        "measured_state": {
+            "schema": "precision_insertion_live_robot_state_v1",
+            "sample_timestamp_s": 10.7},
+    }), encoding="utf-8")
+    landed = _observation("reset_key", 11.0)
+    evidence_dir = _save_evidence(runner, landed)
+    result = runner.observe_reset_landing(
+        key_observation=landed, key_evidence_dir=evidence_dir,
+        recovery_log_path=recovery, timestamp_s=11.05,
+        max_pose_error_deg=5.0, max_return_center_shift_m=0.01,
+        support_tolerance_m=0.002,
+        minimum_rest_socket_clearance_m=0.005,
+        minimum_board_edge_clearance_m=0.005)
+    assert result.labels["reset_success"] is True
+    assert runner.current_decision().action == "reobserve_key_and_preflight"
+    saved = json.loads((runner._attempt_dir / "reset_landing.json").read_text())
+    assert saved["recovery_mode"] == "autodex_missed_grasp_clear_view"
 
 
 def test_failed_insertion_auto_return_observation_restarts_with_fresh_key(

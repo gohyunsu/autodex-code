@@ -156,4 +156,7 @@ def assemble_live_components(
             isinstance(held_return, LiveHeldReturnHandlers) and
             transfer_recovery.restore_original is None):
         transfer_recovery.restore_original = held_return.restore_until_original
+    if (isinstance(transfer_recovery, LiveTransferRecoveryHandlers) and
+            transfer_recovery.key_planning is None):
+        transfer_recovery.key_planning = components[0]
     return tuple(components)
