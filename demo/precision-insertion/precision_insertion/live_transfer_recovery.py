@@ -1,9 +1,9 @@
-"""Close an uncertain transfer with supervised recovery and fresh key capture.
+"""Return a known held key after misalignment, or supervise an unknown one.
 
-No key pose is inferred from a failed transfer. The injected recovery producer
-must place the key on the board, fully open the hand, clear the camera view and
-write the existing supervised-reset record. This fallback does not masquerade
-as a planned automatic robot return.
+No key pose is inferred from an incomplete/aborted transfer. A completed held
+transfer with a failed visual arrival can use the existing socket-aware held
+return and release path. The fallback producer must write a supervised-reset
+record for an unknown key state.
 """
 
 from __future__ import annotations
@@ -14,7 +14,9 @@ from typing import Callable, Mapping
 from uuid import uuid4
 
 from .action_loop import ActionHandler
+from .failed_return_evidence import verify_failed_return_execution
 from .live_key_trial import capture_returned_key_for_reset
+from .preinsert_checkpoint import _transfer_log
 from .session_policy import SessionDecision
 
 
@@ -26,7 +28,64 @@ class LiveTransferRecoveryHandlers:
     key_prompt: str
     capture_parameters: Mapping[str, object]
     landing_parameters: Mapping[str, object]
+    planner: object | None = None
+    limits: object | None = None
+    read_state: Callable | None = None
+    record_execution: Callable | None = None
+    return_parameters: Mapping[str, object] | None = None
     capture_id_factory: Callable[[], str] = lambda: f"transfer_reset_{uuid4().hex}"
+
+    def _completed_held_transfer(self, runner) -> bool:
+        attempt = runner.active_attempt
+        if attempt is None or runner._attempt_dir is None:
+            return False
+        checkpoint = runner._preinsert_checkpoint
+        if (checkpoint is None or
+                checkpoint.preinsert_reached is not False or
+                checkpoint.reason != "measured_hold_pose_outside_limits" or
+                checkpoint.visual.status != "coarse_match"):
+            return False
+        path = runner._attempt_dir / "transfer_execution.json"
+        if not path.is_file():
+            return False
+        return _transfer_log(path, attempt)["measurement"] == {
+            "trajectory_complete": True, "safety_abort": False,
+            "grasp_held": True}
+
+    def _return_held_key(self, runner, decision: SessionDecision) -> Path:
+        if (self.planner is None or self.limits is None or
+                not callable(self.read_state) or
+                not callable(self.record_execution) or
+                not isinstance(self.return_parameters, Mapping)):
+            raise ValueError("held-transfer return needs planner, feedback and controller")
+        parameters = dict(self.return_parameters)
+        held, release, report_path = runner.prepare_failed_transfer_return(
+            planner=self.planner, held_state=self.read_state(),
+            limits=self.limits, **parameters)
+        invoked = False
+
+        def run_planned_return():
+            nonlocal invoked
+            if invoked:
+                raise RuntimeError("held transfer return can run only once")
+            invoked = True
+            return self.live.clear_view.complete_failed_insertion_return_with_autodex(
+                held_plan=held, release_plan=release)
+
+        execution = Path(self.record_execution(
+            run_planned_return, report_path, runner, decision)).expanduser().resolve()
+        if not invoked:
+            raise ValueError("controller recorder skipped the held return")
+        attempt = runner.active_attempt
+        verified = verify_failed_return_execution(
+            path=execution, attempt_id=attempt.attempt_id,
+            candidate_id=attempt.candidate_id,
+            attempt_started_at_s=attempt.started_at_s,
+            session_calibration_sha256=runner.session_sha256,
+            catalog_sha256=runner.catalog_sha256)
+        if verified["plan_report"]["path"] != str(Path(report_path).resolve()):
+            raise ValueError("controller executed another transfer-return plan")
+        return execution
 
     def recover(self, runner, decision: SessionDecision) -> None:
         if (runner is not self.live.opened.runner or
@@ -34,8 +93,15 @@ class LiveTransferRecoveryHandlers:
                 runner.current_decision() != decision or
                 decision.action != "recover_key_then_reobserve"):
             raise ValueError("transfer recovery belongs to another decision")
-        recovery_log = Path(self.recover_to_tabletop(
-            runner, decision)).expanduser().resolve()
+        automatic = all((self.planner is not None, self.limits is not None,
+                         callable(self.read_state),
+                         callable(self.record_execution),
+                         isinstance(self.return_parameters, Mapping)))
+        if automatic and self._completed_held_transfer(runner):
+            recovery_log = self._return_held_key(runner, decision)
+        else:
+            recovery_log = Path(self.recover_to_tabletop(
+                runner, decision)).expanduser().resolve()
         if not recovery_log.is_file():
             raise FileNotFoundError("transfer recovery returned no completion log")
         self.live.clear_view.before_key_capture()

@@ -25,6 +25,7 @@ PHASES = (
     "axial_withdrawal", "held_transfer", "held_descent", "release_open",
     "post_release_lift", "post_release_retract",
 )
+TRANSFER_RETURN_PHASES = PHASES[1:]
 SOURCES = frozenset({
     "trajectory_feedback", "hand_feedback", "guarded_controller", "safety",
 })
@@ -51,7 +52,9 @@ def _finite(value, label: str) -> float:
 def write_failed_return_plan(
     *, output_dir: Path, attempt_id: str, candidate_id: str,
     session_calibration_sha256: str, catalog_sha256: str,
-    withdrawal_evidence_path: Path, postlift_report_path: Path,
+    withdrawal_evidence_path: Path | None = None,
+    transfer_evidence_path: Path | None = None,
+    postlift_report_path: Path,
     withdrawn_state: LiveRobotState,
     held: ReposeHeldPreflight, release: ReposeReleasePreflight,
 ) -> Path:
@@ -102,24 +105,39 @@ def write_failed_return_plan(
             not np.allclose(validated["held_transfer"][0],
                             withdrawn_state.full_q, atol=1e-8, rtol=0)):
         raise ValueError("failed return start differs from measured withdrawal state")
+    if (withdrawal_evidence_path is None) == (transfer_evidence_path is None):
+        raise ValueError("failed return needs exactly one held-start source")
+    transfer_origin = transfer_evidence_path is not None
+    start_name = "transfer_execution" if transfer_origin else "withdrawal"
     sources = {
-        "withdrawal": _source(withdrawal_evidence_path),
+        start_name: _source(transfer_evidence_path if transfer_origin
+                            else withdrawal_evidence_path),
         "postlift_report": _source(postlift_report_path),
     }
-    withdrawal = json.loads(Path(sources["withdrawal"]["path"]).read_text(
+    start_evidence = json.loads(Path(sources[start_name]["path"]).read_text(
         encoding="utf-8"))
-    if (withdrawal.get("schema") !=
-            "precision_insertion_guarded_withdrawal_v1" or
-            withdrawal.get("attempt_id") != attempt_id or
-            withdrawal.get("candidate_id") != candidate_id or
-            withdrawal.get("status") != "withdrawn_to_preinsert_hold" or
-            withdrawal.get("key_still_held") is not True or
-            withdrawal.get("safety_abort") is not False or
-            withdrawal.get("source") != "commissioned_guarded_controller"):
-        raise ValueError("failed return lacks this attempt's guarded withdrawal")
-    _finite(withdrawal.get("completed_at_s"), "withdrawal time")
-    if withdrawn_state.sample_timestamp_s <= withdrawal["completed_at_s"]:
-        raise ValueError("failed return state predates guarded withdrawal")
+    if transfer_origin:
+        valid_start = (
+            start_evidence.get("schema") ==
+            "precision_insertion_transfer_execution_v1" and
+            start_evidence.get("measurement") == {
+                "trajectory_complete": True, "safety_abort": False,
+                "grasp_held": True})
+    else:
+        valid_start = (
+            start_evidence.get("schema") ==
+            "precision_insertion_guarded_withdrawal_v1" and
+            start_evidence.get("status") == "withdrawn_to_preinsert_hold" and
+            start_evidence.get("key_still_held") is True and
+            start_evidence.get("safety_abort") is False and
+            start_evidence.get("source") == "commissioned_guarded_controller")
+    if (not valid_start or start_evidence.get("attempt_id") != attempt_id or
+            start_evidence.get("candidate_id") != candidate_id):
+        raise ValueError("failed return lacks this attempt's held start")
+    start_completed = _finite(start_evidence.get("completed_at_s"),
+                              "held start time")
+    if withdrawn_state.sample_timestamp_s <= start_completed:
+        raise ValueError("failed return state predates held start")
     report = json.loads(Path(sources["postlift_report"]["path"]).read_text(
         encoding="utf-8"))
     if (report.get("attempt_id") != attempt_id or
@@ -140,8 +158,9 @@ def write_failed_return_plan(
         "session_calibration_sha256": session_calibration_sha256,
         "catalog_sha256": catalog_sha256,
         "sources": sources,
-        "withdrawal_completed_at_s": withdrawal["completed_at_s"],
-        "withdrawn_joint_state": withdrawn_state.to_record(),
+        "return_origin": "transfer" if transfer_origin else "insertion",
+        "held_start_completed_at_s": start_completed,
+        "held_start_joint_state": withdrawn_state.to_record(),
         "held_plan": held.to_record(), "release_plan": release.to_record(),
         "planned_trajectories": archive.name,
         "planned_trajectories_sha256": _sha(archive),
@@ -182,6 +201,12 @@ def verify_failed_return_execution(
     if report_ref != report_source:
         raise ValueError("failed return plan report changed")
     report = json.loads(Path(report_ref["path"]).read_text(encoding="utf-8"))
+    origin = report.get("return_origin", "insertion")
+    if origin not in {"insertion", "transfer"} or row.get(
+            "return_origin", "insertion") != origin:
+        raise ValueError("failed return origin differs from its plan")
+    start_name = "transfer_execution" if origin == "transfer" else "withdrawal"
+    phases_expected = (TRANSFER_RETURN_PHASES if origin == "transfer" else PHASES)
     if (report.get("schema") != "precision_insertion_failed_return_plan_v1" or
             report.get("status") !=
             "nominal_failed_return_plan_pass_drop_unobserved" or
@@ -196,7 +221,7 @@ def verify_failed_return_execution(
         raise ValueError("failed return plan is not an unchanged passing plan")
     source_files = report.get("sources")
     if not isinstance(source_files, dict) or set(source_files) != {
-            "withdrawal", "postlift_report"}:
+            start_name, "postlift_report"}:
         raise ValueError("failed return plan lacks its source evidence")
     for evidence in source_files.values():
         if not isinstance(evidence, dict) or set(evidence) != {"path", "sha256"}:
@@ -212,12 +237,15 @@ def verify_failed_return_execution(
             not archive.is_file() or _sha(archive) !=
             report.get("planned_trajectories_sha256")):
         raise ValueError("failed return trajectory archive changed")
-    measured = report.get("withdrawn_joint_state")
+    measured = report.get("held_start_joint_state",
+                          report.get("withdrawn_joint_state"))
+    start_completed = report.get("held_start_completed_at_s",
+                                 report.get("withdrawal_completed_at_s"))
     if (not isinstance(measured, dict) or
             measured.get("schema") != "precision_insertion_live_robot_state_v1" or
             measured.get("source") != "robot_joint_feedback" or
             _finite(measured.get("sample_timestamp_s"), "joint time") <=
-            _finite(report.get("withdrawal_completed_at_s"), "withdrawal time")):
+            _finite(start_completed, "held start time")):
         raise ValueError("failed return lacks a later measured start state")
     with np.load(archive, allow_pickle=False) as paths:
         if (set(paths.files) != {
@@ -228,28 +256,32 @@ def verify_failed_return_execution(
                                 atol=1e-8, rtol=0)):
             raise ValueError("failed return planned start differs from feedback")
     phases = row.get("phases")
-    if (not isinstance(phases, list) or len(phases) != len(PHASES) or
+    if (not isinstance(phases, list) or len(phases) != len(phases_expected) or
             [item.get("name") for item in phases if isinstance(item, dict)] !=
-            list(PHASES)):
+            list(phases_expected)):
         raise ValueError("failed return needs every ordered execution phase")
     previous = _finite(attempt_started_at_s, "attempt start")
     release_at = None
-    for name, item in zip(PHASES, phases):
+    for name, item in zip(phases_expected, phases):
         started = _finite(item.get("started_at_s"), f"{name} start")
         completed = _finite(item.get("completed_at_s"), f"{name} completion")
         if (started < previous or completed <= started or
                 item.get("complete") is not True or
                 item.get("safety_abort") is not False or
-                (name in PHASES[:3] and item.get("grasp_held") is not True) or
+                (name in {"axial_withdrawal", "held_transfer", "held_descent"}
+                 and item.get("grasp_held") is not True) or
                 (name == "release_open" and
                  item.get("hand_open_feedback") is not True)):
             raise ValueError(f"failed return {name} was not completed in order")
         if name == "release_open":
             release_at = completed
         previous = completed
-    if (phases[0]["completed_at_s"] !=
-            report.get("withdrawal_completed_at_s")):
+    if origin == "insertion" and (phases[0]["completed_at_s"] !=
+                                  start_completed):
         raise ValueError("failed return executed another guarded withdrawal")
+    held_return_start = phases[0 if origin == "transfer" else 1]["started_at_s"]
+    if held_return_start < measured["sample_timestamp_s"]:
+        raise ValueError("held return started before its measured start state")
     evidence = row.get("source_records")
     if not isinstance(evidence, dict) or set(evidence) != SOURCES:
         raise ValueError("failed return lacks independent controller sources")

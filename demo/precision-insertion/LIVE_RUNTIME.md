@@ -25,8 +25,10 @@ socket capture and must return these ten components, all bound to that same
 6. `LiveGroundedRetryHandlers` — guarded withdrawal, VLM ≤1 mm XY correction,
    renewed planning and one guarded reattempt.
 7. `LiveHeldReturnHandlers` — held-key return after failed insertion.
-8. `LiveTransferRecoveryHandlers` — supervised recovery when transfer leaves
-   the key state uncertain.
+8. `LiveTransferRecoveryHandlers` — optional planned held return when a
+   completed transfer has measured hand-pose error but the pre-insertion VLM
+   still sees the key matching the held prediction; supervised recovery for
+   suspected slip, abort or other uncertain states.
 9. `LiveReposePlanningHandlers` — directed v8 reorient planning.
 10. `LiveReposeExecutionHandlers` — selected reset execution and new key pose.
 
@@ -37,6 +39,21 @@ See [ACTION_LOOP.md](ACTION_LOOP.md) for each constructor's existing
 parameters and the exact decision-to-handler mapping. The `close` callback
 must release robot-side resources even if a handler raises. The demo closes
 its own camera context first.
+
+For automatic recovery after a completed but misaligned transfer, configure
+`transfer_recovery` with the same `planner` and `limits` as held return,
+`read_state`, `record_execution`, and `return_parameters`. The latter has the
+held-return release/clearance limits plus `max_transfer_state_gap_s` instead
+of `max_withdrawal_state_gap_s`. The execution recorder writes the existing
+`precision_insertion_failed_return_execution_v1` schema with
+`return_origin: "transfer"` and five ordered phases: `held_transfer`,
+`held_descent`, `release_open`, `post_release_lift`,
+`post_release_retract`. There is no fictitious guarded withdrawal. If the
+visual checkpoint says `slip_or_miss` or `gross_misalignment`, the transfer
+was incomplete/aborted, or these automatic-return adapters are absent, the
+handler uses `recover_to_tabletop` and its supervised reset record. A real
+key image after clear view decides whether the return actually restored the
+original tabletop pose; the plan alone never counts as reset success.
 
 To avoid writing ten separate constructor calls on the robot PC, use
 `assemble_live_components` from `precision_insertion.runtime_assembly` in

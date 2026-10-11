@@ -94,13 +94,37 @@ class LiveTaskHandlers:
     def transfer_and_observe(self, runner, decision: SessionDecision) -> None:
         attempt = self._require(runner, decision,
                                 "transfer_execution_gate_required")
-        execute_bound_held_transfer(
-            runner=runner, adapter=self.transfer_adapter,
-            pre_state=self.read_state(), read_post_state=self.read_state,
-            limits=self.transfer_limits,
-            commissioning_record_path=self.transfer_commissioning_path,
-            motion_interlock=self.motion_interlock,
-            enable_robot_motion=self.enable_robot_motion)
+        try:
+            execute_bound_held_transfer(
+                runner=runner, adapter=self.transfer_adapter,
+                pre_state=self.read_state(), read_post_state=self.read_state,
+                limits=self.transfer_limits,
+                commissioning_record_path=self.transfer_commissioning_path,
+                motion_interlock=self.motion_interlock,
+                enable_robot_motion=self.enable_robot_motion)
+        except Exception:
+            # The executor writes this record only after a motion was requested
+            # and stop_and_acknowledge() returned. No transfer checkpoint or
+            # held-key assumption is fabricated from a failed controller call.
+            failure_path = (Path(runner.output_dir) / "attempts" /
+                            attempt.attempt_id / "transfer_failure.json")
+            if not failure_path.is_file():
+                raise
+            failure = json.loads(failure_path.read_text(encoding="utf-8"))
+            if (failure.get("schema") !=
+                    "precision_insertion_transfer_execution_v1" or
+                    failure.get("attempt_id") != attempt.attempt_id or
+                    failure.get("candidate_id") != attempt.candidate_id or
+                    failure.get("status") != "execution_or_feedback_failed" or
+                    not isinstance(failure.get("stop_acknowledgement"), dict) or
+                    failure.get("stop_acknowledgement", {}).get(
+                        "acknowledged") is not True):
+                raise
+            runner.observe_stage(
+                "preinsert_reached", False,
+                timestamp_s=self.decision_time(),
+                evidence_refs={"transfer_failure": str(failure_path)})
+            return
         transfer_log = (Path(runner.output_dir) / "attempts" /
                         attempt.attempt_id / "transfer_execution.json")
         raw, capture = self._capture(

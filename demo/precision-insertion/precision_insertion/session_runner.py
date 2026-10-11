@@ -59,7 +59,7 @@ from .postlift_preflight import (
 )
 from .preinsert_checkpoint import (
     PreinsertCheckpoint, assess_preinsert_checkpoint,
-    verify_preinsert_checkpoint, write_preinsert_checkpoint,
+    verify_preinsert_checkpoint, write_preinsert_checkpoint, _transfer_log,
 )
 from .records import AttemptRecord, begin_attempt
 from .retry_session import (
@@ -1704,6 +1704,100 @@ class SessionRunner:
                 withdrawn_state.sample_timestamp_s - completed >
                 max_withdrawal_state_gap_s):
             raise ValueError("failed return needs this attempt's recent held withdrawal")
+        return self._plan_held_return_from_state(
+            planner=planner, held_state=withdrawn_state,
+            held_start_path=withdrawal_path, origin="insertion",
+            limits=limits, release_height_m=release_height_m,
+            minimum_rest_socket_clearance_m=minimum_rest_socket_clearance_m,
+            minimum_board_edge_clearance_m=minimum_board_edge_clearance_m,
+            minimum_release_key_clearance_m=minimum_release_key_clearance_m)
+
+    def prepare_failed_transfer_return(
+        self, *, planner, held_state: LiveRobotState,
+        limits: PathAuditLimits, release_height_m: float,
+        minimum_rest_socket_clearance_m: float,
+        minimum_board_edge_clearance_m: float,
+        minimum_release_key_clearance_m: float,
+        max_transfer_state_gap_s: float,
+        max_arm_hand_skew_s: float,
+        max_hand_command_error_raw: float,
+        max_arm_velocity_rad_s: float,
+    ):
+        """Plan a held key's return after a completed but misaligned transfer.
+
+        An incomplete or aborted transfer has an unknown key state and cannot
+        take this path. It remains a supervised-recovery case.
+        """
+        if (self.current_decision().action != "recover_key_then_reobserve" or
+                self._attempt is None or self._attempt_dir is None or
+                self._attempt.labels["preinsert_reached"] is not False or
+                self._preinsert_checkpoint is None or
+                self._preinsert_checkpoint.reason !=
+                "measured_hold_pose_outside_limits" or
+                self._preinsert_checkpoint.visual.status != "coarse_match" or
+                self._preinsert_report_path is None or
+                self._preinsert_report_sha256 is None or
+                not self._preinsert_report_path.is_file() or
+                hashlib.sha256(self._preinsert_report_path.read_bytes()).hexdigest()
+                != self._preinsert_report_sha256 or
+                self._preflight is None or self._postlift_preflight is None or
+                self._postlift_preflight.status !=
+                "sampled_postlift_preflight_pass" or
+                self._postlift_report_path is None or
+                self._postlift_report_sha256 is None or
+                not self._postlift_report_path.is_file() or
+                hashlib.sha256(self._postlift_report_path.read_bytes()).hexdigest()
+                != self._postlift_report_sha256):
+            raise ValueError("transfer return needs this attempt's held relation")
+        observed = verify_preinsert_checkpoint(self._preinsert_report_path)
+        if (observed["attempt_id"] != self._attempt.attempt_id or
+                observed["candidate_id"] != self._attempt.candidate_id or
+                observed["preinsert_reached"] is not False or
+                observed["reason"] != "measured_hold_pose_outside_limits" or
+                observed["visual"]["status"] != "coarse_match"):
+            raise ValueError("transfer return needs its unchanged visible hold")
+        if (not isinstance(held_state, LiveRobotState) or
+                not isinstance(limits, PathAuditLimits) or
+                not math.isfinite(float(max_transfer_state_gap_s)) or
+                max_transfer_state_gap_s <= 0):
+            raise ValueError("transfer return needs recent measured state")
+        held_state.validate(
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s)
+        transfer_path = self._attempt_dir / "transfer_execution.json"
+        transfer = _transfer_log(transfer_path, self._attempt)
+        if (transfer.get("session_calibration_sha256") !=
+                self.session_sha256 or
+                transfer.get("postlift_report_path") !=
+                str(self._postlift_report_path) or
+                transfer.get("postlift_report_sha256") !=
+                self._postlift_report_sha256):
+            raise ValueError("transfer return changed its held preflight")
+        completed = float(transfer["completed_at_s"])
+        if (transfer["measurement"] != {
+                "trajectory_complete": True, "safety_abort": False,
+                "grasp_held": True} or
+                held_state.sample_timestamp_s <= completed or
+                held_state.sample_timestamp_s - completed >
+                max_transfer_state_gap_s):
+            raise ValueError("transfer return requires a completed held transfer")
+        return self._plan_held_return_from_state(
+            planner=planner, held_state=held_state,
+            held_start_path=transfer_path, origin="transfer", limits=limits,
+            release_height_m=release_height_m,
+            minimum_rest_socket_clearance_m=minimum_rest_socket_clearance_m,
+            minimum_board_edge_clearance_m=minimum_board_edge_clearance_m,
+            minimum_release_key_clearance_m=minimum_release_key_clearance_m)
+
+    def _plan_held_return_from_state(
+        self, *, planner, held_state: LiveRobotState,
+        held_start_path: Path, origin: str, limits: PathAuditLimits,
+        release_height_m: float, minimum_rest_socket_clearance_m: float,
+        minimum_board_edge_clearance_m: float,
+        minimum_release_key_clearance_m: float,
+    ):
+        """Reuse the same socket-aware held motion for both failure stages."""
         relation = validate_se3(
             self._postlift_preflight.relation.T_key_hand,
             name="failed-return post-lift T_key_hand")
@@ -1716,7 +1810,7 @@ class SessionRunner:
             planner=planner, trial_scene=self._preflight.trial_scene,
             shared_root=self.shared_root, calibration=self.calibration,
             mode=self.mode, T_key_hand=relation,
-            measured_start_q=withdrawn_state.full_q,
+            measured_start_q=held_state.full_q,
             T_robot_key_rest=rest, release_height_m=release_height_m,
             minimum_rest_socket_clearance_m=(
                 minimum_rest_socket_clearance_m),
@@ -1736,14 +1830,17 @@ class SessionRunner:
         if release.status != "nominal_release_exit_path_pass_drop_unobserved":
             raise ValueError(f"failed return release was rejected: {release.status}")
         report = write_failed_return_plan(
-            output_dir=self._attempt_dir / "failed_return_preflight",
+            output_dir=self._attempt_dir / (
+                "failed_transfer_return_preflight" if origin == "transfer"
+                else "failed_return_preflight"),
             attempt_id=self._attempt.attempt_id,
             candidate_id=self._attempt.candidate_id,
             session_calibration_sha256=self.session_sha256,
             catalog_sha256=self.catalog_sha256,
-            withdrawal_evidence_path=withdrawal_path,
+            **({"transfer_evidence_path": held_start_path} if origin ==
+               "transfer" else {"withdrawal_evidence_path": held_start_path}),
             postlift_report_path=self._postlift_report_path,
-            withdrawn_state=withdrawn_state,
+            withdrawn_state=held_state,
             held=held, release=release)
         return held, release, report
 
@@ -1781,8 +1878,9 @@ class SessionRunner:
         if not isinstance(recovery, dict):
             raise ValueError("recovery log must be a JSON object")
         if recovery.get("schema") == "precision_insertion_failed_return_execution_v1":
-            if (self.current_decision().action !=
-                    "recover_held_key_then_reobserve" or
+            if (self.current_decision().action not in {
+                    "recover_held_key_then_reobserve",
+                    "recover_key_then_reobserve"} or
                     self._postlift_report_path is None or
                     self._postlift_report_sha256 is None or
                     not self._postlift_report_path.is_file() or
@@ -1797,12 +1895,19 @@ class SessionRunner:
                 catalog_sha256=self.catalog_sha256)
             plan = json.loads(Path(execution["plan_report"]["path"]).read_text(
                 encoding="utf-8"))
+            expected_origin = (
+                "transfer" if self.current_decision().action ==
+                "recover_key_then_reobserve" else "insertion")
+            if plan.get("return_origin", "insertion") != expected_origin:
+                raise ValueError("automatic return is from another failure stage")
             if plan["sources"]["postlift_report"] != {
                     "path": str(self._postlift_report_path.resolve()),
                     "sha256": self._postlift_report_sha256}:
                 raise ValueError("automatic return differs from this held relation")
             completed = execution["exit_completed_at_s"]
-            recovery_mode = "planned_held_return"
+            recovery_mode = (
+                "planned_held_transfer_return" if expected_origin == "transfer"
+                else "planned_held_return")
         else:
             try:
                 completed = float(recovery.get("completed_at_s", float("nan")))

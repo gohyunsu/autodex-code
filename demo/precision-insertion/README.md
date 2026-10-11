@@ -2494,8 +2494,14 @@ failed preflight records why no correction was used and routes to the held
 return. The grounded route deliberately stops after one correction; a
 second failed stroke returns the key rather than reusing stale geometry.
 [`LiveTransferRecoveryHandlers`](precision_insertion/live_transfer_recovery.py)
-connects an uncertain transfer outcome to a supervised tabletop recovery
-record and fresh key capture. [`compose_live_handlers()`](precision_insertion/live_orchestration.py)
+now reuses the same held-return/release plan after a completed transfer only
+when controller feedback still reports a held key and the pre-insertion VLM
+sees the key matching the held prediction, with a measured hand-pose error.
+The five return phases are logged without inventing an axial withdrawal.
+Suspected slip, incomplete transfer and other uncertain key states still
+require a supervised tabletop recovery record. Both routes end in a fresh
+key capture; only its observed landing label permits the next grasp.
+[`compose_live_handlers()`](precision_insertion/live_orchestration.py)
 requires exactly one handler for every nonterminal action before the
 session begins, so an absent robot-PC callback is visible before pickup.
 A successful 20 mm label still requires admitted key depth. The optional
