@@ -62,8 +62,14 @@ writable on the host:
   --output-root /mnt/paradex2/hyunsu/NEW_foundpose_generated_handoff
 ```
 
-The script writes a tar with paths relative to `shared_data`, checks each
-archived `repre.pth` against its original SHA256, and emits `manifest.json`.
+The completed [2026-10-11 NAS handoff](/mnt/paradex2/hyunsu/autodex_precision_insertion_foundpose_generated_20261011)
+contains `foundpose_generated_7objects.tar` (5,654,118,400 bytes; read-back
+SHA256 `4ce436bec22998fed7c4f91f564f7ef3b1172a2a1999ca15f017b798cdd00094`)
+and `manifest.json`. The script writes paths relative to `shared_data`, checks
+each archived `repre.pth` against its original SHA256, and emits that manifest.
+Extract only into a new/staged `shared_data` tree, then install the seven
+object directories without overwriting any recipient's existing canonical
+asset. The archive does not contain commissioned pose-accuracy results.
 If NAS I/O stops partway through, leave the partial directory untrusted and
 retry with a **new** destination rather than merging into it. It does not
 measure camera pose accuracy.
