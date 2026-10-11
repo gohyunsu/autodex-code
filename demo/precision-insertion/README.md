@@ -120,8 +120,9 @@ saved axial path with that API as a contact insertion command. The current
 15 mm radial-gap catalogue has 12 **offline simulated** v8 candidates that
 pass its nominal 20 mm endpoint screen. Their 4.4–38.5 mm achieved
 hand-relative center drift has no commissioned acceptance limit, and the
-key/socket FoundPose representations remain in NAS `pending_foundpose/`
-awaiting real-image pose/mask QA. These are not physical or robot-ready
+newly generated local key/socket FoundPose representations still await
+real-image pose/mask QA (see [FOUNDPOSE_ONBOARDING.md](FOUNDPOSE_ONBOARDING.md)).
+The older NAS `pending_foundpose/` files were not promoted. These are not physical or robot-ready
 grasps; a real cylinder replay is still not possible here.
 
 For a commissioned session, reuse the *same* runner and saved checkpoint:
@@ -326,8 +327,11 @@ artifacts, but its own README labels them **validation pending**. A later NAS
 addendum and [real-image audit](NAS_PERCEPTION_QA.md) now contain 35 selected
 20-camera shots and 61 offline evaluation reports. Those images expose
 wrong-object key masks and still lack per-camera exposure timestamps and
-independent pose/rim validation. The PTHs have therefore **not** been
-promoted into canonical runtime `foundpose_assets`. No grasp-specific
+independent pose/rim validation. Those older NAS PTHs have therefore **not**
+been promoted into canonical runtime `foundpose_assets`. Separate local
+798-view representations for the first square and cylinder key/socket pairs
+were generated on 2026-10-11, but remain camera-validation pending; see
+[FOUNDPOSE_ONBOARDING.md](FOUNDPOSE_ONBOARDING.md). No grasp-specific
 *physical* key–hand calibration record was found in that handoff.
 Consequently the current retry route still needs
 an observed held-key pose **to reach live retry preflight**. A separate
@@ -2289,15 +2293,18 @@ resumable by another process. For a long-running program use the existing
 after `open_verified_session()`, as documented below. That path requires
 measured robot feedback buffered across the actual camera exposures; a
 single joint read after SAM/FoundPose inference is not equivalent. On this
-workstation, missing canonical key/socket FoundPose files still prevent a
-real session from reaching this stage.
+workstation, canonical FoundPose files are now present for the square 1.5 mm
+first-test pair. Their physical pose accuracy, a complete catalogue,
+commissioned camera timestamps and robot motion path are still missing;
+file presence does not make the session runnable.
 
 `board_snap` and `init` are the metadata-preserving adapters described in
 [CAMERA_FRAME_HANDOFF.md](CAMERA_FRAME_HANDOFF.md); all `commissioned_*`
 variables need measured values from the AutoDex rig. A later NAS addendum now
 contains 35 complete **real 20-camera shots**, but none has verified
-per-camera exposure times, repeated session socket measurements, or promoted
-canonical FoundPose PTHs. See [NAS_PERCEPTION_QA.md](NAS_PERCEPTION_QA.md)
+per-camera exposure times or repeated session socket measurements. Newly
+generated canonical FoundPose PTHs have not passed those images' pose QA.
+See [NAS_PERCEPTION_QA.md](NAS_PERCEPTION_QA.md)
 for the read-only image/evaluation audit. Those saved shots therefore cannot
 yet complete this live startup call. Its tests exercise ordering, missing
 assets and duplicate-request rejection, not live hardware accuracy.
@@ -2428,7 +2435,7 @@ robot.
 An optional `planning_options` mapping accepts only the existing repose
 fidelity/root arguments, never runner-owned candidate exclusions. The saved
 camera evidence survives a failed state or planner gate for diagnosis. This
-API still requires commissioned camera clocks, real key/socket FoundPose
+API still requires commissioned camera clocks, real-image-validated key/socket FoundPose
 representations, a complete endpoint catalogue and live feedback; there is
 no safe robot-execution CLI yet.
 
