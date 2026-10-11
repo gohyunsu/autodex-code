@@ -22,12 +22,12 @@ using the existing demo functions before returning. For example:
 | `await_guarded_insertion_and_observation` | Prepare the bound axial handoff, run a commissioned guarded stroke, then use paired Qwen views plus measured depth/alignment/force in `runner.prepare_observed_insertion_label()`; only its checkpoint may set `insertion_success`. |
 | `guarded_withdrawal_then_xy_assessment` | Withdraw the still-held key and use the existing native-pixel multi-view cylinder landmark/XY diagnostic; replan and record a bounded retry. Do not turn a VLM suggestion directly into a motor command. |
 | `await_retry_execution_and_observation` | Execute the bound retry path and record a *new* insertion checkpoint. |
-| `recover_held_key_then_reobserve` | After logged guarded withdrawal, `runner.prepare_failed_insertion_return()` plans a held tabletop return and clear-view exit. Follow it with stock Franka motion, record the controller phases, recapture the landed key and call `runner.observe_reset_landing()` with the bound execution log. This full action handler is still AutoDex-PC integration work. |
+| `recover_held_key_then_reobserve` | [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py) joins logged guarded withdrawal, `runner.prepare_failed_insertion_return()`, stock Franka held return/release/clear-view motion, independently recorded controller phases, a fresh key capture on the same cameras, and `runner.observe_reset_landing()`. Guarded withdrawal and independent logging remain commissioned robot-PC callbacks. |
 | `recover_key_then_reobserve` | Transfer/hold failure may leave the key in an unknown state. Do not use the held-key or grasp-miss motion blindly; require observed recovery or operator intervention before a new capture. |
 | `preflight_repose`, `continue_repose_seed_preflight`, `preflight_repose_release`, `preflight_alternative_repose_cell` | Use the same captured key and `runner.preflight_repose()` with directed v8 reset seeds; a staged seed alone is not a plan. |
 | `repose_execution_gate_required`, `await_repose_observation` | Execute a commissioned reset plan, observe the landed tabletop pose, and record `reorient_success` before a fresh key capture. |
 
-The first two rows are now implemented as
+The first two rows are implemented as
 [`LiveKeyPlanningHandlers`](precision_insertion/live_planning_handlers.py).
 It obtains capture IDs and uses the *same* `live.cameras` context and frozen
 runner for every new key. A pilot prefix continues from its saved
@@ -49,7 +49,11 @@ selected v8 pickup plan. Its copied reset world preserves the fixed socket
 and original tabletop key as obstacles. For a still-held insertion failure,
 the checked held return and release/exit are required instead. Neither path
 uses free-space `home` after a trial. If measured clear view is not reached,
-key recapture stops.
+key recapture stops. The held-insertion-failure handler invokes the same
+`ClearViewForPerception` return/exit motion, then uses the **same**
+`collect_key_capture()` → SAM/FoundPose → `admit_key_capture()` path used by a
+new trial. It captures the returned tabletop key *before* planning the next
+grasp, and the runner labels the reset only from that fresh observation.
 
 `stop_for_review` is a non-success terminal result. A verified positive
 `insertion_success` produces `session_success`, which immediately returns
@@ -124,10 +128,11 @@ camera, planner, prompt and limit objects supplied above, for example
 `max_key_state_skew_s`, `max_pose_error_deg` and
 `axial_waypoint_step_m`. With only these three handlers the loop stops at
 `execution_gate_required` (or a repose decision) and reports
-`needs_handler`; it **does not** pick up the key. Pickup, insertion, held-key
-recovery logging, VLM observation and repose execution handlers remain
-AutoDex-PC integration work. The judged grasp-miss clear-view reset above is
-already connected. Returning from
+`needs_handler`; it **does not** pick up the key. Pickup, insertion, guarded
+withdrawal, independent controller logging, VLM observation and repose
+execution remain AutoDex-PC integration work. The judged grasp-miss clear-view
+reset is connected; the held-key return handler can be composed as shown
+below once its commissioned callbacks exist. Returning from
 `run_live_precision_session()` closes the cameras and loses the in-memory
 runner, so `needs_handler` is a diagnostic stop, **not** a resumable paused
 trial. Supply the remaining handlers before starting a physical session.
@@ -141,6 +146,38 @@ reuses the stock Franka executor for held transfer/descent, full hand
 release, vertical exit and retract. It checks measured joints at each
 boundary. The [`failed-return evidence`](precision_insertion/failed_return_evidence.py)
 binds the plan and ordered external controller log; `observe_reset_landing()`
-then accepts a new camera-observed tabletop pose to label the reset. A robot
-PC still needs to supply the guarded withdrawal, independent controller
-records and the action handler that invokes these pieces in sequence.
+then accepts a new camera-observed tabletop pose to label the reset. The
+[`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py)
+joins these existing steps without a second camera or robot executor. It
+requires three operator-supplied numeric mappings (the key-capture view
+limits, `SessionRunner.prepare_failed_insertion_return()` return limits, and
+`SessionRunner.observe_reset_landing()` landing limits), plus:
+
+```python
+from precision_insertion.live_recovery_handlers import LiveHeldReturnHandlers
+
+def build_handlers(live):
+    planning = LiveKeyPlanningHandlers(...)  # as above
+    recovery = LiveHeldReturnHandlers(
+        live=live, planner=planner, limits=path_audit_limits,
+        state_for_observation=feedback_sampler.state_for_observation,
+        withdraw_guarded=commissioned_guarded_withdrawal,
+        record_execution=commissioned_controller_recorder,
+        key_prompt="blue precision key on the board, excluding the fixed red socket",
+        capture_parameters=commissioned_capture_parameters,
+        return_parameters=commissioned_return_parameters,
+        landing_parameters=commissioned_landing_parameters,
+    )
+    return {**planning.handlers(), **recovery.handlers(),
+            **other_commissioned_handlers}
+```
+
+`withdraw_guarded(runner, decision)` must execute the axial withdrawal and
+return `(measured_withdrawn_state, guarded_withdrawal_log_path)`.
+`record_execution(run_planned_return, report_path, runner, decision)` must
+invoke the one-shot blocking `run_planned_return()` exactly once while it
+independently records the six ordered controller phases, then return the
+`precision_insertion_failed_return_execution_v1` log path. A skipped or
+invalid execution cannot trigger key capture. Those two callbacks, plus
+physical robot/camera commissioning, are **not** implemented by this repo;
+the handler is not proof of an executed reset.

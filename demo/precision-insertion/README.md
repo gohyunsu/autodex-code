@@ -2440,10 +2440,19 @@ for the handler contract and routing. The new
 [`LiveKeyPlanningHandlers`](precision_insertion/live_planning_handlers.py)
 connects fresh key capture, complete v8 preflight, same-capture candidate
 continuation and stock AutoDex clear-view reset after a judged grasp miss.
+[`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py)
+connects a failed still-held insertion to logged axial withdrawal, the
+runner's held tabletop-return plan, stock Franka held transfer/release/clear-
+view exit, a fresh key capture on those same AutoDex cameras, and observed
+reset labeling. It calls the shared SAM/FoundPose key-capture path rather
+than introducing a separate perception pipeline. The guarded withdrawal
+and independent six-phase controller record must be supplied on the robot
+PC; the handler refuses recapture if the return was not executed and
+verified.
 A missing handler returns `needs_handler` at the exact pending phase; no
-trial result is invented. Pickup, insertion, held-key recovery logging,
-post-motion VLM observation and repose handlers are **not bundled**, so this
-is not yet an unattended robot loop.
+trial result is invented. Pickup, insertion, guarded withdrawal, independent
+controller logging, post-motion VLM observation and repose execution are
+**not bundled**, so this is not yet an unattended robot loop.
 
 `board_snap` and `init` are the metadata-preserving adapters described in
 [CAMERA_FRAME_HANDOFF.md](CAMERA_FRAME_HANDOFF.md); all `commissioned_*`

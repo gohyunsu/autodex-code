@@ -113,9 +113,12 @@ After the arm is clear, capture the key anew and call
 `runner.observe_reset_landing(..., recovery_log_path=execution_log_path)`.
 Only an observed supported tabletop pose in the original pose class and
 within the configured return-position tolerance sets `reset_success=True`.
-The action-loop handler that obtains the new camera observation and
-controller log remains AutoDex-PC integration work; neither the plan writer
-nor the motion wrapper fabricates those measurements.
+The demo's [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py)
+connects these steps to the existing action loop and reuses the initial
+AutoDex key-capture path for the landing observation. The robot PC must
+provide the real guarded-withdrawal callback, independent controller-log
+callback and exposure-time robot-state sampler. Neither the handler nor the
+motion wrapper fabricates those measurements.
 
 The first two identical `held.lift_trajectory` rows are a stationary audit
 hold, **not** an executable lift. Only `held.transfer_trajectory` and

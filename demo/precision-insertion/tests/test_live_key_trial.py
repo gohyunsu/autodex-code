@@ -15,6 +15,7 @@ from autodex.utils.sync import convert_inspire_raw  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.key_perception import KeyPoseObservation  # noqa: E402
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
+from precision_insertion.clear_view import ClearViewForPerception  # noqa: E402
 from precision_insertion.perception_evidence import SocketViewLimits  # noqa: E402
 from precision_insertion.session_runner import SessionRunner  # noqa: E402
 from precision_insertion.session_key_baseline import SessionKeyBaseline  # noqa: E402
@@ -172,6 +173,55 @@ def test_live_key_capture_state_and_preflight_order(tmp_path, monkeypatch):
                       "preflight"]
     assert result.observation.capture_id == "key_001"
     assert result.preflight.status == "sampled_planning_pass"
+
+
+def test_reset_landing_reuses_same_camera_key_capture_without_grasp_preflight(
+        tmp_path, monkeypatch):
+    arguments, events, _ = _setup(tmp_path, monkeypatch)
+    runner = arguments["runner"]
+    runner.current_decision = lambda: SimpleNamespace(
+        action="recover_held_key_then_reobserve")
+    clear = ClearViewForPerception(
+        SimpleNamespace(home=lambda **_kwargs: None),
+        lambda: _measured_state(), .02, 20., .1, 1.)
+    clear.before_key_capture = lambda: events.append("clear_view_before")
+    clear.verify_state = lambda state, **_kwargs: (
+        events.append("clear_view_at_exposure") or state)
+    omitted = {
+        "planner", "limits", "max_pose_error_deg", "axial_waypoint_step_m",
+        "max_arm_hand_skew_s", "max_hand_command_error_raw",
+        "max_arm_velocity_rad_s",
+    }
+    reset_args = {key: value for key, value in arguments.items()
+                  if key not in omitted}
+    reset_args["clear_view"] = clear
+    result = trial.capture_returned_key_for_reset(**reset_args)
+    assert result.observation.capture_id == "key_001"
+    assert result.key_evidence_dir == tmp_path / "key_evidence"
+    assert events == [
+        "clear_view_before", "compatible_renderer", "init_key",
+        "verify_frozen_camera", "capture", "admit", "save_key_evidence",
+        "verify_key_evidence", "measured_state_at_exposure",
+        "clear_view_at_exposure",
+    ]
+
+
+def test_reset_key_capture_does_not_start_before_recovery_decision(
+        tmp_path, monkeypatch):
+    arguments, events, _ = _setup(tmp_path, monkeypatch)
+    clear = ClearViewForPerception(
+        SimpleNamespace(home=lambda **_kwargs: None),
+        lambda: _measured_state(), .02, 20., .1, 1.)
+    omitted = {
+        "planner", "limits", "max_pose_error_deg", "axial_waypoint_step_m",
+        "max_arm_hand_skew_s", "max_hand_command_error_raw",
+        "max_arm_velocity_rad_s",
+    }
+    reset_args = {key: value for key, value in arguments.items()
+                  if key not in omitted}
+    with pytest.raises(ValueError, match="active held recovery"):
+        trial.capture_returned_key_for_reset(**reset_args, clear_view=clear)
+    assert events == []
 
 
 def test_optional_registered_roi_replaces_only_perception_outputs(

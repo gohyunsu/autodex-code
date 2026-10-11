@@ -16,6 +16,7 @@ from typing import Callable, Mapping
 
 from .assets import AssetPaths
 from .calibration import validate_session_camera_calibration
+from .clear_view import ClearViewForPerception
 from .key_perception import (
     KeyPoseObservation, admit_key_capture, verify_key_capture_artifacts,
     write_key_capture_artifacts,
@@ -42,6 +43,204 @@ class PreparedLiveKeyTrial:
     state: LiveRobotState
     preflight: TrialPreflight
     key_evidence_dir: Path
+
+
+@dataclass(frozen=True)
+class ReturnedKeyCapture:
+    observation: KeyPoseObservation
+    state: LiveRobotState
+    key_evidence_dir: Path
+
+
+def _capture_admitted_key(
+    *, runner: SessionRunner, init_orchestrator,
+    acquisition_metadata_for_request: Callable[[int], Mapping],
+    capture_root: Path, output: Path, capture_id: str,
+    calibrated_camera_ids: set[str], intrinsics_full: Mapping,
+    extrinsics_full: Mapping, image_hw: tuple[int, int],
+    key_prompt: str, view_limits: SocketViewLimits,
+    maximum_multiview_center_error_mm: float,
+    maximum_multiview_angle_error_deg: float,
+    maximum_socket_mask_overlap_fraction: float,
+    socket_projection_dilation_px: int, minimum_refinement_iou: float,
+    silhouette_iterations: int, silhouette_loss_threshold: float,
+    capture_timeout_s: float, image_write_timeout_s: float,
+    request_id_factory: Callable[[], int] | None,
+    registered_key_assistance: RegisteredKeyAssistance | None,
+) -> KeyPoseObservation:
+    """Shared AutoDex SAM/FoundPose capture; no candidate planning here."""
+    if (not isinstance(capture_id, str) or not _SAFE_ID.fullmatch(capture_id) or
+            not isinstance(key_prompt, str) or not key_prompt.strip() or
+            key_prompt == "object"):
+        raise ValueError("key capture needs safe ID and a specific SAM prompt")
+    if (not isinstance(image_hw, tuple) or len(image_hw) != 2 or
+            any(type(value) is not int or value <= 0 for value in image_hw) or
+            type(socket_projection_dilation_px) is not int or
+            socket_projection_dilation_px < 0 or
+            type(silhouette_iterations) is not int or
+            silhouette_iterations < 0 or
+            not 0 < minimum_refinement_iou <= 1 or
+            not 0 <= maximum_socket_mask_overlap_fraction < 1 or
+            any(not math.isfinite(float(value)) or float(value) <= 0
+                for value in (
+                    maximum_multiview_center_error_mm,
+                    maximum_multiview_angle_error_deg,
+                    silhouette_loss_threshold, capture_timeout_s,
+                    image_write_timeout_s))):
+        raise ValueError("key capture needs commissioned finite view limits")
+    view_limits.validate()
+    root = Path(capture_root).expanduser()
+    if not root.is_absolute() or not root.is_dir():
+        raise ValueError("key capture root must be an existing absolute directory")
+    output = Path(output).expanduser().resolve()
+    if output.exists():
+        raise FileExistsError(f"key evidence already exists: {output}")
+    paths = AssetPaths(runner.shared_root, runner.mode)
+    mesh = paths.raw_mesh(runner.mode.key_object)
+    repre = paths.foundpose_repre(runner.mode.key_object)
+    for name, path in (("v8 key mesh", mesh),
+                       ("key FoundPose representation", repre)):
+        if not path.is_file():
+            raise FileNotFoundError(f"{name} is missing: {path}")
+    if (not isinstance(calibrated_camera_ids, set) or
+            len(calibrated_camera_ids) < view_limits.minimum_accepted_views or
+            set(intrinsics_full) != calibrated_camera_ids or
+            set(extrinsics_full) != calibrated_camera_ids):
+        raise ValueError("key cameras differ from frozen session calibration")
+    if registered_key_assistance is not None:
+        if not isinstance(registered_key_assistance, RegisteredKeyAssistance):
+            raise TypeError("registered key assistance needs a prepared context")
+        binding = json.loads((runner.output_dir / "source_evidence_binding.json")
+                             .read_text(encoding="utf-8"))
+        baseline = registered_key_assistance.baseline
+        if (binding.get("schema") !=
+                "precision_insertion_session_source_binding_v1" or
+                binding.get("session_evidence_dir") !=
+                str(baseline.session_evidence_dir) or
+                binding.get("session_manifest_sha256") !=
+                baseline.session_manifest_sha256 or
+                getattr(registered_key_assistance.foundpose_model,
+                        "obj_name", None) != runner.mode.key_object):
+            raise ValueError("ROI assistance differs from opened key session")
+    prepare_key_silhouette(
+        init_orchestrator=init_orchestrator,
+        object_name=runner.mode.key_object, raw_mesh=mesh)
+    init_orchestrator.init_object(
+        obj_name=runner.mode.key_object, mesh_path=str(mesh),
+        assets_root=str(paths.foundpose_assets_root(runner.mode.key_object)),
+        intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
+        image_hw=image_hw, mode="live", load_silhouette=False)
+    validate_session_camera_calibration(
+        runner.calibration,
+        intrinsics_undist=init_orchestrator.intrinsics_undist,
+        extrinsics_full=init_orchestrator.extrinsics,
+        calibrated_camera_ids=calibrated_camera_ids)
+    capture = collect_key_capture(
+        init_orchestrator=init_orchestrator,
+        key_object=runner.mode.key_object, capture_id=capture_id,
+        key_prompt=key_prompt, capture_root=root.resolve(),
+        calibrated_camera_ids=calibrated_camera_ids,
+        acquisition_metadata_for_request=acquisition_metadata_for_request,
+        timeout_s=float(capture_timeout_s),
+        image_write_timeout_s=float(image_write_timeout_s),
+        request_id_factory=request_id_factory)
+    derivation = None
+    if registered_key_assistance is not None:
+        capture, derivation = derive_registered_key_capture(
+            capture=capture, assistance=registered_key_assistance,
+            intrinsics_undist=init_orchestrator.intrinsics_undist,
+            extrinsics_full=init_orchestrator.extrinsics,
+            key_object=runner.mode.key_object)
+        diagnostic_dir = write_registered_key_diagnostic(
+            capture=capture, derivation_report=derivation)
+        verify_registered_key_diagnostic(diagnostic_dir)
+    observation = admit_key_capture(
+        capture=capture, init_orchestrator=init_orchestrator,
+        mode=runner.mode, shared_root=runner.shared_root,
+        calibration=runner.calibration,
+        calibrated_camera_ids=calibrated_camera_ids,
+        view_limits=view_limits,
+        maximum_multiview_center_error_mm=maximum_multiview_center_error_mm,
+        maximum_multiview_angle_error_deg=maximum_multiview_angle_error_deg,
+        maximum_socket_mask_overlap_fraction=(
+            maximum_socket_mask_overlap_fraction),
+        socket_projection_dilation_px=socket_projection_dilation_px,
+        minimum_refinement_iou=minimum_refinement_iou,
+        silhouette_iterations=silhouette_iterations,
+        silhouette_loss_threshold=silhouette_loss_threshold)
+    if observation.phase != "tabletop":
+        raise ValueError("key capture requires a tabletop observation")
+    if derivation is None:
+        write_key_capture_artifacts(capture, observation, output)
+    else:
+        write_key_capture_artifacts(
+            capture, observation, output, derivation_report=derivation)
+    verify_key_capture_artifacts(output)
+    return observation
+
+
+def capture_returned_key_for_reset(
+    *, runner: SessionRunner, clear_view: ClearViewForPerception,
+    init_orchestrator,
+    acquisition_metadata_for_request: Callable[[int], Mapping],
+    state_for_observation: Callable[[KeyPoseObservation], LiveRobotState],
+    capture_root: Path, key_evidence_dir: Path, capture_id: str,
+    calibrated_camera_ids: set[str], intrinsics_full: Mapping,
+    extrinsics_full: Mapping, image_hw: tuple[int, int],
+    key_prompt: str, view_limits: SocketViewLimits,
+    maximum_multiview_center_error_mm: float,
+    maximum_multiview_angle_error_deg: float,
+    maximum_socket_mask_overlap_fraction: float,
+    socket_projection_dilation_px: int, minimum_refinement_iou: float,
+    max_key_state_skew_s: float,
+    capture_timeout_s: float, image_write_timeout_s: float,
+    silhouette_iterations: int = 100,
+    silhouette_loss_threshold: float = 0.003,
+    request_id_factory: Callable[[], int] | None = None,
+    registered_key_assistance: RegisteredKeyAssistance | None = None,
+) -> ReturnedKeyCapture:
+    """Use the stock key perception for reset landing, without grasp planning.
+
+    This runs while the *old* attempt remains active. Only after the admitted
+    fresh tabletop pose is recorded by ``observe_reset_landing`` may the
+    runner advance to next-trial v8 candidate filtering.
+    """
+    if (not isinstance(runner, SessionRunner) or
+            runner.current_decision().action !=
+            "recover_held_key_then_reobserve" or
+            not isinstance(clear_view, ClearViewForPerception) or
+            not callable(state_for_observation) or
+            not math.isfinite(max_key_state_skew_s) or
+            max_key_state_skew_s <= 0):
+        raise ValueError("reset key capture needs active held recovery and feedback")
+    clear_view.before_key_capture()
+    output = Path(key_evidence_dir).expanduser().resolve()
+    observation = _capture_admitted_key(
+        runner=runner, init_orchestrator=init_orchestrator,
+        acquisition_metadata_for_request=acquisition_metadata_for_request,
+        capture_root=capture_root, output=output, capture_id=capture_id,
+        calibrated_camera_ids=calibrated_camera_ids,
+        intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
+        image_hw=image_hw, key_prompt=key_prompt, view_limits=view_limits,
+        maximum_multiview_center_error_mm=maximum_multiview_center_error_mm,
+        maximum_multiview_angle_error_deg=maximum_multiview_angle_error_deg,
+        maximum_socket_mask_overlap_fraction=(
+            maximum_socket_mask_overlap_fraction),
+        socket_projection_dilation_px=socket_projection_dilation_px,
+        minimum_refinement_iou=minimum_refinement_iou,
+        silhouette_iterations=silhouette_iterations,
+        silhouette_loss_threshold=silhouette_loss_threshold,
+        capture_timeout_s=capture_timeout_s,
+        image_write_timeout_s=image_write_timeout_s,
+        request_id_factory=request_id_factory,
+        registered_key_assistance=registered_key_assistance)
+    state = clear_view.verify_state(
+        state_for_observation(observation), phase="reset_key_exposure",
+        require_fresh=False)
+    observation.require_state_alignment(
+        state_timestamp_s=state.sample_timestamp_s,
+        maximum_skew_s=max_key_state_skew_s)
+    return ReturnedKeyCapture(observation, state, output)
 
 
 def prepare_next_live_key(
@@ -163,67 +362,13 @@ def prepare_next_live_key(
     if unknown:
         raise ValueError("unsupported or runner-owned planning options: " +
                          ", ".join(sorted(str(key) for key in unknown)))
-    if registered_key_assistance is not None:
-        if not isinstance(registered_key_assistance, RegisteredKeyAssistance):
-            raise TypeError("registered key assistance needs a prepared context")
-        binding_path = runner.output_dir / "source_evidence_binding.json"
-        binding = json.loads(binding_path.read_text(encoding="utf-8"))
-        baseline = registered_key_assistance.baseline
-        if (binding.get("schema") !=
-                "precision_insertion_session_source_binding_v1" or
-                binding.get("session_evidence_dir") !=
-                str(baseline.session_evidence_dir) or
-                binding.get("session_manifest_sha256") !=
-                baseline.session_manifest_sha256 or
-                getattr(registered_key_assistance.foundpose_model,
-                        "obj_name", None) != runner.mode.key_object):
-            raise ValueError("ROI assistance differs from opened key session")
-
-    # AutoDex's unmodified silhouette loader assumes TextureVisuals always
-    # has an image. Our solid-MTL precision CAD is a counterexample. Prepare
-    # an equivalent local renderer before daemon init, keeping raw CAD bytes.
-    prepare_key_silhouette(
-        init_orchestrator=init_orchestrator,
-        object_name=runner.mode.key_object, raw_mesh=mesh)
-    init_orchestrator.init_object(
-        obj_name=runner.mode.key_object, mesh_path=str(mesh),
-        assets_root=str(paths.foundpose_assets_root(runner.mode.key_object)),
-        intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
-        image_hw=image_hw, mode="live", load_silhouette=False)
-    # Reject a changed camera rig before triggering another image request.
-    # admit_key_capture repeats this check after the actual capture.
-    validate_session_camera_calibration(
-        runner.calibration,
-        intrinsics_undist=init_orchestrator.intrinsics_undist,
-        extrinsics_full=init_orchestrator.extrinsics,
-        calibrated_camera_ids=calibrated_camera_ids)
-    capture = collect_key_capture(
-        init_orchestrator=init_orchestrator,
-        key_object=runner.mode.key_object, capture_id=capture_id,
-        key_prompt=key_prompt, capture_root=capture_root,
-        calibrated_camera_ids=calibrated_camera_ids,
+    observation = _capture_admitted_key(
+        runner=runner, init_orchestrator=init_orchestrator,
         acquisition_metadata_for_request=acquisition_metadata_for_request,
-        timeout_s=float(capture_timeout_s),
-        image_write_timeout_s=float(image_write_timeout_s),
-        request_id_factory=request_id_factory)
-    derivation = None
-    if registered_key_assistance is not None:
-        capture, derivation = derive_registered_key_capture(
-            capture=capture, assistance=registered_key_assistance,
-            intrinsics_undist=init_orchestrator.intrinsics_undist,
-            extrinsics_full=init_orchestrator.extrinsics,
-            key_object=runner.mode.key_object)
-        # Keep the source frames, rejected masks and per-view reason even if
-        # the following key-pose gate fails before a trial is created.
-        diagnostic_dir = write_registered_key_diagnostic(
-            capture=capture, derivation_report=derivation)
-        verify_registered_key_diagnostic(diagnostic_dir)
-    observation = admit_key_capture(
-        capture=capture, init_orchestrator=init_orchestrator,
-        mode=runner.mode, shared_root=runner.shared_root,
-        calibration=runner.calibration,
+        capture_root=capture_root, output=output, capture_id=capture_id,
         calibrated_camera_ids=calibrated_camera_ids,
-        view_limits=view_limits,
+        intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
+        image_hw=image_hw, key_prompt=key_prompt, view_limits=view_limits,
         maximum_multiview_center_error_mm=maximum_multiview_center_error_mm,
         maximum_multiview_angle_error_deg=maximum_multiview_angle_error_deg,
         maximum_socket_mask_overlap_fraction=(
@@ -231,15 +376,11 @@ def prepare_next_live_key(
         socket_projection_dilation_px=socket_projection_dilation_px,
         minimum_refinement_iou=minimum_refinement_iou,
         silhouette_iterations=silhouette_iterations,
-        silhouette_loss_threshold=silhouette_loss_threshold)
-    if observation.phase != "tabletop":
-        raise ValueError("fresh key trial requires a tabletop observation")
-    if derivation is None:
-        write_key_capture_artifacts(capture, observation, output)
-    else:
-        write_key_capture_artifacts(
-            capture, observation, output, derivation_report=derivation)
-    verify_key_capture_artifacts(output)
+        silhouette_loss_threshold=silhouette_loss_threshold,
+        capture_timeout_s=capture_timeout_s,
+        image_write_timeout_s=image_write_timeout_s,
+        request_id_factory=request_id_factory,
+        registered_key_assistance=registered_key_assistance)
     state = state_for_observation(observation)
     if not isinstance(state, LiveRobotState):
         raise TypeError("key trial needs measured Franka/Inspire state")
