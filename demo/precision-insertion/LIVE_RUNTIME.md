@@ -230,6 +230,9 @@ from the open AutoDex cameras, but the actual contact/withdrawal adapters
 and reviewed limits are still robot-PC inputs. Occlusion or failed pose
 admission records `held_key_pose_unavailable` and routes to held-key return;
 it does not substitute nominal squeeze or command a guessed XY offset.
+This includes a capture with no calibrated SAM/FoundPose payload in any view.
+A malformed request ID, changed frame provenance or controller failure is
+still an error requiring review, not a visual abstention.
 
 `LiveReposePlanningHandlers` now uses `DirectedReposeTargetSelector` by
 default. When a tabletop pose has no remaining usable grasp, it checks each

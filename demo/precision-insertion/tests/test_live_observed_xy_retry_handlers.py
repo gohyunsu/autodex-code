@@ -8,6 +8,7 @@ import sys
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -61,6 +62,53 @@ def test_occluded_square_retry_records_unavailable_and_keeps_withdrawal(
         encoding="utf-8"))
     assert saved["scope"] == "no_observed_key_pose_no_xy_motion"
     assert handler._pending is None
+
+
+def test_no_foundpose_payload_abstains_but_malformed_capture_does_not(
+        tmp_path, monkeypatch):
+    from precision_insertion.config import select_mode
+
+    mode = select_mode("square", 1.5)
+    runner = SimpleNamespace(
+        mode=mode, _attempt_dir=tmp_path,
+        _postlift_preflight=SimpleNamespace(
+            status="sampled_postlift_preflight_pass"))
+    launch = SimpleNamespace(
+        capture_root=tmp_path, camera_ids=("cam_a", "cam_b"))
+    cameras = SimpleNamespace(
+        launch=launch, init_orchestrator=object(),
+        acquisition_metadata_for_request=lambda _: {})
+    handler = module.LiveObservedXYRetryHandlers(
+        live=SimpleNamespace(cameras=cameras), planner=object(),
+        backend=object(), read_state=lambda: None,
+        state_for_capture=lambda _: None,
+        withdraw_guarded=lambda *_: None,
+        capture_arrival=lambda *_: None, capture_final=lambda *_: None,
+        transfer_adapter=object(), insertion_adapter=object(),
+        motion_interlock=lambda: True, retry_limits=object(),
+        transfer_limits=object(), insertion_limits=object(),
+        contact_limits=object(), transfer_commissioning_path=tmp_path,
+        insertion_watchdog_path=tmp_path,
+        insertion_contact_path=tmp_path, arrival_parameters={},
+        handoff_parameters={}, insertion_parameters={}, final_parameters={},
+        key_prompt="square insertion key",
+        key_capture_parameters={"capture_timeout_s": 5.0,
+                                "image_write_timeout_s": 2.0})
+
+    def no_payload(**_kwargs):
+        raise ValueError("FoundPose has no calibrated camera payloads")
+
+    monkeypatch.setattr(module, "collect_key_capture", no_payload)
+    with pytest.raises(module.HeldKeyRetryUnobservable) as exc:
+        handler._capture_held_key(runner)
+    assert exc.value.raw_dir is None
+
+    def malformed(**_kwargs):
+        raise ValueError("FoundPose request ID mismatch")
+
+    monkeypatch.setattr(module, "collect_key_capture", malformed)
+    with pytest.raises(ValueError, match="request ID mismatch"):
+        handler._capture_held_key(runner)
 
 
 def test_square_live_retry_connects_withdrawal_transfer_arrival_and_label(

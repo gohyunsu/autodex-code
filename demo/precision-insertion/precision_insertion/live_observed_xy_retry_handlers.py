@@ -50,7 +50,7 @@ class HeldKeyRetryCapture:
 class HeldKeyRetryUnobservable(ValueError):
     """A captured withdrawn key could not yield an admitted multiview pose."""
 
-    def __init__(self, reason: str, raw_dir: Path):
+    def __init__(self, reason: str, raw_dir: Path | None):
         super().__init__(reason)
         self.raw_dir = raw_dir
 
@@ -116,14 +116,23 @@ class LiveObservedXYRetryHandlers:
         timeout = options.pop("capture_timeout_s")
         write_timeout = options.pop("image_write_timeout_s")
         capture_id = f"retry_held_{uuid4().hex}"
-        capture = collect_key_capture(
-            init_orchestrator=cameras.init_orchestrator,
-            key_object=runner.mode.key_object, capture_id=capture_id,
-            key_prompt=self.key_prompt, capture_root=launch.capture_root,
-            calibrated_camera_ids=set(launch.camera_ids),
-            acquisition_metadata_for_request=(
-                cameras.acquisition_metadata_for_request),
-            timeout_s=timeout, image_write_timeout_s=write_timeout)
+        try:
+            capture = collect_key_capture(
+                init_orchestrator=cameras.init_orchestrator,
+                key_object=runner.mode.key_object, capture_id=capture_id,
+                key_prompt=self.key_prompt, capture_root=launch.capture_root,
+                calibrated_camera_ids=set(launch.camera_ids),
+                acquisition_metadata_for_request=(
+                    cameras.acquisition_metadata_for_request),
+                timeout_s=timeout, image_write_timeout_s=write_timeout)
+        except ValueError as exc:
+            # This one producer verdict means no camera yielded a SAM/pose
+            # payload. Treat it as a visual abstention, not permission to use
+            # the old key/hand pose. Other malformed or stale captures remain
+            # hard errors requiring operator review.
+            if str(exc) != "FoundPose has no calibrated camera payloads":
+                raise
+            raise HeldKeyRetryUnobservable(str(exc), None) from exc
         raw = RawCameraCapture(
             capture_id=capture.capture_id,
             request_id=capture.request_id,
@@ -229,7 +238,8 @@ class LiveObservedXYRetryHandlers:
                 "schema": "precision_insertion_held_retry_unobservable_v1",
                 "attempt_id": runner.active_attempt.attempt_id,
                 "candidate_id": runner.active_attempt.candidate_id,
-                "raw_capture_dir": str(exc.raw_dir),
+                "raw_capture_dir": (
+                    None if exc.raw_dir is None else str(exc.raw_dir)),
                 "withdrawal_evidence_path": str(withdrawal_path),
                 "reason": str(exc),
                 "scope": "no_observed_key_pose_no_xy_motion",
