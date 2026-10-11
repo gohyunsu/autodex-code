@@ -73,6 +73,7 @@ class VLMObservation:
     backend_model: str
     latency_s: float
     pixel_mapping: dict | None = None
+    aggregation: dict | None = None
 
     def to_record(self) -> dict:
         record = {
@@ -88,6 +89,8 @@ class VLMObservation:
         }
         if self.pixel_mapping is not None:
             record["pixel_mapping"] = self.pixel_mapping
+        if self.aggregation is not None:
+            record["aggregation"] = self.aggregation
         return record
 
 
@@ -182,6 +185,10 @@ class ZeroDexLocalBackend:
         self.vlm = vlm
         self.max_new_tokens = max_new_tokens
         self.native_pixel_coordinates = bool(require_native_pixels)
+        # A physical 20-camera checkpoint must not become one 40-image Qwen
+        # request. The observer asks for one same-camera before/after pair at
+        # a time and conservatively combines independent labels.
+        self.preferred_image_batch_size = 2
 
     @classmethod
     def from_zerodex(
@@ -428,6 +435,116 @@ def _infer_closed_set(
         _backend_model(backend), latency)
 
 
+def _per_view_consensus(
+    backend: ImageVLM, *, stage: str, frames: Sequence[LabeledFrame],
+    prompt_body: str, field: str, allowed: frozenset[str], fallback: str,
+    before: str, after: str,
+) -> VLMObservation:
+    """Bound local VLM memory to a temporal pair, then require agreement.
+
+    Abstaining/invalid views do not vote. Any conflict between decisive
+    cameras abstains rather than letting an arbitrary camera ordering win.
+    The aggregate is explicitly synthetic; exact model replies remain in
+    ``aggregation.per_view`` for replay and inspection.
+    """
+    _require_temporal_camera_pairs(frames, before=before, after=after)
+    order = _frame_order(frames)
+    cameras = sorted({frame.camera_id for frame in frames})
+    observations = []
+    for camera in cameras:
+        pair = [next(frame for frame in frames
+                     if frame.camera_id == camera and frame.phase == phase)
+                for phase in (before, after)]
+        observations.append(_infer_closed_set(
+            backend, stage=stage, frames=pair, prompt_body=prompt_body,
+            field=field, allowed=allowed, fallback=fallback))
+    parsed = _consensus_parsed(
+        [row.to_record() for row in observations], field=field,
+        fallback=fallback, cameras=cameras)
+    prompt = (
+        "Images are supplied in this exact order:\n" +
+        "\n".join(f"{index + 1}: {label}" for index, label in
+                  enumerate(order)) +
+        "\n\nEach camera's temporal pair was sent in a separate local VLM "
+        "request. The aggregate below is a deterministic consensus, not "
+        "an additional model reply.")
+    return VLMObservation(
+        stage, parsed, json.dumps(parsed, sort_keys=True), prompt, order,
+        None, _backend_model(backend),
+        sum(row.latency_s for row in observations), aggregation={
+            "schema": "precision_insertion_per_camera_vlm_consensus_v1",
+            "per_view": [row.to_record() for row in observations],
+        })
+
+
+def _consensus_parsed(
+    per_view: Sequence[dict], *, field: str, fallback: str,
+    cameras: Sequence[str],
+) -> dict:
+    votes: dict[str, list[str]] = {}
+    for camera, row in zip(cameras, per_view):
+        answer = row.get("parsed", {})
+        if (row.get("parse_error") is None and
+                answer.get(field) != fallback and
+                answer.get("evidence_views") == [camera]):
+            votes.setdefault(answer[field], []).append(camera)
+    if len(votes) == 1:
+        label, supporters = next(iter(votes.items()))
+        if len(supporters) >= 2:
+            return {field: label, "evidence": "Independent same-camera votes",
+                    "evidence_views": supporters}
+    return {field: fallback, "evidence": "Insufficient or conflicting views",
+            "evidence_views": []}
+
+
+def verify_per_view_consensus(
+    visual: dict, *, field: str, fallback: str,
+    cameras: set[str], before: str, after: str,
+) -> None:
+    """Replay a local checkpoint's deterministic consensus and raw answers."""
+    aggregation = visual.get("aggregation")
+    if aggregation is None:
+        return
+    if (not isinstance(aggregation, dict) or aggregation.get("schema") !=
+            "precision_insertion_per_camera_vlm_consensus_v1" or
+            not isinstance(aggregation.get("per_view"), list) or
+            len(aggregation["per_view"]) != len(cameras)):
+        raise ValueError("invalid per-camera VLM aggregation")
+    ordered = sorted(cameras)
+    global_order = visual.get("image_order")
+    if (not isinstance(global_order, list) or
+            len(global_order) != 2 * len(cameras)):
+        raise ValueError("per-camera VLM aggregate image order is invalid")
+    for camera, row in zip(ordered, aggregation["per_view"]):
+        expected_order = [next((label for label in global_order
+                                if isinstance(label, str) and
+                                label.startswith(f"{phase}/{camera}@")), None)
+                          for phase in (before, after)]
+        if (not isinstance(row, dict) or row.get("aggregation") is not None or
+                not isinstance(row.get("image_order"), list) or
+                any(item is None for item in expected_order) or
+                row["image_order"] != expected_order or
+                not str(row.get("prompt", "")).startswith(
+                    "Images are supplied in this exact order:\n" +
+                    "\n".join(f"{index + 1}: {label}" for index, label in
+                              enumerate(expected_order)) + "\n\n")):
+            raise ValueError("per-camera VLM pair differs from checkpoint views")
+        if row.get("parse_error") is None:
+            try:
+                raw = _parse_object(row.get("raw_answer", ""))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("per-camera VLM raw answer is invalid") from exc
+            if raw != row.get("parsed"):
+                raise ValueError("per-camera VLM raw answer changed")
+    expected = _consensus_parsed(
+        aggregation["per_view"], field=field, fallback=fallback,
+        cameras=ordered)
+    if (visual.get("parsed") != expected or
+            visual.get("raw_answer") != json.dumps(expected, sort_keys=True) or
+            visual.get("parse_error") is not None):
+        raise ValueError("per-camera VLM consensus changed")
+
+
 def observe_lift(backend: ImageVLM, frames: Sequence[LabeledFrame]) -> VLMObservation:
     """Classify whether the key follows the held hand across lift frames."""
     phases = {frame.phase for frame in frames}
@@ -435,7 +552,10 @@ def observe_lift(backend: ImageVLM, frames: Sequence[LabeledFrame]) -> VLMObserv
         raise ValueError("lift observation needs before_grasp and after_lift")
     _require_temporal_camera_pairs(
         frames, before="before_grasp", after="after_lift")
-    return _infer_closed_set(
+    infer = (_per_view_consensus if
+             getattr(backend, "preferred_image_batch_size", None) == 2
+             else _infer_closed_set)
+    return infer(
         backend, stage="post_lift", frames=frames,
         prompt_body=(
             "Track the loose key relative to its tabletop location and the "
@@ -448,6 +568,8 @@ def observe_lift(backend: ImageVLM, frames: Sequence[LabeledFrame]) -> VLMObserv
         ),
         field="class", allowed=frozenset({"held", "miss", "slip", "unobservable"}),
         fallback="unobservable",
+        **({"before": "before_grasp", "after": "after_lift"}
+           if infer is _per_view_consensus else {}),
     )
 
 
@@ -460,7 +582,10 @@ def observe_insertion_visual(
         raise ValueError("insertion observation needs preinsert and final_or_abort")
     _require_temporal_camera_pairs(
         frames, before="preinsert", after="final_or_abort")
-    return _infer_closed_set(
+    infer = (_per_view_consensus if
+             getattr(backend, "preferred_image_batch_size", None) == 2
+             else _infer_closed_set)
+    return infer(
         backend, stage="insertion_visual", frames=frames,
         prompt_body=(
             "Compare the time-ordered RAW key and socket pixels. CAD overlays "
@@ -473,6 +598,8 @@ def observe_insertion_visual(
             "normal_appearance", "partial", "rim_jam", "slip", "unobservable",
         }),
         fallback="unobservable",
+        **({"before": "preinsert", "after": "final_or_abort"}
+           if infer is _per_view_consensus else {}),
     )
 
 

@@ -22,7 +22,9 @@ from .insertion_checkpoint import (
     _admitted_measurement, _phase_rows, verify_final_insertion_capture,
     verify_preinsert_raw_capture, write_insertion_checkpoint,
 )
-from .observer import ImageVLM, observe_insertion_visual
+from .observer import (
+    ImageVLM, observe_insertion_visual, verify_per_view_consensus,
+)
 from .outcome import InsertionEvidence, judge_insertion
 from .postshift_arrival_checkpoint import PostShiftArrivalCheckpoint
 from .postshift_arrival_replan import PostShiftArrivalReplan
@@ -218,8 +220,20 @@ class _RecordedAnswer:
     def __init__(self, visual: dict):
         self.model = visual["backend_model"]
         self.answer = visual["raw_answer"]
+        aggregation = visual.get("aggregation")
+        self._per_view = (None if aggregation is None else
+                          aggregation["per_view"])
+        self._index = 0
+        if self._per_view is not None:
+            self.preferred_image_batch_size = 2
 
     def infer(self, _images, _prompt):
+        if self._per_view is not None:
+            if self._index >= len(self._per_view):
+                raise ValueError("retry replay requested an extra VLM view")
+            answer = self._per_view[self._index]["raw_answer"]
+            self._index += 1
+            return answer
         return self.answer
 
 
@@ -245,6 +259,11 @@ def verify_retry_insertion_checkpoint(
             not math.isfinite(saved["visual"]["latency_s"]) or
             saved["visual"]["latency_s"] < 0):
         raise ValueError("invalid retry insertion checkpoint")
+    camera_ids = {row["camera_id"] for row in saved["frames"]
+                  if row["phase"] == "preinsert"}
+    verify_per_view_consensus(
+        saved["visual"], field="visual_class", fallback="unobservable",
+        cameras=camera_ids, before="preinsert", after="final_or_abort")
     rebuilt = assess_retry_insertion_checkpoint(
         execution_log_path=Path(saved["execution_log_path"]),
         handoff_report_path=Path(saved["handoff_report_path"]),
@@ -266,6 +285,11 @@ def verify_retry_insertion_checkpoint(
             Path(saved["depth_admission_request"]["commissioning_path"])
             if saved.get("depth_admission_request") is not None else None))
     rebuilt["visual"]["latency_s"] = saved["visual"]["latency_s"]
+    if saved["visual"].get("aggregation") is not None:
+        for rebuilt_view, saved_view in zip(
+                rebuilt["visual"]["aggregation"]["per_view"],
+                saved["visual"]["aggregation"]["per_view"]):
+            rebuilt_view["latency_s"] = saved_view["latency_s"]
     if saved != rebuilt:
         raise ValueError("retry insertion checkpoint differs from replay")
     return saved

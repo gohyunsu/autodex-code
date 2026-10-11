@@ -25,7 +25,10 @@ from .frame_provenance import bounded_capture_skew_s, image_sha256
 from .geometry import validate_se3
 from .key_perception import KeyPoseObservation, verify_key_capture_artifacts
 from .live_robot_state import LiveRobotState
-from .observer import ImageVLM, LabeledFrame, VLMObservation, _parse_object, observe_lift
+from .observer import (
+    ImageVLM, LabeledFrame, VLMObservation, _parse_object, observe_lift,
+    verify_per_view_consensus,
+)
 from .raw_camera_capture import verify_raw_camera_capture
 from .session_bootstrap import _safe_id
 
@@ -501,6 +504,10 @@ def verify_lift_checkpoint(report_path: Path) -> dict:
                 report["decision_timestamp_s"] < after_upper):
             raise ValueError("raw lift frame times no longer bracket execution")
     visual = report["visual"]
+    verify_per_view_consensus(
+        visual, field="class", fallback="unobservable",
+        cameras=phase_cameras["before_grasp"],
+        before="before_grasp", after="after_lift")
     parsed = visual.get("parsed")
     if (not isinstance(parsed, dict) or
             parsed.get("class") not in {

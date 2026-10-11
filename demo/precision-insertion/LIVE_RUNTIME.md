@@ -90,6 +90,13 @@ not invent exposure timestamps or measured robot state. The native-pixel
 setting pads only the right/bottom edge to Qwen's patch unit without moving
 source pixels. Images outside the model's pixel-area budget still need the
 existing pixel-preserving ROI route for metric grounding.
+For temporal lift and insertion labels, local Qwen now receives one
+same-camera before/after pair per call, not all 20 camera pairs in one
+request. A positive visual class needs at least two independently agreeing
+camera replies and no conflicting decisive reply. Each raw per-camera answer,
+prompt and image order is retained inside the aggregate checkpoint record.
+This bounds the image count per model call; it does not establish VLM accuracy
+or guarantee that a full-resolution two-image call fits the robot PC GPU.
 `configure_stages(core, live, options)` returns `{"shared": {...},
 "stages": {...}, "held_relation_route": "physical"}` for the existing
 `assemble_live_components`. The core injects its own `planner` and

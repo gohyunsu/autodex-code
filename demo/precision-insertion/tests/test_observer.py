@@ -18,7 +18,7 @@ from precision_insertion.observer import (  # noqa: E402
     ZeroDexGeminiBackend,
     ZeroDexLocalBackend, load_vlm_backend,
     observe_insertion_visual, observe_lift, observe_preinsert_hold_views,
-    observe_xy_views,
+    observe_xy_views, verify_per_view_consensus,
 )
 from precision_insertion.outcome import InsertionEvidence, judge_insertion  # noqa: E402
 from precision_insertion.xy_voting import (  # noqa: E402
@@ -171,6 +171,61 @@ def test_insertion_visual_is_not_physical_depth_label():
         alignment_within_limits=True, safety_abort=False, grasp_held=True,
     ))
     assert outcome.insertion_success is None
+
+
+def test_local_temporal_vlm_queries_camera_pairs_and_replays_consensus():
+    class PairBackend(FakeBackend):
+        preferred_image_batch_size = 2
+
+    frames = [
+        LabeledFrame(camera, phase, stamp, _image())
+        for camera in ("side", "front", "top")
+        for phase, stamp in (("before_grasp", 1.0), ("after_lift", 2.0))]
+    answers = [json.dumps({
+        "class": "held", "evidence_views": [camera],
+        "evidence": "key follows hand"})
+        for camera in ("front", "side", "top")]
+    backend = PairBackend(*answers)
+    observed = observe_lift(backend, frames)
+    assert len(backend.calls) == 3
+    assert all(len(images) == 2 for images, _prompt in backend.calls)
+    assert observed.parsed["class"] == "held"
+    assert observed.parsed["evidence_views"] == ["front", "side", "top"]
+    record = observed.to_record()
+    assert len(record["aggregation"]["per_view"]) == 3
+    verify_per_view_consensus(
+        record, field="class", fallback="unobservable",
+        cameras={"front", "side", "top"},
+        before="before_grasp", after="after_lift")
+    record["aggregation"]["per_view"][0]["raw_answer"] = "{}"
+    with pytest.raises(ValueError, match="raw answer changed"):
+        verify_per_view_consensus(
+            record, field="class", fallback="unobservable",
+            cameras={"front", "side", "top"},
+            before="before_grasp", after="after_lift")
+
+
+def test_local_temporal_vlm_conflicting_views_abstain():
+    class PairBackend(FakeBackend):
+        preferred_image_batch_size = 2
+
+    frames = [
+        LabeledFrame(camera, phase, stamp, _image())
+        for camera in ("front", "side")
+        for phase, stamp in (("preinsert", 1.0),
+                             ("final_or_abort", 2.0))]
+    backend = PairBackend(*[
+        json.dumps({"visual_class": label, "evidence_views": [camera],
+                    "evidence": "visible key and rim"})
+        for camera, label in (("front", "normal_appearance"),
+                              ("side", "rim_jam"))])
+    observed = observe_insertion_visual(backend, frames)
+    assert observed.parsed["visual_class"] == "unobservable"
+    assert observed.parsed["evidence_views"] == []
+    verify_per_view_consensus(
+        observed.to_record(), field="visual_class",
+        fallback="unobservable", cameras={"front", "side"},
+        before="preinsert", after="final_or_abort")
 
 
 def test_independent_per_view_xy_calls_produce_proposals_not_motion():

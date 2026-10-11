@@ -21,7 +21,10 @@ from .frame_provenance import bounded_capture_skew_s, image_sha256
 from .guarded_axial_handoff import verify_guarded_axial_handoff
 from .guarded_trace import verify_guarded_contact_trace
 from .key_perception import verify_key_capture_artifacts
-from .observer import ImageVLM, LabeledFrame, _parse_object, observe_insertion_visual
+from .observer import (
+    ImageVLM, LabeledFrame, _parse_object, observe_insertion_visual,
+    verify_per_view_consensus,
+)
 from .outcome import InsertionEvidence, judge_insertion
 from .raw_camera_capture import (
     RawCameraCapture, verify_raw_camera_capture, write_raw_camera_capture,
@@ -549,6 +552,10 @@ def verify_insertion_checkpoint(report_path: Path) -> dict:
     if not str(report["visual"].get("prompt", "")).startswith(prefix):
         raise ValueError("insertion VLM prompt differs from saved image order")
     visual = report["visual"]
+    verify_per_view_consensus(
+        visual, field="visual_class", fallback="unobservable",
+        cameras=grouped["preinsert"], before="preinsert",
+        after="final_or_abort")
     parsed = visual.get("parsed", {})
     if visual.get("parse_error") is None:
         try:
