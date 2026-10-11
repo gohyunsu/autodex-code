@@ -82,10 +82,25 @@ def test_observed_relation_route_uses_distinct_handler(monkeypatch):
         object(), shared={"planner": object()}, stages=stages,
         enable_robot_motion=True, held_relation_route="observed")
     assert isinstance(components[3], _ObservedStage)
-    with pytest.raises(ValueError, match="physical or observed"):
+    with pytest.raises(ValueError, match="physical, observed or nominal"):
         runtime_assembly.assemble_live_components(
             object(), shared={"planner": object()}, stages=stages,
-            enable_robot_motion=True, held_relation_route="nominal")
+            enable_robot_motion=True, held_relation_route="unknown")
+
+
+def test_cylinder_nominal_route_is_explicit_and_separate(monkeypatch):
+    from precision_insertion.config import select_mode
+
+    _fake_classes(monkeypatch)
+    monkeypatch.setattr(runtime_assembly,
+                        "LiveNominalRelationHandlers", _ObservedStage)
+    live = SimpleNamespace(opened=SimpleNamespace(runner=SimpleNamespace(
+        mode=select_mode("cylinder", 20))))
+    stages = {name: {} for name in runtime_assembly.STAGE_CLASSES}
+    components = runtime_assembly.assemble_live_components(
+        live, shared={"planner": object()}, stages=stages,
+        enable_robot_motion=True, held_relation_route="nominal")
+    assert isinstance(components[3], _ObservedStage)
 
 
 def test_default_physical_calibration_lookup_is_grasp_and_mode_specific(tmp_path):
@@ -108,7 +123,7 @@ def test_cylinder_live_uses_physical_relation_for_cumulative_xy(monkeypatch):
     live = SimpleNamespace(opened=SimpleNamespace(runner=SimpleNamespace(
         mode=select_mode("cylinder", 20))))
     stages = {name: {} for name in runtime_assembly.STAGE_CLASSES}
-    with pytest.raises(ValueError, match="physical held-relation"):
+    with pytest.raises(ValueError, match="physical or experimental nominal"):
         runtime_assembly.assemble_live_components(
             live, shared={"planner": object()}, stages=stages,
             enable_robot_motion=True, held_relation_route="observed")

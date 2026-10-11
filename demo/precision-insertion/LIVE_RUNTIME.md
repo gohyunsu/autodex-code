@@ -5,8 +5,9 @@
 AutoDex file. One invocation parks FR3/opens Inspire, measures the ChArUco
 board and fixed socket, freezes their collision world, then repeatedly
 captures the key, selects a source-verified v8 grasp, executes/labels pickup,
-lift, transfer and guarded 20 mm insertion, optionally performs one VLM
-multi-view XY correction, and follows the existing recovery/repose decisions.
+lift, transfer and guarded 20 mm insertion, optionally obtains a VLM
+multi-view XY update after each eligible failure and accumulates it for the
+next physical attempt, then follows the existing recovery/repose decisions.
 It ends immediately on an admitted insertion-success label.
 
 The script does **not** include a robot/force controller or invent camera
@@ -22,11 +23,14 @@ socket capture and must return these ten components, all bound to that same
 1. `LiveKeyPlanningHandlers` — key SAM/FoundPose and v8 trial preflight.
 2. `LivePickupHandlers` — selected grasp, measured squeeze and lift plan.
 3. `LiveLiftHandlers` — executed lift and fresh Qwen grasp label.
-4. `LiveHeldRelationHandlers` — physical grasp-specific key/hand relation,
-   or `LiveObservedHeldRelationHandlers` for a newly visible post-lift key.
+4. `LiveHeldRelationHandlers` — physical grasp-specific key/hand relation;
+   `LiveObservedHeldRelationHandlers` for a newly visible post-lift key; or
+   explicitly selected `LiveNominalRelationHandlers` for an **unmeasured v8
+   key–hand hypothesis** in the repeatable-bias experiment.
 5. `LiveTaskHandlers` — transfer, arrival label, first guarded insertion.
-6. `LiveGroundedRetryHandlers` for both cylinder and square — guarded withdrawal,
-   VLM ≤1 mm XY correction, renewed planning and one guarded reattempt.
+6. `LiveGroundedRetryHandlers` — guarded withdrawal and continuous multi-view
+   cylinder XY diagnosis; an at-most-1 mm update is saved for a **new pickup**,
+   not a same-held-attempt movement. Square live execution is disabled.
 7. `LiveHeldReturnHandlers` — held-key return after failed insertion.
 8. `LiveTransferRecoveryHandlers` — optional planned held return when a
    completed transfer has measured hand-pose error but the pre-insertion VLM
@@ -129,6 +133,21 @@ candidate under the session's canonical
 Generate those grasp-specific records from independent physical pickups using
 [`INSERTION_GRASP_CALIBRATION.md`](INSERTION_GRASP_CALIBRATION.md). A missing
 record stops at the held-relation stage; no simulated key pose is substituted.
+For a deliberate no-physical-calibration **experimental cylinder** run,
+return `"held_relation_route": "nominal"` from the robot-PC stage factory.
+Its `held_relation` stage supplies `limits` (`PathAuditLimits`) and a
+`parameters` mapping containing `max_state_age_s`, `max_arm_hand_skew_s`,
+`max_hand_command_error_raw`, `max_arm_velocity_rad_s`,
+`max_postlift_arm_drift_rad`, `max_postlift_hand_drift_raw`, and
+`axial_waypoint_step_m`. These values come from the actual robot setup.
+The selected v8 `wrist_se3.npy` is an *assumed* key–hand relation, never a
+post-squeeze measurement. A fresh measured joint state, the exact 20 mm
+endpoint screen and sampled transfer/axial preflight still run. The saved
+report uses a separate nominal schema, so downstream transfer, visual
+checkpoint, guarded insertion and failed-trial diagnostic retain that
+provenance. This mode tests whether next-trial XY learning absorbs a
+repeatable translation bias; it does not establish physical held-key pose,
+axis tilt or grasp repeatability.
 
 Run:
 
@@ -216,6 +235,7 @@ The observed route uses a fresh measured key/hand relation in its next
 attempt; that direct evidence supersedes a learned wrist-bias hypothesis.
 The physical-calibration route remains the default and adds any saved
 previous-trial socket-XY compensation to the grasp-specific medoid command.
+The nominal route applies the same correction to the selected v8 hypothesis.
 The key CAD target stays centered; the corrected hand/key endpoint and held
 path are re-screened before transfer.
 
@@ -326,14 +346,15 @@ PYTHONPATH="$PWD/demo/precision-insertion:$PWD/src:/path/to/robot_pc_integration
   --endpoint-catalog /absolute/path/to/current_endpoint_catalog.json \
   --output-dir /absolute/path/to/new_run_directory \
   --integration my_robot_integration:create_integration \
-  --max-xy-retries 1 --xy-update-weight 1.0 --enable-robot-motion
+  --xy-update-weight 1.0 --enable-robot-motion
 ```
 
 Use a **new** output directory; the command does not overwrite an earlier
 run. `--enable-robot-motion` is mandatory because the first clear-view move
 occurs before camera capture. `--max-xy-retries 0` disables next-trial XY
 advice; `1` permits one candidate-specific corrected **new physical attempt**
-per session. A larger count permits cumulative failed-trial updates
+per session. By default there is no retry-count cap: eligible failures can
+continue to contribute cumulative updates
 `p_(n+1)=p_n+w*d_n`; the weight defaults to `1.0` and must lie in `(0,1]`.
 The robot integration's `RetrySessionLimits.max_total_offset_m` must allow
 the desired cumulative travel. The live CLI currently accepts only
@@ -350,9 +371,9 @@ Required recipient inputs remain distinct from code completeness:
   and FoundPose representations.
 - Acquisition-timestamped multi-view AutoDex cameras and exposure-aligned
   measured Franka/Inspire feedback.
-- Either a per-grasp physical held-relation calibration, or a visible
-  post-lift multi-view key observation plus independently commissioned total
-  surface bounds; and commissioned pickup, lift, transfer,
+- Either a per-grasp physical held-relation calibration, a visible
+  post-lift multi-view key observation, or an explicitly opted-in unmeasured
+  nominal v8 hypothesis; and commissioned pickup, lift, transfer,
   guarded-contact, withdrawal and reset controllers with their independent
   execution records.
 - Under `evidence_fused`, for a **positive verified 20 mm label**, the optional reviewed visual-depth error

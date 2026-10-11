@@ -95,7 +95,8 @@ def _build_record(
     preinsert = verify_preinsert_checkpoint(preinsert_path)
     if (postlift.get("schema") not in {
                 "precision_insertion_postlift_preflight_v1",
-                "precision_insertion_bounded_postlift_preflight_v1"} or
+                "precision_insertion_bounded_postlift_preflight_v1",
+                "precision_insertion_nominal_postlift_preflight_v1"} or
             postlift.get("status") != "sampled_postlift_preflight_pass" or
             postlift.get("robot_ready") is not False or
             postlift.get("attempt_id") != attempt_id or

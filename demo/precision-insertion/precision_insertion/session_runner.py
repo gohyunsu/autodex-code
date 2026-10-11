@@ -48,6 +48,10 @@ from .failed_return_evidence import (
     verify_failed_return_execution, write_failed_return_plan,
 )
 from .live_robot_state import LiveRobotState
+from .nominal_postlift import (
+    NominalPostLiftPreflight, plan_nominal_postlift_transfer,
+    verify_nominal_postlift_preflight, write_nominal_postlift_preflight,
+)
 from .observer import ImageVLM
 from .raw_camera_capture import verify_raw_camera_capture
 from .outcome import InsertionEvidence, judge_insertion, resolve_insertion_outcome
@@ -196,7 +200,8 @@ class SessionRunner:
         self._attempt_index = 0
         self._attempt_dir: Path | None = None
         self._postlift_preflight: (
-            PostLiftPreflight | BoundedPostLiftPreflight | None) = None
+            PostLiftPreflight | BoundedPostLiftPreflight |
+            NominalPostLiftPreflight | None) = None
         self._postlift_report_path: Path | None = None
         self._postlift_report_sha256: str | None = None
         self._postlift_index = 0
@@ -290,12 +295,16 @@ class SessionRunner:
                         "stop_for_review", "postlift_report_changed", None)
                 bounded = isinstance(
                     self._postlift_preflight, BoundedPostLiftPreflight)
-                if bounded:
+                nominal = isinstance(
+                    self._postlift_preflight, NominalPostLiftPreflight)
+                if bounded or nominal:
                     candidate_dir = (
                         AssetPaths(self.shared_root, self.mode).candidate_dir /
                         Path(*self._postlift_preflight.candidate_key))
                     try:
-                        verify_bounded_postlift_preflight(
+                        verifier = (verify_bounded_postlift_preflight if bounded
+                                    else verify_nominal_postlift_preflight)
+                        verifier(
                             self._postlift_report_path, mode=self.mode,
                             shared_root=self.shared_root,
                             candidate_dir=candidate_dir)
@@ -303,16 +312,21 @@ class SessionRunner:
                             ValueError):
                         return SessionDecision(
                             "stop_for_review",
-                            "bounded_postlift_evidence_changed", None)
+                            ("bounded_postlift_evidence_changed" if bounded
+                             else "nominal_postlift_evidence_changed"), None)
                 return SessionDecision(
                     "transfer_execution_gate_required",
                     ("bounded_postlift_path_planned_arrival_unobserved"
                      if bounded else
+                     "nominal_postlift_path_planned_relation_unmeasured"
+                     if nominal else
                      "observed_postlift_path_planned_arrival_unobserved"),
                     self._attempt.candidate_id,
                     (("commissioned_robot_and_force_limits",) +
                      (("verified_future_trial_surface_bounds",)
                       if bounded else ()) +
+                     (("nominal_key_hand_is_an_unmeasured_hypothesis",)
+                      if nominal else ()) +
                      ("independent_transfer_execution_evidence",
                       "fresh_preinsert_key_and_grip_observation")))
             if (isinstance(self._lift_checkpoint, LiftCheckpoint) and
@@ -1488,6 +1502,63 @@ class SessionRunner:
         self._postlift_index += 1
         return result
 
+    def prepare_nominal_postlift_transfer(
+        self, *, planner, joint_sample: LiveRobotState,
+        max_state_age_s: float, max_arm_hand_skew_s: float,
+        max_hand_command_error_raw: float, max_arm_velocity_rad_s: float,
+        max_postlift_arm_drift_rad: float,
+        max_postlift_hand_drift_raw: float,
+        limits: PathAuditLimits, axial_waypoint_step_m: float,
+    ) -> NominalPostLiftPreflight:
+        """Explicit v8 relation hypothesis for repeatable-bias experiments.
+
+        This does not turn the raw lift label into an observed 6D key pose.
+        Fresh measured joints, exact endpoint and sampled transfer/axial
+        planning are still required; the true squeezed relation is unknown.
+        """
+        if (self.mode.family != "cylinder" or
+                self.current_decision().action !=
+                "held_relation_evidence_required" or
+                self._attempt is None or self._attempt_dir is None or
+                self._preflight is None or
+                not isinstance(self._lift_checkpoint, LiftCheckpoint) or
+                self._lift_checkpoint.evidence_kind != "raw_visual" or
+                self._lift_checkpoint.grasp_success is not True or
+                self._lift_report_path is None or
+                self._lift_report_sha256 is None or
+                not self._lift_report_path.is_file() or
+                hashlib.sha256(self._lift_report_path.read_bytes()).hexdigest()
+                != self._lift_report_sha256):
+            raise ValueError("nominal post-lift plan needs this raw lift checkpoint")
+        result = plan_nominal_postlift_transfer(
+            planner=planner, trial=self._preflight, attempt=self._attempt,
+            calibration=self.calibration, catalog=self.catalog,
+            mode=self.mode, shared_root=self.shared_root,
+            raw_lift=self._lift_checkpoint,
+            raw_lift_report_path=self._lift_report_path,
+            joint_sample=joint_sample,
+            max_state_age_s=max_state_age_s,
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s,
+            max_postlift_arm_drift_rad=max_postlift_arm_drift_rad,
+            max_postlift_hand_drift_raw=max_postlift_hand_drift_raw,
+            limits=limits, axial_waypoint_step_m=axial_waypoint_step_m)
+        output = (self._attempt_dir / "postlift_preflights" /
+                  f"{self._postlift_index:03d}")
+        write_nominal_postlift_preflight(result, output)
+        report = output / "report.json"
+        candidate_dir = (AssetPaths(self.shared_root, self.mode).candidate_dir /
+                         Path(*result.candidate_key))
+        verify_nominal_postlift_preflight(
+            report, mode=self.mode, shared_root=self.shared_root,
+            candidate_dir=candidate_dir)
+        self._postlift_preflight = result
+        self._postlift_report_path = report
+        self._postlift_report_sha256 = hashlib.sha256(report.read_bytes()).hexdigest()
+        self._postlift_index += 1
+        return result
+
     def prepare_observed_preinsert_label(
         self, *, raw_bundle: Path, transfer_execution_path: Path,
         joint_sample: LiveRobotState, backend: ImageVLM,
@@ -1872,7 +1943,8 @@ class SessionRunner:
         held_relation = self._postlift_preflight.relation
         relation = validate_se3(
             (held_relation.T_key_hand_command
-             if isinstance(self._postlift_preflight, BoundedPostLiftPreflight)
+             if isinstance(self._postlift_preflight, (
+                 BoundedPostLiftPreflight, NominalPostLiftPreflight))
              and held_relation.T_key_hand_command is not None
              else held_relation.T_key_hand),
             name="failed-return post-lift T_key_hand")

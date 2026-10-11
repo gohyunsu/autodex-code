@@ -15,6 +15,7 @@ from .insertion_grasp_calibration import calibration_path_for_candidate
 from .labeling import LABEL_MODES
 from .live_held_relation_handlers import LiveHeldRelationHandlers
 from .live_lift_handlers import LiveLiftHandlers
+from .live_nominal_relation_handlers import LiveNominalRelationHandlers
 from .live_observed_relation_handlers import LiveObservedHeldRelationHandlers
 from .live_pickup_handlers import LivePickupHandlers
 from .live_planning_handlers import LiveKeyPlanningHandlers
@@ -72,20 +73,22 @@ def assemble_live_components(
         raise TypeError("runtime assembly needs shared and stage mappings")
     if type(enable_robot_motion) is not bool:
         raise TypeError("runtime assembly needs a boolean motion setting")
-    if held_relation_route not in {"physical", "observed"}:
-        raise ValueError("held relation route must be physical or observed")
+    if held_relation_route not in {"physical", "observed", "nominal"}:
+        raise ValueError("held relation route must be physical, observed or nominal")
     family = getattr(getattr(getattr(live, "opened", None), "runner", None),
                      "mode", None)
     if (getattr(family, "family", None) == "cylinder" and
-            held_relation_route != "physical"):
+            held_relation_route == "observed"):
         raise ValueError(
-            "cylinder live retries require the physical held-relation route")
+            "cylinder live retries need physical or experimental nominal relation")
     if label_mode not in LABEL_MODES or (
             label_mode == "manual" and not callable(manual_label_provider)):
         raise ValueError("invalid label mode or missing manual label provider")
     classes = dict(STAGE_CLASSES)
     if held_relation_route == "observed":
         classes["held_relation"] = LiveObservedHeldRelationHandlers
+    elif held_relation_route == "nominal":
+        classes["held_relation"] = LiveNominalRelationHandlers
     missing = classes.keys() - stages.keys()
     unknown = stages.keys() - classes.keys()
     if missing or unknown:

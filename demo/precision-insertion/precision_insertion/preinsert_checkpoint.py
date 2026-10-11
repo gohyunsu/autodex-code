@@ -32,6 +32,9 @@ from .held_scene_overlay import (
     build_held_scene_prediction,
 )
 from .live_robot_state import LiveRobotState
+from .nominal_postlift import (
+    NominalPostLiftPreflight, verify_nominal_postlift_preflight,
+)
 from .labeling import resolve_label
 from .observer import (
     HeldSceneView, ImageVLM, PreinsertVisualAssessment,
@@ -292,7 +295,7 @@ class PreinsertCheckpoint:
 
 def assess_preinsert_checkpoint(
     *, attempt: AttemptRecord,
-    postlift: PostLiftPreflight | BoundedPostLiftPreflight,
+    postlift: PostLiftPreflight | BoundedPostLiftPreflight | NominalPostLiftPreflight,
     postlift_report_path: Path, calibration: SessionCalibration,
     shared_root: Path, mode: TaskMode, raw_bundle: Path,
     transfer_execution_path: Path, joint_sample: LiveRobotState,
@@ -324,7 +327,8 @@ def assess_preinsert_checkpoint(
             attempt.labels["preinsert_reached"] is not None or
             attempt.candidate_id is None or
             not isinstance(postlift, (PostLiftPreflight,
-                                      BoundedPostLiftPreflight)) or
+                                      BoundedPostLiftPreflight,
+                                      NominalPostLiftPreflight)) or
             postlift.status != "sampled_postlift_preflight_pass" or
             postlift.attempt_id != attempt.attempt_id or
             "/".join(postlift.candidate_key) != attempt.candidate_id or
@@ -340,17 +344,22 @@ def assess_preinsert_checkpoint(
     postlift_path = Path(postlift_report_path).expanduser().resolve()
     saved_plan = json.loads(postlift_path.read_text(encoding="utf-8"))
     bounded = isinstance(postlift, BoundedPostLiftPreflight)
+    nominal = isinstance(postlift, NominalPostLiftPreflight)
     relation_field = ("bounded_held_relation" if bounded else
+                      "nominal_held_relation" if nominal else
                       "observed_held_relation")
-    if bounded:
+    if bounded or nominal:
         candidate_dir = (AssetPaths(Path(shared_root), mode).candidate_dir /
                          Path(*postlift.candidate_key))
-        verify_bounded_postlift_preflight(
+        verifier = (verify_bounded_postlift_preflight if bounded else
+                    verify_nominal_postlift_preflight)
+        verifier(
             postlift_path, mode=mode, shared_root=shared_root,
             candidate_dir=candidate_dir)
     held_relation = (
         postlift.relation.T_key_hand_command
-        if bounded and postlift.relation.T_key_hand_command is not None else
+        if (bounded or nominal) and
+        postlift.relation.T_key_hand_command is not None else
         postlift.relation.T_key_hand)
     if (not isinstance(saved_plan, dict) or
             not isinstance(saved_plan.get(relation_field), dict) or
@@ -406,6 +415,7 @@ def assess_preinsert_checkpoint(
             T_robot_hand_target=postlift.targets.T_robot_hand_preinsert,
             relation_source=(
                 "verified_physical_grasp_calibration" if bounded else
+                "nominal_v8_grasp_hypothesis" if nominal else
                 "observed_multiview_key_plus_wrist"),
             backend=backend, max_capture_skew_s=max_capture_skew_s,
             renderer_factory=renderer_factory, robot_loader=robot_loader))
@@ -439,11 +449,12 @@ def assess_preinsert_checkpoint(
             "joint_feedback": joint_sample.to_record(),
             "max_hand_translation_error_m": max_hand_translation_error_m,
             "max_hand_rotation_error_deg": max_hand_rotation_error_deg,
-            **({"bounded_source_context": {
+            **({"bounded_source_context" if bounded else
+                "nominal_source_context": {
                 "shared_root": str(Path(shared_root).expanduser().resolve()),
                 "family": mode.family, "gap_mm": mode.gap_mm,
                 "candidate_dir": str(candidate_dir.resolve()),
-            }} if bounded else {}),
+            }} if bounded or nominal else {}),
         })
 
 
@@ -498,19 +509,25 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
             _sha(raw / "manifest.json") != report["raw_manifest_sha256"]):
         raise ValueError("preinsert checkpoint source file changed")
     postlift_record = json.loads(postlift.read_text(encoding="utf-8"))
-    if postlift_record.get("schema") == (
-            "precision_insertion_bounded_postlift_preflight_v1"):
-        context = report.get("bounded_source_context")
+    bounded_source = postlift_record.get("schema") == (
+        "precision_insertion_bounded_postlift_preflight_v1")
+    nominal_source = postlift_record.get("schema") == (
+        "precision_insertion_nominal_postlift_preflight_v1")
+    if bounded_source or nominal_source:
+        context = report.get("bounded_source_context" if bounded_source else
+                             "nominal_source_context")
         if not isinstance(context, dict):
-            raise ValueError("bounded preinsert source context is missing")
+            raise ValueError("held-relation preinsert source context is missing")
         mode = select_mode(context["family"], context["gap_mm"])
         root = Path(context["shared_root"]).expanduser().resolve()
         key = postlift_record["candidate_key"]
         candidate_dir = AssetPaths(root, mode).candidate_dir / Path(*key)
         if (context["candidate_dir"] != str(candidate_dir.resolve()) or
                 report["candidate_id"] != "/".join(key)):
-            raise ValueError("bounded preinsert candidate context changed")
-        verify_bounded_postlift_preflight(
+            raise ValueError("preinsert candidate context changed")
+        verifier = (verify_bounded_postlift_preflight if bounded_source else
+                    verify_nominal_postlift_preflight)
+        verifier(
             postlift, mode=mode, shared_root=root,
             candidate_dir=candidate_dir)
     identity = type("AttemptRef", (), {

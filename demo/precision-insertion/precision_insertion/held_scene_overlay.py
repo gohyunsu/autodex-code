@@ -29,6 +29,7 @@ from .observer import HeldSceneView
 _RELATION_SOURCES = frozenset({
     "observed_multiview_key_plus_wrist",
     "verified_physical_grasp_calibration",
+    "nominal_v8_grasp_hypothesis",
     "mujoco_achieved_diagnostic",
     "v8_nominal_diagnostic",
 })

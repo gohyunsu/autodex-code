@@ -640,7 +640,12 @@ only an exact-candidate physical calibration, future-trial bound and fresh
 measured robot state; it is not a motion permit. The raw insertion checkpoint
 does **not** remove the held-key FoundPose requirement in
 `prepare_observed_xy_retry`. Hand occlusion remains a retry feasibility risk;
-do not silently substitute the BODex nominal relation. MuJoCo's achieved
+do not silently substitute the BODex nominal relation. The separately
+selected experimental `held_relation_route="nominal"` does use the exact v8
+candidate relation as an **unmeasured hypothesis** for the cylinder
+repeatable-bias/next-trial-XY study; its reports carry distinct provenance
+and still require fresh joints, endpoint and held-path preflights. This is
+not an observed post-squeeze pose or a physical-calibration claim. MuJoCo's achieved
 squeeze relation is a better simulation prior, but hardware drift and camera
 visibility need grasp-specific calibration or another bounded relation
 estimate before a physical transfer is authorized.

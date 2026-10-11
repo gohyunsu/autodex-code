@@ -25,6 +25,9 @@ from .lift_execution import (
     _verify_controller_commissioning, _write_new,
 )
 from .live_robot_state import LiveRobotState
+from .nominal_postlift import (
+    NominalPostLiftPreflight, verify_nominal_postlift_preflight,
+)
 from .pickup_execution import _reject_known_stock_follower
 from .postlift_preflight import PostLiftPreflight
 from .session_runner import SessionRunner
@@ -114,7 +117,8 @@ def execute_bound_held_transfer(
     attempt_dir = runner._attempt_dir
     if (attempt is None or
             not isinstance(plan, (PostLiftPreflight,
-                                  BoundedPostLiftPreflight)) or
+                                  BoundedPostLiftPreflight,
+                                  NominalPostLiftPreflight)) or
             plan.status != "sampled_postlift_preflight_pass" or
             plan.planning is None or not plan.planning.sampled_planning_pass or
             plan.planning.transfer_trajectory is None or
@@ -135,6 +139,12 @@ def execute_bound_held_transfer(
         candidate_dir = (AssetPaths(runner.shared_root, runner.mode).candidate_dir /
                          Path(*plan.candidate_key))
         verify_bounded_postlift_preflight(
+            report_path, mode=runner.mode, shared_root=runner.shared_root,
+            candidate_dir=candidate_dir)
+    elif isinstance(plan, NominalPostLiftPreflight):
+        candidate_dir = (AssetPaths(runner.shared_root, runner.mode).candidate_dir /
+                         Path(*plan.candidate_key))
+        verify_nominal_postlift_preflight(
             report_path, mode=runner.mode, shared_root=runner.shared_root,
             candidate_dir=candidate_dir)
     source = saved.get("planned_trajectories")

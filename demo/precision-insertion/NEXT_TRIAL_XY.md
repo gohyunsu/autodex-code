@@ -41,13 +41,14 @@ or second insertion while the same key remains in the hand.
    count cap for a particular experiment.
 5. A new attempt receives `wrist_correction_socket_m`; its historical
    `xy_offset_socket_m` (key CAD target offset) remains zero. After a
-   successful fresh pickup, the default physical-calibration branch uses
-   that correction to shift the *commanded wrist relation* and re-runs the
-   full-key/hand 20 mm endpoint screen and sampled held transfer/axial path.
-   The CAD key target remains centered on the socket axis. To make this
-   learned update effective on every cylinder live attempt, the live
-   assembly requires the physical held-relation route; the separate observed
-   6D relation route remains available to offline/square code.
+   successful fresh pickup, the default physical-calibration branch or the
+   explicitly opted-in experimental nominal-v8 branch uses that correction
+   to shift the *commanded wrist relation* and re-runs the full-key/hand
+   20 mm endpoint screen and sampled held transfer/axial path. The CAD key
+   target remains centered on the socket axis. The nominal branch assumes
+   the selected v8 key–hand transform; it must not be described as a measured
+   post-squeeze relation. The separately observed 6D relation route remains
+   available to offline/square code.
 6. The new attempt has its own lift, pre-insertion and final labels. A
    positive task label ends the session; another failure can contribute
    another residual if the retry count and cumulative-offset budgets remain.

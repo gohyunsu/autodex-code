@@ -20,6 +20,7 @@ from PIL import Image
 from .calibration import validate_session_camera_calibration
 from .assets import AssetPaths
 from .bounded_postlift import verify_bounded_postlift_preflight
+from .nominal_postlift import verify_nominal_postlift_preflight
 from .candidates import select_pose_candidates, validate_catalog_session
 from .config import TaskMode
 from .endpoint import screen_grasp_endpoint
@@ -249,12 +250,15 @@ def _validated_retry_trial_context(
                       "precision_insertion_postlift_preflight_v1")
     bounded_route = (postlift.get("schema") ==
                      "precision_insertion_bounded_postlift_preflight_v1")
+    nominal_route = (postlift.get("schema") ==
+                     "precision_insertion_nominal_postlift_preflight_v1")
     relation_field = ("bounded_held_relation" if bounded_route else
+                      "nominal_held_relation" if nominal_route else
                       "observed_held_relation")
     bounded_margin = postlift.get("uncertainty_margin")
     if (not isinstance(postlift.get("planning"), dict) or
             not isinstance(postlift.get(relation_field), dict) or
-            not (observed_route or bounded_route) or
+            not (observed_route or bounded_route or nominal_route) or
             postlift.get("status") != "sampled_postlift_preflight_pass" or
             postlift.get("attempt_id") != attempt.attempt_id or
             postlift.get("candidate_key") != attempt.candidate_id.split("/") or
@@ -285,7 +289,7 @@ def _validated_retry_trial_context(
         raise ValueError("retry catalogue or frozen session changed since trial")
     if postlift.get("catalog_sha256") != trial.catalog_sha256:
         raise ValueError("post-lift preflight uses another endpoint catalogue")
-    if bounded_route:
+    if bounded_route or nominal_route:
         selected = select_pose_candidates(
             catalog, expected_mode=mode,
             tabletop_pose_stem=attempt.tabletop_pose_stem)
@@ -294,7 +298,9 @@ def _validated_retry_trial_context(
         if (selected["status"] != "candidates_available" or
                 len(matches) != 1):
             raise ValueError("bounded retry grasp is no longer endpoint eligible")
-        verify_bounded_postlift_preflight(
+        verifier = (verify_bounded_postlift_preflight if bounded_route else
+                    verify_nominal_postlift_preflight)
+        verifier(
             postlift_file, mode=mode, shared_root=root,
             candidate_dir=matches[0]["candidate_dir"])
     return insertion, postlift, postlift_file, root
@@ -355,6 +361,8 @@ def assess_and_plan_observed_xy_retry(
         postlift_preflight_report_path=postlift_preflight_report_path)
     bounded_postlift = (
         postlift["schema"] == "precision_insertion_bounded_postlift_preflight_v1")
+    if postlift["schema"] == "precision_insertion_nominal_postlift_preflight_v1":
+        raise ValueError("historical observed-key retry does not use the nominal route")
     if (not isinstance(held_key_observation, KeyPoseObservation) or
             held_key_observation.phase != "held_preinsert" or
             held_key_observation.key_object != mode.key_object or

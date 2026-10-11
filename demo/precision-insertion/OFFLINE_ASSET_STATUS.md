@@ -106,6 +106,12 @@ The **code** now has a demo-local live action loop and stage handlers for
 pickup, lift, transfer, first guarded insertion, cumulative cylinder
 next-trial XY advice,
 held-key return, transfer-recovery observation and directed repose. The
+optional `held_relation_route="nominal"` explicitly runs that cylinder loop
+from the selected v8 key–hand **hypothesis** when no per-grasp physical
+calibration exists; its report cannot be mistaken for an observed or
+physically calibrated held-key pose. The default remains the physical
+calibration route. Nominal endpoint/path passes do not demonstrate actual
+post-squeeze key pose or real insertion success.
 `run_auto.py` CLI itself still only opens an evidence ledger; the new
 [`run_live.py`](run_live.py) CLI drives the live loop through an explicit
 AutoDex-PC integration module and independently commissioned controllers.
