@@ -41,6 +41,7 @@ class SolidMeshOccupancy:
     def __init__(self, mesh):
         if not mesh.is_watertight or not mesh.is_winding_consistent:
             raise ValueError("solid occupancy requires a watertight socket mesh")
+        self.bounds = np.asarray(mesh.bounds, dtype=np.float64).copy()
         self._triangles = np.asarray(mesh.triangles, dtype=np.float64)
         self._tree = mesh.triangles_tree
 
@@ -109,6 +110,7 @@ class CylinderSocketOccupancy:
                 not np.allclose(mesh.bounds, expected_bounds, atol=1e-6) or
                 not math.isclose(mesh.volume, expected_volume, rel_tol=0.001)):
             raise ValueError("socket mesh does not match validated cylinder CAD")
+        self.bounds = expected_bounds.copy()
         self._bore = bore
         self._outer = outer
         self._base = base

@@ -22,6 +22,7 @@ from .stock_tabletop import audit_tabletop_cell
 
 
 SCHEMA = "precision_insertion_square_stock_tabletop_1000_v1"
+BATCH_SCHEMA = "precision_insertion_square_stock_tabletop_batch_v2"
 SOURCE_FILES = ("wrist_se3.npy", "pregrasp_pose.npy", "grasp_pose.npy",
                 "bodex_info.npy", "coll_valid.npy", "sim_eval.json",
                 "sim_traj.json")
@@ -100,7 +101,7 @@ def promote_screened_batch(
     candidate_id_offset: int, output_manifest: Path,
     install: bool = False,
 ) -> dict:
-    """Preflight a full 1,000×5 scan; optionally append eligible seeds."""
+    """Preflight a complete screened scan; optionally append eligible seeds."""
     if mode.family != "square":
         raise ValueError("square key mode required")
     if (type(candidate_id_offset) is not int or
@@ -114,12 +115,29 @@ def promote_screened_batch(
     paths = AssetPaths(root, mode)
     summary = _json(screen / "summary.json")
     mode_record = summary.get("modes", {}).get(mode.key_object)
-    if (summary.get("schema") !=
-            "precision_insertion_square_tabletop_1000_screen_v1" or
-            summary.get("expected_proposals_per_scene") != 1000 or
+    legacy = summary.get("schema") == (
+        "precision_insertion_square_tabletop_1000_screen_v1")
+    batch = summary.get("schema") == (
+        "precision_insertion_square_tabletop_batch_screen_v2")
+    expected_count = summary.get("expected_proposals_per_scene")
+    scenes = tuple(summary.get("scene_ids", SCENES if legacy else ()))
+    if (not (legacy or batch) or
+            type(expected_count) is not int or expected_count < 1 or
+            (legacy and expected_count != 1000) or
+            (legacy and scenes != SCENES) or
+            (batch and "scene_ids" not in summary) or
+            not scenes or len(set(scenes)) != len(scenes) or
+            any(scene not in SCENES for scene in scenes) or
+            summary.get("expected_tabletop_scenes_per_key", len(scenes)) !=
+            len(scenes) or
             not isinstance(mode_record, dict) or
             mode_record.get("gap_mm") != mode.gap_mm or
             mode_record.get("socket_object") != mode.socket_object or
+            not isinstance(mode_record.get("scene_counts"), dict) or
+            set(mode_record["scene_counts"]) != set(scenes) or
+            not isinstance(mode_record.get("endpoint_counts", {}), dict) or
+            (mode_record.get("endpoint_counts") and
+             set(mode_record["endpoint_counts"]) != set(scenes)) or
             mode_record.get("errors") or
             summary.get("robot_ready") is not False):
         raise ValueError("screen is not a complete error-free square v8 batch")
@@ -131,11 +149,11 @@ def promote_screened_batch(
     eligible = set(mode_record.get("eligible_offline_grasp_ids", []))
     planned = []
     all_report_ids = set()
-    for scene in SCENES:
+    for scene in scenes:
         counts, passed = audit_tabletop_cell(
             raw_root=raw_root, pass_root=pass_root,
             key_object=mode.key_object, scene_id=scene,
-            expected_seed_count=1000)
+            expected_seed_count=expected_count)
         if counts != mode_record.get("scene_counts", {}).get(scene):
             raise ValueError(f"stock filter changed since screening: {scene}")
         for seed_id, passed_seed in passed:
@@ -180,7 +198,10 @@ def promote_screened_batch(
             shutil.copytree(raw_seed, staged)
             shutil.copy2(report_path, staged / "nominal_endpoint_screen.json")
             validation = {
-                "schema": SCHEMA, "status": "passed",
+                "schema": SCHEMA if legacy else BATCH_SCHEMA,
+                "status": "passed",
+                "source_batch_seed_count": expected_count,
+                "source_batch_scene_ids": list(scenes),
                 "source_candidate": str(raw_seed),
                 "source_sim_filter_pass": str(passed_seed),
                 "source_candidate_id": source_id,
@@ -209,6 +230,8 @@ def promote_screened_batch(
         "screen_summary": str(screen / "summary.json"),
         "screen_summary_sha256": _sha(screen / "summary.json"),
         "candidate_id_offset": candidate_id_offset,
+        "source_batch_seed_count": expected_count,
+        "source_batch_scene_ids": list(scenes),
         "installed": install, "rows": rows,
         "scope": "stock_v8_grasp_filter_plus_nominal_20mm_endpoint_only",
         "robot_ready": False,

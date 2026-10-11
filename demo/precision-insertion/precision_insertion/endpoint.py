@@ -149,7 +149,16 @@ def _mesh_pair_report(moving_mesh, fixed_model, T_fixed_moving: np.ndarray,
     # as well; any ambiguous point-in-solid vote is rejected conservatively.
     vertices = (moving_mesh.vertices @ T_fixed_moving[:3, :3].T +
                 T_fixed_moving[:3, 3])
-    occupied = fixed_occupancy.classify(vertices)
+    # A closed solid is contained in its mesh AABB. Only vertices inside or
+    # within 1 micron of that box can be inside the socket. Most Franka/
+    # Inspire visual-link vertices are far outside it; ray-casting those on
+    # every candidate dominates the complete offline grasp scan.
+    bounds = np.asarray(fixed_occupancy.bounds, dtype=np.float64)
+    if bounds.shape != (2, 3) or not np.all(np.isfinite(bounds)):
+        raise ValueError("fixed solid has invalid metric bounds")
+    possible = np.all((vertices >= bounds[0] - 1e-6) &
+                      (vertices <= bounds[1] + 1e-6), axis=1)
+    occupied = fixed_occupancy.classify(vertices[possible])
     report["surface_intersection"] = report["colliding"]
     report["moving_vertices_inside_fixed"] = occupied.inside_vertices
     report["moving_vertices_occupancy_ambiguous"] = occupied.ambiguous_vertices

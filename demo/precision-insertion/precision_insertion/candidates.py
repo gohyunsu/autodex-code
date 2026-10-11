@@ -23,7 +23,9 @@ from .config import TaskMode, select_mode
 from .geometry import validate_se3
 from .square_promotion import SCHEMA as SQUARE_PROMOTION_SCHEMA, SOURCE_FILES as SQUARE_SOURCE_FILES
 from .square_stock_promotion import (
-    SCHEMA as SQUARE_STOCK_SCHEMA, SOURCE_FILES as SQUARE_STOCK_SOURCE_FILES,
+    SCHEMA as SQUARE_STOCK_SCHEMA,
+    BATCH_SCHEMA as SQUARE_STOCK_BATCH_SCHEMA,
+    SOURCE_FILES as SQUARE_STOCK_SOURCE_FILES,
 )
 
 
@@ -134,7 +136,8 @@ def _grasp_evidence(candidate: Path, key_mesh: Path) -> tuple[bool, str]:
                     _sha256(highres_copy) or
                     _json(endpoint_file).get("endpoint_pass") is not True):
                 return False, "stale_square_source_file"
-        if validation.get("schema") == SQUARE_STOCK_SCHEMA:
+        if validation.get("schema") in (
+                SQUARE_STOCK_SCHEMA, SQUARE_STOCK_BATCH_SCHEMA):
             source_hashes = validation.get("source_file_sha256")
             endpoint_file = candidate / "nominal_endpoint_screen.json"
             if (not isinstance(source_hashes, dict) or
@@ -247,7 +250,8 @@ def build_endpoint_catalog(
             if passed and mode.family == "square":
                 validation = _json(candidate / "simulation_validation.json")
                 if validation.get("schema") in (
-                        SQUARE_PROMOTION_SCHEMA, SQUARE_STOCK_SCHEMA) and (
+                        SQUARE_PROMOTION_SCHEMA, SQUARE_STOCK_SCHEMA,
+                        SQUARE_STOCK_BATCH_SCHEMA) and (
                         validation.get("source_scene_sha256") !=
                         row["scene_sha256"] or
                         validation.get("raw_key_mesh_sha256") !=

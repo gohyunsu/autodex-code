@@ -16,10 +16,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.assets import AssetPaths  # noqa: E402
 from precision_insertion.endpoint import (  # noqa: E402
+    _mesh_pair_report,
     _nominal_inspire_hold_poses,
     _validate_geometry,
     screen_grasp_endpoint,
 )
+from precision_insertion.solid_occupancy import OccupancyResult  # noqa: E402
 
 
 def _geometry():
@@ -104,6 +106,30 @@ def test_triangle_mesh_collision_and_clearance_are_distinct():
     assert data["contained_solid"]["colliding"] is True
     assert data["contained_solid"]["moving_vertices_inside_fixed"] == 8
     assert data["contained_solid"]["minimum_surface_distance_m"] == 0.0
+
+
+def test_solid_occupancy_only_casts_vertices_near_socket_bounds(monkeypatch):
+    class Moving:
+        vertices = np.array([[0., 0., 0.], [10., 0., 0.]])
+
+    class Fixed:
+        bounds = np.array([[-.5, -.5, -.5], [.5, .5, .5]])
+
+        def classify(self, points):
+            np.testing.assert_array_equal(points, [[0., 0., 0.]])
+            return OccupancyResult(inside_vertices=1, ambiguous_vertices=0)
+
+    monkeypatch.setattr("precision_insertion.endpoint._coal_mesh",
+                        lambda _mesh: object())
+    monkeypatch.setattr("precision_insertion.endpoint._coal_models_report",
+                        lambda *_args: {
+                            "colliding": False,
+                            "minimum_surface_distance_m": 1.0,
+                        })
+    report = _mesh_pair_report(Moving(), object(), np.eye(4), Fixed())
+    assert report["colliding"] is True
+    assert report["moving_vertices_inside_fixed"] == 1
+    assert report["minimum_surface_distance_m"] == 0.0
 
 
 def test_retry_endpoint_uses_observed_key_hand_transform(tmp_path, monkeypatch):

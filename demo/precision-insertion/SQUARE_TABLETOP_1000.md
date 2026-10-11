@@ -159,3 +159,79 @@ The normal sandbox hides CUDA and exposes NAS as read-only, whereas an
 explicitly authorized host execution saw RTX 3090 and a writable NFS mount.
 The 5,000-proposal run used that host execution; later reproductions must
 check which environment they actually run in.
+
+## Supplemental tabletop pose `000` scan (square 0.5 mm)
+
+To test whether the sole uncovered tabletop pose was only a 1,000-proposal
+sampling miss, a separate RTX 3090 run used the **unchanged** BODex grasp
+config and stock v8 filter with `--seed_num 5000 --seed 12017`, the single
+`precision_key_0p5mm` object and
+[`square_tabletop_pose_0.json`](configs/square_tabletop_pose_0.json). This
+does not change the precision config's **default 1,000 proposals per scene**
+or replace any existing candidate. The complete source and screen are at
+`shared_data/AutoDex/precision_insertion/square/` as
+`table0_raw_5000_20261011`, `table0_stock_5000_20261011`, and
+`table0_screen_5000_parallel_20261011` respectively.
+
+| Filter for this extra pose `000` batch | Count |
+| --- | ---: |
+| BODex proposals | 5,000 |
+| Stock pregrasp scene collision pass | 4,625 |
+| Stock squeeze contact pass | 2,450 |
+| Stock MuJoCo squeeze/gravity stable | 277 |
+| Exact centered 20 mm key/socket and both Inspire hold poses clear | **0** |
+
+All 277 endpoint reports were generated without errors. Their key/socket
+CAD fits are non-colliding, but none has *both* the stock simulated squeeze
+and nominal AutoDex controller hold clear of the socket. This is strong
+evidence against simply resampling the same proposal distribution for pose
+`000`, **not a proof of geometric impossibility**. No seed was promoted to
+the canonical v8 pool and the current 0.5 mm catalog therefore remains at
+24 eligible grasps, covering poses `001`–`004` only. The directed repose
+path to a covered pose remains a separate requirement.
+
+The screen retains Coal's exact surface check and the same solid-interior
+check; it only omits socket-containment ray casts for vertices provably
+outside the socket's metric AABB. Eight independent CPU workers were used
+for this complete offline scan. A fresh scan of all **25** previously
+installed 0.5 mm v8 candidates produced the same eligible count (**24**),
+no errors, and an otherwise identical catalog; only the implementation
+SHA256 field changed. The new scan did not replace the canonical catalog.
+
+For a future isolated supplemental scan, use new raw/pass/screen roots and
+run the same stock solver/filter before screening:
+
+```bash
+env PYTHONPATH=demo/precision-insertion/compat \
+  /home/hyunsu/miniconda3/envs/autodex_bodex/bin/python \
+  src/grasp_generation/BODex/generate.py \
+  -c sim_inspire/precision_insertion.yml -w 1 \
+  --obj_list_file demo/precision-insertion/configs/square_0p5_full_key.txt \
+  --obj_root_dir /home/hyunsu/shared_data/object_processing \
+  --scene_type table \
+  --scene_filter_file demo/precision-insertion/configs/square_tabletop_pose_0.json \
+  --seed_num 5000 --seed 12017 --exp_name NEW_POSE_0_BATCH \
+  --output_dir /absolute/NEW_RAW
+
+env PYTHONPATH=demo/precision-insertion/compat \
+  /home/hyunsu/miniconda3/envs/autodex_bodex/bin/python -c \
+  'from src.grasp_generation.sim_filter.run_sim_filter import run_sim_filter; print(run_sim_filter("inspire", "v8", "precision_key_0p5mm", "/absolute/NEW_RAW", "/absolute/NEW_STOCK_PASS", obj_root_dir="/home/hyunsu/shared_data/object_processing"))'
+```
+
+Then pass the exact paths to:
+
+```bash
+/home/hyunsu/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/screen_square_tabletop_batch.py \
+  --shared-root /home/hyunsu/shared_data \
+  --raw-root /absolute/NEW_RAW --pass-root /absolute/NEW_STOCK_PASS \
+  --output-root /absolute/NEW_SCREEN --expected-per-scene 5000 \
+  --minimum-hand-clearance-m 0.0002 --gap-mm 0.5 --scene-id 0 --workers 8
+```
+
+The command audits the **entire** one-cell stock pass pool and writes a
+batch-v2 summary; it never describes a one-cell scan as five-pose coverage.
+`promote_square_stock_batch.py` can append eligible batch-v2 seeds under a
+non-overlapping numeric ID offset, but only after its full source and
+endpoint verification. The batch above had zero eligible seeds, so its
+promotion command was intentionally not run.

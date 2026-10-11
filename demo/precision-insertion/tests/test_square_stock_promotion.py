@@ -27,7 +27,9 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def test_append_stock_square_grasp_without_replacing_old_scene(tmp_path, monkeypatch):
+@pytest.mark.parametrize("batch_size", [1000, 5000])
+def test_append_stock_square_grasp_without_replacing_old_scene(
+        tmp_path, monkeypatch, batch_size):
     mode = select_mode("square", 1.0)
     paths = AssetPaths(tmp_path, mode)
     for path in (paths.raw_mesh(mode.key_object), paths.key_planning_mesh,
@@ -84,10 +86,13 @@ def test_append_stock_square_grasp_without_replacing_old_scene(tmp_path, monkeyp
         "minimum_required_hand_clearance_m": .0002,
         "input_sha256": {name: _sha(path) for name, path in inputs.items()},
     })
-    counts = {"generated": 1000, "mujoco_stable": 1}
+    counts = {"generated": batch_size, "mujoco_stable": 1}
     _write(screen / "summary.json", {
-        "schema": "precision_insertion_square_tabletop_1000_screen_v1",
-        "expected_proposals_per_scene": 1000,
+        "schema": ("precision_insertion_square_tabletop_1000_screen_v1"
+                   if batch_size == 1000 else
+                   "precision_insertion_square_tabletop_batch_screen_v2"),
+        "expected_proposals_per_scene": batch_size,
+        "scene_ids": ["0"], "expected_tabletop_scenes_per_key": 1,
         "raw_root": str(raw_root),
         "original_autodex_sim_candidate_root": str(pass_root),
         "minimum_hand_clearance_m": .0002,
@@ -110,6 +115,10 @@ def test_append_stock_square_grasp_without_replacing_old_scene(tmp_path, monkeyp
     new = paths.candidate_dir / "table/0/12011007"
     assert installed["installed"] is True
     assert new.is_dir() and old.is_dir() and manifest.is_file()
+    validation = json.loads((new / "simulation_validation.json").read_text())
+    assert validation["source_batch_seed_count"] == batch_size
+    assert validation["schema"] == (promotion.SCHEMA if batch_size == 1000
+                                     else promotion.BATCH_SCHEMA)
     with pytest.raises(FileExistsError):
         promotion.promote_screened_batch(**args, install=True)
 
