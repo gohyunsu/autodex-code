@@ -18,6 +18,9 @@ from .checkpoint_camera import make_checkpoint_capture
 from .franka_core import (
     FrankaFeedbackSettings, FrankaSamplingSettings, open_franka_core,
 )
+from .franka_measured_lift import (
+    FrankaMeasuredLiftAdapter, MeasuredLiftMonitorLimits,
+)
 from .live_runtime import LiveRuntimeIntegration, RunLiveOptions
 from .observer import load_vlm_backend
 from .runtime_assembly import assemble_live_components
@@ -28,6 +31,10 @@ _FEEDBACK_KEYS = frozenset(FrankaFeedbackSettings.__dataclass_fields__)
 _SAMPLING_KEYS = frozenset(FrankaSamplingSettings.__dataclass_fields__)
 _VLM_KEYS = frozenset({"mode", "model_id", "max_new_tokens",
                        "require_native_pixels", "capture_timeout_s"})
+_LIFT_MONITOR_KEYS = frozenset({
+    "daemon_binary_path", "max_force_norm_n", "max_torque_norm_nm",
+    "max_hand_tracking_error_raw", "max_state_gap_s", "minimum_samples",
+})
 _CHECKPOINT_CAPTURES = {
     "lift": {"capture_after_lift": "after_lift"},
     "task": {"capture_preinsert": "preinsert",
@@ -97,6 +104,20 @@ def _stage_factory(specification: str):
     return result
 
 
+def _lift_monitor_settings(value: object) -> tuple[Path, MeasuredLiftMonitorLimits] | None:
+    if value is None:
+        return None
+    if (not isinstance(value, dict) or set(value) != _LIFT_MONITOR_KEYS or
+            not isinstance(value.get("daemon_binary_path"), str) or
+            not Path(value["daemon_binary_path"]).is_absolute()):
+        raise ValueError("lift_monitor needs an absolute daemon path and all limits")
+    limits = MeasuredLiftMonitorLimits(**{
+        key: item for key, item in value.items()
+        if key != "daemon_binary_path"})
+    limits.validate()
+    return Path(value["daemon_binary_path"]).resolve(), limits
+
+
 def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     """Create one complete AutoDex FR3 integration for ``run_live.py``.
 
@@ -118,7 +139,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     if (not isinstance(record, dict) or record.get("schema") != _SCHEMA or
             not {"schema", "feedback", "stages_factory"} <= set(record) or
             set(record) - {"schema", "feedback", "sampling",
-                           "stages_factory", "vlm"} or
+                           "stages_factory", "vlm", "lift_monitor"} or
             not isinstance(record["feedback"], dict) or
             set(record["feedback"]) != _FEEDBACK_KEYS):
         raise ValueError("FR3 robot config needs schema, feedback and stages_factory")
@@ -128,6 +149,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
         raise ValueError("FR3 feedback thresholds must be finite and positive")
     sampling = None
     vlm = _vlm_settings(record.get("vlm"))
+    lift_monitor = _lift_monitor_settings(record.get("lift_monitor"))
     if "sampling" in record:
         supplied = record["sampling"]
         if (not isinstance(supplied, dict) or
@@ -194,6 +216,13 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             # This is the demo's completion-checked stock subclass; the
             # robot-PC factory still supplies the motion interlock and limits.
             stages["pickup"]["executor"] = core.executor
+        if (lift_monitor is not None and "lift" in stages and
+                "adapter" not in stages["lift"]):
+            binary, limits = lift_monitor
+            stages["lift"]["adapter"] = FrankaMeasuredLiftAdapter(
+                executor=core.executor, daemon_binary_path=binary,
+                trace_root=options.run_output_dir / "controller_traces",
+                limits=limits)
         return assemble_live_components(
             live, shared=shared,
             stages=stages,

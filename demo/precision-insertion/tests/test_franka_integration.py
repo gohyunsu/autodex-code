@@ -100,6 +100,61 @@ def test_franka_integration_reuses_checked_core_for_pickup_unless_overridden(
     integration.build_components(object())
 
 
+def test_franka_integration_builds_measured_lift_adapter_when_configured(
+        monkeypatch, tmp_path):
+    core = SimpleNamespace(
+        clear_view=object(), planner=object(), executor=object(),
+        read_state=lambda: None, sampler=None, close=lambda: None)
+    monkeypatch.setattr(franka_integration, "open_franka_core", lambda _: core)
+    module = ModuleType("robot_pc_stages")
+    module.configure = lambda *_: {
+        "shared": {"backend": object()}, "stages": {"lift": {}}}
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    received = []
+    adapter = object()
+
+    def build_adapter(**kwargs):
+        received.append(kwargs)
+        return adapter
+
+    monkeypatch.setattr(franka_integration, "FrankaMeasuredLiftAdapter",
+                        build_adapter)
+
+    def assemble(_live, **kwargs):
+        assert kwargs["stages"]["lift"]["adapter"] is adapter
+        return ()
+
+    monkeypatch.setattr(franka_integration, "assemble_live_components", assemble)
+    config = _config()
+    binary = tmp_path / "franka_daemon"
+    config["lift_monitor"] = {
+        "daemon_binary_path": str(binary), "max_force_norm_n": 20.,
+        "max_torque_norm_nm": 3., "max_hand_tracking_error_raw": 25.,
+        "max_state_gap_s": .05, "minimum_samples": 3}
+    options = _options(tmp_path, config)
+    franka_integration.factory(options).build_components(object())
+    assert len(received) == 1
+    assert received[0]["executor"] is core.executor
+    assert received[0]["daemon_binary_path"] == binary
+    assert received[0]["trace_root"] == options.run_output_dir / "controller_traces"
+    assert received[0]["limits"].minimum_samples == 3
+
+
+def test_invalid_lift_monitor_fails_before_robot_connection(monkeypatch, tmp_path):
+    connected = []
+    monkeypatch.setattr(franka_integration, "open_franka_core",
+                        lambda _: connected.append(True))
+    config = _config()
+    config["lift_monitor"] = {
+        "daemon_binary_path": "relative/franka_daemon",
+        "max_force_norm_n": 20., "max_torque_norm_nm": 3.,
+        "max_hand_tracking_error_raw": 25., "max_state_gap_s": .05,
+        "minimum_samples": 3}
+    with pytest.raises(ValueError, match="absolute daemon path"):
+        franka_integration.factory(_options(tmp_path, config))
+    assert connected == []
+
+
 def test_invalid_stage_factory_fails_before_robot_connection(monkeypatch, tmp_path):
     events = []
     monkeypatch.setattr(franka_integration, "open_franka_core",
