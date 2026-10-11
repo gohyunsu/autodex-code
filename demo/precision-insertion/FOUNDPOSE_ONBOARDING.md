@@ -20,10 +20,12 @@ visual words. The generator saved each `repre.pth` and reloaded it successfully.
 All four completed the generator's own representation reload. Other gap
 variants are **not** implied to be onboarded by these files.
 The read-only [saved AutoDex-camera replay](FOUNDPOSE_SAVED_REPLAY.md) tests
-these new representations on three selected real views per condition. Its
-initial per-view estimates are not sufficiently consistent to commission a
-fixture pose; the later stock multi-view refinement and independent metric
-accuracy have not yet been evaluated with these representations.
+these new representations on three selected real views per condition. Initial
+per-view estimates disagree, while a second replay shows that stock AutoDex
+multi-view IoU selection and silhouette refinement improves agreement with
+the supplied masks. Independent metric pose accuracy, repeated fixed-fixture
+measurements and live-camera equivalence are still unverified; neither replay
+commissions a fixture pose.
 
 For every object, the canonical runtime path is:
 

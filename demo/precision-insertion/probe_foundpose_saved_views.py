@@ -191,6 +191,20 @@ def _pose_spread(rows: list[dict], *, center_local: np.ndarray,
     }
 
 
+def _view_specs(explicit: list[list[str]] | None,
+                mask_dir: Path | None) -> list[tuple[str, Path]]:
+    """Select only named saved masks; `_load_view` binds each to the shot."""
+    if mask_dir is None:
+        return [(camera, Path(mask)) for camera, mask in (explicit or [])]
+    source = mask_dir.expanduser().resolve()
+    if not source.is_dir():
+        raise NotADirectoryError(source)
+    matches = sorted(source.glob("*_mask.png"))
+    if len(matches) < 2:
+        raise ValueError("saved mask directory needs at least two *_mask.png files")
+    return [(path.name[:-len("_mask.png")], path) for path in matches]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--shared-root", type=Path, required=True)
@@ -200,8 +214,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--shot-dir", type=Path, required=True)
     parser.add_argument("--calib-dir", type=Path, required=True)
     parser.add_argument("--gotrack-root", type=Path, required=True)
-    parser.add_argument("--view", nargs=2, action="append", required=True,
-                        metavar=("CAMERA_ID", "SAVED_MASK_PNG"))
+    sources = parser.add_mutually_exclusive_group(required=True)
+    sources.add_argument("--view", nargs=2, action="append",
+                         metavar=("CAMERA_ID", "SAVED_MASK_PNG"))
+    sources.add_argument("--mask-dir", type=Path,
+                         help="use all *_mask.png files from one saved evaluator")
     parser.add_argument("--output", type=Path, required=True,
                         help="new JSON report; refuses overwrite")
     args = parser.parse_args(argv)
@@ -222,12 +239,13 @@ def main(argv: list[str] | None = None) -> int:
     os.environ.setdefault("EGL_PLATFORM", "surfaceless")
     shot_dir = args.shot_dir.expanduser().resolve()
     calib_dir = args.calib_dir.expanduser().resolve()
-    cameras = [item[0] for item in args.view]
+    specs = _view_specs(args.view, args.mask_dir)
+    cameras = [item[0] for item in specs]
     if len(cameras) != len(set(cameras)):
         raise ValueError("saved-view replay needs unique camera IDs")
     views = [_load_view(shot_dir, calib_dir, camera,
-                        Path(mask).expanduser().resolve())
-             for camera, mask in args.view]
+                        mask.expanduser().resolve())
+             for camera, mask in specs]
     if len({view["shot_json_sha256"] for view in views}) != 1:
         raise ValueError("all views must be from the same shot")
     _validate_condition(views[0]["condition_id"], mode.family, name, args.part,

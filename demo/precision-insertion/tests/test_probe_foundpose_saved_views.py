@@ -120,3 +120,12 @@ def test_end_exchange_uses_geometry_center_and_unsigned_axis():
     assert equivalent["max_pairwise_rotation_deg"] == pytest.approx(180.)
     directed = probe._pose_spread(rows, end_exchange=False, **arguments)
     assert directed["max_pairwise_axis_deg"] == pytest.approx(180.)
+
+
+def test_mask_directory_selects_only_named_camera_masks(tmp_path):
+    for name in ("cam1_mask.png", "cam0_mask.png", "other.png"):
+        (tmp_path / name).write_bytes(b"test")
+    assert [(camera, path.name) for camera, path in
+            probe._view_specs(None, tmp_path)] == [
+                ("cam0", "cam0_mask.png"),
+                ("cam1", "cam1_mask.png")]
