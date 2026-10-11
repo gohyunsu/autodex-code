@@ -11,7 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.action_loop import run_session_actions  # noqa: E402
 from precision_insertion.live_orchestration import (  # noqa: E402
-    run_live_precision_session,
+    compose_live_handlers, run_live_precision_session,
 )
 from precision_insertion.session_policy import SessionDecision  # noqa: E402
 
@@ -140,6 +140,27 @@ def test_step_budget_reports_nonterminal_decision():
     }, max_steps=1)
     assert result.status == "step_budget_exhausted"
     assert result.decision.action == "reobserve_key_and_preflight"
+
+
+def test_complete_live_handler_composition_rejects_missing_or_duplicate_stages():
+    from precision_insertion.live_orchestration import _LIVE_ACTIONS
+
+    live = object()
+
+    class Component:
+        def __init__(self, names):
+            self.live = live
+            self.names = names
+
+        def handlers(self):
+            return {name: lambda *_: None for name in self.names}
+
+    with pytest.raises(ValueError, match="unconfigured actions"):
+        compose_live_handlers(live, Component({"capture_fresh_key"}))
+    with pytest.raises(ValueError, match="duplicate live actions"):
+        compose_live_handlers(
+            live, Component(_LIVE_ACTIONS), Component({"capture_fresh_key"}))
+    assert set(compose_live_handlers(live, Component(_LIVE_ACTIONS))) == _LIVE_ACTIONS
 
 
 def test_live_wrapper_keeps_cameras_open_for_repeated_actions(monkeypatch):

@@ -2808,6 +2808,23 @@ class SessionRunner:
         self._postshift_arrival_replan_committed_reports.add(report)
         return updated
 
+    def record_xy_retry_unavailable(
+        self, *, reason: str, retry_assessment_path: Path,
+        timestamp_s: float,
+    ) -> AttemptRecord:
+        """Route an evidenced VLM abstention or rejected plan to held return."""
+        if (self.current_decision().action !=
+                "guarded_withdrawal_then_xy_assessment" or
+                self._attempt is None or self._attempt_dir is None):
+            raise ValueError("no failed held insertion awaits XY assessment")
+        source = Path(retry_assessment_path).expanduser().resolve()
+        if (not source.is_file() or
+                not source.is_relative_to(self._attempt_dir.resolve())):
+            raise ValueError("retry assessment is not saved in this attempt")
+        return self._record(lambda row: row.record_xy_retry_unavailable(
+            reason=reason, timestamp_s=timestamp_s,
+            evidence_refs={"retry_assessment": str(source)}))
+
     def prepare_retry_axial_handoff(
         self, *, replan: PostShiftArrivalReplan,
         replan_report_path: Path,

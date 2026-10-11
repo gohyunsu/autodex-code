@@ -20,10 +20,10 @@ using the existing demo functions before returning. For example:
 | `postlift_observed_preflight_required`, `held_relation_evidence_required` | A visible independent key pose can use `runner.prepare_postlift_transfer()`. For the occluded-key/raw-Qwen case, [`LiveHeldRelationHandlers`](precision_insertion/live_held_relation_handlers.py) selects that *grasp's* physical key/hand calibration and calls `runner.prepare_bounded_postlift_transfer()` from fresh measured joints. It never substitutes the MuJoCo squeeze pose. |
 | `transfer_execution_gate_required` | [`LiveTaskHandlers`](precision_insertion/live_task_handlers.py) runs the existing bound held-transfer executor, captures the pre-insertion hold on the same AutoDex cameras, and records `preinsert_reached` through the runner's existing Qwen checkpoint. |
 | `await_guarded_insertion_and_observation` | The same handler prepares the axial handoff, runs the existing commissioned guarded stroke, captures final/abort views, then invokes `runner.prepare_observed_insertion_label()` using the controller's metric record. Only this checkpoint may set `insertion_success`. |
-| `guarded_withdrawal_then_xy_assessment` | Withdraw the still-held key and use the existing native-pixel multi-view cylinder landmark/XY diagnostic; replan and record a bounded retry. Do not turn a VLM suggestion directly into a motor command. |
-| `await_retry_execution_and_observation` | Execute the bound retry path and record a *new* insertion checkpoint. |
+| `guarded_withdrawal_then_xy_assessment` | [`LiveGroundedRetryHandlers`](precision_insertion/live_retry_handlers.py) withdraws the still-held key, obtains same-session multi-view tip/axis images, computes a bounded socket-frame XY correction, plans and executes one lateral hold shift, reobserves it, replans 20 mm axial insertion and records a pending retry. Abstention or a rejected plan routes to held-key return. |
+| `await_retry_execution_and_observation` | The same handler acquires a new pre-contact image, executes the bound guarded retry stroke, captures final/abort views and records a *new* insertion checkpoint. |
 | `recover_held_key_then_reobserve` | [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py) joins logged guarded withdrawal, `runner.prepare_failed_insertion_return()`, stock Franka held return/release/clear-view motion, independently recorded controller phases, a fresh key capture on the same cameras, and `runner.observe_reset_landing()`. Guarded withdrawal and independent logging remain commissioned robot-PC callbacks. |
-| `recover_key_then_reobserve` | Transfer/hold failure may leave the key in an unknown state. Do not use the held-key or grasp-miss motion blindly; require observed recovery or operator intervention before a new capture. |
+| `recover_key_then_reobserve` | [`LiveTransferRecoveryHandlers`](precision_insertion/live_transfer_recovery.py) accepts a supervised tabletop recovery record, clears the view, recaptures the key through the same SAM/FoundPose path and labels the reset. It does not pretend an unknown held-key state is safe for automatic release. |
 | `preflight_repose`, `continue_repose_seed_preflight`, `preflight_repose_release`, `preflight_alternative_repose_cell` | [`LiveReposePlanningHandlers`](precision_insertion/live_repose_handlers.py) reuses the exhausted pose's saved key capture and measured joints, selects a target pose/release cell, and invokes `runner.preflight_repose()` with directed v8 reset seeds. |
 | `repose_execution_gate_required`, `await_repose_observation` | [`LiveReposeExecutionHandlers`](precision_insertion/live_repose_execution.py) begins a separate reset attempt, invokes a commissioned executor for the planned pickup/place/clear-view exit, checks its log, recaptures the landed key on the same AutoDex cameras and records `reorient_success`. |
 
@@ -78,7 +78,14 @@ execution/checkpoint primitives. It reuses the opened AutoDex camera IDs,
 records a separate pre-insertion arrival label, and then passes the guarded
 controller's depth/alignment/force record plus final images to the insertion
 checkpoint. Its robot adapters, raw-frame producers and numeric limits are
-injected on the AutoDex PC. It does not implement the XY-retry branch yet.
+injected on the AutoDex PC. The separate
+[`LiveGroundedRetryHandlers`](precision_insertion/live_retry_handlers.py)
+composes the already implemented diagnostic, lateral controller, post-shift
+observation, renewed cuRobo/endpoint preflight, transfer, and guarded retry
+in that order. It only supports the first cylinder XY correction; even if a
+higher retry budget was configured, a second failed grounded retry returns
+the held key instead of reusing the first-shift hypothesis. Square mode's
+two-landmark XY diagnostic abstains because it cannot resolve key yaw.
 
 [`LiveReposePlanningHandlers`](precision_insertion/live_repose_handlers.py)
 handles pose exhaustion without another key exposure. Its target selector
@@ -108,6 +115,15 @@ key recapture stops. The held-insertion-failure handler invokes the same
 `collect_key_capture()` → SAM/FoundPose → `admit_key_capture()` path used by a
 new trial. It captures the returned tabletop key *before* planning the next
 grasp, and the runner labels the reset only from that fresh observation.
+
+`compose_live_handlers(live, planning, pickup, lift, held, task, retry,
+held_return, transfer_recovery, repose_planning, repose_execution)` in
+[`live_orchestration.py`](precision_insertion/live_orchestration.py) checks
+that all nonterminal action names are provided exactly once by components
+bound to the same camera session. Use it as the `build_handlers` factory's
+return value after constructing those ten components. The injected robot-PC
+adapters, motion interlock, exposure-aligned feedback, Qwen backend and
+per-stage limits are still required; composition does not supply them.
 
 `stop_for_review` is a non-success terminal result. A verified positive
 `insertion_success` produces `session_success`, which immediately returns
@@ -201,7 +217,7 @@ result = run_live_precision_session(
     launch_config_path=Path("/absolute/commissioned_session_launch.json"),
     endpoint_catalog_path=Path("/absolute/current_endpoint_catalog.json"),
     run_output_dir=Path("/absolute/new_trial_run"),
-    max_xy_retries=2, clear_view=clear_view,
+    max_xy_retries=1, clear_view=clear_view,
     build_handlers=build_handlers,
 )
 print(result.to_record())

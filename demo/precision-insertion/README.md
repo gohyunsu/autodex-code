@@ -2480,6 +2480,24 @@ than introducing a separate perception pipeline. The guarded withdrawal
 and independent six-phase controller record must be supplied on the robot
 PC; the handler refuses recapture if the return was not executed and
 verified.
+[`LiveGroundedRetryHandlers`](precision_insertion/live_retry_handlers.py)
+now connects the first failed held insertion through logged withdrawal,
+Qwen cylinder-tip/axis grounding, at-most-1 mm socket-XY lateral planning
+and execution, fresh post-shift/arrival images, renewed 20 mm axial planning,
+guarded retry execution and a fresh final VLM label. A VLM abstention or
+failed preflight records why no correction was used and routes to the held
+return. The grounded route deliberately stops after one correction; a
+second failed stroke returns the key rather than reusing stale geometry.
+[`LiveTransferRecoveryHandlers`](precision_insertion/live_transfer_recovery.py)
+connects an uncertain transfer outcome to a supervised tabletop recovery
+record and fresh key capture. [`compose_live_handlers()`](precision_insertion/live_orchestration.py)
+requires exactly one handler for every nonterminal action before the
+session begins, so an absent robot-PC callback is visible before pickup.
+A successful 20 mm label still requires an admitted physical key-depth
+measurement. The existing insertion checkpoint masks unverified controller
+depth claims, so current local tests cannot produce a genuine physical
+success label; this is a remaining producer/commissioning gap, not an
+offline grasp-asset failure.
 A missing handler returns `needs_handler` at the exact pending phase; no
 trial result is invented. The guarded pickup/lift hardware adapters, raw
 post-lift camera producer, physical held-relation calibration data, real

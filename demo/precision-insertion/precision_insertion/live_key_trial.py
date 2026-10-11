@@ -207,7 +207,8 @@ def capture_returned_key_for_reset(
     runner advance to next-trial v8 candidate filtering.
     """
     if (expected_action not in {
-            "recover_held_key_then_reobserve", "await_repose_observation"} or
+            "recover_held_key_then_reobserve", "recover_key_then_reobserve",
+            "await_repose_observation"} or
             not isinstance(runner, SessionRunner) or
             runner.current_decision().action != expected_action or
             not isinstance(clear_view, ClearViewForPerception) or

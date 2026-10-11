@@ -35,6 +35,50 @@ class LivePrecisionSession:
     clear_view: ClearViewForPerception
 
 
+_LIVE_ACTIONS = frozenset({
+    "capture_fresh_key", "reobserve_key_and_preflight",
+    "continue_candidate_preflight", "execution_gate_required",
+    "await_lift_observation", "held_relation_evidence_required",
+    "transfer_execution_gate_required",
+    "await_guarded_insertion_and_observation",
+    "guarded_withdrawal_then_xy_assessment",
+    "await_retry_execution_and_observation",
+    "recover_held_key_then_reobserve", "recover_key_then_reobserve",
+    "preflight_repose", "continue_repose_seed_preflight",
+    "preflight_repose_release", "preflight_alternative_repose_cell",
+    "repose_execution_gate_required", "await_repose_observation",
+})
+
+
+def compose_live_handlers(
+    live: LivePrecisionSession, *components: object,
+) -> dict[str, ActionHandler]:
+    """Join the demo's live stages without overriding or omitting an action.
+
+    Construct each configured component with this same ``live`` instance in
+    ``build_handlers``. Missing hardware producers remain explicit at startup,
+    rather than emerging after a pickup or contact motion.
+    """
+    joined: dict[str, ActionHandler] = {}
+    for component in components:
+        if getattr(component, "live", None) is not live:
+            raise ValueError("live handler belongs to another camera session")
+        handlers = component.handlers()
+        if not isinstance(handlers, Mapping):
+            raise TypeError("live handler component needs a handler mapping")
+        duplicates = joined.keys() & handlers.keys()
+        if duplicates:
+            raise ValueError(f"duplicate live actions: {sorted(duplicates)}")
+        if any(name not in _LIVE_ACTIONS or not callable(handler)
+               for name, handler in handlers.items()):
+            raise ValueError("unknown or non-callable live action handler")
+        joined.update(handlers)
+    missing = _LIVE_ACTIONS - joined.keys()
+    if missing:
+        raise ValueError(f"live pipeline has unconfigured actions: {sorted(missing)}")
+    return joined
+
+
 @contextmanager
 def open_live_precision_session(
     *, launch_config_path: Path, endpoint_catalog_path: Path,

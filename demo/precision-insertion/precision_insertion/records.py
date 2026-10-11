@@ -266,6 +266,30 @@ class AttemptRecord:
             "scope": "executed_observed_metric_shift_not_contact_authorization",
         })
 
+    def record_xy_retry_unavailable(
+        self, *, reason: str, timestamp_s: float,
+        evidence_refs: Mapping[str, str],
+    ) -> None:
+        """End this held-key retry branch when no usable correction exists."""
+        self._require_retryable_failure()
+        if reason not in {
+                "vlm_abstain", "lateral_preflight_failed",
+                "postshift_alignment_failed", "insertion_preflight_failed",
+                "arrival_preflight_failed"}:
+            raise ValueError("unknown XY retry-unavailable reason")
+        refs = _refs(evidence_refs, "preinsert_reached", False)
+        if "retry_assessment" not in refs:
+            raise ValueError("unavailable XY retry needs its source report")
+        timestamp = _finite_time(timestamp_s)
+        if timestamp < self.events[-1]["timestamp_s"]:
+            raise ValueError("attempt events must be in nondecreasing time order")
+        self.events.append({
+            "event_index": len(self.events), "timestamp_s": timestamp,
+            "stage": "xy_retry_unavailable", "value": reason,
+            "evidence_refs": refs,
+            "scope": "retry_branch_ended_without_insertion_motion",
+        })
+
     def record_failure(
         self, code: str, *, timestamp_s: float,
         evidence_refs: Mapping[str, str],

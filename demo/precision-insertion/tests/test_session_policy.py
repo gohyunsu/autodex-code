@@ -145,6 +145,21 @@ def test_failed_insertion_requires_withdrawal_then_bounded_1mm_retry():
             "recover_held_key_then_reobserve")
 
 
+def test_abstained_grounded_retry_returns_held_key_without_false_motion():
+    record = _attempt()
+    _grasp(record)
+    _hold(record)
+    _insert(record)
+    record.record_xy_retry_unavailable(
+        reason="vlm_abstain", timestamp_s=5.0,
+        evidence_refs={"retry_assessment": "vlm/abstain.json"})
+    assert record.xy_offset_socket_m == (0.0, 0.0)
+    assert not record._pending_retry
+    decision = decide_after_attempt(record, max_xy_retries=2)
+    assert decision.action == "recover_held_key_then_reobserve"
+    assert decision.reason == "vlm_abstain"
+
+
 def test_unknown_lost_grasp_and_safety_abort_never_offer_xy_retry():
     for kwargs in (
             {"vlm": "unobservable", "depth": (0.0201, 0.021)},

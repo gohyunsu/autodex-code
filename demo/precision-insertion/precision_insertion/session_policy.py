@@ -134,6 +134,11 @@ def decide_after_attempt(
                 "await_retry_execution_and_observation",
                 "1mm_choice_withdrawal_and_replan_recorded_not_executed",
                 "commissioned_guarded_controller", "new_insertion_observation")
+        if attempt.events[-1]["stage"] == "xy_retry_unavailable":
+            return result(
+                "recover_held_key_then_reobserve",
+                attempt.events[-1]["value"],
+                "guarded_axial_withdrawal", "verified_key_rest_or_human_recovery")
         insertion = next(
             event for event in reversed(attempt.events)
             if event["stage"] == "insertion_success")
@@ -144,9 +149,15 @@ def decide_after_attempt(
             return result("stop_for_review", "grasp_lost_or_insertion_abort")
         retry_count = sum(event["stage"] == "xy_retry"
                           for event in attempt.events)
-        if retry_count >= max_xy_retries:
+        grounded_retry_used = any(
+            event["stage"] == "xy_retry" and
+            event["value"] == "grounded_continuous_xy"
+            for event in attempt.events)
+        if retry_count >= max_xy_retries or grounded_retry_used:
             return result(
-                "recover_held_key_then_reobserve", "xy_retry_budget_exhausted",
+                "recover_held_key_then_reobserve",
+                ("grounded_retry_step_exhausted" if grounded_retry_used else
+                 "xy_retry_budget_exhausted"),
                 "guarded_axial_withdrawal", "verified_key_rest_or_human_recovery")
         return result(
             "guarded_withdrawal_then_xy_assessment", "observed_insertion_failure",

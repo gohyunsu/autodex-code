@@ -218,7 +218,7 @@ def test_session_runner_records_second_verdict_without_false_success(
     assert (tmp_path / "insertion_assessments/000/report.json").is_file()
 
 
-def test_session_runner_rim_jam_reenters_retry_policy_with_budget(
+def test_session_runner_rim_jam_exhausts_first_step_grounded_retry(
         tmp_path, monkeypatch):
     call, _, runner = _case(tmp_path, monkeypatch, visual_class="rim_jam")
     _attach_pending_attempt(tmp_path, call, runner)
@@ -226,4 +226,5 @@ def test_session_runner_rim_jam_reenters_retry_policy_with_budget(
     assert observed["outcome"]["insertion_success"] is False
     assert runner._attempt.labels["insertion_success"] is False
     decision = decide_after_attempt(runner._attempt, max_xy_retries=2)
-    assert decision.action == "guarded_withdrawal_then_xy_assessment"
+    assert decision.action == "recover_held_key_then_reobserve"
+    assert decision.reason == "grounded_retry_step_exhausted"
