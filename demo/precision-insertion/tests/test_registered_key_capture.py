@@ -22,6 +22,7 @@ from precision_insertion.live_capture import KeyCaptureInput  # noqa: E402
 from precision_insertion.registered_key_capture import (  # noqa: E402
     RegisteredKeyAssistance, derive_registered_key_capture,
     prepare_registered_key_assistance,
+    verify_registered_key_diagnostic, write_registered_key_diagnostic,
 )
 from precision_insertion.registered_key_roi import RegisteredKeyROILimits  # noqa: E402
 from precision_insertion.session_key_baseline import SessionKeyBaseline  # noqa: E402
@@ -227,3 +228,31 @@ def test_factory_uses_opened_session_and_exact_key_model(tmp_path, monkeypatch):
             board_config_path=assistance.board_config_path,
             board_id="9", limits=_limits(),
             sam_segmentor=assistance.sam_segmentor, foundpose_model=model)
+
+
+def test_failed_roi_is_saved_before_key_pose_admission(tmp_path, monkeypatch):
+    capture, assistance, _model = _inputs(tmp_path)
+    capture.capture_dir.mkdir()
+
+    class BadSegmentor:
+        def segment(self, rgb, _prompt):
+            return np.ones(rgb.shape[:2], dtype=bool)
+
+    object.__setattr__(assistance, "sam_segmentor", BadSegmentor())
+    derived, report = _derive(capture, assistance)
+    import precision_insertion.session_key_baseline as baseline_module
+    monkeypatch.setattr(
+        baseline_module, "load_session_key_baseline",
+        lambda **_kwargs: assistance.baseline)
+    diagnostic = write_registered_key_diagnostic(
+        capture=derived, derivation_report=report)
+    assert verify_registered_key_diagnostic(diagnostic)["robot_ready"] is False
+    assert report["per_view"]["cam_a"]["status"] == (
+        "registered_roi_view_rejected")
+    assert not (tmp_path / "key_evidence").exists()
+    with pytest.raises(FileExistsError):
+        write_registered_key_diagnostic(
+            capture=derived, derivation_report=report)
+    (diagnostic / "masks/cam_a.png").write_bytes(b"changed")
+    with pytest.raises(ValueError, match="diagnostic file changed"):
+        verify_registered_key_diagnostic(diagnostic)

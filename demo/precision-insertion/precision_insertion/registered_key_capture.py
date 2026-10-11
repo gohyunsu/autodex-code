@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import hashlib
+import json
 from pathlib import Path
 from typing import Callable, Mapping
 
@@ -27,6 +28,7 @@ from .registered_key_roi import (
 from .session_key_baseline import (
     SessionKeyBaseline, load_bound_session_key_baseline,
 )
+from .session_bootstrap import _safe_id, _write_json, _write_png
 
 
 _METHOD = "same_session_registered_roi_sam3_foundpose"
@@ -221,3 +223,168 @@ def derive_registered_key_capture(
         "robot_ready": False,
     }
     return derived, report
+
+
+def write_registered_key_diagnostic(
+    *, capture: KeyCaptureInput, derivation_report: dict,
+) -> Path:
+    """Persist ROI failures before the quality gate can reject this capture.
+
+    The stock capture directory already exists and contains the exact saved
+    frames. This exclusive sidecar also keeps full-frame derived masks and
+    their original pixels, so an abstaining camera remains inspectable even
+    when no KeyPoseObservation or v8 trial is produced.
+    """
+    if (not isinstance(capture, KeyCaptureInput) or
+            not isinstance(derivation_report, dict) or
+            derivation_report.get("schema") !=
+            "precision_insertion_registered_key_capture_derivation_v1" or
+            derivation_report.get("capture_id") != capture.capture_id or
+            derivation_report.get("request_id") != capture.request_id or
+            set(derivation_report.get("per_view", {})) !=
+            set(capture.images_bgr)):
+        raise ValueError("registered key diagnostic needs one bound derivation")
+    root = Path(capture.capture_dir).expanduser().resolve()
+    if not root.is_dir():
+        raise FileNotFoundError("source key capture directory is missing")
+    frame_ids = {serial: capture.masks[serial].get("frame_id")
+                 for serial in capture.images_bgr}
+    verify_frame_provenance(
+        {"request_id": capture.request_id,
+         "source": capture.frame_timestamp_source,
+         "frames": capture.frame_evidence},
+        request_id=capture.request_id,
+        images_bgr=capture.images_bgr, frame_ids=frame_ids)
+    from .key_perception import _verify_perception_derivation
+
+    _verify_perception_derivation(
+        capture.masks, capture.poses, capture.frame_evidence,
+        derivation_report, capture.capture_id, capture.request_id)
+    config = Path(derivation_report["board_config_path"])
+    raw = config.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != derivation_report[
+            "board_config_sha256"]:
+        raise ValueError("ROI board config changed before diagnostic save")
+    target = root / "registered_key_roi"
+    target.mkdir(exist_ok=False)
+    images_dir, masks_dir = target / "images", target / "masks"
+    images_dir.mkdir()
+    masks_dir.mkdir()
+    files = {}
+    payloads = {
+        "capture_id": capture.capture_id,
+        "request_id": capture.request_id,
+        "frame_timestamp_source": capture.frame_timestamp_source,
+        "frame_timestamps_s": capture.frame_timestamps_s,
+        "frame_evidence": capture.frame_evidence,
+        "derivation": derivation_report,
+        "mask_metadata": {}, "pose_payloads": {},
+    }
+    for serial, image in sorted(capture.images_bgr.items()):
+        safe = _safe_id(serial, "key camera ID")
+        image_path = images_dir / f"{safe}.png"
+        mask_path = masks_dir / f"{safe}.png"
+        files[str(image_path.relative_to(target))] = _write_png(
+            image_path, image)
+        mask = capture.masks[serial]
+        files[str(mask_path.relative_to(target))] = _write_png(
+            mask_path, np.asarray(mask["mask"], dtype=np.uint8) * 255)
+        payloads["mask_metadata"][serial] = {
+            key: value for key, value in mask.items() if key != "mask"}
+        pose = dict(capture.poses[serial])
+        if "pose_world" in pose:
+            pose["pose_world"] = np.asarray(pose["pose_world"],
+                                            dtype=float).tolist()
+        payloads["pose_payloads"][serial] = pose
+    board_path = target / "board_config.json"
+    with board_path.open("xb") as stream:
+        stream.write(raw)
+    files["board_config.json"] = hashlib.sha256(raw).hexdigest()
+    files["payloads.json"] = _write_json(target / "payloads.json", payloads)
+    _write_json(target / "evidence_manifest.json", {
+        "schema": "precision_insertion_registered_key_diagnostic_v1",
+        "capture_id": capture.capture_id,
+        "request_id": capture.request_id,
+        "files_sha256": files,
+        "scope": "saved_roi_diagnostic_even_if_key_pose_not_admitted",
+        "robot_ready": False,
+    })
+    return target
+
+
+def verify_registered_key_diagnostic(output_dir: Path) -> dict:
+    """Recheck saved ROI bytes, frame identities and session baseline source."""
+    root = Path(output_dir).expanduser().resolve()
+    manifest = json.loads((root / "evidence_manifest.json").read_text(
+        encoding="utf-8"))
+    hashes = manifest.get("files_sha256")
+    if (manifest.get("schema") !=
+            "precision_insertion_registered_key_diagnostic_v1" or
+            not isinstance(hashes, dict) or
+            not {"payloads.json", "board_config.json"} <= set(hashes)):
+        raise ValueError("invalid registered key diagnostic manifest")
+    for relative, digest in hashes.items():
+        if (not isinstance(relative, str) or
+                not isinstance(digest, str) or len(digest) != 64 or
+                any(char not in "0123456789abcdef" for char in digest)):
+            raise ValueError("invalid registered key diagnostic file digest")
+        path = (root / relative).resolve()
+        if (not path.is_relative_to(root) or not path.is_file() or
+                hashlib.sha256(path.read_bytes()).hexdigest() != digest):
+            raise ValueError("registered key diagnostic file changed")
+    payloads = json.loads((root / "payloads.json").read_text(
+        encoding="utf-8"))
+    if (payloads.get("capture_id") != manifest.get("capture_id") or
+            payloads.get("request_id") != manifest.get("request_id")):
+        raise ValueError("registered key diagnostic identity mismatch")
+    images, masks, poses, frame_ids, mask_counts = {}, {}, {}, {}, {}
+    for serial in payloads["frame_evidence"]:
+        safe = _safe_id(serial, "key camera ID")
+        image = cv2.imread(str(root / "images" / f"{safe}.png"),
+                           cv2.IMREAD_COLOR)
+        mask_image = cv2.imread(str(root / "masks" / f"{safe}.png"),
+                                cv2.IMREAD_GRAYSCALE)
+        if (image is None or mask_image is None or
+                image.shape[:2] != mask_image.shape or
+                np.any((mask_image != 0) & (mask_image != 255))):
+            raise ValueError("registered key diagnostic image/mask missing")
+        images[serial] = image
+        mask_counts[serial] = int(cv2.countNonZero(mask_image))
+        masks[serial] = payloads["mask_metadata"][serial]
+        poses[serial] = payloads["pose_payloads"][serial]
+        frame_ids[serial] = masks[serial].get("frame_id")
+    verified = verify_frame_provenance(
+        {"request_id": manifest["request_id"],
+         "source": payloads.get("frame_timestamp_source"),
+         "frames": payloads["frame_evidence"]},
+        request_id=manifest["request_id"], images_bgr=images,
+        frame_ids=frame_ids)
+    if payloads.get("frame_timestamps_s") != {
+            serial: row["timestamp_s"] for serial, row in verified.items()}:
+        raise ValueError("registered key diagnostic frame times changed")
+    # The same source contract is used by the eventual admitted key bundle.
+    from .key_perception import _verify_perception_derivation
+
+    _verify_perception_derivation(
+        masks, poses, payloads["frame_evidence"],
+        payloads["derivation"], manifest["capture_id"],
+        manifest["request_id"])
+    for serial in images:
+        pose = poses[serial]
+        status = payloads["derivation"]["per_view"][serial].get("status")
+        if pose.get("ok") is True:
+            if (pose.get("mask_pixels") != mask_counts[serial] or
+                    status != "foundpose_available"):
+                raise ValueError("registered key diagnostic pose/mask disagree")
+        elif status == "foundpose_available":
+            raise ValueError("registered key diagnostic pose/status disagree")
+    if (hashlib.sha256((root / "board_config.json").read_bytes()
+                       ).hexdigest() != payloads["derivation"].get(
+                           "board_config_sha256") or
+            set(hashes) != {
+                "payloads.json", "board_config.json",
+                *(f"images/{serial}.png" for serial in images),
+                *(f"masks/{serial}.png" for serial in images),
+            }):
+        raise ValueError("registered key diagnostic source set changed")
+    return manifest

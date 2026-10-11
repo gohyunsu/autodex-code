@@ -139,6 +139,14 @@ unselected summary, the ROI/mask QA, frame provenance, baseline source,
 board config bytes and thresholds. The verification step rechecks the session
 baseline and refuses mixed perception producers.
 
+The optional producer writes an exclusive
+`CAPTURE_DIR/registered_key_roi/` diagnostic **before** the key-pose admission
+gate. It contains the original same-request frames, derived full-frame masks,
+pose payloads, per-view refusal reasons and hashed source manifest. Thus a
+failed perception attempt remains inspectable even when there is no admitted
+key pose or v8 trial preflight. A passing trial additionally gets the normal
+`key_evidence_dir` bundle; the diagnostic does not itself grant motion.
+
 This is an **experimental opt-in** producer, not the default `run_auto.py`
 path. The socket-only procedure must still be checked physically: hashes do
 not prove that the key or a moving hand was absent. The exploratory limits

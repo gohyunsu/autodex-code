@@ -211,11 +211,19 @@ def test_optional_registered_roi_replaces_only_perception_outputs(
         output.mkdir()
 
     monkeypatch.setattr(trial, "derive_registered_key_capture", derive)
+    monkeypatch.setattr(
+        trial, "write_registered_key_diagnostic",
+        lambda **kwargs: events.append("save_roi_diagnostic") or
+        tmp_path / "roi_diagnostic")
+    monkeypatch.setattr(
+        trial, "verify_registered_key_diagnostic",
+        lambda _path: events.append("verify_roi_diagnostic") or {})
     monkeypatch.setattr(trial, "write_key_capture_artifacts", write)
     trial.prepare_next_live_key(**arguments)
     assert events == [
         "compatible_renderer", "init_key", "verify_frozen_camera",
-        "capture", "registered_roi_on_same_capture", "admit",
+        "capture", "registered_roi_on_same_capture",
+        "save_roi_diagnostic", "verify_roi_diagnostic", "admit",
         "save_key_evidence", "verify_key_evidence",
         "measured_state_at_exposure", "preflight",
     ]

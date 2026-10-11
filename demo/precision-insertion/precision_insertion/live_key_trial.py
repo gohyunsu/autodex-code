@@ -26,6 +26,7 @@ from .path_audit import PathAuditLimits
 from .perception_evidence import SocketViewLimits
 from .registered_key_capture import (
     RegisteredKeyAssistance, derive_registered_key_capture,
+    verify_registered_key_diagnostic, write_registered_key_diagnostic,
 )
 from .session_runner import SessionRunner
 from .silhouette_compat import prepare_key_silhouette
@@ -212,6 +213,11 @@ def prepare_next_live_key(
             intrinsics_undist=init_orchestrator.intrinsics_undist,
             extrinsics_full=init_orchestrator.extrinsics,
             key_object=runner.mode.key_object)
+        # Keep the source frames, rejected masks and per-view reason even if
+        # the following key-pose gate fails before a trial is created.
+        diagnostic_dir = write_registered_key_diagnostic(
+            capture=capture, derivation_report=derivation)
+        verify_registered_key_diagnostic(diagnostic_dir)
     observation = admit_key_capture(
         capture=capture, init_orchestrator=init_orchestrator,
         mode=runner.mode, shared_root=runner.shared_root,
