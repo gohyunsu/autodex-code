@@ -1874,8 +1874,9 @@ MuJoCo pass output alone is not a runtime reset pool. The subsequent local
 promotion command uses the new stage, stock-pass root and audit together.
 
 `~/shared_data/AutoDex/candidates/inspire/reset_12` is a symlink to the
-read-only `/mnt/paradex2` NFS mount on this machine. The expanded passing
-seeds were therefore written to the **local, non-runtime**
+`/mnt/paradex2` NFS mount on this machine. At the time of this historical
+run, the sandbox exposed it as read-only, so the expanded passing seeds were
+written to the **local, non-runtime**
 [handoff tree](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_handoff/reset_12)
 with a [promotion manifest](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_promotion_1000_local_handoff_20261010.json).
 No candidate was installed into the canonical NAS tree. To reproduce local
@@ -1886,8 +1887,9 @@ candidate root, audit, and a new promotion manifest path. Do not overlay the
 handoff onto an existing NAS candidate cell without checking IDs and hashes.
 The [handoff v4 audit](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/reorient_handoff_audit_v4_20261010.json)
 uses `run_pipeline.py audit-reorient --candidate-root` to count the two
-evidence-bound seeds separately from the canonical NAS audit, which still
-counts zero.
+evidence-bound seeds separately from the *then-empty* canonical NAS audit.
+Since that audit, `0_1/191` has been installed in the canonical tree; the
+current state is summarized in [OFFLINE_ASSET_STATUS.md](OFFLINE_ASSET_STATUS.md).
 An optional read-only **pose-fidelity** audit applies the exact drift/axis
 gate also used by the direct-v8 reset seed loader. Supply *both* limits;
 without them, `stable_reset_seed_counts_by_height_cm` means only an
@@ -1914,8 +1916,10 @@ contains both candidates, audit reports, v8 key scenes, key and six cylinder
 socket object-processing assets, fixture geometries, and a handoff README.
 Its SHA-256 is
 `6b83a94026074f925c57567dd754771e01cbfda16491d2e8a10ba647894acc98`.
-The byte-identical archive is now in the [ParaDex2 NAS handoff](/mnt/paradex2/hyunsu/autodex_precision_insertion_handoffs/cylinder_reset_v8_20261011_6b83a940.tar.gz),
-but **not** in the canonical runtime reset candidate tree. Scene JSONs embed this host's
+The byte-identical archive is now in the [ParaDex2 NAS handoff](/mnt/paradex2/hyunsu/autodex_precision_insertion_handoffs/cylinder_reset_v8_20261011_6b83a940.tar.gz).
+The archive itself is a staging handoff, not an automatic canonical-tree
+installation; `0_1/191` was installed separately after fidelity screening.
+Scene JSONs embed this host's
 absolute mesh/URDF paths; a different AutoDex-host shared root requires
 scene regeneration and fresh evidence validation, not a blind path edit.
 The demo-local [reset handoff rehydration tool](RESET_HANDOFF_RELOCATION.md)
