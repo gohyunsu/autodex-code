@@ -22,6 +22,7 @@ from .franka_measured_lift import (
     FrankaMeasuredLiftAdapter, MeasuredLiftMonitorLimits,
 )
 from .live_runtime import LiveRuntimeIntegration, RunLiveOptions
+from .labeling import terminal_label_provider
 from .observer import load_vlm_backend
 from .runtime_assembly import assemble_live_components
 
@@ -245,6 +246,10 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             live, shared=shared,
             stages=stages,
             enable_robot_motion=options.enable_robot_motion,
-            held_relation_route=parameters.get("held_relation_route", "physical"))
+            held_relation_route=parameters.get("held_relation_route", "physical"),
+            label_mode=options.label_mode,
+            manual_label_provider=(
+                terminal_label_provider(options.annotator)
+                if options.label_mode == "manual" else None))
 
     return LiveRuntimeIntegration(core.clear_view, components, core.close)

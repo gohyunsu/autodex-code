@@ -26,7 +26,7 @@ from .observer import (
     ImageVLM, LabeledFrame, _parse_object, observe_insertion_visual,
     verify_per_view_consensus,
 )
-from .outcome import InsertionEvidence, judge_insertion
+from .outcome import InsertionEvidence, resolve_insertion_outcome
 from .raw_camera_capture import (
     RawCameraCapture, verify_raw_camera_capture, write_raw_camera_capture,
 )
@@ -322,6 +322,8 @@ def assess_insertion_checkpoint(
     minimum_visual_views: int = 2,
     depth_report_path: Path | None = None,
     depth_commissioning_path: Path | None = None,
+    label_mode: str = "evidence_fused",
+    manual_annotation: dict | None = None,
 ) -> dict:
     """Fuse a saved multiview comparison with independent metric assertions."""
     _safe_id(attempt_id, "attempt ID")
@@ -416,7 +418,9 @@ def assess_insertion_checkpoint(
         if sensor["key_depth_interval_m"] is not None else None,
         sensor["key_depth_source"], sensor["alignment_within_limits"],
         sensor["safety_abort"], sensor["grasp_held"])
-    outcome = judge_insertion(evidence, target_depth_m=target_depth_m)
+    outcome = resolve_insertion_outcome(
+        evidence, target_depth_m=target_depth_m,
+        label_mode=label_mode, manual_annotation=manual_annotation)
     return {
         "schema": "precision_insertion_observed_checkpoint_v1",
         "attempt_id": attempt_id, "candidate_id": candidate_id,
@@ -445,7 +449,9 @@ def assess_insertion_checkpoint(
         "max_preinsert_age_s": max_preinsert_age_s,
         "max_final_observation_gap_s": max_final_observation_gap_s,
         "effective_vlm_class": visual_class,
-        "evidence": asdict(evidence), "outcome": outcome.to_record(),
+        "label_mode": label_mode,
+        "manual_annotation": manual_annotation,
+        "evidence": asdict(evidence), "outcome": outcome,
         "scope": "saved_images_and_external_metrics_not_contact_control_or_producer_certification",
         "robot_ready": False,
     }
@@ -626,9 +632,12 @@ def verify_insertion_checkpoint(report_path: Path) -> dict:
         if sensor["key_depth_interval_m"] is not None else None,
         sensor["key_depth_source"], sensor["alignment_within_limits"],
         sensor["safety_abort"], sensor["grasp_held"])
-    outcome = judge_insertion(evidence, target_depth_m=report["target_depth_m"])
+    outcome = resolve_insertion_outcome(
+        evidence, target_depth_m=report["target_depth_m"],
+        label_mode=report.get("label_mode", "evidence_fused"),
+        manual_annotation=report.get("manual_annotation"))
     serialized_evidence = json.loads(json.dumps(asdict(evidence)))
     if (serialized_evidence != report["evidence"] or
-            outcome.to_record() != report["outcome"]):
+            outcome != report["outcome"]):
         raise ValueError("insertion label conflicts with bound evidence")
     return report

@@ -36,6 +36,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="FR3 config for precision_insertion.franka_integration:factory")
     parser.add_argument("--max-xy-retries", type=int, choices=(0, 1), default=1)
     parser.add_argument("--max-steps", type=int, default=100)
+    parser.add_argument("--label-mode", choices=(
+        "vlm_only", "manual", "evidence_fused"), default="vlm_only",
+        help="task labels: VLM only, interactive human, or legacy sensor fusion")
+    parser.add_argument("--annotator", help="required with --label-mode manual")
     parser.add_argument("--enable-robot-motion", action="store_true",
                         help="required: initial clear-view and trial motions")
     args = parser.parse_args(argv)
@@ -46,7 +50,8 @@ def main(argv: list[str] | None = None) -> int:
         max_xy_retries=args.max_xy_retries,
         max_steps=args.max_steps,
         enable_robot_motion=args.enable_robot_motion,
-        robot_config_path=args.robot_config)
+        robot_config_path=args.robot_config,
+        label_mode=args.label_mode, annotator=args.annotator)
     result = run_integrated_live_session(
         options, integration_spec=args.integration)
     payload = result.to_record()

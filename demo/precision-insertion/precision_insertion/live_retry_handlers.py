@@ -19,6 +19,7 @@ from .action_loop import ActionHandler
 from .frame_provenance import verify_frame_provenance
 from .lateral_execution import execute_bound_lateral_shift
 from .live_depth import prepare_live_depth_evidence
+from .labeling import request_annotation
 from .live_robot_state import LiveRobotState
 from .observer import LabeledFrame
 from .postshift_transfer_execution import execute_bound_postshift_transfer
@@ -79,6 +80,8 @@ class LiveGroundedRetryHandlers:
     depth_limits: object | None = None
     depth_capture_parameters: Mapping[str, float] = field(default_factory=dict)
     depth_commissioning_path: Path | None = None
+    label_mode: str = "evidence_fused"
+    manual_label_provider: Callable | None = None
     enable_robot_motion: bool = False
     decision_time: Callable[[], float] = time.time
     _pending: dict | None = field(default=None, init=False)
@@ -376,6 +379,12 @@ class LiveGroundedRetryHandlers:
             depth_report_path=depth_path,
             depth_commissioning_path=(
                 self.depth_commissioning_path if depth_path is not None else None),
+            label_mode=self.label_mode,
+            manual_annotation=request_annotation(
+                mode=self.label_mode, provider=self.manual_label_provider,
+                stage="insertion_success", evidence_dirs=(before, after),
+                attempt_id=runner.active_attempt.attempt_id,
+                candidate_id=runner.active_attempt.candidate_id),
             **dict(self.final_parameters))
         self._pending = None
 

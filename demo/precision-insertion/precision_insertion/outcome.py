@@ -106,3 +106,31 @@ def judge_insertion(
             lower is None or lower < target_depth_m):
         return outcome(None, "success_evidence_incomplete")
     return outcome(True, "vlm_normal_and_verified_key_depth")
+
+
+def resolve_insertion_outcome(
+    evidence: InsertionEvidence, *, target_depth_m: float,
+    label_mode: str = "evidence_fused", manual_annotation: dict | None = None,
+) -> dict:
+    """Return a task label while retaining independent metric diagnostics.
+
+    In ``vlm_only`` and ``manual`` modes the result is an experimental label,
+    not a claim that measured key penetration reached 20 mm. A controller
+    abort still stops motion through its own execution path.
+    """
+    from .labeling import resolve_label
+
+    fused = judge_insertion(evidence, target_depth_m=target_depth_m)
+    value, reason = resolve_label(
+        stage="insertion_success", mode=label_mode,
+        visual_class=evidence.vlm_class,
+        fused_value=fused.insertion_success, fused_reason=fused.reason,
+        annotation=manual_annotation)
+    record = fused.to_record()
+    record["insertion_success"] = value
+    record["reason"] = reason
+    if label_mode != "evidence_fused":
+        record["scope"] = ("visual_task_label_not_verified_20mm_depth"
+                           if label_mode == "vlm_only" else
+                           "human_task_label_not_verified_20mm_depth")
+    return record

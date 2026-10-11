@@ -25,7 +25,7 @@ from .insertion_checkpoint import (
 from .observer import (
     ImageVLM, observe_insertion_visual, verify_per_view_consensus,
 )
-from .outcome import InsertionEvidence, judge_insertion
+from .outcome import InsertionEvidence, resolve_insertion_outcome
 from .postshift_arrival_checkpoint import PostShiftArrivalCheckpoint
 from .postshift_arrival_replan import PostShiftArrivalReplan
 from .postshift_checkpoint import PostShiftCheckpoint
@@ -59,6 +59,8 @@ def assess_retry_insertion_checkpoint(
     minimum_visual_views: int = 2,
     depth_report_path: Path | None = None,
     depth_commissioning_path: Path | None = None,
+    label_mode: str = "evidence_fused",
+    manual_annotation: dict | None = None,
 ) -> dict:
     """Observe a second stroke, not a replay of the first insertion images."""
     limits = (max_phase_skew_s, max_preinsert_age_s,
@@ -177,7 +179,9 @@ def assess_retry_insertion_checkpoint(
         if sensor["key_depth_interval_m"] is not None else None,
         sensor["key_depth_source"], sensor["alignment_within_limits"],
         sensor["safety_abort"], sensor["grasp_held"])
-    outcome = judge_insertion(evidence, target_depth_m=mode.target_depth_m)
+    outcome = resolve_insertion_outcome(
+        evidence, target_depth_m=mode.target_depth_m,
+        label_mode=label_mode, manual_annotation=manual_annotation)
     return {
         "schema": _SCHEMA,
         "attempt_id": expected.attempt_id,
@@ -207,10 +211,12 @@ def assess_retry_insertion_checkpoint(
         "max_final_observation_gap_s":
             float(max_final_observation_gap_s),
         "effective_vlm_class": visual_class,
+        "label_mode": label_mode,
+        "manual_annotation": manual_annotation,
         "key_depth_admissibility": admissibility,
         "depth_admission_request": depth_request,
         "evidence": json.loads(json.dumps(asdict(evidence))),
-        "outcome": outcome.to_record(),
+        "outcome": outcome,
         "scope": (_REVIEWED_SCOPE if depth_admission is not None else _SCOPE),
         "robot_ready": False,
     }
@@ -283,7 +289,9 @@ def verify_retry_insertion_checkpoint(
             if saved.get("depth_admission_request") is not None else None),
         depth_commissioning_path=(
             Path(saved["depth_admission_request"]["commissioning_path"])
-            if saved.get("depth_admission_request") is not None else None))
+            if saved.get("depth_admission_request") is not None else None),
+        label_mode=saved.get("label_mode", "evidence_fused"),
+        manual_annotation=saved.get("manual_annotation"))
     rebuilt["visual"]["latency_s"] = saved["visual"]["latency_s"]
     if saved["visual"].get("aggregation") is not None:
         for rebuilt_view, saved_view in zip(

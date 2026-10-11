@@ -28,6 +28,7 @@ from .key_perception import (
 )
 from .live_capture import collect_key_capture
 from .live_depth import prepare_live_depth_evidence
+from .labeling import request_annotation
 from .live_robot_state import LiveRobotState
 from .observed_retry_transfer_execution import (
     execute_bound_observed_retry_transfer,
@@ -92,6 +93,8 @@ class LiveObservedXYRetryHandlers:
     depth_limits: object | None = None
     depth_capture_parameters: Mapping[str, float] = field(default_factory=dict)
     depth_commissioning_path: Path | None = None
+    label_mode: str = "evidence_fused"
+    manual_label_provider: Callable | None = None
     enable_robot_motion: bool = False
     decision_time: Callable[[], float] = time.time
     _pending: dict | None = field(default=None, init=False)
@@ -373,6 +376,13 @@ class LiveObservedXYRetryHandlers:
             depth_report_path=depth_path,
             depth_commissioning_path=(
                 self.depth_commissioning_path if depth_path is not None else None),
+            label_mode=self.label_mode,
+            manual_annotation=request_annotation(
+                mode=self.label_mode, provider=self.manual_label_provider,
+                stage="insertion_success",
+                evidence_dirs=(pending["arrival_raw"], final),
+                attempt_id=runner.active_attempt.attempt_id,
+                candidate_id=runner.active_attempt.candidate_id),
             **dict(self.final_parameters))
         self._pending = None
 

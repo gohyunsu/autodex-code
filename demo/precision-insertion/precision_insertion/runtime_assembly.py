@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Mapping
 
 from .insertion_grasp_calibration import calibration_path_for_candidate
+from .labeling import LABEL_MODES
 from .live_held_relation_handlers import LiveHeldRelationHandlers
 from .live_lift_handlers import LiveLiftHandlers
 from .live_observed_relation_handlers import LiveObservedHeldRelationHandlers
@@ -56,6 +57,8 @@ def assemble_live_components(
     stages: Mapping[str, Mapping[str, object]],
     enable_robot_motion: bool,
     held_relation_route: str = "physical",
+    label_mode: str = "evidence_fused",
+    manual_label_provider=None,
 ) -> tuple[object, ...]:
     """Instantiate every existing handler without duplicating its behavior.
 
@@ -72,6 +75,9 @@ def assemble_live_components(
         raise TypeError("runtime assembly needs a boolean motion setting")
     if held_relation_route not in {"physical", "observed"}:
         raise ValueError("held relation route must be physical or observed")
+    if label_mode not in LABEL_MODES or (
+            label_mode == "manual" and not callable(manual_label_provider)):
+        raise ValueError("invalid label mode or missing manual label provider")
     classes = dict(STAGE_CLASSES)
     active_mode = getattr(
         getattr(getattr(live, "opened", None), "runner", None),
@@ -111,6 +117,11 @@ def assemble_live_components(
         arguments = {key: value for key, value in shared.items()
                      if key in accepted}
         arguments.update(stage)
+        if name in {"lift", "task", "retry"}:
+            if "label_mode" in accepted:
+                arguments["label_mode"] = label_mode
+            if "manual_label_provider" in accepted:
+                arguments["manual_label_provider"] = manual_label_provider
         if (name == "held_relation" and cls is LiveHeldRelationHandlers and
                 "calibration_for_candidate" not in arguments):
             arguments["calibration_for_candidate"] = (

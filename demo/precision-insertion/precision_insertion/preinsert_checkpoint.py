@@ -32,6 +32,7 @@ from .held_scene_overlay import (
     build_held_scene_prediction,
 )
 from .live_robot_state import LiveRobotState
+from .labeling import resolve_label
 from .observer import (
     HeldSceneView, ImageVLM, PreinsertVisualAssessment,
     observe_preinsert_hold_views,
@@ -302,6 +303,8 @@ def assess_preinsert_checkpoint(
     max_arm_velocity_rad_s: float,
     renderer_factory: Callable | None = None,
     robot_loader: Callable | None = None,
+    label_mode: str = "evidence_fused",
+    manual_annotation: dict | None = None,
 ) -> PreinsertCheckpoint:
     """Fuse per-view coarse VLM with measured hold pose and execution evidence.
 
@@ -409,6 +412,10 @@ def assess_preinsert_checkpoint(
         max_position_error=max_hand_translation_error_m,
         max_rotation_error=max_hand_rotation_error_deg,
         visual_status=visual.status)
+    label, reason = resolve_label(
+        stage="preinsert_reached", mode=label_mode,
+        visual_class=visual.status, fused_value=label,
+        fused_reason=reason, annotation=manual_annotation)
     return PreinsertCheckpoint(
         attempt.attempt_id, attempt.candidate_id, label, reason,
         position_error, rotation_error, visual, comparison, {
@@ -420,6 +427,8 @@ def assess_preinsert_checkpoint(
             "raw_bundle": str(bundle),
             "raw_manifest_sha256": _sha(bundle / "manifest.json"),
             "transfer_measurement": measurement,
+            "label_mode": label_mode,
+            "manual_annotation": manual_annotation,
             "transfer_started_at_s": started,
             "transfer_completed_at_s": completed,
             "observation_completed_at_s": last_exposure,
@@ -542,6 +551,12 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
         max_position_error=report["max_hand_translation_error_m"],
         max_rotation_error=report["max_hand_rotation_error_deg"],
         visual_status=report["visual"]["status"])
+    expected_label, expected_reason = resolve_label(
+        stage="preinsert_reached",
+        mode=report.get("label_mode", "evidence_fused"),
+        visual_class=report["visual"]["status"],
+        fused_value=expected_label, fused_reason=expected_reason,
+        annotation=report.get("manual_annotation"))
     if (report["preinsert_reached"] is not expected_label or
             report["reason"] != expected_reason):
         raise ValueError("preinsert label contradicts saved evidence")

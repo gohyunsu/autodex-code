@@ -147,6 +147,25 @@ class AttemptRecord:
         )
         return outcome.to_record()
 
+    def record_insertion_decision(
+        self, evidence: InsertionEvidence, *, label_mode: str,
+        manual_annotation: dict | None, timestamp_s: float,
+        evidence_refs: Mapping[str, str],
+    ) -> dict:
+        """Record an explicit visual/human label with its mode and provenance."""
+        from .outcome import resolve_insertion_outcome
+
+        outcome = resolve_insertion_outcome(
+            evidence, target_depth_m=self.mode.target_depth_m,
+            label_mode=label_mode, manual_annotation=manual_annotation)
+        self._append_stage(
+            "insertion_success", outcome["insertion_success"],
+            timestamp_s=timestamp_s, evidence_refs=evidence_refs,
+            detail={"input": asdict(evidence), "outcome": outcome,
+                    "label_mode": label_mode,
+                    "manual_annotation": manual_annotation})
+        return outcome
+
     def record_retry(
         self, decision: ChoiceDecision, *, timestamp_s: float,
         evidence_refs: Mapping[str, str],

@@ -24,6 +24,7 @@ from .endpoint import _load_mesh
 from .frame_provenance import bounded_capture_skew_s, image_sha256
 from .geometry import validate_se3
 from .key_perception import KeyPoseObservation, verify_key_capture_artifacts
+from .labeling import resolve_label
 from .live_robot_state import LiveRobotState
 from .observer import (
     ImageVLM, LabeledFrame, VLMObservation, _parse_object, observe_lift,
@@ -55,6 +56,8 @@ class LiftCheckpoint:
     visual: VLMObservation
     evidence_kind: str = "foundpose_key_rise"
     raw_timing: dict | None = None
+    label_mode: str = "evidence_fused"
+    manual_annotation: dict | None = None
 
     def to_record(self) -> dict:
         return {
@@ -68,6 +71,8 @@ class LiftCheckpoint:
             "candidate_id": self.candidate_id,
             "grasp_success": self.grasp_success,
             "reason": self.reason,
+            "label_mode": self.label_mode,
+            "manual_annotation": self.manual_annotation,
             "lift_completed_at_s": self.lift_completed_at_s,
             "decision_timestamp_s": self.decision_timestamp_s,
             "before_capture_id": self.before_capture_id,
@@ -283,6 +288,8 @@ def assess_raw_lift_checkpoint(
     max_lift_observation_gap_s: float, max_arm_hand_skew_s: float,
     max_hand_command_error_raw: float, max_arm_velocity_rad_s: float,
     minimum_visual_views: int = 2,
+    label_mode: str = "evidence_fused",
+    manual_annotation: dict | None = None,
 ) -> LiftCheckpoint:
     """Assess visible held/miss/slip without pretending to recover key 6D pose.
 
@@ -365,6 +372,13 @@ def assess_raw_lift_checkpoint(
         evidence_views=set(visual.parsed["evidence_views"]),
         parse_error=visual.parse_error, cameras=set(cameras),
         minimum_views=minimum_visual_views)
+    label, reason = resolve_label(
+        stage="grasp_success", mode=label_mode,
+        visual_class=(visual.parsed["class"] if visual.parse_error is None and
+                      len(set(visual.parsed["evidence_views"]) & set(cameras)) >=
+                      minimum_visual_views else "unobservable"),
+        fused_value=label, fused_reason=reason,
+        annotation=manual_annotation)
     return LiftCheckpoint(
         attempt_id, candidate_id, label, reason,
         lift_completed_at_s, decision_timestamp_s,
@@ -373,8 +387,8 @@ def assess_raw_lift_checkpoint(
         minimum_visual_views, joint_sample, visual, "raw_visual", {
             "attempt_started_at_s": attempt_started_at_s,
             "max_phase_skew_s": max_phase_skew_s,
-            "max_lift_observation_gap_s": max_lift_observation_gap_s,
-        })
+        "max_lift_observation_gap_s": max_lift_observation_gap_s,
+        }, label_mode, manual_annotation)
 
 
 def write_lift_checkpoint(result: LiftCheckpoint, output_dir: Path) -> Path:
@@ -549,6 +563,14 @@ def verify_lift_checkpoint(report_path: Path) -> dict:
             parse_error=visual.get("parse_error"),
             cameras=phase_cameras["before_grasp"], rise_m=rise,
             minimum_rise_m=minimum_rise, minimum_views=minimum_views)
+    label, reason = resolve_label(
+        stage="grasp_success", mode=report.get("label_mode", "evidence_fused"),
+        visual_class=(parsed["class"] if visual.get("parse_error") is None and
+                      len(set(parsed["evidence_views"]) &
+                          phase_cameras["before_grasp"]) >= minimum_views
+                      else "unobservable"),
+        fused_value=label, fused_reason=reason,
+        annotation=report.get("manual_annotation"))
     if report.get("grasp_success") is not label or report.get("reason") != reason:
         raise ValueError("saved lift label conflicts with its VLM/key evidence")
     return report

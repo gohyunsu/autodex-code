@@ -50,7 +50,7 @@ from .failed_return_evidence import (
 from .live_robot_state import LiveRobotState
 from .observer import ImageVLM
 from .raw_camera_capture import verify_raw_camera_capture
-from .outcome import InsertionEvidence, judge_insertion
+from .outcome import InsertionEvidence, judge_insertion, resolve_insertion_outcome
 from .path_audit import PathAuditLimits
 from .pose_selection import classify_key_tabletop_pose
 from .postlift_preflight import (
@@ -1150,6 +1150,8 @@ class SessionRunner:
         max_arm_hand_skew_s: float, max_hand_command_error_raw: float,
         max_arm_velocity_rad_s: float,
         minimum_visual_views: int = 2,
+        label_mode: str = "evidence_fused",
+        manual_annotation: dict | None = None,
     ) -> LiftCheckpoint:
         """Observe visible held/miss/slip without requiring post-lift FoundPose.
 
@@ -1182,7 +1184,9 @@ class SessionRunner:
             max_arm_hand_skew_s=max_arm_hand_skew_s,
             max_hand_command_error_raw=max_hand_command_error_raw,
             max_arm_velocity_rad_s=max_arm_velocity_rad_s,
-            minimum_visual_views=minimum_visual_views)
+            minimum_visual_views=minimum_visual_views,
+            label_mode=label_mode,
+            manual_annotation=manual_annotation)
         return self._save_lift_assessment(
             result=result, lift_file=lift_file,
             lift_bytes=lift_bytes, completed=completed)
@@ -1442,6 +1446,8 @@ class SessionRunner:
         max_hand_command_error_raw: float,
         max_arm_velocity_rad_s: float,
         renderer_factory=None, robot_loader=None,
+        label_mode: str = "evidence_fused",
+        manual_annotation: dict | None = None,
     ) -> PreinsertCheckpoint:
         """Save an observed arrival assessment; never command the transfer.
 
@@ -1495,6 +1501,8 @@ class SessionRunner:
             max_arm_hand_skew_s=max_arm_hand_skew_s,
             max_hand_command_error_raw=max_hand_command_error_raw,
             max_arm_velocity_rad_s=max_arm_velocity_rad_s,
+            label_mode=label_mode,
+            manual_annotation=manual_annotation,
             **kwargs)
         output = (self._attempt_dir / "preinsert_assessments" /
                   f"{self._preinsert_assessment_index:03d}")
@@ -2205,8 +2213,14 @@ class SessionRunner:
                     evidence_refs.get("observed_retry_arrival") !=
                     handoff["arrival_report_path"]):
                 raise ValueError("XY retry VLM used another corrected hold")
-        return self._record(lambda row: row.record_insertion_evidence(
-            evidence, timestamp_s=timestamp_s, evidence_refs=evidence_refs))
+        mode = report.get("label_mode", "evidence_fused")
+        if mode == "evidence_fused":
+            return self._record(lambda row: row.record_insertion_evidence(
+                evidence, timestamp_s=timestamp_s, evidence_refs=evidence_refs))
+        return self._record(lambda row: row.record_insertion_decision(
+            evidence, label_mode=mode,
+            manual_annotation=report.get("manual_annotation"),
+            timestamp_s=timestamp_s, evidence_refs=evidence_refs))
 
     def prepare_observed_insertion_label(
         self, *, preinsert_bundle: Path, final_bundle: Path,
@@ -2217,6 +2231,8 @@ class SessionRunner:
         depth_report_path: Path | None = None,
         depth_commissioning_path: Path | None = None,
         retry_arrival_report_path: Path | None = None,
+        label_mode: str = "evidence_fused",
+        manual_annotation: dict | None = None,
     ) -> dict:
         """Persist paired VLM frames and external metric sources, then label.
 
@@ -2285,7 +2301,9 @@ class SessionRunner:
             max_final_observation_gap_s=max_final_observation_gap_s,
             minimum_visual_views=minimum_visual_views,
             depth_report_path=depth_report_path,
-            depth_commissioning_path=depth_commissioning_path)
+            depth_commissioning_path=depth_commissioning_path,
+            label_mode=label_mode,
+            manual_annotation=manual_annotation)
         output = (self._attempt_dir / "insertion_assessments" /
                   f"{self._insertion_assessment_index:03d}")
         path = write_insertion_checkpoint(report, output)
@@ -2337,6 +2355,8 @@ class SessionRunner:
         minimum_visual_views: int = 2,
         depth_report_path: Path | None = None,
         depth_commissioning_path: Path | None = None,
+        label_mode: str = "evidence_fused",
+        manual_annotation: dict | None = None,
     ) -> dict:
         """Record a second insertion verdict only from this retry's new pixels.
 
@@ -2376,7 +2396,9 @@ class SessionRunner:
             max_final_observation_gap_s=max_final_observation_gap_s,
             minimum_visual_views=minimum_visual_views,
             depth_report_path=depth_report_path,
-            depth_commissioning_path=depth_commissioning_path)
+            depth_commissioning_path=depth_commissioning_path,
+            label_mode=label_mode,
+            manual_annotation=manual_annotation)
         if (report["attempt_id"] != self._attempt.attempt_id or
                 report["candidate_id"] != self._attempt.candidate_id or
                 report["session_calibration_sha256"] !=
@@ -2409,13 +2431,21 @@ class SessionRunner:
             "retry_axial_handoff": report["handoff_report_path"],
         }
         evidence = InsertionEvidence(**report["evidence"])
-        if (judge_insertion(evidence,
-                            target_depth_m=self.mode.target_depth_m)
-                .to_record() != report["outcome"]):
+        if (resolve_insertion_outcome(
+                evidence, target_depth_m=self.mode.target_depth_m,
+                label_mode=label_mode,
+                manual_annotation=manual_annotation) != report["outcome"]):
             raise ValueError("retry label differs from observed checkpoint")
-        self._record(lambda row: row.record_insertion_evidence(
-            evidence, timestamp_s=decision_timestamp_s,
-            evidence_refs=refs))
+        if label_mode == "evidence_fused":
+            self._record(lambda row: row.record_insertion_evidence(
+                evidence, timestamp_s=decision_timestamp_s,
+                evidence_refs=refs))
+        else:
+            self._record(lambda row: row.record_insertion_decision(
+                evidence, label_mode=label_mode,
+                manual_annotation=manual_annotation,
+                timestamp_s=decision_timestamp_s,
+                evidence_refs=refs))
         self._insertion_assessment_index += 1
         return report
 

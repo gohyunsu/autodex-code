@@ -12,6 +12,7 @@ from .live_orchestration import (
     LivePrecisionSession, compose_live_handlers, run_live_precision_session,
 )
 from .action_loop import ActionLoopResult
+from .labeling import LABEL_MODES
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,8 @@ class RunLiveOptions:
     max_steps: int = 100
     enable_robot_motion: bool = False
     robot_config_path: Path | None = None
+    label_mode: str = "vlm_only"
+    annotator: str | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +79,9 @@ def run_integrated_live_session(
         raise ValueError("current live grounded retry supports zero or one correction")
     if type(options.max_steps) is not int or options.max_steps < 1:
         raise ValueError("max_steps must be positive")
+    if options.label_mode not in LABEL_MODES or (
+            options.label_mode == "manual" and not options.annotator):
+        raise ValueError("manual labeling needs a named annotator")
     integration = load_runtime_integration(integration_spec, options)
     try:
         def handlers(live: LivePrecisionSession):

@@ -348,12 +348,38 @@ Required recipient inputs remain distinct from code completeness:
   surface bounds; and commissioned pickup, lift, transfer, lateral-shift,
   guarded-contact, withdrawal and reset controllers with their independent
   execution records.
-- For a **positive 20 mm label**, the optional reviewed visual-depth error
+- Under `evidence_fused`, for a **positive verified 20 mm label**, the optional reviewed visual-depth error
   audit described in [DEPTH_ADMISSION.md](DEPTH_ADMISSION.md). Without it,
   unverified controller stroke depth remains diagnostic and a visually
-  normal insertion is not marked successful.
+  normal insertion is not marked successful by that mode.
 
 The current workstation has neither a real AutoDex-PC integration module nor
 the physical depth commissioning audit. Running this command here cannot
 complete a real insertion. The CLI and synthetic tests establish the wiring
 contract, not robot readiness.
+
+## Experimental task-label modes
+
+`run_live.py --label-mode vlm_only` is the default development policy. The
+post-lift, pre-insertion and final/abort images go to the configured VLM;
+the corresponding multi-view visual classes alone determine the three task
+labels. `held`, `coarse_match` and `normal_appearance` are positive;
+visible failure classes are negative; occlusion or insufficient consensus is
+unknown. A visual insertion label is **not** a verified 20 mm penetration.
+The controller's motion/abort mechanism and geometric preflight remain
+separate from this label policy.
+
+Use `--label-mode manual --annotator YOUR_NAME` for directly entered labels.
+After each capture the terminal shows the saved PNG directory and asks for
+`y`, `n` or `u`, plus an optional note. The VLM answer is still saved for
+comparison but the named human label drives the task state. This terminal
+workflow blocks for input; a robot-PC integration needs an operator interface
+and watchdog before unattended physical use. First insertion and retry share
+the mode. `--label-mode evidence_fused` restores the prior VLM-plus-metric
+criterion.
+
+The checkpoint report records `label_mode`, `manual_annotation` and source
+pixels; verification recomputes the label and rejects a changed Boolean.
+Third-party factories can pass `options.label_mode` and a callable
+`manual_label_provider(stage, evidence_dirs, attempt_id, candidate_id)` to
+`assemble_live_components`.

@@ -17,6 +17,7 @@ from .action_loop import ActionHandler
 from .guarded_insertion_execution import execute_bound_guarded_insertion
 from .live_robot_state import LiveRobotState
 from .live_depth import prepare_live_depth_evidence
+from .labeling import request_annotation
 from .raw_camera_capture import (
     RawCameraCapture, verify_raw_camera_capture, write_raw_camera_capture,
 )
@@ -57,6 +58,8 @@ class LiveTaskHandlers:
     depth_limits: object | None = None
     depth_capture_parameters: Mapping[str, float] = field(default_factory=dict)
     depth_commissioning_path: Path | None = None
+    label_mode: str = "evidence_fused"
+    manual_label_provider: Callable | None = None
     enable_robot_motion: bool = False
     decision_time: Callable[[], float] = time.time
     _preinsert_bundle: Path | None = field(default=None, init=False)
@@ -131,6 +134,12 @@ class LiveTaskHandlers:
         checkpoint = runner.prepare_observed_preinsert_label(
             raw_bundle=raw, transfer_execution_path=transfer_log,
             joint_sample=state, backend=self.backend,
+            label_mode=self.label_mode,
+            manual_annotation=request_annotation(
+                mode=self.label_mode, provider=self.manual_label_provider,
+                stage="preinsert_reached", evidence_dirs=(raw,),
+                attempt_id=attempt.attempt_id,
+                candidate_id=attempt.candidate_id),
             **dict(self.preinsert_parameters))
         report = runner._preinsert_report_path
         refs = {
@@ -194,6 +203,13 @@ class LiveTaskHandlers:
             depth_report_path=depth_path,
             depth_commissioning_path=(
                 self.depth_commissioning_path if depth_path is not None else None),
+            label_mode=self.label_mode,
+            manual_annotation=request_annotation(
+                mode=self.label_mode, provider=self.manual_label_provider,
+                stage="insertion_success",
+                evidence_dirs=(self._preinsert_bundle, final),
+                attempt_id=attempt.attempt_id,
+                candidate_id=attempt.candidate_id),
             **dict(self.final_parameters))
 
     def handlers(self) -> dict[str, ActionHandler]:

@@ -15,6 +15,7 @@ from typing import Callable, Mapping
 
 from .action_loop import ActionHandler
 from .lift_execution import LiftExecutionLimits, execute_bound_measured_lift
+from .labeling import request_annotation
 from .live_robot_state import LiveRobotState
 from .raw_camera_capture import (
     RawCameraCapture, verify_raw_camera_capture, write_raw_camera_capture,
@@ -52,6 +53,8 @@ class LiveLiftHandlers:
     limits: LiftExecutionLimits
     commissioning_record_path: Path
     assessment_parameters: Mapping[str, float]
+    label_mode: str = "evidence_fused"
+    manual_label_provider: Callable | None = None
     enable_robot_motion: bool = False
     decision_time: Callable[[], float] = time.time
 
@@ -131,6 +134,15 @@ class LiveLiftHandlers:
             joint_sample=exposure_state, backend=self.backend,
             lift_execution_log_path=lift_log,
             decision_timestamp_s=self.decision_time(),
+            label_mode=self.label_mode,
+            manual_annotation=request_annotation(
+                mode=self.label_mode, provider=self.manual_label_provider,
+                stage="grasp_success",
+                evidence_dirs=(
+                    (Path(runner._key_evidence_dir), evidence_dir)
+                    if self.label_mode == "manual" else (evidence_dir,)),
+                attempt_id=attempt.attempt_id,
+                candidate_id=attempt.candidate_id),
             **dict(self.assessment_parameters))
         if checkpoint.grasp_success is None:
             if type(assessment_index) is not int:
