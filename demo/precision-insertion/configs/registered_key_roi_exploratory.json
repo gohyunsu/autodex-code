@@ -1,0 +1,21 @@
+{
+  "schema": "precision_insertion_registered_key_roi_limits_v1",
+  "purpose": "NAS saved-image diagnostic only; thresholds are not commissioned for robot use",
+  "limits": {
+    "minimum_shared_corners": 8,
+    "minimum_homography_inliers": 7,
+    "homography_ransac_px": 2.0,
+    "maximum_board_shift_px": 20.0,
+    "difference_threshold": 50,
+    "socket_dilation_px": 20,
+    "closing_kernel_px": 7,
+    "minimum_component_pixels": 300,
+    "maximum_competitor_fraction": 0.8,
+    "crop_pad_px": 20,
+    "crop_pad_fraction": 0.15,
+    "minimum_sam_pixels": 300,
+    "maximum_sam_pixels": 80000,
+    "minimum_difference_support_fraction": 0.35,
+    "maximum_socket_overlap_fraction": 0.1
+  }
+}

@@ -129,5 +129,9 @@ Before promoting any object for a live session:
    canonical v8 runtime paths with immutable hashes.
 
 No grasp, guarded insertion, VLM retry or physical success is established by
-these captures. The 1.5 mm square bring-up remains blocked by those gates and
-by its missing endpoint-eligible runtime grasp pool.
+these captures. The newer complete square 1.5 mm endpoint catalogue has seven
+offline-eligible candidates, but that does not remove the perception,
+camera-time, guarded-controller or real-robot validation gates. A separate
+[saved-image registered-ROI diagnostic](REGISTERED_KEY_ROI.md) now reproduces
+the NAS crop and rejects one known wrong-socket key mask; its method is not
+yet the live key producer.
