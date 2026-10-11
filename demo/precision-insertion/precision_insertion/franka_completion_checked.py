@@ -48,6 +48,7 @@ class CompletionCheckedFrankaMixin:
         if getattr(self, "_precision_follow_active", False):
             raise RuntimeError("concurrent FR3 follow is not supported")
         original_land_tol = self.land_tol
+        original_follow_tol = self.follow_tol
         had_own_ramp = "_ramp_hand" in self.__dict__
         original_ramp = self._ramp_hand
         saved_own_ramp = self.__dict__.get("_ramp_hand")
@@ -58,17 +59,24 @@ class CompletionCheckedFrankaMixin:
 
         self._precision_follow_active = True
         self.land_tol = math.inf  # stock follower may never issue its blocking land
+        # The stock loop normally exits at 0.04 rad L2 and relies on its
+        # blocking landing to remove the remainder. Without that landing it
+        # must itself follow until our checked terminal tolerance is reached.
+        self.follow_tol = min(original_follow_tol,
+                              self.completion_max_joint_error_rad)
         self._ramp_hand = defer_ramp
         try:
             result = super()._follow(
                 path, hand_traj, speed=speed,
-                abort_on_contact=abort_on_contact,
+                abort_on_contact=(abort_on_contact or
+                                  bool(getattr(self, "_holding_object", False))),
                 stop_wrench_z=stop_wrench_z,
                 slowdown_wrist_target=slowdown_wrist_target,
                 slowdown_wrist_references=slowdown_wrist_references,
                 proximity_hand_traj=proximity_hand_traj)
         finally:
             self.land_tol = original_land_tol
+            self.follow_tol = original_follow_tol
             if had_own_ramp:
                 self._ramp_hand = saved_own_ramp
             else:

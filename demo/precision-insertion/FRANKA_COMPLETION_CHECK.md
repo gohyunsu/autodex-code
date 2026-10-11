@@ -6,11 +6,15 @@ AutoDex `FrankaExecutor`. It reuses the stock velocity-streaming path follower,
 planner, squeeze sequence and clear-view behavior. The subclass intercepts
 only the follower's terminal behavior:
 
-1. Disable the stock blocking endpoint `arm.move` for that trajectory.
+1. Disable the stock blocking endpoint `arm.move` for that trajectory and
+   tighten its streaming completion tolerance from the stock 0.04 rad L2 to
+   at most 0.02 rad while following.
 2. Defer the stock final hand ramp until after motion.
 3. Require an acknowledged `stop_streaming` response and measured stationary
    joints within 0.02 rad of the planned endpoint.
-4. Only then apply the deferred final hand command. A stall, timeout, reflex,
+4. While an object is held, request reflex-abort rather than the stock
+   recover-and-continue behavior.
+5. Only then apply the deferred final hand command. A stall, timeout, reflex,
    absent feedback or unacknowledged stop raises without that command.
 
 The original stock executor and other arbitrary subclasses remain rejected

@@ -58,6 +58,7 @@ def _wrapper(arm):
     executor = object.__new__(_Executor)
     executor.arm = arm
     executor.land_tol = .02
+    executor.follow_tol = .04
     executor._last_stop_on_contact = False
     executor.ramps = []
     executor._ramp_hand = lambda q: executor.ramps.append(np.asarray(q).copy())
@@ -69,6 +70,7 @@ def _stock_follow_stub(self, path, hand_traj, **kwargs):
     # blocking endpoint land after a stalled/early-ended stream.
     if hand_traj is not None:
         self._ramp_hand(hand_traj[-1])
+    assert self.follow_tol == .02
     if np.linalg.norm(self.arm.q - path[-1, :7]) > self.land_tol:
         self.arm.move(path[-1, :7])
 
@@ -85,6 +87,7 @@ def test_completed_stream_permits_deferred_hand_ramp_without_blocking_land(
     assert len(executor.ramps) == 1
     np.testing.assert_array_equal(executor.ramps[0], hand[-1])
     assert executor.land_tol == .02
+    assert executor.follow_tol == .04
     assert not executor._precision_follow_active
 
 
@@ -99,6 +102,7 @@ def test_incomplete_stream_never_lands_or_ramps(monkeypatch):
     assert arm.moves == []
     assert executor.ramps == []
     assert executor.land_tol == .02
+    assert executor.follow_tol == .04
     assert not executor._precision_follow_active
 
 
@@ -113,6 +117,7 @@ def test_stock_exception_restores_instance_state_without_hand_ramp(monkeypatch):
         executor._follow(np.zeros((2, 7)), np.full((2, 6), 100.))
     assert executor.ramps == []
     assert executor.land_tol == .02
+    assert executor.follow_tol == .04
     assert not executor._precision_follow_active
 
 
@@ -149,3 +154,16 @@ def test_stop_acknowledgement_needs_daemon_response_and_stationary_feedback():
     assert refused.stop_and_acknowledge()["acknowledged"] is False
     held = _wrapper(_Arm(np.zeros(7), np.ones(7) * .01))
     assert held.stop_and_acknowledge()["acknowledged"] is True
+
+
+def test_held_motion_requests_reflex_abort_in_stock_follower(monkeypatch):
+    seen = []
+
+    def follow(self, _path, _hand, **kwargs):
+        seen.append(kwargs["abort_on_contact"])
+
+    monkeypatch.setattr(_Stock, "_follow", follow)
+    executor = _wrapper(_Arm(np.zeros(7)))
+    executor._holding_object = True
+    executor._follow(np.zeros((2, 7)))
+    assert seen == [True]
