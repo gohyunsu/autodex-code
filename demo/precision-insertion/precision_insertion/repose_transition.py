@@ -69,7 +69,7 @@ class ReposeTransitionPreflight:
             "start_q_acquisition_timestamp_s": self.start_q_acquisition_timestamp_s,
             "max_state_skew_s": self.max_state_skew_s,
             "not_validated": [
-                "live pickup/grasp and observed post-lift key-in-hand relation",
+                "live pickup/grasp and repeatability of nominal v8 key-hand relation",
                 "physical hand opening, key detachment and dynamic drop",
                 *(["release and retreat planning absent"]
                    if self.release_plan is None else []),

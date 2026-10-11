@@ -1581,6 +1581,8 @@ def test_pose_exhaustion_routes_to_separate_repose_and_observed_landing(
         runner.preflight_repose(**{**kwargs, "to_pose_stem": "002"})
     runner.preflight_repose(**kwargs)
     assert runner.current_decision().action == "repose_execution_gate_required"
+    assert ("nominal_v8_key_hand_relation_not_postgrasp_measurement" in
+            runner.current_decision().required_before_motion)
     frozen_report = runner._repose_report_path
     saved_report = frozen_report.read_bytes()
     frozen_report.write_bytes(saved_report + b" ")

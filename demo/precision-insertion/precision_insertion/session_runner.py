@@ -355,7 +355,7 @@ class SessionRunner:
                     "nominal_repose_pick_place_only_landing_unobserved", None,
                     ("commissioned_robot_and_force_limits",
                      "fresh_key_and_joint_observation",
-                     "measured_post_lift_key_hand_relation",
+                     "nominal_v8_key_hand_relation_not_postgrasp_measurement",
                      "observed_release_and_landing_pose"))
             if status == "reset_seed_budget_exhausted":
                 return SessionDecision(
