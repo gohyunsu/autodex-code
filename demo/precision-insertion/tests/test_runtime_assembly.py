@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -85,3 +86,16 @@ def test_observed_relation_route_uses_distinct_handler(monkeypatch):
         runtime_assembly.assemble_live_components(
             object(), shared={"planner": object()}, stages=stages,
             enable_robot_motion=True, held_relation_route="nominal")
+
+
+def test_default_physical_calibration_lookup_is_grasp_and_mode_specific(tmp_path):
+    from precision_insertion.config import select_mode
+
+    mode = select_mode("cylinder", 5)
+    live = SimpleNamespace(opened=SimpleNamespace(runner=SimpleNamespace(
+        shared_root=tmp_path, mode=mode)))
+    locate = runtime_assembly._default_physical_calibration_for_candidate(live)
+    assert locate("table/0/184") == (
+        tmp_path / "AutoDex/precision_insertion/physical_grasp_calibrations" /
+        mode.family / mode.key_object / mode.socket_object /
+        "table/0/184/physical_grasp_calibration.json")

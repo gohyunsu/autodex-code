@@ -36,6 +36,31 @@ def _positive(value: object, name: str) -> float:
     return number
 
 
+def load_physical_sample_paths(sample_paths: Sequence[Path]) -> list[dict]:
+    """Load independent pickup records and bind each to its source bytes.
+
+    Both insertion and reset-grasp commissioning use exactly this evidence
+    format.  The calibration routine below verifies the copied fields against
+    the hashed file again before accepting any transform.
+    """
+    sources = []
+    seen: set[Path] = set()
+    for raw in sample_paths:
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            raise ValueError("physical sample paths must be absolute")
+        path = path.resolve()
+        if path in seen:
+            raise ValueError("one physical pickup sample cannot be reused")
+        seen.add(path)
+        sample = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(sample, dict):
+            raise ValueError("physical pickup sample must be a JSON object")
+        sources.append({**sample, "evidence_path": str(path),
+                        "evidence_sha256": _file_sha256(path)})
+    return sources
+
+
 def calibrate_physical_held_relation(
     *, mode: TaskMode, shared_root: Path, candidate_key: tuple[str, str, str],
     candidate_T_key_hand: np.ndarray, samples: Sequence[Mapping],

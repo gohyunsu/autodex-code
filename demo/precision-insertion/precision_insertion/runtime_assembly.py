@@ -8,8 +8,10 @@ the same opened camera session, planner, feedback sampler and VLM backend.
 from __future__ import annotations
 
 from dataclasses import fields
+from pathlib import Path
 from typing import Mapping
 
+from .insertion_grasp_calibration import calibration_path_for_candidate
 from .live_held_relation_handlers import LiveHeldRelationHandlers
 from .live_lift_handlers import LiveLiftHandlers
 from .live_observed_relation_handlers import LiveObservedHeldRelationHandlers
@@ -35,6 +37,17 @@ STAGE_CLASSES = {
     "repose_planning": LiveReposePlanningHandlers,
     "repose_execution": LiveReposeExecutionHandlers,
 }
+
+
+def _default_physical_calibration_for_candidate(live):
+    """Use the insertion grasp commissioning layout under shared data."""
+    runner = live.opened.runner
+    output_root = (Path(runner.shared_root).expanduser().resolve() /
+                   "AutoDex" / "precision_insertion" /
+                   "physical_grasp_calibrations")
+    mode = runner.mode
+    return lambda candidate_id: calibration_path_for_candidate(
+        output_root, mode, candidate_id)
 
 
 def assemble_live_components(
@@ -92,6 +105,10 @@ def assemble_live_components(
         arguments = {key: value for key, value in shared.items()
                      if key in accepted}
         arguments.update(stage)
+        if (name == "held_relation" and cls is LiveHeldRelationHandlers and
+                "calibration_for_candidate" not in arguments):
+            arguments["calibration_for_candidate"] = (
+                _default_physical_calibration_for_candidate(live))
         arguments["live"] = live
         if name == "repose_planning":
             arguments["key_planning"] = components[0]

@@ -21,7 +21,8 @@ if str(DEMO_DIR) not in sys.path:
 
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.physical_grasp_calibration import (  # noqa: E402
-    calibrate_physical_held_relation, verify_physical_held_relation,
+    calibrate_physical_held_relation, load_physical_sample_paths,
+    verify_physical_held_relation,
 )
 from precision_insertion.reset_candidates import (  # noqa: E402
     verify_v8_reset_seed,
@@ -47,20 +48,7 @@ def build_reset_grasp_calibration(
         shared_root=root, mode=mode, height_cm=height_cm,
         from_pose_stem=from_pose_stem, to_pose_stem=to_pose_stem,
         seed_id=seed_id, candidate_root=candidate_root)
-    sources = []
-    seen: set[Path] = set()
-    for raw in sample_paths:
-        if not Path(raw).expanduser().is_absolute():
-            raise ValueError("physical sample paths must be absolute")
-        path = Path(raw).expanduser().resolve()
-        if path in seen:
-            raise ValueError("one physical pickup sample cannot be reused")
-        seen.add(path)
-        sample = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(sample, dict):
-            raise ValueError("physical pickup sample must be a JSON object")
-        sources.append({**sample, "evidence_path": str(path),
-                        "evidence_sha256": _sha(path)})
+    sources = load_physical_sample_paths(sample_paths)
     summary = calibrate_physical_held_relation(
         mode=mode, shared_root=root,
         candidate_key=selected["candidate_key"],

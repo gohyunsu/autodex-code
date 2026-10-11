@@ -108,7 +108,17 @@ long-lived feedback sampler before camera capture and also injects
 `state_for_observation` and `state_for_capture`. It records moving samples
 without killing the thread, but image lookups still require a stationary
 Franka/Inspire hold throughout exposure. The stage factory supplies the
-remaining commissioned pickup, contact, recovery and repose callbacks. Run:
+remaining commissioned pickup, contact, recovery and repose callbacks.
+
+For the default physical held-relation route, the stage factory may omit
+`held_relation.calibration_for_candidate`: assembly then looks for the exact
+candidate under the session's canonical
+`shared_root/AutoDex/precision_insertion/physical_grasp_calibrations` layout.
+Generate those grasp-specific records from independent physical pickups using
+[`INSERTION_GRASP_CALIBRATION.md`](INSERTION_GRASP_CALIBRATION.md). A missing
+record stops at the held-relation stage; no simulated key pose is substituted.
+
+Run:
 
 ```bash
 python demo/precision-insertion/run_live.py \
