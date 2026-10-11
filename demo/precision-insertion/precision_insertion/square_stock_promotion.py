@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 import shutil
 import tempfile
@@ -144,7 +145,7 @@ def promote_screened_batch(
     raw_root = Path(summary["raw_root"]).resolve()
     pass_root = Path(summary["original_autodex_sim_candidate_root"]).resolve()
     clearance = float(summary["minimum_hand_clearance_m"])
-    if clearance <= 0:
+    if not math.isfinite(clearance) or clearance < 0:
         raise ValueError("invalid endpoint clearance")
     eligible = set(mode_record.get("eligible_offline_grasp_ids", []))
     planned = []

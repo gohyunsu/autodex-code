@@ -1,5 +1,9 @@
 # Cylindrical key: 1,000 BODex proposals per tabletop scene
 
+This page records the **historical 25 mm proxy** run. For new unrestricted
+80 mm proposal generation and its independent results, see
+[FULL_LENGTH_CYLINDER_PROPOSALS.md](FULL_LENGTH_CYLINDER_PROPOSALS.md).
+
 This is a grasp-level offline run, **not** a robot-executable insertion
 scenario. It uses the existing `sim_inspire/precision_insertion.yml` default
 `seed_num: 1000`, tabletop scenes `0` (end-down) and `1` (side-down), the

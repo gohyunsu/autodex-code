@@ -39,8 +39,8 @@ def screen_axis_1mm_endpoint_choices(
     if not math.isfinite(max_total_offset_m) or max_total_offset_m <= 0:
         raise ValueError("max_total_offset_m must be positive and finite")
     if (not math.isfinite(minimum_hand_clearance_m) or
-            minimum_hand_clearance_m <= 0):
-        raise ValueError("minimum_hand_clearance_m must be positive and finite")
+            minimum_hand_clearance_m < 0):
+        raise ValueError("minimum_hand_clearance_m must be nonnegative and finite")
     if T_key_hand_override is not None:
         T_key_hand_override = validate_se3(
             T_key_hand_override, name="held T_key_hand hypothesis")

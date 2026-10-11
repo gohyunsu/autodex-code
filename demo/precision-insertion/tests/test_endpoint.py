@@ -173,6 +173,16 @@ def test_retry_endpoint_uses_observed_key_hand_transform(tmp_path, monkeypatch):
     assert result["T_key_hand"][0][3] == pytest.approx(0.001)
     assert result["candidate_T_key_hand"][0][3] == pytest.approx(0.0)
 
+    zero_margin = screen_grasp_endpoint(
+        shared_root=tmp_path, mode=mode, candidate_dir=candidate,
+        minimum_hand_clearance_m=0.0, T_key_hand_override=observed)
+    assert zero_margin["endpoint_pass"] is True
+    assert zero_margin["minimum_required_hand_clearance_m"] == 0.0
+    with pytest.raises(ValueError, match="nonnegative"):
+        screen_grasp_endpoint(
+            shared_root=tmp_path, mode=mode, candidate_dir=candidate,
+            minimum_hand_clearance_m=-0.001)
+
     achieved = screen_grasp_endpoint(
         shared_root=tmp_path, mode=mode, candidate_dir=candidate,
         minimum_hand_clearance_m=0.0002, T_key_hand_override=observed,

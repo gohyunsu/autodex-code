@@ -42,8 +42,12 @@ class PathAuditLimits:
 
     def validate(self) -> None:
         for name, value in vars(self).items():
-            if not math.isfinite(value) or value <= 0:
-                raise ValueError(f"{name} must be finite and positive")
+            if not math.isfinite(value) or (
+                    value < 0 if name == "minimum_hand_clearance_m"
+                    else value <= 0):
+                adjective = ("nonnegative" if name == "minimum_hand_clearance_m"
+                             else "positive")
+                raise ValueError(f"{name} must be finite and {adjective}")
 
 
 def _sha256(path: Path) -> str:

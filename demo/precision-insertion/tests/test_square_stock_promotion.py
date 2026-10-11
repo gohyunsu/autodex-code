@@ -28,8 +28,9 @@ def _sha(path: Path) -> str:
 
 
 @pytest.mark.parametrize("batch_size", [1000, 5000])
+@pytest.mark.parametrize("clearance_m", [0.0, .0002])
 def test_append_stock_square_grasp_without_replacing_old_scene(
-        tmp_path, monkeypatch, batch_size):
+        tmp_path, monkeypatch, batch_size, clearance_m):
     mode = select_mode("square", 1.0)
     paths = AssetPaths(tmp_path, mode)
     for path in (paths.raw_mesh(mode.key_object), paths.key_planning_mesh,
@@ -83,7 +84,7 @@ def test_append_stock_square_grasp_without_replacing_old_scene(
                  "socket_object": mode.socket_object},
         "verification_depth_m": 0.02,
         "xy_offset_socket_m": [0.0, 0.0],
-        "minimum_required_hand_clearance_m": .0002,
+        "minimum_required_hand_clearance_m": clearance_m,
         "input_sha256": {name: _sha(path) for name, path in inputs.items()},
     })
     counts = {"generated": batch_size, "mujoco_stable": 1}
@@ -95,7 +96,7 @@ def test_append_stock_square_grasp_without_replacing_old_scene(
         "scene_ids": ["0"], "expected_tabletop_scenes_per_key": 1,
         "raw_root": str(raw_root),
         "original_autodex_sim_candidate_root": str(pass_root),
-        "minimum_hand_clearance_m": .0002,
+        "minimum_hand_clearance_m": clearance_m,
         "modes": {mode.key_object: {
             "gap_mm": 1.0, "socket_object": mode.socket_object,
             "errors": [], "scene_counts": {"0": counts},
@@ -133,11 +134,11 @@ def test_append_stock_square_grasp_without_replacing_old_scene(
             }.items()}}
 
     catalog = build_endpoint_catalog(
-        shared_root=tmp_path, mode=mode, minimum_hand_clearance_m=.0002,
+        shared_root=tmp_path, mode=mode, minimum_hand_clearance_m=clearance_m,
         screen=fake_screen)
     assert catalog["eligible_count"] == 1
     (new / "sim_traj.json").write_text("{}", encoding="utf-8")
     stale = build_endpoint_catalog(
-        shared_root=tmp_path, mode=mode, minimum_hand_clearance_m=.0002,
+        shared_root=tmp_path, mode=mode, minimum_hand_clearance_m=clearance_m,
         screen=fake_screen)
     assert stale["eligible_count"] == 0

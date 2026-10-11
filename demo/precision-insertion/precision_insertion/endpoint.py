@@ -226,8 +226,8 @@ def screen_grasp_endpoint(
     state and its matching key-relative hand pose. Neither is hardware
     feedback or motion authorization.
     """
-    if not math.isfinite(minimum_hand_clearance_m) or minimum_hand_clearance_m <= 0:
-        raise ValueError("minimum_hand_clearance_m must be positive and calibrated")
+    if not math.isfinite(minimum_hand_clearance_m) or minimum_hand_clearance_m < 0:
+        raise ValueError("minimum_hand_clearance_m must be finite and nonnegative")
     offset = np.asarray(xy_offset_socket_m, dtype=np.float64)
     if offset.shape != (2,) or not np.all(np.isfinite(offset)):
         raise ValueError("xy_offset_socket_m must be two finite metric values")

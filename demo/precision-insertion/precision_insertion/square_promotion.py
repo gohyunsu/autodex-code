@@ -108,7 +108,7 @@ def promote_square_scene(
     if (not isinstance(simulation_version, str) or
             not simulation_version.strip() or
             not math.isfinite(minimum_hand_clearance_m) or
-            minimum_hand_clearance_m <= 0):
+            minimum_hand_clearance_m < 0):
         raise ValueError("simulation version and clearance must be explicit")
     root = Path(shared_root).expanduser().resolve()
     paths = AssetPaths(root, mode)

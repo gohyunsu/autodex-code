@@ -23,7 +23,7 @@ class RunLiveOptions:
     endpoint_catalog_path: Path
     run_output_dir: Path
     max_xy_retries: int | None = None
-    max_steps: int = 100
+    max_steps: int | None = None
     enable_robot_motion: bool = False
     robot_config_path: Path | None = None
     label_mode: str = "vlm_only"
@@ -85,8 +85,9 @@ def run_integrated_live_session(
     if (not math.isfinite(float(options.xy_update_weight)) or
             not 0 < options.xy_update_weight <= 1):
         raise ValueError("XY update weight must be in (0, 1]")
-    if type(options.max_steps) is not int or options.max_steps < 1:
-        raise ValueError("max_steps must be positive")
+    if options.max_steps is not None and (
+            type(options.max_steps) is not int or options.max_steps < 1):
+        raise ValueError("max_steps must be positive or None")
     if options.label_mode not in LABEL_MODES or (
             options.label_mode == "manual" and not options.annotator):
         raise ValueError("manual labeling needs a named annotator")

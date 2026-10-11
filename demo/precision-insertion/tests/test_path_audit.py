@@ -127,6 +127,12 @@ def _limits():
     )
 
 
+def test_collision_only_hand_margin_is_explicitly_allowed():
+    replace(_limits(), minimum_hand_clearance_m=0.0).validate()
+    with pytest.raises(ValueError, match="nonnegative"):
+        replace(_limits(), minimum_hand_clearance_m=-0.001).validate()
+
+
 def _audit(tmp_path, fixture, transfer, descent):
     calibration, targets, _ = fixture
     return audit_held_joint_paths(

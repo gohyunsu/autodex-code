@@ -105,6 +105,12 @@ def test_catalog_selects_pose_and_reuses_v8_loader(tmp_path):
         minimum_hand_clearance_m=0.0002, screen=screen)
     assert catalog["complete_scan"] is True
     assert catalog["eligible_count"] == 2
+
+    collision_only = build_endpoint_catalog(
+        shared_root=tmp_path, mode=mode,
+        minimum_hand_clearance_m=0.0, screen=screen)
+    assert collision_only["minimum_hand_clearance_m"] == 0.0
+    assert collision_only["eligible_count"] == 2
     assert [row["tabletop_pose_stem"] for row in catalog["candidates"]] == [
         "000", "000", "001"]
     _write_json(tmp_path / "AutoDex" / "experiment" / "v8" / "coverage" /

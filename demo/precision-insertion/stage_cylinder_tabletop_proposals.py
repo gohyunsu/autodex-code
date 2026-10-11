@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy grip-proxy BODex proposals into an isolated full-key sim-filter run.
+"""Copy full-length BODex proposals into a full-key sim-filter run.
 
 The proxy supplies only object-frame grasp transforms. The original AutoDex
 sim_filter subsequently reads the *full physical key* scene and URDF. This
@@ -17,8 +17,8 @@ from pathlib import Path
 import numpy as np
 
 
-PROXY = "precision_key_cylinder_r15_h80_grip_proxy"
 KEY = "precision_key_cylinder_r15_h80"
+PROXY = f"{KEY}_full_length_proposal"
 FILES = ("wrist_se3.npy", "pregrasp_pose.npy", "grasp_pose.npy", "bodex_info.npy")
 SCENES = ("0", "1")
 
@@ -47,6 +47,8 @@ def check_scene_pair(shared_root: Path, scene_id: str) -> dict:
         raise ValueError(f"proxy/full-key tabletop pose IDs differ: {scene_id}")
     if proxy["meta"].get("runtime_object") != KEY:
         raise ValueError(f"proxy does not declare runtime object {KEY}: {scene_id}")
+    if proxy["meta"].get("proposal_surface_z_range_m") != [0.0, 0.08]:
+        raise ValueError("proposal scene must cover the full 80 mm key")
     return {
         "scene_id": scene_id,
         "tabletop_pose_stem": key["meta"]["pose_idx"],
@@ -86,6 +88,8 @@ def stage(raw_root: Path, stage_root: Path, shared_root: Path, expected: int) ->
         "schema": "precision_insertion_proxy_to_full_key_stage_v1",
         "status": "raw_proposals_only_not_filtered",
         "proxy_object": PROXY,
+        "proposal_contact_z_range_m": [0.0, 0.08],
+        "proposal_contact_region_restricted": False,
         "full_key_object": KEY,
         "raw_root": str(raw_root),
         "stage_root": str(stage_root),

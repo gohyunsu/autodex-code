@@ -10,6 +10,7 @@ current decision visible instead of silently skipping a physical phase.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import count
 from typing import Callable, Mapping, Protocol
 
 from .session_policy import SessionDecision
@@ -45,7 +46,7 @@ class ActionLoopResult:
 
 def run_session_actions(
     runner: DecisionRunner, *, handlers: Mapping[str, ActionHandler],
-    max_steps: int = 100,
+    max_steps: int | None = None,
 ) -> ActionLoopResult:
     """Dispatch until the session is terminal, unhandled, or step-limited.
 
@@ -62,10 +63,10 @@ def run_session_actions(
             not isinstance(name, str) or not name or not callable(handler)
             for name, handler in handlers.items()):
         raise TypeError("action handlers need nonempty action names and callables")
-    if type(max_steps) is not int or max_steps < 1:
-        raise ValueError("max_steps must be a positive integer")
+    if max_steps is not None and (type(max_steps) is not int or max_steps < 1):
+        raise ValueError("max_steps must be a positive integer or None")
     visited: list[SessionDecision] = []
-    for _ in range(max_steps):
+    for _ in (count() if max_steps is None else range(max_steps)):
         decision = runner.current_decision()
         if not isinstance(decision, SessionDecision):
             raise TypeError("runner returned no SessionDecision")

@@ -139,7 +139,7 @@ def run_live_precision_session(
     run_output_dir: Path, max_xy_retries: int | None,
     clear_view: ClearViewForPerception,
     build_handlers: Callable[[LivePrecisionSession], Mapping[str, ActionHandler]],
-    max_steps: int = 100, xy_update_weight: float = 1.0,
+    max_steps: int | None = None, xy_update_weight: float = 1.0,
 ) -> ActionLoopResult:
     """Keep the one ChArUco/socket camera session open across trial actions.
 
@@ -152,8 +152,8 @@ def run_live_precision_session(
     """
     if not callable(build_handlers):
         raise TypeError("live action loop needs a handler factory")
-    if type(max_steps) is not int or max_steps < 1:
-        raise ValueError("max_steps must be a positive integer")
+    if max_steps is not None and (type(max_steps) is not int or max_steps < 1):
+        raise ValueError("max_steps must be a positive integer or None")
     with open_live_precision_session(
             launch_config_path=launch_config_path,
             endpoint_catalog_path=endpoint_catalog_path,

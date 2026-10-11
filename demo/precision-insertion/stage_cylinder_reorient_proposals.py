@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage prior cylinder grip-proxy reset seeds for full-key AutoDex filtering.
+"""Stage full-length cylinder reset proposals for full-key AutoDex filtering.
 
 The proxy and full key share an object frame but have different shape-derived
 virtual reset pillars. This only copies raw proposal transforms into a new
@@ -21,8 +21,8 @@ import numpy as np
 from precision_insertion.geometry import validate_se3
 
 
-PROXY = "precision_key_cylinder_r15_h80_grip_proxy"
 KEY = "precision_key_cylinder_r15_h80"
+PROXY = f"{KEY}_full_length_proposal"
 FILES = ("wrist_se3.npy", "pregrasp_pose.npy", "grasp_pose.npy", "bodex_info.npy")
 PAIRS = ("0_1", "1_0")
 
@@ -57,6 +57,9 @@ def _check_scene_pair(shared_root: Path, cell: str) -> dict:
             Path(k_target["file_path"]).resolve() != key_mesh or
             not proxy_mesh.is_file() or not key_mesh.is_file()):
         raise ValueError(f"proxy/full-key reset object frames differ: {cell}")
+    if (proxy["meta"].get("runtime_object") != KEY or
+            proxy["meta"].get("proposal_surface_z_range_m") != [0.0, 0.08]):
+        raise ValueError("reset proposal must cover the full 80 mm key")
     return {
         "cell": cell,
         "proxy_scene": str(proxy_path), "proxy_sha256": _sha256(proxy_path),
@@ -109,11 +112,13 @@ def stage(
         "schema": "precision_insertion_cylinder_reset_proxy_stage_v1",
         "status": "raw_full_key_filter_input_only",
         "proxy_object": PROXY, "full_key_object": KEY,
+        "proposal_contact_z_range_m": [0.0, 0.08],
+        "proposal_contact_region_restricted": False,
         "raw_root": str(raw), "stage_root": str(target),
         "expected_per_cell": expected_per_cell,
         "total_raw_proposals": len(sources), "scenes": scenes,
         "warning": (
-            "Proxy pillars may differ from full-key pillars. No seed is usable "
+            "The full-length proposal only seeds BODex. No seed is usable "
             "until the original full-key scene/contact/MuJoCo filter and "
             "socket-aware reset path preflight pass."),
         "robot_ready": False,

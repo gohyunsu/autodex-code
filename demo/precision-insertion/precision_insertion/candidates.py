@@ -173,11 +173,12 @@ def build_endpoint_catalog(
 
     ``screen`` is injectable for offline tests; normal calls use the exact
     Coal CAD screen. A screen error makes catalogue completeness false and
-    cannot silently promote a candidate. Clearance is an explicit physical
-    commissioning input, never an inferred default.
+    cannot silently promote a candidate. Clearance is an explicit screening
+    input, never an inferred default. Zero requests CAD noncollision only;
+    a positive value is an extra margin, not a physical uncertainty bound.
     """
-    if not math.isfinite(minimum_hand_clearance_m) or minimum_hand_clearance_m <= 0:
-        raise ValueError("minimum_hand_clearance_m must be finite and positive")
+    if not math.isfinite(minimum_hand_clearance_m) or minimum_hand_clearance_m < 0:
+        raise ValueError("minimum_hand_clearance_m must be finite and nonnegative")
     if max_candidates is not None and max_candidates < 1:
         raise ValueError("max_candidates must be positive")
     root = Path(shared_root).expanduser().resolve()

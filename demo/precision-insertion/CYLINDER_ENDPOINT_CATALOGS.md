@@ -1,4 +1,10 @@
-# Current local cylinder endpoint catalogs (2026-10-11)
+# Historical local cylinder endpoint catalogs (2026-10-11)
+
+For the newer explicit **0 mm extra-margin** full-pool catalogs (CAD
+noncollision only), use [COLLISION_ONLY_CATALOGS.md](COLLISION_ONLY_CATALOGS.md).
+The files below predate that endpoint implementation change **and** the new
+112-grasp full-length candidate append. They are retained as historical
+screens; their implementation hashes and candidate-set binding are now stale.
 
 The earlier `endpoint_catalog_staged{,_verified}_gap_*mm_20261011.json`
 files fail `preflight_endpoint_catalog_file`: their saved
@@ -7,10 +13,10 @@ demo implementation. They remain untouched as historical evidence. Do not
 edit their hashes or use them for a session; the candidate/endpoint screen
 must be rerun after a bound implementation changes.
 
-The current **local-only** full-pool screens are in
+The earlier **local-only** full-pool screens are in
 `/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/`:
 
-| Cylinder radial gap | Current catalog file | v8 candidates | Nominally eligible |
+| Cylinder radial gap | Historical catalog file | v8 candidates then | Nominally eligible then |
 | --- | --- | ---: | ---: |
 | 1 mm | `endpoint_catalog_current_gap_1mm_20261011.json` | 12 | 12 |
 | 3 mm | `endpoint_catalog_current_gap_3mm_20261011.json` | 12 | 12 |

@@ -48,6 +48,14 @@ def test_one_mm_cardinal_targets_are_screened_before_vlm(tmp_path):
                for row in report["rows"][1:])
     assert report["robot_ready"] is False
 
+    collision_only = screen_axis_1mm_endpoint_choices(
+        shared_root=tmp_path, mode=mode,
+        candidate_dir=tmp_path / "raw_seed",
+        current_offset_socket_m=(0.0, 0.0),
+        max_total_offset_m=0.001,
+        minimum_hand_clearance_m=0.0, screen=fake_screen)
+    assert collision_only["minimum_hand_clearance_m"] == 0.0
+
 
 def test_total_offset_budget_prunes_without_geom_call(tmp_path):
     mode = select_mode("square", 1.5)

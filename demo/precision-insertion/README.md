@@ -8,6 +8,12 @@ files remain unchanged.
 For a concise distinction between **offline-usable**, staging-only and
 missing assets, see [OFFLINE_ASSET_STATUS.md](OFFLINE_ASSET_STATUS.md). It
 does not treat live-camera/robot commissioning as a missing 3D file.
+The active cylinder live loop uses a **next-physical-attempt** cumulative XY
+offset after failed insertion. It does not perform lateral correction or
+reinsertion within the failed attempt. See [EXTRA_GATE_AUDIT.md](EXTRA_GATE_AUDIT.md)
+for the 1 mm per-update norm cap, default gain 1.0, and separate stop gates.
+The older same-attempt lateral-shift tools discussed below are experimental
+read-only/opt-in utilities, not the active live retry route.
 
 ## Calibrated VLM point grounding (read-only diagnostic)
 
@@ -1942,6 +1948,12 @@ socket-aware full-chain Franka planning and physical validation.
 
 For the cylindrical family, generate the key's BODex/MuJoCo v8 grasp pool
 **once**, then screen that same pool against **each** selected socket. A
+new [full-length proposal workflow](FULL_LENGTH_CYLINDER_PROPOSALS.md)
+removes the historical 25 mm proposal restriction without changing the
+exact physical key used for AutoDex filtering. The current source-bound
+zero-added-margin runtime catalogues are listed in
+[COLLISION_ONLY_CATALOGS.md](COLLISION_ONLY_CATALOGS.md); the new full-length
+pool is still offline until endpoint screening and promotion finish. A
 recommended per-socket output layout is
 `endpoint_catalogs/cylindrical/<socket_object>/<scan_id>.json`. For example,
 after the grasp pool is present, select the 20 mm radial-gap variant with

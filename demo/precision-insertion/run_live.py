@@ -40,7 +40,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--xy-update-weight", type=float, default=1.0,
         help="gain applied to each failed-trial XY residual before adding to the next trial (default: 1.0)")
-    parser.add_argument("--max-steps", type=int, default=100)
+    parser.add_argument("--max-steps", type=int,
+                        help="optional action-loop cap; default runs until success or a real stop decision")
     parser.add_argument("--label-mode", choices=(
         "vlm_only", "manual", "evidence_fused"), default="vlm_only",
         help="task labels: VLM only, interactive human, or legacy sensor fusion")

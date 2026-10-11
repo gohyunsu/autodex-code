@@ -54,8 +54,8 @@ def run(*, shared_root: Path, raw_root: Path, pass_root: Path,
         workers: int = 1) -> dict:
     if output_root.exists():
         raise FileExistsError(f"refusing to overwrite screen: {output_root}")
-    if not 0 < minimum_hand_clearance_m < 0.001:
-        raise ValueError("give an explicit positive numerical clearance below 1 mm")
+    if not 0 <= minimum_hand_clearance_m < 0.001:
+        raise ValueError("give an explicit nonnegative numerical margin below 1 mm")
     if not gap_mm or len(set(gap_mm)) != len(gap_mm) or any(
             gap not in GAPS_MM for gap in gap_mm):
         raise ValueError("select one or more distinct configured square gaps")

@@ -44,6 +44,11 @@ def _stage_fixture(root: Path, *, expected: int = 2) -> tuple[Path, Path]:
                     "cuboid": {"table_i": {}, "table_j": {}},
                 },
             }
+            if obj == PROXY:
+                scene["meta"].update({
+                    "runtime_object": KEY,
+                    "proposal_surface_z_range_m": [0.0, 0.08],
+                })
             path = scene_root / obj / "reorient_12" / f"{cell}.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(scene))

@@ -142,6 +142,17 @@ def test_step_budget_reports_nonterminal_decision():
     assert result.decision.action == "reobserve_key_and_preflight"
 
 
+def test_default_loop_does_not_truncate_repeated_physical_attempts():
+    runner = Runner([_decision("capture_fresh_key", str(i))
+                     for i in range(125)] +
+                    [_decision("session_success")])
+    result = run_session_actions(runner, handlers={
+        "capture_fresh_key": lambda row, _: row.advance(),
+    })
+    assert result.status == "success"
+    assert len(result.visited) == 126
+
+
 def test_complete_live_handler_composition_rejects_missing_or_duplicate_stages():
     from precision_insertion.live_orchestration import _LIVE_ACTIONS
 
