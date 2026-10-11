@@ -16,16 +16,21 @@ from precision_insertion.feedback_buffer import (  # noqa: E402
 )
 from precision_insertion.key_perception import KeyPoseObservation  # noqa: E402
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
+from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
 
 
-def _state(timestamp, *, arm_angle=0., hand_raw=500.):
+def _state(timestamp, *, arm_angle=0., hand_raw=500., arm_velocity=0.,
+           hand_command_error=0.):
     raw = np.full(6, hand_raw, dtype=float)
     arm_q = np.zeros(7)
     arm_q[0] = arm_angle
     q = np.concatenate((arm_q, convert_inspire_raw(raw[None, :])[0]))
+    qvel = np.zeros(7)
+    qvel[0] = arm_velocity
+    commanded = raw.copy() + hand_command_error
     return LiveRobotState(
-        q, np.zeros(7), timestamp, timestamp, 500., timestamp,
-        raw.copy(), raw.copy(), 0., np.zeros(6))
+        q, qvel, timestamp, timestamp, 500., timestamp,
+        raw.copy(), commanded, abs(hand_command_error), np.zeros(6))
 
 
 def _observation(lower=100.021, upper=100.029):
@@ -66,6 +71,41 @@ def test_feedback_motion_between_brackets_rejects_preflight():
     buffer.append(_state(100.04))
     with pytest.raises(ValueError, match="moved during key exposure"):
         buffer.state_for_observation(_observation(100.001, 100.039))
+
+
+def test_session_long_buffer_records_motion_but_admits_only_later_hold():
+    buffer = _buffer(
+        max_sampling_arm_velocity_rad_s=2.,
+        max_sampling_hand_command_error_raw=200.)
+    buffer.append(_state(100.))
+    buffer.append(_state(
+        100.02, arm_angle=.01, arm_velocity=.5,
+        hand_command_error=80.))
+    buffer.append(_state(100.04, arm_angle=.02))
+    with pytest.raises(ValueError, match="moved during key exposure"):
+        buffer.state_for_observation(_observation(100.001, 100.039))
+    buffer.append(_state(100.06, arm_angle=.02))
+    buffer.append(_state(100.08, arm_angle=.02))
+    selected = buffer.state_for_observation(_observation(100.061, 100.079))
+    assert selected.sample_timestamp_s == 100.06
+    assert selected.full_q[0] == .02
+
+
+def test_raw_vlm_capture_rejects_motion_even_if_arm_returns_to_same_pose():
+    buffer = _buffer(max_sampling_arm_velocity_rad_s=2.)
+    buffer.append(_state(100.))
+    buffer.append(_state(100.02, arm_velocity=.5))
+    buffer.append(_state(100.04))
+    capture = RawCameraCapture(
+        "raw_1", 9,
+        {camera: np.zeros((2, 2, 3), dtype=np.uint8)
+         for camera in ("cam_a", "cam_b")},
+        {"cam_a": 1, "cam_b": 1},
+        {"request_id": 9, "frames": {
+            "cam_a": {"timestamp_s": 100.021, "max_error_s": 0.},
+            "cam_b": {"timestamp_s": 100.029, "max_error_s": 0.}}})
+    with pytest.raises(ValueError, match="moved during raw exposure"):
+        buffer.state_for_capture(capture)
 
 
 def test_missing_or_wide_bracket_rejects_and_input_arrays_are_copied():

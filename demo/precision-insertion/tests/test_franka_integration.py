@@ -40,7 +40,7 @@ def test_franka_integration_reuses_core_and_existing_stage_assembly(
     events = []
     core = SimpleNamespace(
         clear_view=object(), planner=object(), read_state=lambda: None,
-        close=lambda: events.append("close"))
+        sampler=None, close=lambda: events.append("close"))
     monkeypatch.setattr(franka_integration, "open_franka_core",
                         lambda feedback: (events.append(feedback) or core))
     module = ModuleType("robot_pc_stages")
@@ -100,7 +100,7 @@ def test_stage_factory_cannot_replace_fr3_planner_or_feedback(
         monkeypatch, tmp_path):
     core = SimpleNamespace(
         clear_view=object(), planner=object(), read_state=lambda: None,
-        close=lambda: None)
+        sampler=None, close=lambda: None)
     monkeypatch.setattr(franka_integration, "open_franka_core", lambda _: core)
     module = ModuleType("robot_pc_stages")
     module.configure = lambda *_: {
@@ -109,3 +109,47 @@ def test_stage_factory_cannot_replace_fr3_planner_or_feedback(
     integration = franka_integration.factory(_options(tmp_path, _config()))
     with pytest.raises(ValueError, match="belong to core"):
         integration.build_components(object())
+
+
+def test_franka_integration_starts_and_injects_exposure_sampler(
+        monkeypatch, tmp_path):
+    events = []
+    sampler = SimpleNamespace(
+        state_for_observation=lambda _: None,
+        state_for_capture=lambda _: None)
+    core = SimpleNamespace(
+        clear_view=object(), planner=object(), read_state=lambda: None,
+        sampler=None, close=lambda: events.append("close"))
+
+    def start(settings):
+        assert settings.max_sampling_arm_velocity_rad_s == 2.
+        core.sampler = sampler
+        events.append("sampler_start")
+
+    core.start_feedback_sampler = start
+    monkeypatch.setattr(franka_integration, "open_franka_core", lambda _: core)
+    module = ModuleType("robot_pc_stages")
+    module.configure = lambda *_: {"shared": {}, "stages": {}}
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+
+    def assemble(_live, **kwargs):
+        assert kwargs["shared"]["state_for_observation"] is (
+            sampler.state_for_observation)
+        assert kwargs["shared"]["state_for_capture"] is (
+            sampler.state_for_capture)
+        return ()
+
+    monkeypatch.setattr(franka_integration, "assemble_live_components", assemble)
+    config = _config()
+    config["sampling"] = {
+        "max_samples": 100, "max_bracket_span_s": .1,
+        "max_key_state_skew_s": .05, "max_arm_hold_drift_rad": .002,
+        "max_hand_hold_drift_raw": 2.,
+        "max_sampling_hand_command_error_raw": 200.,
+        "max_sampling_arm_velocity_rad_s": 2.,
+        "period_s": .01, "warmup_timeout_s": 2.,
+    }
+    integration = franka_integration.factory(_options(tmp_path, config))
+    integration.build_components(object())
+    integration.close()
+    assert events == ["sampler_start", "close"]

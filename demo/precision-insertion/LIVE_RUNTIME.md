@@ -57,6 +57,17 @@ For the first-party FR3 resource path, create a robot-PC JSON file such as:
     "max_arm_update_wait_s": 0.2,
     "max_arm_velocity_rad_s": 0.05
   },
+  "sampling": {
+    "max_samples": 100,
+    "max_bracket_span_s": 0.1,
+    "max_key_state_skew_s": 0.05,
+    "max_arm_hold_drift_rad": 0.002,
+    "max_hand_hold_drift_raw": 2.0,
+    "max_sampling_hand_command_error_raw": 200.0,
+    "max_sampling_arm_velocity_rad_s": 2.0,
+    "period_s": 0.01,
+    "warmup_timeout_s": 2.0
+  },
   "stages_factory": "my_robot_pc_binding:configure_stages"
 }
 ```
@@ -65,8 +76,13 @@ These numbers illustrate the file format, **not** rig-approved limits.
 `configure_stages(core, live, options)` returns `{"shared": {...},
 "stages": {...}, "held_relation_route": "physical"}` for the existing
 `assemble_live_components`. The core injects its own `planner` and
-`read_state`; the stage factory supplies the remaining commissioned camera,
-feedback-buffer, Qwen, pickup, contact, recovery and repose callbacks. Run:
+`read_state`. If the optional `sampling` block is present, it starts the
+long-lived feedback sampler before camera capture and also injects
+`state_for_observation` and `state_for_capture`. It records moving samples
+without killing the thread, but image lookups still require a stationary
+Franka/Inspire hold throughout exposure. The stage factory supplies the
+remaining commissioned camera, Qwen, pickup, contact, recovery and repose
+callbacks. Run:
 
 ```bash
 python demo/precision-insertion/run_live.py \
@@ -203,6 +219,10 @@ and `state_for_capture(raw_capture)` for feedback bracketing **all** camera
 exposure times. Start the sampler before the first camera request, using a
 reader based on `read_live_franka_inspire_state` and the same
 `FrankaExecutor.arm`/`.hand`; close it in the integration's `close` callback.
+For a session-long sampler, use the wider sampling velocity/hand-error limits
+for both its reader and `ExposureStateBuffer` admission, while retaining
+the tighter stationary limits for image lookup. The first-party `sampling`
+block above wires this distinction and closes the sampler automatically.
 The pre-existing `state_for_observation(key_observation)` remains the input
 to key FoundPose planning. No joint state is inferred from a planned path or
 read only after Qwen inference. These are robot-PC receipt timestamps, not

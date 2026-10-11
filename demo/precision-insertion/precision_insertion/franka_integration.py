@@ -14,13 +14,16 @@ import math
 from pathlib import Path
 from typing import Mapping
 
-from .franka_core import FrankaFeedbackSettings, open_franka_core
+from .franka_core import (
+    FrankaFeedbackSettings, FrankaSamplingSettings, open_franka_core,
+)
 from .live_runtime import LiveRuntimeIntegration, RunLiveOptions
 from .runtime_assembly import assemble_live_components
 
 
 _SCHEMA = "precision_insertion_franka_integration_v1"
 _FEEDBACK_KEYS = frozenset(FrankaFeedbackSettings.__dataclass_fields__)
+_SAMPLING_KEYS = frozenset(FrankaSamplingSettings.__dataclass_fields__)
 
 
 def _stage_factory(specification: str):
@@ -57,7 +60,9 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
         raise FileNotFoundError(f"FR3 robot config is missing: {source}")
     record = json.loads(source.read_text(encoding="utf-8"))
     if (not isinstance(record, dict) or record.get("schema") != _SCHEMA or
-            set(record) != {"schema", "feedback", "stages_factory"} or
+            set(record) not in (
+                {"schema", "feedback", "stages_factory"},
+                {"schema", "feedback", "sampling", "stages_factory"}) or
             not isinstance(record["feedback"], dict) or
             set(record["feedback"]) != _FEEDBACK_KEYS):
         raise ValueError("FR3 robot config needs schema, feedback and stages_factory")
@@ -65,10 +70,29 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
            not math.isfinite(value) or value <= 0
            for value in record["feedback"].values()):
         raise ValueError("FR3 feedback thresholds must be finite and positive")
+    sampling = None
+    if "sampling" in record:
+        supplied = record["sampling"]
+        if (not isinstance(supplied, dict) or
+                set(supplied) != _SAMPLING_KEYS or
+                type(supplied.get("max_samples")) is not int or
+                supplied["max_samples"] < 2 or
+                any(type(value) not in (float, int) or
+                    not math.isfinite(value) or value <= 0
+                    for key, value in supplied.items()
+                    if key != "max_samples")):
+            raise ValueError("FR3 sampling settings are incomplete or invalid")
+        sampling = FrankaSamplingSettings(**supplied)
     # Parse/import all static inputs before touching CUDA or a robot daemon.
     feedback = FrankaFeedbackSettings(**record["feedback"])
     build_stages = _stage_factory(record["stages_factory"])
     core = open_franka_core(feedback)
+    if sampling is not None:
+        try:
+            core.start_feedback_sampler(sampling)
+        except BaseException:
+            core.close()
+            raise
 
     def components(live):
         parameters = build_stages(core, live, options)
@@ -80,9 +104,16 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 not isinstance(parameters["stages"], Mapping)):
             raise TypeError("stage factory needs shared and stages mappings")
         shared = dict(parameters["shared"])
-        if {"planner", "read_state"} & shared.keys():
-            raise ValueError("FR3 planner and measured reader belong to core")
+        owned = {"planner", "read_state"}
+        if core.sampler is not None:
+            owned.update({"state_for_observation", "state_for_capture"})
+        if owned & shared.keys():
+            raise ValueError("FR3 planner and measured readers belong to core")
         shared.update(planner=core.planner, read_state=core.read_state)
+        if core.sampler is not None:
+            shared.update(
+                state_for_observation=core.sampler.state_for_observation,
+                state_for_capture=core.sampler.state_for_capture)
         return assemble_live_components(
             live, shared=shared, stages=parameters["stages"],
             enable_robot_motion=options.enable_robot_motion,

@@ -68,3 +68,48 @@ def test_franka_core_checks_cuda_planner_before_opening_franka():
                 events.append("connect") or _executor(events)),
             planner_factory=broken_planner)
     assert events == []
+
+
+def test_franka_core_owns_motion_tolerant_exposure_sampler(monkeypatch):
+    events = []
+    executor = _executor(events)
+    planner = SimpleNamespace(_n_arm=7, _hand="fr3_inspire")
+    buffer_settings = {}
+
+    def buffer_factory(**kwargs):
+        buffer_settings.update(kwargs)
+        return object()
+
+    class Sampler:
+        def __init__(self, buffer, reader, *, period_s):
+            assert period_s == .01
+            self.reader = reader
+
+        def start(self):
+            events.append("sampler_start")
+
+        def wait_until_ready(self, *, timeout_s):
+            assert timeout_s == 2.
+            events.append("sampler_ready")
+
+        def close(self):
+            events.append("sampler_close")
+
+    monkeypatch.setattr(franka_core, "ExposureStateBuffer", buffer_factory)
+    monkeypatch.setattr(franka_core, "RobotFeedbackSampler", Sampler)
+    monkeypatch.setattr(franka_core, "read_live_franka_inspire_state",
+                        lambda **kwargs: kwargs)
+    core = franka_core.open_franka_core(
+        _settings(), executor_factory=lambda: executor,
+        planner_factory=lambda: planner)
+    settings = franka_core.FrankaSamplingSettings(
+        100, .1, .05, .002, 2., 200., 2., .01, 2.)
+    sampler = core.start_feedback_sampler(settings)
+    sample = sampler.reader()
+    assert sample["max_arm_velocity_rad_s"] == 2.
+    assert sample["max_hand_command_error_raw"] == 200.
+    assert buffer_settings["max_arm_velocity_rad_s"] == .05
+    assert buffer_settings["max_sampling_arm_velocity_rad_s"] == 2.
+    core.close()
+    assert events == ["sampler_start", "sampler_ready",
+                      "sampler_close", "shutdown"]

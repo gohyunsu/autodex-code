@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .clear_view import ClearViewForPerception
+from .feedback_buffer import ExposureStateBuffer, RobotFeedbackSampler
 from .live_robot_state import LiveRobotState, read_live_franka_inspire_state
 
 
@@ -24,19 +25,86 @@ class FrankaFeedbackSettings:
     max_arm_velocity_rad_s: float
 
 
+@dataclass(frozen=True)
+class FrankaSamplingSettings:
+    max_samples: int
+    max_bracket_span_s: float
+    max_key_state_skew_s: float
+    max_arm_hold_drift_rad: float
+    max_hand_hold_drift_raw: float
+    max_sampling_hand_command_error_raw: float
+    max_sampling_arm_velocity_rad_s: float
+    period_s: float
+    warmup_timeout_s: float
+
+
 @dataclass
 class FrankaRuntimeCore:
     executor: object
     planner: object
     read_state: Callable[[], LiveRobotState]
     clear_view: ClearViewForPerception
+    feedback: FrankaFeedbackSettings
+    sampler: RobotFeedbackSampler | None = None
     _closed: bool = False
+
+    def start_feedback_sampler(
+        self, settings: FrankaSamplingSettings,
+    ) -> RobotFeedbackSampler:
+        """Keep exposure-time feedback alive through intervening arm motion.
+
+        The sampling limits admit moving states into the buffer. Lookup for a
+        key or VLM image still uses the tighter stationary limits and rejects
+        any moving sample that overlaps that image's exposure interval.
+        """
+        if (self._closed or self.sampler is not None or
+                not isinstance(settings, FrankaSamplingSettings)):
+            raise ValueError("FR3 feedback sampler is closed or already running")
+        buffer = ExposureStateBuffer(
+            max_samples=settings.max_samples,
+            max_bracket_span_s=settings.max_bracket_span_s,
+            max_key_state_skew_s=settings.max_key_state_skew_s,
+            max_arm_hold_drift_rad=settings.max_arm_hold_drift_rad,
+            max_hand_hold_drift_raw=settings.max_hand_hold_drift_raw,
+            max_arm_hand_skew_s=self.feedback.max_arm_hand_skew_s,
+            max_hand_command_error_raw=self.feedback.max_hand_command_error_raw,
+            max_arm_velocity_rad_s=self.feedback.max_arm_velocity_rad_s,
+            max_sampling_hand_command_error_raw=(
+                settings.max_sampling_hand_command_error_raw),
+            max_sampling_arm_velocity_rad_s=(
+                settings.max_sampling_arm_velocity_rad_s))
+
+        def sample_state() -> LiveRobotState:
+            return read_live_franka_inspire_state(
+                arm=self.executor.arm, hand=self.executor.hand,
+                max_arm_hand_skew_s=self.feedback.max_arm_hand_skew_s,
+                max_sample_age_s=self.feedback.max_sample_age_s,
+                max_hand_command_error_raw=(
+                    settings.max_sampling_hand_command_error_raw),
+                max_arm_update_wait_s=self.feedback.max_arm_update_wait_s,
+                max_arm_velocity_rad_s=(
+                    settings.max_sampling_arm_velocity_rad_s))
+
+        sampler = RobotFeedbackSampler(
+            buffer, sample_state, period_s=settings.period_s)
+        sampler.start()
+        try:
+            sampler.wait_until_ready(timeout_s=settings.warmup_timeout_s)
+        except BaseException:
+            sampler.close()
+            raise
+        self.sampler = sampler
+        return sampler
 
     def close(self) -> None:
         """Release the stock Franka daemon/controllers once, even on failure."""
         if not self._closed:
             self._closed = True
-            self.executor.shutdown()
+            try:
+                if self.sampler is not None:
+                    self.sampler.close()
+            finally:
+                self.executor.shutdown()
 
 
 def open_franka_core(
@@ -90,7 +158,8 @@ def open_franka_core(
             max_hand_command_error_raw=feedback.max_hand_command_error_raw,
             max_arm_velocity_rad_s=feedback.max_arm_velocity_rad_s,
             max_sample_age_s=feedback.max_sample_age_s)
-        return FrankaRuntimeCore(executor, planner, read_state, clear_view)
+        return FrankaRuntimeCore(
+            executor, planner, read_state, clear_view, feedback)
     except BaseException:
         # FrankaExecutor owns a daemon connection and a proximity worker even
         # if planner construction fails. Never leak them on a partial startup.

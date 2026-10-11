@@ -46,6 +46,8 @@ class ExposureStateBuffer:
         max_key_state_skew_s: float, max_arm_hold_drift_rad: float,
         max_hand_hold_drift_raw: float, max_arm_hand_skew_s: float,
         max_hand_command_error_raw: float, max_arm_velocity_rad_s: float,
+        max_sampling_hand_command_error_raw: float | None = None,
+        max_sampling_arm_velocity_rad_s: float | None = None,
     ) -> None:
         if type(max_samples) is not int or max_samples < 2:
             raise ValueError("feedback buffer needs at least two samples")
@@ -67,6 +69,24 @@ class ExposureStateBuffer:
         self.max_arm_hand_skew_s = float(max_arm_hand_skew_s)
         self.max_hand_command_error_raw = float(max_hand_command_error_raw)
         self.max_arm_velocity_rad_s = float(max_arm_velocity_rad_s)
+        # A session-long sampler must survive expected pickup/transfer motion.
+        # These admission limits apply only when storing a sample; exposure
+        # lookup below still requires the tighter stationary limits.
+        self.max_sampling_hand_command_error_raw = float(
+            max_hand_command_error_raw if
+            max_sampling_hand_command_error_raw is None else
+            max_sampling_hand_command_error_raw)
+        self.max_sampling_arm_velocity_rad_s = float(
+            max_arm_velocity_rad_s if
+            max_sampling_arm_velocity_rad_s is None else
+            max_sampling_arm_velocity_rad_s)
+        if (not math.isfinite(self.max_sampling_hand_command_error_raw) or
+                self.max_sampling_hand_command_error_raw <
+                self.max_hand_command_error_raw or
+                not math.isfinite(self.max_sampling_arm_velocity_rad_s) or
+                self.max_sampling_arm_velocity_rad_s <
+                self.max_arm_velocity_rad_s):
+            raise ValueError("sampling limits must cover stationary limits")
         self._samples: deque[LiveRobotState] = deque(maxlen=max_samples)
         self._lock = threading.Lock()
 
@@ -75,8 +95,9 @@ class ExposureStateBuffer:
             raise TypeError("feedback buffer accepts measured LiveRobotState only")
         state.validate(
             max_arm_hand_skew_s=self.max_arm_hand_skew_s,
-            max_hand_command_error_raw=self.max_hand_command_error_raw,
-            max_arm_velocity_rad_s=self.max_arm_velocity_rad_s)
+            max_hand_command_error_raw=(
+                self.max_sampling_hand_command_error_raw),
+            max_arm_velocity_rad_s=self.max_sampling_arm_velocity_rad_s)
         frozen = _copy_state(state)
         with self._lock:
             if (self._samples and frozen.sample_timestamp_s <=
@@ -108,7 +129,10 @@ class ExposureStateBuffer:
             raise ValueError("robot feedback bracket is too wide")
         reference = segment[0]
         for row in segment:
-            if (np.max(np.abs(row.full_q[:7] - reference.full_q[:7])) >
+            if (np.max(np.abs(row.arm_qvel)) > self.max_arm_velocity_rad_s or
+                    row.max_hand_command_error_raw >
+                    self.max_hand_command_error_raw or
+                    np.max(np.abs(row.full_q[:7] - reference.full_q[:7])) >
                     self.max_arm_hold_drift_rad or
                     np.max(np.abs(row.hand_raw_measured -
                                   reference.hand_raw_measured)) >
@@ -136,6 +160,10 @@ class ExposureStateBuffer:
         age = time.time() - selected.sample_timestamp_s
         if age < -max_age_s or age > max_age_s:
             raise ValueError("latest measured robot feedback is stale")
+        selected.validate(
+            max_arm_hand_skew_s=self.max_arm_hand_skew_s,
+            max_hand_command_error_raw=self.max_hand_command_error_raw,
+            max_arm_velocity_rad_s=self.max_arm_velocity_rad_s)
         return selected
 
     def state_for_capture(self, capture: RawCameraCapture) -> LiveRobotState:
@@ -179,7 +207,10 @@ class ExposureStateBuffer:
             raise ValueError("raw exposure feedback bracket is too wide")
         reference = segment[0]
         for row in segment:
-            if (np.max(np.abs(row.full_q[:7] - reference.full_q[:7])) >
+            if (np.max(np.abs(row.arm_qvel)) > self.max_arm_velocity_rad_s or
+                    row.max_hand_command_error_raw >
+                    self.max_hand_command_error_raw or
+                    np.max(np.abs(row.full_q[:7] - reference.full_q[:7])) >
                     self.max_arm_hold_drift_rad or
                     np.max(np.abs(row.hand_raw_measured -
                                   reference.hand_raw_measured)) >
@@ -202,8 +233,11 @@ class RobotFeedbackSampler:
 
     Start it *before* triggering any camera capture. ``sample_state`` may
     call ``read_live_franka_inspire_state(arm=..., hand=..., ...)``; the
-    sampler never creates controllers or sends arm/hand commands. A read or
-    validation error stops sampling and makes later lookups fail closed.
+    sampler never creates controllers or sends arm/hand commands. For a
+    session-long sampler, use the buffer's wider *sampling* limits and pass
+    those same limits to the state reader: motion is recorded, then rejected
+    if it overlaps a camera exposure. A read or invalid-sample error stops
+    sampling and makes later lookups fail closed.
     """
 
     def __init__(
