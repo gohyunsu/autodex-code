@@ -184,7 +184,9 @@ class LiveHeldReturnHandlers:
             minimum_release_key_clearance_m=(
                 self.return_parameters["minimum_release_key_clearance_m"]),
             retreat_goal_arm_q=np.asarray(FR3_CLEAR_VIEW, dtype=float),
-            limits=self.limits)
+            limits=self.limits,
+            preferred_candidate_key=tuple(
+                runner.active_attempt.candidate_id.split("/")))
         if plan.status != "nominal_reset_preflight_pass_drop_unobserved":
             raise RuntimeError(f"original-pose restoration unavailable: {plan.status}")
         folder = Path(runner._attempt_dir) / "reset_restoration" / f"{index:03d}"

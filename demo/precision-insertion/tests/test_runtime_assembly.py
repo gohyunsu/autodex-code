@@ -32,6 +32,13 @@ class _ObservedStage:
     planner: object
 
 
+@dataclass
+class _HeldReturnStage:
+    live: object
+    planner: object
+    execute_restoration: object = None
+
+
 def _fake_classes(monkeypatch):
     classes = {name: _Stage for name in runtime_assembly.STAGE_CLASSES}
     classes["repose_planning"] = _ReposeStage
@@ -131,6 +138,29 @@ def test_cylinder_live_rejects_postgrasp_observed_relation(monkeypatch):
         runtime_assembly.assemble_live_components(
             live, shared={"planner": object()}, stages=stages,
             enable_robot_motion=True, held_relation_route="physical")
+
+
+def test_cylinder_requires_restoration_executor_before_pickup(monkeypatch):
+    from precision_insertion.config import select_mode
+
+    _fake_classes(monkeypatch)
+    monkeypatch.setattr(runtime_assembly,
+                        "LiveNominalRelationHandlers", _ObservedStage)
+    monkeypatch.setattr(runtime_assembly,
+                        "LiveHeldReturnHandlers", _HeldReturnStage)
+    runtime_assembly.STAGE_CLASSES["held_return"] = _HeldReturnStage
+    live = SimpleNamespace(opened=SimpleNamespace(runner=SimpleNamespace(
+        mode=select_mode("cylinder", 20))))
+    stages = {name: {} for name in runtime_assembly.STAGE_CLASSES}
+    with pytest.raises(ValueError, match="execute_restoration.*before any pickup"):
+        runtime_assembly.assemble_live_components(
+            live, shared={"planner": object()}, stages=stages,
+            enable_robot_motion=True)
+    stages["held_return"]["execute_restoration"] = lambda *_args: None
+    components = runtime_assembly.assemble_live_components(
+        live, shared={"planner": object()}, stages=stages,
+        enable_robot_motion=True)
+    assert callable(components[6].execute_restoration)
 
 
 def test_square_session_uses_same_metric_retry_handler(monkeypatch):

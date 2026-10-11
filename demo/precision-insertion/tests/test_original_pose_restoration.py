@@ -58,6 +58,7 @@ def test_same_pose_restoration_reuses_v8_grasp_and_fully_opens_hand(
     candidate.mkdir()
     np.save(candidate / "wrist_se3.npy", np.eye(4))
     row = {"key": ["table", "0", "3"], "candidate_dir": str(candidate)}
+    other = {"key": ["table", "0", "1"], "candidate_dir": str(candidate)}
     scene = {"mesh": {"target": {"pose": se32cart(np.eye(4)).tolist()}}}
     monkeypatch.setattr(module, "build_trial_scene_from_session",
                         lambda **_: scene)
@@ -67,9 +68,10 @@ def test_same_pose_restoration_reuses_v8_grasp_and_fully_opens_hand(
                         lambda **_: np.eye(4))
     monkeypatch.setattr(module, "select_pose_candidates",
                         lambda *_args, **_kwargs: {
-                            "status": "candidates_available", "candidates": [row]})
+                            "status": "candidates_available",
+                            "candidates": [other, row]})
     monkeypatch.setattr(module, "planner_candidate_override",
-                        lambda **_: "selected v8 grasp")
+                        lambda **kwargs: tuple(kwargs["selected"][0]["key"]))
     monkeypatch.setattr(module, "install_curobo_planner_compat", lambda: None)
     monkeypatch.setattr(module, "plan_repose_held_chain",
                         lambda **_: SimpleNamespace(
@@ -88,7 +90,7 @@ def test_same_pose_restoration_reuses_v8_grasp_and_fully_opens_hand(
             pass
 
         def plan(self, _scene, _object, _version, **kwargs):
-            assert kwargs["candidate_override"] == "selected v8 grasp"
+            assert kwargs["candidate_override"] == ("table", "0", "3")
             return SimpleNamespace(
                 success=True, lift_preflight=object(),
                 scene_info=("table", "0", "3"),
@@ -110,7 +112,8 @@ def test_same_pose_restoration_reuses_v8_grasp_and_fully_opens_hand(
         minimum_board_edge_clearance_m=.005,
         minimum_release_key_clearance_m=.005,
         retreat_goal_arm_q=np.zeros(7),
-        limits=SimpleNamespace(goal_position_tolerance_m=.001))
+        limits=SimpleNamespace(goal_position_tolerance_m=.001),
+        preferred_candidate_key=("table", "0", "3"))
     assert result.status == "nominal_reset_preflight_pass_drop_unobserved"
     assert result.selected_seed["seed_id"] == "table/0/3"
     assert frozen_scene is scene

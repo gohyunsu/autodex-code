@@ -143,7 +143,9 @@ grasp rows for pose `000` and 4 for pose `001` at the 20 mm gap. These are
 **unplanned** for each new observed tabletop location; a complete Franka
 restoration path still must be found at runtime. The robot-PC
 `execute_restoration` callback and execution log remain external integration
-resources, not files supplied by the offline asset handoff.
+resources, not files supplied by the offline asset handoff. Cylinder live
+assembly requires that callback before pickup; a nominal reset plan is not
+a substitute for physical execution evidence.
 `run_auto.py` CLI itself still only opens an evidence ledger; the new
 [`run_live.py`](run_live.py) CLI drives the live loop through an explicit
 AutoDex-PC integration module and independently commissioned controllers.

@@ -55,6 +55,7 @@ def plan_original_pose_restoration(
     minimum_board_edge_clearance_m: float,
     minimum_release_key_clearance_m: float,
     retreat_goal_arm_q: np.ndarray, limits,
+    preferred_candidate_key: tuple[str, str, str] | None = None,
 ) -> tuple[ReposeTransitionPreflight, dict]:
     """Return a full pickup→place→release/exit preflight and its frozen scene.
 
@@ -108,7 +109,13 @@ def plan_original_pose_restoration(
         asset_support_tolerance_m=limits.goal_position_tolerance_m)
     selected = select_pose_candidates(
         catalog, expected_mode=mode, tabletop_pose_stem=source)
-    rows = selected.get("candidates", ()) if selected["status"] == "candidates_available" else ()
+    rows = list(selected.get("candidates", ())) if (
+        selected["status"] == "candidates_available") else []
+    if preferred_candidate_key is not None:
+        preferred = tuple(preferred_candidate_key)
+        if len(preferred) != 3 or not all(isinstance(part, str) for part in preferred):
+            raise ValueError("preferred restoration grasp needs a v8 candidate key")
+        rows.sort(key=lambda row: tuple(row["key"]) != preferred)
     attempts = []
 
     def result(status, candidate=None, pickup=None, held=None, release=None):

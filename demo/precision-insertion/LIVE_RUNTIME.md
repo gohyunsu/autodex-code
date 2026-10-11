@@ -172,7 +172,10 @@ failed attempt ID**; the handler verifies it before another clear-view key
 capture. The same helper is wired into completed-transfer recovery. If no
 placement is needed, the callback is not called. No new key/socket mesh or
 same-pose reset seed is required: an eligible full-key v8 grasp from the
-source tabletop pose is used for same-pose relocation. If neither a directed
+source tabletop pose is used for same-pose relocation, with the previous
+attempt's candidate tried first when it is still eligible. Cylinder live
+assembly rejects a missing callback before pickup, instead of discovering
+that gap only after a failed insertion. If neither a directed
 reset seed nor an eligible source-pose grasp has a complete planned path,
 restoration remains unavailable for that observed scene; it is not reported
 as a successful reset. `restoration_height_cm` defaults to 12 and
