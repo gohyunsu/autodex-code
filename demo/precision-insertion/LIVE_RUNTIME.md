@@ -19,7 +19,8 @@ socket capture and must return these ten components, all bound to that same
 1. `LiveKeyPlanningHandlers` — key SAM/FoundPose and v8 trial preflight.
 2. `LivePickupHandlers` — selected grasp, measured squeeze and lift plan.
 3. `LiveLiftHandlers` — executed lift and fresh Qwen grasp label.
-4. `LiveHeldRelationHandlers` — physical grasp-specific key/hand relation.
+4. `LiveHeldRelationHandlers` — physical grasp-specific key/hand relation,
+   or `LiveObservedHeldRelationHandlers` for a newly visible post-lift key.
 5. `LiveTaskHandlers` — transfer, arrival label, first guarded insertion.
 6. `LiveGroundedRetryHandlers` — guarded withdrawal, VLM ≤1 mm XY correction,
    renewed planning and one guarded reattempt.
@@ -57,11 +58,21 @@ def build_components(live):
     return assemble_live_components(
         live, shared=shared_robot_objects,
         stages=stage_specific_callbacks_and_limits,
-        enable_robot_motion=options.enable_robot_motion)
+        enable_robot_motion=options.enable_robot_motion,
+        held_relation_route="physical")
 ```
 
 This removes integration boilerplate; it does not synthesize camera frames,
 robot feedback, physical grasp calibration or an insertion controller.
+Set `held_relation_route="observed"` only when the held key is visible enough
+for a **new** multi-view FoundPose measurement after Qwen's positive lift
+label. This route uses the measured wrist plus selected v8 grasp solely as a
+loose search prior, then replans from the observed key–hand relation. Failed
+pose admission stops that attempt; it does not silently substitute the
+nominal BODex transform. The current grounded XY **retry** route still uses
+physical bounded-relation evidence, so run the observed route with
+`--max-xy-retries 0` until that retry path is extended. The default remains
+the physical relation route for the intended VLM correction experiment.
 
 `LiveReposePlanningHandlers` now uses `DirectedReposeTargetSelector` by
 default. When a tabletop pose has no remaining usable grasp, it ranks the

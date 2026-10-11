@@ -25,6 +25,12 @@ class _ReposeStage:
     key_planning: object
 
 
+@dataclass
+class _ObservedStage:
+    live: object
+    planner: object
+
+
 def _fake_classes(monkeypatch):
     classes = {name: _Stage for name in runtime_assembly.STAGE_CLASSES}
     classes["repose_planning"] = _ReposeStage
@@ -64,3 +70,18 @@ def test_assembly_rejects_split_session_or_missing_stage(monkeypatch):
         runtime_assembly.assemble_live_components(
             object(), shared={"planner": object()}, stages=stages,
             enable_robot_motion=True)
+
+
+def test_observed_relation_route_uses_distinct_handler(monkeypatch):
+    _fake_classes(monkeypatch)
+    monkeypatch.setattr(runtime_assembly,
+                        "LiveObservedHeldRelationHandlers", _ObservedStage)
+    stages = {name: {} for name in runtime_assembly.STAGE_CLASSES}
+    components = runtime_assembly.assemble_live_components(
+        object(), shared={"planner": object()}, stages=stages,
+        enable_robot_motion=True, held_relation_route="observed")
+    assert isinstance(components[3], _ObservedStage)
+    with pytest.raises(ValueError, match="physical or observed"):
+        runtime_assembly.assemble_live_components(
+            object(), shared={"planner": object()}, stages=stages,
+            enable_robot_motion=True, held_relation_route="nominal")

@@ -12,6 +12,7 @@ from typing import Mapping
 
 from .live_held_relation_handlers import LiveHeldRelationHandlers
 from .live_lift_handlers import LiveLiftHandlers
+from .live_observed_relation_handlers import LiveObservedHeldRelationHandlers
 from .live_pickup_handlers import LivePickupHandlers
 from .live_planning_handlers import LiveKeyPlanningHandlers
 from .live_recovery_handlers import LiveHeldReturnHandlers
@@ -40,6 +41,7 @@ def assemble_live_components(
     live: object, *, shared: Mapping[str, object],
     stages: Mapping[str, Mapping[str, object]],
     enable_robot_motion: bool,
+    held_relation_route: str = "physical",
 ) -> tuple[object, ...]:
     """Instantiate every existing handler without duplicating its behavior.
 
@@ -54,8 +56,13 @@ def assemble_live_components(
         raise TypeError("runtime assembly needs shared and stage mappings")
     if type(enable_robot_motion) is not bool:
         raise TypeError("runtime assembly needs a boolean motion setting")
-    missing = STAGE_CLASSES.keys() - stages.keys()
-    unknown = stages.keys() - STAGE_CLASSES.keys()
+    if held_relation_route not in {"physical", "observed"}:
+        raise ValueError("held relation route must be physical or observed")
+    classes = dict(STAGE_CLASSES)
+    if held_relation_route == "observed":
+        classes["held_relation"] = LiveObservedHeldRelationHandlers
+    missing = classes.keys() - stages.keys()
+    unknown = stages.keys() - classes.keys()
     if missing or unknown:
         raise ValueError(
             f"runtime stages missing {sorted(missing)} or unknown {sorted(unknown)}")
@@ -63,14 +70,14 @@ def assemble_live_components(
     if reserved & shared.keys():
         raise ValueError("live and robot-motion opt-in are CLI-owned")
     known = set()
-    for cls in STAGE_CLASSES.values():
+    for cls in classes.values():
         known.update(field.name for field in fields(cls) if field.init)
     unknown_shared = shared.keys() - known
     if unknown_shared:
         raise ValueError(f"unknown shared runtime fields: {sorted(unknown_shared)}")
 
     components = []
-    for name, cls in STAGE_CLASSES.items():
+    for name, cls in classes.items():
         stage = stages[name]
         if not isinstance(stage, Mapping):
             raise TypeError(f"{name} stage parameters must be a mapping")
