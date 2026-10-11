@@ -65,14 +65,16 @@ robot feedback, physical grasp calibration or an insertion controller.
 
 For VLM checkpoints, `make_checkpoint_capture` in
 `precision_insertion.checkpoint_camera` supplies the existing handlers'
-`(live, runner, decision)` callback using the **same open AutoDex init
-camera transport** and its undistorted, request-bound images. Instantiate a
-callback per phase (`after_lift`, `preinsert`, `post_lateral_hold`,
-`final_or_abort`); repeated calls create fresh capture IDs. The wrapper
-ignores FoundPose's pose estimate, but the current AutoDex init transport
-must still return frame metadata and saved images for every calibrated view.
-If segmentation/pose transport emits no payload for a heavily occluded key,
-the robot PC must supply a raw-only camera capture callback instead.
+`(live, runner, decision)` callback. Its default `snapshot` transport uses
+the **same open AutoDex snapshot cameras** without asking SAM/FoundPose to
+recognize a partly occluded held key. It undistorts the original snapshot
+using the session camera calibration, and saves both image versions so that
+the VLM bundle can replay that exact derivation. Instantiate a callback per
+phase (`after_lift`, `preinsert`, `post_lateral_hold`, `final_or_abort`);
+repeated calls create fresh capture IDs. `transport="init_key"` retains the
+older key-init capture path when FoundPose outputs are explicitly wanted.
+The default still requires complete frame-ID/exposure metadata from the
+AutoDex snapshot adapter, but **does not require a key mask or pose**.
 `state_for_capture` remains a separate exposure-aligned robot feedback
 sampler; reading joints after Qwen inference is not equivalent.
 

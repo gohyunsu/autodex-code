@@ -10,9 +10,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.checkpoint_camera import (  # noqa: E402
-    capture_checkpoint_frames, make_checkpoint_capture,
+    capture_checkpoint_frames, capture_snapshot_checkpoint_frames,
+    make_checkpoint_capture,
 )
-from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
+from precision_insertion.frame_provenance import image_sha256  # noqa: E402
+from precision_insertion.raw_camera_capture import (  # noqa: E402
+    RawCameraCapture, verify_raw_camera_capture, write_raw_camera_capture,
+)
 
 
 def test_checkpoint_capture_reuses_session_and_exact_frame_metadata():
@@ -63,3 +67,45 @@ def test_checkpoint_capture_rejects_missing_camera_or_unknown_phase():
                 request_id=1, capture_id="test",
                 images_bgr={"cam_a": np.zeros((4, 5, 3), dtype=np.uint8)},
                 frame_evidence={"cam_a": {"frame_id": 2}}))
+
+
+def test_raw_snapshot_checkpoint_does_not_depend_on_key_pose(tmp_path):
+    original = {camera: np.full((8, 9, 3), index * 30, dtype=np.uint8)
+                for index, camera in enumerate(("cam_a", "cam_b"), 1)}
+    evidence = {camera: {
+        "frame_id": index, "image_sha256": image_sha256(image),
+        "timestamp_s": 100.0, "max_error_s": 0.002,
+        "timestamp_method": "hardware_exposure", "clock_domain": "unix_utc"}
+        for index, (camera, image) in enumerate(original.items(), 1)}
+    source = SimpleNamespace(
+        request_id=31, images_bgr=original, frame_evidence=evidence)
+    snap = object()
+    intrinsics = {
+        camera: {"K_orig": np.eye(3), "K_undist": np.eye(3),
+                 "dist_params": np.zeros(5)} for camera in original}
+    live = SimpleNamespace(cameras=SimpleNamespace(
+        snapshot_orchestrator=snap,
+        acquisition_metadata_for_request=lambda request: None,
+        launch=SimpleNamespace(camera_ids=tuple(original),
+                               intrinsics_full=intrinsics)))
+    requests = []
+
+    def collect(**kwargs):
+        requests.append(kwargs)
+        return source
+
+    raw = capture_snapshot_checkpoint_frames(
+        live, phase="preinsert", timeout_s=2.0,
+        capture_id="raw_31", snapshot_collector=collect)
+    assert requests[0]["snapshot_orchestrator"] is snap
+    assert raw.source_images_bgr is original
+    path = write_raw_camera_capture(raw, tmp_path / "raw", phase="preinsert")
+    manifest = verify_raw_camera_capture(path, phase="preinsert")
+    assert set(manifest["undistort_derivation"]["source_frame_evidence"]) == {
+        "cam_a", "cam_b"}
+    assert make_checkpoint_capture(
+        phase="preinsert", timeout_s=2.0).__name__ == \
+        "capture"
+    with pytest.raises(ValueError, match="key-specific prompt"):
+        make_checkpoint_capture(
+            phase="preinsert", timeout_s=2.0, transport="init_key")
