@@ -1,5 +1,110 @@
 # Cylinder precision-insertion presentation visuals
 
+## Passed full-robot offline trajectory set (recommended)
+
+The newest set is under:
+
+```text
+~/shared_data/AutoDex/precision_insertion/presentation_assets/
+  cylinder_passed_trial_20261012/
+```
+
+It uses all 41 original FR3/Inspire URDF visual geometries (479,710 robot
+mesh faces), the exact cylinder key/socket meshes, and saved joint paths from
+one current precision-insertion preflight.  All MP4 files are 1280x720 at
+24 fps; every MP4 has a 960x540, 10 fps GIF derivative below 50 MB.
+
+| Stage | MP4/GIF stem | Motion/evidence shown |
+| --- | --- | --- |
+| 0 | `00_socket_pose/00_socket_pose` | Static session socket-pose checkpoint; not a camera measurement. |
+| 1 | `01_key_perception/01_key_perception` | Static tabletop-key checkpoint; not a camera measurement. |
+| 2 | `02_pickup_grasp/02_pickup_grasp` | Saved AutoDex v8 pickup approach followed by the commanded pregrasp-to-grasp-to-hold hand transition. |
+| 3 | `03_held_lift/03_held_lift` | Saved locked-hand lift path; key pose is derived from exact URDF FK and the fixed v8 `T_key_hand`. |
+| 4 | `04_transfer/04_transfer` | Saved native Cartesian transfer path with the same fixed hand/key relation. |
+| 5 | `05_preinsert_hold/05_preinsert_hold` | Static pre-insertion checkpoint at zero XY retry offset. |
+| 6 | `06_axial_insertion/06_axial_insertion` | Saved axial path to the nominal 20 mm verification transform. |
+| 7 | `07_success_judgement/07_success_judgement` | Static observation checkpoint; it does not claim that a VLM verdict was evaluated. |
+| Full | `08_full_pipeline/cylinder_passed_full_pipeline_overview` | Clean full-arm sequence. |
+| Full | `08_full_pipeline/cylinder_passed_full_pipeline_labeled` | The same sequence with concise phase labels for slides. |
+
+Use `passed_trial_storyboard_16x9.png` for a one-slide overview.  `MANIFEST.json`
+binds the stage trajectories to the source report and hashes; `gif_manifest.json`
+records every rendered MP4/GIF's dimensions, duration, and size.
+
+### What actually passed
+
+Candidate `table/0/184` passed the current `plan_fresh_key_trial` offline
+preflight in explicitly selected `native-locked-experimental` mode:
+
+- stock v8 pickup preflight;
+- locked-hand lift, transfer, and ten-waypoint axial planning;
+- sampled held-key/whole-hand collision audit against the frozen world; and
+- the nominal 20 mm endpoint, with 0.00552 mm translation error and
+  0.000369 degree rotation error in the saved result.
+
+The saved planner arrays contain 123 pickup, 694 lift, 90 transfer, and 621
+axial samples.  The maximum hand-joint drift after grasp is
+`4.77e-8 rad`.  The presentation exporter keeps path endpoints and only
+subsamples intermediate frames for playback speed.  It derives every
+post-grasp key pose as
+`T_robot_key = T_robot_hand(q) @ inverse(T_key_hand)`, so the key cannot slide
+or rotate independently of the hand in the animation.
+
+This is an **offline preflight trajectory**, not real execution evidence.
+The scene uses hypothetical socket/key poses, stock diagnostic home joints,
+and exploratory planning limits.  It does not validate camera estimates,
+controller tracking, the physical post-squeeze hand/key relation, contact
+force dynamics, VLM accuracy, or real insertion success.  The ordinary
+planner mode did not produce a full pass in the first 20 candidates (18 hand
+drift rejections and two unreachable transfers); the passing set therefore
+must not be described as a default live-runtime result.
+
+### Rebuild the passed set
+
+Generate a new source report in a new output directory.  The environment flag
+and matching `--planner-mode` declaration are both required:
+
+```bash
+cd ~/autodex-code
+AUTODEX_ENABLE_NATIVE_POSE_CONSTRAINTS=1 \
+PYTHONPATH=demo/precision-insertion/compat:. \
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/diagnose_synthetic_full_chain.py \
+  --shared-root ~/shared_data \
+  --catalog ~/shared_data/AutoDex/precision_insertion/cylindrical/endpoint_catalog_full_length_collision_only_gap_20mm_20261011.json \
+  --mode cylinder --gap-mm 20 --pose-stem 000 --table-z-m 0 \
+  --key-x-m 0.45 --key-y-m 0.08 \
+  --socket-x-m 0.45 --socket-y-m -0.10 \
+  --max-candidates 20 --planner-mode native-locked-experimental \
+  --output-dir ~/shared_data/AutoDex/precision_insertion/cylindrical/NEW_SOURCE_DIR
+```
+
+The presentation exporter refuses a failed, modified, default-mode, or
+non-cylinder source and refuses to overwrite an existing output root:
+
+```bash
+~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/prepare_passed_cylinder_trial_visuals.py \
+  --shared-root ~/shared_data \
+  --report-dir ~/shared_data/AutoDex/precision_insertion/cylindrical/NEW_SOURCE_DIR \
+  --output-root ~/shared_data/AutoDex/precision_insertion/presentation_assets/NEW_RENDER_DIR
+```
+
+Convert each resulting trajectory with
+`prepare_blender_actual_mesh_animation.py`, render it through
+`render_blender_actual_mesh_animation.py`, and build GIF derivatives with:
+
+```bash
+python3 scripts/precision_insertion/render_gif_derivatives.py \
+  --root ~/shared_data/AutoDex/precision_insertion/presentation_assets/NEW_RENDER_DIR \
+  --fps 10 --width 960 --colors 128 --force
+```
+
+The synthetic diagnostic and native planner switch are deliberate offline
+tools.  They do not authorize a robot command.
+
+## Earlier composed presentation set
+
 The presentation set is generated under:
 
 ```text

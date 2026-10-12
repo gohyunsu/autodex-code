@@ -114,6 +114,8 @@ def main() -> int:
         geometry_names = [str(value) for value in data["geometry_names"].tolist()]
         key_path = Path(str(data["object_mesh_path"].item()))
         socket_path = Path(str(data["socket_mesh_path"].item()))
+        table_surface_z_m = float(data["table_surface_z_m"].item()) \
+            if "table_surface_z_m" in data else 0.04
 
     _clear_scene()
     for index, name in enumerate(geometry_names):
@@ -129,7 +131,8 @@ def main() -> int:
     _set_color(socket, (0.72, 0.025, 0.02, 1.0))
     socket.matrix_world = _matrix(socket_pose)
 
-    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0.31, 0.0, 0.0))
+    bpy.ops.mesh.primitive_cube_add(
+        size=1.0, location=(0.31, 0.0, table_surface_z_m - 0.04))
     table = bpy.context.object
     table.name = "table"
     table.dimensions = (1.05, 0.95, 0.08)

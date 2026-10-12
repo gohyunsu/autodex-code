@@ -89,6 +89,8 @@ def main() -> int:
         object_mesh_path = Path(str(data["object_mesh_path"].item())).resolve()
         socket_mesh_path = Path(str(data["socket_mesh_path"].item())).resolve()
         robot_urdf_path = Path(str(data["robot_urdf_path"].item())).resolve()
+        table_surface_z_m = float(data["table_surface_z_m"].item()) \
+            if "table_surface_z_m" in data else 0.04
 
     urdf = URDF.load(
         str(robot_urdf_path), build_scene_graph=True, load_meshes=True
@@ -122,6 +124,7 @@ def main() -> int:
         object_mesh_path=np.asarray(str(key_blender_mesh)),
         socket_mesh_path=np.asarray(str(socket_blender_mesh)),
         source_trajectory=np.asarray(str(trajectory)),
+        table_surface_z_m=np.asarray(table_surface_z_m),
     )
     print(output)
     print(json.dumps({
