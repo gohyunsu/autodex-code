@@ -9,6 +9,9 @@ The newest set is under:
   cylinder_passed_trial_20261012/
 ```
 
+The identical media plus its five-file source-preflight record is mirrored at
+`/mnt/paradex2/hyunsu/autodex_precision_insertion_passed_visuals_20261012_870f7aa/`.
+
 It uses all 41 original FR3/Inspire URDF visual geometries (479,710 robot
 mesh faces), the exact cylinder key/socket meshes, and saved joint paths from
 one current precision-insertion preflight.  All MP4 files are 1280x720 at
