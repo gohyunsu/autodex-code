@@ -343,9 +343,11 @@ PYTHONPATH=demo/precision-insertion:src python \
   --config /absolute/recipient/session_launch.json --capture
 ```
 
-The first invocation validates the launch files only. `--capture` connects
-to the **AutoDex cameras only**: first measure the ChArUco board, then place
-only the fixed socket, acquire repeated socket observations and freeze the
+The first invocation validates the launch files only. Before `--capture`,
+start the AutoDex camera streams and place only the fixed socket on the
+ChArUco board; keep the key absent. `--capture` connects to the **AutoDex
+cameras only** and immediately measures the board and repeated socket
+observations without pausing for object placement. It then freezes the
 collision world. Inspect raw frames, SAM masks, CAD fit/rim orientation,
 per-view agreement, repeated-pose residuals, camera IDs and exposure times.
 The output path must be new; the command does not drive Franka to clear view.
@@ -353,6 +355,15 @@ The operator must arrange a clear view without using this command to move
 the robot. A PTH loading or silhouette-loss pass alone is not socket-pose
 accuracy. See [NAS_PERCEPTION_QA.md](NAS_PERCEPTION_QA.md) for the known
 small-object/wrong-socket mask failure modes.
+
+On 2026-10-13, a camera-only transport probe briefly armed the five idle
+capture PCs, received **20/20 live JPEGs**, observed advancing frame IDs on
+all 20 cameras, and returned every camera to `READY` with no controller.
+The saved report is at
+`/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical/live_camera_stream_probe_20261013/report.json`.
+One inspected view (`24122734.jpg`) showed soda cans in a box, not the
+ChArUco/key/socket setup. This proves camera transport only; the board,
+socket-only SAM/FoundPose and key-with-socket stages still need real captures.
 
 There is presently **no one-command, camera-only live key-with-socket trial**
 in this CLI: key capture is normally coupled to an exposure-aligned robot

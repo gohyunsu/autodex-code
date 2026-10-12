@@ -6,7 +6,8 @@ import re
 
 
 _OTHER_COLOR = re.compile(
-    r"\b(red|blue|green|yellow|orange|purple|pink|black|brown|gray|grey)\b",
+    r"\b(red|blue|green|yellow|orange|purple|pink|black|brown|gray|grey|"
+    r"silver|gold|beige|cyan|magenta)\b",
     re.IGNORECASE,
 )
 

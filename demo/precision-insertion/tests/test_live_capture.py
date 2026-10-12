@@ -129,7 +129,12 @@ def test_socket_uses_same_request_saved_frames_and_foundpose(tmp_path):
 def test_incorrect_object_color_is_rejected_before_camera_request(tmp_path):
     for color, collector, object_name, prompt_name in (
             ("red", collect_socket_capture, "socket_model", "socket_prompt"),
-            ("blue", collect_key_capture, "key_model", "key_prompt")):
+            ("blue", collect_key_capture, "key_model", "key_prompt"),
+            ("silver", collect_socket_capture, "socket_model", "socket_prompt"),
+            ("beige", collect_key_capture, "key_model", "key_prompt"),
+            ("cyan", collect_socket_capture, "socket_model", "socket_prompt"),
+            ("magenta", collect_key_capture, "key_model", "key_prompt"),
+            ("gold", collect_socket_capture, "socket_model", "socket_prompt")):
         with pytest.raises(ValueError, match="key and socket are white"):
             collector(
                 init_orchestrator=SimpleNamespace(obj_name=object_name),
