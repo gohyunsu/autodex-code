@@ -21,7 +21,9 @@ from precision_insertion.reorient_assets import prepare_v8_reorient_scenes  # no
 from precision_insertion.reset_candidates import (  # noqa: E402
     EVIDENCE_SCHEMA, GRASP_FILES, _candidate_arrays, _valid_scene_pair,
 )
-from rehydrate_reset_handoff import rehydrate  # noqa: E402
+from rehydrate_reset_handoff import (  # noqa: E402
+    _same_scene_semantics, rehydrate,
+)
 
 
 MODE = select_mode("cylinder", 20)
@@ -30,6 +32,16 @@ KEY = MODE.key_object
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_scene_roundoff_is_not_a_geometry_change():
+    source = {"scene": {"cuboid": {"dims": [0.0072894052897370665]}},
+              "meta": {"version": "v8"}}
+    generated = {"scene": {"cuboid": {"dims": [0.007289405289737066]}},
+                 "meta": {"version": "v8"}}
+    assert _same_scene_semantics(source, generated)
+    generated["scene"]["cuboid"]["dims"][0] += 1e-6
+    assert not _same_scene_semantics(source, generated)
 
 
 def _case(tmp_path: Path):
@@ -137,6 +149,33 @@ def test_rehydrates_exact_scenes_and_keeps_original_evidence(tmp_path):
             source_shared_root=source, target_shared_root=target,
             source_candidate_root=incoming, target_candidate_root=output,
             source_audit_path=audit)
+
+
+def test_rehydrate_accepts_only_fidelity_float_roundoff(tmp_path):
+    source, target, incoming, output, audit, seed = _case(tmp_path)
+    evidence_path = seed / "source_evidence.json"
+    evidence = json.loads(evidence_path.read_text())
+    field = evidence["post_squeeze_fidelity"]["end_squeeze"]
+    field["center_in_hand_displacement_m"] += 2e-14
+    evidence_path.write_text(json.dumps(evidence))
+    result = rehydrate(
+        source_shared_root=source, target_shared_root=target,
+        source_candidate_root=incoming, target_candidate_root=output,
+        source_audit_path=audit)
+    assert len(result["seeds"]) == 1
+
+    source2, target2, incoming2, output2, audit2, seed2 = _case(
+        tmp_path / "changed")
+    evidence_path2 = seed2 / "source_evidence.json"
+    changed = json.loads(evidence_path2.read_text())
+    changed["post_squeeze_fidelity"]["end_squeeze"][
+        "center_in_hand_displacement_m"] += 1e-5
+    evidence_path2.write_text(json.dumps(changed))
+    with pytest.raises(ValueError, match="fidelity evidence changed"):
+        rehydrate(
+            source_shared_root=source2, target_shared_root=target2,
+            source_candidate_root=incoming2, target_candidate_root=output2,
+            source_audit_path=audit2)
 
 
 def test_separate_source_run_uses_distinct_staging_root(tmp_path):

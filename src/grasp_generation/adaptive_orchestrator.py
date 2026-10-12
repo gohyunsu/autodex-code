@@ -29,9 +29,10 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(REPO_ROOT, "src", "scene_generation"))
 
+import generate_scene as scene_generation  # noqa: E402
 from generate_scene import get_shelf_scene, get_wall_scene, get_box_scene, get_tabletop_scene  # noqa: E402
 
-from autodex.utils.path import obj_path as default_obj_path, get_scene_dir  # noqa: E402
+from autodex.utils.path import obj_path as default_obj_path, get_obj_root, get_scene_dir  # noqa: E402
 
 
 # --- Schedules ---
@@ -187,7 +188,15 @@ def make_meta(scene_type, cfg, gap_or_h):
 
 def write_scene_file(hand, obj_name, obj_root, scene_type, cfg, obb_info, gap_or_h):
     """Write {hand}/{obj}/{type}/{id}.json. Returns True if scene is non-None."""
-    scene = build_scene_dict(obj_name, scene_type, cfg, obb_info, gap_or_h)
+    # generate_scene.get_mesh_dict uses its module-level obj_path. Bind it to
+    # the same root that supplied the v8 tabletop pose and OBB for this scene.
+    # Restoring the previous value keeps other scene-generation callers intact.
+    previous_root = scene_generation.obj_path
+    scene_generation.obj_path = os.path.realpath(obj_root)
+    try:
+        scene = build_scene_dict(obj_name, scene_type, cfg, obb_info, gap_or_h)
+    finally:
+        scene_generation.obj_path = previous_root
     if scene is None:
         return False
     out_dir = get_scene_dir(hand, obj_name, scene_type)
@@ -714,7 +723,8 @@ def main():
     parser.add_argument("--obj_list_file", default=None)
     parser.add_argument("--scenes", nargs="+", default=["wall", "shelf", "box"],
                         choices=["wall", "shelf", "box", "table"])
-    parser.add_argument("--obj_root", default=default_obj_path)
+    parser.add_argument("--obj_root", default=None,
+                        help="object tree; defaults to object_processing for v8")
     parser.add_argument("--parallel", type=int, default=20)
     parser.add_argument("--output_dir", default=None,
                         help="Where to write adaptive_summary.json (default: REPO/logging/adaptive/)")
@@ -726,6 +736,8 @@ def main():
                         help="One or more random seeds. Each (gap, N) round runs BODex+sim_filter once per seed, "
                              "accumulating candidates (tagged with seed).")
     args = parser.parse_args()
+    if args.obj_root is None:
+        args.obj_root = get_obj_root(args.version)
 
     # Build obj list
     if args.obj:

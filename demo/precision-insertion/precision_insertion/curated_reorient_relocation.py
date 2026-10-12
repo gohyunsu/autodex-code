@@ -14,7 +14,9 @@ import shutil
 
 from .config import TaskMode
 from .reorient_assets import _scene_path, _sim_filter_scene_path, _validate_scene
-from .reset_candidates import _candidate_arrays, _valid_scene_pair
+from .reset_candidates import (
+    _candidate_arrays, _same_numeric_record, _valid_scene_pair,
+)
 
 
 def _sha(path: Path) -> str:
@@ -165,7 +167,7 @@ def rehydrate_curated_reorient(
                               key_object=mode.key_object)
             for scene in source_json
         ]
-        if normalized[0] != normalized[1]:
+        if not _same_numeric_record(normalized[0], normalized[1]):
             raise ValueError(f"source reset scenes disagree: {cell}")
         generated = gen_reorient_scene(
             mode.key_object, i, j, h / 100,
@@ -173,9 +175,9 @@ def rehydrate_curated_reorient(
         generated["meta"]["scene_type"] = f"reorient_{h}"
         _validate_scene(generated, mode=mode, object_dir=target_obj,
                         h_cm=h, i=i, j=j)
-        if normalized[0] != _normalized_scene(
+        if not _same_numeric_record(normalized[0], _normalized_scene(
                 generated, object_dir=target_obj,
-                key_object=mode.key_object):
+                key_object=mode.key_object)):
             raise ValueError(f"recipient reset geometry differs: {cell}")
         destinations = (
             _scene_path(target_obj, h, i, j),
@@ -191,9 +193,9 @@ def rehydrate_curated_reorient(
             try:
                 _validate_scene(existing, mode=mode, object_dir=target_obj,
                                 h_cm=h, i=i, j=j)
-                same_target_geometry = (_normalized_scene(
+                same_target_geometry = _same_numeric_record(_normalized_scene(
                     existing, object_dir=target_obj,
-                    key_object=mode.key_object) == normalized[0])
+                    key_object=mode.key_object), normalized[0])
             except (ValueError, KeyError, TypeError):
                 same_target_geometry = False
             if same_target_geometry:

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 import numpy as np
+from autodex.utils.conversion import cart2se3
 
 from .assets import AssetPaths
 from .config import TaskMode, select_mode
@@ -63,10 +64,13 @@ def _candidate_dirs(root: Path) -> list[Path]:
     )
 
 
-def _scene_pose(shared_root: Path, key: str, candidate: Path) -> tuple[str, Path]:
+def _scene_pose(shared_root: Path, mode: TaskMode,
+                candidate: Path) -> tuple[str, Path]:
+    key = mode.key_object
     scene = (shared_root / "AutoDex" / "scene" / "inspire" / key /
              candidate.parent.parent.name / f"{candidate.parent.name}.json")
-    meta = _json(scene).get("meta")
+    scene_record = _json(scene)
+    meta = scene_record.get("meta")
     if not isinstance(meta, dict) or not isinstance(meta.get("pose_idx"), str):
         raise ValueError(f"v8 scene pose_idx missing: {scene}")
     stem = meta["pose_idx"]
@@ -74,6 +78,34 @@ def _scene_pose(shared_root: Path, key: str, candidate: Path) -> tuple[str, Path
                 "info" / "tabletop" / f"{stem}.npy")
     if not tabletop.is_file():
         raise FileNotFoundError(f"scene references missing tabletop pose: {tabletop}")
+    if mode.family == "cylinder":
+        # The stock v8 scene generator can otherwise read an object_processing
+        # tabletop pose while retaining its older paradex mesh-path default.
+        # A scene with mixed object frames must never enter a live catalog.
+        body = scene_record.get("scene")
+        mesh = body.get("mesh") if isinstance(body, dict) else None
+        target = mesh.get("target") if isinstance(mesh, dict) else None
+        object_dir = shared_root / "object_processing" / key / "processed_data"
+        expected = {
+            "file_path": object_dir / "mesh" / "simplified.obj",
+            "urdf_path": object_dir / "urdf" / "coacd.urdf",
+        }
+        if not isinstance(target, dict):
+            raise ValueError(f"v8 cylinder scene lacks a target mesh: {scene}")
+        for field, path in expected.items():
+            declared = target.get(field)
+            if (not isinstance(declared, str) or
+                    not Path(declared).is_absolute() or
+                    Path(declared).resolve() != path.resolve() or
+                    not path.is_file()):
+                raise ValueError(
+                    f"v8 cylinder scene {field} is not bound to object_processing: {scene}")
+        pose = np.asarray(target.get("pose"), dtype=np.float64)
+        tabletop_pose = np.load(tabletop, allow_pickle=False)
+        if (pose.shape != (7,) or not np.all(np.isfinite(pose)) or
+                not np.allclose(cart2se3(pose), tabletop_pose,
+                                rtol=0.0, atol=1e-7)):
+            raise ValueError(f"v8 cylinder scene pose differs from tabletop: {scene}")
     return stem, scene
 
 
@@ -222,7 +254,7 @@ def build_endpoint_catalog(
             "error": None,
         }
         try:
-            stem, scene = _scene_pose(root, mode.key_object, candidate)
+            stem, scene = _scene_pose(root, mode, candidate)
             row["tabletop_pose_stem"] = stem
             row["scene_path"] = str(scene)
             row["scene_sha256"] = _sha256(scene)

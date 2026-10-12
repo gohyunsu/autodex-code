@@ -28,7 +28,8 @@ from precision_insertion.reorient_assets import (  # noqa: E402
     _scene_path, _sim_filter_scene_path, _validate_scene,
 )
 from precision_insertion.reset_candidates import (  # noqa: E402
-    EVIDENCE_SCHEMA, GRASP_FILES, _candidate_arrays, _valid_scene_pair,
+    EVIDENCE_SCHEMA, GRASP_FILES, _candidate_arrays, _same_numeric_record,
+    _valid_scene_pair,
 )
 
 
@@ -63,6 +64,11 @@ def _canonical_scene(scene: dict, object_dir: Path) -> dict:
         if value != KEY:
             raise ValueError(f"reorient scene has a different {field}")
     return result
+
+
+def _same_scene_semantics(left, right) -> bool:
+    """Compare CAD values, allowing only JSON float serialization roundoff."""
+    return _same_numeric_record(left, right)
 
 
 def _matching_key_assets(
@@ -150,7 +156,8 @@ def rehydrate(
         source_scene = json.loads(source_scenes[0].read_text(encoding="utf-8"))
         source_sim_scene = json.loads(source_scenes[1].read_text(
             encoding="utf-8"))
-        if (_canonical_scene(source_scene, origin_obj) !=
+        if not _same_scene_semantics(
+                _canonical_scene(source_scene, origin_obj),
                 _canonical_scene(source_sim_scene, origin_obj)):
             raise ValueError(f"source BODex/simulation scenes differ: {cell}")
         generated = gen_reorient_scene(
@@ -159,7 +166,8 @@ def rehydrate(
         generated["meta"]["scene_type"] = f"reorient_{HEIGHT_CM}"
         _validate_scene(generated, mode=mode, object_dir=target_obj,
                         h_cm=HEIGHT_CM, i=i, j=j)
-        if (_canonical_scene(source_scene, origin_obj) !=
+        if not _same_scene_semantics(
+                _canonical_scene(source_scene, origin_obj),
                 _canonical_scene(generated, target_obj)):
             raise ValueError(f"regenerated reset scene changed geometry: {cell}")
         destinations = (
@@ -172,8 +180,8 @@ def rehydrate(
                 try:
                     _validate_scene(existing, mode=mode, object_dir=target_obj,
                                     h_cm=HEIGHT_CM, i=i, j=j)
-                    already_valid = (
-                        _canonical_scene(existing, target_obj) ==
+                    already_valid = _same_scene_semantics(
+                        _canonical_scene(existing, target_obj),
                         _canonical_scene(generated, target_obj))
                 except ValueError:
                     already_valid = False

@@ -53,6 +53,10 @@ def _candidate_fixture(tmp_path, mode=None):
     for file in shared_files:
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text("mesh test", encoding="utf-8")
+    key_urdf = (paths.object_dir(mode.key_object) / "processed_data" /
+                "urdf" / "coacd.urdf")
+    key_urdf.parent.mkdir(parents=True, exist_ok=True)
+    key_urdf.write_text("<robot/>", encoding="utf-8")
     paths.key_tabletop_dir.mkdir(parents=True, exist_ok=True)
     for stem in ("000", "001"):
         np.save(paths.key_tabletop_dir / f"{stem}.npy", np.eye(4))
@@ -61,7 +65,14 @@ def _candidate_fixture(tmp_path, mode=None):
                                      ("0", "000", "2"),
                                      ("1", "001", "3")):
         scene_path = paths.scene_dir / f"{scene_id}.json"
-        _write_json(scene_path, {"meta": {"pose_idx": stem}})
+        scene_record = {"meta": {"pose_idx": stem}}
+        if mode.family == "cylinder":
+            scene_record["scene"] = {"mesh": {"target": {
+                "pose": [0, 0, 0, 1, 0, 0, 0],
+                "file_path": str(paths.key_planning_mesh),
+                "urdf_path": str(key_urdf),
+            }}}
+        _write_json(scene_path, scene_record)
         candidate = paths.candidate_dir / "table" / scene_id / grasp_id
         candidate.mkdir(parents=True)
         wrist = np.eye(4)
@@ -201,6 +212,38 @@ def test_promoted_cylinder_source_bytes_are_bound_to_catalog(tmp_path):
     assert second["candidates"][0]["eligible"] is False
     assert second["candidates"][0]["grasp_stability_reason"] == (
         "stale_cylinder_source_file")
+
+
+def test_cylinder_catalog_rejects_legacy_scene_mesh_path(tmp_path):
+    mode, paths, _candidates, screen = _candidate_fixture(
+        tmp_path, select_mode("cylinder", 20))
+    scene = paths.scene_dir / "0.json"
+    record = json.loads(scene.read_text(encoding="utf-8"))
+    record["scene"]["mesh"]["target"]["file_path"] = str(
+        tmp_path / "AutoDex/object/paradex" / mode.key_object /
+        "processed_data/mesh/simplified.obj")
+    _write_json(scene, record)
+    catalog = build_endpoint_catalog(
+        shared_root=tmp_path, mode=mode,
+        minimum_hand_clearance_m=0, screen=screen)
+    assert catalog["complete_scan"] is False
+    assert all(row["eligible"] is False for row in catalog["candidates"]
+               if row["key"][1] == "0")
+    assert "not bound to object_processing" in catalog["errors"][0]["error"]
+
+
+def test_cylinder_catalog_rejects_mixed_tabletop_pose(tmp_path):
+    mode, paths, _candidates, screen = _candidate_fixture(
+        tmp_path, select_mode("cylinder", 20))
+    scene = paths.scene_dir / "0.json"
+    record = json.loads(scene.read_text(encoding="utf-8"))
+    record["scene"]["mesh"]["target"]["pose"][0] = .01
+    _write_json(scene, record)
+    catalog = build_endpoint_catalog(
+        shared_root=tmp_path, mode=mode,
+        minimum_hand_clearance_m=0, screen=screen)
+    assert catalog["complete_scan"] is False
+    assert "pose differs from tabletop" in catalog["errors"][0]["error"]
 
 
 def test_pilot_or_bad_scene_cannot_become_complete_catalog(tmp_path, monkeypatch):

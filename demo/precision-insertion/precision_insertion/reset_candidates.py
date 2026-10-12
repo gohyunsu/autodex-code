@@ -69,6 +69,21 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _same_numeric_record(left, right) -> bool:
+    """Allow only absolute JSON float roundoff up to 1e-12 per numeric field."""
+    if isinstance(left, dict) and isinstance(right, dict):
+        return (left.keys() == right.keys() and
+                all(_same_numeric_record(left[key], right[key]) for key in left))
+    if isinstance(left, list) and isinstance(right, list):
+        return (len(left) == len(right) and
+                all(_same_numeric_record(a, b) for a, b in zip(left, right)))
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if type(left) in (int, float) and type(right) in (int, float):
+        return math.isclose(left, right, rel_tol=0.0, abs_tol=1e-12)
+    return type(left) is type(right) and left == right
+
+
 def _stem(value: int | str, ids: tuple[int, ...], label: str) -> int:
     if isinstance(value, bool) or not str(value).isdigit():
         raise ValueError(f"{label} must be a numeric v8 tabletop stem")
@@ -136,7 +151,7 @@ def _candidate_arrays(seed: Path, *, mode: TaskMode, cell: str,
             trajectory, key_center_local_m=center)
     else:
         raise ValueError(f"unsupported reset key family: {mode.family}")
-    if fidelity != evidence.get("post_squeeze_fidelity"):
+    if not _same_numeric_record(fidelity, evidence.get("post_squeeze_fidelity")):
         raise ValueError(f"reset grasp fidelity evidence changed: {seed}")
     result = json.loads((seed / "sim_eval.json").read_text(encoding="utf-8"))
     if (result.get("success") is not True or
