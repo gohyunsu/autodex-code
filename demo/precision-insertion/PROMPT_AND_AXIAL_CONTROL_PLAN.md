@@ -31,14 +31,14 @@ transport code can add image dimensions and JSON schema constraints.
 
 | Stage | Images, in order | Model-facing question | JSON fields | Downstream use |
 | --- | --- | --- | --- | --- |
-| Lift | `before_grasp` (initial tabletop capture), `after_lift` from the **same camera** | `Is the same white peg visibly held after the lift? Do not infer from closed fingers or occlusion.` | `{"label":"held|miss|slip|unobservable","evidence":"..."}` | Grasp outcome; if not held, do not start transfer. |
-| Transfer / preinsert | `after_lift`, `preinsert` from the **same camera** | `Is the same peg still held above the socket, with a roughly compatible axis? Judge visible pixels only.` | `{"label":"coarse_match|gross_misalignment|slip_or_miss|unobservable","evidence":"..."}` | Detect lost key or gross arrival error; not a metric XY estimate. |
-| Final released state | `initial_tabletop`, `final_clear_view` from the **same camera**, after opening the hand and clearing the view | `Is the peg visibly inside the socket now? Disappearance or an empty hand is not proof.` | `{"label":"inside_socket|outside_socket|unobservable","evidence":"..."}` | Visual task label; this is **not** a claim of measured 20 mm depth. |
+| Lift | `before_grasp` (initial tabletop capture), `after_lift` from the **same camera** | `Is the same white peg visibly held after the lift? Do not infer from closed fingers or occlusion.` | `{"class":"held|miss|slip|unobservable","evidence_views":["camera_id"],"evidence":"..."}` | Grasp outcome; if not held, do not start transfer. |
+| Transfer / preinsert | `after_lift`, `preinsert` from the **same camera** | `Is the same peg still held above the socket, with a roughly compatible axis? Judge visible pixels only.` | `{"class":"coarse_match|gross_misalignment|slip_or_miss|unobservable","evidence_views":["camera_id"],"evidence":"..."}` | Detect lost key or gross arrival error; not a metric XY estimate. |
+| Final released state | `initial_tabletop`, `final_clear_view` from the **same camera**, after opening the hand and clearing the view | `Is the peg visibly inside the socket now? Disappearance or an empty hand is not proof.` | `{"visual_class":"inside_socket|outside_socket|unobservable","evidence_views":["camera_id"],"evidence":"..."}` | Visual task label; this is **not** a claim of measured 20 mm depth. |
 | Failed trial, next-trial XY | The already saved **raw preinsert** image from each camera; no post-failure recapture | `Mark the visible insertion-tip center and two separated points on the peg axis. Use image pixels; return null for hidden features.` | `{"tip_px":[x,y]|null,"axis_line_px":[[x1,y1],[x2,y2]]|null}` | Calibrated multi-view geometry computes socket-frame millimetres. The VLM never outputs robot-frame millimetres. |
 
-For label requests, the implementation may retain `evidence_views` because
-the current observer validates it; the JSON snippets above omit that
-transport field only to show the question concisely. In particular, the
+For label requests, the implementation retains `evidence_views` because the
+current observer validates it. Use the sole camera's ID for a decisive
+per-camera result; use `[]` when unobservable. In particular, the
 current [`observe_preinsert_raw_views`](precision_insertion/observer.py)
 sends **one** preinsert image, so the transfer row is a planned change:
 capture/persist after-lift and preinsert using matching camera IDs and call a
@@ -83,6 +83,12 @@ is hard-coded to pure world-Z and rejects lateral target displacement;
 passing a tilted socket-axis target to it is incorrect. Adapt its
 continuation/collision-validation machinery to a general measured axis, or
 add a sibling axis-stroke planner without changing stock AutoDex behavior.
+The current demo
+[`preflight.py`](precision_insertion/preflight.py) already places successive
+Cartesian goals **on the socket axis**, but calls cuRobo
+`plan_cartesian_pose` independently for each segment. A valid sequence of
+axis endpoints does not alone prove the path between them is a single smooth
+axis-following continuation; the sampled audit checks the intermediate FK.
 The current insertion audit already measures progress and lateral drift
 relative to `insertion_axis_robot` in
 [`path_audit.py`](precision_insertion/path_audit.py). The robot-side
