@@ -2,8 +2,8 @@
 
 This review compares the stock AutoDex `main` at `448732d` with
 `feat/precision-insertion` and its isolated robot-PC staging root. On
-2026-10-13, `git ls-remote` confirmed the fork's `main` at `448732d` and
-the pushed feature branch at `acd7665`. It describes code paths and
+2026-10-13, `git ls-remote` confirmed the fork's `main` at `448732d`.
+Use `git rev-parse HEAD` for the current feature-branch SHA. It describes code paths and
 offline execution evidence, not a physical insertion result. The stock
 `src/execution/{run_pipeline.py,run_auto.py,scene_cfg.py}` files remain
 unchanged. The only shared source change in this review is
@@ -28,10 +28,11 @@ unchanged. The only shared source change in this review is
 The common VLM wrapper in `observer._infer_closed_set` prepends the exact
 ordered image labels and valid camera IDs. It instructs the model to return
 **one compact JSON object** with exactly the requested class field,
-`evidence_views`, and a ≤12-word `evidence` phrase. A local Qwen backend
-passes ordered PIL images and the prompt to `infer_images_prompt`; it does
-not acquire cameras. The robot config should set `vlm.model_id` to the
-verified staged Qwen directory to avoid relying on a public model name.
+`evidence_views`, and a ≤12-word `evidence` phrase. The first-party local
+Qwen backend passes ordered PIL images to Transformers Qwen3-VL, requests
+offline-only weights and decodes only newly generated tokens; it does not
+acquire cameras or import ZeroDex. The built-in FR3 integration defaults to
+the verified staged Qwen directory under the launch `shared_root`.
 
 | Active observation | Ordered raw input and prompt rule | Parsed output and decision |
 | --- | --- | --- |
@@ -62,6 +63,18 @@ matched all 10 source files by SHA-256; the staged key and 20 mm socket
 FoundPose PTH hashes matched their recorded handoff digests. Unit/integration
 tests use fixtures or mock adapters; they are not camera, controller, force,
 or physical insertion tests.
+The first-party Qwen adapter loaded the staged 2B model on CPU and returned
+text for two synthetic white images. That answer used a Markdown JSON fence
+and gave `evidence` as an array, so the strict observer would abstain; this
+is a model-loading smoke test, not a passed task-label benchmark. CUDA was
+not visible to PyTorch in this sandbox, despite host `nvidia-smi` output.
+A second saved-image probe applied the **active lift prompt** to two pairs of
+synthetic white shapes with no robot hand. Both camera calls returned `held`
+and the consensus accepted `held`; the report is
+`AutoDex/precision_insertion/cylindrical/qwen_synthetic_smoke_20261013/report.json`
+inside staging. This is a concrete semantic false positive on deliberately
+unrealistic images, not evidence of a physical grasp. Real paired camera
+benchmarking and independent held-key checks remain required before motion.
 The nonmoving verification record is saved at
 `AutoDex/precision_insertion/cylindrical/recipient_staging_verification_20261013.json`
 inside the staging root.

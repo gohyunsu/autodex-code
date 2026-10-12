@@ -107,10 +107,11 @@ All keys and sockets are white. Use a socket SAM prompt such as
 as `loose white cylindrical peg on the tabletop`. The launch and capture
 adapters reject stale nonwhite color words before sending a SAM request.
 Set `vlm.model_id` to the recipient's verified NAS Qwen bundle
-`payload/model` directory. The `vlm` block is optional for custom stage
-factories that supply `backend`; without either one, the integration loads
-the named Qwen model from the local model cache, whose contents must be
-verified separately. The integration uses the active camera image size;
+`payload/model` directory. If omitted, the built-in FR3 integration selects
+`shared_root/AutoDex/models/Qwen3-VL-2B-Instruct`; a custom stage factory
+may instead supply `backend`. The first-party Transformers loader reads only
+local model files and does not import ZeroDex's `main.vlm_base`. The
+integration uses the active camera image size;
 Gemini requires an explicit `mode: "gemini"` and `model_id`. The
 integration also fills missing lift, pre-insertion/final, and retry checkpoint
 callbacks with fresh snapshots from the already-open AutoDex cameras. A

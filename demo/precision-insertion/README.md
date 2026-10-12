@@ -1084,8 +1084,8 @@ The first independent helpers are in `precision_insertion/`:
   Older recorded `normal_20mm` assessments remain accepted as an alias, but
   the new VLM prompt deliberately does not ask the model to infer millimetres.
 - `observer.py` defines the event-driven lift, per-camera XY, and insertion
-  visual prompts; it reuses ZeroDex's Gemini helper or an already-loaded
-  ZeroDex local `BaseVLM` through optional adapters. Inputs have explicit
+  visual prompts; its local Qwen adapter uses first-party Transformers and
+  its optional Gemini adapter uses the Google Gen AI SDK. Inputs have explicit
   camera/phase/time order. Closed-set JSON parsing falls back to
   `unobservable` or `abstain` on malformed responses. Per-view XY calls are
   separate; their output still goes through `xy_voting.py`, not directly to
@@ -1145,7 +1145,7 @@ After actual stage observations have been appended to an `AttemptRecord`, use
 an in-memory policy API, not a replay parser or live execution loop.
 
 The XY voting resolver remains a read-only contract even when an optional
-ZeroDex-backed observer supplies votes. Its caller must first validate the
+The demo-local observer supplies votes. Its caller must first validate the
 candidate offsets against the exact
 key/socket/hand geometry, match image intrinsics to the undistorted/resized
 AutoDex camera frames, and verify the current grasp and calibration. After a
@@ -1313,8 +1313,9 @@ For a **saved-image, read-only** observer replay, the default backend is local
 The newly generated key/socket FoundPose representations have a separate
 [saved-camera diagnostic](FOUNDPOSE_SAVED_REPLAY.md); it does not validate or
 enable the VLM/robot loop.
-The local option reuses ZeroDex's `main.vlm_base.BaseVLM`; it does not use a
-Gemini key or send images to an API. Install its optional dependencies in an
+The local option uses `precision_insertion.local_qwen.LocalQwenModel`; it does
+not use a Gemini key, send images to an API, or import ZeroDex. Install its
+optional dependencies in an
 **isolated** venv, not the production AutoDex Python environment:
 
 ```bash
@@ -1322,7 +1323,7 @@ Gemini key or send images to an API. Install its optional dependencies in an
   ~/.venvs/precision-vlm
 ~/.venvs/precision-vlm/bin/python -m pip install \
   -r demo/precision-insertion/requirements-local-vlm.txt
-export PYTHONPATH="$PWD/demo/precision-insertion:$HOME/realtime_vlm"
+export PYTHONPATH="$PWD/demo/precision-insertion:$PWD/src"
 ```
 
 This example reuses the existing hardware-compatible PyTorch installation.
@@ -1332,11 +1333,13 @@ Check CUDA visibility outside a sandbox that hides the GPU:
 ~/.venvs/precision-vlm/bin/python -c 'import torch; print(torch.cuda.is_available())'
 ```
 
-The first model load downloads public weights into the Hugging Face
-cache. For a semantic-only smoke test on *saved* images (not a real trial):
+The loader uses `local_files_only=True`; point it to the verified NAS bundle
+or staged copy. For a semantic-only smoke test on *saved* images (not a real
+trial):
 
 ```bash
 ~/.venvs/precision-vlm/bin/python demo/precision-insertion/probe_vlm.py \
+  --model-id /absolute/staged/shared_data/AutoDex/models/Qwen3-VL-2B-Instruct \
   --task lift \
   --view front /path/to/before.png /path/to/after.png \
   --output /tmp/precision-local-lift-probe.json
@@ -1385,16 +1388,15 @@ image geometry and records raw per-view marks, but does not certify camera
 provenance, metric accuracy or robot readiness.
 
 `before_pil` and `after_pil` must be supplied from the same saved trial; the
-timestamps above are placeholders. Semantic labels can use ZeroDex's
-aspect-preserving resize. **Metric point/axis grounding cannot:** create a
+timestamps above are placeholders. Semantic labels may use the Qwen
+processor's resizing. **Metric point/axis grounding cannot:** create a
 backend with `require_native_pixels=True` and a `max_input_size` at least as
 large as every supplied undistorted frame (or implement an explicit crop-to-
-original-pixel transform). The backend rejects a frame that ZeroDex would
-silently resize **or** that the installed Qwen image processor would resize
-to its patch grid or pixel-area limits. For the cached Qwen3-VL-2B processor,
-both dimensions must be multiples of 32 and the area within its configured
-limits: 640×480 is unchanged, whereas 1280×720 becomes 1280×704 internally
-and is rejected for metric grounding. The latest inspected AutoDex NAS camera
+original-pixel transform). The backend pads only right/bottom to Qwen's
+32-pixel patch grid and rejects a frame if the padded dimensions exceed the
+declared ceiling or processor pixel-area limits. For this Qwen3-VL-2B
+processor, 640×480 is unchanged; 1280×720 becomes 1280×736 by lossless
+padding and requires a ceiling of at least 1280×736. The latest inspected AutoDex NAS camera
 calibration records 2048×1536, which passed a single-view local-model smoke
 test with `max_input_size=(2048, 1536)`; this is not a multi-view accuracy
 result or a guarantee that the next live session uses that calibration.
@@ -1413,11 +1415,10 @@ one object. The optional Gemini adapter accepts an already-configured
 `ZeroDexGeminiBackend.from_env(model="YOUR_MODEL_ID")`. Install the optional
 `google-genai` package in the execution environment first with
 `python -m pip install -r demo/precision-insertion/requirements-gemini.txt`
-(the pin matches the local ZeroDex checkout). Unlike the earlier
-adapter, Gemini no longer imports ZeroDex's complete voting script, which
-also imports unrelated local-model dependencies; it sends the same ordered
-PNG images plus one text prompt through the Google Gen AI SDK. The local
-adapter still requires the ZeroDex package and model weights. In either case,
+(the pin matches the optional Google SDK adapter). Gemini sends the same
+ordered PNG images plus one text prompt through the Google Gen AI SDK. The
+local adapter requires Transformers and the verified Qwen snapshot, with no
+ZeroDex package or camera dependency. In either case,
 no key is saved in trial reports, and calling Gemini sends camera images to
 an external API. The configured backend is passed explicitly to the relevant
 `SessionRunner` observation method; there is no implicit model/API call.

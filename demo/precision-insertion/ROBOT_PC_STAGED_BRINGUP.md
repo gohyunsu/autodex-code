@@ -253,10 +253,12 @@ test ! -e "$MODEL_DIR" && mkdir -p "$MODEL_DIR"
 cp -a "$NAS_DIR/autodex_precision_insertion_qwen3_vl_2b_20261012_89644892/payload/model/." "$MODEL_DIR/"
 ```
 
-Set the robot config's `vlm.model_id` to the absolute `MODEL_DIR` path when
-using `precision_insertion.franka_integration:factory`. Its unspecified
-model ID selects the public default name and may fetch from the network;
-it does not select this staged bundle. The FR3 copy command assumes the robot PC has its existing
+With `precision_insertion.franka_integration:factory`, an omitted
+`vlm.model_id` resolves to this directory under the launch `shared_root`.
+An explicit absolute `vlm.model_id` may select another verified local copy.
+The first-party Qwen loader uses Transformers with `local_files_only=True`;
+it never requires ZeroDex's `main.vlm_base` or downloads a model. The FR3
+copy command assumes the robot PC has its existing
 `/home/robot/shared_data/AutoDex` asset tree; if it is mounted elsewhere,
 substitute that verified path before copying. A successful file copy is not a
 camera, GPU inference, or robot connection test.
