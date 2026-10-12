@@ -31,9 +31,9 @@ transport code can add image dimensions and JSON schema constraints.
 
 | Stage | Images, in order | Model-facing question | JSON fields | Downstream use |
 | --- | --- | --- | --- | --- |
-| Lift | `before_grasp` (initial tabletop capture), `after_lift` from the **same camera** | `Is the same white peg visibly held after the lift? Do not infer from closed fingers or occlusion.` | `{"class":"held|miss|slip|unobservable","evidence_views":["camera_id"],"evidence":"..."}` | Grasp outcome; if not held, do not start transfer. |
-| Transfer / preinsert | `after_lift`, `preinsert` from the **same camera** | `Is the same peg still held above the socket, with a roughly compatible axis? Judge visible pixels only.` | `{"class":"coarse_match|gross_misalignment|slip_or_miss|unobservable","evidence_views":["camera_id"],"evidence":"..."}` | Detect lost key or gross arrival error; not a metric XY estimate. |
-| Final released state | `initial_tabletop`, `final_clear_view` from the **same camera**, after opening the hand and clearing the view | `Is the peg visibly inside the socket now? Disappearance or an empty hand is not proof.` | `{"visual_class":"inside_socket|outside_socket|unobservable","evidence_views":["camera_id"],"evidence":"..."}` | Visual task label; this is **not** a claim of measured 20 mm depth. |
+| Lift | `before_grasp` (initial tabletop capture), `after_lift` from the **same camera** | `Is the same white peg visibly held after the lift? Do not infer from closed fingers or occlusion.` | JSON keys `class`, `evidence_views`, `evidence`; `class` is exactly one of `held`, `miss`, `slip`, `unobservable` | Grasp outcome; if not held, do not start transfer. |
+| Transfer / preinsert | `after_lift`, `preinsert` from the **same camera** | `Is the same peg still held above the socket, with a roughly compatible axis? Judge visible pixels only.` | Same JSON keys; `class` is exactly one of `coarse_match`, `gross_misalignment`, `slip_or_miss`, `unobservable` | Detect lost key or gross arrival error; not a metric XY estimate. |
+| Final released state | `initial_tabletop`, `final_clear_view` from the **same camera**, after opening the hand and clearing the view | `Is the peg visibly inside the socket now? Disappearance or an empty hand is not proof.` | JSON keys `visual_class`, `evidence_views`, `evidence`; `visual_class` is exactly one of `inside_socket`, `outside_socket`, `unobservable` | Visual task label; this is **not** a claim of measured 20 mm depth. |
 | Failed trial, next-trial XY | The already saved **raw preinsert** image from each camera; no post-failure recapture | `Mark the visible insertion-tip center and two separated points on the peg axis. Use image pixels; return null for hidden features.` | `{"tip_px":[x,y]|null,"axis_line_px":[[x1,y1],[x2,y2]]|null}` | Calibrated multi-view geometry computes socket-frame millimetres. The VLM never outputs robot-frame millimetres. |
 
 For label requests, the implementation retains `evidence_views` because the
@@ -46,6 +46,24 @@ two-image version of the same label contract. The current released-state
 pair is already wired in [`observe_released_insertion_visual`](precision_insertion/observer.py).
 The existing prompts are longer; shortening them must preserve these
 semantics and parser tests, not merely replace string literals.
+
+The request formatter should construct the **literal model input** like this
+for each camera, substituting the stage's image names, question, field and
+allowed values from the table:
+
+```text
+Camera {camera_id}. Image 1: {before}. Image 2: {after}.
+{one-sentence question from the table}
+Choose exactly one {field}: {comma-separated allowed values}.
+Return JSON only with exactly {field}, evidence_views, evidence.
+evidence_views = ["{camera_id}"] for a visible conclusion, otherwise [].
+evidence = one short phrase about visible pixels.
+```
+
+For the XY request there is just one image, so include its undistorted width
+and height and substitute the existing exact JSON keys `tip_px`,
+`axis_line_px`, `evidence`. Do not put a pipe-delimited list of labels inside
+a JSON string: that could be copied literally instead of choosing one value.
 
 The pixel-grounding request should use the full undistorted image, or a crop
 with its exact origin and scale saved. Validate coordinates against that
