@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from diagnose_synthetic_full_chain import main  # noqa: E402
+from diagnose_synthetic_full_chain import _candidate_key, main  # noqa: E402
 from diagnose_synthetic_repose import (  # noqa: E402
     _capture_failed_stroke_state, _diagnose_failed_world_obstacle,
     main as repose_main,
@@ -42,6 +42,12 @@ _REPOSE_REQUIRED = [
     "--min-board-edge-clearance-mm", "10",
     "--output-dir", "/unused/new-repose-output",
 ]
+
+
+def test_candidate_exclusion_key_is_exact_v8_layout():
+    assert _candidate_key("table/0/184") == ("table", "0", "184")
+    with pytest.raises(Exception, match="candidate must be"):
+        _candidate_key("0/184")
 
 
 @pytest.mark.parametrize("env_value,declared_mode", [

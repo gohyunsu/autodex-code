@@ -106,6 +106,37 @@ python3 scripts/precision_insertion/render_gif_derivatives.py \
 The synthetic diagnostic and native planner switch are deliberate offline
 tools.  They do not authorize a robot command.
 
+## Four additional full-chain grasp passes
+
+Four more pose-000 cylinder grasps passed the same native-locked offline
+pickup/lift/transfer/20 mm axial audit:
+
+```text
+~/shared_data/AutoDex/precision_insertion/presentation_assets/
+  cylinder_passed_grasp_comparison_20261012/
+```
+
+The passed keys are `table/0/194`, `table/0/20071`, `table/0/20140`, and
+`table/0/20141`.  `four_grasp_full_pipeline_grid.{mp4,gif}` synchronizes the
+four full-arm sequences; `four_grasp_20mm_insertion_grid.{mp4,gif}` shows the
+insertion strokes at the task-focused view; and
+`four_grasp_20mm_endpoint_grid.png` compares the four terminal grasps.  Each
+`grasp_ID/` directory also contains its individual full-pipeline and
+close-insertion MP4/GIF.
+
+Candidate `table/0/20096` was deliberately excluded after its endpoint-eligible
+grasp failed the full sampled axial path audit.  Candidate `table/0/20097` was
+excluded after pickup preflight failure.  Thus the comparison does not relabel
+endpoint-only candidates as full-chain passes.  The top-level `MANIFEST.json`
+hashes all four reports and output media and records the same synthetic/robot-
+ready limitations as the first passed visualization.
+
+For reproducible candidate-specific diagnostics, repeat
+`--exclude-candidate table/SCENE_ID/GRASP_ID` on
+`diagnose_synthetic_full_chain.py`.  Excluded keys are treated exactly as
+already-attempted candidates by `plan_fresh_key_trial` and are written to the
+synthetic context record.
+
 ## Earlier composed presentation set
 
 The presentation set is generated under:

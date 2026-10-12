@@ -47,6 +47,16 @@ def _sha(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _candidate_key(value: str) -> tuple[str, str, str]:
+    parts = tuple(value.split("/"))
+    if (len(parts) != 3 or any(not part for part in parts) or
+            parts[0] != "table" or not parts[1].isdigit() or
+            not parts[2].isdigit()):
+        raise argparse.ArgumentTypeError(
+            "candidate must be table/SCENE_ID/GRASP_ID")
+    return parts
+
+
 def synthetic_calibration(*, root: Path, mode, table_z_m: float,
                           socket_xy_m: tuple[float, float]) -> SessionCalibration:
     """Build a labelled *hypothetical* fixed world using actual fixture CAD."""
@@ -89,6 +99,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--socket-y-m", type=float, required=True)
     parser.add_argument("--max-candidates", type=int, default=1)
     parser.add_argument(
+        "--exclude-candidate", action="append", type=_candidate_key,
+        default=[], metavar="table/SCENE_ID/GRASP_ID",
+        help=("repeatable candidate key to mark already attempted; useful for "
+              "candidate-specific offline diagnostics"),
+    )
+    parser.add_argument(
         "--planner-mode", choices=("default", "native-locked-experimental"),
         default="default",
         help="declare the exact AutoDex Cartesian planner mode for this offline run",
@@ -105,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
         raise FileExistsError(output)
     if args.max_candidates < 1:
         raise ValueError("max-candidates must be positive")
+    if len(args.exclude_candidate) != len(set(args.exclude_candidate)):
+        raise ValueError("excluded candidate keys must be unique")
     values = (args.table_z_m, args.key_x_m, args.key_y_m,
               args.socket_x_m, args.socket_y_m)
     if not all(np.isfinite(value) for value in values):
@@ -153,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
                         start_q_acquisition_timestamp_s=2.0,
                         max_key_state_skew_s=.1, limits=limits,
                         max_pose_error_deg=10., axial_waypoint_step_m=.005,
+                        attempted=tuple(args.exclude_candidate),
                         max_candidate_attempts=args.max_candidates)
         except Exception as exc:
             output.mkdir(parents=True, exist_ok=False)
@@ -190,6 +209,7 @@ def main(argv: list[str] | None = None) -> int:
         "T_robot_socket_hypothetical": calibration.socket_pose_robot.tolist(),
         "start_q_source": "stock_FR3_Inspire_diagnostic_home_not_measured",
         "limits_source": "exploratory_not_commissioned",
+        "excluded_candidates": [list(key) for key in args.exclude_candidate],
         "result_status": result.status,
         "attempted_candidates": list(result.attempted_candidates),
         "planner_log_sha256": _sha(output / "planner_stdout_stderr.txt"),
