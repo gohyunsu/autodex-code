@@ -116,6 +116,10 @@ pickup/lift/transfer/20 mm axial audit:
   cylinder_passed_grasp_comparison_20261012/
 ```
 
+The identical 124-file presentation tree plus the four five-file source
+preflights is mirrored at
+`/mnt/paradex2/hyunsu/autodex_precision_insertion_passed_grasp_visuals_20261012_41df7cc/`.
+
 The passed keys are `table/0/194`, `table/0/20071`, `table/0/20140`, and
 `table/0/20141`.  `four_grasp_full_pipeline_grid.{mp4,gif}` synchronizes the
 four full-arm sequences; `four_grasp_20mm_insertion_grid.{mp4,gif}` shows the
