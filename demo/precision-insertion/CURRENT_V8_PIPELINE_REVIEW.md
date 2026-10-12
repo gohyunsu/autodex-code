@@ -1,8 +1,9 @@
 # Current AutoDex v8 versus precision insertion: implementation review
 
-This review compares the **local** stock AutoDex checkout at `448732d` with
-`feat/precision-insertion` and its isolated robot-PC staging root. Remote
-GitHub freshness must be checked separately. It describes code paths and
+This review compares the stock AutoDex `main` at `448732d` with
+`feat/precision-insertion` and its isolated robot-PC staging root. On
+2026-10-13, `git ls-remote` confirmed the fork's `main` at `448732d` and
+the pushed feature branch at `acd7665`. It describes code paths and
 offline execution evidence, not a physical insertion result. The stock
 `src/execution/{run_pipeline.py,run_auto.py,scene_cfg.py}` files remain
 unchanged. The only shared source change in this review is
