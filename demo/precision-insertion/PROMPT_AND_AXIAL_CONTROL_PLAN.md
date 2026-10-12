@@ -2,8 +2,9 @@
 
 This document records the stage semantics and the current runtime. The VLM reads **raw, undistorted AutoDex camera
 images**. CAD overlays are saved for humans, never sent as visual evidence.
-The cylinder key and socket in the real-camera NAS shots are white; the old
-square-demo text `blue precision key ... red socket` is not a cylinder prompt.
+All precision keys and sockets are white. Segmentation prompts must identify
+the loose key and fixed socket by shape and location, not a different color.
+The runtime rejects stale color words before a SAM request.
 
 ## 1. Segmentation before pickup
 

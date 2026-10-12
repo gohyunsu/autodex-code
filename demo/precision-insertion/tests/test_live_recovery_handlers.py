@@ -117,7 +117,7 @@ def _setup(tmp_path):
         live=live, planner=object(), limits=object(),
         state_for_observation=lambda _obs: _state(),
         withdraw_guarded=withdraw, record_execution=record,
-        key_prompt="blue precision key excluding red socket",
+        key_prompt="white precision key excluding white socket",
         capture_parameters=CAPTURE, return_parameters=RETURN,
         landing_parameters=LANDING, capture_id_factory=lambda: "reset_001")
     return bound, runner, events

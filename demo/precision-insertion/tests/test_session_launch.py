@@ -67,7 +67,7 @@ def _config(tmp_path):
             "minimum_border_clearance_px": 2,
             "maximum_capture_skew_s": .02,
         },
-        "socket_prompt": "fixed red socket",
+        "socket_prompt": "fixed white socket",
         "socket_capture_count": 2,
         "board_timeout_s": 5., "socket_timeout_s": 15.,
         "image_write_timeout_s": 5.,

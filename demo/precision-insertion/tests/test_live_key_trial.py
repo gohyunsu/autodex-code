@@ -96,7 +96,7 @@ def _setup(tmp_path, monkeypatch, *, state_timestamp=100.005):
     def collect(**kwargs):
         events.append("capture")
         assert init.obj_name == mode.key_object
-        assert kwargs["key_prompt"] == "blue precision key, excluding red socket"
+        assert kwargs["key_prompt"] == "white precision key, excluding white socket"
         return capture
 
     def admit(**kwargs):
@@ -144,7 +144,7 @@ def _setup(tmp_path, monkeypatch, *, state_timestamp=100.005):
         "intrinsics_full": {"cam_a": {}, "cam_b": {}},
         "extrinsics_full": {"cam_a": {}, "cam_b": {}},
         "image_hw": (1536, 2048),
-        "key_prompt": "blue precision key, excluding red socket",
+        "key_prompt": "white precision key, excluding white socket",
         "view_limits": SocketViewLimits(50, .5, 10, 2, .02),
         "maximum_multiview_center_error_mm": 3.,
         "maximum_multiview_angle_error_deg": 5.,

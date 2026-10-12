@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -54,7 +55,7 @@ class FoundPoseStub:
         self.write_images = write_images
 
     def collect_payloads(self, **kwargs):
-        assert kwargs["prompt"] == "red socket"
+        assert kwargs["prompt"] == "white socket"
         assert kwargs["n_expected_serials"] == 2
         capture_dir = Path(kwargs["save_capture_dir"])
         if self.write_images:
@@ -107,7 +108,7 @@ def test_board_rejects_publication_time_even_with_matching_request():
 def test_socket_uses_same_request_saved_frames_and_foundpose(tmp_path):
     result = collect_socket_capture(
         init_orchestrator=FoundPoseStub(), socket_object="socket_model",
-        capture_id="socket_001", socket_prompt="red socket",
+        capture_id="socket_001", socket_prompt="white socket",
         capture_root=tmp_path, calibrated_camera_ids=CAMERAS,
         acquisition_metadata_for_request=_provider, timeout_s=2.0,
         request_id_factory=lambda: 43)
@@ -119,10 +120,24 @@ def test_socket_uses_same_request_saved_frames_and_foundpose(tmp_path):
     with pytest.raises(FileExistsError):
         collect_socket_capture(
             init_orchestrator=FoundPoseStub(), socket_object="socket_model",
-            capture_id="socket_001", socket_prompt="red socket",
+            capture_id="socket_001", socket_prompt="white socket",
             capture_root=tmp_path, calibrated_camera_ids=CAMERAS,
             acquisition_metadata_for_request=_provider, timeout_s=2.0,
             request_id_factory=lambda: 43)
+
+
+def test_incorrect_object_color_is_rejected_before_camera_request(tmp_path):
+    for color, collector, object_name, prompt_name in (
+            ("red", collect_socket_capture, "socket_model", "socket_prompt"),
+            ("blue", collect_key_capture, "key_model", "key_prompt")):
+        with pytest.raises(ValueError, match="key and socket are white"):
+            collector(
+                init_orchestrator=SimpleNamespace(obj_name=object_name),
+                **({"socket_object": object_name} if prompt_name == "socket_prompt"
+                   else {"key_object": object_name}),
+                capture_id="capture_1", **{prompt_name: f"{color} {object_name}"},
+                capture_root=tmp_path, calibrated_camera_ids=CAMERAS,
+                acquisition_metadata_for_request=_provider, timeout_s=2.0)
 
 
 def test_socket_rejects_mask_pose_hash_from_another_camera_frame(tmp_path):
@@ -135,7 +150,7 @@ def test_socket_rejects_mask_pose_hash_from_another_camera_frame(tmp_path):
     with pytest.raises(ValueError, match="source pixels differ"):
         collect_socket_capture(
             init_orchestrator=WrongSource(), socket_object="socket_model",
-            capture_id="socket_wrong_source", socket_prompt="red socket",
+            capture_id="socket_wrong_source", socket_prompt="white socket",
             capture_root=tmp_path, calibrated_camera_ids=CAMERAS,
             acquisition_metadata_for_request=_provider, timeout_s=2.0,
             request_id_factory=lambda: 55)
@@ -146,7 +161,7 @@ def test_socket_rejects_missing_same_request_image(tmp_path):
         collect_socket_capture(
             init_orchestrator=FoundPoseStub(write_images=False),
             socket_object="socket_model", capture_id="socket_002",
-            socket_prompt="red socket", capture_root=tmp_path,
+            socket_prompt="white socket", capture_root=tmp_path,
             calibrated_camera_ids=CAMERAS,
             acquisition_metadata_for_request=_provider, timeout_s=1.0,
             image_write_timeout_s=0.05, request_id_factory=lambda: 44)
@@ -156,7 +171,7 @@ def test_socket_rejects_wrong_initialized_foundpose_model(tmp_path):
     with pytest.raises(ValueError, match="not initialized"):
         collect_socket_capture(
             init_orchestrator=FoundPoseStub(), socket_object="other_socket",
-            capture_id="socket_001", socket_prompt="red socket",
+            capture_id="socket_001", socket_prompt="white socket",
             capture_root=tmp_path, calibrated_camera_ids=CAMERAS,
             acquisition_metadata_for_request=_provider, timeout_s=1.0,
             request_id_factory=lambda: 43)
@@ -210,7 +225,7 @@ def test_rejects_old_stock_payload_without_frame_id(tmp_path):
     with pytest.raises(ValueError, match="frame ID mismatch"):
         collect_socket_capture(
             init_orchestrator=StockFoundPose(), socket_object="socket_model",
-            capture_id="socket_old", socket_prompt="red socket",
+            capture_id="socket_old", socket_prompt="white socket",
             capture_root=tmp_path, calibrated_camera_ids=CAMERAS,
             acquisition_metadata_for_request=_provider, timeout_s=2.0,
             request_id_factory=lambda: 45)
@@ -221,13 +236,13 @@ def test_key_capture_reuses_strict_foundpose_frame_binding(tmp_path):
         obj_name = "key_model"
 
         def collect_payloads(self, **kwargs):
-            assert kwargs["prompt"] == "blue key on tabletop"
-            kwargs["prompt"] = "red socket"
+            assert kwargs["prompt"] == "white key on tabletop"
+            kwargs["prompt"] = "white socket"
             return super().collect_payloads(**kwargs)
 
     capture = collect_key_capture(
         init_orchestrator=KeyFoundPoseStub(), key_object="key_model",
-        capture_id="key_001", key_prompt="blue key on tabletop",
+        capture_id="key_001", key_prompt="white key on tabletop",
         capture_root=tmp_path, calibrated_camera_ids=CAMERAS,
         acquisition_metadata_for_request=_provider, timeout_s=2.0,
         request_id_factory=lambda: 46)
@@ -237,7 +252,7 @@ def test_key_capture_reuses_strict_foundpose_frame_binding(tmp_path):
     with pytest.raises(ValueError, match="selected key"):
         collect_key_capture(
             init_orchestrator=FoundPoseStub(), key_object="key_model",
-            capture_id="key_002", key_prompt="blue key on tabletop",
+            capture_id="key_002", key_prompt="white key on tabletop",
             capture_root=tmp_path, calibrated_camera_ids=CAMERAS,
             acquisition_metadata_for_request=_provider, timeout_s=2.0,
             request_id_factory=lambda: 47)

@@ -111,7 +111,7 @@ def _setup(tmp_path, monkeypatch, request_ids=(11, 12, 13)):
         "image_hw": (1536, 2048), "c2r": np.eye(4),
         "base_scene": {"mesh": {}, "cuboid": {}},
         "view_limits": SocketViewLimits(50, .5, 10, 2, .02),
-        "socket_prompt": "fixed red cylindrical socket", "socket_capture_count": 2,
+        "socket_prompt": "fixed white cylindrical socket", "socket_capture_count": 2,
         "board_timeout_s": 5., "socket_timeout_s": 15.,
         "max_socket_translation_mm": 1., "max_socket_angle_deg": 1.,
         "minimum_socket_refined_iou": .8,

@@ -89,7 +89,7 @@ def _inputs(tmp_path):
             "request_id": 2,
         }
     capture = KeyCaptureInput(
-        "key_001", 3, "red tabletop key", images, masks, poses,
+        "key_001", 3, "white tabletop key", images, masks, poses,
         {camera: evidence[camera]["timestamp_s"] for camera in CAMERAS},
         "camera_acquisition", evidence, tmp_path / "raw_key")
     reference = SessionKeyBaseline(

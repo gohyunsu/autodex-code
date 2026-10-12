@@ -66,7 +66,7 @@ def _bundle(tmp_path: Path, *, bound: bool = True) -> Path:
             "frame_id": evidence[camera]["frame_id"],
         } for camera in CAMERAS}
         captures.append(SocketCaptureInput(
-            capture_id, number, "red fixed socket", images, masks, poses,
+            capture_id, number, "white fixed socket", images, masks, poses,
             times, "camera_acquisition", evidence if bound else None))
         observations = tuple(SocketObservation(
             capture_id, camera, times[camera], np.eye(4),

@@ -60,7 +60,7 @@ def _capture(poses, tmp_path):
     times = {"cam_a": 100.0, "cam_b": 100.005}
     frame_ids = {"cam_a": 21, "cam_b": 22}
     return KeyCaptureInput(
-        "key_001", 51, "blue cylindrical key",
+        "key_001", 51, "white cylindrical key",
         {serial: image.copy() for serial in CAMERAS},
         {serial: {"mask": mask.copy(), "frame_id": frame_ids[serial]}
          for serial in CAMERAS},

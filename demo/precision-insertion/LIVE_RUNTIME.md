@@ -102,6 +102,10 @@ For the first-party FR3 resource path, create a robot-PC JSON file such as:
 ```
 
 These numbers illustrate the file format, **not** rig-approved limits.
+All keys and sockets are white. Use a socket SAM prompt such as
+`fixed white cylindrical socket on the ChArUco board` and a key prompt such
+as `loose white cylindrical peg on the tabletop`. The launch and capture
+adapters reject stale nonwhite color words before sending a SAM request.
 Set `vlm.model_id` to the recipient's verified NAS Qwen bundle
 `payload/model` directory. The `vlm` block is optional for custom stage
 factories that supply `backend`; without either one, the integration loads

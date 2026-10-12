@@ -90,7 +90,7 @@ def test_capture_then_continue_uses_same_key_and_measured_state(
     bound = live_planning_handlers.LiveKeyPlanningHandlers(
         live=live, planner=object(),
         state_for_observation=lambda _: state,
-        limits=object(), key_prompt="blue key excluding red socket",
+        limits=object(), key_prompt="white key excluding white socket",
         key_parameters=PARAMETERS,
         capture_id_factory=lambda: next(ids))
     result = run_session_actions(runner, handlers=bound.handlers())
@@ -139,7 +139,7 @@ def test_verified_reset_reobserves_with_new_capture_without_repeating_recovery(
     bound = live_planning_handlers.LiveKeyPlanningHandlers(
         live=live, planner=object(),
         state_for_observation=lambda _: None,
-        limits=object(), key_prompt="blue key excluding red socket",
+        limits=object(), key_prompt="white key excluding white socket",
         key_parameters=PARAMETERS,
         capture_id_factory=lambda: next(ids))
     bound.capture_and_preflight(runner, runner.current_decision())
@@ -182,7 +182,7 @@ def test_fresh_and_reobserved_key_check_clear_view_before_capture_and_exposure(
                         capture)
     bound = live_planning_handlers.LiveKeyPlanningHandlers(
         live=live, planner=object(), state_for_observation=lambda _: state,
-        limits=object(), key_prompt="blue key excluding socket",
+        limits=object(), key_prompt="white key excluding socket",
         key_parameters=PARAMETERS)
     bound.capture_and_preflight(runner, runner.current_decision())
     runner.decision = SessionDecision(

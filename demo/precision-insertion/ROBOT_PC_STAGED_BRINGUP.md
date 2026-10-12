@@ -128,8 +128,8 @@ runtime catalog.
 
 ```bash
 cd /home/ROBOT_USER/autodex-precision-insertion
-DATA_DIR=/absolute/recipient/shared_data
-NAS_DIR=/mnt/paradex2/hyunsu
+DATA_DIR=/absolute/new/staging/shared_data
+NAS_DIR=/home/robot/shared_data/hyunsu  # use the actual mount on the recipient PC
 CHECK_DIR="$(mktemp -d /tmp/precision-pc-check.XXXXXX)"
 PYTHONPATH="$PWD/demo/precision-insertion:$PWD/src" \
   python -m pytest -q demo/precision-insertion/tests
@@ -170,16 +170,97 @@ python demo/precision-insertion/export_local_qwen_handoff.py \
   --verify-root "$NAS_DIR/autodex_precision_insertion_qwen3_vl_2b_20261012_89644892"
 ```
 
-Install into a staging `shared_data` tree first, with the bundle-specific
-rehydration procedures in [ROBOT_PC_HANDOFF_20261012.md](ROBOT_PC_HANDOFF_20261012.md),
-[CYLINDER_SOCKET_HANDOFF_RELOCATION.md](CYLINDER_SOCKET_HANDOFF_RELOCATION.md),
-and [FULL_LENGTH_CYLINDER_PROPOSALS.md](FULL_LENGTH_CYLINDER_PROPOSALS.md).
-Never copy source-bound `audit_only` endpoint catalogs as runnable files:
-their absolute paths and hashes belong to the producer. Install the
-historical cylinder 12-ID pool before appending the new 112-ID pool if the
-full 124-row catalog is desired. Install the exact key/socket FoundPose
-representations and only the selected directed reset seeds; do not promote
-`pending_foundpose`. Rebuild each selected per-gap catalog on the recipient.
+Install into a **new, empty** staging `shared_data` tree. The current
+full-length 112-ID cylinder pool is sufficient as the v8 source pool; the
+earlier 12-ID pool is not a runtime dependency. The base bundle's tabletop
+scenes and socket fixture contain producer absolute paths and must be rebound
+before screening. For this verified base bundle, the embedded producer root
+is `/home/robot/shared_data`:
+
+```bash
+test ! -e "$DATA_DIR" && mkdir -p "$DATA_DIR"
+BASE="$NAS_DIR/autodex_precision_insertion_handoff_20261010_652ac909/payload/shared_data"
+cp -a "$BASE/." "$DATA_DIR/"
+PYTHONPATH=demo/precision-insertion:src python \
+  demo/precision-insertion/rehydrate_cylinder_socket_handoff.py \
+  --source-shared-root "$BASE" \
+  --source-origin-shared-root /home/robot/shared_data \
+  --target-shared-root "$DATA_DIR" --install
+python demo/precision-insertion/rehydrate_cylinder_key_scenes.py \
+  --source-shared-root "$BASE" \
+  --source-origin-shared-root /home/robot/shared_data \
+  --target-shared-root "$DATA_DIR" --install
+PYTHONPATH=demo/precision-insertion:src python \
+  demo/precision-insertion/rehydrate_full_length_cylinder_handoff.py \
+  --bundle-root "$NAS_DIR/autodex_precision_insertion_cylinder_full_length_addendum_20261011_eb38993" \
+  --target-shared-root "$DATA_DIR" --install
+```
+
+The installers verify source files and refuse conflicting recipient files.
+Install the exact key/socket FoundPose representations and the selected
+directed reset seeds using their handoff manifests. Never use a source-bound
+`audit_only` catalog as a runtime catalog. Rebuild the complete selected-gap
+catalog on this recipient root. See
+[ROBOT_PC_HANDOFF_20261012.md](ROBOT_PC_HANDOFF_20261012.md) for the remaining
+asset inventories. The key and every socket are **white**: use specific white
+key/socket SAM prompts, not color cues from old examples.
+The following commands install the current cylinder v8 runtime inputs into
+the new staging root. The curated `000→001/191` archive is only source
+evidence for the v8 seed; runtime uses the rebound canonical copy, never its
+producer paths. The reverse cell uses the current `001→000/1687` addendum.
+
+```bash
+tar --no-same-owner -xf \
+  "$NAS_DIR/autodex_precision_insertion_foundpose_20261011/autodex_precision_foundpose_4objects_20261011.tar" \
+  -C "$DATA_DIR" --wildcards \
+  'AutoDex/foundpose_assets/precision_key_cylinder_r15_h80/*'
+tar --no-same-owner -xf \
+  "$NAS_DIR/autodex_precision_insertion_foundpose_20261011/precision_foundpose_socket_20mm_20261011.tar" \
+  -C "$DATA_DIR" --wildcards \
+  'AutoDex/foundpose_assets/precision_socket_cylinder_gap_20mm/*'
+cp -a /home/robot/shared_data/AutoDex/content/assets/robot/fr3_inspire_description \
+  "$DATA_DIR/AutoDex/content/assets/robot/"
+RESET_BUNDLE="$NAS_DIR/autodex_precision_insertion_cylinder_reset1687_addendum_20261012"
+PYTHONPATH=demo/precision-insertion:src python \
+  demo/precision-insertion/rehydrate_reset_handoff.py \
+  --source-shared-root "$RESET_BUNDLE/payload/shared_data" \
+  --source-origin-shared-root /home/hyunsu/shared_data \
+  --target-shared-root "$DATA_DIR" \
+  --source-candidate-root "$RESET_BUNDLE/payload/shared_data/AutoDex/precision_insertion/cylindrical/reorient_handoff_seed11012/reset_12" \
+  --target-candidate-root "$DATA_DIR/AutoDex/precision_insertion/cylindrical/reorient_handoff_seed11012/reset_12" \
+  --source-audit "$RESET_BUNDLE/audit_only/SOURCE_AUDIT.json"
+PYTHONPATH=demo/precision-insertion:src python \
+  demo/precision-insertion/install_cylinder_reset_seeds.py \
+  --shared-root "$DATA_DIR" \
+  --source-reset-root "$DATA_DIR/AutoDex/precision_insertion/cylindrical/reorient_handoff_seed11012/reset_12" \
+  --gap-mm 20 --from-pose-stem 1 --to-pose-stem 0 --seed-id 1687 \
+  --output-manifest "$CHECK_DIR/reset1687_install.json"
+CURATED="$NAS_DIR/autodex_precision_insertion_reorient_curated_20261011/cylinder"
+PYTHONPATH=demo/precision-insertion:src python \
+  demo/precision-insertion/rehydrate_curated_reorient.py \
+  --mode cylinder --gap-mm 20 \
+  --source-shared-root "$CURATED/source_shared_data" \
+  --source-handoff-root "$CURATED" --target-shared-root "$DATA_DIR" \
+  --target-handoff-root "$DATA_DIR/AutoDex/precision_insertion/cylindrical/reorient_curated_v8_rehydrated"
+PYTHONPATH=demo/precision-insertion:src python \
+  demo/precision-insertion/install_cylinder_reset_seeds.py \
+  --shared-root "$DATA_DIR" \
+  --source-reset-root "$DATA_DIR/AutoDex/precision_insertion/cylindrical/reorient_curated_v8_rehydrated/reset_12" \
+  --gap-mm 20 --from-pose-stem 0 --to-pose-stem 1 --seed-id 191 \
+  --output-manifest "$CHECK_DIR/reset191_install.json"
+MODEL_DIR="$DATA_DIR/AutoDex/models/Qwen3-VL-2B-Instruct"
+test ! -e "$MODEL_DIR" && mkdir -p "$MODEL_DIR"
+cp -a "$NAS_DIR/autodex_precision_insertion_qwen3_vl_2b_20261012_89644892/payload/model/." "$MODEL_DIR/"
+```
+
+Set the robot config's `vlm.model_id` to the absolute `MODEL_DIR` path when
+using `precision_insertion.franka_integration:factory`. Its unspecified
+model ID selects the public default name and may fetch from the network;
+it does not select this staged bundle. The FR3 copy command assumes the robot PC has its existing
+`/home/robot/shared_data/AutoDex` asset tree; if it is mounted elsewhere,
+substitute that verified path before copying. A successful file copy is not a
+camera, GPU inference, or robot connection test.
+
 For the current `gap_mm=20` mode, if its canonical catalog path does **not**
 already exist:
 

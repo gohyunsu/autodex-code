@@ -463,7 +463,8 @@ def observe_grounded_key_axis(
             "square insertion shaft meets its wider handle behind that tip")
         prompt = (
             f"Camera {frame.camera_id}; ORIGINAL UNDISTORTED image "
-            f"{width}x{height} pixels. Use only visible raw pixels, no robot "
+            f"{width}x{height} pixels. Key and socket are both white; use "
+            "shape and location. Use only visible raw pixels, no robot "
             "command or CAD overlay as evidence. Mark the centre of the "
             "key's insertion tip and " + reference + ". The caller has "
             "measured their CAD spacing; do not choose an arbitrary point "
@@ -797,7 +798,8 @@ def _observe_grounded_axis_line(
             "crop origin yourself.")
         prompt = (
             f"Camera {frame.camera_id}. {image_description}"
-            "From visible raw key pixels only, "
+            "Key and socket are both white; distinguish by shape and "
+            "location. From visible raw key pixels only, "
             f"mark {point_description} and TWO separated points along "
             "the image-projected centreline of the visible straight key "
             "shaft. The line points need not mark the same physical shaft "

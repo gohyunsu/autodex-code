@@ -33,6 +33,7 @@ from .fixture_contract import validate_cylinder_socket_fixture
 from .geometry import validate_se3
 from .live_session_start import StartedPrecisionSession, start_precision_session
 from .perception_evidence import SocketViewLimits
+from .prompt_contract import reject_incorrect_object_color
 
 
 _SCHEMA = "precision_insertion_live_session_launch_v1"
@@ -277,6 +278,7 @@ def load_session_launch(path: Path) -> SessionLaunch:
             not isinstance(prompt, str) or not prompt.strip() or
             prompt.strip() == "object"):
         raise ValueError("socket needs repeated captures and a specific SAM prompt")
+    reject_incorrect_object_color(prompt)
     values = {name: _positive(record.get(name), name=name) for name in (
         "board_timeout_s", "socket_timeout_s", "image_write_timeout_s",
         "max_socket_translation_mm", "max_socket_angle_deg",

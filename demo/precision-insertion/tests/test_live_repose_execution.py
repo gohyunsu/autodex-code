@@ -68,7 +68,7 @@ def _handler(tmp_path):
     bound = live_repose_execution.LiveReposeExecutionHandlers(
         live=live, execute_repose=execute,
         state_for_observation=lambda _observation: object(),
-        key_prompt="blue key excluding red socket",
+        key_prompt="white key excluding white socket",
         capture_parameters={}, landing_parameters={},
         attempt_id_factory=lambda: "repose_001",
         capture_id_factory=lambda: "repose_key_001",

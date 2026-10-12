@@ -40,7 +40,7 @@ def test_checkpoint_capture_reuses_session_and_exact_frame_metadata():
             mode=SimpleNamespace(key_object="precision_key"),
             capture_root=Path("/tmp"), camera_ids=("cam_a", "cam_b"))))
     result = capture_checkpoint_frames(
-        live, phase="after_lift", key_prompt="blue key handle",
+        live, phase="after_lift", key_prompt="white key handle",
         timeout_s=4.0, capture_id="lift_1", collector=collector)
     assert isinstance(result, RawCameraCapture)
     assert result.capture_id == "lift_1"

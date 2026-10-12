@@ -23,7 +23,7 @@
     "maximum_capture_skew_s": 0.02,
     "minimum_accepted_views": 2
   },
-  "socket_prompt": "fixed red socket on the ChArUco board",
+  "socket_prompt": "fixed white cylindrical socket on the ChArUco board",
   "socket_capture_count": 2,
   "board_timeout_s": 5.0,
   "socket_timeout_s": 15.0,

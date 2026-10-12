@@ -24,6 +24,7 @@ from .key_perception import (
 from .live_capture import collect_key_capture
 from .live_robot_state import LiveRobotState
 from .path_audit import PathAuditLimits
+from .prompt_contract import reject_incorrect_object_color
 from .perception_evidence import SocketViewLimits
 from .registered_key_capture import (
     RegisteredKeyAssistance, derive_registered_key_capture,
@@ -73,6 +74,7 @@ def _capture_admitted_key(
             not isinstance(key_prompt, str) or not key_prompt.strip() or
             key_prompt == "object"):
         raise ValueError("key capture needs safe ID and a specific SAM prompt")
+    reject_incorrect_object_color(key_prompt)
     if (not isinstance(image_hw, tuple) or len(image_hw) != 2 or
             any(type(value) is not int or value <= 0 for value in image_hw) or
             type(socket_projection_dilation_px) is not int or
@@ -298,6 +300,7 @@ def prepare_next_live_key(
     if (not isinstance(key_prompt, str) or not key_prompt.strip() or
             key_prompt == "object"):
         raise ValueError("fresh key needs a specific SAM prompt")
+    reject_incorrect_object_color(key_prompt)
     if not callable(acquisition_metadata_for_request) or not callable(
             state_for_observation):
         raise TypeError("camera evidence and exposure-time state providers are required")

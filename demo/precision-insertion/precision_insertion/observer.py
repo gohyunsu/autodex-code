@@ -558,7 +558,8 @@ def observe_lift(backend: ImageVLM, frames: Sequence[LabeledFrame]) -> VLMObserv
     return infer(
         backend, stage="post_lift", frames=frames,
         prompt_body=(
-            "Track the loose key relative to its tabletop location and the "
+            "The key and socket are both white. Track the loose key by shape "
+            "and location relative to its tabletop position and the "
             "robot hand. Classify held only when distinct key pixels visibly "
             "move with the hand in the cited camera views; closed fingers, "
             "a hidden key, or a commanded lift are not held evidence. "
@@ -588,6 +589,7 @@ def observe_insertion_visual(
     return infer(
         backend, stage="insertion_visual", frames=frames,
         prompt_body=(
+            "The key and socket are both white; use shape and location. "
             "Compare the time-ordered RAW key and socket pixels. CAD overlays "
             "are predictions, not measurements. A hidden key is not proof "
             "of insertion. Do not claim numerical depth from pixels. "
@@ -622,7 +624,8 @@ def observe_released_insertion_visual(
     return _per_view_consensus(
         backend, stage="released_insertion_visual", frames=frames,
         prompt_body=(
-            "Image 1 shows the loose target key during the initial tabletop "
+            "The key and socket are both white; distinguish them by shape "
+            "and location. Image 1 shows the loose target key during the initial tabletop "
             "perception step. Image 2 shows the same workspace after the "
             "20 mm insertion attempt, after the hand has fully opened and "
             "the robot has moved to clear view. Decide from visible pixels "
@@ -686,6 +689,7 @@ def observe_preinsert_hold_views(
         observations.append(_infer_closed_set(
             backend, stage="preinsert_visual", frames=frames,
             prompt_body=(
+                "The key and socket are both white; use shape and location. "
                 "Image 1 is the RAW camera frame. Image 2 is the same frame "
                 "with a translucent robot/key/socket CAD prediction. The CAD "
                 "key is a hypothesis, not observed evidence; synthetic "
@@ -756,6 +760,7 @@ def observe_preinsert_raw_views(
             backend, stage="preinsert_visual", frames=frames,
             prompt_body=(
                 "This is one RAW camera image at the pre-insertion hold. "
+                "Both key and socket are white; use shape and location. "
                 "Inspect only visible pixels. Choose coarse_match only when "
                 "the target key is visibly still carried by the hand above "
                 "the socket and its insertion axis is grossly compatible "
@@ -828,7 +833,8 @@ def observe_preinsert_temporal_views(
             backend, stage="preinsert_visual", frames=(before, after),
             prompt_body=(
                 "Image 1 is the RAW after-lift view; image 2 is the RAW "
-                "preinsert view from the same camera. Is the same white peg "
+                "preinsert view from the same camera. Both peg and socket "
+                "are white; use shape and location. Is the same white peg "
                 "still visibly held after transfer and roughly aligned "
                 "above the socket? Choose coarse_match only from visible "
                 "key pixels in both images. Choose gross_misalignment for "
@@ -883,6 +889,7 @@ def observe_xy_views(
         order = _frame_order(frames)
         ids = ", ".join(catalog)
         prompt = (
+            "Both key and socket are white; use shape and location. "
             "Image 1 is the RAW camera crop; image 2 marks calibrated "
             "candidate center anchors on the same crop. Markers are target "
             "projections, not observed key poses or measured millimetres. "

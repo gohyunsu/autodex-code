@@ -95,7 +95,7 @@ def test_observed_relation_uses_fresh_foundpose_and_measured_feedback(
     handler = module.LiveObservedHeldRelationHandlers(
         live=live, planner=object(),
         state_for_capture=lambda raw: received.setdefault("raw", raw) and _sample(),
-        key_prompt="blue key handle", path_limits=object(),
+        key_prompt="white key handle", path_limits=object(),
         capture_parameters=_capture_parameters(),
         parameters=_parameters(), capture_id_factory=lambda: "held_1")
     handler.handlers()[decision.action](runner, decision)
@@ -162,7 +162,7 @@ def test_observed_relation_exports_sample_only_when_configured_and_planned(
     handler = module.LiveObservedHeldRelationHandlers(
         live=live, planner=object(),
         state_for_capture=lambda raw: _sample(),
-        key_prompt="blue key", path_limits=object(),
+        key_prompt="white key", path_limits=object(),
         capture_parameters=_capture_parameters(), parameters=_parameters(),
         calibration_sample_bounds=bounds,
         capture_id_factory=lambda: "held_1")
@@ -196,7 +196,7 @@ def test_occluded_held_key_does_not_advance_to_transfer(monkeypatch, tmp_path):
                 view_limits=object())))
     handler = module.LiveObservedHeldRelationHandlers(
         live=live, planner=object(), state_for_capture=lambda raw: _sample(),
-        key_prompt="blue key handle", path_limits=object(),
+        key_prompt="white key handle", path_limits=object(),
         capture_parameters=_capture_parameters(),
         parameters=_parameters(), capture_id_factory=lambda: "held_1")
     with pytest.raises(ValueError, match="capture missing"):

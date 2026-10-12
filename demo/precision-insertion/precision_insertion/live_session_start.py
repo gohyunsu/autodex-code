@@ -23,6 +23,7 @@ from .geometry import validate_se3
 from .fixture_contract import validate_cylinder_socket_fixture
 from .live_capture import collect_board_snapshot, collect_socket_capture
 from .perception_evidence import SocketViewLimits
+from .prompt_contract import reject_incorrect_object_color
 from .silhouette_compat import prepare_precision_silhouette
 from .socket_refinement import refine_socket_capture
 from .session_bootstrap import (
@@ -79,6 +80,7 @@ def start_precision_session(
             not isinstance(socket_prompt, str) or
             not socket_prompt.strip() or socket_prompt == "object"):
         raise ValueError("session needs repeated socket captures and a specific prompt")
+    reject_incorrect_object_color(socket_prompt)
     for name, value in (("board_timeout_s", board_timeout_s),
                         ("socket_timeout_s", socket_timeout_s),
                         ("image_write_timeout_s", image_write_timeout_s),

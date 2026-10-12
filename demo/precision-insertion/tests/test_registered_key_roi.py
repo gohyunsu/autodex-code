@@ -46,7 +46,7 @@ def _scene():
     socket = np.zeros((240, 240), dtype=np.uint8)
     cv2.circle(socket, (100, 100), 12, 255, -1)
     current = baseline.copy()
-    current[145:165, 170:190] = (0, 0, 255)  # red BGR key
+    current[145:165, 170:190] = (255, 255, 255)  # white BGR key
     return baseline, current, socket
 
 
@@ -80,15 +80,15 @@ def test_registered_difference_localizes_key_and_maps_sam_to_full_frame():
     assert x0 <= 170 < 190 <= x1 and y0 <= 145 < 165 <= y1
     assert proposal.to_record()["robot_ready"] is False
 
-    class RedKey:
+    class WhiteKey:
         def segment(self, crop, prompt):
-            assert prompt == "red tabletop key"
-            return crop[:, :, 0] > 200
+            assert prompt == "white tabletop key"
+            return np.all(crop > 200, axis=2)
 
     mask = segment_registered_key_roi(
         current_rgb=cv2.cvtColor(current, cv2.COLOR_BGR2RGB),
-        proposal=proposal, sam_segmentor=RedKey(),
-        prompt="red tabletop key", limits=_limits())
+        proposal=proposal, sam_segmentor=WhiteKey(),
+        prompt="white tabletop key", limits=_limits())
     assert mask.status == "mask_available"
     assert mask.mask is not None and mask.mask.shape == socket.shape
     assert int(mask.mask.sum()) == 400

@@ -114,7 +114,7 @@ def test_combined_collector_requires_exact_saved_frame_evidence(tmp_path):
         extrinsics = {"camera_a": np.eye(4), "camera_b": np.eye(4)}
 
         def collect_payloads(self, **kwargs):
-            assert kwargs["prompt"] == "red square socket"
+            assert kwargs["prompt"] == "white square socket"
             assert kwargs["n_expected_serials"] == 2
             assert kwargs["request_id"] == 42
             image_dir = Path(kwargs["save_capture_dir"]) / "images"
@@ -138,7 +138,7 @@ def test_combined_collector_requires_exact_saved_frame_evidence(tmp_path):
     kwargs = {
         "orchestrator": OriginalCollectorStub(),
         "socket_object": "precision_socket_unified",
-        "capture_id": "socket_001", "prompt": "red square socket",
+        "capture_id": "socket_001", "prompt": "white square socket",
         "calibrated_camera_ids": {"camera_a", "camera_b"},
         "limits": limits, "timeout_s": 10.0,
         "capture_root": tmp_path,

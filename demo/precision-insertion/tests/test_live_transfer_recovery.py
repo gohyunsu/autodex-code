@@ -101,7 +101,7 @@ def test_grasp_miss_recaptures_and_restores_before_closing_attempt(
     handler = LiveTransferRecoveryHandlers(
         live=live, recover_to_tabletop=lambda *_: (_ for _ in ()).throw(
             AssertionError("a judged miss needs AutoDex clear view")),
-        state_for_observation=lambda *_: object(), key_prompt="blue key",
+        state_for_observation=lambda *_: object(), key_prompt="white key",
         capture_parameters={}, landing_parameters={}, planner=object(),
         key_planning=SimpleNamespace(latest=selected),
         restore_original=restore)

@@ -15,8 +15,8 @@ import probe_vlm  # noqa: E402
 def test_local_probe_uses_selected_backend_and_saves_read_only_record(
         tmp_path, monkeypatch):
     before, after = tmp_path / "before.png", tmp_path / "after.png"
-    Image.new("RGB", (24, 16), "blue").save(before)
-    Image.new("RGB", (24, 16), "red").save(after)
+    Image.new("RGB", (24, 16), "white").save(before)
+    Image.new("RGB", (24, 16), "white").save(after)
     calls = []
 
     class Backend:

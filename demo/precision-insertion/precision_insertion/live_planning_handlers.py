@@ -15,6 +15,7 @@ from uuid import uuid4
 from .action_loop import ActionHandler
 from .live_key_trial import PreparedLiveKeyTrial, prepare_next_live_key
 from .session_policy import SessionDecision
+from .prompt_contract import reject_incorrect_object_color
 
 
 def _new_capture_id() -> str:
@@ -61,6 +62,7 @@ class LiveKeyPlanningHandlers:
                 not self.key_prompt.strip() or
                 not isinstance(self.key_parameters, Mapping)):
             raise TypeError("key planning needs feedback, IDs, prompt and parameters")
+        reject_incorrect_object_color(self.key_prompt)
         if not callable(getattr(getattr(self.live, "clear_view", None),
                                 "before_key_capture", None)) or not callable(
                 getattr(self.live.clear_view, "verify_state", None)):

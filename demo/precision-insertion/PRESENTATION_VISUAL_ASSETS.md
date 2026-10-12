@@ -152,8 +152,9 @@ The presentation set is generated under:
 
 All delivered stills and animations use a 16:9 frame. The Blender renders use
 the exact cylindrical key/socket CAD meshes and the Inspire visual-link meshes
-exported at a current AutoDex v8 grasp posture. Blue denotes the key and red
-denotes the socket.
+exported at a current AutoDex v8 grasp posture. The older rendered blue key
+and red socket are visualization colors only. The physical key and every socket
+are white; active SAM and VLM prompts use white objects and shape/location cues.
 
 ## Recommended slide assets
 

@@ -33,7 +33,7 @@ def _capture(capture_id: str, timestamp: float) -> sb.SocketCaptureInput:
         "inliers": 20, "mask_pixels": 108, "ts": timestamp + 12,
     } for serial in images}
     return sb.SocketCaptureInput(
-        capture_id, int(timestamp), "red cylindrical socket", images, masks, poses,
+        capture_id, int(timestamp), "white cylindrical socket", images, masks, poses,
         {"cam_a": timestamp, "cam_b": timestamp + 0.005},
         "camera_acquisition")
 
@@ -175,7 +175,7 @@ def test_writes_non_overwriting_raw_evidence_bundle(monkeypatch, tmp_path):
     for relative, digest in manifest["files_sha256"].items():
         assert hashlib.sha256((target / relative).read_bytes()).hexdigest() == digest
     payload = json.loads((target / "socket/socket_1/payloads.json").read_text())
-    assert payload["sam_prompt"] == "red cylindrical socket"
+    assert payload["sam_prompt"] == "white cylindrical socket"
     assert payload["pose_payloads"]["cam_a"]["pose_world"] == np.eye(4).tolist()
     assert sb.verify_session_evidence_bundle(target)["robot_ready"] is False
     legacy = dict(manifest)

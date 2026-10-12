@@ -91,6 +91,8 @@ def run_integrated_live_session(
     if options.label_mode not in LABEL_MODES or (
             options.label_mode == "manual" and not options.annotator):
         raise ValueError("manual labeling needs a named annotator")
+    if options.label_mode == "evidence_fused":
+        raise ValueError("current cylinder live loop needs vlm_only or manual labels")
     if load_session_launch(options.launch_config_path).mode.family != "cylinder":
         raise ValueError("live insertion currently supports cylinder mode only")
     integration = load_runtime_integration(integration_spec, options)

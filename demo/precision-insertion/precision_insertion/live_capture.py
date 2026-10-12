@@ -22,6 +22,7 @@ import cv2
 import numpy as np
 
 from .frame_provenance import image_sha256, verify_frame_provenance
+from .prompt_contract import reject_incorrect_object_color
 from .session_bootstrap import SocketCaptureInput
 
 
@@ -150,6 +151,7 @@ def collect_socket_capture(
     if (not isinstance(socket_prompt, str) or not socket_prompt.strip() or
             socket_prompt == "object"):
         raise ValueError("a socket-specific SAM prompt is required")
+    reject_incorrect_object_color(socket_prompt)
     if (not isinstance(capture_id, str) or
             not _SAFE_ID.fullmatch(capture_id)):
         raise ValueError("capture ID must be a simple path-safe identifier")
@@ -233,6 +235,7 @@ def collect_key_capture(
     if (not isinstance(key_prompt, str) or not key_prompt.strip() or
             key_prompt == "object"):
         raise ValueError("a key-specific SAM prompt is required")
+    reject_incorrect_object_color(key_prompt)
     capture = collect_socket_capture(
         init_orchestrator=init_orchestrator, socket_object=key_object,
         capture_id=capture_id, socket_prompt=key_prompt,

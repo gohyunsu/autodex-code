@@ -123,6 +123,19 @@ def test_square_live_mode_stops_before_constructing_robot_integration(
             options, integration_spec="ignored:factory")
 
 
+def test_cylinder_live_rejects_legacy_label_route_before_robot_integration(
+        monkeypatch, tmp_path):
+    monkeypatch.setattr(live_runtime, "load_runtime_integration", lambda *_a:
+                        pytest.fail("legacy label must not construct robot adapter"))
+    options = live_runtime.RunLiveOptions(
+        tmp_path / "launch.json", tmp_path / "catalog.json",
+        tmp_path / "run", label_mode="evidence_fused",
+        enable_robot_motion=True)
+    with pytest.raises(ValueError, match="vlm_only or manual"):
+        live_runtime.run_integrated_live_session(
+            options, integration_spec="ignored:factory")
+
+
 @pytest.mark.parametrize("weight", [0.0, -0.1, 1.1, float("nan")])
 def test_invalid_xy_weight_is_rejected_before_robot_integration(
         monkeypatch, tmp_path, weight):
