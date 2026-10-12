@@ -366,6 +366,11 @@ ChArUco/key/socket setup. A saved-JPEG check found **zero known ChArUco
 markers in all 20 views** (`charuco_presence_probe.json` beside the report).
 This proves camera transport only; the board,
 socket-only SAM/FoundPose and key-with-socket stages still need real captures.
+The separate `20261012_060559` camera/C2R pair contains all 20 live camera
+serials, and its 1536×2048 dimensions match every saved JPEG (see
+`live_serial_calibration_file_match_20261013.json` in the same cylindrical
+staging directory). This file match does not commission its robot-frame
+accuracy or camera exposure timing.
 
 There is presently **no one-command, camera-only live key-with-socket trial**
 in this CLI: key capture is normally coupled to an exposure-aligned robot

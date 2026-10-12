@@ -108,7 +108,11 @@ The supplied handoff contains a `20260921_213318` camera snapshot and an
 older `20260821_215517` C2R snapshot. A newer **separate** shared-data tree
 contains paired `cam_param/20261012_060559` and
 `handeye_calibration/20261012_060559/0/C2R.npy`; their camera JSON bytes
-match. Its calibration report records a 4.15 mm mean and 8.10 mm maximum
+match. The live snapshot's 20 serials are all present in that pair, and all
+20 saved JPEGs match its 1536×2048 calibration dimensions; the candidate
+file-match report is
+`AutoDex/precision_insertion/cylindrical/live_serial_calibration_file_match_20261013.json`
+in staging. Its calibration report records a 4.15 mm mean and 8.10 mm maximum
 leave-one-pose-out robot-predicted corner error, plus a 4.54 mm mean / 22.45
 mm maximum AX=XB translation residual. These are measured report values,
 not a current socket-pose bound or proof that this is the commissioned rig.
