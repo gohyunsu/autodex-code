@@ -1,8 +1,10 @@
-"""Route a failed held-key insertion back through the same live AutoDex run.
+"""Restore a failed attempt's key through the same live AutoDex run.
 
-The camera, Franka executor and frozen SessionRunner are shared with the
-trial. Only guarded withdrawal and independent controller logging are
-injected: this module does not fabricate either physical observation.
+The active route starts from the key already released after the 20 mm stroke,
+perceives it from clear view, and reuses the AutoDex reset/repose machinery to
+restore the trial-start tabletop pose and position.  The historical held-key
+return implementation remains available internally for recorded artifacts,
+but is not exposed by the current action map.
 """
 
 from __future__ import annotations
@@ -58,23 +60,22 @@ _LANDING_KEYS = frozenset({
 class LiveHeldReturnHandlers:
     """One action boundary from failed insertion to observed reset landing.
 
-    ``withdraw_guarded`` must perform/log axial withdrawal and return its
-    measured endpoint. ``record_execution`` receives a one-shot blocking
-    function for the planned AutoDex held return and must emit the independent
-    phase/source record accepted by ``verify_failed_return_execution``.
-    The reset key capture itself reuses the session's stock camera context.
+    The current action observes the released key and restores it with the
+    existing reset/repose planner. ``withdraw_guarded`` and
+    ``record_execution`` are accepted only for the non-routed historical
+    held-return method. The key captures reuse the session's stock cameras.
     """
 
     live: object
     planner: object
     limits: object
     state_for_observation: Callable
-    withdraw_guarded: Callable
-    record_execution: Callable
     key_prompt: str
     capture_parameters: Mapping[str, object]
     return_parameters: Mapping[str, object]
     landing_parameters: Mapping[str, object]
+    withdraw_guarded: Callable | None = None
+    record_execution: Callable | None = None
     capture_id_factory: Callable[[], str] = lambda: f"reset_{uuid4().hex}"
     read_state: Callable[[], LiveRobotState] | None = None
     reuse_withdrawal: Callable[[], tuple[str, LiveRobotState, Path] | None] | None = None
@@ -84,8 +85,6 @@ class LiveHeldReturnHandlers:
 
     def __post_init__(self) -> None:
         if (not callable(self.state_for_observation) or
-                not callable(self.withdraw_guarded) or
-                not callable(self.record_execution) or
                 not callable(self.capture_id_factory) or
                 not isinstance(self.key_prompt, str) or
                 not self.key_prompt.strip()):
@@ -218,6 +217,9 @@ class LiveHeldReturnHandlers:
         return execution, float(verified["release_completed_at_s"])
 
     def recover(self, runner, decision: SessionDecision) -> None:
+        if (not callable(self.withdraw_guarded) or
+                not callable(self.record_execution)):
+            raise RuntimeError("legacy held return needs withdrawal/execution adapters")
         if (runner is not self.live.opened.runner or
                 not isinstance(decision, SessionDecision) or
                 decision.action != "recover_held_key_then_reobserve" or
@@ -293,5 +295,67 @@ class LiveHeldReturnHandlers:
             restoration_evidence_paths=restoration_logs,
             **dict(self.landing_parameters))
 
+    def recover_released(self, runner, decision: SessionDecision) -> None:
+        """Observe the released key, then repose/reorient it to trial start."""
+        if (runner is not self.live.opened.runner or
+                not isinstance(decision, SessionDecision) or
+                decision.action != "recover_released_key_then_reobserve" or
+                runner.current_decision() != decision or
+                runner.active_attempt is None):
+            raise ValueError("released-key recovery belongs to another attempt")
+        if not callable(self.read_state):
+            raise RuntimeError("released-key recovery needs measured clear-view state")
+        insertion = next((
+            event for event in reversed(runner.active_attempt.events)
+            if event["stage"] == "insertion_success"), None)
+        if insertion is None or insertion["value"] is not False:
+            raise ValueError("released-key recovery requires observed insertion failure")
+        refs = insertion["evidence_refs"]
+        release_path = Path(refs.get("release_execution", "")).expanduser().resolve()
+        if not release_path.is_file():
+            raise ValueError("released-key recovery lacks the post-stroke release log")
+        clear_state = self.live.clear_view.before_key_capture()
+        measured = self.read_state()
+        if not isinstance(clear_state, LiveRobotState) or not isinstance(
+                measured, LiveRobotState):
+            raise TypeError("released-key recovery needs measured robot feedback")
+        measured = self.live.clear_view.verify_state(
+            measured, phase="released_failure_clear_view")
+        if measured.sample_timestamp_s <= runner.active_attempt.events[-1]["timestamp_s"]:
+            raise ValueError("released-key recovery state predates XY assessment")
+        folder = Path(runner._attempt_dir)
+        recovery_path = folder / "released_failure_clear_view.json"
+        record = {
+            "schema": "precision_insertion_released_failure_clear_view_v1",
+            "attempt_id": runner.active_attempt.attempt_id,
+            "candidate_id": runner.active_attempt.candidate_id,
+            "completed_at_s": measured.sample_timestamp_s,
+            "hand_open": True,
+            "clear_view_reached": True,
+            "measured_state": measured.to_record(),
+            "poststroke_release": {
+                "path": str(release_path),
+                "sha256": hashlib.sha256(release_path.read_bytes()).hexdigest(),
+            },
+            "scope": "released_key_ready_for_fresh_perception_and_restoration",
+            "robot_ready": False,
+        }
+        with recovery_path.open("x", encoding="utf-8") as stream:
+            json.dump(record, stream, indent=2, sort_keys=True, allow_nan=False)
+            stream.write("\n")
+        launch = self.live.cameras.launch
+        landed = self._capture_landing(runner, launch, decision)
+        landed, restoration_logs = self.restore_until_original(
+            runner, decision, landed, launch)
+        runner.observe_reset_landing(
+            key_observation=landed.observation,
+            key_evidence_dir=landed.key_evidence_dir,
+            recovery_log_path=recovery_path,
+            timestamp_s=landed.observation.acquisition_interval_s[1],
+            restoration_evidence_paths=restoration_logs,
+            **dict(self.landing_parameters))
+
     def handlers(self) -> dict[str, ActionHandler]:
-        return {"recover_held_key_then_reobserve": self.recover}
+        return {
+            "recover_released_key_then_reobserve": self.recover_released,
+        }

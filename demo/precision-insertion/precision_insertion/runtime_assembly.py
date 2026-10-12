@@ -140,17 +140,18 @@ def assemble_live_components(
             arguments["enable_robot_motion"] = enable_robot_motion
         components.append(cls(**arguments))
     retry = components[list(classes).index("retry")]
+    task = components[list(classes).index("task")]
     held_return = components[list(classes).index("held_return")]
+    if (enable_robot_motion and isinstance(task, LiveTaskHandlers) and
+            not callable(task.release_and_clear)):
+        raise ValueError(
+            "live insertion needs task.release_and_clear before any pickup")
     if (enable_robot_motion and getattr(family, "family", None) == "cylinder"
             and isinstance(held_return, LiveHeldReturnHandlers)
             and not callable(held_return.execute_restoration)):
         raise ValueError(
             "cylinder live pipeline needs held_return.execute_restoration "
             "before any pickup")
-    if (isinstance(retry, LiveGroundedRetryHandlers) and
-            isinstance(held_return, LiveHeldReturnHandlers) and
-            held_return.reuse_withdrawal is None):
-        held_return.reuse_withdrawal = retry.withdrawn_for_return
     transfer_recovery = components[list(classes).index("transfer_recovery")]
     if (isinstance(transfer_recovery, LiveTransferRecoveryHandlers) and
             isinstance(held_return, LiveHeldReturnHandlers) and

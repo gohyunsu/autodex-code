@@ -82,10 +82,10 @@ def decide_after_attempt(
 ) -> SessionDecision:
     """Choose the next *evidence gate* after one observed physical phase.
 
-    A failed grasp is never followed by a transfer. A failed insertion may
-    produce a bounded visual XY proposal, but it cannot move laterally or
-    reinsert during the same physical attempt. The key is returned before a
-    fresh key observation and new pickup can use the proposal.
+    A failed grasp is never followed by a transfer. After insertion the hand
+    is already open and the robot is at clear view. A visual XY proposal is
+    therefore replayed from the snapshot saved at the pre-insertion hold; no
+    post-failure lift/capture or same-attempt reinsertion is allowed.
     """
     if max_xy_retries is not None and (
             type(max_xy_retries) is not int or max_xy_retries < 0):
@@ -152,14 +152,14 @@ def decide_after_attempt(
                 "stop_for_review", "legacy_same_attempt_retry_is_unsupported")
         if attempt.events[-1]["stage"] == "next_trial_xy_advice":
             return result(
-                "recover_held_key_then_reobserve",
+                "recover_released_key_then_reobserve",
                 "xy_advice_saved_for_next_physical_attempt",
-                "verified_key_rest", "fresh_key_pose")
+                "fresh_released_key_pose", "restore_original_pose_and_position")
         if attempt.events[-1]["stage"] == "xy_retry_unavailable":
             return result(
-                "recover_held_key_then_reobserve",
+                "recover_released_key_then_reobserve",
                 attempt.events[-1]["value"],
-                "guarded_axial_withdrawal", "verified_key_rest_or_human_recovery")
+                "fresh_released_key_pose", "restore_original_pose_and_position")
         insertion = next(
             event for event in reversed(attempt.events)
             if event["stage"] == "insertion_success")
@@ -170,9 +170,9 @@ def decide_after_attempt(
             return result("stop_for_review", "grasp_lost_or_insertion_abort")
         if attempt.mode.family == "square":
             return result(
-                "recover_held_key_then_reobserve",
+                "recover_released_key_then_reobserve",
                 "square_mode_no_xy_error_correction",
-                "guarded_axial_withdrawal", "verified_key_rest_or_human_recovery")
+                "fresh_released_key_pose", "restore_original_pose_and_position")
         retry_count = sum(event["stage"] == "xy_retry"
                           for event in attempt.events)
         grounded_retry_used = any(
@@ -182,13 +182,13 @@ def decide_after_attempt(
         if ((max_xy_retries is not None and retry_count >= max_xy_retries) or
                 grounded_retry_used):
             return result(
-                "recover_held_key_then_reobserve",
+                "recover_released_key_then_reobserve",
                 ("grounded_retry_step_exhausted" if grounded_retry_used else
                  "xy_retry_budget_exhausted"),
-                "guarded_axial_withdrawal", "verified_key_rest_or_human_recovery")
+                "fresh_released_key_pose", "restore_original_pose_and_position")
         return result(
-            "guarded_withdrawal_then_xy_assessment", "observed_insertion_failure",
-            "guarded_axial_withdrawal", "raw_multiview_tip_observation",
+            "assess_saved_preinsert_xy", "observed_released_insertion_failure",
+            "saved_preinsert_raw_multiview_tip_observation",
             "calibrated_xy_only_up_to_10mm_next_trial_update",
             "next_attempt_only_no_lateral_motion")
     if any(event["stage"] == "insertion_success" for event in attempt.events):

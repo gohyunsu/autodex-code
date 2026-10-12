@@ -30,7 +30,15 @@ from precision_insertion.insertion_checkpoint import (  # noqa: E402
 )
 from precision_insertion import insertion_checkpoint as checkpoint_module  # noqa: E402
 from precision_insertion.key_perception import (  # noqa: E402
-    admit_held_key_capture, write_key_capture_artifacts,
+    admit_held_key_capture, admit_key_capture, write_key_capture_artifacts,
+)
+from precision_insertion.raw_camera_capture import (  # noqa: E402
+    RawCameraCapture, write_raw_camera_capture,
+)
+from precision_insertion.released_insertion_checkpoint import (  # noqa: E402
+    assess_released_insertion_checkpoint,
+    verify_released_insertion_checkpoint,
+    write_released_insertion_checkpoint,
 )
 from precision_insertion.perception_evidence import SocketViewLimits  # noqa: E402
 from precision_insertion.records import begin_attempt  # noqa: E402
@@ -68,7 +76,7 @@ def _setup(tmp_path, *, answer=None, metric_overrides=None,
     admitted = admit_held_key_capture(
         capture=before, init_orchestrator=SelectorStub(mode.key_object),
         mode=mode, shared_root=tmp_path,
-        calibration=_session(tmp_path, mode, socket_x=0.0),
+        calibration=_session(tmp_path, mode, socket_x=0.4),
         calibrated_camera_ids=set(CAMERAS),
         view_limits=SocketViewLimits(50, 0.5, 10, 2, 0.02),
         maximum_multiview_center_error_mm=2.0,
@@ -201,6 +209,92 @@ def test_multiview_appearance_cannot_certify_unverified_depth(tmp_path):
     metric.write_text(metric.read_text() + " ", encoding="utf-8")
     with pytest.raises(ValueError, match="metric record changed"):
         verify_insertion_checkpoint(saved)
+
+
+def test_released_label_pairs_initial_and_clear_view_raw_per_camera(tmp_path):
+    args, _ = _setup(tmp_path)
+    mode = select_mode("square", 1.5)
+    pose = np.eye(4)
+    initial_capture = _capture({camera: pose for camera in CAMERAS}, tmp_path)
+    initial_observation = admit_key_capture(
+        capture=initial_capture,
+        init_orchestrator=SelectorStub(mode.key_object),
+        mode=mode, shared_root=tmp_path,
+        calibration=_session(tmp_path, mode, socket_x=0.4),
+        calibrated_camera_ids=set(CAMERAS),
+        view_limits=SocketViewLimits(50, 0.5, 10, 2, 0.02),
+        maximum_multiview_center_error_mm=2.0,
+        maximum_multiview_angle_error_deg=5.0,
+        maximum_socket_mask_overlap_fraction=0.1,
+        socket_projection_dilation_px=0,
+        minimum_refinement_iou=0.5)
+    initial = write_key_capture_artifacts(
+        initial_capture, initial_observation, tmp_path / "initial_tabletop")
+
+    def raw_bundle(name, phase, request, timestamp):
+        image = np.ones((24, 32, 3), dtype=np.uint8) * request
+        images = {camera: image.copy() for camera in CAMERAS}
+        rows = {camera: {
+            "frame_id": request + index,
+            "image_sha256": image_sha256(image),
+            "timestamp_s": timestamp + .005 * index,
+            "max_error_s": .001,
+            "timestamp_method": "hardware_exposure",
+            "clock_domain": "unix_utc",
+        } for index, camera in enumerate(CAMERAS)}
+        capture = RawCameraCapture(
+            name, request, images,
+            {camera: row["frame_id"] for camera, row in rows.items()},
+            {"request_id": request, "source": "camera_acquisition",
+             "frames": rows})
+        return write_raw_camera_capture(
+            capture, tmp_path / name, phase=phase)
+
+    preinsert = raw_bundle("preinsert_raw", "preinsert", 70, 102.0)
+    final = raw_bundle("final_clear", "final_clear_view", 80, 103.0)
+    metric = args["metric_record_path"]
+    release = tmp_path / "poststroke_release.json"
+    release.write_text(json.dumps({
+        "schema": "precision_insertion_poststroke_release_clear_view_v1",
+        "attempt_id": "trial_1", "candidate_id": "table/0/3",
+        "session_calibration_sha256": "0" * 64,
+        "status": "released_and_clear_view", "started_at_s": 102.81,
+        "release_completed_at_s": 102.85,
+        "clear_view_completed_at_s": 102.9,
+        "guarded_execution": {
+            "path": str(metric.resolve()),
+            "sha256": hashlib.sha256(metric.read_bytes()).hexdigest()},
+        "measurement": {"hand_open": True, "clear_view_reached": True},
+    }), encoding="utf-8")
+    backend = FakeBackend({
+        "visual_class": "inside_socket",
+        "evidence_views": ["cam_a"],
+        "evidence": "key visibly occupies socket"})
+    # Per-camera inference must name its own view.
+    answers = iter((
+        json.dumps({"visual_class": "inside_socket",
+                    "evidence_views": ["cam_a"], "evidence": "inside"}),
+        json.dumps({"visual_class": "inside_socket",
+                    "evidence_views": ["cam_b"], "evidence": "inside"})))
+    backend.infer = lambda images, prompt: (
+        backend.calls.append((images, prompt)) or next(answers))
+    report = assess_released_insertion_checkpoint(
+        attempt_id="trial_1", candidate_id="table/0/3",
+        target_depth_m=.020, session_calibration_sha256="0" * 64,
+        initial_key_bundle=initial, preinsert_bundle=preinsert,
+        final_bundle=final, metric_record_path=metric,
+        release_record_path=release, preinsert_reached_at_s=102.1,
+        decision_timestamp_s=103.1, backend=backend,
+        max_phase_skew_s=.02, max_preinsert_age_s=1.,
+        max_final_observation_gap_s=.5, label_mode="vlm_only")
+    assert report["outcome"]["insertion_success"] is True
+    assert report["effective_vlm_class"] == "inside_socket"
+    assert len(backend.calls) == 2
+    assert all(len(images) == 2 for images, _prompt in backend.calls)
+    saved = write_released_insertion_checkpoint(
+        report, tmp_path / "released_assessment")
+    assert verify_released_insertion_checkpoint(saved)["outcome"][
+        "insertion_success"] is True
 
 
 def test_reviewed_visual_depth_can_complete_task_label(tmp_path, monkeypatch):

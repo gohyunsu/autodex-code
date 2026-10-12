@@ -25,7 +25,9 @@ from precision_insertion.trial_preflight import (  # noqa: E402
 )
 from precision_insertion.outcome import InsertionEvidence  # noqa: E402
 from precision_insertion.retry_preflight import XYRetryPreflight  # noqa: E402
-from precision_insertion.retry_session import GroundedXYDiagnostic  # noqa: E402
+from precision_insertion.retry_session import (  # noqa: E402
+    GroundedXYDiagnostic, PreinsertXYDiagnostic,
+)
 from precision_insertion.records import begin_attempt  # noqa: E402
 from precision_insertion import session_runner  # noqa: E402
 from precision_insertion.xy_retry import XYRetryAssessment  # noqa: E402
@@ -189,25 +191,37 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
     runner._attempt = first
     runner._attempt_dir = runner.output_dir / "attempts" / first.attempt_id
     runner._attempt_dir.mkdir(parents=True)
-    assert runner.current_decision().action == "guarded_withdrawal_then_xy_assessment"
-    withdrawal = tmp_path / "withdrawal.json"
-    withdrawal.write_text("{}", encoding="utf-8")
-    diagnostic = GroundedXYDiagnostic(
-        "diagnostic_metric_xy_correction", first.attempt_id,
-        first.candidate_id, runner.session_sha256, "camera_hash",
-        "geometry_hash", 1, withdrawal,
-        hashlib.sha256(withdrawal.read_bytes()).hexdigest(),
-        tmp_path / "postlift.json", "postlift_hash", {},
-        SimpleNamespace(to_record=lambda: {}),
-        {"bounded_xy_increment_socket_m": [0.0006, -0.0008],
-         "inlier_cameras": ["cam0", "cam1"]}, ())
+    assert runner.current_decision().action == "assess_saved_preinsert_xy"
+    preinsert = tmp_path / "preinsert.json"
+    preinsert.write_text("{}", encoding="utf-8")
+    bundle = tmp_path / "preinsert_bundle"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text("{}", encoding="utf-8")
+    diagnostic = PreinsertXYDiagnostic(
+        status="diagnostic_metric_xy_correction",
+        attempt_id=first.attempt_id, candidate_id=first.candidate_id,
+        session_calibration_sha256=runner.session_sha256,
+        camera_calibration_sha256="camera_hash",
+        task_geometry_sha256="geometry_hash", frame_request_id=1,
+        preinsert_checkpoint_path=preinsert,
+        preinsert_checkpoint_sha256=hashlib.sha256(
+            preinsert.read_bytes()).hexdigest(),
+        preinsert_bundle_path=bundle,
+        preinsert_manifest_sha256=hashlib.sha256(
+            (bundle / "manifest.json").read_bytes()).hexdigest(),
+        postlift_preflight_path=tmp_path / "postlift.json",
+        postlift_preflight_sha256="postlift_hash", frame_binding={},
+        joint_sample=SimpleNamespace(to_record=lambda: {}),
+        alignment={"bounded_xy_increment_socket_m": [0.0006, -0.0008],
+                   "inlier_cameras": ["cam0", "cam1"]},
+        vlm_observations=())
     source = runner._attempt_dir / "xy_retry_assessments/000/report.json"
     source.parent.mkdir(parents=True)
     source.write_text(json.dumps(diagnostic.to_record()), encoding="utf-8")
     runner.record_next_trial_xy_advice(
         diagnostic=diagnostic, diagnostic_report_path=source,
         timestamp_s=5.0)
-    assert runner.current_decision().action == "recover_held_key_then_reobserve"
+    assert runner.current_decision().action == "recover_released_key_then_reobserve"
     assert runner.active_attempt.xy_offset_socket_m == (0.0, 0.0)
     assert all(event["stage"] != "xy_retry" for event in runner.active_attempt.events)
     runner._record(lambda row: row.record_stage(
@@ -248,16 +262,30 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
         evidence_refs={"vlm_observation": "insert2.json",
                        "key_depth": "depth2.json", "alignment": "axis2.json",
                        "force_trace": "force2.json"})
-    assert runner.current_decision().action == "guarded_withdrawal_then_xy_assessment"
-    diagnostic2 = GroundedXYDiagnostic(
-        "diagnostic_metric_xy_correction", second.attempt_id,
-        second.candidate_id, runner.session_sha256, "camera_hash",
-        "geometry_hash", 1, withdrawal,
-        hashlib.sha256(withdrawal.read_bytes()).hexdigest(),
-        tmp_path / "postlift.json", "postlift_hash", {},
-        SimpleNamespace(to_record=lambda: {}),
-        {"bounded_xy_increment_socket_m": [0.0004, 0.0],
-         "inlier_cameras": ["cam0", "cam1"]}, ())
+    assert runner.current_decision().action == "assess_saved_preinsert_xy"
+    preinsert2 = tmp_path / "preinsert2.json"
+    preinsert2.write_text("{}", encoding="utf-8")
+    bundle2 = tmp_path / "preinsert_bundle2"
+    bundle2.mkdir()
+    (bundle2 / "manifest.json").write_text("{}", encoding="utf-8")
+    diagnostic2 = PreinsertXYDiagnostic(
+        status="diagnostic_metric_xy_correction",
+        attempt_id=second.attempt_id, candidate_id=second.candidate_id,
+        session_calibration_sha256=runner.session_sha256,
+        camera_calibration_sha256="camera_hash",
+        task_geometry_sha256="geometry_hash", frame_request_id=2,
+        preinsert_checkpoint_path=preinsert2,
+        preinsert_checkpoint_sha256=hashlib.sha256(
+            preinsert2.read_bytes()).hexdigest(),
+        preinsert_bundle_path=bundle2,
+        preinsert_manifest_sha256=hashlib.sha256(
+            (bundle2 / "manifest.json").read_bytes()).hexdigest(),
+        postlift_preflight_path=tmp_path / "postlift2.json",
+        postlift_preflight_sha256="postlift_hash", frame_binding={},
+        joint_sample=SimpleNamespace(to_record=lambda: {}),
+        alignment={"bounded_xy_increment_socket_m": [0.0004, 0.0],
+                   "inlier_cameras": ["cam0", "cam1"]},
+        vlm_observations=())
     source2 = runner._attempt_dir / "xy_retry_assessments/000/report.json"
     source2.parent.mkdir(parents=True)
     source2.write_text(json.dumps(diagnostic2.to_record()), encoding="utf-8")
@@ -1203,6 +1231,8 @@ def test_failed_insertion_auto_return_observation_restarts_with_fresh_key(
     runner.observe_stage(
         "preinsert_reached", True, timestamp_s=10.4,
         evidence_refs=_bind_preinsert(runner, monkeypatch))
+    release = tmp_path / "poststroke_release.json"
+    release.write_text('{"released":true}\n', encoding="utf-8")
     runner._record(lambda row: row.record_insertion_evidence(
         InsertionEvidence("partial", (0.005, 0.008),
                           "key_pose_multiview", True, False, True),
@@ -1210,23 +1240,24 @@ def test_failed_insertion_auto_return_observation_restarts_with_fresh_key(
         evidence_refs={"vlm_observation": "vlm/insert.json",
                        "key_depth": "pose/depth.json",
                        "alignment": "pose/axis.json",
-                       "force_trace": "wrench/trace.json"}))
-    assert runner.current_decision().action == "recover_held_key_then_reobserve"
-    report = tmp_path / "return_plan.json"
-    report.write_text(json.dumps({
-        "sources": {"postlift_report": {
-            "path": str(postlift.resolve()),
-            "sha256": hashlib.sha256(postlift.read_bytes()).hexdigest()}}
-    }), encoding="utf-8")
-    execution = tmp_path / "return_execution.json"
+                       "force_trace": "wrench/trace.json",
+                       "release_execution": str(release.resolve())}))
+    assert runner.current_decision().action == (
+        "recover_released_key_then_reobserve")
+    raw = np.full(6, 500.)
+    q = np.r_[np.zeros(7), convert_inspire_raw(raw[None])[0]]
+    state = LiveRobotState(q, np.zeros(7), 10.7, 10.7, 100., 10.7,
+                           raw, raw.copy(), 0., np.zeros(6))
+    execution = tmp_path / "released_recovery.json"
     execution.write_text(json.dumps({
-        "schema": "precision_insertion_failed_return_execution_v1"
+        "schema": "precision_insertion_released_failure_clear_view_v1",
+        "attempt_id": "attempt_1", "candidate_id": "table/0/3",
+        "completed_at_s": 10.7, "hand_open": True,
+        "clear_view_reached": True, "measured_state": state.to_record(),
+        "poststroke_release": {
+            "path": str(release.resolve()),
+            "sha256": hashlib.sha256(release.read_bytes()).hexdigest()},
     }), encoding="utf-8")
-    monkeypatch.setattr(
-        session_runner, "verify_failed_return_execution",
-        lambda **_kwargs: {
-            "plan_report": {"path": str(report)},
-            "exit_completed_at_s": 10.7})
     monkeypatch.setattr(
         session_runner, "classify_key_tabletop_pose",
         lambda **_kwargs: {"stem": "000", "rotation_error_deg": 0.0})
@@ -1249,7 +1280,7 @@ def test_failed_insertion_auto_return_observation_restarts_with_fresh_key(
     assert result.labels["reset_success"] is True
     assert runner.current_decision().action == "reobserve_key_and_preflight"
     saved = json.loads((runner._attempt_dir / "reset_landing.json").read_text())
-    assert saved["recovery_mode"] == "planned_held_return"
+    assert saved["recovery_mode"] == "released_key_clear_view_then_restore"
 
 
 def test_unknown_preinsert_checkpoint_routes_to_recovery_not_repeat_transfer(
@@ -1269,6 +1300,7 @@ def test_unknown_preinsert_checkpoint_routes_to_recovery_not_repeat_transfer(
     assert runner.current_decision().action == "recover_key_then_reobserve"
 
 
+@pytest.mark.skip(reason="held-key return was replaced by released-key restoration")
 def test_failed_return_plan_reuses_postlift_relation_and_frozen_world(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)
@@ -1354,6 +1386,7 @@ def test_failed_return_plan_reuses_postlift_relation_and_frozen_world(
             max_arm_velocity_rad_s=.05)
 
 
+@pytest.mark.skip(reason="same-attempt lateral reinsertion was removed by policy")
 def test_retry_requires_matching_two_view_vote_and_live_replan(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)
@@ -1443,6 +1476,7 @@ def test_retry_requires_matching_two_view_vote_and_live_replan(
     assert runner.active_attempt.events[-1]["timestamp_s"] == 10.8
 
 
+@pytest.mark.skip(reason="withdrawn-key diagnostic was replaced by saved preinsert frames")
 def test_unobserved_xy_advice_is_saved_without_pending_retry(monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)
     monkeypatch.setattr(

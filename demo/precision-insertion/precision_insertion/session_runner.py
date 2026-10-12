@@ -43,6 +43,11 @@ from .insertion_checkpoint import (
     assess_insertion_checkpoint, verify_insertion_checkpoint,
     write_insertion_checkpoint,
 )
+from .released_insertion_checkpoint import (
+    assess_released_insertion_checkpoint,
+    verify_released_insertion_checkpoint,
+    write_released_insertion_checkpoint,
+)
 from .endpoint import _load_mesh
 from .failed_return_evidence import (
     verify_failed_return_execution, write_failed_return_plan,
@@ -76,9 +81,10 @@ from .observed_retry_axial_handoff import (
 from .records import AttemptRecord, begin_attempt
 from .retry_session import (
     RetrySessionLimits, RetrySessionResult, UnobservedXYDiagnostic,
-    GroundedXYDiagnostic, assess_grounded_xy_diagnostic,
+    GroundedXYDiagnostic, PreinsertXYDiagnostic,
+    assess_grounded_xy_diagnostic, assess_saved_preinsert_xy_diagnostic,
     assess_and_plan_observed_xy_retry, assess_unobserved_xy_diagnostic,
-    write_retry_session_artifacts,
+    write_retry_session_artifacts, write_saved_preinsert_xy_artifacts,
 )
 from .grounded_alignment import AlignmentLimits, NEXT_TRIAL_XY_MAX_STEP_M
 from .xy_voting import VLM_XY_STEP_M
@@ -2093,6 +2099,36 @@ class SessionRunner:
             recovery_mode = (
                 "planned_held_transfer_return" if expected_origin == "transfer"
                 else "planned_held_return")
+        elif recovery.get("schema") == (
+                "precision_insertion_released_failure_clear_view_v1"):
+            try:
+                completed = float(recovery.get("completed_at_s", float("nan")))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("invalid released-key recovery time") from exc
+            release_ref = recovery.get("poststroke_release")
+            insertion = next((event for event in reversed(self._attempt.events)
+                              if event["stage"] == "insertion_success"), None)
+            if (self.current_decision().action !=
+                    "recover_released_key_then_reobserve" or
+                    insertion is None or insertion["value"] is not False or
+                    recovery.get("attempt_id") != self._attempt.attempt_id or
+                    recovery.get("candidate_id") != self._attempt.candidate_id or
+                    recovery.get("clear_view_reached") is not True or
+                    recovery.get("hand_open") is not True or
+                    not isinstance(recovery.get("measured_state"), dict) or
+                    recovery["measured_state"].get("schema") !=
+                    "precision_insertion_live_robot_state_v1" or
+                    recovery["measured_state"].get("sample_timestamp_s") !=
+                    completed or not math.isfinite(completed) or
+                    not isinstance(release_ref, dict) or
+                    set(release_ref) != {"path", "sha256"} or
+                    insertion["evidence_refs"].get("release_execution") !=
+                    release_ref["path"] or
+                    not Path(release_ref["path"]).is_file() or
+                    hashlib.sha256(Path(release_ref["path"]).read_bytes())
+                    .hexdigest() != release_ref["sha256"]):
+                raise ValueError("released-key recovery lacks measured clear view")
+            recovery_mode = "released_key_clear_view_then_restore"
         elif recovery.get("schema") == "precision_insertion_missed_grasp_clear_view_v1":
             try:
                 completed = float(recovery.get("completed_at_s", float("nan")))
@@ -2517,6 +2553,93 @@ class SessionRunner:
         self._insertion_assessment_index += 1
         return report
 
+    @property
+    def initial_key_evidence_dir(self) -> Path | None:
+        """Initial tabletop pixels bound to the currently selected attempt."""
+        return self._key_evidence_dir
+
+    def prepare_released_insertion_label(
+        self, *, initial_key_bundle: Path, preinsert_bundle: Path,
+        final_bundle: Path, metric_record_path: Path,
+        release_record_path: Path, backend: ImageVLM,
+        decision_timestamp_s: float, max_phase_skew_s: float,
+        max_preinsert_age_s: float, max_final_observation_gap_s: float,
+        minimum_visual_views: int = 2, label_mode: str = "vlm_only",
+        manual_annotation: dict | None = None,
+    ) -> dict:
+        """Label the released key from initial/final clear-view image pairs.
+
+        The saved held pre-insertion bundle is retained for a later failed-
+        trial XY diagnostic but is never shown to this success classifier.
+        """
+        if (self._attempt is None or self._attempt_dir is None or
+                self._attempt.candidate_id is None or
+                self.current_decision().action !=
+                "await_guarded_insertion_and_observation"):
+            raise ValueError("no insertion attempt awaits released-key observation")
+        if self._key_evidence_dir is None:
+            raise ValueError("released-key comparison lacks initial perception")
+        initial_root = Path(initial_key_bundle).expanduser().resolve()
+        preinsert_root = Path(preinsert_bundle).expanduser().resolve()
+        if initial_root != self._key_evidence_dir:
+            raise ValueError("released-key comparison used another initial key capture")
+        preinsert_events = [
+            event for event in self._attempt.events
+            if event["stage"] == "preinsert_reached" and event["value"] is True]
+        if len(preinsert_events) != 1 or preinsert_events[0]["evidence_refs"].get(
+                "preinsert_image") != str(preinsert_root / "manifest.json"):
+            raise ValueError("released-key label used another pre-insertion snapshot")
+        report = assess_released_insertion_checkpoint(
+            attempt_id=self._attempt.attempt_id,
+            candidate_id=self._attempt.candidate_id,
+            target_depth_m=self.mode.target_depth_m,
+            session_calibration_sha256=self.session_sha256,
+            initial_key_bundle=initial_root,
+            preinsert_bundle=preinsert_root, final_bundle=final_bundle,
+            metric_record_path=metric_record_path,
+            release_record_path=release_record_path,
+            preinsert_reached_at_s=preinsert_events[0]["timestamp_s"],
+            decision_timestamp_s=decision_timestamp_s, backend=backend,
+            max_phase_skew_s=max_phase_skew_s,
+            max_preinsert_age_s=max_preinsert_age_s,
+            max_final_observation_gap_s=max_final_observation_gap_s,
+            minimum_visual_views=minimum_visual_views,
+            label_mode=label_mode, manual_annotation=manual_annotation)
+        output = (self._attempt_dir / "released_insertion_assessments" /
+                  f"{self._insertion_assessment_index:03d}")
+        checkpoint = write_released_insertion_checkpoint(report, output)
+        verify_released_insertion_checkpoint(checkpoint)
+        metric = json.loads(Path(metric_record_path).read_text(encoding="utf-8"))
+        sources = metric["source_records"]
+        refs = {
+            "vlm_observation": str(checkpoint),
+            "vlm_observation_sha256": hashlib.sha256(
+                checkpoint.read_bytes()).hexdigest(),
+            "key_depth": sources["key_depth"]["path"],
+            "alignment": sources["alignment"]["path"],
+            "force_trace": sources["force_trace"]["path"],
+            "grasp_state": sources["grasp_state"]["path"],
+            "guarded_execution": str(Path(metric_record_path).resolve()),
+            "release_execution": str(Path(release_record_path).resolve()),
+            "initial_key_image": str(
+                initial_root / "evidence_manifest.json"),
+            "preinsert_xy_source": str(preinsert_root / "manifest.json"),
+            "final_clear_view": str(
+                Path(final_bundle).expanduser().resolve() / "manifest.json"),
+        }
+        evidence = InsertionEvidence(**report["evidence"])
+        if label_mode == "evidence_fused":
+            self._record(lambda row: row.record_insertion_evidence(
+                evidence, timestamp_s=decision_timestamp_s,
+                evidence_refs=refs))
+        else:
+            self._record(lambda row: row.record_insertion_decision(
+                evidence, label_mode=label_mode,
+                manual_annotation=manual_annotation,
+                timestamp_s=decision_timestamp_s, evidence_refs=refs))
+        self._insertion_assessment_index += 1
+        return report
+
     def prepare_observed_retry_insertion_label(
         self, *, replan: PostShiftArrivalReplan,
         previous: PostShiftInsertionPreflight,
@@ -2856,24 +2979,65 @@ class SessionRunner:
         self._retry_assessment_index += 1
         return result
 
+    def prepare_saved_preinsert_xy_diagnostic(
+        self, *, backend: ImageVLM, limits: RetrySessionLimits,
+        alignment_limits: AlignmentLimits,
+        axis_reference_key_z_m: float | None = None,
+        roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]] | None = None,
+        square_translation_only: bool = False,
+    ) -> PreinsertXYDiagnostic:
+        """Reuse this attempt's pre-stroke raw snapshot for next-trial XY."""
+        if (self.mode.family != "cylinder" or
+                self.current_decision().action !=
+                "assess_saved_preinsert_xy" or
+                self._attempt is None or self._preflight is None or
+                self._attempt_dir is None or self._preinsert_report_path is None or
+                self._postlift_report_path is None):
+            raise ValueError("saved preinsert XY needs this failed cylinder attempt")
+        result = assess_saved_preinsert_xy_diagnostic(
+            mode=self.mode, shared_root=self.shared_root,
+            calibration=self.calibration, catalog=self.catalog,
+            trial=self._preflight, attempt=self._attempt,
+            preinsert_checkpoint_path=self._preinsert_report_path,
+            postlift_preflight_report_path=self._postlift_report_path,
+            backend=backend, limits=limits,
+            alignment_limits=alignment_limits,
+            axis_reference_key_z_m=axis_reference_key_z_m,
+            roi_xyxy_by_camera=roi_xyxy_by_camera,
+            square_translation_only=square_translation_only,
+            search_index=self._future_xy_corrections_used)
+        output = (self._attempt_dir / "xy_retry_assessments" /
+                  f"{self._retry_assessment_index:03d}")
+        write_saved_preinsert_xy_artifacts(result, output)
+        self._retry_assessment_index += 1
+        return result
+
     def record_next_trial_xy_advice(
-        self, *, diagnostic: GroundedXYDiagnostic,
+        self, *, diagnostic: GroundedXYDiagnostic | PreinsertXYDiagnostic,
         diagnostic_report_path: Path, timestamp_s: float,
     ) -> AttemptRecord:
         """Queue one measured XY wrist correction for a new pickup only."""
+        action = self.current_decision().action
         if (self.mode.family != "cylinder" or
-                self.current_decision().action !=
-                "guarded_withdrawal_then_xy_assessment" or
+                action not in {
+                    "guarded_withdrawal_then_xy_assessment",
+                    "assess_saved_preinsert_xy"} or
                 self._attempt is None or self._attempt_dir is None or
                 self._pending_next_trial_xy is not None or
                 (self.max_xy_retries is not None and
                  self._future_xy_corrections_used >= self.max_xy_retries) or
-                not isinstance(diagnostic, GroundedXYDiagnostic) or
+                not isinstance(diagnostic, (
+                    GroundedXYDiagnostic, PreinsertXYDiagnostic)) or
                 diagnostic.status != "diagnostic_metric_xy_correction" or
                 diagnostic.attempt_id != self._attempt.attempt_id or
                 diagnostic.candidate_id != self._attempt.candidate_id or
                 diagnostic.session_calibration_sha256 != self.session_sha256):
             raise ValueError("next-trial XY advice needs this failed held attempt")
+        if ((action == "assess_saved_preinsert_xy" and
+             not isinstance(diagnostic, PreinsertXYDiagnostic)) or
+                (action == "guarded_withdrawal_then_xy_assessment" and
+                 not isinstance(diagnostic, GroundedXYDiagnostic))):
+            raise ValueError("XY diagnostic source does not match the active policy")
         source = Path(diagnostic_report_path).expanduser().resolve()
         expected = self._attempt_dir / "xy_retry_assessments"
         if source.parent.parent != expected or not source.is_file():
@@ -2900,10 +3064,14 @@ class SessionRunner:
             applied_step_socket_xy_m=applied_step,
             next_wrist_correction_socket_m=cumulative,
             supporting_cameras=cameras, timestamp_s=timestamp_s,
-            evidence_refs={
-                "axial_withdrawal": str(diagnostic.withdrawal_evidence_path),
-                "grounded_xy": str(source),
-            }))
+            evidence_refs=(
+                {"preinsert_snapshot": str(
+                    diagnostic.preinsert_checkpoint_path),
+                 "grounded_xy": str(source)}
+                if isinstance(diagnostic, PreinsertXYDiagnostic) else
+                {"axial_withdrawal": str(
+                    diagnostic.withdrawal_evidence_path),
+                 "grounded_xy": str(source)})))
         advice = {
             "schema": "precision_insertion_next_trial_xy_v1",
             "source_attempt_id": snapshot.attempt_id,
@@ -3372,11 +3540,12 @@ class SessionRunner:
         self, *, reason: str, retry_assessment_path: Path,
         timestamp_s: float,
     ) -> AttemptRecord:
-        """Route an evidenced VLM abstention or rejected plan to held return."""
-        if (self.current_decision().action !=
-                "guarded_withdrawal_then_xy_assessment" or
+        """Route an unusable saved-snapshot estimate to released-key recovery."""
+        if (self.current_decision().action not in {
+                "guarded_withdrawal_then_xy_assessment",
+                "assess_saved_preinsert_xy"} or
                 self._attempt is None or self._attempt_dir is None):
-            raise ValueError("no failed held insertion awaits XY assessment")
+            raise ValueError("no failed insertion awaits XY assessment")
         source = Path(retry_assessment_path).expanduser().resolve()
         if (not source.is_file() or
                 not source.is_relative_to(self._attempt_dir.resolve())):

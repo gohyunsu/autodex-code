@@ -296,5 +296,5 @@ def test_session_runner_rim_jam_exhausts_first_step_grounded_retry(
     assert observed["outcome"]["insertion_success"] is False
     assert runner._attempt.labels["insertion_success"] is False
     decision = decide_after_attempt(runner._attempt, max_xy_retries=2)
-    assert decision.action == "recover_held_key_then_reobserve"
+    assert decision.action == "recover_released_key_then_reobserve"
     assert decision.reason == "grounded_retry_step_exhausted"

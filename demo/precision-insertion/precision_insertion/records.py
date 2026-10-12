@@ -273,8 +273,10 @@ class AttemptRecord:
                 len(set(supporting_cameras)) != len(supporting_cameras)):
             raise ValueError("next-trial advice needs distinct supporting cameras")
         refs = _refs(evidence_refs, "preinsert_reached", False)
-        if not {"axial_withdrawal", "grounded_xy"} <= refs.keys():
-            raise ValueError("next-trial advice needs withdrawal and diagnostic")
+        if ("grounded_xy" not in refs or
+                not ({"axial_withdrawal", "preinsert_snapshot"} & refs.keys())):
+            raise ValueError(
+                "next-trial advice needs a preinsert/withdrawal source and diagnostic")
         timestamp = _finite_time(timestamp_s)
         if timestamp < self.events[-1]["timestamp_s"]:
             raise ValueError("attempt events must be in nondecreasing time order")

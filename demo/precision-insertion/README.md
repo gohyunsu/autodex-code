@@ -2483,10 +2483,11 @@ physical calibration artifact is present locally, so a MuJoCo squeeze pose
 cannot be used to advance this branch.
 [`LiveTaskHandlers`](precision_insertion/live_task_handlers.py) connects the
 passing held-transfer plan to execution, a same-session Qwen pre-insertion
-hold checkpoint and its separate arrival label, then connects the bound
-guarded 20 mm stroke to final/abort frames and the existing insertion
-checkpoint. The first successful insertion label ends the session; no
-additional release/reset is initiated on that success path.
+hold checkpoint using raw images only, then connects the bound guarded 20 mm
+stroke to a required full-hand-open/clear-view exit. Each camera's initial
+tabletop raw image is paired with its final clear-view raw image; the released
+key is classified as inside/outside/unobservable. The first successful label
+ends the session with the key released in the socket.
 [`LiveReposePlanningHandlers`](precision_insertion/live_repose_handlers.py)
 reuses the exhausted tabletop pose's saved key capture for the existing
 directed v8 reset preflight, including seed/cell continuation. It needs a
@@ -2497,19 +2498,16 @@ the AutoDex key capture and clear-view gate to label the observed landing.
 The physical reset controller and its independent execution log remain
 AutoDex-PC inputs.
 [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py)
-connects a failed still-held insertion to logged axial withdrawal, the
-runner's held tabletop-return plan, stock Franka held transfer/release/clear-
-view exit, a fresh key capture on those same AutoDex cameras, and observed
-reset labeling. It calls the shared SAM/FoundPose key-capture path rather
-than introducing a separate perception pipeline. The guarded withdrawal
-and independent six-phase controller record must be supplied on the robot
-PC; the handler refuses recapture if the return was not executed and
-verified.
+handles the released-key failure route. From the already measured open-hand
+clear view it runs the shared SAM/FoundPose key perception, restores a key
+that is not at the trial-start pose/position with the existing v8 reset
+planner, and recaptures it before recording reset success.
 [`LiveGroundedRetryHandlers`](precision_insertion/live_retry_handlers.py)
-now connects the first failed held insertion through logged withdrawal,
-Qwen cylinder-tip/axis grounding and a saved socket-XY correction for the
+now replays the multi-view raw snapshot saved at the pre-insertion hold,
+uses Qwen cylinder-tip/axis grounding, and saves a socket-XY correction for the
 **next physical pickup**. It does not command lateral motion or another
-insertion in the same attempt. After return, clear view and fresh key
+insertion in the same attempt and does not acquire a post-failure image. After
+released-key perception/restoration, clear view and fresh key
 perception, a same-pose/same-grasp new attempt uses the cumulative wrist
 command offset `p_(n+1)=p_n+w*d_n` (default `w=1.0`); each diagnostic is
 bounded to 10 mm and there is no separate cumulative offset bound.

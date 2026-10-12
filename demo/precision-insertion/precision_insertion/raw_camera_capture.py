@@ -20,7 +20,7 @@ from .session_bootstrap import _safe_id
 
 
 PHASES = frozenset({"after_lift", "preinsert", "post_lateral_hold",
-                    "final_or_abort"})
+                    "final_or_abort", "final_clear_view"})
 
 
 @dataclass(frozen=True)

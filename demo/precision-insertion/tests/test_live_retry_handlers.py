@@ -1,31 +1,22 @@
-"""The live XY branch advances even when the camera declines correction."""
+"""Failed insertion reuses saved preinsert frames without robot motion."""
 
 from pathlib import Path
-import json
 import sys
 from types import SimpleNamespace
 
-import numpy as np
 import pytest
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion import live_retry_handlers  # noqa: E402
-from precision_insertion.frame_provenance import image_sha256  # noqa: E402
-from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
 from precision_insertion.session_policy import SessionDecision  # noqa: E402
 
 
 @pytest.mark.parametrize("status", ["abstain", "diagnostic_metric_xy_correction"])
-@pytest.mark.parametrize("camera_count", [1, 2])
 def test_live_grounded_advice_never_moves_xy_in_same_attempt(
-        tmp_path, monkeypatch, status, camera_count):
-    class State:
-        pass
-
-    monkeypatch.setattr(live_retry_handlers, "LiveRobotState", State)
+        tmp_path, status):
     decision = SessionDecision(
-        "guarded_withdrawal_then_xy_assessment", "failed", "table/0/1")
+        "assess_saved_preinsert_xy", "failed", "table/0/1")
     events = []
 
     class Runner:
@@ -41,11 +32,11 @@ def test_live_grounded_advice_never_moves_xy_in_same_attempt(
         def current_decision(self):
             return decision
 
-        def prepare_grounded_xy_diagnostic(self, **kwargs):
-            events.append(("diagnostic", kwargs["frame_request_id"]))
+        def prepare_saved_preinsert_xy_diagnostic(self, **kwargs):
+            events.append(("diagnostic", kwargs["backend"]))
             report = tmp_path / "xy_retry_assessments/000/report.json"
             report.parent.mkdir(parents=True)
-            report.write_text(json.dumps({"status": status}), encoding="utf-8")
+            report.write_text('{"status":"saved"}', encoding="utf-8")
             self._retry_assessment_index += 1
             return SimpleNamespace(
                 status=status,
@@ -58,49 +49,17 @@ def test_live_grounded_advice_never_moves_xy_in_same_attempt(
             events.append(("next_trial", kwargs["diagnostic"].status))
 
     runner = Runner()
-    camera_ids = ("front", "side")[:camera_count]
-    launch = SimpleNamespace(
-        camera_ids=camera_ids, intrinsics_full={},
-        extrinsics_full={})
-    live = SimpleNamespace(
-        opened=SimpleNamespace(runner=runner),
-        cameras=SimpleNamespace(launch=launch))
-    images = {camera: np.zeros((8, 8, 3), dtype=np.uint8)
-              for camera in launch.camera_ids}
-    metadata = {
-        "request_id": 1, "source": "camera_acquisition",
-        "frames": {
-            camera: {
-                "frame_id": index, "image_sha256": image_sha256(images[camera]),
-                "timestamp_s": 5.0, "max_error_s": 0.001,
-                "timestamp_method": "hardware_exposure",
-                "clock_domain": "unix_utc",
-            }
-            for index, camera in enumerate(launch.camera_ids, start=1)
-        },
-    }
-    capture = RawCameraCapture(
-        "withdrawn_1", 1, images,
-        {camera: index for index, camera in enumerate(camera_ids, start=1)},
-        metadata)
-    withdrawal = tmp_path / "withdrawal.json"
-    withdrawal.write_text(json.dumps({"completed_at_s": 4.0}),
-                          encoding="utf-8")
+    live = SimpleNamespace(opened=SimpleNamespace(runner=runner))
+    backend = object()
     params = dict(
-        live=live, backend=object(),
-        state_for_capture=lambda _: State(),
-        withdraw_guarded=lambda *_: (State(), withdrawal),
-        capture_withdrawn=lambda *_: capture,
+        live=live, backend=backend,
         retry_limits=SimpleNamespace(max_total_offset_m=0.003),
         alignment_limits=object(),
         diagnostic_parameters={},
         enable_robot_motion=True, decision_time=lambda: 10.0)
     handler = live_retry_handlers.LiveGroundedRetryHandlers(**params)
     handler.assess_for_next_trial(runner, decision)
-    assert events == [("diagnostic", 1), (
+    assert events == [("diagnostic", backend), (
         ("unavailable", "vlm_abstain") if status == "abstain" else
         ("next_trial", "diagnostic_metric_xy_correction"))]
-    assert handler.withdrawn_for_return() == (
-        "attempt_1", handler._withdrawn[1], withdrawal.resolve())
-    assert set(handler.handlers()) == {
-        "guarded_withdrawal_then_xy_assessment"}
+    assert set(handler.handlers()) == {"assess_saved_preinsert_xy"}

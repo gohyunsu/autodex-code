@@ -130,9 +130,13 @@ still supply pickup limits and a real motion interlock; the subclass does
 not replace a robot-side watchdog or physical review. The stage factory
 supplies the remaining commissioned contact, recovery and repose callbacks.
 An optional [`held_motion_monitor` block](MEASURED_LIFT_ADAPTER.md) builds
-one measured non-contact adapter for lift and first transfer. Retry requires
-only the independently commissioned guarded axial withdrawal; there is no
-same-attempt lateral or retry-transfer adapter. The older
+one measured non-contact adapter for lift and first transfer. The task stage
+must additionally supply `release_and_clear`; it opens Inspire after the
+single 20 mm stroke and follows a commissioned collision-checked exit to
+FR3 clear view. The callback returns a
+`precision_insertion_poststroke_release_clear_view_v1` JSON record bound to
+the guarded metric record. Retry itself has no motion or capture adapter: it
+reuses the saved pre-insertion snapshot. The older
 `lift_monitor` block still fills only `lift.adapter`. The factory may override
 each field. Neither setting supplies a reviewed daemon watchdog record,
 stage limits, interlock, contact controller or real-robot validation.
@@ -160,7 +164,7 @@ provenance. This mode tests whether next-trial XY learning absorbs a
 repeatable translation bias; it does not establish physical held-key pose,
 axis tilt or grasp repeatability.
 
-For failed-return original-pose restoration, the robot-PC stage factory must
+For released-key original-pose restoration, the robot-PC stage factory must
 provide `stages["held_return"]["execute_restoration"]`. Its callable receives
 `(runner, decision, plan, preflight_report_path)` and returns an absolute
 execution-log path. `plan` is a `ReposeTransitionPreflight` assembled from
@@ -274,11 +278,12 @@ path are re-screened before transfer.
 
 The cylinder live path uses one **future-trial advice** handler (see
 [`NEXT_TRIAL_XY.md`](NEXT_TRIAL_XY.md) for the attempt boundary and transform):
-guarded axial withdrawal, fresh raw AutoDex multi-view images, metric
-tip/axis reconstruction, save an at-most-10-mm socket-XY increment, return
-the key to the tabletop, clear view, and start a new perception/pickup
-attempt. There is no lateral hold shift or second insertion in the failed
-attempt. The cylinder VLM marks a tip and visible shaft-axis line.
+reopen the raw AutoDex multi-view images captured at the pre-insertion hold,
+run metric tip/axis reconstruction, save an at-most-10-mm socket-XY increment,
+perceive the key already released after the stroke, restore its original
+tabletop pose/position, and start a new perception/pickup attempt. There is no
+post-failure lift/capture, lateral hold shift, or second insertion in the
+failed attempt. The cylinder VLM marks a tip and visible shaft-axis line.
 Square remains an offline asset/planning mode with **no XY correction**;
 its effective update weight and retry budget are zero. Historical square
 diagnostic helpers are not assembled into the active pipeline.
@@ -422,9 +427,12 @@ contract, not robot readiness.
 ## Experimental task-label modes
 
 `run_live.py --label-mode vlm_only` is the default development policy. The
-post-lift, pre-insertion and final/abort images go to the configured VLM;
-the corresponding multi-view visual classes alone determine the three task
-labels. `held`, `coarse_match` and `normal_appearance` are positive;
+post-lift and raw pre-insertion images go to the configured VLM. Final task
+success is evaluated only after the 20 mm stroke, full hand opening and
+clear-view exit: each camera contributes an initial-tabletop/final-clear-view
+raw image pair. No CAD overlay is supplied to either VLM checkpoint. The
+corresponding multi-view visual classes alone determine the three task
+labels. `held`, `coarse_match` and `inside_socket` are positive;
 visible failure classes are negative; occlusion or insufficient consensus is
 unknown. A visual insertion label is **not** a verified 20 mm penetration.
 The controller's motion/abort mechanism and geometric preflight remain

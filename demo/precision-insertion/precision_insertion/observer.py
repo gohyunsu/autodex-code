@@ -603,6 +603,47 @@ def observe_insertion_visual(
     )
 
 
+def observe_released_insertion_visual(
+    backend: ImageVLM, frames: Sequence[LabeledFrame],
+) -> VLMObservation:
+    """Judge a released key from paired initial/final clear-view images.
+
+    The first image identifies the loose key before pickup.  The second image
+    is acquired only after the 20 mm stroke, full hand opening and robot
+    clear-view exit.  A missing/occluded key is deliberately not positive
+    evidence that it is inside the socket.
+    """
+    phases = {frame.phase for frame in frames}
+    if not {"initial_tabletop", "final_clear_view"} <= phases:
+        raise ValueError(
+            "released insertion needs initial_tabletop and final_clear_view")
+    _require_temporal_camera_pairs(
+        frames, before="initial_tabletop", after="final_clear_view")
+    return _per_view_consensus(
+        backend, stage="released_insertion_visual", frames=frames,
+        prompt_body=(
+            "Image 1 shows the loose target key during the initial tabletop "
+            "perception step. Image 2 shows the same workspace after the "
+            "20 mm insertion attempt, after the hand has fully opened and "
+            "the robot has moved to clear view. Decide from visible pixels "
+            "whether that key is now physically inside the socket. Classify "
+            "inside_socket only when the final image contains positive visual "
+            "evidence that the key occupies the socket opening/interior. "
+            "Classify outside_socket when the key is visibly outside the "
+            "socket. Occlusion, disappearance, the empty hand, or the "
+            "commanded motion is not evidence of insertion; use unobservable "
+            "when the final relation cannot be established. Do not infer a "
+            "numerical insertion depth from pixels."
+        ),
+        field="visual_class",
+        allowed=frozenset({
+            "inside_socket", "outside_socket", "unobservable",
+        }),
+        fallback="unobservable",
+        before="initial_tabletop", after="final_clear_view",
+    )
+
+
 def observe_preinsert_hold_views(
     backend: ImageVLM, views: Sequence[HeldSceneView], *,
     max_capture_skew_s: float, minimum_agreeing_views: int = 2,
@@ -669,6 +710,72 @@ def observe_preinsert_hold_views(
         category = observed.parsed["class"]
         if (observed.parse_error is None and
                 category != "unobservable" and
+                observed.parsed["evidence"].strip() and
+                observed.parsed["evidence_views"] == [view.camera_id]):
+            decisive.setdefault(category, []).append(view.camera_id)
+    if (len(decisive) == 1 and
+            len(next(iter(decisive.values()))) >= minimum_agreeing_views):
+        status = next(iter(decisive))
+        support = tuple(sorted(decisive[status]))
+    else:
+        status, support = "unknown", ()
+    return PreinsertVisualAssessment(status, support, tuple(observations))
+
+
+def observe_preinsert_raw_views(
+    backend: ImageVLM, views: Sequence[HeldSceneView], *,
+    max_capture_skew_s: float, minimum_agreeing_views: int = 2,
+) -> PreinsertVisualAssessment:
+    """Judge the visible held-key/socket relation from raw pixels only.
+
+    ``HeldSceneView`` is retained as the report container because the
+    deterministic geometry/renderer audit still stores a predicted scene for
+    humans.  The VLM receives only ``view.raw``; the CAD rendering is never an
+    inference input.
+    """
+    if (type(minimum_agreeing_views) is not int or
+            minimum_agreeing_views < 2 or
+            not math.isfinite(float(max_capture_skew_s)) or
+            max_capture_skew_s <= 0 or len(views) < minimum_agreeing_views):
+        raise ValueError("preinsert check needs multiple synchronized views")
+    cameras = [view.camera_id for view in views]
+    if (any(not isinstance(camera, str) or not _CAMERA_ID.fullmatch(camera)
+            for camera in cameras) or len(cameras) != len(set(cameras))):
+        raise ValueError("preinsert views need unique safe camera IDs")
+    times = [float(view.timestamp_s) for view in views]
+    if (not all(math.isfinite(value) and value > 0 for value in times) or
+            max(times) - min(times) > max_capture_skew_s):
+        raise ValueError("preinsert cameras are stale or asynchronous")
+    observations: list[VLMObservation] = []
+    for view in views:
+        if not isinstance(view.raw, Image.Image) or view.raw.mode != "RGB":
+            raise ValueError("preinsert needs raw RGB camera images")
+        frames = (LabeledFrame(
+            view.camera_id, "raw_preinsert", view.timestamp_s, view.raw),)
+        observations.append(_infer_closed_set(
+            backend, stage="preinsert_visual", frames=frames,
+            prompt_body=(
+                "This is one RAW camera image at the pre-insertion hold. "
+                "Inspect only visible pixels. Choose coarse_match only when "
+                "the target key is visibly still carried by the hand above "
+                "the socket and its insertion axis is grossly compatible "
+                "with the socket axis. Choose gross_misalignment when the "
+                "visible key and socket are plainly displaced or tilted, "
+                "or slip_or_miss when visible pixels show that the key is no "
+                "longer held. If the key or socket rim is occluded, choose "
+                "unobservable. Do not use an expected CAD pose, infer hidden "
+                "geometry, estimate millimetres, or infer contact/depth. "
+                f"Use only camera ID {view.camera_id}."
+            ),
+            field="class", allowed=frozenset({
+                "coarse_match", "gross_misalignment", "slip_or_miss",
+                "unobservable",
+            }), fallback="unobservable",
+        ))
+    decisive: dict[str, list[str]] = {}
+    for view, observed in zip(views, observations):
+        category = observed.parsed["class"]
+        if (observed.parse_error is None and category != "unobservable" and
                 observed.parsed["evidence"].strip() and
                 observed.parsed["evidence_views"] == [view.camera_id]):
             decisive.setdefault(category, []).append(view.camera_id)

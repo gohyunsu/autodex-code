@@ -8,7 +8,6 @@ from the AutoDex PC; this module does not emulate physical motion or sensors.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import json
 from pathlib import Path
 import time
 from typing import Callable, Mapping
@@ -16,13 +15,13 @@ from typing import Callable, Mapping
 from .action_loop import ActionHandler
 from .guarded_insertion_execution import execute_bound_guarded_insertion
 from .live_robot_state import LiveRobotState
-from .live_depth import prepare_live_depth_evidence
 from .labeling import request_annotation
 from .raw_camera_capture import (
     RawCameraCapture, verify_raw_camera_capture, write_raw_camera_capture,
 )
 from .recoverable_failure import acknowledged_failure
 from .session_policy import SessionDecision
+from .post_insertion_release import verify_post_insertion_release
 from .transfer_execution import execute_bound_held_transfer
 
 
@@ -60,6 +59,7 @@ class LiveTaskHandlers:
     depth_commissioning_path: Path | None = None
     label_mode: str = "evidence_fused"
     manual_label_provider: Callable | None = None
+    release_and_clear: Callable | None = None
     enable_robot_motion: bool = False
     decision_time: Callable[[], float] = time.time
     _preinsert_bundle: Path | None = field(default=None, init=False)
@@ -179,35 +179,38 @@ class LiveTaskHandlers:
             enable_robot_motion=self.enable_robot_motion,
             **dict(self.insertion_parameters))
         metric = Path(execution["metric_record"]["path"])
+        if not callable(self.release_and_clear):
+            raise RuntimeError(
+                "20 mm insertion needs a commissioned release_and_clear callback")
+        release_path = Path(self.release_and_clear(
+            self.live, runner, decision, execution)).expanduser().resolve()
+        verify_post_insertion_release(
+            release_path, attempt_id=attempt.attempt_id,
+            candidate_id=attempt.candidate_id,
+            session_calibration_sha256=runner.session_sha256,
+            guarded_execution_path=metric)
+        # The release callback performs the physical open/exit; this measured
+        # gate prevents a final image from being taken with the hand in view.
+        self.live.clear_view.before_key_capture()
         final, _capture = self._capture(
             runner=runner, decision=decision,
-            callback=self.capture_final, phase="final_or_abort")
+            callback=self.capture_final, phase="final_clear_view")
         decision_at = self.decision_time()
-        depth_path = None
-        if self.depth_limits is not None:
-            metric_record = json.loads(metric.read_text(encoding="utf-8"))
-            saved, visible = prepare_live_depth_evidence(
-                runner=runner, final_bundle=final, backend=self.backend,
-                completed_at_s=metric_record["completed_at_s"],
-                decision_timestamp_s=decision_at,
-                limits=self.depth_limits,
-                capture_parameters=self.depth_capture_parameters,
-                slot="first")
-            if visible and self.depth_commissioning_path is not None:
-                depth_path = saved
-        runner.prepare_observed_insertion_label(
+        initial = runner.initial_key_evidence_dir
+        if initial is None:
+            raise ValueError("released insertion lacks its initial key perception")
+        runner.prepare_released_insertion_label(
+            initial_key_bundle=initial,
             preinsert_bundle=self._preinsert_bundle,
             final_bundle=final, metric_record_path=metric,
+            release_record_path=release_path,
             backend=self.backend,
             decision_timestamp_s=decision_at,
-            depth_report_path=depth_path,
-            depth_commissioning_path=(
-                self.depth_commissioning_path if depth_path is not None else None),
             label_mode=self.label_mode,
             manual_annotation=request_annotation(
                 mode=self.label_mode, provider=self.manual_label_provider,
                 stage="insertion_success",
-                evidence_dirs=(self._preinsert_bundle, final),
+                evidence_dirs=(initial, final),
                 attempt_id=attempt.attempt_id,
                 candidate_id=attempt.candidate_id),
             **dict(self.final_parameters))

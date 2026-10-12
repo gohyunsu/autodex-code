@@ -57,8 +57,9 @@ def resolve_label(
         "grasp_success": ({"held"}, {"miss", "slip"}),
         "preinsert_reached": ({"coarse_match"},
                               {"gross_misalignment", "slip_or_miss"}),
-        "insertion_success": ({"normal_appearance", "normal_20mm"},
-                              {"partial", "rim_jam", "slip"}),
+        "insertion_success": (
+            {"normal_appearance", "normal_20mm", "inside_socket"},
+            {"partial", "rim_jam", "slip", "outside_socket"}),
     }
     positive, negative = classes[stage]
     if visual_class in positive:

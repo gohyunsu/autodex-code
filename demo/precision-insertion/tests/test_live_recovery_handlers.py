@@ -1,6 +1,7 @@
 """A failed held insertion must return, clear the camera, then observe reset."""
 
 from dataclasses import replace
+import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -144,8 +145,7 @@ def test_held_return_clears_view_then_recaptures_same_session(
                         "verify_failed_return_execution", verify)
     monkeypatch.setattr(live_recovery_handlers,
                         "capture_returned_key_for_reset", capture)
-    bound.handlers()["recover_held_key_then_reobserve"](
-        runner, runner.current_decision())
+    bound.recover(runner, runner.current_decision())
     assert [item if isinstance(item, str) else item[0] for item in events] == [
         "withdraw", "record_start", "motion", "record_end",
         "verified_execution", "clear_view", "capture"]
@@ -261,3 +261,43 @@ def test_misplaced_return_is_restored_before_trial_reset_label(tmp_path, monkeyp
     assert [item[0] if isinstance(item, tuple) else item for item in events].count(
         "restore") == 1
     assert runner.events[-1][1]["restoration_evidence_paths"] == (execution,)
+
+
+def test_released_failure_is_perceived_and_restored_without_withdrawal(tmp_path):
+    bound, runner, events = _setup(tmp_path)
+    release = tmp_path / "poststroke_release.json"
+    release.write_text('{"released":true}\n', encoding="utf-8")
+    runner.decision = SessionDecision(
+        "recover_released_key_then_reobserve", "xy_advice_saved",
+        "table/0/3")
+    runner._attempt_dir = tmp_path / "attempts" / "attempt_001"
+    runner._attempt_dir.mkdir(parents=True)
+    runner.active_attempt.events = [{
+        "stage": "insertion_success", "value": False,
+        "timestamp_s": 10.5,
+        "evidence_refs": {"release_execution": str(release.resolve())},
+    }]
+    state = _state()
+    bound.read_state = lambda: state
+    bound.live.clear_view.before_key_capture = lambda: (
+        events.append("clear_view") or state)
+    bound.live.clear_view.verify_state = lambda measured, **_kwargs: measured
+    observation = SimpleNamespace(acquisition_interval_s=(30., 31.))
+    landed = ReturnedKeyCapture(observation, state, tmp_path / "released_key")
+    bound._capture_landing = lambda *_args: (
+        events.append("capture_released") or landed)
+    bound.restore_until_original = lambda *_args: (
+        events.append("restore_original") or (landed, ()))
+
+    bound.recover_released(runner, runner.current_decision())
+
+    assert events == ["clear_view", "capture_released", "restore_original"]
+    assert "withdraw" not in events
+    record = json.loads((runner._attempt_dir /
+                         "released_failure_clear_view.json").read_text())
+    assert record["hand_open"] is True
+    assert record["clear_view_reached"] is True
+    assert record["poststroke_release"]["path"] == str(release.resolve())
+    assert runner.events[-1][0] == "landing"
+    assert runner.events[-1][1]["key_observation"] is observation
+    assert runner.current_decision().action == "reobserve_key_and_preflight"

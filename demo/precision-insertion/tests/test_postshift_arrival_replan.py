@@ -222,6 +222,7 @@ def test_saved_arrival_axial_rejects_mutated_path_and_cad(
             shared_root=tmp_path, calibration=call["calibration"])
 
 
+@pytest.mark.skip(reason="same-attempt lateral reinsertion was removed by policy")
 def test_session_records_verified_continuous_shift_as_pending_retry(
         tmp_path, monkeypatch):
     call, _ = _setup(tmp_path, monkeypatch)

@@ -6,11 +6,13 @@ v8 relation is an explicit hypothesis throughout transfer and the centered
 20 mm endpoint collision preflight. Square remains an offline-only mode with
 no XY learning in the live entry point.
 
-For failed physical attempt `n`, the guarded controller first withdraws the
-still-held key along the socket axis. Fresh calibrated AutoDex views are then
-sent to local Qwen (Gemini is optional) to mark the visible insertion-tip
-center and cylinder-axis line. The camera intrinsics/extrinsics and frozen
-session socket pose—not VLM text—produce a socket-frame metric XY estimate.
+For attempt `n`, synchronized calibrated AutoDex views are saved while the
+held key is at the pre-insertion position. They are captured **before** the
+guarded stroke. If the later released-key label is `outside_socket`, those
+same saved raw views—not a newly lifted key and not a CAD overlay—are sent to
+local Qwen (Gemini is optional) to mark the visible insertion-tip center and
+cylinder-axis line. Camera intrinsics/extrinsics and the frozen session socket
+pose—not VLM text—produce a socket-frame metric XY estimate.
 
 - Two or more visible tips: triangulate in 3D. If the axis-line fit is usable,
   minimize mean XY error at the rim and 20 mm depth; otherwise use tip XY with
@@ -35,9 +37,9 @@ or `exploratory_search`), calibration/catalog binding, and VLM replies. The
 correction is bound to the same candidate and tabletop pose; if the key
 lands in another pose or the grasp changes, it is not silently transferred.
 
-The first failed attempt has **no lateral retry**. It returns the key to the
-original tabletop class and CAD-center XY. After release, Franka/Inspire
-moves to clear view; SAM/FoundPose recaptures the key. If the landing is
+The failed attempt has **no lateral retry**. The hand was fully opened after
+the 20 mm stroke and Franka/Inspire already moved to clear view before the
+final task label. SAM/FoundPose now captures the released key. If its pose is
 misplaced, a new v8 pickup→held transfer→release/exit plan attempts to restore
 the original pose within the **same physical attempt**, followed by another
 clear-view recapture. This requires a robot-PC `execute_restoration` callback

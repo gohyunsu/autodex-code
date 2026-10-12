@@ -14,6 +14,7 @@ import math
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+import cv2
 import numpy as np
 from PIL import Image
 
@@ -37,7 +38,10 @@ from .grounding_crop import verify_native_crop_observation
 from .held_relation import HeldRelation, resolve_postlift_held_relation
 from .key_perception import KeyPoseObservation, verify_key_capture_artifacts
 from .live_robot_state import LiveRobotState
+from .guarded_axial_handoff import _state_from_record
 from .observer import ImageVLM, LabeledFrame
+from .preinsert_checkpoint import verify_preinsert_checkpoint
+from .raw_camera_capture import verify_raw_camera_capture
 from .path_audit import PathAuditLimits
 from .records import AttemptRecord
 from .retry_preflight import (
@@ -215,6 +219,54 @@ class GroundedXYDiagnostic:
             "vlm_observations": [v.to_record() for v in self.vlm_observations],
             "preflight": None,
             "scope": "saved_metric_hypothesis_only_not_pending_retry_or_robot_motion",
+            "robot_ready": False,
+        }
+
+
+@dataclass(frozen=True)
+class PreinsertXYDiagnostic:
+    """Metric XY estimate replayed from the saved pre-insertion snapshot."""
+
+    status: str
+    attempt_id: str
+    candidate_id: str
+    session_calibration_sha256: str
+    camera_calibration_sha256: str
+    task_geometry_sha256: str
+    frame_request_id: int
+    preinsert_checkpoint_path: Path
+    preinsert_checkpoint_sha256: str
+    preinsert_bundle_path: Path
+    preinsert_manifest_sha256: str
+    postlift_preflight_path: Path
+    postlift_preflight_sha256: str
+    frame_binding: dict
+    joint_sample: LiveRobotState
+    alignment: dict
+    vlm_observations: tuple
+
+    def to_record(self) -> dict:
+        return {
+            "schema": "precision_insertion_saved_preinsert_xy_diagnostic_v1",
+            "status": self.status,
+            "attempt_id": self.attempt_id,
+            "candidate_id": self.candidate_id,
+            "session_calibration_sha256": self.session_calibration_sha256,
+            "camera_calibration_sha256": self.camera_calibration_sha256,
+            "task_geometry_sha256": self.task_geometry_sha256,
+            "frame_request_id": self.frame_request_id,
+            "preinsert_checkpoint_path": str(self.preinsert_checkpoint_path),
+            "preinsert_checkpoint_sha256": self.preinsert_checkpoint_sha256,
+            "preinsert_bundle_path": str(self.preinsert_bundle_path),
+            "preinsert_manifest_sha256": self.preinsert_manifest_sha256,
+            "postlift_preflight_path": str(self.postlift_preflight_path),
+            "postlift_preflight_sha256": self.postlift_preflight_sha256,
+            "frame_binding": self.frame_binding,
+            "joint_sample": self.joint_sample.to_record(),
+            "alignment": self.alignment,
+            "vlm_observations": [row.to_record() for row in self.vlm_observations],
+            "preflight": None,
+            "scope": "saved_preinsert_raw_pixels_next_attempt_xy_only",
             "robot_ready": False,
         }
 
@@ -674,6 +726,191 @@ def assess_unobserved_xy_diagnostic(
         verified, joint_sample, assessment)
 
 
+def _compute_grounded_alignment(
+    *, mode: TaskMode, root: Path, calibration, postlift_file: Path,
+    frames: Sequence[LabeledFrame], intrinsics_full: Mapping,
+    extrinsics_full: Mapping, backend: ImageVLM,
+    alignment_limits: AlignmentLimits,
+    axis_reference_key_z_m: float | None,
+    roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]] | None,
+    square_translation_only: bool, search_index: int,
+) -> tuple[str, dict, tuple]:
+    """Shared raw-pixel geometry for live-withdrawal and saved-snapshot use."""
+    geometry_path = AssetPaths(root, mode).task_geometry
+    geometry_bytes = geometry_path.read_bytes()
+    geometry = json.loads(geometry_bytes)
+    tip_z = float(geometry["key_frame"]["tip_z_m"])
+    reference_z = None
+    if mode.family != "cylinder":
+        if axis_reference_key_z_m is None:
+            reference_z = (geometry["key_frame"].get("handle_front_z_m")
+                           if square_translation_only else 0.0)
+        else:
+            reference_z = float(axis_reference_key_z_m)
+        if (reference_z is None or not math.isfinite(reference_z) or
+                reference_z < 0 or reference_z >= tip_z):
+            raise ValueError("axis reference must be behind the CAD tip")
+        if square_translation_only and reference_z <= 0:
+            raise ValueError("square shoulder needs a positive CAD z coordinate")
+    if (float(geometry.get("verification_depth_m", mode.target_depth_m)) !=
+            mode.target_depth_m or
+            geometry["insertion_direction_socket"] != [0.0, 0.0, -1.0]):
+        raise ValueError("CAD depth/axis differs from configured insertion task")
+    socket = validated_frozen_socket_pose(
+        mode=mode, shared_root=root, calibration=calibration)
+    c2r = validate_se3(calibration.record["c2r"], name="session C2R")
+    calibrated = [CalibratedXYFrame(
+        frame.camera_id, frame.timestamp_s, frame.image,
+        camera_socket_transform(
+            T_camera_world=extrinsics_full[frame.camera_id],
+            T_world_robot=c2r, T_robot_socket=socket),
+        np.asarray(intrinsics_full[frame.camera_id]["K_undist"], dtype=float),
+    ) for frame in frames]
+    if mode.yaw_relevant:
+        if square_translation_only:
+            grounded, observations = observe_grounded_key_axis(
+                backend, calibrated, reference_kind="square_shoulder")
+            alignment = estimate_grounded_alignment(
+                grounded, landmark_spacing_m=tip_z - reference_z,
+                socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
+                verification_depth_m=mode.target_depth_m,
+                limits=alignment_limits)
+            alignment = dict(
+                alignment, square_translation_only=True,
+                square_yaw_observed=False,
+                square_yaw_requires_independent_evidence=True,
+                axis_reference_feature="insertion_shaft_handle_shoulder",
+                scope="read_only_xy_axis_diagnostic_square_yaw_unobserved")
+        else:
+            observations = ()
+            alignment = estimate_grounded_alignment(
+                [], landmark_spacing_m=tip_z - reference_z,
+                socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
+                verification_depth_m=mode.target_depth_m,
+                limits=alignment_limits, yaw_relevant=True)
+    else:
+        if roi_xyxy_by_camera is None:
+            grounded, observations = observe_grounded_cylinder_axis(
+                backend, calibrated)
+        else:
+            grounded, observations = observe_grounded_cylinder_axis_cropped(
+                backend, calibrated, roi_xyxy_by_camera=roi_xyxy_by_camera)
+            for frame, observation in zip(calibrated, observations):
+                verify_native_crop_observation(
+                    observation.to_record(), full_image_size_px=frame.raw.size)
+        alignment = estimate_grounded_line_alignment(
+            grounded,
+            socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
+            verification_depth_m=mode.target_depth_m,
+            limits=alignment_limits)
+        nominal = json.loads(postlift_file.read_text(encoding="utf-8"))
+        T_robot_key = validate_se3(
+            nominal["targets"]["T_robot_key_preinsert"],
+            name="commanded preinsert key target")
+        tip_robot = T_robot_key @ np.array([0., 0., tip_z, 1.])
+        tip_socket = np.linalg.inv(socket) @ tip_robot
+        alignment = resolve_xy_only_cylinder_alignment(
+            grounded, alignment,
+            nominal_tip_z_socket_m=float(tip_socket[2]),
+            search_index=search_index)
+    alignment = dict(
+        alignment, estimator_limits=asdict(alignment_limits),
+        grounding_input=("lossless_raw_roi" if roi_xyxy_by_camera is not None
+                         and not mode.yaw_relevant else
+                         "full_undistorted_frames"),
+        key_object=mode.key_object, socket_object=mode.socket_object,
+        socket_entry_plane_z_m=float(geometry["socket_entry_plane_z_m"]),
+        verification_depth_m=mode.target_depth_m,
+        axis_reference_key_z_m=(reference_z if mode.family != "cylinder"
+                                else None))
+    return hashlib.sha256(geometry_bytes).hexdigest(), alignment, tuple(observations)
+
+
+def assess_saved_preinsert_xy_diagnostic(
+    *, mode: TaskMode, shared_root: Path, calibration, catalog: dict,
+    trial, attempt: AttemptRecord, preinsert_checkpoint_path: Path,
+    postlift_preflight_report_path: Path, backend: ImageVLM,
+    limits: RetrySessionLimits, alignment_limits: AlignmentLimits,
+    axis_reference_key_z_m: float | None = None,
+    roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]] | None = None,
+    square_translation_only: bool = False, search_index: int = 0,
+) -> PreinsertXYDiagnostic:
+    """Compute next-attempt XY from the raw snapshot saved before insertion."""
+    limits.validate()
+    if type(square_translation_only) is not bool or (
+            square_translation_only and mode.family != "square"):
+        raise ValueError("square translation-only grounding needs square mode")
+    root = Path(shared_root).expanduser().resolve()
+    _insertion, _postlift, postlift_file, validated_root = (
+        _validated_retry_trial_context(
+            mode=mode, shared_root=root, calibration=calibration,
+            catalog=catalog, trial=trial, attempt=attempt,
+            postlift_preflight_report_path=postlift_preflight_report_path))
+    if validated_root != root:
+        raise ValueError("saved preinsert diagnostic changed shared root")
+    checkpoint_path = Path(preinsert_checkpoint_path).expanduser().resolve()
+    report = verify_preinsert_checkpoint(checkpoint_path)
+    if (report.get("attempt_id") != attempt.attempt_id or
+            report.get("candidate_id") != attempt.candidate_id or
+            report.get("preinsert_reached") is not True or
+            Path(report["postlift_report_path"]).resolve() != postlift_file):
+        raise ValueError("saved preinsert snapshot belongs to another attempt")
+    bundle = Path(report["raw_bundle"]).expanduser().resolve()
+    capture = verify_raw_camera_capture(bundle, phase="preinsert")
+    joint_sample = _state_from_record(report["joint_feedback"])
+    joint_sample.validate(
+        max_arm_hand_skew_s=limits.max_arm_hand_skew_s,
+        max_hand_command_error_raw=limits.max_hand_command_error_raw,
+        max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
+    frame_rows = capture["frame_evidence"]
+    images = {}
+    frames = []
+    for camera, row in sorted(frame_rows.items()):
+        image = cv2.imread(str(bundle / "images" / f"{camera}.png"),
+                           cv2.IMREAD_COLOR)
+        if image is None or image_sha256(image) != row["image_sha256"]:
+            raise ValueError("saved preinsert raw image changed")
+        images[camera] = image
+        frames.append(LabeledFrame(
+            camera, "preinsert_hold", row["timestamp_s"],
+            Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))))
+    if (len(frames) < (1 if mode.family == "cylinder" else 2) or
+            max(row["timestamp_s"] + row["max_error_s"]
+                for row in frame_rows.values()) -
+            min(row["timestamp_s"] - row["max_error_s"]
+                for row in frame_rows.values()) > limits.max_capture_skew_s):
+        raise ValueError("saved preinsert cameras are insufficient or asynchronous")
+    validate_session_camera_calibration(
+        calibration,
+        intrinsics_undist={serial: row["K_undist"] for serial, row in
+                           calibration.record["camera_calibration"]
+                           ["intrinsics_full"].items()},
+        extrinsics_full=calibration.record["camera_calibration"]
+        ["extrinsics_full"],
+        calibrated_camera_ids=set(calibration.record["camera_calibration"]
+                                  ["intrinsics_full"]))
+    snapshot = calibration.record["camera_calibration"]
+    geometry_hash, alignment, observations = _compute_grounded_alignment(
+        mode=mode, root=root, calibration=calibration,
+        postlift_file=postlift_file, frames=frames,
+        intrinsics_full=snapshot["intrinsics_full"],
+        extrinsics_full=snapshot["extrinsics_full"], backend=backend,
+        alignment_limits=alignment_limits,
+        axis_reference_key_z_m=axis_reference_key_z_m,
+        roi_xyxy_by_camera=roi_xyxy_by_camera,
+        square_translation_only=square_translation_only,
+        search_index=search_index)
+    return PreinsertXYDiagnostic(
+        alignment["status"], attempt.attempt_id, attempt.candidate_id,
+        attempt.session_calibration_sha256,
+        calibration.record["camera_calibration_sha256"], geometry_hash,
+        capture["request_id"], checkpoint_path,
+        hashlib.sha256(checkpoint_path.read_bytes()).hexdigest(), bundle,
+        hashlib.sha256((bundle / "manifest.json").read_bytes()).hexdigest(),
+        postlift_file, hashlib.sha256(postlift_file.read_bytes()).hexdigest(),
+        frame_rows, joint_sample, alignment, observations)
+
+
 def assess_grounded_xy_diagnostic(
     *, mode: TaskMode, shared_root: Path, calibration, catalog: dict,
     trial, attempt: AttemptRecord, joint_sample: LiveRobotState,
@@ -816,7 +1053,8 @@ def assess_grounded_xy_diagnostic(
 
 
 def write_retry_session_artifacts(
-    result: RetrySessionResult | UnobservedXYDiagnostic | GroundedXYDiagnostic,
+    result: RetrySessionResult | UnobservedXYDiagnostic | GroundedXYDiagnostic |
+    PreinsertXYDiagnostic,
     frames: Sequence[LabeledFrame],
     output_dir: Path,
 ) -> Path:
@@ -839,7 +1077,7 @@ def write_retry_session_artifacts(
             raise ValueError("saved retry image differs from VLM source pixels")
         files[str(path.relative_to(target))] = hashlib.sha256(
             path.read_bytes()).hexdigest()
-    if (not isinstance(result, GroundedXYDiagnostic) and
+    if (not isinstance(result, (GroundedXYDiagnostic, PreinsertXYDiagnostic)) and
             result.assessment is not None and result.assessment.overlays is not None):
         overlay_dir = target / "overlays"
         overlay_dir.mkdir()
@@ -851,7 +1089,7 @@ def write_retry_session_artifacts(
                 image.save(path, format="PNG")
                 files[str(path.relative_to(target))] = hashlib.sha256(
                     path.read_bytes()).hexdigest()
-    if (not isinstance(result, GroundedXYDiagnostic) and
+    if (not isinstance(result, (GroundedXYDiagnostic, PreinsertXYDiagnostic)) and
             result.preflight is not None):
         preflight_dir = write_xy_retry_preflight(
             result.preflight, target / "preflight")
@@ -865,3 +1103,21 @@ def write_retry_session_artifacts(
         json.dump(report, stream, indent=2, sort_keys=True, allow_nan=False)
         stream.write("\n")
     return target
+
+
+def write_saved_preinsert_xy_artifacts(
+    result: PreinsertXYDiagnostic, output_dir: Path,
+) -> Path:
+    """Persist a diagnostic by reloading its already verified raw bundle."""
+    if not isinstance(result, PreinsertXYDiagnostic):
+        raise TypeError("expected a saved preinsert XY diagnostic")
+    frames = []
+    for camera, row in sorted(result.frame_binding.items()):
+        image = cv2.imread(str(result.preinsert_bundle_path / "images" /
+                               f"{camera}.png"), cv2.IMREAD_COLOR)
+        if image is None or image_sha256(image) != row["image_sha256"]:
+            raise ValueError("saved preinsert image changed before artifact write")
+        frames.append(LabeledFrame(
+            camera, "preinsert_hold", row["timestamp_s"],
+            Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))))
+    return write_retry_session_artifacts(result, frames, output_dir)

@@ -2,8 +2,9 @@
 
 An external controller supplies a completed transfer log. The saved camera
 bundle, measured stationary FR3/Inspire joints, post-lift grasp relation, and
-per-view raw/CAD VLM comparison are checked together. This does not execute
-motion, prove contact, or certify the external log's physical producer.
+per-view raw-only VLM check are evaluated together. CAD projections are saved
+for deterministic geometry/audit only and are never passed to the VLM. This
+does not execute motion, prove contact, or certify the external producer.
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ from .nominal_postlift import (
 from .labeling import resolve_label, independent_vlm_label
 from .observer import (
     HeldSceneView, ImageVLM, PreinsertVisualAssessment,
-    observe_preinsert_hold_views,
+    observe_preinsert_raw_views,
 )
 from .postlift_preflight import PostLiftPreflight
 from .raw_camera_capture import verify_raw_camera_capture
@@ -171,7 +172,7 @@ def observe_held_preinsert_scene(
         T_camera_robot={serial: camera_world_all[serial] @ c2r
                         for serial in camera_ids},
         renderer_factory=renderer_factory)
-    visual = observe_preinsert_hold_views(
+    visual = observe_preinsert_raw_views(
         backend, comparison.views, max_capture_skew_s=max_capture_skew_s)
     return position_error, rotation_error, comparison, visual
 
@@ -187,7 +188,7 @@ def _verify_visual_record(visual: dict, views: dict) -> None:
         if (not isinstance(row, dict) or
                 row.get("stage") != "preinsert_visual" or
                 not isinstance(row.get("image_order"), list) or
-                len(row["image_order"]) != 2 or
+                len(row["image_order"]) != 1 or
                 not isinstance(row.get("parsed"), dict)):
             raise ValueError("preinsert per-view response is invalid")
         label = row["image_order"][0]
@@ -196,8 +197,7 @@ def _verify_visual_record(visual: dict, views: dict) -> None:
         camera = label.removeprefix("raw_preinsert/").split("@", 1)[0]
         if (camera not in views or camera in seen or
                 row["image_order"] != [
-                    f"raw_preinsert/{camera}@{views[camera]['timestamp_s']:.6f}",
-                    f"predicted_scene/{camera}@{views[camera]['timestamp_s']:.6f}"]):
+                    f"raw_preinsert/{camera}@{views[camera]['timestamp_s']:.6f}"]):
             raise ValueError("preinsert VLM camera/frame order changed")
         seen.add(camera)
         parsed = row["parsed"]
@@ -253,7 +253,7 @@ def _verify_visual_replay(
     # it is not a new assertion about commissioned camera synchronization.
     replay_skew_s = max(max(stamps) - min(stamps) + 1e-6, 1e-6)
     try:
-        replay = observe_preinsert_hold_views(
+        replay = observe_preinsert_raw_views(
             _RecordedPreinsertAnswers(recorded), paired_pixels,
             max_capture_skew_s=replay_skew_s).to_record()
     except (TypeError, ValueError, IndexError) as exc:
@@ -463,7 +463,7 @@ def assess_preinsert_checkpoint(
 def write_preinsert_checkpoint(
     checkpoint: PreinsertCheckpoint, output_dir: Path,
 ) -> Path:
-    """Save the exact VLM overlay pixels alongside an immutable report."""
+    """Save raw VLM inputs plus separate geometry-audit renderings."""
     if not isinstance(checkpoint, PreinsertCheckpoint):
         raise TypeError("expected a computed preinsert checkpoint")
     target = Path(output_dir).expanduser().resolve()
@@ -481,7 +481,7 @@ def write_preinsert_checkpoint(
             raise OSError(f"could not save preinsert overlay: {path}")
         if (image_sha256(overlay_bgr) != checkpoint.comparison.pixel_digests[
                 view.camera_id]["overlay_image_sha256"]):
-            raise ValueError("saved preinsert overlay differs from VLM input")
+            raise ValueError("saved preinsert geometry-audit overlay changed")
         png_hashes[view.camera_id] = _sha(path)
     record["overlay_png_sha256"] = png_hashes
     report = target / "report.json"

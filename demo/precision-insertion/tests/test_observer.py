@@ -18,6 +18,7 @@ from precision_insertion.observer import (  # noqa: E402
     ZeroDexGeminiBackend,
     ZeroDexLocalBackend, load_vlm_backend,
     observe_insertion_visual, observe_lift, observe_preinsert_hold_views,
+    observe_preinsert_raw_views, observe_released_insertion_visual,
     observe_xy_views, verify_per_view_consensus,
 )
 from precision_insertion.outcome import InsertionEvidence, judge_insertion  # noqa: E402
@@ -298,6 +299,41 @@ def test_preinsert_raw_and_mesh_overlay_needs_two_agreeing_views():
     assert "coarse_match|gross_misalignment" not in backend.calls[0][1]
     assert len(backend.calls) == 2
     assert len(backend.calls[0][0]) == 2
+
+
+def test_current_preinsert_vlm_receives_raw_image_only():
+    backend = FakeBackend(
+        _preinsert_answer("coarse_match", "front"),
+        _preinsert_answer("coarse_match", "side"))
+    result = observe_preinsert_raw_views(
+        backend, [_held_view("front"), _held_view("side", 10.01)],
+        max_capture_skew_s=0.02)
+    assert result.status == "coarse_match"
+    assert len(backend.calls) == 2
+    assert all(len(images) == 1 for images, _prompt in backend.calls)
+    assert all("Image 2" not in prompt for _images, prompt in backend.calls)
+
+
+def test_released_insertion_pairs_each_camera_without_overlay():
+    answer = lambda category, camera: json.dumps({
+        "visual_class": category, "evidence_views": [camera],
+        "evidence": "key visibly occupies socket opening",
+    })
+    backend = FakeBackend(
+        answer("inside_socket", "front"),
+        answer("inside_socket", "side"))
+    frames = [
+        LabeledFrame("front", "initial_tabletop", 1.0, _image()),
+        LabeledFrame("side", "initial_tabletop", 1.01, _image()),
+        LabeledFrame("front", "final_clear_view", 2.0, _image()),
+        LabeledFrame("side", "final_clear_view", 2.01, _image()),
+    ]
+    result = observe_released_insertion_visual(backend, frames)
+    assert result.parsed["visual_class"] == "inside_socket"
+    assert result.parsed["evidence_views"] == ["front", "side"]
+    assert len(backend.calls) == 2
+    assert all(len(images) == 2 for images, _prompt in backend.calls)
+    assert all("CAD" not in prompt for _images, prompt in backend.calls)
 
 
 def test_preinsert_occlusion_conflict_or_wrong_camera_abstains():

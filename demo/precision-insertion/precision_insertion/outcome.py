@@ -15,7 +15,7 @@ VLM_CLASSES = frozenset({
     # New observers emit normal_appearance: 20 mm is measured independently.
     # Keep normal_20mm as an older recorded-assessment alias.
     "normal_appearance", "normal_20mm", "partial", "rim_jam", "slip",
-    "unobservable",
+    "inside_socket", "outside_socket", "unobservable",
 })
 KEY_DEPTH_SOURCES = frozenset({
     "key_pose_multiview", "exposed_length_cad", "crosschecked_wrist_key",
@@ -92,7 +92,7 @@ def judge_insertion(
         return outcome(False, "alignment_outside_commissioned_limits")
     if upper is not None and upper < target_depth_m:
         return outcome(False, "key_depth_definitely_short")
-    if evidence.vlm_class in {"partial", "rim_jam", "slip"}:
+    if evidence.vlm_class in {"partial", "rim_jam", "slip", "outside_socket"}:
         if lower is not None and lower >= target_depth_m:
             return outcome(None, "vlm_and_key_depth_conflict")
         if evidence.vlm_class == "slip" and evidence.grasp_held is True:

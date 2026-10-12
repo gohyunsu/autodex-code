@@ -41,6 +41,8 @@ class Runner:
             "transfer_execution_gate_required", "bounded_plan", "table/0/3")
         self._postlift_report_path = root / "postlift.json"
         self._preinsert_report_path = root / "preinsert.json"
+        self.initial_key_evidence_dir = root / "initial_key"
+        self.session_sha256 = "a" * 64
         self.events = []
 
     def current_decision(self):
@@ -60,7 +62,7 @@ class Runner:
         self.events.append(("handoff", kwargs))
         return self.output_dir / "handoff.json"
 
-    def prepare_observed_insertion_label(self, **kwargs):
+    def prepare_released_insertion_label(self, **kwargs):
         self.events.append(("assess_insertion", kwargs))
         self.decision = SessionDecision("session_success", "observed_20mm", "table/0/3")
 
@@ -73,7 +75,8 @@ def _handler(tmp_path, enabled=True):
         live=SimpleNamespace(
             opened=SimpleNamespace(runner=runner),
             cameras=SimpleNamespace(launch=SimpleNamespace(
-                camera_ids={"front", "side"}))),
+                camera_ids={"front", "side"})),
+            clear_view=SimpleNamespace(before_key_capture=lambda: None)),
         transfer_adapter=object(), insertion_adapter=object(),
         read_state=_state, state_for_capture=lambda _capture: _state(),
         capture_preinsert=lambda *_args: first,
@@ -86,7 +89,9 @@ def _handler(tmp_path, enabled=True):
         insertion_contact_path=tmp_path / "contact.json",
         preinsert_parameters={}, handoff_parameters={},
         insertion_parameters={"max_handoff_age_s": 1.},
-        final_parameters={}, enable_robot_motion=enabled,
+        final_parameters={},
+        release_and_clear=lambda *_args: tmp_path / "release.json",
+        enable_robot_motion=enabled,
         decision_time=lambda: 20.)
     return bound, runner, first, final
 
@@ -94,6 +99,10 @@ def _handler(tmp_path, enabled=True):
 def test_transfer_hold_then_guarded_20mm_and_vlm_label(tmp_path, monkeypatch):
     bound, runner, first, final = _handler(tmp_path)
     actions = []
+    bound.release_and_clear = lambda *_args: (
+        actions.append(("release_and_clear",)) or tmp_path / "release.json")
+    bound.live.clear_view.before_key_capture = lambda: actions.append(
+        ("clear_view_gate",))
     monkeypatch.setattr(
         live_task_handlers, "execute_bound_held_transfer",
         lambda **kwargs: actions.append(("transfer", kwargs)))
@@ -109,6 +118,9 @@ def test_transfer_hold_then_guarded_20mm_and_vlm_label(tmp_path, monkeypatch):
         live_task_handlers, "verify_raw_camera_capture",
         lambda output, **kwargs:
         actions.append(("verify", output, kwargs["phase"])))
+    monkeypatch.setattr(
+        live_task_handlers, "verify_post_insertion_release",
+        lambda *args, **kwargs: {})
     bound.handlers()["transfer_execution_gate_required"](
         runner, runner.current_decision())
     assert runner.current_decision().action == "await_guarded_insertion_and_observation"
@@ -120,9 +132,16 @@ def test_transfer_hold_then_guarded_20mm_and_vlm_label(tmp_path, monkeypatch):
     assert [row[0] for row in runner.events] == [
         "assess_hold", "label_hold", "handoff", "assess_insertion"]
     assert [row[0] for row in actions] == [
-        "transfer", "write", "verify", "insertion", "write", "verify"]
-    assert actions[4][1] is final and actions[4][3] == "final_or_abort"
+        "transfer", "write", "verify", "insertion", "release_and_clear",
+        "clear_view_gate", "write", "verify"]
+    assert actions[6][1] is final and actions[6][3] == "final_clear_view"
     assert runner.events[-1][1]["metric_record_path"] == tmp_path / "metric.json"
+    assert runner.events[-1][1]["initial_key_bundle"] == tmp_path / "initial_key"
+    capture_root = tmp_path / "attempts" / "attempt_001" / "raw_captures"
+    assert runner.events[-1][1]["preinsert_bundle"] == (
+        capture_root / "preinsert" / "preinsert_001")
+    assert runner.events[-1][1]["final_bundle"] == (
+        capture_root / "final_clear_view" / "final_001")
     assert runner.current_decision().action == "session_success"
 
 

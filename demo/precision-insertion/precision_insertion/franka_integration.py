@@ -39,7 +39,7 @@ _LIFT_MONITOR_KEYS = frozenset({
 _CHECKPOINT_CAPTURES = {
     "lift": {"capture_after_lift": "after_lift"},
     "task": {"capture_preinsert": "preinsert",
-             "capture_final": "final_or_abort"},
+             "capture_final": "final_clear_view"},
     "retry": {"capture_withdrawn": "preinsert"},
 }
 
