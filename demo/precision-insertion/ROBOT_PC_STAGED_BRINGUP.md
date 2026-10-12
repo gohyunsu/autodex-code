@@ -362,7 +362,9 @@ all 20 cameras, and returned every camera to `READY` with no controller.
 The saved report is at
 `/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical/live_camera_stream_probe_20261013/report.json`.
 One inspected view (`24122734.jpg`) showed soda cans in a box, not the
-ChArUco/key/socket setup. This proves camera transport only; the board,
+ChArUco/key/socket setup. A saved-JPEG check found **zero known ChArUco
+markers in all 20 views** (`charuco_presence_probe.json` beside the report).
+This proves camera transport only; the board,
 socket-only SAM/FoundPose and key-with-socket stages still need real captures.
 
 There is presently **no one-command, camera-only live key-with-socket trial**
