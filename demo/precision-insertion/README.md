@@ -2594,7 +2594,7 @@ prepared = prepare_next_live_key(
     calibrated_camera_ids=active_serials,
     intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
     image_hw=(H, W),
-    key_prompt="blue precision key on the board, excluding the fixed red socket",
+    key_prompt="white plastic cylindrical peg",  # cylinder mode; square needs its own prompt
     view_limits=commissioned_view_limits,
     maximum_multiview_center_error_mm=commissioned_center_mm,
     maximum_multiview_angle_error_deg=commissioned_angle_deg,

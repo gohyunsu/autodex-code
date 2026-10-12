@@ -199,7 +199,7 @@ def build_handlers(live):
         live=live, planner=planner,
         state_for_observation=feedback_sampler.state_for_observation,
         limits=path_audit_limits,
-        key_prompt="blue precision key on the board, excluding the fixed red socket",
+        key_prompt="white plastic cylindrical peg",
         key_parameters=commissioned_key_parameters,
     )
     pickup = LivePickupHandlers(
@@ -293,7 +293,7 @@ def build_handlers(live):
         state_for_observation=feedback_sampler.state_for_observation,
         withdraw_guarded=commissioned_guarded_withdrawal,
         record_execution=commissioned_controller_recorder,
-        key_prompt="blue precision key on the board, excluding the fixed red socket",
+        key_prompt="white plastic cylindrical peg",
         capture_parameters=commissioned_capture_parameters,
         return_parameters=commissioned_return_parameters,
         landing_parameters=commissioned_landing_parameters,
