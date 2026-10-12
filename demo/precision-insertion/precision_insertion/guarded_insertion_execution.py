@@ -272,6 +272,7 @@ def execute_bound_guarded_insertion(
         record = {
             **base, "started_at_s": begun, "completed_at_s": completed,
             "safety_abort": result["safety_abort"],
+            "grasp_held": metric["measurement"]["grasp_held"],
             "metric_record": {"path": str(metric_path),
                               "sha256": _sha(metric_path)},
             "post_state": post.to_record(),

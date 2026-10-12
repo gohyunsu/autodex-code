@@ -335,10 +335,12 @@ def test_xy_only_retry_one_view_uses_nominal_height_and_zero_view_explores():
     one = resolve_xy_only_cylinder_alignment(
         rows[:1], {"status": "abstain"}, nominal_tip_z_socket_m=.09,
         search_index=0)
+    assert one["status"] == "diagnostic_planar_xy_hypothesis"
     assert one["xy_source"] == "single_view_nominal_tip_height_plane"
     assert one["xy_correction_socket_m"] == pytest.approx([-.003, .002], abs=1e-6)
     none = resolve_xy_only_cylinder_alignment(
         [], {"status": "abstain"}, nominal_tip_z_socket_m=.09,
         search_index=1)
+    assert none["status"] == "diagnostic_exploratory_xy_step"
     assert none["xy_source"] == "no_metric_measurement_exploratory_search"
     assert np.linalg.norm(none["bounded_xy_increment_socket_m"]) == pytest.approx(.002)

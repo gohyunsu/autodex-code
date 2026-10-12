@@ -3026,7 +3026,7 @@ class SessionRunner:
         self, *, diagnostic: GroundedXYDiagnostic | PreinsertXYDiagnostic,
         diagnostic_report_path: Path, timestamp_s: float,
     ) -> AttemptRecord:
-        """Queue one measured XY wrist correction for a new pickup only."""
+        """Queue source-labeled XY wrist advice for a new pickup only."""
         action = self.current_decision().action
         if (self.mode.family != "cylinder" or
                 action not in {
@@ -3038,7 +3038,10 @@ class SessionRunner:
                  self._future_xy_corrections_used >= self.max_xy_retries) or
                 not isinstance(diagnostic, (
                     GroundedXYDiagnostic, PreinsertXYDiagnostic)) or
-                diagnostic.status != "diagnostic_metric_xy_correction" or
+                diagnostic.status not in {
+                    "diagnostic_metric_xy_correction",
+                    "diagnostic_planar_xy_hypothesis",
+                    "diagnostic_exploratory_xy_step"} or
                 diagnostic.attempt_id != self._attempt.attempt_id or
                 diagnostic.candidate_id != self._attempt.candidate_id or
                 diagnostic.session_calibration_sha256 != self.session_sha256):
@@ -3058,9 +3061,27 @@ class SessionRunner:
             raise ValueError("saved multi-view diagnostic differs from advice")
         increment = diagnostic.alignment.get("bounded_xy_increment_socket_m")
         inliers = diagnostic.alignment.get("inlier_cameras")
+        source_kind = diagnostic.alignment.get("xy_source")
+        expected_sources = {
+            "diagnostic_metric_xy_correction": {
+                "multiview_tip_and_axis",
+                "multiview_tip_xy_vertical_axis_assumption"},
+            "diagnostic_planar_xy_hypothesis": {
+                "single_view_nominal_tip_height_plane"},
+            "diagnostic_exploratory_xy_step": {
+                "no_metric_measurement_exploratory_search"},
+        }
         if (not isinstance(increment, list) or len(increment) != 2 or
-                not isinstance(inliers, list)):
-            raise ValueError("grounded diagnostic lacks metric XY/inliers")
+                not isinstance(inliers, list) or
+                source_kind not in expected_sources[diagnostic.status] or
+                diagnostic.alignment.get("status") != diagnostic.status or
+                (diagnostic.status == "diagnostic_exploratory_xy_step" and
+                 len(inliers) != 0) or
+                (diagnostic.status == "diagnostic_planar_xy_hypothesis" and
+                 len(inliers) != 1) or
+                (diagnostic.status == "diagnostic_metric_xy_correction" and
+                 len(inliers) < 2)):
+            raise ValueError("grounded diagnostic status and XY source disagree")
         correction = tuple(float(value) for value in increment)
         applied_step = tuple(self.xy_update_weight * value for value in correction)
         prior = self._attempt.wrist_correction_socket_m
@@ -3073,6 +3094,7 @@ class SessionRunner:
             update_weight=self.xy_update_weight,
             applied_step_socket_xy_m=applied_step,
             next_wrist_correction_socket_m=cumulative,
+            advice_kind=diagnostic.status,
             supporting_cameras=cameras, timestamp_s=timestamp_s,
             evidence_refs=(
                 {"preinsert_snapshot": str(
@@ -3087,6 +3109,9 @@ class SessionRunner:
             "source_attempt_id": snapshot.attempt_id,
             "candidate_id": snapshot.candidate_id,
             "tabletop_pose_stem": snapshot.tabletop_pose_stem,
+            "advice_kind": diagnostic.status,
+            "xy_source": source_kind,
+            "supporting_cameras": list(cameras),
             "increment_socket_xy_m": list(correction),
             "update_weight": self.xy_update_weight,
             "applied_step_socket_xy_m": list(applied_step),

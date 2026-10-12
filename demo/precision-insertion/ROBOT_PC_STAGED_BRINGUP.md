@@ -41,7 +41,9 @@ level must not be reported as success at the next.
    attempt. The next commanded wrist bias is `p_next = p_previous + w*d`,
    with default `w=1.0`, a 10 mm bound on each weighted step and no separate
    cumulative cap. A no-visible-tip fallback is an **exploratory 2 mm step**,
-   not a VLM-measured millimetre error. Then clear view, perceive the released
+   not a VLM-measured millimetre error. Metric, nominal-height planar and
+   exploratory advice have distinct statuses in the saved report. Then clear
+   view, perceive the released
    key, and restore its original tabletop pose/position in the same failed
    attempt. The next attempt starts with another fresh key observation.
    `unobservable`, a controller/safety abort, or lost grasp is not the same
@@ -63,7 +65,7 @@ active label path.
 | FR3/Inspire basic resources | `franka_core.open_franka_core` constructs the existing AutoDex planner, completion-checked FR3 executor, measured-state reader and clear-view gate | Check the actual daemon/hand connection and feedback on the robot PC. Construction connects but does not call `home()`. Commission any motion separately. |
 | Lift and non-contact transfer | Stage handlers, saved paths, FK/path checks, optional measured-motion adapter | Supply stage-specific execution adapters/interlocks and check measured trajectory completion and hand state. The generic trajectory follower is not a contact-insertion controller. |
 | Guarded insertion | 20 mm path/handoff verifier, contact decision/trace schema and execution-evidence verifier | Implement `insertion_adapter.follow_guarded_insertion(...)` and `stop_and_acknowledge()` on the robot side, with a watchdog/contact stop, force/torque acquisition and an authentic bound metric record. Provide reviewed watchdog/contact commissioning records; do not bypass this by replaying joint points through an ordinary follower. |
-| Release and final view | Ordering and SHA-bound `verify_post_insertion_release` record schema | Implement `task.release_and_clear(live, runner, decision, execution)`: open the hand, perform the checked exit to clear view, and return a new `precision_insertion_poststroke_release_clear_view_v1` JSON record. The code checks its ordering and later measured clear-view state; it cannot manufacture the physical motion. |
+| Release and final view | Abort/grasp gate and ordering and SHA-bound `verify_post_insertion_release` record schema | Implement `task.release_and_clear(live, runner, decision, execution)`: after a non-aborted stroke with a verified held key, open the hand, perform the checked exit to clear view, and return a new `precision_insertion_poststroke_release_clear_view_v1` JSON record. An abort or unknown/lost key remains held for supervised recovery. The code checks ordering and later measured clear-view state; it cannot manufacture the physical motion. |
 | Failed key restoration and reorient | Fresh released-key perception, source-pose/directed-v8 candidate selection and socket-aware reset preflight | Implement `held_return.execute_restoration` and `repose_execution.execute_repose` with authentic execution logs. Plans must be recomputed for each newly observed landing; a seed or one hypothetical passing plan is not a universal path. Observe the landing before declaring the attempt restored. |
 | VLM outcome | Local Qwen default, optional manual label with independent VLM result retained, visual label reports | Test on *real paired AutoDex frames*. A parseable answer or `inside_socket` is not a metric depth test. Decide separately whether an independently verified 20 mm metric is part of the study endpoint. |
 

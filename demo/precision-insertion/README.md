@@ -487,14 +487,15 @@ that session and catalogue. For each new key observation:
    session, not `observe_reset_landing` on the successful one. For a failed
    insertion, a supervised return remains evidence-only, not automatic
    extraction or reset motion.
-4. After an observed **cylinder** insertion failure, withdraw axially and
-   capture the still-held key with the same AutoDex cameras. The saved
-   multi-view tip/axis diagnostic gives a socket-frame residual `d_n`, capped
-   at 10 mm per update. With insufficient visible landmarks it instead records
-   a single-view nominal-height estimate or an explicitly exploratory step;
-   it does not treat that as a measured multi-view residual. Do not move
-   laterally or insert again in this attempt. Return the
-   key to the tabletop, clear the view and recognize it again. A new pickup
+4. In the active cylinder live route, the hand opens and reaches clear view
+   before the final visual verdict. After a visible `outside_socket` failure,
+   replay the **saved pre-insertion raw views**; do not withdraw or lift the
+   key for another image. Multi-view tip/axis reconstruction gives a
+   socket-frame residual `d_n`, capped at 10 mm per update. A single-view
+   nominal-height estimate and no-tip 2 mm exploration have separate statuses
+   and are never labeled as multi-view measurements. Do not move laterally or
+   insert again in this attempt. Observe the released key, restore its
+   original tabletop pose/position and recognize it again. A new pickup
    of the same grasp and tabletop class uses the accumulated wrist correction
    `p_(n+1)=p_n+w*d_n`, initially zero, with default `w=1.0`. The grasp and
    held-path preflights run again. See [NEXT_TRIAL_XY.md](NEXT_TRIAL_XY.md).

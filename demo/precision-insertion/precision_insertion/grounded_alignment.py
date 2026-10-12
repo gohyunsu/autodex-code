@@ -250,9 +250,15 @@ def resolve_xy_only_cylinder_alignment(
         correction = -np.asarray(point[:2], dtype=float)
     magnitude = float(np.linalg.norm(correction))
     increment = correction * min(1.0, NEXT_TRIAL_XY_MAX_STEP_M / magnitude)
+    status = (
+        "diagnostic_exploratory_xy_step"
+        if source == "no_metric_measurement_exploratory_search" else
+        "diagnostic_planar_xy_hypothesis"
+        if source == "single_view_nominal_tip_height_plane" else
+        "diagnostic_metric_xy_correction")
     return {
         **dict(alignment),
-        "status": "diagnostic_metric_xy_correction",
+        "status": status,
         "reason": source,
         "xy_source": source,
         "inlier_cameras": supporting,

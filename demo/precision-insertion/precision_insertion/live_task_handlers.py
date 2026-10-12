@@ -184,6 +184,11 @@ class LiveTaskHandlers:
             motion_interlock=self.motion_interlock,
             enable_robot_motion=self.enable_robot_motion,
             **dict(self.insertion_parameters))
+        if (execution.get("safety_abort") is not False or
+                execution.get("grasp_held") is not True):
+            raise RuntimeError(
+                "guarded insertion aborted or lost the key; keep the terminal "
+                "hold for supervised recovery instead of opening the hand")
         metric = Path(execution["metric_record"]["path"])
         if not callable(self.release_and_clear):
             raise RuntimeError(

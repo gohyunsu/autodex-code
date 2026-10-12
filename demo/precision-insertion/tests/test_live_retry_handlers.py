@@ -12,7 +12,10 @@ from precision_insertion import live_retry_handlers  # noqa: E402
 from precision_insertion.session_policy import SessionDecision  # noqa: E402
 
 
-@pytest.mark.parametrize("status", ["abstain", "diagnostic_metric_xy_correction"])
+@pytest.mark.parametrize("status", [
+    "abstain", "diagnostic_metric_xy_correction",
+    "diagnostic_planar_xy_hypothesis", "diagnostic_exploratory_xy_step",
+])
 def test_live_grounded_advice_never_moves_xy_in_same_attempt(
         tmp_path, status):
     decision = SessionDecision(
@@ -61,5 +64,5 @@ def test_live_grounded_advice_never_moves_xy_in_same_attempt(
     handler.assess_for_next_trial(runner, decision)
     assert events == [("diagnostic", backend), (
         ("unavailable", "vlm_abstain") if status == "abstain" else
-        ("next_trial", "diagnostic_metric_xy_correction"))]
+        ("next_trial", status))]
     assert set(handler.handlers()) == {"assess_saved_preinsert_xy"}

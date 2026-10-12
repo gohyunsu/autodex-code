@@ -240,6 +240,7 @@ class AttemptRecord:
         next_wrist_correction_socket_m: tuple[float, float],
         supporting_cameras: tuple[str, ...], timestamp_s: float,
         evidence_refs: Mapping[str, str],
+        advice_kind: str = "diagnostic_metric_xy_correction",
     ) -> None:
         """Record advice for a *new pickup*, without moving this held grasp."""
         if self.mode.family != "cylinder":
@@ -272,6 +273,11 @@ class AttemptRecord:
         if (not isinstance(supporting_cameras, tuple) or
                 len(set(supporting_cameras)) != len(supporting_cameras)):
             raise ValueError("next-trial advice needs distinct supporting cameras")
+        if advice_kind not in {
+                "diagnostic_metric_xy_correction",
+                "diagnostic_planar_xy_hypothesis",
+                "diagnostic_exploratory_xy_step"}:
+            raise ValueError("next-trial advice needs a recognized XY source kind")
         refs = _refs(evidence_refs, "preinsert_reached", False)
         if ("grounded_xy" not in refs or
                 not ({"axial_withdrawal", "preinsert_snapshot"} & refs.keys())):
@@ -283,6 +289,7 @@ class AttemptRecord:
         self.events.append({
             "event_index": len(self.events), "timestamp_s": timestamp,
             "stage": "next_trial_xy_advice", "value": [dx, dy],
+            "advice_kind": advice_kind,
             "update_weight": update_weight,
             "prior_wrist_correction_socket_m": list(
                 self.wrist_correction_socket_m),

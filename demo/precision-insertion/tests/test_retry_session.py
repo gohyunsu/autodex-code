@@ -524,7 +524,7 @@ def test_cylinder_retry_diagnostic_accepts_explicit_lossless_rois(
         **kwargs, alignment_limits=limits,
         roi_xyxy_by_camera={frame.camera_id: (0, 0, 100, 100)
                             for frame in kwargs["frames"]})
-    assert result.status == "diagnostic_metric_xy_correction"
+    assert result.status == "diagnostic_exploratory_xy_step"
     assert result.alignment["xy_source"] == (
         "no_metric_measurement_exploratory_search")
     assert result.alignment["grounding_input"] == "lossless_raw_roi"

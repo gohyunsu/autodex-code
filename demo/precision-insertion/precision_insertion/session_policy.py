@@ -131,7 +131,7 @@ def decide_after_attempt(
             "fresh_key_pose", "fresh_robot_state")
     if labels["insertion_success"] is True:
         return result(
-            "session_success", "observed_20mm_insertion_success_end_session")
+            "session_success", "observed_task_success_end_session")
     if labels["reset_success"] is True:
         return result(
             "reobserve_key_and_preflight", "reset_observed",

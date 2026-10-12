@@ -181,7 +181,7 @@ class UnobservedXYDiagnostic:
 
 @dataclass(frozen=True)
 class GroundedXYDiagnostic:
-    """Metric visual hypothesis, with no retry preflight or pending motion."""
+    """Visual XY advice with explicit metric, planar or exploratory source."""
 
     status: str
     attempt_id: str
@@ -218,14 +218,14 @@ class GroundedXYDiagnostic:
             "alignment": self.alignment,
             "vlm_observations": [v.to_record() for v in self.vlm_observations],
             "preflight": None,
-            "scope": "saved_metric_hypothesis_only_not_pending_retry_or_robot_motion",
+            "scope": "saved_xy_advice_only_not_pending_retry_or_robot_motion",
             "robot_ready": False,
         }
 
 
 @dataclass(frozen=True)
 class PreinsertXYDiagnostic:
-    """Metric XY estimate replayed from the saved pre-insertion snapshot."""
+    """XY advice replayed from the saved pre-insertion snapshot."""
 
     status: str
     attempt_id: str

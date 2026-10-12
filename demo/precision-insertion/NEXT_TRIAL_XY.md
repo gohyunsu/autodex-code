@@ -24,6 +24,14 @@ pose—not VLM text—produce a socket-frame metric XY estimate.
   the trial loop. Record an explicitly named deterministic 2 mm XY search
   step. It is exploration, not multi-view triangulation.
 
+The diagnostic status is `diagnostic_metric_xy_correction` for a multi-view
+measurement, `diagnostic_planar_xy_hypothesis` for a single-view ray intersected
+with the commanded height plane, or `diagnostic_exploratory_xy_step` when no
+usable tip was observed. `next_trial_xy_advice.json` and the attempt event
+retain this status, the exact `xy_source`, and the supporting camera IDs. An
+exploratory step has no supporting camera and must never be described as a
+measured XY residual.
+
 The continuous correction `d_n` is clipped to a **10 mm Euclidean norm per
 failed attempt**. It is applied only to the *next* pickup:
 

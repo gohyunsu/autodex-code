@@ -116,7 +116,7 @@ def _setup(tmp_path: Path, monkeypatch):
         "schema": "precision_insertion_guarded_execution_v2",
         "axial_handoff": {"path": str(handoff_report),
                             "sha256": _sha(handoff_report)},
-        "measurement": {"safety_abort": False},
+        "measurement": {"safety_abort": False, "grasp_held": True},
     }
     monkeypatch.setattr(execution, "_metric_record", lambda *_a, **_k:
                         (metric, 102.33, 102.5))
@@ -188,6 +188,7 @@ def test_guarded_insertion_records_external_stroke_without_task_label(
     record = execute_bound_guarded_insertion(
         **args, enable_robot_motion=True)
     assert record["safety_abort"] is False
+    assert record["grasp_held"] is True
     assert record["robot_ready"] is False
     assert args["runner"]._attempt.labels["insertion_success"] is None
     assert args["adapter"].calls == 1
@@ -282,7 +283,7 @@ def test_observed_xy_retry_reuses_guarded_controller_with_retry_handoff(
         "schema": "precision_insertion_guarded_execution_v2",
         "axial_handoff": {"path": str(retry_report),
                             "sha256": _sha(retry_report)},
-        "measurement": {"safety_abort": False},
+        "measurement": {"safety_abort": False, "grasp_held": True},
     }
     monkeypatch.setattr(execution, "_metric_record", lambda *_a, **_k:
                         (metric, 102.33, 102.5))

@@ -61,7 +61,10 @@ class LiveGroundedRetryHandlers:
             **dict(self.diagnostic_parameters))
         diagnostic_path = self._report(
             runner, "xy_retry_assessments", diagnostic_index)
-        if diagnostic.status != "diagnostic_metric_xy_correction":
+        if diagnostic.status not in {
+                "diagnostic_metric_xy_correction",
+                "diagnostic_planar_xy_hypothesis",
+                "diagnostic_exploratory_xy_step"}:
             self._unavailable(runner, "vlm_abstain", diagnostic_path)
             return
         runner.record_next_trial_xy_advice(

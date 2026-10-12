@@ -213,7 +213,9 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
         postlift_preflight_sha256="postlift_hash", frame_binding={},
         joint_sample=SimpleNamespace(to_record=lambda: {}),
         alignment={"bounded_xy_increment_socket_m": [0.0006, -0.0008],
-                   "inlier_cameras": ["cam0", "cam1"]},
+                   "inlier_cameras": ["cam0", "cam1"],
+                   "status": "diagnostic_metric_xy_correction",
+                   "xy_source": "multiview_tip_and_axis"},
         vlm_observations=())
     source = runner._attempt_dir / "xy_retry_assessments/000/report.json"
     source.parent.mkdir(parents=True)
@@ -269,7 +271,7 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
     bundle2.mkdir()
     (bundle2 / "manifest.json").write_text("{}", encoding="utf-8")
     diagnostic2 = PreinsertXYDiagnostic(
-        status="diagnostic_metric_xy_correction",
+        status="diagnostic_exploratory_xy_step",
         attempt_id=second.attempt_id, candidate_id=second.candidate_id,
         session_calibration_sha256=runner.session_sha256,
         camera_calibration_sha256="camera_hash",
@@ -283,8 +285,10 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
         postlift_preflight_path=tmp_path / "postlift2.json",
         postlift_preflight_sha256="postlift_hash", frame_binding={},
         joint_sample=SimpleNamespace(to_record=lambda: {}),
-        alignment={"bounded_xy_increment_socket_m": [0.0004, 0.0],
-                   "inlier_cameras": ["cam0", "cam1"]},
+        alignment={"bounded_xy_increment_socket_m": [0.002, 0.0],
+                   "inlier_cameras": [],
+                   "status": "diagnostic_exploratory_xy_step",
+                   "xy_source": "no_metric_measurement_exploratory_search"},
         vlm_observations=())
     source2 = runner._attempt_dir / "xy_retry_assessments/000/report.json"
     source2.parent.mkdir(parents=True)
@@ -296,15 +300,18 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
                           "next_trial_xy_advice.json").read_text())
     assert advice2["prior_wrist_correction_socket_m"] == pytest.approx(
         [0.0003, -0.0004])
+    assert advice2["advice_kind"] == "diagnostic_exploratory_xy_step"
+    assert advice2["xy_source"] == "no_metric_measurement_exploratory_search"
+    assert advice2["supporting_cameras"] == []
     assert advice2["next_wrist_correction_socket_m"] == pytest.approx(
-        [0.0005, -0.0004])
+        [0.0013, -0.0004])
     runner._record(lambda row: row.record_stage(
         "reset_success", True, timestamp_s=12.0,
         evidence_refs={"key_pose": "fresh_key3.json"}))
     _plan(runner, _observation("key_3", 13.0))
     runner.begin_selected_attempt(attempt_id="attempt_3", started_at_s=13.2)
     assert runner.active_attempt.wrist_correction_socket_m == pytest.approx(
-        (0.0005, -0.0004))
+        (0.0013, -0.0004))
 
 
 def test_grounded_lateral_session_only_accepts_own_saved_diagnostic(

@@ -142,8 +142,11 @@ supplies the remaining commissioned contact, recovery and repose callbacks.
 An optional [`held_motion_monitor` block](MEASURED_LIFT_ADAPTER.md) builds
 one measured non-contact adapter for lift and first transfer. The task stage
 must additionally supply `release_and_clear`; it opens Inspire after the
-single 20 mm stroke and follows a commissioned collision-checked exit to
-FR3 clear view. The callback returns a
+single 20 mm stroke only when the bound controller reports no safety abort
+and a verified held key. An abort, lost key, or unknown grasp state keeps the
+terminal hold for supervised recovery without release or final task capture.
+On a permitted release, the callback follows a commissioned collision-checked
+exit to FR3 clear view. The callback returns a
 `precision_insertion_poststroke_release_clear_view_v1` JSON record bound to
 the guarded metric record. Retry itself has no motion or capture adapter: it
 reuses the saved pre-insertion snapshot. The active released-failure branch
@@ -301,7 +304,9 @@ its effective update weight and retry budget are zero. Historical square
 diagnostic helpers are not assembled into the active pipeline.
 If full tip/axis marks are unavailable, use a calibrated multi-view tip,
 single-view nominal-height intersection or explicitly exploratory step,
-according to the available evidence. The older
+according to the available evidence. These have distinct diagnostic statuses
+and the saved next-trial advice records the source and supporting cameras;
+an exploratory step is not a measured XY error. The older
 `LiveObservedXYRetryHandlers` is not selected by runtime assembly and its
 same-attempt action is unsupported by the session policy. The robot-PC
 factory still supplies actual withdrawal/contact adapters and limits.

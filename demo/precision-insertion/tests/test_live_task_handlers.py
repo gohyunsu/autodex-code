@@ -112,6 +112,7 @@ def test_transfer_hold_then_guarded_20mm_and_vlm_label(tmp_path, monkeypatch):
     monkeypatch.setattr(
         live_task_handlers, "execute_bound_guarded_insertion",
         lambda **kwargs: (actions.append(("insertion", kwargs)) or {
+            "safety_abort": False, "grasp_held": True,
             "metric_record": {"path": str(tmp_path / "metric.json")}}))
     monkeypatch.setattr(
         live_task_handlers, "write_raw_camera_capture",
@@ -147,6 +148,31 @@ def test_transfer_hold_then_guarded_20mm_and_vlm_label(tmp_path, monkeypatch):
     assert runner.events[-1][1]["final_bundle"] == (
         capture_root / "final_clear_view" / "final_001")
     assert runner.current_decision().action == "session_success"
+
+
+@pytest.mark.parametrize("result", [
+    {"safety_abort": True, "grasp_held": True},
+    {"safety_abort": False, "grasp_held": False},
+    {"safety_abort": False, "grasp_held": None},
+])
+def test_guarded_abort_or_lost_key_never_releases(tmp_path, monkeypatch, result):
+    bound, runner, *_ = _handler(tmp_path)
+    actions = []
+    runner.decision = SessionDecision(
+        "await_guarded_insertion_and_observation", "hold_observed", "table/0/3")
+    bound._preinsert_attempt_id = runner.active_attempt.attempt_id
+    bound._preinsert_bundle = tmp_path / "preinsert_bundle"
+    bound.release_and_clear = lambda *_args: actions.append("release")
+    bound.capture_final = lambda *_args: actions.append("capture")
+    monkeypatch.setattr(
+        live_task_handlers, "execute_bound_guarded_insertion",
+        lambda **kwargs: {**result, "metric_record": {
+            "path": str(tmp_path / "metric.json")}})
+    with pytest.raises(RuntimeError, match="supervised recovery"):
+        bound.handlers()["await_guarded_insertion_and_observation"](
+            runner, runner.current_decision())
+    assert actions == []
+    assert [row[0] for row in runner.events] == ["handoff"]
 
 
 def test_motion_disabled_before_transfer_or_insertion(tmp_path):
