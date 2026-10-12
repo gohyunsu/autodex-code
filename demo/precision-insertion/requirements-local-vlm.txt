@@ -1,4 +1,4 @@
-# Optional, isolated local-inference extras matching the ZeroDex checkout.
+# Optional, isolated first-party Qwen3-VL inference extras.
 # Install in a separate venv with the hardware-compatible PyTorch already
 # available; do not install these into the production AutoDex environment.
 transformers==5.5.0

@@ -298,7 +298,8 @@ def test_franka_integration_starts_and_injects_exposure_sampler(
     }
     integration = franka_integration.factory(_options(tmp_path, config))
     integration.build_components(SimpleNamespace(
-        cameras=SimpleNamespace(launch=SimpleNamespace(image_hw=(1080, 1920)))))
+        cameras=SimpleNamespace(launch=SimpleNamespace(
+            image_hw=(1080, 1920), shared_root=tmp_path))))
     integration.close()
     assert events == ["sampler_start", "close"]
 
@@ -346,9 +347,12 @@ def test_first_party_qwen_and_fresh_checkpoint_callbacks(monkeypatch, tmp_path):
     config["vlm"] = {"capture_timeout_s": 6.0}
     integration = franka_integration.factory(_options(tmp_path, config))
     integration.build_components(SimpleNamespace(
-        cameras=SimpleNamespace(launch=SimpleNamespace(image_hw=(1080, 1920)))))
+        cameras=SimpleNamespace(launch=SimpleNamespace(
+            image_hw=(1080, 1920), shared_root=tmp_path))))
     assert loaded == [{
-        "mode": "local", "model_id": None, "max_input_size": (1920, 1088),
+        "mode": "local", "model_id": str(
+            tmp_path / "AutoDex/models/Qwen3-VL-2B-Instruct"),
+        "max_input_size": (1920, 1088),
         "max_new_tokens": 512, "require_native_pixels": True}]
     assert len(captures) == 3
     assert all(timeout == 6.0 for _phase, timeout in captures)

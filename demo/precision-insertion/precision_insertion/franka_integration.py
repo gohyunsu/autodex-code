@@ -196,8 +196,11 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             native_ceiling = (
                 ((width + 31) // 32) * 32,
                 ((height + 31) // 32) * 32)
+            model_id = (vlm["model_id"] or str(
+                live.cameras.launch.shared_root /
+                "AutoDex/models/Qwen3-VL-2B-Instruct"))
             shared["backend"] = load_vlm_backend(
-                mode=vlm["mode"], model_id=vlm["model_id"],
+                mode=vlm["mode"], model_id=model_id,
                 max_input_size=native_ceiling,
                 max_new_tokens=vlm["max_new_tokens"],
                 require_native_pixels=vlm["require_native_pixels"])

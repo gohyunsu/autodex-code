@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.observer import (  # noqa: E402
     DEFAULT_LOCAL_VLM_MODEL_ID, HeldSceneView, LabeledFrame, XYView,
     ZeroDexGeminiBackend,
-    ZeroDexLocalBackend, load_vlm_backend,
+    LocalQwenBackend, ZeroDexLocalBackend, load_vlm_backend,
     observe_insertion_visual, observe_lift, observe_preinsert_hold_views,
     observe_preinsert_raw_views, observe_preinsert_temporal_views,
     observe_released_insertion_visual,
@@ -489,19 +489,18 @@ def test_local_loader_fails_before_model_download_without_cuda(monkeypatch):
     import torch
 
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    with pytest.raises(RuntimeError, match="model was not downloaded"):
-        ZeroDexLocalBackend.from_zerodex(max_input_size=(1280, 720))
+    with pytest.raises(RuntimeError, match="model was not loaded"):
+        LocalQwenBackend.from_transformers(max_input_size=(1280, 720))
 
 
-def test_local_loader_reuses_zerodex_without_gemini_or_resize(monkeypatch):
+def test_local_loader_uses_first_party_qwen_without_gemini_or_resize(monkeypatch):
     loaded = []
-    zerodex_main = ModuleType("main")
-    zerodex_core = ModuleType("main.vlm_base")
+    from precision_insertion import local_qwen
 
-    class StubBaseVLM:
+    class StubQwen:
         def __init__(self, **kwargs):
             loaded.append(kwargs)
-            self.family = kwargs["family"]
+            self.family = "qwen"
             self.max_input_size = kwargs["max_input_size"]
             self.processor = SimpleNamespace(image_processor=SimpleNamespace(
                 patch_size=2, merge_size=2,
@@ -510,20 +509,18 @@ def test_local_loader_reuses_zerodex_without_gemini_or_resize(monkeypatch):
         def infer_images_prompt(self, images, prompt, max_new_tokens):
             return SimpleNamespace(answer='{"class":"held"}')
 
-    zerodex_core.BaseVLM = StubBaseVLM
-    monkeypatch.setitem(sys.modules, "main", zerodex_main)
-    monkeypatch.setitem(sys.modules, "main.vlm_base", zerodex_core)
+    monkeypatch.setattr(local_qwen, "LocalQwenModel", StubQwen)
     backend = load_vlm_backend(
         mode="local", model_id="Qwen/test", max_input_size=(16, 12),
         max_new_tokens=40, require_cuda=False)
     assert loaded == [{
-        "model_id": "Qwen/test", "family": "qwen",
-        "max_input_size": (16, 12), "use_thinking": False,
+        "model_id": "Qwen/test", "max_input_size": (16, 12),
+        "require_cuda": False,
     }]
     assert backend.infer([_image()], "label") == '{"class":"held"}'
     default_backend = load_vlm_backend(
         max_input_size=(16, 12), max_new_tokens=40, require_cuda=False)
-    assert isinstance(default_backend, ZeroDexLocalBackend)
+    assert isinstance(default_backend, LocalQwenBackend)
     assert loaded[-1]["model_id"] == DEFAULT_LOCAL_VLM_MODEL_ID
     with pytest.raises(ValueError, match="explicit model ID"):
         load_vlm_backend(mode="gemini", max_input_size=(16, 12))

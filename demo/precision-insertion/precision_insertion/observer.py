@@ -1,4 +1,4 @@
-"""Read-only, event-driven VLM observations using ZeroDex backend contracts.
+"""Read-only, event-driven VLM observations over AutoDex camera frames.
 
 This module never commands a robot. It makes image order explicit, validates
 closed-set responses, and fails closed on malformed output. A visual verdict
@@ -174,14 +174,14 @@ class ZeroDexGeminiBackend:
         return (response.text or "").strip()
 
 
-class ZeroDexLocalBackend:
-    """Reuse ZeroDex BaseVLM (Qwen/Gemma), guarding original pixel geometry."""
+class LocalQwenBackend:
+    """Use local Transformers Qwen3-VL, guarding original pixel geometry."""
 
     def __init__(self, vlm, *, max_new_tokens: int = 512,
                  require_native_pixels: bool = True):
         if (not hasattr(vlm, "infer_images_prompt") or
                 type(max_new_tokens) is not int or max_new_tokens <= 0):
-            raise ValueError("local VLM needs BaseVLM and positive token limit")
+            raise ValueError("local Qwen needs an image adapter and token limit")
         self.vlm = vlm
         self.max_new_tokens = max_new_tokens
         self.native_pixel_coordinates = bool(require_native_pixels)
@@ -191,45 +191,38 @@ class ZeroDexLocalBackend:
         self.preferred_image_batch_size = 2
 
     @classmethod
-    def from_zerodex(
+    def from_transformers(
         cls, *, model_id: str = DEFAULT_LOCAL_VLM_MODEL_ID,
-        family: str = "qwen", max_input_size: tuple[int, int],
+        max_input_size: tuple[int, int],
         max_new_tokens: int = 512, require_cuda: bool = True,
         require_native_pixels: bool = True,
-    ) -> "ZeroDexLocalBackend":
-        """Explicitly load a local model; fail before downloading if no GPU.
+    ) -> "LocalQwenBackend":
+        """Load an offline Qwen model; fail before any model load if no GPU.
 
         Set ``require_cuda=False`` only for a slow offline CPU smoke test.
         ``max_input_size`` is a native-image ceiling, not a target resize.
         """
         if (not isinstance(model_id, str) or not model_id.strip() or
-                family not in {"qwen", "gemma"} or
                 not isinstance(max_input_size, tuple) or
                 len(max_input_size) != 2 or
                 any(type(v) is not int or v <= 0 for v in max_input_size)):
-            raise ValueError("local VLM needs model, family and native size ceiling")
+            raise ValueError("local Qwen needs a model and native size ceiling")
         if require_cuda:
             import torch
             if not torch.cuda.is_available():
                 raise RuntimeError(
-                    "CUDA is unavailable; local VLM model was not downloaded")
-        try:
-            from main.vlm_base import BaseVLM
-        except ImportError as exc:
-            raise RuntimeError(
-                "ZeroDex BaseVLM or its optional dependencies are unavailable; "
-                "put realtime_vlm on PYTHONPATH and install local VLM extras"
-            ) from exc
-        vlm = BaseVLM(
-            model_id=model_id, family=family,
-            max_input_size=max_input_size, use_thinking=False)
+                    "CUDA is unavailable; local Qwen model was not loaded")
+        from .local_qwen import LocalQwenModel
+        vlm = LocalQwenModel(
+            model_id=model_id, max_input_size=max_input_size,
+            require_cuda=require_cuda)
         return cls(vlm, max_new_tokens=max_new_tokens,
                    require_native_pixels=require_native_pixels)
 
     def _native_processor_geometry(self) -> tuple[int, int, int]:
         """Return Qwen's exact patch factor and accepted pixel-area range.
 
-        ZeroDex's outer aspect-preserving resize is not the only transform.
+        The Qwen image processor may resize independently of the caller.
         We pad only right and bottom so the original pixel origin and every
         source pixel are unchanged, then require the processor to leave the
         padded image untouched. Unknown processors still fail closed.
@@ -290,6 +283,11 @@ class ZeroDexLocalBackend:
         return result.answer
 
 
+# Older demo imports can still construct the same image adapter; the active
+# loader never imports or instantiates a ZeroDex module.
+ZeroDexLocalBackend = LocalQwenBackend
+
+
 def load_vlm_backend(
     *, mode: str = "local", model_id: str | None = None,
     max_input_size: tuple[int, int] | None = None,
@@ -299,7 +297,7 @@ def load_vlm_backend(
     """Choose one VLM for existing read-only checkpoint/grounding calls.
 
     Neither branch acquires cameras or authorizes a robot action. Gemini is
-    explicit external-API opt-in; local uses ZeroDex's existing BaseVLM.
+    explicit external-API opt-in; local uses first-party offline Qwen loading.
     """
     if mode == "gemini":
         if not isinstance(model_id, str) or not model_id.strip():
@@ -310,7 +308,7 @@ def load_vlm_backend(
                           else model_id)
         if max_input_size is None:
             raise ValueError("local mode needs original image-size ceiling")
-        return ZeroDexLocalBackend.from_zerodex(
+        return LocalQwenBackend.from_transformers(
             model_id=selected_model, max_input_size=max_input_size,
             max_new_tokens=max_new_tokens, require_cuda=require_cuda,
             require_native_pixels=require_native_pixels)
