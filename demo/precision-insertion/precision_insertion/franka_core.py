@@ -4,7 +4,9 @@ The robot-PC integration still supplies camera timing, contact controllers,
 and per-stage callbacks. This module owns the demo's completion-checked
 subclass of the stock Franka executor,
 FR3 cuRobo planner, measured feedback reader and clear-view gate. Importing
-it does not connect to or move the robot; ``open_franka_core`` does connect.
+it does not connect to or move the robot. ``open_franka_core`` constructs a
+command-capable executor: its constructors may send FR3 setup commands and
+Inspire angle writes, so it belongs only to the motion-authorized stage.
 """
 
 from __future__ import annotations
@@ -113,13 +115,15 @@ def open_franka_core(
     executor_factory: Callable[[], object] | None = None,
     planner_factory: Callable[[], object] | None = None,
 ) -> FrankaRuntimeCore:
-    """Connect to FR3/Inspire without commanding home or a grasp.
+    """Construct the motion-capable FR3/Inspire runtime after motion opt-in.
 
     The two optional factories allow tests to exercise resource ownership
     without a robot. Real callers should use the AutoDex constructors below.
-    ``run_live.py`` invokes its integration factory only after the explicit
-    robot-motion opt-in; that factory can call this function and return the
-    resulting ``clear_view`` and ``close`` in ``LiveRuntimeIntegration``.
+    The stock executor constructor calls FR3 stop/recovery/collision setup;
+    the Inspire constructor writes angle/speed/force registers. This is not a
+    connection-only or feedback-only probe. ``run_live.py`` invokes its
+    integration factory only after the explicit robot-motion opt-in; that
+    factory can return ``clear_view`` and ``close`` from this core.
     """
     if not isinstance(feedback, FrankaFeedbackSettings):
         raise TypeError("FR3 runtime needs explicit feedback settings")

@@ -62,7 +62,7 @@ active label path.
 | --- | --- | --- |
 | Key/socket and grasp assets | Object meshes, exact fixed-socket collision mesh, FoundPose representations, v8-filtered full-key candidates, per-gap 20 mm endpoint catalogs, Qwen bundle and some directed reset seeds | Rehydrate/rebuild catalogs under the recipient's absolute `shared_data` root. File presence is not pose accuracy or an executable Franka path. |
 | Cameras and perception | AutoDex camera transport, undistortion, SAM/FoundPose orchestration, frozen socket world and raw checkpoint bundles | Supply real serials, intrinsics/extrinsics, camera-to-robot transform, exposure-time metadata and synchronized measured state. Verify socket-only then key-with-socket frames, masks and repeatability on the actual rig. |
-| FR3/Inspire basic resources | `franka_core.open_franka_core` constructs the existing AutoDex planner, completion-checked FR3 executor, measured-state reader and clear-view gate | Check the actual daemon/hand connection and feedback on the robot PC. Construction connects but does not call `home()`. Commission any motion separately. |
+| FR3/Inspire basic resources | `franka_core.open_franka_core` constructs the existing AutoDex planner, completion-checked FR3 executor, measured-state reader and clear-view gate | Use the separate read-only feedback probe for Stage 3. `open_franka_core` creates command-capable controllers and may send setup and hand-angle writes; reserve it for the motion-authorized stage. |
 | Lift and non-contact transfer | Stage handlers, saved paths, FK/path checks, optional measured-motion adapter | Supply stage-specific execution adapters/interlocks and check measured trajectory completion and hand state. The generic trajectory follower is not a contact-insertion controller. |
 | Guarded insertion | 20 mm path/handoff verifier, contact decision/trace schema and execution-evidence verifier | Implement `insertion_adapter.follow_guarded_insertion(...)` and `stop_and_acknowledge()` on the robot side, with a watchdog/contact stop, force/torque acquisition and an authentic bound metric record. Provide reviewed watchdog/contact commissioning records; do not bypass this by replaying joint points through an ordinary follower. |
 | Release and final view | Abort/grasp gate and ordering and SHA-bound `verify_post_insertion_release` record schema | Implement `task.release_and_clear(live, runner, decision, execution)`: after a non-aborted stroke with a verified held key, open the hand, perform the checked exit to clear view, and return a new `precision_insertion_poststroke_release_clear_view_v1` JSON record. An abort or unknown/lost key remains held for supervised recovery. The code checks ordering and later measured clear-view state; it cannot manufacture the physical motion. |
@@ -393,37 +393,36 @@ not the active released-key initial/final success checkpoint.
 
 ## Stage 3 — robot connection and measured feedback, no motion
 
-Only on the authorized AutoDex PC, after validating the robot-specific
-feedback JSON, the following *connection-only* probe constructs the existing
-Franka/Inspire resources, reads one measured state and closes them. It does
-not call `home()`, execute a grasp, or insert. It **does connect** to the
-Franka daemon and initializes the CUDA planner, so run it under the rig
-operator's normal connection procedure:
+Only on the authorized AutoDex PC, use the current robot-network configuration
+to select the FR3 state PUB endpoint and Inspire Modbus endpoint. The probe
+subscribes to **FR3 state port 5556** and uses only Modbus function 03 reads
+for Inspire actual/command angle registers. It never opens FR3 command port
+5555, constructs a robot controller, or writes hand registers. Use a new
+output path and the rig operator's normal connection procedure:
 
 ```bash
-PYTHONPATH=demo/precision-insertion:src python - \
-  /absolute/recipient/franka_runtime.json <<'PY'
-import json
-import sys
-from pathlib import Path
-from precision_insertion.franka_core import (
-    FrankaFeedbackSettings, open_franka_core,
-)
-settings = json.loads(Path(sys.argv[1]).read_text())["feedback"]
-core = open_franka_core(FrankaFeedbackSettings(**settings))
-try:
-    state = core.read_state()
-    print("state_time_s:", state.sample_timestamp_s)
-    print("full_q_shape:", state.full_q.shape)
-finally:
-    core.close()
-PY
+python demo/precision-insertion/probe_robot_feedback_only.py \
+  --franka-host 127.0.0.1 --franka-state-port 5556 \
+  --inspire-host 192.168.11.210 --inspire-port 6000 \
+  --output /absolute/new/feedback_only_probe.json
 ```
 
-Confirm that the measured array has 13 FR3/Inspire joints, timestamps are
-current, arm/hand samples agree, and closing releases the daemon. Then
-commission `state_for_capture` against actual camera exposure intervals.
-Do not infer an image-time state from a read taken after a slow VLM call.
+The addresses above match this PC's current ParaDex network configuration;
+verify them before running elsewhere. Confirm two advancing 7-joint FR3
+packets and six measured/commanded Inspire registers. This read-only probe
+does not prove the two devices are exposure-aligned or stationary, nor does
+it construct the production 13-joint `LiveRobotState`. Commission the
+production feedback limits and `state_for_capture` against actual camera
+exposure intervals separately. Do not use `open_franka_core` for Stage 3:
+constructing its stock executor can write hand-angle and FR3 setup commands.
+
+The 2026-10-13 run on this PC received two advancing FR3 state packets and
+six Inspire actual and command registers, using only the read paths above.
+The saved report is at
+`/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical/feedback_only_probe_20261013.json`.
+It observed a maximum absolute FR3 velocity of 0.00198 rad/s and maximum
+Inspire actual/command difference of 13 raw units in that one sample. These
+are diagnostic observations, not commissioned hold or exposure-time limits.
 
 ## Stage 4 — full robot loop, only after stage adapters exist
 

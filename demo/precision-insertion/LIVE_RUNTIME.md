@@ -61,8 +61,11 @@ unchanged `src.execution.franka_executor.FrankaExecutor(hand_name="inspire")`,
 `GraspPlanner(hand="fr3_inspire")`, measured FR3/Inspire state reader and
 clear-view gate. The integration factory can pass `core.clear_view` and
 `core.close` to `LiveRuntimeIntegration`, and share `core.planner` and
-`core.read_state` across stages. Construction connects to the robot but does
-not command `home()`; the live session does that after explicit motion opt-in.
+`core.read_state` across stages. Construction is **not feedback-only**: the
+stock executor performs FR3 stop/recovery/collision setup and the Inspire
+constructor writes angle, speed and force registers. Call it only after
+explicit motion opt-in. For nonmoving connection checks use
+[`probe_robot_feedback_only.py`](probe_robot_feedback_only.py).
 Do not use `autodex.executor.real.RealExecutor`: it controls xArm, and the
 clear-view gate rejects it. This core does not supply a robot-side watchdog,
 guarded contact, camera timestamps or the remaining hardware callbacks.
