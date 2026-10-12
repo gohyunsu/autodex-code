@@ -8,6 +8,9 @@ files remain unchanged.
 For a concise distinction between **offline-usable**, staging-only and
 missing assets, see [OFFLINE_ASSET_STATUS.md](OFFLINE_ASSET_STATUS.md). It
 does not treat live-camera/robot commissioning as a missing 3D file.
+Presentation-ready 16:9 cylinder animations, their evidence boundary, and
+rebuild commands are indexed in
+[PRESENTATION_VISUAL_ASSETS.md](PRESENTATION_VISUAL_ASSETS.md).
 The active cylinder live loop uses a **next-physical-attempt** cumulative XY
 offset after failed insertion. It does not perform lateral correction or
 reinsertion within the failed attempt. The current behavior is specified in

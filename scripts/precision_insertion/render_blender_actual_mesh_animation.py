@@ -28,7 +28,7 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument(
         "--view",
         choices=("task", "key-socket", "reorient", "overview",
-                 "endpoint-oblique", "endpoint-side"),
+                 "endpoint-oblique", "endpoint-side", "pipeline"),
         default="task",
         help=(
             "task shows the workspace from the socket side; key-socket uses "
@@ -143,7 +143,7 @@ def main() -> int:
     camera = bpy.data.objects.new("Camera", camera_data)
     bpy.context.collection.objects.link(camera)
     camera.data.sensor_width = 36.0
-    if args.view == "task":
+    if args.view in ("task", "pipeline"):
         # Close fixed view of the entire key-to-socket workspace.  The key
         # starts near (0.40, 0.18), the socket is near (0.45, -0.10), and the
         # 12 cm lift remains in frame.  Some proximal arm links are allowed to
@@ -187,8 +187,8 @@ def main() -> int:
     scene.display.shading.curvature_valley_factor = 0.75
     scene.display.shading.show_specular_highlight = True
     scene.display.shading.show_object_outline = False
-    scene.display.shading.background_type = "VIEWPORT"
-    scene.display.shading.background_color = (0.92, 0.94, 0.97)
+    scene.world.color = (0.82, 0.85, 0.90)
+    scene.display.shading.background_type = "WORLD"
     scene.display.render_aa = "32"
     scene.render.resolution_x = args.width
     scene.render.resolution_y = args.height
