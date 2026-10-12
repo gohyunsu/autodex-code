@@ -5,6 +5,12 @@ Franka trajectory, contact-control commissioning, or physical insertion. The
 live demo currently selects only the cylinder mode. Square remains an offline
 planning mode. Keep this checkout separate from the stock AutoDex checkout.
 
+For an executable, staged AutoDex-PC checklist and the exact robot-PC callback
+contract, use [ROBOT_PC_STAGED_BRINGUP.md](ROBOT_PC_STAGED_BRINGUP.md). It
+distinguishes file-only checks, camera-only capture, connection-only feedback,
+and opt-in robot motion. In particular, a successful file audit does not make
+the live CLI a camera-only dry run.
+
 ## Local inventory
 
 Reproduce the all-mode audit on a machine where `shared_data` is installed:

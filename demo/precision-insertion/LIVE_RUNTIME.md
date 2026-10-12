@@ -37,11 +37,14 @@ socket capture and must return these ten components, all bound to that same
 4. `LiveNominalRelationHandlers` — selected v8 **unmeasured key–hand
    hypothesis** for cylinder live execution; no post-grasp key pose estimate.
 5. `LiveTaskHandlers` — transfer, arrival label, first guarded insertion.
-6. `LiveGroundedRetryHandlers` — guarded withdrawal and continuous multi-view
-   cylinder XY diagnosis; an at-most-10 mm update is saved for a **new pickup**,
-   not a same-held-attempt movement. Square live execution is disabled.
-7. `LiveHeldReturnHandlers` — held-key return, clear-view recapture and, if
-   misplaced, original-pose pick/place restoration in the same attempt.
+6. `LiveGroundedRetryHandlers` — read the **saved pre-insertion** raw views
+   after a released-key failure and calculate continuous multi-view cylinder
+   XY advice; an at-most-10 mm update is saved for a **new pickup**, with no
+   same-attempt movement or new failure-time capture. Square live execution
+   is disabled.
+7. `LiveHeldReturnHandlers` — after a released-key failure, clear-view
+   recapture and, if misplaced, original-pose pick/place restoration in the
+   same attempt; separate held-key recovery paths remain for earlier failures.
 8. `LiveTransferRecoveryHandlers` — judged grasp-miss AutoDex clear-view
    reset, fresh key capture and same-attempt original-pose restoration;
    optional planned held return when a
@@ -136,7 +139,9 @@ single 20 mm stroke and follows a commissioned collision-checked exit to
 FR3 clear view. The callback returns a
 `precision_insertion_poststroke_release_clear_view_v1` JSON record bound to
 the guarded metric record. Retry itself has no motion or capture adapter: it
-reuses the saved pre-insertion snapshot. The older
+reuses the saved pre-insertion snapshot. The active released-failure branch
+does not command a guarded withdrawal or take another held-key photograph.
+The older
 `lift_monitor` block still fills only `lift.adapter`. The factory may override
 each field. Neither setting supplies a reviewed daemon watchdog record,
 stage limits, interlock, contact controller or real-robot validation.
@@ -253,7 +258,7 @@ def build_components(live):
         live, shared=shared_robot_objects,
         stages=stage_specific_callbacks_and_limits,
         enable_robot_motion=options.enable_robot_motion,
-        held_relation_route="physical")
+  held_relation_route="nominal")
 ```
 
 This removes integration boilerplate; it does not synthesize camera frames,
@@ -333,15 +338,14 @@ release-site probes of those two seeds found no complete Franka path; one
 same-state collision isolation implicated the hypothetical table obstacle.
 This is a planner diagnostic, not a claim about every measured session.
 
-After the XY diagnostic (whether advice or abstention), the key is already
-at the withdrawn hold. The assembled held-return handler
-reuses that withdrawal record and fresh measured joint state, instead of
-commanding a second axial withdrawal. It accepts reuse only if the joints
-remain at the withdrawn hold.
-`max_withdrawal_state_gap_s` in the held-return settings must cover the
-elapsed VLM/planning time; otherwise the return raises before motion.
-The robot-PC integration must supply a real `read_state` and the
-original guarded withdrawal controller; this wiring does not implement it.
+The active released-failure branch ends its 20 mm stroke by opening the hand
+and moving to clear view **before** taking the final snapshot. If the raw
+initial/final camera pairs show the key visibly outside the socket, the
+retry handler reuses the earlier pre-insertion snapshot for next-attempt XY
+advice. The held-return handler then observes the released key and restores
+its original tabletop pose/position before a new attempt. The older guarded
+withdrawal and held-key return utilities remain available to other opt-in
+paths, but they are **not** the active cylinder insertion-failure route.
 
 For VLM checkpoints, `make_checkpoint_capture` in
 `precision_insertion.checkpoint_camera` supplies the existing handlers'
