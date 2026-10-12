@@ -9,6 +9,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.usefixtures(
+    "mock_axis_for_fake_planner", "mock_curobo_compat_for_composition")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from autodex.utils.sync import convert_inspire_raw  # noqa: E402

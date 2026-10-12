@@ -11,6 +11,8 @@ import time
 
 import numpy as np
 import pytest
+
+pytestmark = pytest.mark.usefixtures("mock_axis_for_fake_planner")
 import coal  # noqa: F401 -- load its C++ runtime before trimesh on this host
 import trimesh
 

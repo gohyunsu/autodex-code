@@ -12,24 +12,22 @@ level must not be reported as success at the next.
 ## Current behavior and decisions to preserve
 
 1. The default live label mode is `vlm_only`. Lift receives each camera's
-   initial-tabletop/after-lift **raw** pair. The current transfer label sees
-   **one raw pre-insertion image per camera**, not an after-lift/pre-insertion
-   pair. That is sufficient to ask whether the *current visible state* looks
-   ready to insert, but does not directly compare the state across transfer.
-   If the research label is specifically "the key remained held through
-   transfer," a temporal pair is preferable; adding it is a **future code
-   change**, not a feature the recipient should assume is present.
-2. The current CAD pre-insertion target and segmented descent use the
-   **measured socket axis**, `R_robot_socket @ insertion_direction_socket`.
-   Lift uses AutoDex's Jacobian vertical-stroke API; descent currently uses
-   successive `plan_cartesian_pose` calls, **not** a Jacobian stroke.
-   Neither a world-Z descent nor a socket-axis Jacobian descent should be
-   claimed for the present code. For the upright, easy cylinder experiment,
-   retain the current socket-axis target and segmented descent. Switching to
-   world-Z is optional only after measuring that the fixture is sufficiently
-   upright for the selected clearance; changing only the descent direction
-   while leaving its target on the measured socket axis creates a mixed-frame
-   path. A passing cuRobo plan is not a contact-control policy.
+   initial-tabletop/after-lift **raw** pair. Preinsert receives that same
+   camera's raw `after_lift` and raw `preinsert` frames, in time order, and
+   asks whether the same key remains visibly held and roughly above the
+   socket. The report binds both manifests, frame IDs, exposure times, PNG
+   hashes, prompts and raw model answers. It is a coarse visual continuity
+   label, not a metric XY or insertion result. CAD overlays remain a separate
+   geometry audit and are never VLM inputs in this active checkpoint.
+2. The pre-insertion target and Jacobian continuation follow the
+   **session-frozen measured socket axis**,
+   `R_robot_socket @ insertion_direction_socket`, with fixed wrist orientation.
+   Demo-local `axis_jacobian.py` reuses stock AutoDex numerical Jacobian,
+   collision rollout, joint limits and retiming while preserving the stock
+   world-Z planner. `path_audit.py` checks sampled key, hand and socket
+   geometry, progress and lateral error on the dense result. This is a
+   kinematic reference for the robot-side guarded controller, not a force or
+   contact policy and not a measured physical 20 mm stroke.
 3. Following one guarded nominal 20 mm stroke, the robot-PC callback must
    **open Inspire and move Franka to clear view before final capture**. Each
    camera then supplies its initial-tabletop/final-clear-view raw pair to
@@ -52,8 +50,9 @@ level must not be reported as success at the next.
 The active VLM paths receive undistorted raw images, **not CAD overlays**.
 The pre-insertion checkpoint still renders an overlay for a separate geometry
 audit, so its renderer dependency remains even though the VLM does not see
-the overlay. The dormant `observe_preinsert_hold_views` utility is not the
-active label path and does accept an overlay; do not wire it by accident.
+the overlay. The dormant `observe_preinsert_hold_views` overlay utility and
+the historical single-image `observe_preinsert_raw_views` utility are not the
+active label path.
 
 ## What exists, and what the robot PC must supply
 
@@ -87,8 +86,12 @@ On the producer, first push the intended commit. At handoff time the local
 from this file does not push it. On the AutoDex PC, use a **new directory**:
 
 ```bash
-git -C /home/hyunsu/autodex-code push origin feat/precision-insertion
-git -C /home/hyunsu/autodex-code rev-parse HEAD
+git -C /home/robot/autodex-precision-insertion status --short --branch
+git -C /home/robot/autodex-precision-insertion rev-parse HEAD
+git -C /home/robot/autodex-precision-insertion remote get-url origin
+git -C /home/robot/autodex-precision-insertion config user.name
+gh auth status  # verify the active account is gohyunsu before pushing
+git -C /home/robot/autodex-precision-insertion push origin feat/precision-insertion
 ```
 
 If the push is blocked by DNS/authentication, do not claim that the AutoDex
@@ -102,6 +105,9 @@ git clone --single-branch --branch feat/precision-insertion \
 cd /home/ROBOT_USER/autodex-precision-insertion
 git rev-parse HEAD
 git status --short --branch
+git remote get-url origin  # must be gohyunsu/autodex-code.git
+git config user.name gohyunsu
+git config user.email gohyunsu@users.noreply.github.com
 ```
 
 Compare the SHA to the producer's `git rev-parse HEAD`. Do not `git pull`
@@ -142,6 +148,18 @@ sha256sum -c SHA256SUMS
 cd "$NAS_DIR/autodex_precision_insertion_perception_eval_20261010_652ac909"
 sha256sum -c SHA256SUMS
 cd /home/ROBOT_USER/autodex-precision-insertion
+python demo/precision-insertion/verify_handoff_manifest.py \
+  --bundle-root "$NAS_DIR/autodex_precision_insertion_tabletop_v8_handoff_20261011_955e133"
+python demo/precision-insertion/verify_handoff_manifest.py \
+  --bundle-root "$NAS_DIR/autodex_precision_insertion_foundpose_generated_20261011"
+printf '%s  %s\n' \
+  3198df432a5beb7d3a3470b6021512045171d27d3db85fec50a444f330b67c96 \
+  "$NAS_DIR/autodex_precision_insertion_foundpose_20261011/autodex_precision_foundpose_4objects_20261011.tar" \
+  | sha256sum -c -
+printf '%s  %s\n' \
+  c11a637bf167e48585baadd13734cfef5fd50072c1256d771518ba9c88fcf8a8 \
+  "$NAS_DIR/autodex_precision_insertion_foundpose_20261011/precision_foundpose_socket_20mm_20261011.tar" \
+  | sha256sum -c -
 python demo/precision-insertion/export_full_length_cylinder_handoff.py \
   --verify-root "$NAS_DIR/autodex_precision_insertion_cylinder_full_length_addendum_20261011_eb38993"
 python demo/precision-insertion/export_current_cylinder_reset_handoff.py \

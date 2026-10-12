@@ -818,9 +818,14 @@ The first independent helpers are in `precision_insertion/`:
   verified trajectory completion, measured stationary arm/hand feedback,
   bounded key–hand relation and calibrated key/socket pose residual. This
   observer cannot replace the endpoint and live-path preflight gates.
-  `preinsert_checkpoint.assess_preinsert_checkpoint` now fuses its visual
+  The active `observer.observe_preinsert_temporal_views` instead compares one
+  camera's raw `after_lift` and raw `preinsert` images in time order. It never
+  sends the CAD overlay to the VLM. The historical single-image
+  `observe_preinsert_raw_views` remains only for older retry diagnostics.
+  `preinsert_checkpoint.assess_preinsert_checkpoint` fuses the active visual
   assessment with a matching saved post-lift plan, same-session frozen socket
-  and camera calibration, provenance-verified raw preinsert bundle, measured
+  and camera calibration, provenance-verified raw after-lift and preinsert
+  bundles with matching camera/frame IDs and ordered exposure times, measured
   stationary Franka/Inspire joints, target hand-pose residual and an external
   transfer execution log. The log schema is
   `precision_insertion_transfer_execution_v1`: matching attempt/candidate IDs,
@@ -830,7 +835,8 @@ The first independent helpers are in `precision_insertion/`:
   Visible two-view coarse alignment plus passing measured/log gates can yield
   a provisional `preinsert_reached=True` checkpoint; occlusion gives unknown.
   `write_preinsert_checkpoint` saves the exact overlay PNGs and hashes, and
-  `verify_preinsert_checkpoint` rechecks saved frames, overlays, transfer
+  `verify_preinsert_checkpoint` rechecks both saved raw frame sets, VLM prompt
+  and answer replay, overlays, transfer
   sources and the plan file. After a separately controlled transfer,
   `SessionRunner.prepare_observed_preinsert_label(...)` creates this report.
   A repeated VLM call must use genuinely newer camera exposures; reusing the
@@ -1200,8 +1206,9 @@ preflight = plan_insertion_after_pickup(
 print(preflight.to_record())
 ```
 
-The held hand is checked at **every** sampled joint of the lift, transfer,
-and axial cuRobo paths. If a nominally successful query changes an Inspire
+The held hand is checked at **every** sampled joint of the lift, cuRobo
+transfer and demo-local socket-axis Jacobian path. If a nominally successful
+query changes an Inspire
 joint by more than the path contract permits, that grasp receives
 `held_lift_hand_drift`, `transfer_hand_drift`, or
 `axial_waypoint_hand_drift`; the record retains the maximum deviation and

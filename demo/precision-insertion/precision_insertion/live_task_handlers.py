@@ -128,6 +128,10 @@ class LiveTaskHandlers:
         raw, capture = self._capture(
             runner=runner, decision=decision,
             callback=self.capture_preinsert, phase="preinsert")
+        lift_checkpoint = getattr(runner, "_lift_checkpoint", None)
+        after_lift_raw = getattr(lift_checkpoint, "after_bundle", None)
+        if after_lift_raw is None:
+            raise ValueError("preinsert VLM needs this attempt's raw after-lift capture")
         state = self.state_for_capture(capture)
         if not isinstance(state, LiveRobotState):
             raise TypeError("pre-insertion exposure needs measured robot state")
@@ -137,7 +141,8 @@ class LiveTaskHandlers:
             label_mode=self.label_mode,
             manual_annotation=request_annotation(
                 mode=self.label_mode, provider=self.manual_label_provider,
-                stage="preinsert_reached", evidence_dirs=(raw,),
+                stage="preinsert_reached",
+                evidence_dirs=(Path(after_lift_raw), raw),
                 attempt_id=attempt.attempt_id,
                 candidate_id=attempt.candidate_id),
             **dict(self.preinsert_parameters))
@@ -149,6 +154,7 @@ class LiveTaskHandlers:
             "grasp_state": str(transfer_log),
             "key_socket_pose": str(report),
             "preinsert_image": str(raw / "manifest.json"),
+            "after_lift_image": str(Path(after_lift_raw) / "manifest.json"),
         }
         runner.observe_stage(
             "preinsert_reached", checkpoint.preinsert_reached,

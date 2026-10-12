@@ -18,7 +18,8 @@ from precision_insertion.observer import (  # noqa: E402
     ZeroDexGeminiBackend,
     ZeroDexLocalBackend, load_vlm_backend,
     observe_insertion_visual, observe_lift, observe_preinsert_hold_views,
-    observe_preinsert_raw_views, observe_released_insertion_visual,
+    observe_preinsert_raw_views, observe_preinsert_temporal_views,
+    observe_released_insertion_visual,
     observe_xy_views, verify_per_view_consensus,
 )
 from precision_insertion.outcome import InsertionEvidence, judge_insertion  # noqa: E402
@@ -46,6 +47,36 @@ def _frames(before="before_grasp", after="after_lift"):
         LabeledFrame("front", before, 1.0, _image()),
         LabeledFrame("front", after, 2.0, _image()),
     ]
+
+
+def test_preinsert_temporal_uses_raw_same_camera_pairs_only():
+    answer = lambda camera: json.dumps({
+        "class": "coarse_match", "evidence_views": [camera],
+        "evidence": "the same peg remains visible above the socket"})
+    backend = FakeBackend(answer("front"), answer("side"))
+    frames = [
+        LabeledFrame(camera, phase, stamp, Image.new("RGB", (8, 8), color))
+        for camera in ("front", "side")
+        for phase, stamp, color in (("after_lift", 1.0, (20, 0, 0)),
+                                    ("preinsert", 2.0, (0, 20, 0)))
+    ]
+    observed = observe_preinsert_temporal_views(
+        backend, frames, max_capture_skew_s=.01)
+    assert observed.status == "coarse_match"
+    assert len(backend.calls) == 2
+    assert [image.getpixel((0, 0)) for image in backend.calls[0][0]] == [
+        (20, 0, 0), (0, 20, 0)]
+    assert observed.per_view[0].image_order == (
+        "after_lift/front@1.000000", "preinsert/front@2.000000")
+    assert "same white peg" in backend.calls[0][1]
+    with pytest.raises(ValueError, match="paired camera views"):
+        observe_preinsert_temporal_views(
+            FakeBackend(), frames[:-1], max_capture_skew_s=.01)
+    with pytest.raises(ValueError, match="time ordered"):
+        observe_preinsert_temporal_views(
+            FakeBackend(), [*frames[:2], frames[2],
+                            LabeledFrame("side", "preinsert", .5, _image())],
+            max_capture_skew_s=.01)
 
 
 def test_gemini_backend_requires_explicit_key_without_leaking_it(monkeypatch):

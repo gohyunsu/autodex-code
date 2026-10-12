@@ -41,6 +41,9 @@ class Runner:
             "transfer_execution_gate_required", "bounded_plan", "table/0/3")
         self._postlift_report_path = root / "postlift.json"
         self._preinsert_report_path = root / "preinsert.json"
+        self._lift_checkpoint = SimpleNamespace(
+            after_bundle=root / "attempts" / "attempt_001" /
+            "raw_after_lift" / "lift_001")
         self.initial_key_evidence_dir = root / "initial_key"
         self.session_sha256 = "a" * 64
         self.events = []
@@ -125,6 +128,7 @@ def test_transfer_hold_then_guarded_20mm_and_vlm_label(tmp_path, monkeypatch):
         runner, runner.current_decision())
     assert runner.current_decision().action == "await_guarded_insertion_and_observation"
     assert [row[0] for row in runner.events] == ["assess_hold", "label_hold"]
+    assert runner.events[0][1]["manual_annotation"] is None
     assert runner.events[1][1:3] == ("preinsert_reached", True)
     assert actions[1][1] is first and actions[1][3] == "preinsert"
     bound.handlers()["await_guarded_insertion_and_observation"](

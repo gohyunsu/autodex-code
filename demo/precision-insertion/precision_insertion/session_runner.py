@@ -1587,6 +1587,14 @@ class SessionRunner:
         """
         if (self._attempt is None or self._attempt_dir is None or
                 self._attempt.labels["grasp_success"] is not True or
+                not isinstance(self._lift_checkpoint, LiftCheckpoint) or
+                self._lift_checkpoint.evidence_kind != "raw_visual" or
+                self._lift_checkpoint.grasp_success is not True or
+                self._lift_checkpoint.attempt_id != self._attempt.attempt_id or
+                self._lift_report_path is None or
+                self._lift_report_sha256 is None or
+                hashlib.sha256(self._lift_report_path.read_bytes()).hexdigest()
+                != self._lift_report_sha256 or
                 self._attempt.labels["preinsert_reached"] is not None or
                 self._postlift_preflight is None or
                 self._postlift_report_path is None or
@@ -1621,6 +1629,7 @@ class SessionRunner:
             postlift_report_path=self._postlift_report_path,
             calibration=self.calibration, shared_root=self.shared_root,
             mode=self.mode, raw_bundle=raw_root,
+            after_lift_raw_bundle=self._lift_checkpoint.after_bundle,
             transfer_execution_path=transfer_execution_path,
             joint_sample=joint_sample, backend=backend,
             max_capture_skew_s=max_capture_skew_s,
@@ -1633,6 +1642,7 @@ class SessionRunner:
             max_arm_velocity_rad_s=max_arm_velocity_rad_s,
             label_mode=label_mode,
             manual_annotation=manual_annotation,
+            lift_checkpoint_report_path=self._lift_report_path,
             **kwargs)
         output = (self._attempt_dir / "preinsert_assessments" /
                   f"{self._preinsert_assessment_index:03d}")

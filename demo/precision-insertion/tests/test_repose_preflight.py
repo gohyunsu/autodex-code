@@ -12,6 +12,8 @@ from types import SimpleNamespace
 import coal  # noqa: F401 -- AutoDex host loads Coal before Trimesh
 import numpy as np
 import pytest
+
+pytestmark = pytest.mark.usefixtures("mock_curobo_compat_for_composition")
 import trimesh
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

@@ -37,9 +37,10 @@ from .nominal_postlift import (
     NominalPostLiftPreflight, verify_nominal_postlift_preflight,
 )
 from .labeling import resolve_label, independent_vlm_label
+from .lift_checkpoint import verify_lift_checkpoint
 from .observer import (
-    HeldSceneView, ImageVLM, PreinsertVisualAssessment,
-    observe_preinsert_raw_views,
+    HeldSceneView, ImageVLM, LabeledFrame, PreinsertVisualAssessment,
+    observe_preinsert_raw_views, observe_preinsert_temporal_views,
 )
 from .postlift_preflight import PostLiftPreflight
 from .raw_camera_capture import verify_raw_camera_capture
@@ -123,6 +124,8 @@ def observe_held_preinsert_scene(
     relation_source: str, backend: ImageVLM, max_capture_skew_s: float,
     renderer_factory: Callable | None = None,
     robot_loader: Callable | None = None,
+    after_lift_raw_bundle: Path | None = None,
+    after_lift_frame_rows: dict | None = None,
 ) -> tuple[float, float, HeldSceneComparison, PreinsertVisualAssessment]:
     """Render and label one measured held-key arrival for either transfer route."""
     snapshot = calibration.record.get("camera_calibration", {})
@@ -172,12 +175,36 @@ def observe_held_preinsert_scene(
         T_camera_robot={serial: camera_world_all[serial] @ c2r
                         for serial in camera_ids},
         renderer_factory=renderer_factory)
-    visual = observe_preinsert_raw_views(
-        backend, comparison.views, max_capture_skew_s=max_capture_skew_s)
+    if after_lift_raw_bundle is None and after_lift_frame_rows is None:
+        # Historical same-held-attempt XY retry utility; never assembled in
+        # the cylinder live pipeline. Its single-frame evidence stays explicit.
+        visual = observe_preinsert_raw_views(
+            backend, comparison.views, max_capture_skew_s=max_capture_skew_s)
+        return position_error, rotation_error, comparison, visual
+    if after_lift_raw_bundle is None or after_lift_frame_rows is None:
+        raise ValueError("preinsert temporal views need an after-lift bundle")
+    frames = []
+    for view in sorted(comparison.views, key=lambda item: item.camera_id):
+        camera = view.camera_id
+        after_lift = cv2.imread(
+            str(after_lift_raw_bundle / "images" / f"{camera}.png"),
+            cv2.IMREAD_COLOR)
+        if after_lift is None:
+            raise ValueError("saved after-lift image cannot be decoded")
+        frames.extend((
+            LabeledFrame(camera, "after_lift",
+                         after_lift_frame_rows[camera]["timestamp_s"],
+                         Image.fromarray(cv2.cvtColor(after_lift, cv2.COLOR_BGR2RGB))),
+            LabeledFrame(camera, "preinsert", view.timestamp_s, view.raw),
+        ))
+    visual = observe_preinsert_temporal_views(
+        backend, frames, max_capture_skew_s=max_capture_skew_s)
     return position_error, rotation_error, comparison, visual
 
 
-def _verify_visual_record(visual: dict, views: dict) -> None:
+def _verify_visual_record(
+    visual: dict, views: dict, after_rows: dict | None = None,
+) -> None:
     rows = visual.get("per_view")
     if (not isinstance(rows, list) or len(rows) != len(views) or
             len(rows) < 2):
@@ -188,16 +215,22 @@ def _verify_visual_record(visual: dict, views: dict) -> None:
         if (not isinstance(row, dict) or
                 row.get("stage") != "preinsert_visual" or
                 not isinstance(row.get("image_order"), list) or
-                len(row["image_order"]) != 1 or
+                len(row["image_order"]) != (2 if after_rows is not None else 1) or
                 not isinstance(row.get("parsed"), dict)):
             raise ValueError("preinsert per-view response is invalid")
         label = row["image_order"][0]
-        if not isinstance(label, str) or not label.startswith("raw_preinsert/"):
+        prefix = "after_lift/" if after_rows is not None else "raw_preinsert/"
+        if not isinstance(label, str) or not label.startswith(prefix):
             raise ValueError("preinsert per-view raw image order changed")
-        camera = label.removeprefix("raw_preinsert/").split("@", 1)[0]
+        camera = label.removeprefix(prefix).split("@", 1)[0]
+        expected = ([
+            f"after_lift/{camera}@{after_rows[camera]['timestamp_s']:.6f}",
+            f"preinsert/{camera}@{views[camera]['timestamp_s']:.6f}"]
+            if after_rows is not None and camera in after_rows else [
+                f"raw_preinsert/{camera}@{views[camera]['timestamp_s']:.6f}"]
+            if camera in views else [])
         if (camera not in views or camera in seen or
-                row["image_order"] != [
-                    f"raw_preinsert/{camera}@{views[camera]['timestamp_s']:.6f}"]):
+                row["image_order"] != expected):
             raise ValueError("preinsert VLM camera/frame order changed")
         seen.add(camera)
         parsed = row["parsed"]
@@ -234,12 +267,13 @@ class _RecordedPreinsertAnswers:
 
 
 def _verify_visual_replay(
-    visual: dict, paired_pixels: list[HeldSceneView],
+    visual: dict, paired_pixels: list[LabeledFrame] | list[HeldSceneView],
 ) -> None:
     """Bind parsed labels, prompts and consensus to exact saved VLM text."""
     recorded = visual.get("per_view")
+    temporal = bool(paired_pixels and isinstance(paired_pixels[0], LabeledFrame))
     if (not isinstance(recorded, list) or
-            len(recorded) != len(paired_pixels) or
+            len(recorded) * (2 if temporal else 1) != len(paired_pixels) or
             any(not isinstance(row, dict) or
                 not isinstance(row.get("raw_answer"), str) or
                 not isinstance(row.get("backend_model"), str) or
@@ -248,12 +282,23 @@ def _verify_visual_replay(
                 not math.isfinite(row["latency_s"]) or
                 row["latency_s"] < 0 for row in recorded)):
         raise ValueError("preinsert VLM saved answer is invalid")
-    stamps = [view.timestamp_s for view in paired_pixels]
+    if temporal:
+        stamps_by_phase = {
+            phase: [view.timestamp_s for view in paired_pixels
+                    if view.phase == phase]
+            for phase in ("after_lift", "preinsert")}
+        replay_skew_s = max(
+            max(stamps) - min(stamps) for stamps in stamps_by_phase.values()) + 1e-6
+    else:
+        stamps = [view.timestamp_s for view in paired_pixels]
+        replay_skew_s = max(stamps) - min(stamps) + 1e-6
     # This replay bound merely admits the *same* already verified captures;
     # it is not a new assertion about commissioned camera synchronization.
-    replay_skew_s = max(max(stamps) - min(stamps) + 1e-6, 1e-6)
+    replay_skew_s = max(replay_skew_s, 1e-6)
     try:
-        replay = observe_preinsert_raw_views(
+        observer = (observe_preinsert_temporal_views if temporal
+                    else observe_preinsert_raw_views)
+        replay = observer(
             _RecordedPreinsertAnswers(recorded), paired_pixels,
             max_capture_skew_s=replay_skew_s).to_record()
     except (TypeError, ValueError, IndexError) as exc:
@@ -300,6 +345,7 @@ def assess_preinsert_checkpoint(
     postlift: PostLiftPreflight | BoundedPostLiftPreflight | NominalPostLiftPreflight,
     postlift_report_path: Path, calibration: SessionCalibration,
     shared_root: Path, mode: TaskMode, raw_bundle: Path,
+    after_lift_raw_bundle: Path,
     transfer_execution_path: Path, joint_sample: LiveRobotState,
     backend: ImageVLM, max_capture_skew_s: float,
     max_joint_frame_skew_s: float, max_transfer_observation_gap_s: float,
@@ -310,6 +356,7 @@ def assess_preinsert_checkpoint(
     robot_loader: Callable | None = None,
     label_mode: str = "evidence_fused",
     manual_annotation: dict | None = None,
+    lift_checkpoint_report_path: Path | None = None,
 ) -> PreinsertCheckpoint:
     """Fuse per-view coarse VLM with measured hold pose and execution evidence.
 
@@ -387,7 +434,30 @@ def assess_preinsert_checkpoint(
         raise ValueError("transfer predates the observed post-lift replan")
     bundle = Path(raw_bundle).expanduser().resolve()
     capture = verify_raw_camera_capture(bundle, phase="preinsert")
+    after_lift_bundle = Path(after_lift_raw_bundle).expanduser().resolve()
+    after_lift_capture = verify_raw_camera_capture(
+        after_lift_bundle, phase="after_lift")
+    lift_checkpoint_path = None
+    if lift_checkpoint_report_path is not None:
+        lift_checkpoint_path = Path(lift_checkpoint_report_path).expanduser().resolve()
+        lift_record = verify_lift_checkpoint(lift_checkpoint_path)
+        if (lift_record.get("schema") != "precision_insertion_raw_lift_checkpoint_v1" or
+                lift_record.get("attempt_id") != attempt.attempt_id or
+                lift_record.get("candidate_id") != attempt.candidate_id or
+                lift_record.get("grasp_success") is not True or
+                lift_record.get("after_bundle") != str(after_lift_bundle)):
+            raise ValueError("preinsert pair differs from this attempt's lift checkpoint")
     frame_rows = capture["frame_evidence"]
+    after_lift_rows = after_lift_capture["frame_evidence"]
+    if (set(after_lift_rows) != set(frame_rows) or
+            after_lift_capture["capture_id"] == capture["capture_id"] or
+            bounded_capture_skew_s(after_lift_rows) > max_capture_skew_s or
+            max(row["timestamp_s"] + row["max_error_s"]
+                for row in after_lift_rows.values()) >= started or
+            any(after_lift_rows[camera]["frame_id"] >= frame_rows[camera]["frame_id"]
+                or after_lift_rows[camera]["timestamp_s"] >=
+                frame_rows[camera]["timestamp_s"] for camera in frame_rows)):
+        raise ValueError("after-lift/preinsert raw camera pairs are not ordered")
     if (len(frame_rows) < 2 or
             bounded_capture_skew_s(frame_rows) > max_capture_skew_s):
         raise ValueError("preinsert cameras are not synchronized")
@@ -411,7 +481,8 @@ def assess_preinsert_checkpoint(
     position_error, rotation_error, comparison, visual = (
         observe_held_preinsert_scene(
             calibration=calibration, shared_root=shared_root, mode=mode,
-            raw_bundle=bundle, frame_rows=frame_rows,
+            raw_bundle=bundle, after_lift_raw_bundle=after_lift_bundle,
+            frame_rows=frame_rows, after_lift_frame_rows=after_lift_rows,
             joint_sample=joint_sample,
             T_key_hand=held_relation,
             T_robot_hand_target=postlift.targets.T_robot_hand_preinsert,
@@ -442,6 +513,24 @@ def assess_preinsert_checkpoint(
             "transfer_execution_sha256": _sha(transfer_path),
             "raw_bundle": str(bundle),
             "raw_manifest_sha256": _sha(bundle / "manifest.json"),
+            "after_lift_raw_bundle": str(after_lift_bundle),
+            "after_lift_manifest_sha256": _sha(after_lift_bundle / "manifest.json"),
+            **({"lift_checkpoint_report_path": str(lift_checkpoint_path),
+                "lift_checkpoint_report_sha256": _sha(lift_checkpoint_path)}
+               if lift_checkpoint_path is not None else {}),
+            "max_capture_skew_s": max_capture_skew_s,
+            "max_transfer_observation_gap_s": max_transfer_observation_gap_s,
+            "vlm_frame_evidence": {
+                camera: {
+                    phase: {
+                        "timestamp_s": source["frame_evidence"][camera]["timestamp_s"],
+                        "frame_id": source["frame_evidence"][camera]["frame_id"],
+                        "image_sha256": source["frame_evidence"][camera]["image_sha256"],
+                        "png_sha256": source["image_file_sha256"][camera],
+                    }
+                    for phase, source in (("after_lift", after_lift_capture),
+                                          ("preinsert", capture))}
+                for camera in sorted(frame_rows)},
             "transfer_measurement": measurement,
             "label_mode": label_mode,
             "manual_annotation": manual_annotation,
@@ -504,11 +593,14 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
     postlift = Path(report["postlift_report_path"])
     transfer = Path(report["transfer_execution_path"])
     raw = Path(report["raw_bundle"])
+    after_lift = Path(report["after_lift_raw_bundle"])
     if (not postlift.is_absolute() or not transfer.is_absolute() or
-            not raw.is_absolute() or
+            not raw.is_absolute() or not after_lift.is_absolute() or
             _sha(postlift) != report["postlift_report_sha256"] or
             _sha(transfer) != report["transfer_execution_sha256"] or
-            _sha(raw / "manifest.json") != report["raw_manifest_sha256"]):
+            _sha(raw / "manifest.json") != report["raw_manifest_sha256"] or
+            _sha(after_lift / "manifest.json") !=
+            report["after_lift_manifest_sha256"]):
         raise ValueError("preinsert checkpoint source file changed")
     postlift_record = json.loads(postlift.read_text(encoding="utf-8"))
     bounded_source = postlift_record.get("schema") == (
@@ -542,9 +634,41 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
             float(source["completed_at_s"]) != report["transfer_completed_at_s"]):
         raise ValueError("preinsert transfer report changed")
     capture = verify_raw_camera_capture(raw, phase="preinsert")
+    after_capture = verify_raw_camera_capture(after_lift, phase="after_lift")
+    lift_path_value = report.get("lift_checkpoint_report_path")
+    if lift_path_value is not None:
+        lift_path = Path(lift_path_value)
+        if (not lift_path.is_absolute() or
+                _sha(lift_path) != report.get("lift_checkpoint_report_sha256")):
+            raise ValueError("preinsert lift checkpoint source changed")
+        lift_record = verify_lift_checkpoint(lift_path)
+        if (lift_record.get("schema") != "precision_insertion_raw_lift_checkpoint_v1" or
+                lift_record.get("attempt_id") != report["attempt_id"] or
+                lift_record.get("candidate_id") != report["candidate_id"] or
+                lift_record.get("grasp_success") is not True or
+                lift_record.get("after_bundle") != str(after_lift)):
+            raise ValueError("preinsert lift checkpoint binding changed")
+    after_rows = after_capture["frame_evidence"]
+    pre_rows = capture["frame_evidence"]
+    if (set(after_rows) != set(pre_rows) or
+            after_capture["capture_id"] == capture["capture_id"] or
+            bounded_capture_skew_s(after_rows) > report["max_capture_skew_s"] or
+            bounded_capture_skew_s(pre_rows) > report["max_capture_skew_s"] or
+            max(row["timestamp_s"] + row["max_error_s"]
+                for row in after_rows.values()) >= report["transfer_started_at_s"] or
+            min(row["timestamp_s"] - row["max_error_s"]
+                for row in pre_rows.values()) <= report["transfer_completed_at_s"] or
+            min(row["timestamp_s"] - row["max_error_s"]
+                for row in pre_rows.values()) - report["transfer_completed_at_s"] >
+            report["max_transfer_observation_gap_s"] or
+            any(after_rows[camera]["frame_id"] >= pre_rows[camera]["frame_id"]
+                or after_rows[camera]["timestamp_s"] >=
+                pre_rows[camera]["timestamp_s"] for camera in pre_rows)):
+        raise ValueError("preinsert raw camera pair chronology changed")
     views = report.get("comparison", {}).get("views", {})
     png_hashes = report.get("overlay_png_sha256", {})
     if (set(views) != set(capture["frame_evidence"]) or
+            set(views) != set(after_capture["frame_evidence"]) or
             set(png_hashes) != set(views) or len(views) < 2):
         raise ValueError("preinsert overlay camera set changed")
     paired_pixels = []
@@ -552,20 +676,36 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
         hashes = views[serial]
         source_image = cv2.imread(str(raw / "images" / f"{serial}.png"),
                                   cv2.IMREAD_COLOR)
+        before_image = cv2.imread(
+            str(after_lift / "images" / f"{serial}.png"), cv2.IMREAD_COLOR)
         overlay_path = path.parent / "overlays" / f"{serial}.png"
         overlay_image = cv2.imread(str(overlay_path), cv2.IMREAD_COLOR)
-        if (source_image is None or overlay_image is None or
+        if (source_image is None or before_image is None or
+                overlay_image is None or
                 image_sha256(source_image) != hashes["raw_image_sha256"] or
                 image_sha256(overlay_image) != hashes["overlay_image_sha256"] or
                 _sha(overlay_path) != png_hashes[serial] or
                 hashes["timestamp_s"] !=
-                capture["frame_evidence"][serial]["timestamp_s"]):
+                capture["frame_evidence"][serial]["timestamp_s"] or
+                report.get("vlm_frame_evidence", {}).get(serial) != {
+                    phase: {
+                        "timestamp_s": source["frame_evidence"][serial]["timestamp_s"],
+                        "frame_id": source["frame_evidence"][serial]["frame_id"],
+                        "image_sha256": source["frame_evidence"][serial]["image_sha256"],
+                        "png_sha256": source["image_file_sha256"][serial],
+                    }
+                    for phase, source in (("after_lift", after_capture),
+                                          ("preinsert", capture))}):
             raise ValueError("preinsert VLM pixel evidence changed")
-        paired_pixels.append(HeldSceneView(
-            serial, hashes["timestamp_s"],
-            Image.fromarray(cv2.cvtColor(source_image, cv2.COLOR_BGR2RGB)),
-            Image.fromarray(cv2.cvtColor(overlay_image, cv2.COLOR_BGR2RGB))))
-    _verify_visual_record(report["visual"], views)
+        paired_pixels.extend((
+            LabeledFrame(serial, "after_lift",
+                         after_capture["frame_evidence"][serial]["timestamp_s"],
+                         Image.fromarray(cv2.cvtColor(before_image, cv2.COLOR_BGR2RGB))),
+            LabeledFrame(serial, "preinsert", hashes["timestamp_s"],
+                         Image.fromarray(cv2.cvtColor(source_image, cv2.COLOR_BGR2RGB))),
+        ))
+    _verify_visual_record(report["visual"], views,
+                          after_capture["frame_evidence"])
     _verify_visual_replay(report["visual"], paired_pixels)
     expected_label, expected_reason = _arrival_label(
         measurement=report["transfer_measurement"],

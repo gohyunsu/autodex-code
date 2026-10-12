@@ -11,6 +11,8 @@ import sys
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.usefixtures("mock_axis_for_fake_planner")
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -143,7 +145,7 @@ def test_measured_postlift_relation_rescreens_then_plans(tmp_path, monkeypatch):
     assert result.relation.translation_drift_m < 1e-9
     assert result.planning.held_hand_source == "measured"
     assert result.planning.lift_trajectory is None
-    assert len(args["planner"].calls) == 11
+    assert len(args["planner"].calls) == 1  # transfer; axis uses continuation
     assert screen_calls[0]["override_source"] == (
         "multiview_key_pose_plus_live_wrist")
     np.testing.assert_allclose(

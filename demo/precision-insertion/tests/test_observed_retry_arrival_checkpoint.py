@@ -31,6 +31,7 @@ def _sha(path):
 
 def _retry_inputs(tmp_path):
     args = _setup(tmp_path)
+    args.pop("after_lift_raw_bundle")  # historical single-image retry route
     attempt = args["attempt"]
     attempt.labels["preinsert_reached"] = True
     attempt.labels["insertion_success"] = False

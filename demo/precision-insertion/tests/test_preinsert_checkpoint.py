@@ -24,6 +24,7 @@ from precision_insertion.preinsert_checkpoint import (  # noqa: E402
     assess_preinsert_checkpoint, verify_preinsert_checkpoint,
     write_preinsert_checkpoint,
 )
+from precision_insertion import preinsert_checkpoint  # noqa: E402
 from precision_insertion.raw_camera_capture import (  # noqa: E402
     RawCameraCapture, write_raw_camera_capture,
 )
@@ -72,6 +73,10 @@ class _VLM:
         self.fenced = fenced
 
     def infer(self, images, prompt):
+        if "RAW after-lift" in prompt:
+            assert len(images) == 2 and "RAW preinsert" in prompt
+        else:
+            assert len(images) == 1  # historical retry diagnostic
         camera = "cam_a" if "Use only camera ID cam_a" in prompt else "cam_b"
         answer = json.dumps({
             "class": self.category,
@@ -122,6 +127,23 @@ def _setup(tmp_path):
         "targets": {"T_robot_hand_preinsert": target.tolist()},
     }), encoding="utf-8")
     image = np.zeros((24, 32, 3), dtype=np.uint8)
+    lifted = image.copy()
+    lifted[:, :, 1] = 80
+    lift_ids = {"cam_a": 21, "cam_b": 22}
+    lift_evidence = {
+        camera: {"frame_id": lift_ids[camera],
+                 "image_sha256": image_sha256(lifted),
+                 "timestamp_s": 10.55 + i * 0.005,
+                 "max_error_s": 0.001,
+                 "timestamp_method": "hardware_exposure",
+                 "clock_domain": "unix_utc"}
+        for i, camera in enumerate(CAMERAS)}
+    after_lift_bundle = write_raw_camera_capture(
+        RawCameraCapture(
+            "lift_1", 49, {camera: lifted.copy() for camera in CAMERAS},
+            lift_ids, {"request_id": 49, "source": "camera_acquisition",
+                       "frames": lift_evidence}),
+        tmp_path / "after_lift", phase="after_lift")
     frame_ids = {"cam_a": 31, "cam_b": 32}
     evidence = {
         camera: {"frame_id": frame_ids[camera],
@@ -162,6 +184,7 @@ def _setup(tmp_path):
         attempt=attempt, postlift=postlift,
         postlift_report_path=postlift_file, calibration=calibration,
         shared_root=tmp_path, mode=mode, raw_bundle=bundle,
+        after_lift_raw_bundle=after_lift_bundle,
         transfer_execution_path=transfer, joint_sample=measured,
         backend=_VLM(), max_capture_skew_s=0.02,
         max_joint_frame_skew_s=0.02,
@@ -181,6 +204,8 @@ def test_measured_preinsert_arrival_needs_multiview_visible_key(tmp_path):
     assert report.reason == "measured_arrival_and_visible_held_key"
     assert report.to_record()["robot_ready"] is False
     assert len(report.to_record()["comparison"]["views"]) == 2
+    assert all(len(row["image_order"]) == 2 for row in
+               report.to_record()["visual"]["per_view"])
     saved = write_preinsert_checkpoint(report, tmp_path / "arrival")
     assert verify_preinsert_checkpoint(saved)["preinsert_reached"] is True
     original_report = saved.read_bytes()
@@ -199,6 +224,13 @@ def test_measured_preinsert_arrival_needs_multiview_visible_key(tmp_path):
     overlay.write_bytes(overlay.read_bytes() + b"tampered")
     with pytest.raises(ValueError, match="pixel evidence changed"):
         verify_preinsert_checkpoint(saved)
+    saved.write_bytes(original_report)
+    lifted_png = args["after_lift_raw_bundle"] / "images" / "cam_a.png"
+    original_lifted_png = lifted_png.read_bytes()
+    lifted_png.write_bytes(original_lifted_png + b"tampered")
+    with pytest.raises(ValueError, match="raw camera PNG changed"):
+        verify_preinsert_checkpoint(saved)
+    lifted_png.write_bytes(original_lifted_png)
     assert assess_preinsert_checkpoint(
         **{**args, "backend": _VLM("unobservable")}).preinsert_reached is None
 
@@ -256,3 +288,30 @@ def test_preinsert_rejects_unbound_postlift_plan(tmp_path):
     args["postlift_report_path"].write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="saved post-lift plan"):
         assess_preinsert_checkpoint(**args)
+
+
+def test_preinsert_pair_is_bound_to_successful_lift_checkpoint(
+        tmp_path, monkeypatch):
+    args = _setup(tmp_path)
+    lift_path = tmp_path / "lift_checkpoint.json"
+    lift_path.write_text('{"saved":true}', encoding="utf-8")
+    lift_record = {
+        "schema": "precision_insertion_raw_lift_checkpoint_v1",
+        "attempt_id": args["attempt"].attempt_id,
+        "candidate_id": args["attempt"].candidate_id,
+        "grasp_success": True,
+        "after_bundle": str(args["after_lift_raw_bundle"]),
+    }
+    monkeypatch.setattr(preinsert_checkpoint, "verify_lift_checkpoint",
+                        lambda _path: lift_record)
+    report = assess_preinsert_checkpoint(
+        **args, lift_checkpoint_report_path=lift_path)
+    saved = write_preinsert_checkpoint(report, tmp_path / "bound_arrival")
+    assert verify_preinsert_checkpoint(saved)["preinsert_reached"] is True
+
+    lift_record["attempt_id"] = "some_other_trial"
+    with pytest.raises(ValueError, match="binding changed"):
+        verify_preinsert_checkpoint(saved)
+    with pytest.raises(ValueError, match="differs from this attempt"):
+        assess_preinsert_checkpoint(
+            **args, lift_checkpoint_report_path=lift_path)

@@ -1781,6 +1781,11 @@ def test_preinsert_assessment_is_saved_before_positive_arrival_label(
     raw_bundle = runner._attempt_dir / "preinsert_raw"
     raw_bundle.mkdir()
     (raw_bundle / "manifest.json").write_text("{}\n", encoding="utf-8")
+    # This composition test substitutes a raw lift checkpoint without
+    # building camera pixels; the checkpoint verifier has separate tests.
+    runner._lift_checkpoint.evidence_kind = "raw_visual"
+    runner._lift_checkpoint.after_bundle = runner._attempt_dir / "after_lift_raw"
+    monkeypatch.setattr(session_runner, "LiftCheckpoint", SimpleNamespace)
     seen = []
 
     def assess(**kwargs):
@@ -1829,6 +1834,8 @@ def test_preinsert_assessment_is_saved_before_positive_arrival_label(
     result = runner.prepare_observed_preinsert_label(**assessment_kwargs)
     assert result.preinsert_reached is True
     assert seen[0]["attempt"].attempt_id == "attempt_1"
+    assert seen[0]["after_lift_raw_bundle"] == (
+        runner._attempt_dir / "after_lift_raw")
     with pytest.raises(ValueError, match="newer camera exposures"):
         runner.prepare_observed_preinsert_label(**assessment_kwargs)
     report = runner._preinsert_report_path

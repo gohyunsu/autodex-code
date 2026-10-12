@@ -92,7 +92,7 @@ For the first-party FR3 resource path, create a robot-PC JSON file such as:
   },
   "vlm": {
     "mode": "local",
-    "model_id": "Qwen/Qwen3-VL-2B-Instruct",
+    "model_id": "/absolute/recipient/qwen3-vl-2b/payload/model",
     "max_new_tokens": 512,
     "require_native_pixels": true,
     "capture_timeout_s": 10.0
@@ -102,9 +102,12 @@ For the first-party FR3 resource path, create a robot-PC JSON file such as:
 ```
 
 These numbers illustrate the file format, **not** rig-approved limits.
-The `vlm` block is optional. If the stage factory does not supply `backend`,
-the integration loads local Qwen by default using the active camera image
-size; Gemini requires an explicit `mode: "gemini"` and `model_id`. The
+Set `vlm.model_id` to the recipient's verified NAS Qwen bundle
+`payload/model` directory. The `vlm` block is optional for custom stage
+factories that supply `backend`; without either one, the integration loads
+the named Qwen model from the local model cache, whose contents must be
+verified separately. The integration uses the active camera image size;
+Gemini requires an explicit `mode: "gemini"` and `model_id`. The
 integration also fills missing lift, pre-insertion/final, and retry checkpoint
 callbacks with fresh snapshots from the already-open AutoDex cameras. A
 stage factory may supply a custom callback for any field. These defaults do
@@ -112,11 +115,15 @@ not invent exposure timestamps or measured robot state. The native-pixel
 setting pads only the right/bottom edge to Qwen's patch unit without moving
 source pixels. Images outside the model's pixel-area budget still need the
 existing pixel-preserving ROI route for metric grounding.
-For temporal lift and insertion labels, local Qwen now receives one
-same-camera before/after pair per call, not all 20 camera pairs in one
+For temporal lift, preinsert and released insertion labels, local Qwen receives
+one same-camera raw before/after pair per call, not all 20 camera pairs in one
 request. A positive visual class needs at least two independently agreeing
 camera replies and no conflicting decisive reply. Each raw per-camera answer,
 prompt and image order is retained inside the aggregate checkpoint record.
+The preinsert pair is `after_lift` followed by `preinsert`. Its checkpoint
+also binds both capture manifests, camera/frame IDs, exposure times and PNG
+hashes, and replay verifies the original model text. The visual class only
+asks whether the same key remains visibly held and roughly above the socket.
 This bounds the image count per model call; it does not establish VLM accuracy
 or guarantee that a full-resolution two-image call fits the robot PC GPU.
 `configure_stages(core, live, options)` returns `{"shared": {...},

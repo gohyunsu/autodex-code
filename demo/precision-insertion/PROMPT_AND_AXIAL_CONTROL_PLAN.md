@@ -1,7 +1,6 @@
 # Cylinder insertion: prompt and axial-control contract
 
-This document distinguishes the proposed short English prompts from the
-currently wired runtime. The VLM reads **raw, undistorted AutoDex camera
+This document records the stage semantics and the current runtime. The VLM reads **raw, undistorted AutoDex camera
 images**. CAD overlays are saved for humans, never sent as visual evidence.
 The cylinder key and socket in the real-camera NAS shots are white; the old
 square-demo text `blue precision key ... red socket` is not a cylinder prompt.
@@ -39,10 +38,11 @@ transport code can add image dimensions and JSON schema constraints.
 For label requests, the implementation retains `evidence_views` because the
 current observer validates it. Use the sole camera's ID for a decisive
 per-camera result; use `[]` when unobservable. In particular, the
-current [`observe_preinsert_raw_views`](precision_insertion/observer.py)
-sends **one** preinsert image, so the transfer row is a planned change:
-capture/persist after-lift and preinsert using matching camera IDs and call a
-two-image version of the same label contract. The current released-state
+active [`observe_preinsert_temporal_views`](precision_insertion/observer.py)
+sends each camera's ordered raw `after_lift`/`preinsert` pair. The saved
+checkpoint binds both source manifests, camera/frame IDs, timestamps, PNG
+hashes, prompt and raw answer, and replays parsing. The historical
+`observe_preinsert_raw_views` remains a single-frame diagnostic only. The released-state
 pair is already wired in [`observe_released_insertion_visual`](precision_insertion/observer.py).
 The existing prompts are longer; shortening them must preserve these
 semantics and parser tests, not merely replace string literals.
@@ -101,12 +101,13 @@ is hard-coded to pure world-Z and rejects lateral target displacement;
 passing a tilted socket-axis target to it is incorrect. Adapt its
 continuation/collision-validation machinery to a general measured axis, or
 add a sibling axis-stroke planner without changing stock AutoDex behavior.
-The current demo
-[`preflight.py`](precision_insertion/preflight.py) already places successive
-Cartesian goals **on the socket axis**, but calls cuRobo
-`plan_cartesian_pose` independently for each segment. A valid sequence of
-axis endpoints does not alone prove the path between them is a single smooth
-axis-following continuation; the sampled audit checks the intermediate FK.
+The demo-local [`axis_jacobian.py`](precision_insertion/axis_jacobian.py)
+implements a sibling continuation on the frozen socket axis. Its short
+waypoints seed from the preceding accepted joints, and it reuses stock
+AutoDex numerical Jacobian, joint limits, collision rollout and retiming.
+[`preflight.py`](precision_insertion/preflight.py) calls it after the
+non-contact transfer and passes its dense path to the sampled held-key/hand
+audit. A successful plan is still only a kinematic reference.
 The current insertion audit already measures progress and lateral drift
 relative to `insertion_axis_robot` in
 [`path_audit.py`](precision_insertion/path_audit.py). The robot-side

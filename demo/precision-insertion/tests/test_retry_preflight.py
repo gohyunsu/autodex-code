@@ -8,6 +8,8 @@ import sys
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.usefixtures("mock_axis_for_fake_planner")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.path_audit import PathAuditLimits  # noqa: E402
@@ -99,7 +101,7 @@ def test_retry_plans_fresh_transfer_and_axial_from_withdrawn_state(
     result = plan_xy_retry_from_withdrawn_hold(**args)
     assert result.status == "sampled_retry_preflight_pass"
     assert result.choice_id == "x_plus_1mm"
-    assert len(args["planner"].calls) == 11
+    assert len(args["planner"].calls) == 1  # transfer; axis uses continuation
     assert result.planning.lift_trajectory is None
     assert result.targets.xy_offset_socket_m == pytest.approx((0.001, 0.0))
     assert checked[0]["hand_poses_override"]["measured_withdrawn"] == (

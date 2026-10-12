@@ -44,6 +44,7 @@ class _Planner:
         pose[:3, 3] = np.asarray(q)[:3]
         return pose
 
+
     def plan_lift_preflight(self, start, scene, lift_h):
         self.lift_start = np.asarray(start).copy()
         end = self.lift_start.copy()
@@ -66,6 +67,39 @@ class _Planner:
         if self.start_mismatch_query == len(self.calls):
             traj[0, 0] += 0.01
         return SimpleNamespace(success=True, trajectory=traj)
+
+
+@pytest.fixture(autouse=True)
+def _mock_axis_continuation(monkeypatch):
+    """Keep composition tests independent of cuRobo; solver has its own tests."""
+    def stroke(planner, start, reference, target, *, axis_robot,
+               scene_cfg, expected_travel_m, step_m):
+        del scene_cfg
+        assert np.isclose(np.linalg.norm(axis_robot), 1)
+        assert np.allclose(target[:3, 3] - reference[:3, 3],
+                           expected_travel_m * axis_robot)
+        count = int(np.ceil(expected_travel_m / step_m))
+        path = [np.asarray(start).copy()]
+        records = []
+        for index in range(1, count + 1):
+            if planner.fail_query == index + 1:
+                records.append({"stage": "axial_waypoint", "index": index,
+                                "success": False,
+                                "failure_code": "mock_unreachable"})
+                return SimpleNamespace(success=False, trajectory=None,
+                                       step_records=records, validation={})
+            end = np.asarray(start).copy()
+            end[:3] = reference[:3, 3] + index / count * expected_travel_m * axis_robot
+            if planner.hand_drift_query == index + 1:
+                end[7] += 0.01
+            path.extend(np.linspace(path[-1], end, 5)[1:])
+            records.append({"stage": "axial_waypoint", "index": index,
+                            "success": True})
+        return SimpleNamespace(success=True, trajectory=np.asarray(path),
+                               step_records=records,
+                               validation={"axis_robot": axis_robot.tolist()})
+    monkeypatch.setattr("precision_insertion.preflight.plan_jacobian_axis_stroke",
+                        stroke)
 
 
 def _fixture():
@@ -135,12 +169,12 @@ def test_preflight_replans_held_lift_and_all_axial_waypoints(monkeypatch):
     result = _run(planner, fixture)
     assert result.status == "sampled_planning_pass"
     assert result.axial_waypoint_count == 10
-    assert len(planner.calls) == 11  # one transfer + ten <=5 mm axial goals
+    assert len(planner.calls) == 1  # one transfer, then one Jacobian continuation
     assert planner.lift_start[7:] == pytest.approx([0.2] * 6)
     assert all(call[2]["include_obj_obstacle"] is False and
                call[2]["lock_hand"] is True and
                call[2]["return_result"] is True for call in planner.calls)
-    np.testing.assert_allclose(planner.calls[-1][1], fixture[3].T_robot_hand_verification)
+    assert result.planner_query_records[-1]["planner_api"] == "plan_jacobian_axis_stroke"
     assert captured["transfer_trajectory"].shape == (5, 13)
     assert captured["descent_trajectory"].shape == (41, 13)
     assert captured["lift_trajectory"].shape == (11, 13)
@@ -172,7 +206,7 @@ def test_query_or_sampled_geometry_failure_does_not_promote_plan(monkeypatch):
         ({"lift_hand_drift": True}, "held_lift_hand_drift", "held_lift", 0),
         ({"hand_drift_query": 1}, "transfer_hand_drift", "transfer", 0),
         ({"hand_drift_query": 4}, "axial_waypoint_hand_drift",
-         "axial_waypoint", 2),
+         "axial_waypoint", 10),
     ])
 def test_planner_hand_drift_rejects_only_this_candidate(
     planner_kwargs, status, last_stage, completed_waypoints,
@@ -232,7 +266,7 @@ def test_fresh_arrival_plans_axial_without_another_transfer(monkeypatch):
         axial_waypoint_step_m=.005, start_at_preinsert=True)
     result = plan_held_transfer_and_axial(**arguments)
     assert result.status == "sampled_planning_pass"
-    assert len(planner.calls) == 10  # axial waypoints only
+    assert len(planner.calls) == 0  # no second transfer query
     assert result.planner_query_records[0] == {
         "stage": "arrival_hold", "success": True,
         "planner_api": "measured_fk_no_transfer",
@@ -249,4 +283,4 @@ def test_fresh_arrival_plans_axial_without_another_transfer(monkeypatch):
     rejected = plan_held_transfer_and_axial(
         **{**arguments, "start_q": displaced})
     assert rejected.status == "arrival_hold_goal_residual"
-    assert len(planner.calls) == 10  # a shifted hold never reaches cuRobo
+    assert len(planner.calls) == 0  # a shifted hold never reaches cuRobo

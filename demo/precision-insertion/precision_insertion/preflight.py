@@ -2,8 +2,8 @@
 
 The caller has already selected one v8 grasp and obtained AutoDex's pickup
 ``PlanResult`` for the fresh key scene. This module does *no* robot I/O. It
-replans the lift at the specified held Inspire pose, plans transfer and short
-socket-axis waypoints with the existing cuRobo planner, and audits the held
+replans the lift at the specified held Inspire pose, plans transfer and a
+continuous socket-axis Jacobian stroke, and audits the held
 key/hand along those dense trajectories. There is no guarded contact control,
 between-sample swept proof, release or physical success claim.
 """
@@ -19,6 +19,7 @@ import numpy as np
 
 from autodex.utils.conversion import cart2se3
 
+from .axis_jacobian import plan_jacobian_axis_stroke
 from .geometry import pose_angle_deg, validate_se3
 from .path_audit import PathAuditLimits, audit_held_joint_paths
 from .targets import InsertionTargets
@@ -222,7 +223,7 @@ def plan_held_transfer_and_axial(
     measured post-transfer hold must already meet the freshly reconstructed
     hand target: no second transfer is planned, and the two identical rows in
     the transfer audit are a stationary hold, not an executable trajectory.
-    All variants reuse the same axial cuRobo queries and full-key/whole-hand
+    All variants reuse the same axial Jacobian continuation and full-key/whole-hand
     sampled audit. This never executes contact motion.
     """
     limits.validate()
@@ -304,42 +305,32 @@ def plan_held_transfer_and_axial(
     count = int(math.ceil(travel / step))
     if count < 1:
         raise ValueError("insertion travel is invalid")
-    segments: list[np.ndarray] = []
-    current = transfer[-1].copy()
-    for index in range(1, count + 1):
-        fraction = index / count
-        goal = targets.T_robot_hand_preinsert.copy()
-        goal[:3, 3] += fraction * travel * targets.insertion_axis_robot
-        query = planner.plan_cartesian_pose(
-            current, goal, scene_cfg=trial_scene,
-            include_obj_obstacle=False, return_result=True, lock_hand=True,
-            timing_phase="precision_insertion_axial_preflight")
-        query_records.append({
-            "stage": "axial_waypoint", "index": index,
-            "success": bool(query.success),
-            "planner_api": "plan_cartesian_pose",
-            "constraint_mode": getattr(query, "constraint_mode", None),
-            "failure_stage": getattr(query, "failure_stage", None),
-            "T_robot_hand_goal": goal.tolist(),
-        })
-        if not query.success or query.trajectory is None:
-            return result("axial_waypoint_unreachable", transfer=transfer,
-                          waypoints=index - 1)
-        try:
-            segment = _path(query.trajectory, f"axial waypoint {index}",
-                            current, held)
-        except HeldHandPoseDrift as exc:
-            query_records[-1]["held_hand_lock_verified"] = False
-            query_records[-1]["max_abs_hand_delta_rad"] = exc.max_abs_delta_rad
-            return result("axial_waypoint_hand_drift", transfer=transfer,
-                          waypoints=index - 1)
-        if not _goal_met(validate_se3(planner.fk_wrist(segment[-1]),
-                                      name=f"axial FK[{index}]"), goal, limits):
-            return result("axial_waypoint_goal_residual", transfer=transfer,
-                          waypoints=index - 1)
-        segments.append(segment[1:])
-        current = segment[-1].copy()
-    axial = np.concatenate([transfer[-1:], *segments], axis=0)
+    query = plan_jacobian_axis_stroke(
+        planner, transfer[-1], targets.T_robot_hand_preinsert,
+        targets.T_robot_hand_verification,
+        axis_robot=targets.insertion_axis_robot, scene_cfg=trial_scene,
+        expected_travel_m=travel, step_m=step)
+    query_records.extend({
+        **row, "planner_api": "plan_jacobian_axis_stroke",
+    } for row in query.step_records)
+    if not query.success or query.trajectory is None:
+        completed = sum(row["success"] is True for row in query.step_records)
+        return result("axial_waypoint_unreachable", transfer=transfer,
+                      waypoints=completed)
+    try:
+        axial = _path(query.trajectory, "socket-axis Jacobian stroke",
+                      transfer[-1], held)
+    except HeldHandPoseDrift as exc:
+        query_records[-1]["held_hand_lock_verified"] = False
+        query_records[-1]["max_abs_hand_delta_rad"] = exc.max_abs_delta_rad
+        return result("axial_waypoint_hand_drift", transfer=transfer,
+                      waypoints=count)
+    if not _goal_met(validate_se3(planner.fk_wrist(axial[-1]),
+                                  name="axial endpoint FK"),
+                     targets.T_robot_hand_verification, limits):
+        return result("axial_waypoint_goal_residual", transfer=transfer,
+                      waypoints=count)
+    query_records[-1]["execution_validation"] = query.validation
     sampled = audit_held_joint_paths(
         shared_root=shared_root, calibration=calibration, targets=targets,
         planner=planner, transfer_trajectory=transfer,

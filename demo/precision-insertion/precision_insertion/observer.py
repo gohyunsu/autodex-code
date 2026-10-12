@@ -726,7 +726,7 @@ def observe_preinsert_raw_views(
     backend: ImageVLM, views: Sequence[HeldSceneView], *,
     max_capture_skew_s: float, minimum_agreeing_views: int = 2,
 ) -> PreinsertVisualAssessment:
-    """Judge the visible held-key/socket relation from raw pixels only.
+    """Legacy single-preinsert-image diagnostic; not the live checkpoint.
 
     ``HeldSceneView`` is retained as the report container because the
     deterministic geometry/renderer audit still stores a predicted scene for
@@ -781,6 +781,76 @@ def observe_preinsert_raw_views(
             decisive.setdefault(category, []).append(view.camera_id)
     if (len(decisive) == 1 and
             len(next(iter(decisive.values()))) >= minimum_agreeing_views):
+        status = next(iter(decisive))
+        support = tuple(sorted(decisive[status]))
+    else:
+        status, support = "unknown", ()
+    return PreinsertVisualAssessment(status, support, tuple(observations))
+
+
+def observe_preinsert_temporal_views(
+    backend: ImageVLM, frames: Sequence[LabeledFrame], *,
+    max_capture_skew_s: float, minimum_agreeing_views: int = 2,
+) -> PreinsertVisualAssessment:
+    """Compare each camera's raw after-lift and preinsert pixels in order.
+
+    This is a coarse continuity/arrival label, never an XY or depth measure.
+    CAD overlays are deliberately absent from the inference input.
+    """
+    if (type(minimum_agreeing_views) is not int or
+            minimum_agreeing_views < 2 or
+            not math.isfinite(float(max_capture_skew_s)) or
+            max_capture_skew_s <= 0):
+        raise ValueError("preinsert pair needs positive multiview limits")
+    _require_temporal_camera_pairs(
+        frames, before="after_lift", after="preinsert")
+    grouped = {phase: {} for phase in ("after_lift", "preinsert")}
+    for frame in frames:
+        if (not _CAMERA_ID.fullmatch(frame.camera_id) or
+                not isinstance(frame.image, Image.Image) or
+                frame.image.mode != "RGB" or
+                not math.isfinite(float(frame.timestamp_s)) or
+                frame.timestamp_s <= 0):
+            raise ValueError("preinsert pair needs identified raw RGB exposures")
+        grouped[frame.phase][frame.camera_id] = frame
+    cameras = sorted(grouped["after_lift"])
+    if len(cameras) < minimum_agreeing_views:
+        raise ValueError("preinsert pair needs multiple camera views")
+    for phase in grouped:
+        times = [frame.timestamp_s for frame in grouped[phase].values()]
+        if max(times) - min(times) > max_capture_skew_s:
+            raise ValueError("preinsert pair has asynchronous camera views")
+    observations = []
+    for camera in cameras:
+        before = grouped["after_lift"][camera]
+        after = grouped["preinsert"][camera]
+        observations.append(_infer_closed_set(
+            backend, stage="preinsert_visual", frames=(before, after),
+            prompt_body=(
+                "Image 1 is the RAW after-lift view; image 2 is the RAW "
+                "preinsert view from the same camera. Is the same white peg "
+                "still visibly held after transfer and roughly aligned "
+                "above the socket? Choose coarse_match only from visible "
+                "key pixels in both images. Choose gross_misalignment for "
+                "a visibly displaced or incompatible arrival, slip_or_miss "
+                "when the key is visibly no longer held, and unobservable "
+                "when occlusion prevents a comparison. Do not infer metric "
+                "XY, contact, insertion success or depth. "
+                f"Use only camera ID {camera}."
+            ),
+            field="class", allowed=frozenset({
+                "coarse_match", "gross_misalignment", "slip_or_miss",
+                "unobservable",
+            }), fallback="unobservable",
+        ))
+    decisive: dict[str, list[str]] = {}
+    for camera, observed in zip(cameras, observations):
+        category = observed.parsed["class"]
+        if (observed.parse_error is None and category != "unobservable" and
+                observed.parsed["evidence"].strip() and
+                observed.parsed["evidence_views"] == [camera]):
+            decisive.setdefault(category, []).append(camera)
+    if len(decisive) == 1 and len(next(iter(decisive.values()))) >= minimum_agreeing_views:
         status = next(iter(decisive))
         support = tuple(sorted(decisive[status]))
     else:

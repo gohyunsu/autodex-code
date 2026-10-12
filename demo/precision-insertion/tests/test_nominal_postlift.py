@@ -11,6 +11,8 @@ import time
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.usefixtures("mock_axis_for_fake_planner")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion import nominal_postlift as nominal_module  # noqa: E402
