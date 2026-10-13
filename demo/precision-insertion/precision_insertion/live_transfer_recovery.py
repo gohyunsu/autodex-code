@@ -18,7 +18,7 @@ from uuid import uuid4
 from .action_loop import ActionHandler
 from .failed_return_evidence import verify_failed_return_execution
 from .live_key_trial import capture_returned_key_for_reset
-from .preinsert_checkpoint import _transfer_log
+from .preinsert_checkpoint import _transfer_log, visible_held_transfer_return
 from .session_policy import SessionDecision
 
 
@@ -83,11 +83,8 @@ class LiveTransferRecoveryHandlers:
         checkpoint = runner._preinsert_checkpoint
         if (checkpoint is None or
                 checkpoint.preinsert_reached is not False or
-                checkpoint.reason not in {
-                    "measured_hold_pose_outside_limits",
-                    "multiview_visible_preinsert_failure"} or
-                checkpoint.visual.status not in {
-                    "coarse_match", "gross_misalignment"}):
+                not visible_held_transfer_return(
+                    checkpoint.reason, checkpoint.visual.status)):
             return False
         path = runner._attempt_dir / "transfer_execution.json"
         if not path.is_file():

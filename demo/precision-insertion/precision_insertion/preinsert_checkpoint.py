@@ -117,6 +117,18 @@ def _arrival_label(
     return None, "preinsert_evidence_incomplete_or_occluded"
 
 
+def visible_held_transfer_return(reason: str, visual_status: str) -> bool:
+    """Admit only completed, visibly held preinsert failures to held return.
+
+    The transfer controller's independent ``grasp_held`` record and measured
+    endpoint are checked by the caller; a visual slip/miss never qualifies.
+    """
+    return (reason, visual_status) in {
+        ("measured_hold_pose_outside_limits", "coarse_match"),
+        ("multiview_visible_preinsert_failure", "gross_misalignment"),
+    }
+
+
 def observe_held_preinsert_scene(
     *, calibration: SessionCalibration, shared_root: Path, mode: TaskMode,
     raw_bundle: Path, frame_rows: dict, joint_sample: LiveRobotState,

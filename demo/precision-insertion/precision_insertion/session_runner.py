@@ -70,6 +70,7 @@ from .postlift_preflight import (
 from .preinsert_checkpoint import (
     PreinsertCheckpoint, assess_preinsert_checkpoint,
     verify_preinsert_checkpoint, write_preinsert_checkpoint, _transfer_log,
+    visible_held_transfer_return,
 )
 from .observed_retry_arrival_checkpoint import (
     ObservedRetryArrivalCheckpoint, assess_observed_retry_arrival,
@@ -1971,9 +1972,9 @@ class SessionRunner:
                 self._attempt is None or self._attempt_dir is None or
                 self._attempt.labels["preinsert_reached"] is not False or
                 self._preinsert_checkpoint is None or
-                self._preinsert_checkpoint.reason !=
-                "measured_hold_pose_outside_limits" or
-                self._preinsert_checkpoint.visual.status != "coarse_match" or
+                not visible_held_transfer_return(
+                    self._preinsert_checkpoint.reason,
+                    self._preinsert_checkpoint.visual.status) or
                 self._preinsert_report_path is None or
                 self._preinsert_report_sha256 is None or
                 not self._preinsert_report_path.is_file() or
@@ -1992,8 +1993,8 @@ class SessionRunner:
         if (observed["attempt_id"] != self._attempt.attempt_id or
                 observed["candidate_id"] != self._attempt.candidate_id or
                 observed["preinsert_reached"] is not False or
-                observed["reason"] != "measured_hold_pose_outside_limits" or
-                observed["visual"]["status"] != "coarse_match"):
+                not visible_held_transfer_return(
+                    observed["reason"], observed["visual"]["status"])):
             raise ValueError("transfer return needs its unchanged visible hold")
         if (not isinstance(held_state, LiveRobotState) or
                 not isinstance(limits, PathAuditLimits) or

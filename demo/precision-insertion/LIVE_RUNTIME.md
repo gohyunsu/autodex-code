@@ -222,6 +222,10 @@ For a completed held transfer with a visible preinsert failure, the cylinder
 integration also shares the held-return recorder, path limits and return
 parameters with transfer recovery unless that stage overrides them. The same
 stock return plan then takes the still-held key back to the tabletop.
+The recovery handler and session planner agree on the eligible observations:
+either a coarse visible hold with measured pose outside limits, or a visible
+gross misalignment after a completed held transfer. A visual slip/miss routes
+to supervised recovery because the held-key relation is unknown.
 The older
 `lift_monitor` block still fills only `lift.adapter`. The factory may override
 other stage fields. Neither setting supplies stage limits, interlock or
