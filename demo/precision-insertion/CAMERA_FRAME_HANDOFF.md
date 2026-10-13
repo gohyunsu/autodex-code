@@ -123,6 +123,12 @@ expiration. The registry
 joins that time to the *same* request's exact image hash and frame ID. Do not
 create this JSON from snapshot/FoundPose publication `ts`, `pc_time` after
 `GetNextImage`, or the **separate** timestamp-monitor camera's frame IDs.
+The live calibrated provider also records the robot-host request/response
+window and rejects a calibrated exposure interval that does not overlap it.
+This catches stale frame-ID time mappings after a camera-stream restart when
+the mapped time lies outside the current request. It is still not a substitute
+for binding a physical calibration to the correct camera-stream epoch when
+frame IDs can reset and recur within a narrow time window.
 ParaDex enables image timestamp chunk data, but its current `get_image()`
 returns only `pc_time` and `frameID`; the chunk exposure timestamp is not
 presently carried into SHM. Reading/validating that timestamp per imaging

@@ -76,6 +76,36 @@ def test_independent_fit_and_heldout_bounds_make_frame_id_provider(tmp_path):
             "rig_a_20261010")
 
 
+def test_calibrated_frame_must_overlap_its_live_request_after_stream_restart(
+        tmp_path):
+    path, _source, _record = _calibration_file(tmp_path)
+    calibration = CameraTimeCalibration.load(path)
+    origin = 1_800_000_000.
+    frame = np.zeros((24, 32, 3), dtype=np.uint8)
+    registry = FrameIdentityRegistry()
+    windows = RequestWindowRegistry()
+    for request_id in (42, 43):
+        registry.register(request_id, {"cam_a": {
+            "frame_id": 106, "image_sha256": image_sha256(frame)}})
+    windows.put(42, origin + .04, origin + .08, 10., 10.04)
+    windows.put(43, origin + 2., origin + 2.1, 12., 12.1)
+    provider = AcquisitionTimeProvider(
+        registry, {"cam_a": calibration}, request_windows=windows)
+    evidence = provider(42)
+    verified = verify_frame_provenance(
+        evidence, request_id=42, images_bgr={"cam_a": frame},
+        frame_ids={"cam_a": 106})
+    assert verified["cam_a"]["request_window_start_s"] == origin + .04
+    with pytest.raises(ValueError, match="contradicts its live request"):
+        provider(43)
+    evidence["frames"]["cam_a"]["request_window_start_s"] = origin + 2.
+    evidence["frames"]["cam_a"]["request_window_end_s"] = origin + 2.1
+    with pytest.raises(ValueError, match="contradicts live request"):
+        verify_frame_provenance(
+            evidence, request_id=42, images_bgr={"cam_a": frame},
+            frame_ids={"cam_a": 106})
+
+
 def test_unmeasured_pc_receipt_or_changed_sources_are_rejected(tmp_path):
     path, source, record = _calibration_file(
         tmp_path, source_method="pc_time_after_GetNextImage")

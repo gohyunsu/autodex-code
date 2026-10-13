@@ -97,6 +97,19 @@ def verify_frame_provenance(
                     calibration_id is not None):
                 raise ValueError(f"request interval does not bound exposure for {serial}")
             window = (float(start), float(end))
+        elif method == "calibrated_frame_id" and (
+                "request_window_start_s" in row or
+                "request_window_end_s" in row):
+            start = row.get("request_window_start_s")
+            end = row.get("request_window_end_s")
+            if (type(start) not in (int, float) or
+                    type(end) not in (int, float) or
+                    not math.isfinite(start) or not math.isfinite(end) or
+                    start <= 0 or end <= start or
+                    stamp + error < start or stamp - error > end):
+                raise ValueError(
+                    f"calibrated exposure contradicts live request for {serial}")
+            window = (float(start), float(end))
         verified[serial] = {
             "frame_id": fid,
             "image_sha256": digest,

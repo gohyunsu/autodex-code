@@ -362,8 +362,9 @@ def open_session_cameras(
     from autodex.perception.snapshot_orchestrator import SnapshotOrchestrator
 
     registry = FrameIdentityRegistry()
-    windows = (RequestWindowRegistry() if launch.camera_time_mode ==
-               "bounded_request_interval" else None)
+    # Even calibrated frame-ID times must agree with the live request that
+    # produced their pixels. ParaDex may reuse frame IDs after stream restart.
+    windows = RequestWindowRegistry()
     with ExitStack() as stack:
         stock_snapshot = SnapshotOrchestrator(
             list(launch.pc_list), list(launch.capture_ips))
@@ -377,12 +378,12 @@ def open_session_cameras(
         stock_init = InitOrchestrator(
             list(launch.pc_list), list(launch.capture_ips), **init_kwargs)
         stack.callback(stock_init.close)
-        init = (PrecisionInitOrchestrator(stock_init, registry)
-                if windows is None else PrecisionInitOrchestrator(
-                    stock_init, registry, request_windows=windows))
+        init = PrecisionInitOrchestrator(
+            stock_init, registry, request_windows=windows)
         provider = (BoundedRequestTimeProvider(registry, windows)
-                    if windows is not None else
-                    AcquisitionTimeProvider(registry, launch.camera_times))
+                    if launch.camera_time_mode == "bounded_request_interval" else
+                    AcquisitionTimeProvider(
+                        registry, launch.camera_times, request_windows=windows))
         yield OpenSessionCameras(launch, board, init, provider)
 
 

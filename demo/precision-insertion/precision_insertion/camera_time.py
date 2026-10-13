@@ -165,7 +165,8 @@ class AcquisitionTimeProvider:
     """Merge request-bound frame identities with independently calibrated time."""
 
     def __init__(self, registry: FrameIdentityRegistry,
-                 calibrations: Mapping[str, CameraTimeCalibration]):
+                 calibrations: Mapping[str, CameraTimeCalibration],
+                 request_windows: RequestWindowRegistry | None = None):
         if not calibrations or any(
                 not isinstance(calibration, CameraTimeCalibration) or
                 calibration.camera_serial != serial
@@ -175,6 +176,7 @@ class AcquisitionTimeProvider:
                 "records with matching camera IDs")
         self.registry = registry
         self.calibrations = dict(calibrations)
+        self.request_windows = request_windows
 
     def __call__(self, request_id: int) -> dict:
         identities = self.registry.get(request_id)
@@ -183,16 +185,27 @@ class AcquisitionTimeProvider:
         if any(time.time() > self.calibrations[serial].valid_until_utc_s
                for serial in identities):
             raise ValueError("camera-time calibration has expired in wall time")
+        window = (None if self.request_windows is None else
+                  self.request_windows.get(request_id))
         frames = {}
         for serial, row in identities.items():
             calibration = self.calibrations[serial]
             timestamp, error = calibration.exposure(row["frame_id"])
+            if window is not None and (
+                    timestamp + error < window[0] or
+                    timestamp - error > window[1]):
+                raise ValueError(
+                    f"camera {serial} calibrated exposure contradicts its "
+                    "live request window")
             frames[serial] = {
                 **row, "timestamp_s": timestamp, "max_error_s": error,
                 "timestamp_method": "calibrated_frame_id",
                 "calibration_id": calibration.calibration_id,
                 "clock_domain": "unix_utc",
             }
+            if window is not None:
+                frames[serial]["request_window_start_s"] = window[0]
+                frames[serial]["request_window_end_s"] = window[1]
         return {"request_id": request_id,
                 "source": "camera_acquisition", "frames": frames}
 

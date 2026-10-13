@@ -229,9 +229,9 @@ def test_capture_closes_all_camera_connections_even_on_failure(
         "autodex.perception.init_orchestrator.InitOrchestrator", Init)
     monkeypatch.setattr(launch, "SnapshotMetadataTap", Tap)
     monkeypatch.setattr(launch, "PrecisionInitOrchestrator",
-                        lambda stock, _registry: stock)
+                        lambda stock, _registry, **_kwargs: stock)
     monkeypatch.setattr(launch, "AcquisitionTimeProvider",
-                        lambda _registry, _times: object())
+                        lambda _registry, _times, **_kwargs: object())
     monkeypatch.setattr(launch, "start_precision_session",
                         lambda **_kwargs: (_ for _ in ()).throw(
                             RuntimeError("camera capture failed")))
@@ -279,9 +279,9 @@ def test_open_camera_context_survives_socket_start_until_trial_is_done(
         "autodex.perception.init_orchestrator.InitOrchestrator", Init)
     monkeypatch.setattr(launch, "SnapshotMetadataTap", Tap)
     monkeypatch.setattr(launch, "PrecisionInitOrchestrator",
-                        lambda stock, _registry: stock)
+                        lambda stock, _registry, **_kwargs: stock)
     monkeypatch.setattr(launch, "AcquisitionTimeProvider",
-                        lambda _registry, _times: object())
+                        lambda _registry, _times, **_kwargs: object())
 
     def start(**kwargs):
         events.append("socket_frozen")
