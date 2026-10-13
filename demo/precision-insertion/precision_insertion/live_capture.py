@@ -117,7 +117,14 @@ def _load_saved_frames(
     while time.monotonic() < deadline:
         for serial in camera_ids - images.keys():
             image_file = capture_dir / "images" / f"{serial}.png"
-            if image_file.is_file():
+            try:
+                with image_file.open("rb") as stream:
+                    stream.seek(-12, 2)
+                    complete = (stream.read(12) ==
+                                b"\x00\x00\x00\x00IEND\xaeB`\x82")
+            except (FileNotFoundError, OSError):
+                complete = False
+            if complete:
                 image = cv2.imread(str(image_file), cv2.IMREAD_COLOR)
                 if image is not None and image.size:
                     images[serial] = image

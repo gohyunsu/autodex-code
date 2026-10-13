@@ -173,6 +173,7 @@ def run_camera_only_key_socket_qa(
     confirm_socket_placement: Callable[[], bool] | None = None,
     key_prompt: str = DEFAULT_KEY_PROMPT,
     capture_id: str | None = None,
+    init_ports: tuple[int, int, int] | None = None,
 ) -> Path:
     """Freeze socket, then collect one same-session key/SAM/FoundPose request."""
     if (not isinstance(launch, SessionLaunch) or
@@ -185,7 +186,7 @@ def run_camera_only_key_socket_qa(
     if launch.mode.family != "cylinder":
         raise ValueError("key/socket camera QA currently supports the cylinder")
     identifier = capture_id or time.strftime("key_socket_%Y%m%d_%H%M%S")
-    with open_session_cameras(launch) as cameras:
+    with open_session_cameras(launch, init_ports=init_ports) as cameras:
         started = cameras.start(
             confirm_socket_placement=confirm_socket_placement)
         if confirm_key_placement() is not True:

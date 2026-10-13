@@ -48,12 +48,13 @@ def _owner(image):
         undistort_maps={"cam": (mapx, mapy)})
 
 
-def test_recording_reader_binds_exact_undistorted_pixels_and_monotonic_fid():
+def test_recording_reader_binds_pixels_across_camera_stream_restart():
     image = np.arange(24 * 32 * 3, dtype=np.uint8).reshape(24, 32, 3)
     owner = _owner(image)
     install_init_provenance(owner)
     owner._precision_active_request_id = 42
-    reader = RecordingReader(_Reader(image), owner)
+    stock_reader = _Reader(image)
+    reader = RecordingReader(stock_reader, owner)
     frames = reader.wait_for_new_frames()
     assert frames["cam"][1] == 11
     assert owner._precision_frames[(42, "cam")]["image_sha256"] == (
@@ -64,7 +65,12 @@ def test_recording_reader_binds_exact_undistorted_pixels_and_monotonic_fid():
     pose_meta = owner.pub_pose._publisher.published[0][0][0]
     assert mask_meta["fid"] == pose_meta["fid"] == 11
     assert mask_meta["image_sha256"] == pose_meta["image_sha256"]
-    with pytest.raises(ValueError, match="did not advance"):
+    owner._precision_active_request_id = 43
+    stock_reader.fid = 1  # the camera stream was rearmed between requests
+    reader.wait_for_new_frames()
+    assert owner._precision_frames[(43, "cam")]["frame_id"] == 1
+    stock_reader.fid = 0
+    with pytest.raises(ValueError, match="positive sensor frame ID"):
         reader.wait_for_new_frames()
 
 

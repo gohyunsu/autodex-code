@@ -27,16 +27,19 @@ reusing the stock camera capture and FoundPose inference code:
   unchanged `SnapshotOrchestrator` dispatch/collect, but returns a frame ID
   only if its decoded JPEG exactly matches the tap's same-request JPEG.
   A missing tap message rejects that capture; no later image is substituted.
-- `precision_init_daemon.py` is a **capture-PC replacement for the stock
-  init daemon**, not a modification of it. It subclasses the existing
+- `precision_init_daemon.py` is a **demo-local capture-PC adapter** that may
+  run on a separate set of ports alongside the unchanged stock daemon. It
+  subclasses the existing
   SAM3/FoundPose pipeline, records the SHM `(frame ID, image)` used by the
   request, hashes the exact undistorted pixels and adds `fid`/pixel hash to
   both existing mask and pose PUB metadata. On the robot PC,
   `PrecisionInitOrchestrator(stock_init_orchestrator)` preserves these extra
   fields in the stock buffers. `collect_socket_capture` and
   `collect_key_capture` require both payload hashes and IDs to match their
-  same-request saved PNG. Only one daemon may bind ports 6893/5006/5007 on a
-  capture PC; do **not** start stock and precision daemons together.
+  same-request saved PNG. The two daemons need distinct mask, pose and command
+  ports; the staged adapter uses 15006/15007/16893 while stock continues on
+  5006/5007/6893. The adapter can import the installed stock code via
+  `AUTODEX_STOCK_ROOT` without changing that checkout.
 
 Example robot-PC construction, before starting any capture:
 
@@ -62,8 +65,14 @@ acquisition_metadata_for_request = AcquisitionTimeProvider(
 The example names are imports from the unchanged AutoDex orchestrators and
 the demo-local `camera_transport` module. The metadata tap's PUB connection
 is not a guaranteed barrier: if it misses an initial message, the capture
-fails closed and must be repeated. These adapters have synthetic transport
-tests, **not** an AutoDex-camera-PC deployment test.
+fails closed and must be repeated. On 2026-10-13 the separate-port init
+adapter was staged on all five AutoDex capture PCs and exercised against all
+20 live cameras: each returned mask, pose and complete undistorted PNG had
+matching request/frame IDs and pixel hashes. This proves those per-request
+bindings; the snapshot metadata tap, exposure-time alignment, strict session
+admission and robot-frame accuracy have not been commissioned by that test.
+The adapter accepts a positive frame ID per request; ParaDex may restart its
+counter when a stopped camera stream is armed again.
 
 `camera_time.py` supplies two modes for
 `acquisition_metadata_for_request(request_id)`:
@@ -154,8 +163,10 @@ that provide the following for *the exact frame* used in each request:
 
 1. Preserve `(camera serial, request ID, sensor frame ID)` from SHM through
    board JPEG return, and through both socket SAM and FoundPose payloads.
-   One camera's mask and pose must have the same ID. IDs must be positive and
-   should be checked for monotonic advance at the producer.
+   One camera's mask and pose must have the same ID. IDs must be positive;
+   the stock reader waits for a new SHM frame within the current request.
+   ParaDex may reset its counter when the camera stream restarts, so compare
+   frame identity within a request rather than against a previous stream.
 2. For precise exposure timing, provide capture-PC hardware time or validated
    per-camera frame-ID calibration in the common clock and retain its error
    bound. For stationary bring-up only, the robot-host bounded-request mode

@@ -241,7 +241,9 @@ def test_open_camera_context_survives_socket_start_until_trial_is_done(
             events.append("snapshot_close")
 
     class Init:
-        def __init__(self, *_args):
+        def __init__(self, *_args, **kwargs):
+            assert kwargs == {"port_mask": 15006, "port_pose": 15007,
+                              "port_cmd": 16893}
             events.append("init_open")
 
         def close(self):
@@ -272,7 +274,8 @@ def test_open_camera_context_survives_socket_start_until_trial_is_done(
         return object()
 
     monkeypatch.setattr(launch, "start_precision_session", start)
-    with launch.open_session_cameras(loaded) as cameras:
+    with launch.open_session_cameras(
+            loaded, init_ports=(15006, 15007, 16893)) as cameras:
         assert cameras.start() is not None
         assert isinstance(cameras.init_orchestrator, Init)
         assert events == ["snapshot_open", "tap_open", "init_open",
@@ -280,3 +283,14 @@ def test_open_camera_context_survives_socket_start_until_trial_is_done(
     assert events == ["snapshot_open", "tap_open", "init_open",
                       "socket_frozen", "init_close", "tap_close",
                       "snapshot_close"]
+
+
+def test_alternate_init_ports_validate_before_camera_connection(tmp_path, monkeypatch):
+    config, _record = _config(tmp_path)
+    _stub_time(monkeypatch)
+    loaded = launch.load_session_launch(config)
+    for ports in ((15006, 15006, 16893), (15006, 15007, 65536),
+                  (15006, 15007)):
+        with pytest.raises(ValueError, match="distinct TCP port"):
+            with launch.open_session_cameras(loaded, init_ports=ports):
+                pytest.fail("invalid ports opened a camera")

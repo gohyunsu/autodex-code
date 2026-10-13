@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+import threading
+import time
 from types import SimpleNamespace
 
 import cv2
@@ -13,7 +15,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.live_capture import (  # noqa: E402
-    collect_board_snapshot, collect_key_capture, collect_socket_capture,
+    _load_saved_frames, collect_board_snapshot, collect_key_capture,
+    collect_socket_capture,
 )
 from precision_insertion.frame_provenance import image_sha256  # noqa: E402
 
@@ -124,6 +127,29 @@ def test_socket_uses_same_request_saved_frames_and_foundpose(tmp_path):
             capture_root=tmp_path, calibrated_camera_ids=CAMERAS,
             acquisition_metadata_for_request=_provider, timeout_s=2.0,
             request_id_factory=lambda: 43)
+
+
+def test_saved_frame_reader_waits_for_complete_async_png(tmp_path):
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    encoded = cv2.imencode(".png", IMAGE)[1].tobytes()
+    source = image_dir / "cam_a.png"
+    source.write_bytes(encoded[:-12])
+    with pytest.raises(TimeoutError, match="same-request socket frames"):
+        _load_saved_frames(tmp_path, {"cam_a"}, timeout_s=0.05)
+
+    def finish_write():
+        time.sleep(0.1)
+        with source.open("ab") as stream:
+            stream.write(encoded[-12:])
+
+    writer = threading.Thread(target=finish_write)
+    writer.start()
+    try:
+        recovered = _load_saved_frames(tmp_path, {"cam_a"}, timeout_s=1.0)
+    finally:
+        writer.join()
+    np.testing.assert_array_equal(recovered["cam_a"], IMAGE)
 
 
 def test_incorrect_object_color_is_rejected_before_camera_request(tmp_path):

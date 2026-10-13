@@ -101,7 +101,8 @@ def test_camera_qa_waits_for_key_after_socket_and_closes_transport(
     init = Init()
 
     @contextmanager
-    def cameras(_launch):
+    def cameras(_launch, *, init_ports):
+        assert init_ports == (15006, 15007, 16893)
         events.append("open_cameras")
         try:
             yield SimpleNamespace(
@@ -128,6 +129,7 @@ def test_camera_qa_waits_for_key_after_socket_and_closes_transport(
                         session / "report.json")
     result = qa.run_camera_only_key_socket_qa(
         launch=launch,
+        init_ports=(15006, 15007, 16893),
         confirm_key_placement=lambda: events.append("place_key") or True)
     assert result == session / "report.json"
     assert events == ["open_cameras", "socket_frozen", "place_key",

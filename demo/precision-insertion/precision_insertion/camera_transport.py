@@ -39,9 +39,12 @@ class RecordingReader:
             raise ValueError("precision capture received no camera frames")
         for serial, value in frames.items():
             image, frame_id = value
-            if (type(frame_id) is not int or frame_id <= 0 or
-                    frame_id <= self._owner._precision_last_frame_ids.get(serial, 0)):
-                raise ValueError(f"camera {serial} frame ID did not advance")
+            # ParaDex frame IDs restart when its acquisition stream is armed
+            # again. The stock reader already waits for a new SHM frame for
+            # this request; comparing against an earlier stream epoch would
+            # reject a valid new image after a camera-only session restarts.
+            if type(frame_id) is not int or frame_id <= 0:
+                raise ValueError(f"camera {serial} has no positive sensor frame ID")
             if serial not in self._owner.undistort_maps:
                 raise ValueError(f"camera {serial} has no undistortion map")
             maps = self._owner.undistort_maps[serial]
@@ -53,7 +56,6 @@ class RecordingReader:
                 "image_sha256": image_sha256(undistorted),
                 "image_space": "autodex_undistorted_full_frame",
             }
-            self._owner._precision_last_frame_ids[serial] = frame_id
         return frames
 
 
@@ -93,7 +95,6 @@ def install_init_provenance(daemon) -> None:
             daemon.pub_pose, ProvenancePublisher):
         raise ValueError("precision provenance is already installed")
     daemon._precision_frames = {}
-    daemon._precision_last_frame_ids = {}
     daemon._precision_active_request_id = None
     daemon.pub_mask = ProvenancePublisher(daemon.pub_mask, daemon)
     daemon.pub_pose = ProvenancePublisher(daemon.pub_pose, daemon)

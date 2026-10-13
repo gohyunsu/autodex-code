@@ -501,9 +501,74 @@ in `view_review.json` found three key masks on the socket
 still lack exact sensor-frame identity, so this diagnostic remains
 `robot_ready: false`. The stock daemon writes PNGs asynchronously after
 publishing results; the diagnostic waits for each complete PNG before
-recording its hash. To run the strict session, deploy the demo-local precision
-init daemon on the capture PCs in place of the stock init daemon and verify
-its frame-bound payloads first.
+recording its hash.
+
+The demo-local precision init daemon has since been staged separately on all
+five capture PCs under
+`/home/captureX/precision_init_adapter_20261013_983ba80/`, importing the
+current installed AutoDex through `AUTODEX_STOCK_ROOT`. It listens on
+15006/15007/16893 while the stock daemon keeps 5006/5007/6893. The
+camera-only transport report at
+`$QA_BASE/precision_init_all20_alt_20261013/report.json` verifies 20/20
+live cameras: each mask, FoundPose result and saved undistorted PNG has the
+same request and positive sensor frame ID, with matching pixel hashes. A
+camera-stream restart can reset ParaDex frame IDs; the adapter therefore
+checks identity within each request without imposing monotonic IDs across
+stream sessions. The stock daemons and their checkout were not changed.
+
+For a stationary board-9/socket/key diagnostic against those separate-port
+adapters, start the five staged processes first and use fresh evidence paths:
+
+```bash
+for host in capture1 capture2 capture3 capture5 capture6; do
+  ssh "$host" "AUTODEX_STOCK_ROOT=/home/$host/AutoDex \
+    PYTHONPATH=/home/$host/precision_init_adapter_20261013_983ba80:/home/$host/AutoDex \
+    nohup /home/$host/anaconda3/envs/gotrack_cu128/bin/python \
+    /home/$host/precision_init_adapter_20261013_983ba80/precision_init_daemon.py \
+    --port-mask 15006 --port-pose 15007 --port-cmd 16893 \
+    > /home/$host/precision_init_adapter_20261013_983ba80/daemon.log 2>&1 < /dev/null &"
+done
+
+cd /home/robot/autodex-precision-insertion
+QA_BASE=/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" \
+  /home/robot/anaconda3/envs/autodex/bin/python \
+  demo/precision-insertion/probe_stock_camera_qa.py \
+  --launch-config "$QA_BASE/static_preflight_board9_gap20_20261013/launch.json" \
+  --evidence-dir "$QA_BASE/precision_frame_bound_stock_qa_$(date +%Y%m%d_%H%M%S)" \
+  --precision-init-port-mask 15006 --precision-init-port-pose 15007 \
+  --precision-init-port-cmd 16893
+```
+
+This diagnostic retains stock board ChArUco measurement and stock
+IoU/silhouette refinement while verifying the init mask/pose/PNG sensor-frame
+binding. It writes `robot_ready: false`. The unchanged stock board snapshot
+does not expose a matching frame ID here, and no cross-camera exposure-time
+alignment or robot-frame accuracy is inferred. A strict `probe_live_key_socket`
+attempt with `bounded_request_interval` stopped at the configured 20 ms
+capture-skew check: its response interval includes slow inference and cannot
+certify 20 ms exposure skew. Use independently calibrated imaging-camera
+exposure times for that claim rather than narrowing the interval by hand.
+
+The completed stationary diagnostic is
+`$QA_BASE/precision_frame_bound_stock_qa_20261013_retry1/report.json`.
+Board 9 had 42 triangulated corners from 20 cameras (0.284 px median
+reprojection error, 0.185 mm plane RMS). Both socket requests and the key
+request received 20/20 masks and 20/20 pose payloads, and all 60 resulting
+mask/pose/undistorted-PNG triples had matching sensor frame IDs and pixel
+hashes. Camera `25305466` had an empty mask and failed pose on all three
+requests; the other 19 had nonempty masks and valid per-view poses. Stock
+IoU/silhouette refinement rejected both socket results with
+`sil_loss_too_high` (0.003060 and 0.004295), while accepting the key result
+(0.000145). Even the two rejected pre-refinement socket candidates differ by
+11.93 mm in translation, so this run supplies no repeatable frozen socket
+pose. The saved `review_socket_000.jpg`, `review_socket_001.jpg` and
+`review_key.jpg` show all 20 masked views. Visual review found that the key
+prompt segmented the socket instead of the key in cameras `25322645` and
+`25322646`. These failures prevent treating the diagnostic as an admitted
+socket/key pose or as permission for robot motion. After capture, the five
+temporary precision init processes were stopped; the original stock init
+processes remained running.
 
 For a reproducible **historical NAS-frame** QA exercise (not a substitute
 for new recipient-camera frames), run:

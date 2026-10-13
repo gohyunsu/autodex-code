@@ -333,6 +333,7 @@ def load_session_launch(
 @contextmanager
 def open_session_cameras(
     launch: SessionLaunch,
+    *, init_ports: tuple[int, int, int] | None = None,
 ) -> Iterator[OpenSessionCameras]:
     """Own AutoDex camera connections until the caller leaves the context.
 
@@ -345,6 +346,11 @@ def open_session_cameras(
         raise TypeError("camera session needs a validated launch")
     if launch.execution_scope not in {"live", "camera_only_diagnostic"}:
         raise PermissionError("static preflight launch cannot open cameras")
+    if init_ports is not None and (
+            not isinstance(init_ports, tuple) or len(init_ports) != 3 or
+            any(type(port) is not int or not 0 < port < 65536
+                for port in init_ports) or len(set(init_ports)) != 3):
+        raise ValueError("init ports need three distinct TCP port numbers")
     from autodex.perception.init_orchestrator import InitOrchestrator
     from autodex.perception.snapshot_orchestrator import SnapshotOrchestrator
 
@@ -359,8 +365,10 @@ def open_session_cameras(
         stack.callback(tap.close)
         board = ProvenanceSnapshotAdapter(
             stock_snapshot, tap.buffer, registry, request_windows=windows)
+        init_kwargs = ({} if init_ports is None else dict(
+            zip(("port_mask", "port_pose", "port_cmd"), init_ports)))
         stock_init = InitOrchestrator(
-            list(launch.pc_list), list(launch.capture_ips))
+            list(launch.pc_list), list(launch.capture_ips), **init_kwargs)
         stack.callback(stock_init.close)
         init = (PrecisionInitOrchestrator(stock_init, registry)
                 if windows is None else PrecisionInitOrchestrator(

@@ -1,19 +1,27 @@
 #!/usr/bin/env python3
 """Capture-PC FoundPose daemon retaining exact sensor frame ID and image hash.
 
-Deploy *instead of* the stock init daemon on the selected AutoDex capture PCs,
-on the same ports. Do not run both simultaneously. This reuses the unchanged
-AutoDex SAM3/FoundPose pipeline and adds only frame provenance metadata.
+Run on dedicated mask, pose and command ports alongside the unchanged stock
+init daemon, or on the stock ports while that daemon is stopped. This reuses
+the installed AutoDex SAM3/FoundPose pipeline and adds frame provenance
+metadata without changing stock code.
 It does not supply or invent hardware exposure timestamps.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import sys
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+_stock_root_env = os.environ.get("AUTODEX_STOCK_ROOT")
+REPO_ROOT = (Path(_stock_root_env).expanduser().resolve()
+             if _stock_root_env else Path(__file__).resolve().parents[2])
+if not (REPO_ROOT / "src/execution/daemon/init_daemon.py").is_file():
+    raise FileNotFoundError(
+        f"AutoDex stock init daemon is missing under {REPO_ROOT}; "
+        "set AUTODEX_STOCK_ROOT to the capture PC's current AutoDex checkout")
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
