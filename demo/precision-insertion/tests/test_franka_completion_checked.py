@@ -133,6 +133,21 @@ def test_unacknowledged_stop_prevents_terminal_hand_ramp(monkeypatch):
     assert arm.moves == []
 
 
+def test_force_stop_is_acknowledged_before_caller_can_reverse(monkeypatch):
+    def force_stop(self, _path, _hand, **kwargs):
+        assert kwargs["stop_wrench_z"] == 12.
+        self._last_stop_on_contact = True
+
+    monkeypatch.setattr(_Stock, "_follow", force_stop)
+    arm = _Arm(np.zeros(7))
+    executor = _wrapper(arm)
+    executor._follow(np.vstack((np.zeros(7), np.full(7, .2))),
+                     stop_wrench_z=12., abort_on_contact=True)
+    assert arm.stops == 1
+    assert executor._last_stop_on_contact is True
+    assert arm.moves == []
+
+
 def test_stock_lineage_requires_exact_demo_wrapper(monkeypatch):
     stock_type = type("FrankaExecutor", (_Stock,), {
         "__module__": "src.execution.franka_executor"})

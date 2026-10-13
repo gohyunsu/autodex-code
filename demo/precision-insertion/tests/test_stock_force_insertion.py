@@ -42,7 +42,8 @@ def test_stock_force_stop_ascends_without_speed_override(monkeypatch):
             arm_state["qpos"] = np.asarray(path)[-1].copy()
 
     executor._follow = follow
-    executor.stop_and_acknowledge = lambda: {"acknowledged": True}
+    executor.stop_and_acknowledge = lambda: pytest.fail(
+        "completion-checked _follow already acknowledged the stop")
     monkeypatch.setattr(stock, "is_demo_completion_checked_executor", lambda _: True)
     adapter = stock.FrankaForceStopInsertionAdapter(executor)
     axial = np.zeros((5, 13))
@@ -61,7 +62,8 @@ def test_stock_normal_completion_does_not_withdraw(monkeypatch):
     calls = []
     executor = SimpleNamespace(_last_stop_on_contact=False)
     executor._follow = lambda path, **kwargs: calls.append((path, kwargs))
-    executor.stop_and_acknowledge = lambda: {"acknowledged": True}
+    executor.stop_and_acknowledge = lambda: pytest.fail(
+        "completion-checked _follow already acknowledged the stop")
     monkeypatch.setattr(stock, "is_demo_completion_checked_executor", lambda _: True)
     axial = np.zeros((3, 13))
     axial[:, 0] = [0., .01, .02]

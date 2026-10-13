@@ -70,9 +70,9 @@ class FrankaForceStopInsertionAdapter:
         self.executor._follow(path[:, :7], stop_wrench_z=force_threshold_n,
                               abort_on_contact=True)
         contact = bool(self.executor._last_stop_on_contact)
-        stop = self.stop_and_acknowledge()
-        if stop.get("acknowledged") is not True:
-            raise RuntimeError("FR3 stop was not acknowledged")
+        # The required completion-checked _follow already stops the velocity
+        # stream and acknowledges stationary feedback, including force stops.
+        # A second stop here would delay the reverse ascent after contact.
         retreat = None
         contact_state = None
         if contact:
@@ -84,9 +84,6 @@ class FrankaForceStopInsertionAdapter:
             # Reverse the already checked axis stroke immediately, while the
             # key remains gripped. A reflex/error or failed ascent propagates.
             self.executor._follow(retreat, abort_on_contact=True)
-            stop = self.stop_and_acknowledge()
-            if stop.get("acknowledged") is not True:
-                raise RuntimeError("FR3 ascent stop was not acknowledged")
         if time.time() - started > max_duration_s:
             raise TimeoutError("stock insertion and withdrawal exceeded duration")
         return {
