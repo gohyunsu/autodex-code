@@ -150,6 +150,9 @@ All keys and sockets are white. Use a socket SAM prompt such as
 `fixed white cylindrical socket on the ChArUco board` and a key prompt such
 as `loose white cylindrical peg on the tabletop`. The launch and capture
 adapters reject stale nonwhite color words before sending a SAM request.
+For cylinder stages that capture the key, the built-in FR3 integration fills
+an omitted prompt with `white plastic cylindrical key`; a configured prompt
+still takes precedence.
 Set `vlm.model_id` to the recipient's verified NAS Qwen bundle
 `payload/model` directory. If omitted, the built-in FR3 integration selects
 `shared_root/AutoDex/models/Qwen3-VL-2B-Instruct`; a custom stage factory

@@ -111,7 +111,7 @@ def test_cylinder_factory_injects_stock_force_and_release_with_existing_limits(
     interlock = lambda: True
     module.configure = lambda *_: {
         "shared": {"backend": object()},
-        "stages": {"task": {}, "held_return": {
+        "stages": {"task": {}, "key_planning": {}, "held_return": {
                        "limits": limits, "return_parameters": {"stock": True}},
                    "transfer_recovery": {},
                    "pickup": {"motion_interlock": interlock},
@@ -157,6 +157,10 @@ def test_cylinder_factory_injects_stock_force_and_release_with_existing_limits(
         assert kwargs["stages"]["transfer_recovery"]["limits"] is limits
         assert kwargs["stages"]["transfer_recovery"]["return_parameters"] == (
             {"stock": True})
+        for stage in ("key_planning", "held_return", "transfer_recovery",
+                      "repose_execution"):
+            assert kwargs["stages"][stage]["key_prompt"] == (
+                "white plastic cylindrical key")
         assert kwargs["stages"]["held_return"]["execute_restoration"] is (
             restoration)
         assert kwargs["stages"]["repose_execution"]["execute_repose"] is (

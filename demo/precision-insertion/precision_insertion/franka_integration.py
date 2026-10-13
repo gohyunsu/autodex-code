@@ -247,6 +247,12 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
         stages = _with_checkpoint_captures(
             parameters["stages"], vlm["capture_timeout_s"],
             family=family)
+        if family == "cylinder":
+            for stage_name in ("key_planning", "held_return",
+                               "transfer_recovery", "repose_execution"):
+                if stage_name in stages:
+                    stages[stage_name].setdefault(
+                        "key_prompt", "white plastic cylindrical key")
         if "pickup" in stages and "executor" not in stages["pickup"]:
             # Use the same FR3 connection as clear-view and measured state.
             # This is the demo's completion-checked stock subclass; the
