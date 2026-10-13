@@ -22,16 +22,25 @@ sample fresh stationary FR3/Inspire feedback and call
    Cartesian planner mode must match the bound initial preflight and is
    recorded again; an implicit switch between default and experimental
    locked-hand modes is rejected before the replan.
-5. Requires explicit `SurfaceDeviationBounds` covering future key/hand
-   surface error relative to the fixture. If nominal clearance cannot absorb
-   these commissioned bounds, the result is rejected.
+5. With `SurfaceDeviationBounds`, checks that the sampled clearance absorbs
+   a commissioned future-trial key/hand surface error. Cylinder mode may
+   instead explicitly use `bounds=None` to keep the stock nominal CAD audit
+   without claiming a measured physical error margin. Square retains the
+   bound requirement.
 
-Passing status is `sampled_measured_chain_pass`; it is **not** grasp success,
-a contact-control result or a motor command. The bound is not learned from
-one simulated grasp or one camera image. It must cover the full future-trial
-error budget, including squeeze-induced relation shift and any slip. Without
-such physical commissioning, a positive geometric result cannot be promoted
-to a real-robot launch.
+The bounded passing status is `sampled_measured_chain_pass`; the cylinder
+nominal status is `sampled_nominal_measured_chain_pass`. Both are geometric
+path results, not grasp success, contact results or motor commands. The latter
+saves `sampled_margin_pass: null` and the explicit provenance
+`nominal_BODex_relation_without_future_surface_bound`. It cannot be reported
+as a verified physical clearance margin. A bound, when supplied, must cover
+future squeeze-induced relation shift, slip, calibration, robot tracking and
+mesh error; a single reset landing or one camera image does not establish it.
+In particular, the reset landing error is the difference between the key's
+requested and actual tabletop pose after a failed attempt. The next attempt
+captures that key afresh. It does not measure how far any point on the key or
+hand may deviate from its planned pose relative to the fixed socket while the
+robot carries it.
 
 From the demo Python environment, after one selected attempt and the pickup
 execution record:
@@ -59,28 +68,22 @@ result = runner.prepare_measured_lift_chain(
 )
 ```
 
+For the current cylinder stock-style nominal trial, pass `bounds=None` in
+that call. This changes only the uncertainty-margin claim; the measured
+post-squeeze start, exact endpoint, sampled full-mesh collision and complete
+axial path checks still run. A failed nominal audit still stops the attempt.
+
 Rejected and passing plans are saved exclusively under
 `attempts/<id>/measured_lift_preflights/<index>/`. The report and dense NPZ
 can be rechecked with `verify_measured_lift_chain(report_path)`. An altered
 pickup log or trajectory fails verification.
 
-There is deliberately **no** lift motor call yet. Stock
-`FrankaExecutor.execute_lift()` calls `follow_joint_trajectory()` without
-`abort_on_contact`; its `_follow()` may recover a collision reflex. Even
-calling `_follow(..., abort_on_contact=True)` is insufficient as-is: its
-timeout/stall branches fall through to a blocking final landing move. A
-demo-local monitored lift controller must stop and remain stopped on reflex,
-force threshold, timeout or stall, verify actual endpoint/hand state, and
-write a fresh `precision_insertion_lift_execution_v1` log. Only then can the
-existing paired-camera VLM lift checkpoint label `grasp_success`. The same
-execution discipline is needed for transfer; the 20 mm contact stroke needs
-a dedicated guarded controller, not free-space trajectory playback.
-
-The checked-out ParaDex `franka_daemon.cpp::handle_set_joint_velocity` parses
-`duration_ms` but does not use it to expire a streaming velocity command.
-Consequently a Python-side timeout alone is **not** a dead-man safeguard:
-if its process stalls or dies, the last target can remain active. Before any
-demo-local follower commands hardware, commission an independent stop/watchdog
-at the robot-control layer (and verify it on the actual robot PC), together
-with an E-stop and guarded force/torque abort. These are physical execution
-prerequisites, not settings that a saved trajectory or mock test can satisfy.
+The current `FrankaMeasuredLiftAdapter` follows the saved measured-start
+lift with the session's completion-checked stock FR3 executor, records the
+FR3/Inspire/force trace and verifies a stopped endpoint. The execution
+boundary still requires a reviewed watchdog record for lift and transfer;
+none is installed on this PC. The installed ParaDex daemon source and binary
+contain a default 200 ms stream-expiry watchdog, but inspection is not a
+physical timeout or E-stop test. The 20 mm cylinder contact stroke uses the
+separate stock 12 N force-stop adapter and reverse-axis ascent. A positive
+paired-camera VLM lift label is evaluated only after a completed lift record.

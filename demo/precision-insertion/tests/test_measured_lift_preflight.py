@@ -182,6 +182,36 @@ def test_measured_q_replans_lift_and_full_chain(tmp_path, monkeypatch):
         lift.write_measured_lift_chain(result, output)
 
 
+def test_cylinder_can_use_explicit_stock_nominal_chain_without_fake_bound(
+        tmp_path, monkeypatch):
+    args, planned_calls, _log, _marker = _fixture(tmp_path, monkeypatch)
+    args["runner"].mode = select_mode("cylinder", 20)
+    args["bounds"] = None
+    result = lift.plan_measured_lift_chain(**args)
+    assert result.status == lift.NOMINAL_UNBOUNDED_LIFT_STATUS
+    assert result.relation_source == (
+        "nominal_BODex_relation_without_future_surface_bound")
+    assert result.uncertainty_margin["sampled_margin_pass"] is None
+    assert len(planned_calls) == 1
+    output = lift.write_measured_lift_chain(result, tmp_path / "nominal_chain")
+    report = output / "report.json"
+    assert lift.verify_measured_lift_chain(report, expected=result)["status"] == (
+        lift.NOMINAL_UNBOUNDED_LIFT_STATUS)
+    saved = json.loads(report.read_text())
+    saved["uncertainty_margin"]["sampled_margin_pass"] = True
+    report.write_text(json.dumps(saved), encoding="utf-8")
+    with pytest.raises(ValueError, match="chain/margin proof"):
+        lift.verify_measured_lift_chain(report)
+
+
+def test_unbounded_nominal_chain_is_not_available_for_square(tmp_path, monkeypatch):
+    args, planned_calls, _log, _marker = _fixture(tmp_path, monkeypatch)
+    args["bounds"] = None
+    with pytest.raises(ValueError, match="cylinder-only"):
+        lift.plan_measured_lift_chain(**args)
+    assert not planned_calls
+
+
 @pytest.mark.parametrize("defect", ["missing_marker", "changed_log_plan",
                                      "stale_state", "hand_drift"])
 def test_bad_squeeze_evidence_blocks_planner(tmp_path, monkeypatch, defect):

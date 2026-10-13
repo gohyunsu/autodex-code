@@ -1,9 +1,10 @@
 """Replan the complete held-key chain from the measured post-squeeze state.
 
-This does not command a robot. It uses the unchanged v8 lift planner, the
-demo's existing transfer/axial planner and sampled whole-key/hand audit, plus
-commissioned surface-error bounds. The key/hand relation remains a nominal
-grasp hypothesis until independently observed or physically bounded.
+This does not command a robot. It uses the unchanged v8 lift planner and the
+demo's transfer/axial planner with a sampled whole-key/hand audit. The
+explicit cylinder stock-nominal route keeps future surface-error margin
+unassessed when no physical bound exists. The key/hand relation remains a
+nominal grasp hypothesis until independently observed or physically bounded.
 """
 
 from __future__ import annotations
@@ -32,6 +33,15 @@ from .targets import InsertionTargets, build_rigid_insertion_targets
 from .uncertainty_margin import (
     SurfaceDeviationBounds, audit_sampled_uncertainty_margins,
 )
+
+
+NOMINAL_UNBOUNDED_LIFT_STATUS = "sampled_nominal_measured_chain_pass"
+_NOMINAL_UNASSESSED_MARGIN = {
+    "schema": "precision_insertion_nominal_surface_margin_unassessed_v1",
+    "sampled_margin_pass": None,
+    "reason": "no_future_trial_surface_error_bound",
+    "scope": "stock_nominal_geometry_only_not_robust_physical_clearance",
+}
 
 
 def _sha(path: Path) -> str:
@@ -86,7 +96,7 @@ class MeasuredLiftChain:
 def plan_measured_lift_chain(
     *, runner: SessionRunner, planner, pickup_execution_log: Path,
     joint_sample: LiveRobotState,
-    bounds: SurfaceDeviationBounds,
+    bounds: SurfaceDeviationBounds | None,
     limits: PathAuditLimits,
     max_state_age_s: float,
     max_post_squeeze_arm_drift_rad: float,
@@ -100,9 +110,10 @@ def plan_measured_lift_chain(
 
     Only a measured 13-DOF state after this attempt's completed squeeze is
     accepted. The complete path is audited using the same frozen socket and
-    exact CAD inputs as the initial v8 trial. Surface-error bounds must be
-    commissioned externally; nominal BODex/MuJoCo relation alone cannot make
-    this path executable.
+    exact CAD inputs as the initial v8 trial. If a commissioned future-trial
+    surface bound is unavailable, cylinder mode may explicitly retain only
+    the stock-style nominal path audit. That path records the unassessed
+    margin and never claims robust physical clearance.
     """
     thresholds = (
         max_state_age_s, max_post_squeeze_arm_drift_rad,
@@ -113,7 +124,11 @@ def plan_measured_lift_chain(
                 for v in thresholds) or axial_waypoint_step_m > .005):
         raise ValueError("measured lift needs positive commissioned limits")
     limits.validate()
-    bounds.validate()
+    if bounds is None:
+        if not isinstance(runner, SessionRunner) or runner.mode.family != "cylinder":
+            raise ValueError("unbounded nominal lift is cylinder-only")
+    else:
+        bounds.validate()
     if not isinstance(runner, SessionRunner):
         raise TypeError("measured lift needs a frozen SessionRunner")
     attempt = runner.active_attempt
@@ -234,7 +249,9 @@ def plan_measured_lift_chain(
             status, attempt.attempt_id, attempt.candidate_id,
             log_file, _sha(log_file), runner.session_sha256,
             verified["report_sha256"], joint_sample, relation,
-            "nominal_BODex_relation_with_commissioned_surface_error_bound",
+            ("nominal_BODex_relation_with_commissioned_surface_error_bound"
+             if bounds is not None else
+             "nominal_BODex_relation_without_future_surface_bound"),
             endpoint, targets, planning, margin, planner_mode)
 
     if endpoint.get("endpoint_pass") is not True:
@@ -275,6 +292,9 @@ def plan_measured_lift_chain(
                               "planner_api": "plan_lift_preflight"},))
     if not planning.sampled_planning_pass:
         return result(planning.status, targets=targets, planning=planning)
+    if bounds is None:
+        return result(NOMINAL_UNBOUNDED_LIFT_STATUS, targets=targets,
+                      planning=planning, margin=dict(_NOMINAL_UNASSESSED_MARGIN))
     margin = audit_sampled_uncertainty_margins(
         mode=runner.mode, endpoint=endpoint, targets=targets,
         planning=planning, bounds=bounds)
@@ -331,13 +351,21 @@ def verify_measured_lift_chain(
             key: value for key, value in report.items()
             if key not in artifact_fields} != expected.to_record():
         raise ValueError("saved measured lift differs from selected replan")
-    if report.get("status") == "sampled_measured_chain_pass":
+    passing = {"sampled_measured_chain_pass", NOMINAL_UNBOUNDED_LIFT_STATUS}
+    if report.get("status") in passing:
         planning = report.get("planning")
         margin = report.get("uncertainty_margin")
         if (not isinstance(planning, dict) or
                 planning.get("sampled_planning_pass") is not True or
-                not isinstance(margin, dict) or
-                margin.get("sampled_margin_pass") is not True):
+                (report["status"] == "sampled_measured_chain_pass" and
+                 (not isinstance(margin, dict) or
+                  margin.get("sampled_margin_pass") is not True)) or
+                (report["status"] == NOMINAL_UNBOUNDED_LIFT_STATUS and
+                 (report.get("relation_source") !=
+                  "nominal_BODex_relation_without_future_surface_bound" or
+                  margin != _NOMINAL_UNASSESSED_MARGIN or
+                  not isinstance(report.get("endpoint"), dict) or
+                  report["endpoint"].get("endpoint_pass") is not True))):
             raise ValueError("saved measured lift pass lacks chain/margin proof")
     filename = report.get("planned_trajectories")
     if filename is not None:
@@ -351,7 +379,7 @@ def verify_measured_lift_chain(
         with np.load(artifact, allow_pickle=False) as archive:
             if "lift" not in archive.files:
                 raise ValueError("saved measured lift has no lift trajectory")
-            if (report.get("status") == "sampled_measured_chain_pass" and
+            if (report.get("status") in passing and
                     not {"lift", "transfer", "axial"} <=
                     set(archive.files)):
                 raise ValueError("passing measured lift lacks full-chain paths")
@@ -363,6 +391,6 @@ def verify_measured_lift_chain(
                 if name in archive.files:
                     segment = _path(archive[name], f"saved {name}", tail, held)
                     tail = segment[-1]
-    elif report.get("status") == "sampled_measured_chain_pass":
+    elif report.get("status") in passing:
         raise ValueError("passing measured lift has no saved trajectory")
     return report

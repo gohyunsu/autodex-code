@@ -130,7 +130,8 @@ def execute_bound_measured_lift(
     report_path = runner._measured_lift_report_path
     attempt_dir = runner._attempt_dir
     if (attempt is None or not isinstance(chain, MeasuredLiftChain) or
-            chain.status != "sampled_measured_chain_pass" or
+            chain.status not in {"sampled_measured_chain_pass",
+                                 "sampled_nominal_measured_chain_pass"} or
             report_path is None or attempt_dir is None or
             chain.attempt_id != attempt.attempt_id or
             chain.candidate_id != attempt.candidate_id or
@@ -139,7 +140,8 @@ def execute_bound_measured_lift(
             runner._measured_lift_report_sha256 != _sha(report_path)):
         raise ValueError("lift is not bound to this passing measured chain")
     saved = verify_measured_lift_chain(report_path, expected=chain)
-    if (saved["status"] != "sampled_measured_chain_pass" or
+    if (saved["status"] not in {"sampled_measured_chain_pass",
+                                 "sampled_nominal_measured_chain_pass"} or
             saved["session_calibration_sha256"] != runner.session_sha256):
         raise ValueError("saved lift chain changed")
     output = attempt_dir / "lift_execution.json"

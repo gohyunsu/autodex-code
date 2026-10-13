@@ -404,9 +404,10 @@ existing AutoDex execution files (`run_auto.py`, `run_pipeline.py`, or
 `scene_cfg.py`). AutoDex/ParaDex hardware and perception APIs may be reused
 through explicit adapters, while insertion-specific orchestration lives here.
 
-There is no robot-executable insertion runner in this directory yet. The
-existing scenario catalog, VLM observer, and retry policy are offline evidence
-and decision helpers, not proof of a continuous insertion plan or hardware
+`run_live.py` now assembles the opt-in cylinder execution loop, but its
+robot-PC `stages_factory` is still absent here and the installed controller
+has no reviewed watchdog record. The scenario catalog, VLM observer, and
+retry policy are evidence and decision helpers, not proof of hardware
 readiness. Do not interpret a grasp/lift simulation pass as an insertion pass.
 Offline grasp eligibility now means v8 grasp stability **plus** a centered,
 axis-aligned 20 mm key-in-socket endpoint at which the full Inspire hand does
@@ -421,8 +422,9 @@ For promoted cylindrical candidates the catalogue also carries the hashed
 MuJoCo `simulated_post_squeeze_fidelity_diagnostic` through pose selection.
 It is diagnostic evidence, not a commissioned acceptance threshold or a
 measured post-lift key-in-hand relation. Before transfer, the live pipeline
-must establish a bounded relation and recheck the endpoint and route against
-that relation; the catalogue alone cannot authorize insertion.
+rechecks the endpoint and path from measured post-squeeze joints. The cylinder
+route may explicitly use a nominal relation with an unassessed physical
+surface margin; the catalogue alone cannot authorize insertion.
 The original AutoDex source files are kept at the `main` baseline; the
 previous feature-branch changes are preserved at
 `archive/precision-pre-isolation`. `PLAN.md` maps existing APIs to the demo
@@ -1309,15 +1311,16 @@ After a measured squeeze, [the measured-lift replan](MEASURED_LIFT.md)
 re-screens the 20 mm endpoint with achieved finger joints and uses existing
 v8 cuRobo planning plus the demo's full held-key/hand path audit from the
 achieved FR3/Inspire state. It additionally needs a commissioned bound on
-key/hand surface error. This is still a saved plan, **not** a lift command;
-the stock lift follower cannot be used as a fail-closed contact/reflex monitor.
+key/hand surface error for a bounded-margin claim. The cylinder route can
+explicitly use `bounds=None` for a stock-style nominal CAD plan and records
+that margin as unassessed. This is still a saved plan, **not** a lift command.
 
 The separate [measured lift execution boundary](LIFT_EXECUTION.md) can pass
 that exact saved lift to an injected, independently safeguarded adapter only
 after a reviewed watchdog-binary record, fresh matching robot feedback,
-explicit motion opt-in and interlock. It defaults to no motion, has only
-fake-adapter tests, and no commissioned adapter exists yet. Its successful
-execution record is input to the later paired-camera lift checkpoint, never
+explicit motion opt-in and interlock. It defaults to no motion and has only
+fake-adapter execution tests; no reviewed watchdog record exists on this PC.
+Its successful execution record is input to the later paired-camera lift checkpoint, never
 itself a grasp-success label.
 
 After the lift checkpoint and a passing observed or uncertainty-bounded

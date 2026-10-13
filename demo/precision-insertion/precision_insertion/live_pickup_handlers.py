@@ -114,7 +114,9 @@ class LivePickupHandlers:
             joint_sample=after, bounds=self.lift_bounds,
             limits=self.path_limits,
             **dict(self.measured_lift_parameters))
-        if chain.status != "sampled_measured_chain_pass":
+        if chain.status not in {
+                "sampled_measured_chain_pass",
+                "sampled_nominal_measured_chain_pass"}:
             report = runner._measured_lift_report_path
             if report is None or not Path(report).is_file():
                 raise ValueError("rejected measured lift has no saved report")

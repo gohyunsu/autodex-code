@@ -247,6 +247,12 @@ Generate those grasp-specific records from independent physical pickups using
 record stops at the held-relation stage; no simulated key pose is substituted.
 For the active cylinder run, omit `held_relation_route` or explicitly return
 `"held_relation_route": "nominal"` from the robot-PC stage factory.
+At the measured post-squeeze lift stage, `pickup.lift_bounds=None` opts into
+the separately recorded stock-nominal path when no future-trial key/hand
+surface-error bound exists. It preserves measured joints, the exact CAD
+endpoint and sampled path audit, and records the physical margin as
+unassessed; it is not a physical clearance certificate. A supplied
+`SurfaceDeviationBounds` retains the bounded audit.
 Its `held_relation` stage supplies `limits` (`PathAuditLimits`) and a
 `parameters` mapping containing `max_state_age_s`, `max_arm_hand_skew_s`,
 `max_hand_command_error_raw`, `max_arm_velocity_rad_s`,

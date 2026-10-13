@@ -19,6 +19,7 @@ from precision_insertion import lift_execution, measured_lift_preflight  # noqa:
 from precision_insertion.lift_execution import (  # noqa: E402
     LiftExecutionLimits, execute_bound_measured_lift,
 )
+from precision_insertion.config import select_mode  # noqa: E402
 from test_measured_lift_preflight import _fixture, _state  # noqa: E402
 
 
@@ -60,8 +61,11 @@ class _Adapter:
         return {"acknowledged": True}
 
 
-def _setup(tmp_path, monkeypatch):
+def _setup(tmp_path, monkeypatch, *, nominal_unbounded=False):
     args, _calls, _log, _marker = _fixture(tmp_path, monkeypatch)
+    if nominal_unbounded:
+        args["runner"].mode = select_mode("cylinder", 20)
+        args["bounds"] = None
     chain = measured_lift_preflight.plan_measured_lift_chain(**args)
     runner = args["runner"]
     measured_lift_preflight.write_measured_lift_chain(
@@ -123,6 +127,17 @@ def test_bound_lift_writes_observation_eligible_log_not_grasp_label(
     assert (kwargs["runner"]._attempt_dir / "lift_execution.json").is_file()
     with pytest.raises(FileExistsError, match="already started"):
         execute_bound_measured_lift(**kwargs, enable_robot_motion=True)
+
+
+def test_explicit_cylinder_nominal_chain_can_reach_lift_adapter(
+        tmp_path, monkeypatch):
+    kwargs = _setup(tmp_path, monkeypatch, nominal_unbounded=True)
+    assert kwargs["runner"]._measured_lift_preflight.status == (
+        "sampled_nominal_measured_chain_pass")
+    result = execute_bound_measured_lift(
+        **kwargs, enable_robot_motion=True)
+    assert result["trajectory_complete"] is True
+    assert kwargs["adapter"].calls == 1
 
 
 def test_lift_adapter_error_latches_failure_and_supervised_recovery(

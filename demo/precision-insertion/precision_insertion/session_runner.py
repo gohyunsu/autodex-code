@@ -1188,7 +1188,7 @@ class SessionRunner:
 
     def prepare_measured_lift_chain(
         self, *, planner, pickup_execution_log: Path,
-        joint_sample: LiveRobotState, bounds: SurfaceDeviationBounds,
+        joint_sample: LiveRobotState, bounds: SurfaceDeviationBounds | None,
         limits: PathAuditLimits, max_state_age_s: float,
         max_post_squeeze_arm_drift_rad: float,
         max_post_squeeze_hand_drift_raw: float,
@@ -1209,8 +1209,9 @@ class SessionRunner:
 
         if (self._attempt_dir is None or
                 (self._measured_lift_preflight is not None and
-                 self._measured_lift_preflight.status ==
-                 "sampled_measured_chain_pass")):
+                 self._measured_lift_preflight.status in {
+                     "sampled_measured_chain_pass",
+                     "sampled_nominal_measured_chain_pass"})):
             raise ValueError("measured lift is absent or already preflighted")
         result = plan_measured_lift_chain(
             runner=self, planner=planner,
