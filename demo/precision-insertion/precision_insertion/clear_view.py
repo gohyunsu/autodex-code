@@ -152,6 +152,7 @@ class ClearViewForPerception:
         self, *, release_plan: ReposeReleasePreflight,
         open_hand: Callable[[np.ndarray], None],
         follow_joint_trajectory: Callable[[np.ndarray], None],
+        evidence_sink: list[dict] | None = None,
     ) -> LiveRobotState:
         """Open at the return site, ascend, then follow the planned retract.
 
@@ -193,16 +194,27 @@ class ClearViewForPerception:
         self._verify_release_waypoint(up[0], phase="before_release_open",
                                       require_open=False)
         open_hand(np.asarray(INSPIRE_INIT, dtype=float).copy())
-        self._verify_release_waypoint(up[0], phase="after_release_open",
-                                      require_open=True)
+        opened = self._verify_release_waypoint(
+            up[0], phase="after_release_open", require_open=True)
+        if evidence_sink is not None:
+            evidence_sink.append({"name": "release_open",
+                                  "state": opened.to_record()})
         follow_joint_trajectory(up.copy())
-        self._verify_release_waypoint(up[-1], phase="after_release_lift",
-                                      require_open=True)
+        lifted = self._verify_release_waypoint(
+            up[-1], phase="after_release_lift", require_open=True)
+        if evidence_sink is not None:
+            evidence_sink.append({"name": "post_release_lift",
+                                  "state": lifted.to_record()})
         follow_joint_trajectory(retract.copy())
-        return self.verify_state(self.read_state(), phase="after_release_exit")
+        final = self.verify_state(self.read_state(), phase="after_release_exit")
+        if evidence_sink is not None:
+            evidence_sink.append({"name": "post_release_retract",
+                                  "state": final.to_record()})
+        return final
 
     def finish_planned_release_exit_with_autodex(
         self, *, release_plan: ReposeReleasePreflight,
+        evidence_sink: list[dict] | None = None,
     ) -> LiveRobotState:
         """Execute the checked exit through the existing FrankaExecutor.
 
@@ -221,7 +233,8 @@ class ClearViewForPerception:
 
         return self.finish_planned_release_exit(
             release_plan=release_plan, open_hand=open_hand,
-            follow_joint_trajectory=self._follow_autodex)
+            follow_joint_trajectory=self._follow_autodex,
+            evidence_sink=evidence_sink)
 
     def _follow_autodex(self, path: np.ndarray) -> None:
         hand_actions = np.asarray([
@@ -233,6 +246,7 @@ class ClearViewForPerception:
     def complete_failed_insertion_return_with_autodex(
         self, *, held_plan: ReposeHeldPreflight,
         release_plan: ReposeReleasePreflight,
+        evidence_sink: list[dict] | None = None,
     ) -> LiveRobotState:
         """From withdrawn hold, return key to table and park for recapture.
 
@@ -274,13 +288,25 @@ class ClearViewForPerception:
                     np.asarray(release_plan.post_release_lift_trajectory)[0, :7],
                     descent[-1, :7], atol=1e-4, rtol=0)):
             raise ValueError("failed insertion return lacks a continuous release/exit plan")
-        self._verify_return_endpoint(transfer[0], phase="withdrawn_held_start")
+        started = self._verify_return_endpoint(
+            transfer[0], phase="withdrawn_held_start")
+        if evidence_sink is not None:
+            evidence_sink.append({"name": "withdrawn_hold",
+                                  "state": started.to_record()})
         self._follow_autodex(transfer.copy())
-        self._verify_return_endpoint(transfer[-1], phase="held_transfer_end")
+        transferred = self._verify_return_endpoint(
+            transfer[-1], phase="held_transfer_end")
+        if evidence_sink is not None:
+            evidence_sink.append({"name": "held_transfer",
+                                  "state": transferred.to_record()})
         self._follow_autodex(descent.copy())
-        self._verify_return_endpoint(descent[-1], phase="held_descent_end")
+        descended = self._verify_return_endpoint(
+            descent[-1], phase="held_descent_end")
+        if evidence_sink is not None:
+            evidence_sink.append({"name": "held_descent",
+                                  "state": descended.to_record()})
         return self.finish_planned_release_exit_with_autodex(
-            release_plan=release_plan)
+            release_plan=release_plan, evidence_sink=evidence_sink)
 
     def _verify_return_endpoint(self, expected: np.ndarray, *, phase: str):
         state = self.read_state()

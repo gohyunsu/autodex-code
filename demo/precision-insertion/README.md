@@ -8,7 +8,9 @@ The 20 mm cylinder stroke now uses the current AutoDex FR3 executor's
 `traj_speed` and held-object speed cap. On detected force, it stops the
 stream, follows the already planned socket-axis path backward to preinsert
 with the key gripped, records `force_abort`, and sends the held key through
-the existing return-to-original-pose action. That failure does not produce
+the existing return-to-original-pose action. The FR3 integration now records
+that planned held transfer, descent, hand opening and clear-view exit from
+measured stock AutoDex waypoints before a fresh landing image. That failure does not produce
 an XY measurement or open the hand at the socket. The active cylinder route
 does not require a separate contact-controller commissioning record. A
 normal stroke uses the built-in `StockSocketRelease` callback: it preplans

@@ -244,7 +244,14 @@ def test_failed_insertion_return_uses_stock_held_motion_then_release():
         else np.full(6, 500.))
     guard.executor.follow_joint_trajectory = follow
     guard.executor.release = release
+    feedback = []
     guard.complete_failed_insertion_return_with_autodex(
-        held_plan=held, release_plan=release_plan)
+        held_plan=held, release_plan=release_plan,
+        evidence_sink=feedback)
     assert events == ["held", "held", "release", "open_exit", "open_exit"]
+    assert [row["name"] for row in feedback] == [
+        "withdrawn_hold", "held_transfer", "held_descent", "release_open",
+        "post_release_lift", "post_release_retract"]
+    np.testing.assert_allclose(feedback[-1]["state"]["full_q"][:7],
+                               FR3_CLEAR_VIEW)
     guard.before_key_capture()

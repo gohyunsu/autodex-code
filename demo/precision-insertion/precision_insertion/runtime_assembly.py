@@ -158,6 +158,19 @@ def assemble_live_components(
         raise ValueError(
             "cylinder live pipeline needs held_return.execute_restoration "
             "before any pickup")
+    if (enable_robot_motion and getattr(family, "family", None) == "cylinder"
+            and isinstance(held_return, LiveHeldReturnHandlers)
+            and not callable(held_return.record_execution)):
+        raise ValueError(
+            "cylinder force-stop recovery needs held_return.record_execution "
+            "before any pickup")
+    repose_execution = components[list(classes).index("repose_execution")]
+    if (enable_robot_motion and getattr(family, "family", None) == "cylinder"
+            and isinstance(repose_execution, LiveReposeExecutionHandlers)
+            and not callable(repose_execution.execute_repose)):
+        raise ValueError(
+            "cylinder live pipeline needs repose_execution.execute_repose "
+            "before any pickup")
     transfer_recovery = components[list(classes).index("transfer_recovery")]
     if (isinstance(transfer_recovery, LiveTransferRecoveryHandlers) and
             isinstance(held_return, LiveHeldReturnHandlers) and

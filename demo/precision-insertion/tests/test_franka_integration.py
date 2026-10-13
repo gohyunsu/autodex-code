@@ -114,6 +114,7 @@ def test_cylinder_factory_injects_stock_force_and_release_with_existing_limits(
     monkeypatch.setitem(sys.modules, module.__name__, module)
     force = object()
     release = object()
+    return_recorder = object()
     monkeypatch.setattr(franka_integration, "FrankaForceStopInsertionAdapter",
                         lambda executor: force if executor is core.executor else None)
 
@@ -123,11 +124,16 @@ def test_cylinder_factory_injects_stock_force_and_release_with_existing_limits(
         return release
 
     monkeypatch.setattr(franka_integration, "StockSocketRelease", make_release)
+    monkeypatch.setattr(franka_integration, "StockFailedReturnRecorder",
+                        lambda executor: return_recorder
+                        if executor is core.executor else None)
 
     def assemble(_live, **kwargs):
         task = kwargs["stages"]["task"]
         assert task["insertion_adapter"] is force
         assert task["release_and_clear"] is release
+        assert kwargs["stages"]["held_return"]["record_execution"] is (
+            return_recorder)
         return ()
 
     monkeypatch.setattr(franka_integration, "assemble_live_components", assemble)

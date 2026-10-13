@@ -4,6 +4,7 @@ from pathlib import Path
 import hashlib
 import json
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -17,6 +18,7 @@ from precision_insertion.failed_return_evidence import (  # noqa: E402
 from precision_insertion.repose_preflight import ReposeHeldPreflight  # noqa: E402
 from precision_insertion.repose_release import ReposeReleasePreflight  # noqa: E402
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
+from precision_insertion import stock_failed_return  # noqa: E402
 from autodex.utils.sync import convert_inspire_raw  # noqa: E402
 from autodex.utils.robot_config import FR3_CLEAR_VIEW  # noqa: E402
 
@@ -25,7 +27,8 @@ def _sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _fixture(tmp_path, *, transfer_origin=False, stock_force=False):
+def _fixture(tmp_path, *, transfer_origin=False, stock_force=False,
+             plan_dir_name="return_plan"):
     attempt = "attempt_1"
     candidate = "table/0/3"
     session = "a" * 64
@@ -77,7 +80,7 @@ def _fixture(tmp_path, *, transfer_origin=False, stock_force=False):
         np.vstack([release_low, high]), np.vstack([high, parked]),
         {"sampled_clear": True}, (), np.zeros(6), parked[:7])
     report = write_failed_return_plan(
-        output_dir=tmp_path / "return_plan", attempt_id=attempt,
+        output_dir=tmp_path / plan_dir_name, attempt_id=attempt,
         candidate_id=candidate, session_calibration_sha256=session,
         catalog_sha256=catalog,
         **({"transfer_evidence_path": transfer} if transfer_origin else
@@ -136,6 +139,81 @@ def test_stock_force_ascent_is_admitted_as_held_return_start(tmp_path):
     report, _, _, args = _fixture(tmp_path, stock_force=True)
     assert verify_failed_return_execution(**args)["plan_report"]["path"] == (
         str(report))
+
+
+def test_stock_return_recorder_binds_measured_waypoints_to_force_stop(
+        tmp_path, monkeypatch):
+    report, _, _, args = _fixture(
+        tmp_path, stock_force=True, plan_dir_name="failed_return_preflight")
+    with np.load(report.parent / "planned_trajectories.npz") as paths:
+        planned = [
+            np.asarray(json.loads(report.read_text())["held_start_joint_state"][
+                "full_q"]),
+            paths["held_transfer"][-1].copy(),
+            paths["held_descent"][-1].copy(),
+            paths["post_release_lift"][0].copy(),
+            paths["post_release_lift"][-1].copy(),
+            paths["post_release_retract"][-1].copy(),
+        ]
+    samples = [LiveRobotState(
+        q.copy(), np.zeros(7), 4.1 + index, 4.1 + index, 100.,
+        4.1 + index, np.zeros(6), np.zeros(6), 0., np.zeros(6))
+        for index, q in enumerate(planned)]
+    decision = SimpleNamespace(action="recover_held_key_then_reobserve")
+    runner = SimpleNamespace(
+        _attempt_dir=tmp_path,
+        active_attempt=SimpleNamespace(
+            attempt_id="attempt_1", candidate_id="table/0/3",
+            started_at_s=2.0),
+        session_sha256="a" * 64, catalog_sha256="b" * 64,
+        current_decision=lambda: decision)
+    calls = []
+
+    def run(*, evidence_sink):
+        calls.append("motion")
+        evidence_sink.extend(
+            {"name": name, "state": state.to_record()}
+            for name, state in zip(
+                stock_failed_return.STOCK_CHECKPOINTS, samples))
+        return samples[-1]
+
+    executor = SimpleNamespace(stop_and_acknowledge=lambda: {
+        "acknowledged": True})
+    monkeypatch.setattr(stock_failed_return,
+                        "is_demo_completion_checked_executor", lambda _: True)
+    saved = stock_failed_return.StockFailedReturnRecorder(executor)(
+        run, report, runner, decision)
+    assert calls == ["motion"]
+    assert verify_failed_return_execution(**{**args, "path": saved})[
+        "release_completed_at_s"] == samples[3].sample_timestamp_s
+    record = json.loads(saved.read_text())
+    assert record["source"] == "stock_autodex_franka_executor"
+    with pytest.raises(FileExistsError):
+        stock_failed_return.StockFailedReturnRecorder(executor)(
+            run, report, runner, decision)
+
+
+def test_stock_return_rejects_changed_withdrawal_before_motion(
+        tmp_path, monkeypatch):
+    report, _, _, _ = _fixture(
+        tmp_path, stock_force=True, plan_dir_name="failed_return_preflight")
+    source = Path(json.loads(report.read_text())["sources"]["withdrawal"]["path"])
+    source.write_text("{}", encoding="utf-8")
+    decision = SimpleNamespace(action="recover_held_key_then_reobserve")
+    runner = SimpleNamespace(
+        _attempt_dir=tmp_path,
+        active_attempt=SimpleNamespace(
+            attempt_id="attempt_1", candidate_id="table/0/3",
+            started_at_s=2.0),
+        session_sha256="a" * 64, catalog_sha256="b" * 64,
+        current_decision=lambda: decision)
+    monkeypatch.setattr(stock_failed_return,
+                        "is_demo_completion_checked_executor", lambda _: True)
+    with pytest.raises(ValueError, match="sources changed"):
+        stock_failed_return.StockFailedReturnRecorder(object())(
+            lambda **_: pytest.fail("tampered plan commanded motion"),
+            report, runner, decision)
+    assert not (tmp_path / "failed_return_stock_started.json").exists()
 
 
 def test_completed_held_transfer_uses_same_return_without_fake_withdrawal(tmp_path):

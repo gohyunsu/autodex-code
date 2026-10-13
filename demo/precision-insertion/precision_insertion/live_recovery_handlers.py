@@ -61,9 +61,9 @@ class LiveHeldReturnHandlers:
     """One action boundary from failed insertion to observed reset landing.
 
     The current action observes the released key and restores it with the
-    existing reset/repose planner. ``withdraw_guarded`` and
-    ``record_execution`` are accepted only for the non-routed historical
-    held-return method. The key captures reuse the session's stock cameras.
+    existing reset/repose planner. A stock force-stop ascent also routes here
+    with its saved withdrawal and the stock held-return execution recorder.
+    The key captures reuse the session's stock cameras.
     """
 
     live: object
@@ -261,13 +261,15 @@ class LiveHeldReturnHandlers:
             limits=self.limits, **return_parameters)
         invoked = False
 
-        def run_planned_return():
+        def run_planned_return(evidence_sink=None):
             nonlocal invoked
             if invoked:
                 raise RuntimeError("held-key return motion can run only once")
             invoked = True
             return self.live.clear_view.complete_failed_insertion_return_with_autodex(
-                held_plan=held, release_plan=release)
+                held_plan=held, release_plan=release,
+                **({"evidence_sink": evidence_sink}
+                   if evidence_sink is not None else {}))
 
         execution_path = Path(self.record_execution(
             run_planned_return, report_path, runner, decision)).expanduser()

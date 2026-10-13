@@ -22,6 +22,7 @@ from .franka_measured_lift import (
     FrankaMeasuredLiftAdapter, MeasuredLiftMonitorLimits,
 )
 from .stock_force_insertion import FrankaForceStopInsertionAdapter
+from .stock_failed_return import StockFailedReturnRecorder
 from .stock_socket_release import StockSocketRelease
 from .live_runtime import LiveRuntimeIntegration, RunLiveOptions
 from .labeling import terminal_label_provider
@@ -263,6 +264,10 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                         executor=core.executor, planner=core.planner,
                         read_state=core.read_state,
                         path_limits=release_limits)
+        if (family == "cylinder" and "held_return" in stages and
+                "record_execution" not in stages["held_return"]):
+            stages["held_return"]["record_execution"] = (
+                StockFailedReturnRecorder(core.executor))
         assignments = (
             [("lift", "adapter"), ("task", "transfer_adapter")]
             if held_motion_monitor is not None else

@@ -29,6 +29,11 @@ TRANSFER_RETURN_PHASES = PHASES[1:]
 SOURCES = frozenset({
     "trajectory_feedback", "hand_feedback", "guarded_controller", "safety",
 })
+STOCK_SOURCE = "stock_autodex_franka_executor"
+STOCK_CHECKPOINTS = (
+    "withdrawn_hold", "held_transfer", "held_descent", "release_open",
+    "post_release_lift", "post_release_retract",
+)
 
 
 def _sha(path: Path) -> str:
@@ -188,7 +193,8 @@ def verify_failed_return_execution(
     row = json.loads(source.read_text(encoding="utf-8"))
     if (not isinstance(row, dict) or row.get("schema") !=
             "precision_insertion_failed_return_execution_v1" or
-            row.get("source") != "commissioned_external_controller" or
+            row.get("source") not in {
+                "commissioned_external_controller", STOCK_SOURCE} or
             row.get("attempt_id") != attempt_id or
             row.get("candidate_id") != candidate_id or
             row.get("session_calibration_sha256") !=
@@ -259,6 +265,64 @@ def verify_failed_return_execution(
                                 np.asarray(measured.get("full_q"), dtype=float),
                                 atol=1e-8, rtol=0)):
             raise ValueError("failed return planned start differs from feedback")
+    if row["source"] == STOCK_SOURCE:
+        feedback_ref = row.get("stock_feedback")
+        if (not isinstance(feedback_ref, dict) or
+                set(feedback_ref) != {"path", "sha256"} or
+                _source(Path(feedback_ref["path"])) != feedback_ref):
+            raise ValueError("stock return lacks unchanged measured feedback")
+        feedback_path = Path(feedback_ref["path"])
+        if (feedback_path.parent != source.parent or
+                feedback_path in {source, Path(report_ref["path"]), archive}):
+            raise ValueError("stock return feedback aliases a plan file")
+        feedback = json.loads(feedback_path.read_text(encoding="utf-8"))
+        samples = feedback.get("checkpoints")
+        if (feedback.get("schema") !=
+                "precision_insertion_stock_return_feedback_v1" or
+                feedback.get("attempt_id") != attempt_id or
+                feedback.get("plan_report_sha256") != report_ref["sha256"] or
+                feedback.get("stop_acknowledgement", {}).get("acknowledged")
+                is not True or
+                not isinstance(samples, list) or
+                [item.get("name") for item in samples
+                 if isinstance(item, dict)] != list(STOCK_CHECKPOINTS)):
+            raise ValueError("stock return feedback is incomplete")
+        with np.load(archive, allow_pickle=False) as paths:
+            expected = (
+                np.asarray(measured["full_q"], dtype=float),
+                np.asarray(paths["held_transfer"][-1], dtype=float),
+                np.asarray(paths["held_descent"][-1], dtype=float),
+                np.asarray(paths["post_release_lift"][0], dtype=float),
+                np.asarray(paths["post_release_lift"][-1], dtype=float),
+                np.asarray(paths["post_release_retract"][-1], dtype=float),
+            )
+        previous_sample = _finite(start_completed, "held start time")
+        for item, endpoint in zip(samples, expected):
+            state = item.get("state")
+            if (not isinstance(state, dict) or state.get("schema") !=
+                    "precision_insertion_live_robot_state_v1" or
+                    state.get("source") != "robot_joint_feedback"):
+                raise ValueError("stock return lacks measured checkpoints")
+            stamp = _finite(state.get("sample_timestamp_s"), "checkpoint time")
+            q = np.asarray(state.get("full_q"), dtype=float)
+            if (stamp <= previous_sample or q.shape != (13,) or
+                    not np.isfinite(q).all() or
+                    np.max(np.abs(q - endpoint)) > 0.05):
+                raise ValueError("stock return missed its measured checkpoint")
+            previous_sample = stamp
+        final_q = np.asarray(samples[-1]["state"]["full_q"], dtype=float)
+        if (np.max(np.abs(final_q[7:] - INSPIRE_INIT)) > 0.05 or
+                np.max(np.abs(final_q[:7] - FR3_CLEAR_VIEW)) > 0.05 or
+                row.get("hand_open_final") is not True or
+                row.get("arm_clear_view_final") is not True):
+            raise ValueError("stock return did not finish open at clear view")
+        return {
+            "path": str(source), "sha256": _sha(source),
+            "release_completed_at_s": samples[3]["state"]["sample_timestamp_s"],
+            "exit_completed_at_s": samples[-1]["state"]["sample_timestamp_s"],
+            "plan_report": report_ref,
+            "scope": "stock_measured_waypoints_plus_later_camera_landing",
+        }
     phases = row.get("phases")
     if (not isinstance(phases, list) or len(phases) != len(phases_expected) or
             [item.get("name") for item in phases if isinstance(item, dict)] !=

@@ -8,10 +8,11 @@ return/restoration action. No separate contact-controller review file or
 contact site validation is required by this route. The failure remains in
 the episode evidence and does not create an XY correction. A completed stroke
 uses the existing release/clear-view callback and visual task label. The
-robot-PC `stages_factory`, return/repose callbacks, stage limits, and measured
-feedback are still required for a complete live run. With existing path-audit
-limits, the FR3 integration constructs the cylinder release/clear-view
-callback from the stock executor and planner.
+robot-PC `stages_factory`, restoration/repose callbacks, stage limits, and
+measured feedback are still required for a complete live run. The FR3
+integration provides the stock held-return execution recorder. With existing
+path-audit limits, it also constructs the cylinder release/clear-view callback
+from the stock executor and planner.
 
 `run_live.py` is the demo-local replacement for a precision-specific
 `run_pipeline.py`/`run_auto.py` robot loop. It does not modify either stock
@@ -185,6 +186,10 @@ single 20 mm stroke only when the stock follower reports no force stop
 and the measured hand hold is unchanged. A force stop follows the saved
 axis back to preinsert and selects held-key return without release or final
 task capture. A lost or unknown grasp state stops for review.
+For a force stop, the factory also injects `held_return.record_execution` if
+the stage omits it. The callback runs the existing stock planned held-return
+path and saves measured checkpoints through full hand opening and clear view;
+the later camera capture still decides where the key landed.
 On a permitted release, the callback follows that planned socket-axis exit to
 FR3 clear view at stock speed and verifies measured waypoints. It returns a
 `precision_insertion_poststroke_release_clear_view_v1` JSON record bound to

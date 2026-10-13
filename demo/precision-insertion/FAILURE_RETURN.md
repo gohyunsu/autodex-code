@@ -6,8 +6,10 @@ can leave the key in or on the socket instead of restoring a tabletop trial.
 
 For a **still-held key after insertion failure**, the intended common tail is:
 
-1. A commissioned guarded controller withdraws axially to a clear hold and
-   records its result. Do not shift laterally while the key is engaged.
+1. The active cylinder FR3 route uses the stock 12 N wrist-Z force stop. On
+   contact it immediately reverses the traversed socket-axis path to the
+   preinsert hold and records the measured stopped state. Do not shift
+   laterally while the key is engaged.
 2. From fresh measured Franka/Inspire joints and the established post-lift
    `T_key_hand`, plan the held key to an explicitly chosen tabletop release
    site. The trial-start site is a useful target, but its full key footprint
@@ -23,8 +25,9 @@ For a **still-held key after insertion failure**, the intended common tail is:
    commanded drop does not prove its pose.
    `SessionRunner.observe_reset_landing()` accepts either a supervised manual
    return or an ordered, source-bound automatic-return execution record. A
-   commissioned controller still has to produce that independent record;
-   neither a commanded drop nor a planned trajectory proves the landing.
+   built-in stock return recorder binds measured waypoints to the saved plan.
+   Neither the drop nor those robot waypoints prove the key's landing pose;
+   the fresh camera observation supplies that evidence.
 
 For a **judged missed grasp**, there is no held key to withdraw or drop.
 `LiveTransferRecoveryHandlers` calls stock AutoDex
@@ -47,7 +50,7 @@ established held relation, the original trial scene, and an explicit safe
 tabletop target:
 
 In a live session, prefer `runner.prepare_failed_insertion_return(...)`.
-It accepts the externally logged guarded withdrawal, checks the measured
+It accepts the saved stock force-stop ascent, checks the measured
 Franka/Inspire start, reuses that attempt's saved post-lift key/hand relation
 and original tabletop pose, and writes an immutable return plan with source
 hashes under the attempt. The explicit lower-level equivalent is shown here
@@ -81,7 +84,7 @@ release = plan_repose_release_exit(
 if release.status != "nominal_release_exit_path_pass_drop_unobserved":
     raise RuntimeError(release.status)
 
-# After the commissioned guarded withdrawal and a fresh measured start,
+# After the stock force-stop ascent and a fresh measured start,
 # this reuses the existing FrankaExecutor for all return/exit motion.
 clear_view.complete_failed_insertion_return_with_autodex(
     held_plan=held, release_plan=release)

@@ -37,6 +37,14 @@ class _HeldReturnStage:
     live: object
     planner: object
     execute_restoration: object = None
+    record_execution: object = None
+
+
+@dataclass
+class _ReposeExecutionStage:
+    live: object
+    planner: object
+    execute_repose: object = None
 
 
 def _fake_classes(monkeypatch):
@@ -149,6 +157,9 @@ def test_cylinder_requires_restoration_executor_before_pickup(monkeypatch):
     monkeypatch.setattr(runtime_assembly,
                         "LiveHeldReturnHandlers", _HeldReturnStage)
     runtime_assembly.STAGE_CLASSES["held_return"] = _HeldReturnStage
+    monkeypatch.setattr(runtime_assembly,
+                        "LiveReposeExecutionHandlers", _ReposeExecutionStage)
+    runtime_assembly.STAGE_CLASSES["repose_execution"] = _ReposeExecutionStage
     live = SimpleNamespace(opened=SimpleNamespace(runner=SimpleNamespace(
         mode=select_mode("cylinder", 20))))
     stages = {name: {} for name in runtime_assembly.STAGE_CLASSES}
@@ -157,10 +168,22 @@ def test_cylinder_requires_restoration_executor_before_pickup(monkeypatch):
             live, shared={"planner": object()}, stages=stages,
             enable_robot_motion=True)
     stages["held_return"]["execute_restoration"] = lambda *_args: None
+    with pytest.raises(ValueError, match="record_execution.*before any pickup"):
+        runtime_assembly.assemble_live_components(
+            live, shared={"planner": object()}, stages=stages,
+            enable_robot_motion=True)
+    stages["held_return"]["record_execution"] = lambda *_args: None
+    with pytest.raises(ValueError, match="execute_repose.*before any pickup"):
+        runtime_assembly.assemble_live_components(
+            live, shared={"planner": object()}, stages=stages,
+            enable_robot_motion=True)
+    stages["repose_execution"]["execute_repose"] = lambda *_args: None
     components = runtime_assembly.assemble_live_components(
         live, shared={"planner": object()}, stages=stages,
         enable_robot_motion=True)
     assert callable(components[6].execute_restoration)
+    assert callable(components[6].record_execution)
+    assert callable(components[9].execute_repose)
 
 
 def test_square_session_uses_same_metric_retry_handler(monkeypatch):
