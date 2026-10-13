@@ -461,6 +461,50 @@ The workspace was covered by a black cloth, so board 9, the socket and key
 were not visible in the downsampled preview. That capture is a scene check,
 not the required socket/key pose QA. The operator must restore the board and
 white socket before the camera-only diagnostic above can run.
+
+The operator subsequently restored board 9 and the fixed white 20 mm-gap
+socket, then placed the white cylindrical key without moving the socket. The
+current capture PCs still run the **stock** init daemon, whose mask/pose
+payloads omit sensor frame IDs and image hashes. The strict diagnostic above
+therefore rejected its payloads as unbound; this is a provenance failure, not
+a failed ChArUco fit. To inspect the actual scene with the current stock
+AutoDex behavior, run the camera-only stock diagnostic (it does not admit a
+pose to `run_live.py`):
+
+```bash
+cd /home/robot/autodex-precision-insertion
+QA_BASE=/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" \
+  /home/robot/anaconda3/envs/autodex/bin/python \
+  demo/precision-insertion/probe_stock_camera_qa.py \
+  --launch-config "$QA_BASE/static_preflight_board9_gap20_20261013/launch.json" \
+  --evidence-dir "$QA_BASE/stock_key_socket_camera_qa_$(date +%Y%m%d_%H%M%S)"
+```
+
+The completed 2026-10-13 camera-only run is in
+`$QA_BASE/stock_key_socket_camera_qa_20261013_retry1/`. Its launch loads the
+newest directory currently present under `shared_data/cam_param`,
+`20261012_060559`, for all 20 serials. The board snapshot
+contained 20/20 JPEGs. Stock ChArUco measured 42 board-9 corners from 20
+cameras, with 0.330 px median reprojection error, 0.192 mm plane RMS and
+0.302 mm rigid-fit RMS. Each of two socket requests and the key request saved
+20/20 undistorted PNGs and 20/20 masks and pose payloads. Nonempty masks with
+valid FoundPose results numbered 15/20, 15/20, and 18/20. The unchanged stock
+IoU/silhouette refinement selected socket cameras `25322644` and `25322643`,
+then key camera `25322641`. The two refined socket translations differed by
+0.202 mm in this stationary scene. These residuals measure repeatability and
+internal fit with the loaded camera calibration, not robot-frame accuracy.
+Visual review of all 20 key overlays and the provisional socket-hull projection
+in `view_review.json` found three key masks on the socket
+(`25305464`, `25305467`, `25322640`) and two empty masks (`25322645`,
+`25322646`); keep the socket-exclusion check for key admission. Stock payloads
+still lack exact sensor-frame identity, so this diagnostic remains
+`robot_ready: false`. The stock daemon writes PNGs asynchronously after
+publishing results; the diagnostic waits for each complete PNG before
+recording its hash. To run the strict session, deploy the demo-local precision
+init daemon on the capture PCs in place of the stock init daemon and verify
+its frame-bound payloads first.
+
 For a reproducible **historical NAS-frame** QA exercise (not a substitute
 for new recipient-camera frames), run:
 

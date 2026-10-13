@@ -6,6 +6,17 @@ the unchanged AutoDex snapshot/init outputs **by design**. A conservative
 request/response *interval* can now bound exposure for bring-up; it is not a
 millisecond-accurate camera timestamp or a precision-calibration result.
 
+The current stock live init daemon makes one undistortion map per camera from
+`original_intrinsics`, `dist_params`, and `intrinsics_undistort`. For each
+request it remaps the raw SHM BGR frame once, saves that undistorted BGR array
+as a PNG, and converts the same array to RGB for SAM3 and FoundPose. FoundPose
+uses `intrinsics_undistort` for those pixels. The board snapshot follows the
+stock tabletop path: ChArUco is detected in the original JPEG and only its
+corner coordinates are undistorted before triangulation. The stock diagnostic
+`probe_stock_camera_qa.py` does not remap either output again. These are two
+different, consistent image paths; a board JPEG and a socket PNG must not be
+compared as if they shared the same pixel coordinates.
+
 ## Demo-only transport and timing modes
 
 `precision_insertion/camera_transport.py` supplies two narrow adapters while
