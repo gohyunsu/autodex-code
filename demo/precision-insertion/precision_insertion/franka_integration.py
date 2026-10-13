@@ -280,11 +280,21 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             # A completed but visibly misaligned transfer returns the held
             # key through the same stock failed-return path as a force stop.
             # Keep explicit site overrides for unusual recovery hardware.
-            for field in ("record_execution", "limits", "return_parameters"):
+            for field in ("record_execution", "limits"):
                 if (field not in stages["transfer_recovery"] and
                         field in stages["held_return"]):
                     stages["transfer_recovery"][field] = (
                         stages["held_return"][field])
+            if ("return_parameters" not in stages["transfer_recovery"] and
+                    "return_parameters" in stages["held_return"]):
+                # The two stock return plans share their geometry, but the
+                # feedback gap names describe different motion boundaries.
+                transfer_return = dict(
+                    stages["held_return"]["return_parameters"])
+                transfer_return["max_transfer_state_gap_s"] = (
+                    transfer_return.pop("max_withdrawal_state_gap_s"))
+                stages["transfer_recovery"]["return_parameters"] = (
+                    transfer_return)
         if family == "cylinder" and ({"held_return", "repose_execution"} <=
                                       stages.keys()):
             needs_restoration = "execute_restoration" not in stages["held_return"]

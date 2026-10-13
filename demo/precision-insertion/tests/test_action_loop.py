@@ -255,6 +255,56 @@ def test_live_wrapper_keeps_cameras_open_for_repeated_actions(monkeypatch):
                      "reobserve_key_and_preflight", "camera_closed"]
 
 
+def test_initial_key_is_placed_after_socket_capture_before_first_key_image(
+        monkeypatch):
+    from precision_insertion import live_orchestration
+
+    calls = []
+    runner = Runner([
+        _decision("capture_fresh_key"), _decision("stop_for_review")])
+    live = SimpleNamespace(opened=SimpleNamespace(runner=runner))
+
+    @contextmanager
+    def opened(**_kwargs):
+        calls.append("socket_captured")
+        try:
+            yield live
+        finally:
+            calls.append("camera_closed")
+
+    monkeypatch.setattr(live_orchestration, "open_live_precision_session", opened)
+
+    def build(_live):
+        def capture(current, _decision):
+            calls.append("key_captured")
+            current.advance()
+        return {"capture_fresh_key": capture}
+
+    result = run_live_precision_session(
+        launch_config_path=Path("/unused/launch.json"),
+        endpoint_catalog_path=Path("/unused/catalog.json"),
+        run_output_dir=Path("/unused/run"), max_xy_retries=None,
+        clear_view=object(), build_handlers=build,
+        confirm_initial_key_placement=lambda: (
+            calls.append("operator_enter") or True))
+    assert result.status == "terminal"
+    assert calls == ["socket_captured", "operator_enter", "key_captured",
+                     "camera_closed"]
+
+    calls.clear()
+    live.opened.runner = Runner([
+        _decision("capture_fresh_key"), _decision("stop_for_review")])
+    with pytest.raises(RuntimeError, match="initial key placement"):
+        run_live_precision_session(
+            launch_config_path=Path("/unused/launch.json"),
+            endpoint_catalog_path=Path("/unused/catalog.json"),
+            run_output_dir=Path("/unused/run"), max_xy_retries=None,
+            clear_view=object(), build_handlers=build,
+            confirm_initial_key_placement=lambda: (
+                calls.append("operator_quit") or False))
+    assert calls == ["socket_captured", "operator_quit", "camera_closed"]
+
+
 def test_live_wrapper_closes_cameras_immediately_on_success(monkeypatch):
     from precision_insertion import live_orchestration
 

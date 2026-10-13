@@ -24,8 +24,8 @@ no independent key-penetration measurement; `inside_socket` remains a visual
 label, not measured 20 mm depth. The older guarded-contact sections below
 describe optional or historical contracts and do not gate this cylinder
 route. The FR3 integration also supplies stock v8 restoration/repose callbacks
-when the stage factory provides the pickup interlock. A complete robot-PC
-stage factory and camera callbacks are still required. The built-in release callback
+from the board-9 `robot_pc_stages:configure` motion interlock. Its ten stages
+and camera callbacks now assemble offline. The built-in release callback
 needs the existing path-audit limits and is not a measured key-depth test.
 
 For the complete AutoDex-PC execution entry point and required integration
@@ -404,8 +404,14 @@ existing AutoDex execution files (`run_auto.py`, `run_pipeline.py`, or
 `scene_cfg.py`). AutoDex/ParaDex hardware and perception APIs may be reused
 through explicit adapters, while insertion-specific orchestration lives here.
 
-`run_live.py` now assembles the opt-in cylinder execution loop, but its
-robot-PC `stages_factory` is still absent here. The first-party noncontact
+`run_live.py` now assembles the opt-in cylinder execution loop. The first-party
+[`robot_pc_stages.py`](robot_pc_stages.py) supplies all ten board-9/20 mm
+cylinder stages and reuses the stock v8 planner, FR3 speed, force-stop,
+release and reset callbacks. After socket-only capture it waits for the
+operator to place the white key and press Enter. The perception/landing
+thresholds beyond the accepted feedback and path proposal are provisional;
+the assembled loop has offline test coverage but no physical insertion run.
+The first-party noncontact
 adapter checks the exact running stock ParaDex daemon identity; no physical
 watchdog test has been recorded. The scenario catalog, VLM observer, and
 retry policy are evidence and decision helpers, not proof of hardware
@@ -1142,8 +1148,8 @@ The first independent helpers are in `precision_insertion/`:
   exhaustion to a separate repose preflight. A retry-count cap is optional;
   the cumulative XY distance has its own configured bound. Its
   `execution_gate_required` result does not authorize a
-  robot command; the live capture/executor and commissioned F/T gates are
-  still absent.
+  robot command; the current cylinder loop uses the first-party stock FR3
+  force stop and still needs physical trial evidence.
 
 For a physically stationary post-lift hold, reuse the executor's already-open
 ParaDex controller handles; do not construct a second controller. The call is
@@ -2450,8 +2456,8 @@ The output contains frozen session/catalog snapshots and
 `source_evidence_binding.json` with exact source hashes. The printed next
 decision is initially `capture_fresh_key`. A present PTH is not a QA-approved
 pose estimator, and a positive endpoint catalog is not motion authorization;
-the live camera/robot stage factory and failed-key return/repose callbacks
-remain to be completed for this rig.
+the first-party board-9 live binding and failed-key return/repose callbacks
+still require physical verification on this rig.
 
 `run_auto.py` opens a ledger and **exits**; its in-memory runner is not
 resumable by another process. For a long-running program use the existing

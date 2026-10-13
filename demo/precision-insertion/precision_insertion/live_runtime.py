@@ -49,6 +49,17 @@ class LiveRuntimeIntegration:
     close: Callable[[], None]
 
 
+def _confirm_initial_key_placement() -> bool:
+    """Match stock AutoDex's one initial object-placement wait."""
+    try:
+        response = input(
+            "[precision-insertion] Socket captured. Place the white key "
+            "without moving the socket, then press Enter (q to quit): ")
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return response.strip().lower() not in {"q", "quit"}
+
+
 def _stage_module_on_path(specification: str) -> bool:
     """Check a stage module's path without importing robot-PC code.
 
@@ -181,6 +192,7 @@ def run_integrated_live_session(
             max_xy_retries=options.max_xy_retries,
             xy_update_weight=options.xy_update_weight,
             clear_view=integration.clear_view,
-            build_handlers=handlers, max_steps=options.max_steps)
+            build_handlers=handlers, max_steps=options.max_steps,
+            confirm_initial_key_placement=_confirm_initial_key_placement)
     finally:
         integration.close()

@@ -145,6 +145,7 @@ def run_live_precision_session(
     clear_view: ClearViewForPerception,
     build_handlers: Callable[[LivePrecisionSession], Mapping[str, ActionHandler]],
     max_steps: int | None = None, xy_update_weight: float = 1.0,
+    confirm_initial_key_placement: Callable[[], bool] | None = None,
 ) -> ActionLoopResult:
     """Keep the one ChArUco/socket camera session open across trial actions.
 
@@ -166,6 +167,14 @@ def run_live_precision_session(
             max_xy_retries=max_xy_retries,
             xy_update_weight=xy_update_weight,
             clear_view=clear_view) as live:
+        # The fixed socket is measured with the key absent. Match stock
+        # run_auto's one initial object-placement gate before key perception.
+        # Retry captures never pause here or remeasure the socket.
+        if (confirm_initial_key_placement is not None and
+                live.opened.runner.current_decision().action ==
+                "capture_fresh_key" and
+                confirm_initial_key_placement() is not True):
+            raise RuntimeError("operator did not confirm initial key placement")
         return run_session_actions(
             live.opened.runner, handlers=build_handlers(live),
             max_steps=max_steps)

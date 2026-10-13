@@ -75,12 +75,13 @@ The precise callback signatures and record fields are in
 [`guarded_insertion_execution.py`](precision_insertion/guarded_insertion_execution.py),
 [`post_insertion_release.py`](precision_insertion/post_insertion_release.py),
 and [REPOSE_EXECUTION_EVIDENCE.md](REPOSE_EXECUTION_EVIDENCE.md).
-The optional robot-PC `stages_factory` supplies the ten stage mappings for
-`precision_insertion.franka_integration:factory`; `franka_core` injects the
-shared planner/reader, default Qwen and checkpoint camera callbacks where
-specified. There is **no** complete commissioned factory/controller in the
-NAS asset bundle. This is a robot-specific integration gap, not a missing
-STL, `repre.pth`, or grasp candidate.
+[`robot_pc_stages.py`](robot_pc_stages.py) now supplies the ten board-9/20 mm
+cylinder stage mappings for `precision_insertion.franka_integration:factory`.
+`franka_core` injects the stock planner/reader, local Qwen and checkpoint
+camera callbacks; the integration injects its checked stock FR3 executor,
+noncontact lift/transfer adapter, 12 N insertion, release and v8 reset. The
+binding assembles offline, but its provisional perception/landing thresholds
+and physical motion/recovery have not been measured on the robot.
 
 ## Stage 0 — separate checkout and immutable baseline
 
@@ -711,20 +712,19 @@ maximum velocity **0.00090 rad/s**, and Inspire command registers all at
 directory. This verifies the endpoint after one free-space move; it does not
 commission pickup, contact control, socket accuracy or insertion.
 
-## Stage 4 — full robot loop, only after stage callbacks exist
+## Stage 4 — board-9/20 mm robot loop
 
-Supply an importable robot-PC `stages_factory` and its commissioned settings
-as in [LIVE_RUNTIME.md](LIVE_RUNTIME.md). Check the factory's ten stage
-mappings before motion. Cylinder insertion uses the built-in stock FR3
+The first-party `robot_pc_stages:configure` supplies all ten stage mappings
+and the accepted feedback/path limits. Cylinder insertion uses the stock FR3
 12 N force stop and reverse-axis ascent, without a separate contact
 commissioning record. The FR3 integration injects stock `release_and_clear`
 with the existing path-audit limits and stock `execute_restoration`/
-`execute_repose` with the pickup motion interlock. Supply all ten stage
-mappings, the site limits, pickup/lift/transfer adapters, interlocks and
-exposure-aligned feedback. The stock
+`execute_repose` with the same fresh-feedback motion interlock. The stock
 `FrankaExecutor.follow_joint_trajectory` is not the force-stop entry point;
 the cylinder adapter calls `_follow` with `stop_wrench_z=12.0`. Validate
 callback records against the verifier schemas with mocked actuation first.
+Unknown key state after a controller abort still stops for supervised
+recovery; the stock planner cannot infer a safe key position from that event.
 For the cylinder's measured post-squeeze replan, set `pickup.lift_bounds=None`
 only if the run intentionally uses the stock nominal CAD path. This produces
 `sampled_nominal_measured_chain_pass` and records the future key/hand surface
@@ -775,28 +775,56 @@ scene and illustrative tolerances from being used for a live run. The report
 has `robot_ready: false` and no camera session was created.
 The additional `approved_values_static_preflight_20261013.json` records the
 operator-accepted feedback/sampler/local-Qwen/noncontact-monitor settings:
-112 catalog candidates, 98 eligible, 20 cameras, and valid JSON syntax.
-Its `robot_pc_stages:configure` factory is still absent:
-`stage_factory_module_on_path` is `false`. Static preflight checks this
-without importing any robot-PC module. The example launch remains
-`static_preflight_only`, so neither this command nor its successful output
-can start the camera session or robot motion.
+112 catalog candidates, 98 eligible, 20 cameras, and valid JSON syntax. That
+report predates the first-party factory. A fresh static preflight on
+`live_board9_gap20_20261013/launch.json` now reports
+`stage_factory_module_on_path: true`. It does not import the factory or
+check live camera, FR3, contact, landing or Qwen behavior.
 
-After stage commissioning, the motion command is:
+The staged board-9/20 mm files use the recipient calibration, white prompts,
+fixed socket and a new one-use session evidence path. From this checkout,
+the **non-moving** file check is:
 
 ```bash
-PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src:/absolute/robot_pc_binding" \
-  python demo/precision-insertion/run_live.py \
-  --launch-config /absolute/recipient/new_live_session.json \
-  --endpoint-catalog "$CATALOG20" \
+cd /home/robot/autodex-precision-insertion
+STAGE=/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" \
+  /home/robot/anaconda3/envs/planner/bin/python demo/precision-insertion/run_live.py \
+  --preflight --launch-config "$STAGE/live_board9_gap20_20261013/launch.json" \
+  --endpoint-catalog "$STAGE/recipient_gap20_endpoint_catalog_20261013.json" \
+  --robot-config "$STAGE/franka_runtime_board9_gap20.json"
+```
+
+The live command uses the `planner` environment because its Transformers 5.5
+provides Qwen3-VL; `flir_env` has no Transformers and the `autodex` environment's
+Transformers 4.51 does not provide `Qwen3VLForConditionalGeneration`. On the
+host, the `planner` environment imported the FR3/camera integration, saw CUDA,
+and loaded the staged Qwen model. The tool sandbox hides `/dev/nvidia*` and
+the Docker socket, so run this command in an ordinary host terminal.
+
+The operator-run motion command uses the same files. Start the stock ParaDex
+Docker daemon in a separate terminal with
+`bash /home/robot/paradex/cpp/franka_daemon/run_daemon.sh 172.17.1.11 5555 5556`.
+Remove the key for the board/socket capture; the white fixed socket stays on
+board 9. After the socket is frozen, the program prompts you to place the
+white key; press Enter to start its first capture, or `q` to stop. The live
+command starts with stock
+`home(clear_view=True)` at default speed:
+
+```bash
+cd /home/robot/autodex-precision-insertion
+STAGE=/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" \
+  /home/robot/anaconda3/envs/planner/bin/python demo/precision-insertion/run_live.py \
+  --launch-config "$STAGE/live_board9_gap20_20261013/launch.json" \
+  --endpoint-catalog "$STAGE/recipient_gap20_endpoint_catalog_20261013.json" \
   --integration precision_insertion.franka_integration:factory \
-  --robot-config /absolute/recipient/franka_runtime.json \
-  --label-mode manual --annotator OPERATOR_NAME \
+  --robot-config "$STAGE/franka_runtime_board9_gap20.json" \
   --xy-update-weight 1.0 --enable-robot-motion
 ```
 
-For autonomous experimental labels change only `--label-mode` to
-`vlm_only`; manual mode still saves the independent VLM label. The launch
+The CLI's `vlm_only` mode is the default; `--label-mode manual --annotator NAME`
+still saves the independent VLM label. The launch
 uses a **new** session evidence path. `--exp-name` defaults to
 `precision-insertion`; without `--output-dir` the new run goes under stock
 `~/shared_data/AutoDex/experiment/precision-insertion/inspire/<cylinder_key>/_pipeline_runs/`.

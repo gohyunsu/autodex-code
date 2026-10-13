@@ -8,8 +8,9 @@ return/restoration action. No separate contact-controller review file or
 contact site validation is required by this route. The failure remains in
 the episode evidence and does not create an XY correction. A completed stroke
 uses the existing release/clear-view callback and visual task label. The
-robot-PC `stages_factory`, stage limits, interlocks, and measured feedback are
-still required for a complete live run. For the first-party measured lift and
+the board-9/20 mm `robot_pc_stages:configure` factory now supplies stage
+limits and the fresh-feedback interlock; hardware execution and camera/robot
+timing remain unverified. For the first-party measured lift and
 transfer adapter, the execution boundaries verify the exact local stock
 daemon process and at most 200 ms command expiry; this is not evidence of a
 physical timeout or E-stop test. External adapters retain the reviewed
@@ -311,11 +312,13 @@ python demo/precision-insertion/run_live.py \
 
 The JSON/stage module is read before the FR3 connection; the planner is
 initialized before the executor. On process exit, the built-in integration
-shuts down the Franka executor. This command still cannot run with only the
-illustrative file: the robot-PC stage factory must supply its stage limits,
-lift/transfer adapters, supervised recovery callback, prompts, interlocks and
-capture parameters. The built-in integration supplies the stock pickup
-executor and cylinder release/return/reset callbacks described above.
+shuts down the Franka executor. This generic example still needs a matching
+stage module and robot-PC files. For the staged board-9/20 mm command, use the
+exact paths in [ROBOT_PC_STAGED_BRINGUP.md](ROBOT_PC_STAGED_BRINGUP.md). The
+first-party factory supplies the prompts and stage parameters; the built-in
+integration supplies the stock pickup, lift/transfer, force-stop,
+release/return and reset callbacks. An unobserved key state after controller
+abort stops for supervised recovery rather than inventing a landing pose.
 
 The handler composer rejects missing/duplicate actions before any grasp. The
 module should supply commissioned robot-side adapters and may override the
@@ -561,10 +564,14 @@ Required recipient inputs remain distinct from code completeness:
   unverified controller stroke depth remains diagnostic and a visually
   normal insertion is not marked successful by that mode.
 
-The current workstation has neither a complete robot-PC `stages_factory` nor
-the physical depth commissioning audit. Running this command here cannot
-complete a real insertion. The CLI and synthetic tests establish the wiring
-contract, not robot readiness.
+The current workstation now has a first-party
+[`robot_pc_stages.py`](robot_pc_stages.py) for board 9 and the 20 mm cylinder
+socket. It assembles all ten actions with stock FR3/v8 resources, but its
+provisional perception and landing thresholds, contact behavior and actual
+insertion remain unverified on hardware. The first-party stock-force route
+uses a visual task label, not a physically measured 20 mm depth. A live run
+first captures the socket without the key, then waits for the operator to
+place the white key and press Enter before the first key image.
 
 ## Experimental task-label modes
 
