@@ -81,9 +81,11 @@ pickup log or trajectory fails verification.
 The current `FrankaMeasuredLiftAdapter` follows the saved measured-start
 lift with the session's completion-checked stock FR3 executor, records the
 FR3/Inspire/force trace and verifies a stopped endpoint. The execution
-boundary still requires a reviewed watchdog record for lift and transfer;
-none is installed on this PC. The installed ParaDex daemon source and binary
-contain a default 200 ms stream-expiry watchdog, but inspection is not a
-physical timeout or E-stop test. The 20 mm cylinder contact stroke uses the
+boundary checks the exact local stock daemon binary and running process with
+a stream expiry of at most 200 ms for this first-party adapter; external
+adapters still need a reviewed watchdog record. The installed ParaDex source
+and binary contain a default 200 ms stream-expiry watchdog, but inspection is
+not a physical timeout or E-stop test. No daemon process was visible in this
+session's offline check. The 20 mm cylinder contact stroke uses the
 separate stock 12 N force-stop adapter and reverse-axis ascent. A positive
 paired-camera VLM lift label is evaluated only after a completed lift record.

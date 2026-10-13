@@ -140,7 +140,7 @@ The later examples assume the same shell retains `DATA_DIR`, `NAS_DIR` and
 `CHECK_DIR`; set them again if starting a new shell. `CHECK_DIR` is an
 exclusive disposable report directory, not the runtime asset root.
 On this robot PC, the complete demo test suite passed with
-`/home/robot/anaconda3/envs/flir_env/bin/python` (NumPy 1.26): 953 passed,
+`/home/robot/anaconda3/envs/flir_env/bin/python` (NumPy 1.26): 960 passed,
 4 skipped on 2026-10-13 with
 `PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src"`. `flir_env_2`
 has NumPy 2 with the installed older
@@ -730,8 +730,10 @@ only if the run intentionally uses the stock nominal CAD path. This produces
 `sampled_nominal_measured_chain_pass` and records the future key/hand surface
 margin as unassessed; it still requires the measured start, exact endpoint and
 sampled full-path collision audit. The separate lift/transfer execution
-boundaries currently require a reviewed watchdog record, which this PC does
-not have. Static preflight therefore does not establish motion readiness.
+boundaries accept the first-party measured adapter only when the exact audited
+ParaDex binary is running locally with its stream expiry at most 200 ms.
+External adapters still require a reviewed watchdog record. Static preflight
+does not inspect the running daemon or establish motion readiness.
 Do not use `--max-steps` as a physical
 single-step controller: stopping the Python loop is not a safe robot hold.
 

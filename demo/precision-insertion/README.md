@@ -405,8 +405,9 @@ existing AutoDex execution files (`run_auto.py`, `run_pipeline.py`, or
 through explicit adapters, while insertion-specific orchestration lives here.
 
 `run_live.py` now assembles the opt-in cylinder execution loop, but its
-robot-PC `stages_factory` is still absent here and the installed controller
-has no reviewed watchdog record. The scenario catalog, VLM observer, and
+robot-PC `stages_factory` is still absent here. The first-party noncontact
+adapter checks the exact running stock ParaDex daemon identity; no physical
+watchdog test has been recorded. The scenario catalog, VLM observer, and
 retry policy are evidence and decision helpers, not proof of hardware
 readiness. Do not interpret a grasp/lift simulation pass as an insertion pass.
 Offline grasp eligibility now means v8 grasp stability **plus** a centered,
@@ -1316,11 +1317,11 @@ explicitly use `bounds=None` for a stock-style nominal CAD plan and records
 that margin as unassessed. This is still a saved plan, **not** a lift command.
 
 The separate [measured lift execution boundary](LIFT_EXECUTION.md) can pass
-that exact saved lift to an injected, independently safeguarded adapter only
-after a reviewed watchdog-binary record, fresh matching robot feedback,
-explicit motion opt-in and interlock. It defaults to no motion and has only
-fake-adapter execution tests; no reviewed watchdog record exists on this PC.
-Its successful execution record is input to the later paired-camera lift checkpoint, never
+that exact saved lift to the first-party measured adapter after checking the
+running local stock daemon identity, fresh matching robot feedback, explicit
+motion opt-in and interlock. An external adapter still needs a reviewed
+watchdog record. It defaults to no motion and has only fake-adapter execution
+tests. Its successful execution record is input to the later paired-camera lift checkpoint, never
 itself a grasp-success label.
 
 After the lift checkpoint and a passing observed or uncertainty-bounded

@@ -5,9 +5,11 @@
 It consumes `SessionRunner.prepare_measured_lift_chain(...)` output, not the
 original BODex candidate's nominal lift. Before motion, it rechecks the
 saved complete-chain report and trajectory hash, fixed Inspire joints, exact
-selected attempt/session, fresh stationary FR3/Inspire feedback, a reviewed
-robot-side watchdog record tied to the executing daemon binary, and a live
-interlock. `enable_robot_motion` defaults to `False`.
+selected attempt/session, fresh stationary FR3/Inspire feedback, and a live
+interlock. The first-party `FrankaMeasuredLiftAdapter` additionally requires
+the exact audited local ParaDex daemon binary running with a stream expiry
+within `max_watchdog_command_age_s`; an external adapter requires a reviewed
+watchdog record instead. `enable_robot_motion` defaults to `False`.
 
 The injected adapter must implement:
 
@@ -24,13 +26,14 @@ containing `trajectory_complete`, `force_abort`,
 `completed_at_s`, and an absolute `controller_trace_path` plus SHA-256.
 The adapter must implement online force, state, stall and timeout handling;
 this Python function validates its returned record and a fresh measured
-stationary endpoint, but cannot replace a controller-side watchdog. In
-particular, the checked-out ParaDex daemon accepts `duration_ms` without
-expiring a stale streaming velocity target. It **does not currently satisfy**
-this prerequisite. The commissioning JSON is a reviewed external assertion,
-not proof that a hardware test was honestly performed.
+stationary endpoint, but cannot replace a controller-side watchdog. The
+installed ParaDex source expires joint-velocity setpoints after at most
+200 ms by default and the first-party route verifies the exact binary hash,
+running process and launch timeout before motion. That identity check records
+`physical_watchdog_tested: false`; it is not a physical timeout or E-stop
+test. No matching daemon process was visible in this session's offline check.
 
-The commissioning record has schema
+For an external adapter, the commissioning record has schema
 `precision_insertion_robot_watchdog_commissioning_v1`, the exact binary path
 and SHA-256, `reviewed_by`, `tested_at_s`, `command_expiry_s`, and four true
 booleans: `stale_command_timeout_test_passed`,
@@ -47,5 +50,6 @@ existing schema consumed by the session runner's paired-camera lift
 checkpoint. It does **not** set `grasp_success`; fresh multi-view visual
 evidence must do that. It commands no transfer, XY shift or socket contact.
 
-Only fake-adapter tests have run on this workstation. No current adapter or
-watchdog record is commissioned, and no real Franka motion has been tested.
+The first-party measured adapter exists, but only fake-adapter execution and
+mock process-identity tests have run here. No real Franka lift has been
+tested.

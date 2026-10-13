@@ -48,12 +48,12 @@ dataclasses and JSON fields.
 The installed ParaDex daemon source and matching installed binary have a
 default `200 ms` streaming command-expiry watchdog. The live command line did
 not override it. No real timeout, disconnect, E-stop, or dynamic contact test
-was conducted by this inspection. `LiftExecutionLimits` currently also asks
-for a separately reviewed watchdog record (`max_watchdog_command_age_s`,
-`max_commissioning_record_age_s`) before built-in lift/transfer; none exists.
-Do not create a record claiming those tests passed. Aligning this built-in
-noncontact path with the stock AutoDex follower still requires a code change
-and review. The stage factory and its remaining site-specific camera, pickup,
+was conducted by this inspection. The first-party noncontact lift/transfer
+path now checks the exact running local ParaDex binary and requires
+`max_watchdog_command_age_s >= 0.2`; this is a stock runtime-identity check,
+not a physical timeout or E-stop test. External held-motion adapters still
+require a separately reviewed watchdog record, and none exists. Do not create
+a record claiming tests passed. The stage factory and its site-specific camera, pickup,
 recovery and interlock parameters must also be supplied before a full live run.
 
 Evidence: `task_geometry.json` in the staged 20 mm fixture; the read-only

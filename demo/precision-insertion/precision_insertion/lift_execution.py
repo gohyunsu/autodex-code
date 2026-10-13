@@ -1,9 +1,10 @@
-"""Demo-local, opt-in boundary for an independently safeguarded held lift.
+"""Demo-local, opt-in boundary for a measured held lift.
 
 This consumes the *measured post-squeeze* v8 lift replan, never the original
-nominal candidate lift. It cannot implement or certify the external Franka
-controller, robot-side stale-command watchdog or E-stop. Transfer and
-contact insertion are intentionally separate stages.
+nominal candidate lift. The first-party adapter requires the exact running
+stock ParaDex watchdog binary; external adapters retain a reviewed-record
+gate. Neither check certifies a physical timeout or E-stop test. Transfer and
+contact insertion are separate stages.
 """
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ from .measured_lift_preflight import (
 )
 from .pickup_execution import _reject_known_stock_follower
 from .session_runner import SessionRunner
+from .stock_daemon_identity import verify_stock_daemon_identity
+from .franka_measured_lift import FrankaMeasuredLiftAdapter
 
 
 def _sha(path: Path) -> str:
@@ -102,10 +105,26 @@ def _verify_controller_commissioning(
             "command_expiry_s": float(timeout)}
 
 
+def _verify_noncontact_controller(
+    *, adapter, commissioning_record_path: Path | None,
+    limits: LiftExecutionLimits, now_s: float,
+) -> dict:
+    """Use stock runtime identity for the first-party follower only."""
+    if type(adapter) is FrankaMeasuredLiftAdapter:
+        return verify_stock_daemon_identity(
+            adapter=adapter,
+            max_command_age_s=limits.max_watchdog_command_age_s)
+    if commissioning_record_path is None:
+        raise ValueError("external held-motion adapter needs a reviewed watchdog record")
+    return _verify_controller_commissioning(
+        path=commissioning_record_path, adapter=adapter,
+        limits=limits, now_s=now_s)
+
+
 def execute_bound_measured_lift(
     *, runner: SessionRunner, adapter, pre_state: LiveRobotState,
     read_post_state: Callable[[], LiveRobotState],
-    limits: LiftExecutionLimits, commissioning_record_path: Path,
+    limits: LiftExecutionLimits, commissioning_record_path: Path | None,
     motion_interlock: Callable[[], bool],
     enable_robot_motion: bool = False,
 ) -> dict:
@@ -175,10 +194,12 @@ def execute_bound_measured_lift(
                                 chain.measured_start.hand_raw_measured))) >
             limits.max_hand_drift_raw):
         raise ValueError("live held start differs from the measured lift plan")
-    commissioning = _verify_controller_commissioning(
-        path=commissioning_record_path, adapter=adapter,
+    if enable_robot_motion is not True:
+        raise PermissionError("held lift needs explicit live motion interlock")
+    commissioning = _verify_noncontact_controller(
+        adapter=adapter, commissioning_record_path=commissioning_record_path,
         limits=limits, now_s=now)
-    if enable_robot_motion is not True or motion_interlock() is not True:
+    if motion_interlock() is not True:
         raise PermissionError("held lift needs explicit live motion interlock")
     if _wall_time() - pre_state.sample_timestamp_s > limits.max_start_age_s:
         raise ValueError("held start became stale while waiting for interlock")

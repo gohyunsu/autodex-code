@@ -20,6 +20,7 @@ from precision_insertion.lift_execution import (  # noqa: E402
     LiftExecutionLimits, execute_bound_measured_lift,
 )
 from precision_insertion.config import select_mode  # noqa: E402
+from precision_insertion.franka_measured_lift import FrankaMeasuredLiftAdapter  # noqa: E402
 from test_measured_lift_preflight import _fixture, _state  # noqa: E402
 
 
@@ -138,6 +139,32 @@ def test_explicit_cylinder_nominal_chain_can_reach_lift_adapter(
         **kwargs, enable_robot_motion=True)
     assert result["trajectory_complete"] is True
     assert kwargs["adapter"].calls == 1
+
+
+def test_first_party_stock_identity_is_saved_without_review_record(
+        tmp_path, monkeypatch):
+    kwargs = _setup(tmp_path, monkeypatch, nominal_unbounded=True)
+    fake = kwargs["adapter"]
+    adapter = object.__new__(FrankaMeasuredLiftAdapter)
+    monkeypatch.setattr(
+        FrankaMeasuredLiftAdapter, "follow_lift",
+        lambda self, *args, **named: fake.follow_lift(*args, **named))
+    monkeypatch.setattr(
+        FrankaMeasuredLiftAdapter, "stop_and_acknowledge",
+        lambda self: fake.stop_and_acknowledge())
+    monkeypatch.setattr(
+        lift_execution, "verify_stock_daemon_identity",
+        lambda **_named: {
+            "schema": "precision_insertion_stock_daemon_identity_v1",
+            "physical_watchdog_tested": False,
+        })
+    kwargs["adapter"] = adapter
+    kwargs["commissioning_record_path"] = None
+    result = execute_bound_measured_lift(**kwargs, enable_robot_motion=True)
+    assert result["commissioning"]["schema"] == (
+        "precision_insertion_stock_daemon_identity_v1")
+    assert result["commissioning"]["physical_watchdog_tested"] is False
+    assert fake.calls == 1
 
 
 def test_lift_adapter_error_latches_failure_and_supervised_recovery(

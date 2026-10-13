@@ -3,9 +3,9 @@
 This reuses the demo's completion-checked stock follower. Every follower
 state read also checks fresh FR3 wrench/joints and measured Inspire motors;
 the original controller samples, not a planned trajectory, form its trace.
-It does not implement a robot-side command-expiry watchdog. The existing
-lift boundary still requires a separately reviewed daemon commissioning
-record before this adapter can receive a real motion command.
+It does not implement a robot-side command-expiry watchdog. The lift and
+transfer boundaries check the exact running stock ParaDex daemon binary and
+its local stream-expiry setting before this adapter can command motion.
 """
 
 from __future__ import annotations
@@ -136,8 +136,9 @@ class FrankaMeasuredLiftAdapter:
     """Supply lift, transfer and lateral boundaries from measured samples.
 
     The caller must pass the *same* completion-checked executor owned by the
-    live session and an exact robot daemon binary path. A commissioning
-    record for that binary remains the separate boundary's responsibility.
+    live session and an exact robot daemon binary path. The boundary verifies
+    the running stock daemon identity; it does not claim physical watchdog
+    commissioning.
     """
 
     def __init__(self, *, executor, daemon_binary_path: Path,

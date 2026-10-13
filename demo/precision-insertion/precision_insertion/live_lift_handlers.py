@@ -51,7 +51,7 @@ class LiveLiftHandlers:
     backend: object
     motion_interlock: Callable[[], bool]
     limits: LiftExecutionLimits
-    commissioning_record_path: Path
+    commissioning_record_path: Path | None
     assessment_parameters: Mapping[str, float]
     label_mode: str = "evidence_fused"
     manual_label_provider: Callable | None = None

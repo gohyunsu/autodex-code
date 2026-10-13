@@ -1,8 +1,9 @@
 """Opt-in held transfer to the pre-insertion hold; never axial contact.
 
-Only a separately safeguarded controller may follow this plan. This Python
-boundary binds its returned records to the measured post-lift replan; it
-cannot implement a robot-side watchdog or verify physical contact itself.
+The first-party measured adapter may follow this plan with the exact running
+stock ParaDex watchdog binary. External adapters retain a reviewed-record
+gate. This Python boundary binds returned records to the post-lift replan;
+it cannot implement a robot-side watchdog or verify physical contact itself.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from .bounded_postlift import (
 )
 from .lift_execution import (
     LiftExecutionLimits as TransferExecutionLimits,
-    _verify_controller_commissioning, _write_new,
+    _verify_noncontact_controller, _write_new,
 )
 from .live_robot_state import LiveRobotState
 from .nominal_postlift import (
@@ -89,7 +90,7 @@ def verify_transfer_controller_result(
 def execute_bound_held_transfer(
     *, runner: SessionRunner, adapter, pre_state: LiveRobotState,
     read_post_state: Callable[[], LiveRobotState],
-    limits: TransferExecutionLimits, commissioning_record_path: Path,
+    limits: TransferExecutionLimits, commissioning_record_path: Path | None,
     motion_interlock: Callable[[], bool],
     enable_robot_motion: bool = False,
 ) -> dict:
@@ -184,10 +185,12 @@ def execute_bound_held_transfer(
                                 plan.joint_feedback.hand_raw_measured))) >
             limits.max_hand_drift_raw):
         raise ValueError("live held start differs from the post-lift transfer")
-    commissioning = _verify_controller_commissioning(
-        path=commissioning_record_path, adapter=adapter,
+    if enable_robot_motion is not True:
+        raise PermissionError("held transfer needs explicit live motion interlock")
+    commissioning = _verify_noncontact_controller(
+        adapter=adapter, commissioning_record_path=commissioning_record_path,
         limits=limits, now_s=now)
-    if enable_robot_motion is not True or motion_interlock() is not True:
+    if motion_interlock() is not True:
         raise PermissionError("held transfer needs explicit live motion interlock")
     if _wall_time() - pre_state.sample_timestamp_s > limits.max_start_age_s:
         raise ValueError("held transfer start became stale at interlock")

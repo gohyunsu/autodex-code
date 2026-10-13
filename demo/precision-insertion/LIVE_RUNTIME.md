@@ -9,7 +9,11 @@ contact site validation is required by this route. The failure remains in
 the episode evidence and does not create an XY correction. A completed stroke
 uses the existing release/clear-view callback and visual task label. The
 robot-PC `stages_factory`, stage limits, interlocks, and measured feedback are
-still required for a complete live run. The FR3 integration provides the
+still required for a complete live run. For the first-party measured lift and
+transfer adapter, the execution boundaries verify the exact local stock
+daemon process and at most 200 ms command expiry; this is not evidence of a
+physical timeout or E-stop test. External adapters retain the reviewed
+watchdog-record requirement. The FR3 integration provides the
 stock held-return execution recorder. With existing path-audit limits it
 constructs the cylinder release/clear-view callback; with the pickup motion
 interlock it also constructs stock v8 restoration/repose callbacks. These

@@ -46,7 +46,7 @@ class LiveTaskHandlers:
     motion_interlock: Callable[[], bool]
     transfer_limits: object
     insertion_limits: object
-    transfer_commissioning_path: Path
+    transfer_commissioning_path: Path | None
     preinsert_parameters: Mapping[str, object]
     handoff_parameters: Mapping[str, object]
     insertion_parameters: Mapping[str, object]
