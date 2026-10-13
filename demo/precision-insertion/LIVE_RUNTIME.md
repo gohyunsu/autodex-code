@@ -256,8 +256,8 @@ python demo/precision-insertion/run_live.py \
 The JSON/stage module is read before the FR3 connection; the planner is
 initialized before the executor. On process exit, the built-in integration
 shuts down the Franka executor. This command still cannot run with only the
-illustrative file: robot-PC stage callbacks and commissioned contact control
-remain required.
+illustrative file: robot-PC stage callbacks for pickup, failed-key return and
+repose, with their stage parameters, remain required.
 
 The handler composer rejects missing/duplicate actions before any grasp. The
 module should supply commissioned robot-side adapters and may override the
@@ -348,7 +348,9 @@ and the saved next-trial advice records the source and supporting cameras;
 an exploratory step is not a measured XY error. The older
 `LiveObservedXYRetryHandlers` is not selected by runtime assembly and its
 same-attempt action is unsupported by the session policy. The robot-PC
-factory still supplies actual withdrawal/contact adapters and limits.
+factory still supplies failed-key return, restoration and repose execution
+callbacks and their limits. Cylinder insertion uses the built-in stock
+force-stop adapter.
 A malformed request ID, changed frame provenance or controller failure is
 still an error requiring review, not a visual abstention.
 

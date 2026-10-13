@@ -2435,8 +2435,8 @@ The output contains frozen session/catalog snapshots and
 `source_evidence_binding.json` with exact source hashes. The printed next
 decision is initially `capture_fresh_key`. A present PTH is not a QA-approved
 pose estimator, and a positive endpoint catalog is not motion authorization;
-the live camera/robot trial loop and guarded contact controller remain to be
-commissioned.
+the live camera/robot stage factory and failed-key return/repose callbacks
+remain to be completed for this rig.
 
 `run_auto.py` opens a ledger and **exits**; its in-memory runner is not
 resumable by another process. For a long-running program use the existing
