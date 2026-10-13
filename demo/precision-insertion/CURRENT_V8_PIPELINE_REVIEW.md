@@ -142,6 +142,13 @@ valid current feedback. This was checked in tests, without a motion command.
 After the operator authorized supervised clear-view movement, a new
 feedback-only preflight got no advancing FR3 state packets; the existing
 daemon logged repeated `Net Exception`. No motion command was issued.
+Following operator FCI activation and daemon reconnection, stock
+`FrankaExecutor.home(clear_view=True)` completed once. The agent set an
+unrequested 0.2 speed scale, which the operator rejected for future motion.
+Independent post-move feedback found the stock clear-view target within
+0.00989 rad maximum joint error and a stationary 0.00090 rad/s maximum
+joint velocity. The hand remained commanded open. No pickup or insertion
+was executed.
 
 A separate read-only FR3/Inspire probe used only the FR3 state subscription
 and Inspire register reads. It received two advancing FR3 packets with seven

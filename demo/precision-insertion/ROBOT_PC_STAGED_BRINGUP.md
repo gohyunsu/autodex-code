@@ -268,13 +268,16 @@ copy command assumes the robot PC has its existing
 substitute that verified path before copying. A successful file copy is not a
 camera, GPU inference, or robot connection test.
 
-Select the actual source-rebound `gap_mm=20` catalog path on this recipient:
+Select the actual source-rebound `gap_mm=20` catalog path on this recipient.
+The staged recipient used in the 2026-10-13 checks has a verified catalog
+named `recipient_gap20_endpoint_catalog_20261013.json`:
 
 ```bash
-CATALOG20="$DATA_DIR/AutoDex/precision_insertion/cylindrical/endpoint_catalog_full_length_collision_only_gap_20mm_20261011.json"
+CATALOG20="$DATA_DIR/AutoDex/precision_insertion/cylindrical/recipient_gap20_endpoint_catalog_20261013.json"
 ```
 
-If that path does **not** already exist, build the catalog there:
+If that path does **not** already exist on a different recipient, select a new
+output path and build a catalog there:
 
 ```bash
 PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
@@ -492,6 +495,22 @@ listening. The existing `franka` tmux daemon repeatedly logged `Net
 Exception`. The command-capable controller was not opened and no clear-view
 motion was sent. Recheck FR3 power, Desk/FCI and the robot network, then
 repeat the read-only feedback probe before planning a first free-space move.
+The operator then activated FCI. Restarting the existing daemon restored
+advancing FR3 state. After one more interrupted connection during concurrent
+CUDA compilation, that compilation was stopped, the daemon reconnected, and
+the read-only FR3/Inspire probe passed again. With on-site supervision and
+the operator's explicit `home()` authorization, stock
+`FrankaExecutor.home(clear_view=True)` was called once with an **agent-chosen
+0.2 arm speed scale**. The operator objected to that slower-than-stock
+setting; future commanded motions should use the stock default unless the
+operator specifies otherwise. The move completed in 16.47 s. A separate
+read-only probe measured maximum FR3 clear-view joint error **0.00989 rad**,
+maximum velocity **0.00090 rad/s**, and Inspire command registers all at
+1000 with actual readings `[999, 999, 998, 998, 1000, 986]`. Evidence is
+`stock_clearview_home_20261013.json` and
+`feedback_only_probe_post_home_20261013.json` in the cylindrical staging
+directory. This verifies the endpoint after one free-space move; it does not
+commission pickup, contact control, socket accuracy or insertion.
 
 ## Stage 4 — full robot loop, only after stage adapters exist
 
