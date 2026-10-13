@@ -139,6 +139,15 @@ as `qpos` and commanded angles as `action`. The demo's lift/transfer monitor
 now reads `qpos`; its previous `joint_value` lookup would abort despite
 valid current feedback. This was checked in tests, without a motion command.
 
+The recipient's current ParaDex FR3 daemon source contains a 1 kHz
+streaming-setpoint expiry watchdog (default 200 ms), and
+`/home/robot/paradex/cpp/franka_daemon/build/franka_daemon` contains its
+watchdog messages (SHA-256
+`363e4247cb3f9d7f3b25e9c5ae1e1dc8766775ce104407e33c48541e62b60bab`).
+This is source/binary inspection only: the watchdog, contact stop and
+force/torque handling have not passed the commissioning records required by
+`execute_bound_guarded_insertion`. No guarded insertion adapter exists yet.
+
 After the operator authorized supervised clear-view movement, a new
 feedback-only preflight got no advancing FR3 state packets; the existing
 daemon logged repeated `Net Exception`. No motion command was issued.

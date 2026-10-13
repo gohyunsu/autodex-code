@@ -638,8 +638,10 @@ transform the FR3 wrench, verify sensor calibration, stop the robot, or
 generate the `guarded_execution_v1` metric record. A separate
 [`guarded_trace.py`](precision_insertion/guarded_trace.py) serializes and
 replays the sample decisions used in that record. Its Python-side sample
-deadline is not an independent daemon dead-man; the checked-out ParaDex
-velocity stream has no verified command-expiry watchdog. An actuator must
+deadline is not an independent daemon dead-man. The current recipient's
+ParaDex daemon source contains a 1 kHz stream-expiry watchdog and the installed
+binary contains its watchdog messages, but the watchdog has not been
+commissioned for this insertion controller. An actuator must
 meet that robot-side safety prerequisite before interpreting any `continue`
 decision as permission to follow a preflighted path. The thresholds in unit
 tests are synthetic examples, **not** robot settings. The exact sample,
