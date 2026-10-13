@@ -7,9 +7,10 @@ planned stream was not followed. This subclass reuses the stock streaming
 algorithm but defers its final hand ramp, disables its blocking landing, and
 checks measured joint completion before allowing the ramp.
 
-This is *not* a robot-side watchdog, contact controller, or commissioning
-record. The daemon can still hold a velocity if Python dies mid-command; the
-AutoDex PC must commission that independent protection before robot trials.
+This is *not* a robot-side watchdog or a force servo. The installed ParaDex
+daemon has its own command-expiry watchdog; this mixin checks completion and
+acknowledges a stopped stream through that daemon. It does not claim that a
+key physically reached the socket depth.
 """
 
 from __future__ import annotations

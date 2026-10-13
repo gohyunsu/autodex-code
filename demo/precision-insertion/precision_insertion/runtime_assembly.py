@@ -142,6 +142,12 @@ def assemble_live_components(
     retry = components[list(classes).index("retry")]
     task = components[list(classes).index("task")]
     held_return = components[list(classes).index("held_return")]
+    if (isinstance(task, LiveTaskHandlers) and
+            isinstance(held_return, LiveHeldReturnHandlers) and
+            held_return.reuse_withdrawal is None):
+        held_return.reuse_withdrawal = task.withdrawn_for_return
+        if held_return.read_state is None:
+            held_return.read_state = task.read_state
     if (enable_robot_motion and isinstance(task, LiveTaskHandlers) and
             not callable(task.release_and_clear)):
         raise ValueError(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import hashlib
+import itertools
 import json
 from pathlib import Path
 import sys
@@ -17,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.guarded_contact import GuardedContactLimits  # noqa: E402
 from precision_insertion import guarded_insertion_execution as execution  # noqa: E402
+from precision_insertion import insertion_checkpoint  # noqa: E402
 from precision_insertion.guarded_insertion_execution import (  # noqa: E402
     GuardedInsertionExecutionLimits, execute_bound_guarded_insertion,
 )
@@ -194,6 +196,73 @@ def test_guarded_insertion_records_external_stroke_without_task_label(
     assert args["adapter"].calls == 1
     assert (args["runner"]._attempt_dir /
             "guarded_insertion_execution.json").is_file()
+
+
+@pytest.mark.parametrize("contact", [False, True])
+def test_stock_force_stroke_needs_no_contact_review_and_saves_ascent(
+        tmp_path, monkeypatch, contact):
+    args = _setup(tmp_path, monkeypatch)
+    with np.load(tmp_path / "axial.npz", allow_pickle=False) as archive:
+        axial = archive["axial"]
+    post_q = axial[0, :7] if contact else axial[-1, :7]
+    args["read_post_state"] = lambda: _state(102.70, post_q)
+    ticks = itertools.count(102.5, .01)
+    monkeypatch.setattr(execution, "_wall_time", lambda: next(ticks))
+
+    class Stock:
+        def __init__(self):
+            self.calls = 0
+
+        def follow_stock_force_insertion(self, path, *, max_duration_s):
+            self.calls += 1
+            np.testing.assert_array_equal(path, axial)
+            assert max_duration_s == .5
+            return {
+                "schema": "precision_insertion_stock_force_result_v1",
+                "started_at_s": 102.55, "completed_at_s": 102.65,
+                "safety_abort": contact, "retreat_completed": contact,
+                "terminal_hold_acknowledged": True,
+                "force_threshold_n": 12., "contact_wrench": None,
+                "speed_source": "stock_franka_traj_speed",
+            }
+
+        def stop_and_acknowledge(self):
+            return {"acknowledged": True}
+
+    stock = Stock()
+    args["adapter"] = stock
+    args["contact_limits"] = None
+    args["contact_commissioning_path"] = tmp_path / "absent_contact_review.json"
+    args["watchdog_commissioning_path"] = tmp_path / "absent_review.json"
+    record = execute_bound_guarded_insertion(
+        **args, enable_robot_motion=True)
+    assert stock.calls == 1
+    assert record["safety_abort"] is contact
+    metric = Path(record["metric_record"]["path"])
+    assert json.loads(metric.read_text())["measurement"]["key_depth_interval_m"] is None
+    handoff_path = args["handoff_report_path"]
+    handoff_path.write_text(json.dumps({
+        "schema": "precision_insertion_guarded_axial_handoff_v1"}),
+        encoding="utf-8")
+    # Replay the stock metric with the exact bound handoff schema. Rebind
+    # the metric's digest because this fake fixture changes the report bytes.
+    metric_row = json.loads(metric.read_text())
+    metric_row["axial_handoff"]["sha256"] = _sha(handoff_path)
+    metric.write_text(json.dumps(metric_row), encoding="utf-8")
+    monkeypatch.setattr(insertion_checkpoint, "verify_guarded_axial_handoff",
+                        lambda _: {**execution.verify_guarded_axial_handoff(
+                            handoff_path), "decision_timestamp_s": 102.1})
+    replayed, _, _ = insertion_checkpoint._metric_record(
+        metric, attempt_id=args["runner"]._attempt.attempt_id,
+        candidate_id=args["runner"]._attempt.candidate_id,
+        session_calibration_sha256=args["runner"].session_sha256)
+    assert replayed["measurement"]["safety_abort"] is contact
+    if contact:
+        withdrawal = Path(record["withdrawal_record_path"])
+        assert json.loads(withdrawal.read_text())["source"] == (
+            "stock_franka_force_stop_follow")
+    else:
+        assert record["withdrawal_record_path"] is None
 
 
 def test_guarded_insertion_stops_on_changed_metric(tmp_path, monkeypatch):

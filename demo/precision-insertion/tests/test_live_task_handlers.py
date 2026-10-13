@@ -175,6 +175,35 @@ def test_guarded_abort_or_lost_key_never_releases(tmp_path, monkeypatch, result)
     assert [row[0] for row in runner.events] == ["handoff"]
 
 
+def test_stock_force_stop_records_failure_then_reuses_ascent_for_return(
+        tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    runner.decision = SessionDecision(
+        "await_guarded_insertion_and_observation", "hold_observed", "table/0/3")
+    bound._preinsert_attempt_id = runner.active_attempt.attempt_id
+    bound._preinsert_bundle = tmp_path / "preinsert_bundle"
+    release_calls = []
+    bound.release_and_clear = lambda *_: release_calls.append("release")
+    metric = tmp_path / "metric.json"
+    withdrawal = tmp_path / "withdrawal.json"
+    monkeypatch.setattr(
+        live_task_handlers, "execute_bound_guarded_insertion",
+        lambda **_: {"safety_abort": True, "grasp_held": True,
+                    "retreat_completed": True,
+                    "withdrawal_record_path": str(withdrawal),
+                    "metric_record": {"path": str(metric)}})
+    runner.observe_stock_force_stop = lambda **kwargs: runner.events.append(
+        ("force_stop", kwargs))
+    runner.record_failure = lambda *args, **kwargs: runner.events.append(
+        ("failure", args, kwargs))
+    bound.insert_and_observe(runner, runner.current_decision())
+    assert [row[0] for row in runner.events] == [
+        "handoff", "force_stop", "failure"]
+    assert bound.withdrawn_for_return()[2] == withdrawal
+    assert runner.events[-1][1] == ("force_abort",)
+    assert release_calls == []
+
+
 def test_motion_disabled_before_transfer_or_insertion(tmp_path):
     bound, runner, *_ = _handler(tmp_path, enabled=False)
     with pytest.raises(PermissionError, match="not enabled"):

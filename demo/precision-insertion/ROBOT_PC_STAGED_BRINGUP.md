@@ -512,18 +512,19 @@ maximum velocity **0.00090 rad/s**, and Inspire command registers all at
 directory. This verifies the endpoint after one free-space move; it does not
 commission pickup, contact control, socket accuracy or insertion.
 
-## Stage 4 — full robot loop, only after stage adapters exist
+## Stage 4 — full robot loop, only after stage callbacks exist
 
 Supply an importable robot-PC `stages_factory` and its commissioned settings
 as in [LIVE_RUNTIME.md](LIVE_RUNTIME.md). Check the factory's ten stage
-mappings before motion. In particular, provide a guarded-contact adapter
-with real stop acknowledgement and metric trace, `release_and_clear`,
+mappings before motion. Cylinder insertion uses the built-in stock FR3
+12 N force stop and reverse-axis ascent, without a separate contact
+commissioning record. Provide `release_and_clear`,
 `execute_restoration`, directed `execute_repose`, pickup/lift/transfer
 adapters, motion interlocks and exposure-aligned feedback. The stock
-`FrankaExecutor.follow_joint_trajectory` must **not** be presented as a
-guarded contact controller. Validate callback records against the verifier
-schemas with mocked actuation first; then commission each physical stage
-under the rig operator's procedure. Do not use `--max-steps` as a physical
+`FrankaExecutor.follow_joint_trajectory` is not the force-stop entry point;
+the cylinder adapter calls `_follow` with `stop_wrench_z=12.0`. Validate
+callback records against the verifier schemas with mocked actuation first.
+Do not use `--max-steps` as a physical
 single-step controller: stopping the Python loop is not a safe robot hold.
 
 The launch and 20 mm catalog can first be checked without cameras,

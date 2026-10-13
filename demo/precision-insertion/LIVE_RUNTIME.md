@@ -1,5 +1,16 @@
 # Run one live AutoDex precision-insertion session
 
+**Current cylinder insertion behavior (2026-10-13):** The first insertion
+uses the stock FR3 follower with its 12 N wrench-Z contact stop and stock
+trajectory speed. A force stop immediately reverses the executed socket-axis
+path to preinsert, then records a failed attempt and selects the held-key
+return/restoration action. No separate contact-controller review file or
+contact site validation is required by this route. The failure remains in
+the episode evidence and does not create an XY correction. A completed stroke
+uses the existing release/clear-view callback and visual task label. The
+robot-PC `stages_factory`, release/return callbacks, and measured feedback
+are still required for a complete live run.
+
 `run_live.py` is the demo-local replacement for a precision-specific
 `run_pipeline.py`/`run_auto.py` robot loop. It does not modify either stock
 AutoDex file. One invocation parks FR3/opens Inspire, measures the ChArUco
@@ -35,7 +46,7 @@ pickup/place and recaptures from clear view before recording reset success.
 See [NEXT_TRIAL_XY.md](NEXT_TRIAL_XY.md). Older discussions later on this
 page describe optional/historical branches, not the active cylinder loop.
 
-The script does **not** include a robot/force controller or invent camera
+The script uses the stock FR3 force-stop follower for cylinder insertion; it does not invent camera
 exposure timestamps. The optional `bounded_request_interval` camera mode
 uses the complete new-frame request/response interval as timing uncertainty
 for stationary bring-up; slow FoundPose calls may still fail the unchanged
@@ -81,8 +92,8 @@ constructor writes angle, speed and force registers. Call it only after
 explicit motion opt-in. For nonmoving connection checks use
 [`probe_robot_feedback_only.py`](probe_robot_feedback_only.py).
 Do not use `autodex.executor.real.RealExecutor`: it controls xArm, and the
-clear-view gate rejects it. This core does not supply a robot-side watchdog,
-guarded contact, camera timestamps or the remaining hardware callbacks.
+clear-view gate rejects it. This core does not supply camera timestamps or
+the remaining hardware callbacks.
 
 For the first-party FR3 resource path, create a robot-PC JSON file such as:
 
@@ -160,13 +171,14 @@ Franka/Inspire hold throughout exposure. The stage factory may omit
 completion-checked FR3 executor used for clear-view and feedback. It must
 still supply pickup limits and a real motion interlock; the subclass does
 not replace a robot-side watchdog or physical review. The stage factory
-supplies the remaining commissioned contact, recovery and repose callbacks.
+supplies the remaining recovery and repose callbacks.
 An optional [`held_motion_monitor` block](MEASURED_LIFT_ADAPTER.md) builds
 one measured non-contact adapter for lift and first transfer. The task stage
 must additionally supply `release_and_clear`; it opens Inspire after the
-single 20 mm stroke only when the bound controller reports no safety abort
-and a verified held key. An abort, lost key, or unknown grasp state keeps the
-terminal hold for supervised recovery without release or final task capture.
+single 20 mm stroke only when the stock follower reports no force stop
+and the measured hand hold is unchanged. A force stop follows the saved
+axis back to preinsert and selects held-key return without release or final
+task capture. A lost or unknown grasp state stops for review.
 On a permitted release, the callback follows a commissioned collision-checked
 exit to FR3 clear view. The callback returns a
 `precision_insertion_poststroke_release_clear_view_v1` JSON record bound to
@@ -175,8 +187,8 @@ reuses the saved pre-insertion snapshot. The active released-failure branch
 does not command a guarded withdrawal or take another held-key photograph.
 The older
 `lift_monitor` block still fills only `lift.adapter`. The factory may override
-each field. Neither setting supplies a reviewed daemon watchdog record,
-stage limits, interlock, contact controller or real-robot validation.
+other stage fields. Neither setting supplies stage limits, interlock or
+real-robot validation.
 
 For the **historical square/offline** physical held-relation route, the stage factory may omit
 `held_relation.calibration_for_candidate`: assembly then looks for the exact
@@ -433,8 +445,7 @@ are installed. A launch created only to inspect current recipient files may
 set `"execution_scope": "static_preflight_only"`; the camera capture and
 motion entry points reject that launch, while `--preflight` can read it.
 
-For the full motion-enabled loop, after the stage adapters and guarded
-controller are commissioned:
+For the full motion-enabled loop, after the stage callbacks are configured:
 
 ```bash
 PYTHONPATH="$PWD/demo/precision-insertion:$PWD/src:/path/to/robot_pc_integration" \
@@ -477,14 +488,14 @@ Required recipient inputs remain distinct from code completeness:
 - Either a per-grasp physical held-relation calibration, a visible
   post-lift multi-view key observation, or an explicitly opted-in unmeasured
   nominal v8 hypothesis; and commissioned pickup, lift, transfer,
-  guarded-contact, withdrawal and reset controllers with their independent
+  stock force-stop insertion, release/clear, held-return and reset execution with their
   execution records.
 - Under `evidence_fused`, for a **positive verified 20 mm label**, the optional reviewed visual-depth error
   audit described in [DEPTH_ADMISSION.md](DEPTH_ADMISSION.md). Without it,
   unverified controller stroke depth remains diagnostic and a visually
   normal insertion is not marked successful by that mode.
 
-The current workstation has neither a real AutoDex-PC integration module nor
+The current workstation has neither a complete robot-PC `stages_factory` nor
 the physical depth commissioning audit. Running this command here cannot
 complete a real insertion. The CLI and synthetic tests establish the wiring
 contract, not robot readiness.

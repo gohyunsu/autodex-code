@@ -162,11 +162,16 @@ def test_franka_integration_reuses_held_motion_adapter_across_stages(
     held_adapter = object()
     monkeypatch.setattr(franka_integration, "FrankaMeasuredLiftAdapter",
                         build_adapter)
+    insertion_adapter = object()
+    monkeypatch.setattr(franka_integration, "FrankaForceStopInsertionAdapter",
+                        lambda executor: insertion_adapter)
 
     def assemble(_live, **kwargs):
         stages = kwargs["stages"]
         assert stages["lift"]["adapter"] is held_adapter
         assert stages["task"]["transfer_adapter"] is held_adapter
+        if family == "cylinder":
+            assert stages["task"]["insertion_adapter"] is insertion_adapter
         assert "transfer_adapter" not in stages["retry"]
         assert "lateral_adapter" not in stages["retry"]
         return ()

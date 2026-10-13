@@ -43,6 +43,7 @@ _LIVE_ACTIONS = frozenset({
     "transfer_execution_gate_required",
     "await_guarded_insertion_and_observation",
     "assess_saved_preinsert_xy",
+    "recover_held_key_then_reobserve",
     "recover_released_key_then_reobserve", "recover_key_then_reobserve",
     "preflight_repose", "continue_repose_seed_preflight",
     "preflight_repose_release", "preflight_alternative_repose_cell",

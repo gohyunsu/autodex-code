@@ -121,7 +121,8 @@ def _metric_record(
     if (not isinstance(metric, dict) or
             metric.get("schema") not in {
                 "precision_insertion_guarded_execution_v1",
-                "precision_insertion_guarded_execution_v2"} or
+                "precision_insertion_guarded_execution_v2",
+                "precision_insertion_stock_force_execution_v1"} or
             metric.get("attempt_id") != attempt_id or
             metric.get("candidate_id") != candidate_id or
             metric.get("session_calibration_sha256") !=
@@ -135,7 +136,10 @@ def _metric_record(
         raise ValueError("guarded execution times are missing") from exc
     if not all(map(math.isfinite, (started, completed))) or started >= completed:
         raise ValueError("guarded execution times are invalid")
-    if metric["schema"] == "precision_insertion_guarded_execution_v2":
+    bound_schema = metric["schema"] in {
+        "precision_insertion_guarded_execution_v2",
+        "precision_insertion_stock_force_execution_v1"}
+    if bound_schema:
         reference = metric.get("axial_handoff")
         if (not isinstance(reference, dict) or
                 set(reference) != {"path", "sha256"} or
@@ -173,6 +177,22 @@ def _metric_record(
         if metric["measurement"][name] is not None and type(
                 metric["measurement"][name]) is not bool:
             raise ValueError(f"guarded execution {name} must be boolean or unknown")
+    if metric["schema"] == "precision_insertion_stock_force_execution_v1":
+        result = metric.get("stock_result")
+        if (not isinstance(result, dict) or
+                result.get("schema") != "precision_insertion_stock_force_result_v1" or
+                result.get("terminal_hold_acknowledged") is not True or
+                result.get("safety_abort") is not
+                metric["measurement"]["safety_abort"] or
+                result.get("started_at_s") != started or
+                result.get("completed_at_s") != completed or
+                metric["measurement"]["key_depth_interval_m"] is not None or
+                metric["measurement"]["key_depth_source"] is not None or
+                metric["measurement"]["alignment_within_limits"] is not None or
+                metric["measurement"]["grasp_held"] is not True or
+                "source_records" in metric):
+            raise ValueError("stock force record claims unmeasured insertion evidence")
+        return metric, started, completed
     source_records = metric.get("source_records")
     if (not isinstance(source_records, dict) or
             set(source_records) != {

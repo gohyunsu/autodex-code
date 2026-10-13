@@ -41,7 +41,7 @@ from .guarded_axial_handoff import (
     verify_guarded_axial_handoff,
 )
 from .insertion_checkpoint import (
-    assess_insertion_checkpoint, verify_insertion_checkpoint,
+    _metric_record, assess_insertion_checkpoint, verify_insertion_checkpoint,
     write_insertion_checkpoint,
 )
 from .released_insertion_checkpoint import (
@@ -1923,15 +1923,22 @@ class SessionRunner:
             row["timestamp_s"] for row in reversed(self._attempt.events)
             if row["stage"] == "insertion_success")
         completed = float(withdrawal.get("completed_at_s", float("nan")))
+        stock_force_withdrawal = (
+            withdrawal.get("source") == "stock_franka_force_stop_follow")
         if (withdrawal.get("schema") !=
                 "precision_insertion_guarded_withdrawal_v1" or
                 withdrawal.get("attempt_id") != self._attempt.attempt_id or
                 withdrawal.get("candidate_id") != self._attempt.candidate_id or
                 withdrawal.get("status") != "withdrawn_to_preinsert_hold" or
-                withdrawal.get("source") != "commissioned_guarded_controller" or
+                withdrawal.get("source") not in {
+                    "commissioned_guarded_controller",
+                    "stock_franka_force_stop_follow"} or
                 withdrawal.get("key_still_held") is not True or
-                withdrawal.get("safety_abort") is not False or
-                not math.isfinite(completed) or completed <= insertion_at or
+                withdrawal.get("safety_abort") is not stock_force_withdrawal or
+                not math.isfinite(completed) or
+                (completed <= self._attempt.started_at_s if stock_force_withdrawal
+                 else completed <= insertion_at) or
+                (stock_force_withdrawal and completed > insertion_at) or
                 withdrawn_state.sample_timestamp_s <= completed or
                 withdrawn_state.sample_timestamp_s - completed >
                 max_withdrawal_state_gap_s):
@@ -2518,6 +2525,51 @@ class SessionRunner:
             manual_annotation=report.get("manual_annotation"),
             timestamp_s=timestamp_s, evidence_refs=evidence_refs))
 
+    def observe_stock_force_stop(
+        self, *, metric_record_path: Path, withdrawal_record_path: Path,
+        timestamp_s: float,
+    ) -> AttemptRecord:
+        """Record a contact failure only after a bound reverse-axis ascent."""
+        if (self.current_decision().action !=
+                "await_guarded_insertion_and_observation" or
+                self._attempt is None or self._attempt_dir is None):
+            raise ValueError("force stop needs this held insertion attempt")
+        metric_path = Path(metric_record_path).expanduser().resolve()
+        withdrawal_path = Path(withdrawal_record_path).expanduser().resolve()
+        if (not metric_path.is_relative_to(self._attempt_dir.resolve()) or
+                not withdrawal_path.is_relative_to(self._attempt_dir.resolve())):
+            raise ValueError("force stop records belong to another attempt")
+        metric, _, completed = _metric_record(
+            metric_path, attempt_id=self._attempt.attempt_id,
+            candidate_id=self._attempt.candidate_id,
+            session_calibration_sha256=self.session_sha256)
+        withdrawal = json.loads(withdrawal_path.read_text(encoding="utf-8"))
+        if (metric["schema"] !=
+                "precision_insertion_stock_force_execution_v1" or
+                metric["measurement"]["safety_abort"] is not True or
+                metric["stock_result"].get("retreat_completed") is not True or
+                withdrawal.get("schema") !=
+                "precision_insertion_guarded_withdrawal_v1" or
+                withdrawal.get("source") != "stock_franka_force_stop_follow" or
+                withdrawal.get("status") != "withdrawn_to_preinsert_hold" or
+                withdrawal.get("attempt_id") != self._attempt.attempt_id or
+                withdrawal.get("candidate_id") != self._attempt.candidate_id or
+                withdrawal.get("completed_at_s") != completed or
+                withdrawal.get("key_still_held") is not True or
+                withdrawal.get("safety_abort") is not True or
+                withdrawal.get("metric_record") != {
+                    "path": str(metric_path), "sha256": hashlib.sha256(
+                        metric_path.read_bytes()).hexdigest()} or
+                float(timestamp_s) <= completed):
+            raise ValueError("force stop has no verified held-key ascent")
+        evidence = InsertionEvidence(
+            "unobservable", None, None, None, True, True)
+        refs = {"force_trace": str(metric_path),
+                "axial_withdrawal": str(withdrawal_path),
+                "guarded_execution": str(metric_path)}
+        return self._record(lambda row: row.record_insertion_evidence(
+            evidence, timestamp_s=timestamp_s, evidence_refs=refs))
+
     def prepare_observed_insertion_label(
         self, *, preinsert_bundle: Path, final_bundle: Path,
         metric_record_path: Path, backend: ImageVLM,
@@ -2604,7 +2656,14 @@ class SessionRunner:
                   f"{self._insertion_assessment_index:03d}")
         path = write_insertion_checkpoint(report, output)
         verify_insertion_checkpoint(path)
-        sources = metric["source_records"]
+        sources = metric.get("source_records")
+        if sources is None and metric.get("schema") == (
+                "precision_insertion_stock_force_execution_v1"):
+            metric_source = str(Path(metric_record_path).expanduser().resolve())
+            sources = {name: {"path": metric_source} for name in (
+                "key_depth", "alignment", "force_trace", "grasp_state")}
+        if sources is None:
+            raise ValueError("insertion metric lacks evidence sources")
         refs = {
             "vlm_observation": str(path),
             "vlm_observation_sha256": hashlib.sha256(
@@ -2694,7 +2753,14 @@ class SessionRunner:
         checkpoint = write_released_insertion_checkpoint(report, output)
         verify_released_insertion_checkpoint(checkpoint)
         metric = json.loads(Path(metric_record_path).read_text(encoding="utf-8"))
-        sources = metric["source_records"]
+        sources = metric.get("source_records")
+        if sources is None and metric.get("schema") == (
+                "precision_insertion_stock_force_execution_v1"):
+            metric_source = str(Path(metric_record_path).expanduser().resolve())
+            sources = {name: {"path": metric_source} for name in (
+                "key_depth", "alignment", "force_trace", "grasp_state")}
+        if sources is None:
+            raise ValueError("released insertion metric lacks evidence sources")
         refs = {
             "vlm_observation": str(checkpoint),
             "vlm_observation_sha256": hashlib.sha256(

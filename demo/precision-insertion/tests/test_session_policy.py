@@ -176,6 +176,27 @@ def test_failed_insertion_advice_returns_key_before_next_physical_attempt():
             "recover_released_key_then_reobserve")
 
 
+def test_stock_force_stop_returns_held_key_only_after_logged_ascent():
+    record = _attempt()
+    _grasp(record)
+    _hold(record)
+    record.record_insertion_evidence(
+        InsertionEvidence("unobservable", None, None, None, True, True),
+        timestamp_s=4.,
+        evidence_refs={"force_trace": "robot/force.json",
+                       "axial_withdrawal": "robot/ascent.json"})
+    record.record_failure(
+        "force_abort", timestamp_s=4.1,
+        evidence_refs={"force_trace": "robot/force.json"})
+    assert decide_after_attempt(
+        record, max_xy_retries=1).action == "recover_held_key_then_reobserve"
+    assert not any(event["stage"] == "next_trial_xy_advice"
+                   for event in record.events)
+    record.events[2]["evidence_refs"].pop("axial_withdrawal")
+    assert decide_after_attempt(
+        record, max_xy_retries=1).action == "stop_for_review"
+
+
 def test_next_trial_xy_has_10mm_step_but_no_cumulative_limit():
     record = begin_attempt(
         attempt_id="trial_large_offset", mode=MODE, session_record=SESSION,

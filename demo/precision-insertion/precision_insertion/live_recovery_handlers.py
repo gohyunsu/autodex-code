@@ -217,9 +217,8 @@ class LiveHeldReturnHandlers:
         return execution, float(verified["release_completed_at_s"])
 
     def recover(self, runner, decision: SessionDecision) -> None:
-        if (not callable(self.withdraw_guarded) or
-                not callable(self.record_execution)):
-            raise RuntimeError("legacy held return needs withdrawal/execution adapters")
+        if not callable(self.record_execution):
+            raise RuntimeError("held return needs an execution recorder")
         if (runner is not self.live.opened.runner or
                 not isinstance(decision, SessionDecision) or
                 decision.action != "recover_held_key_then_reobserve" or
@@ -247,6 +246,8 @@ class LiveHeldReturnHandlers:
                     raise ValueError("robot moved after the reusable withdrawal")
                 withdrawal = (current, previous[2])
         if withdrawal is None:
+            if not callable(self.withdraw_guarded):
+                raise RuntimeError("held return lacks a completed axis withdrawal")
             withdrawal = self.withdraw_guarded(runner, decision)
         if (not isinstance(withdrawal, tuple) or len(withdrawal) != 2 or
                 not isinstance(withdrawal[0], LiveRobotState)):
@@ -357,5 +358,6 @@ class LiveHeldReturnHandlers:
 
     def handlers(self) -> dict[str, ActionHandler]:
         return {
+            "recover_held_key_then_reobserve": self.recover,
             "recover_released_key_then_reobserve": self.recover_released,
         }

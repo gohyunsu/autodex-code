@@ -1,5 +1,24 @@
 # Precision insertion demo
 
+## Active cylinder force-stop route (2026-10-13)
+
+The 20 mm cylinder stroke now uses the current AutoDex FR3 executor's
+`_follow(..., stop_wrench_z=12.0, abort_on_contact=True)` through
+`FrankaForceStopInsertionAdapter`. It keeps the executor's normal
+`traj_speed` and held-object speed cap. On detected force, it stops the
+stream, follows the already planned socket-axis path backward to preinsert
+with the key gripped, records `force_abort`, and sends the held key through
+the existing return-to-original-pose action. That failure does not produce
+an XY measurement or open the hand at the socket. The active cylinder route
+does not require a separate contact-controller commissioning record. A
+normal stroke still opens the hand, exits to clear view, and obtains the
+same-camera initial/final visual task label. The stock force record contains
+no independent key-penetration measurement; `inside_socket` remains a visual
+label, not measured 20 mm depth. The older guarded-contact sections below
+describe optional or historical contracts and do not gate this cylinder
+route. Robot pickup, release/clear, return execution, and camera callbacks
+still require a working robot-PC stage factory.
+
 For the complete AutoDex-PC execution entry point and required integration
 module, see [LIVE_RUNTIME.md](LIVE_RUNTIME.md). `run_live.py` keeps all
 precision-specific robot-loop code under this demo; stock AutoDex execution

@@ -1,10 +1,9 @@
-"""Opt-in boundary to a separately commissioned 20 mm contact controller.
+"""Bind a saved 20 mm axial path to the selected insertion executor.
 
-This module binds one observed pre-insertion hold to its saved axial path,
-checks explicit live interlocks, then accepts independently recorded force,
-depth, alignment and grasp evidence. It cannot implement the robot-side
-dead-man, watchdog, force servo or physical key-depth measurement. No task
-success label is set here, even when the commanded stroke completes.
+The active cylinder path uses stock FR3 force stop and reverse-axis ascent.
+The earlier external guarded-controller contract remains available for
+historical/offline callers. Neither execution result measures physical key
+penetration or sets a task-success label.
 """
 
 from __future__ import annotations
@@ -85,13 +84,12 @@ def execute_bound_guarded_insertion(
     enable_robot_motion: bool = False,
     observed_xy_retry: bool = False,
 ) -> dict:
-    """Run one *bound* external contact stroke; never infer key insertion.
+    """Run one bound axial stroke; never infer physical key insertion.
 
-    The external adapter must provide `follow_guarded_insertion` with its own
-    robot-side watchdog, force/contact abort, grip-loss stop and terminal
-    hold. This Python boundary is not a substitute for any of those. An
-    exception after command onset leaves an exclusive failure marker and
-    demands supervised recovery.
+    Cylinder live mode injects the stock force-stop adapter. The historical
+    external adapter contract remains for callers that explicitly supply it.
+    An exception after command onset leaves an exclusive failure marker and
+    requires recovery from measured state.
     """
     limits.validate()
     if (type(max_handoff_age_s) not in (int, float) or
@@ -105,11 +103,14 @@ def execute_bound_guarded_insertion(
             not isinstance(pre_state, LiveRobotState) or
             not callable(read_post_state) or
             not callable(motion_interlock) or
-            not callable(getattr(adapter, "follow_guarded_insertion", None)) or
+            not (callable(getattr(adapter, "follow_guarded_insertion", None)) or
+                 callable(getattr(adapter, "follow_stock_force_insertion", None))) or
             not callable(getattr(adapter, "stop_and_acknowledge", None))):
         raise ValueError("guarded insertion needs an observed hold and safe adapter")
-    contact_limits.validate(family=runner.mode.family)
-    _reject_known_stock_follower(adapter)
+    stock_force = callable(getattr(adapter, "follow_stock_force_insertion", None))
+    if not stock_force:
+        contact_limits.validate(family=runner.mode.family)
+        _reject_known_stock_follower(adapter)
     attempt = runner.active_attempt
     attempt_dir = runner._attempt_dir
     if (attempt is None or attempt_dir is None or
@@ -183,6 +184,14 @@ def execute_bound_guarded_insertion(
                                 handoff_state["hand_raw_measured"]))) >
             limits.max_hand_drift_raw):
         raise ValueError("fresh held state differs from the axial handoff")
+    if stock_force:
+        return _execute_stock_force_stroke(
+            runner=runner, adapter=adapter, handoff=handoff,
+            report_path=report_path, axial=axial, pre_state=pre_state,
+            read_post_state=read_post_state, limits=limits,
+            output=output, started_path=started_path, failure_path=failure_path,
+            motion_interlock=motion_interlock,
+            enable_robot_motion=enable_robot_motion)
     watchdog = _verify_controller_commissioning(
         path=watchdog_commissioning_path, adapter=adapter,
         limits=limits, now_s=now)
@@ -292,3 +301,125 @@ def execute_bound_guarded_insertion(
         })
         raise
     return record
+
+
+def _execute_stock_force_stroke(
+    *, runner: SessionRunner, adapter, handoff: dict, report_path: Path,
+    axial: np.ndarray, pre_state: LiveRobotState,
+    read_post_state: Callable[[], LiveRobotState],
+    limits: GuardedInsertionExecutionLimits, output: Path,
+    started_path: Path, failure_path: Path,
+    motion_interlock: Callable[[], bool], enable_robot_motion: bool,
+) -> dict:
+    """Use stock force stop; a contact failure includes its immediate ascent."""
+    if enable_robot_motion is not True or motion_interlock() is not True:
+        raise PermissionError("stock insertion needs the enabled motion interlock")
+    if _wall_time() - pre_state.sample_timestamp_s > limits.max_start_age_s:
+        raise ValueError("held start aged before stock insertion")
+    attempt = runner.active_attempt
+    binding = {"path": str(report_path), "sha256": _sha(report_path)}
+    base = {
+        "attempt_id": attempt.attempt_id,
+        "candidate_id": attempt.candidate_id,
+        "session_calibration_sha256": runner.session_sha256,
+        "axial_handoff": binding,
+        "trajectory_archive_sha256": handoff["trajectory_archive_sha256"],
+        "pre_state": pre_state.to_record(),
+        "scope": "stock_force_stop_and_reverse_path_not_physical_key_depth",
+        "robot_ready": False,
+    }
+    _write_new(started_path, {
+        **base, "schema": "precision_insertion_stock_force_started_v1",
+        "requested_at_s": _wall_time()})
+    try:
+        result = adapter.follow_stock_force_insertion(
+            axial.copy(), max_duration_s=limits.max_execution_duration_s)
+        if (not isinstance(result, dict) or
+                result.get("schema") !=
+                "precision_insertion_stock_force_result_v1" or
+                type(result.get("safety_abort")) is not bool or
+                result.get("terminal_hold_acknowledged") is not True or
+                (result["safety_abort"] and
+                 result.get("retreat_completed") is not True) or
+                not started_path.is_file()):
+            raise RuntimeError("stock force follower lacks a stopped ascent result")
+        post = read_post_state()
+        if not isinstance(post, LiveRobotState):
+            raise RuntimeError("stock force follower lacks measured end state")
+        post.validate(
+            max_arm_hand_skew_s=limits.max_arm_hand_skew_s,
+            max_hand_command_error_raw=limits.max_hand_command_error_raw,
+            max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
+        completed = float(result["completed_at_s"])
+        target = axial[0] if result["safety_abort"] else axial[-1]
+        if (post.sample_timestamp_s <= completed or
+                post.sample_timestamp_s - completed >
+                limits.max_execution_feedback_gap_s or
+                _wall_time() - post.sample_timestamp_s >
+                limits.max_end_state_age_s or
+                np.max(np.abs(post.full_q - target)) >
+                limits.max_end_joint_error_rad or
+                np.max(np.abs(post.hand_raw_measured -
+                              pre_state.hand_raw_measured)) >
+                limits.max_hand_drift_raw):
+            raise RuntimeError("stock force result differs from measured stopped pose")
+        metric_path = output.with_name("stock_force_metric.json")
+        metric = {
+            **base, "schema": "precision_insertion_stock_force_execution_v1",
+            "started_at_s": result["started_at_s"],
+            "completed_at_s": completed,
+            "measurement": {
+                "key_depth_interval_m": None, "key_depth_source": None,
+                "alignment_within_limits": None,
+                "safety_abort": result["safety_abort"],
+                "grasp_held": True,
+            },
+            "grasp_held_scope": "measured_hand_motor_hold_not_key_presence",
+            "post_state": post.to_record(),
+            "stock_result": result,
+        }
+        _write_new(metric_path, metric)
+        withdrawal = None
+        if result["safety_abort"]:
+            withdrawal = output.with_name("stock_force_withdrawal.json")
+            _write_new(withdrawal, {
+                "schema": "precision_insertion_guarded_withdrawal_v1",
+                "attempt_id": attempt.attempt_id,
+                "candidate_id": attempt.candidate_id,
+                "status": "withdrawn_to_preinsert_hold",
+                "source": "stock_franka_force_stop_follow",
+                "started_at_s": result["started_at_s"],
+                "completed_at_s": completed,
+                "key_still_held": True,
+                "key_still_held_scope": "preinsert_visual_and_measured_hand_hold",
+                "safety_abort": True,
+                "metric_record": {"path": str(metric_path),
+                                  "sha256": _sha(metric_path)},
+                "post_state": post.to_record(),
+            })
+        record = {
+            **base, "schema": "precision_insertion_stock_force_boundary_v1",
+            "started_at_s": result["started_at_s"],
+            "completed_at_s": completed,
+            "safety_abort": result["safety_abort"],
+            "grasp_held": True,
+            "retreat_completed": result["retreat_completed"],
+            "metric_record": {"path": str(metric_path),
+                              "sha256": _sha(metric_path)},
+            "withdrawal_record_path": (str(withdrawal) if withdrawal else None),
+            "post_state": post.to_record(),
+        }
+        _write_new(output, record)
+        return record
+    except Exception as exc:
+        try:
+            stop_ack = adapter.stop_and_acknowledge()
+        except Exception as stop_exc:
+            stop_ack = {"acknowledged": False, "error": str(stop_exc)}
+        _write_new(failure_path, {
+            **base, "schema": "precision_insertion_stock_force_failure_v1",
+            "error_type": type(exc).__name__, "error": str(exc),
+            "stop_acknowledgement": stop_ack,
+            "robot_state_after_failure": "unknown_requires_recovery",
+        })
+        raise

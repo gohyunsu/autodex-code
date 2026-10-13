@@ -124,13 +124,17 @@ def write_failed_return_plan(
                 "trajectory_complete": True, "safety_abort": False,
                 "grasp_held": True})
     else:
+        stock_force = (
+            start_evidence.get("source") == "stock_franka_force_stop_follow")
         valid_start = (
             start_evidence.get("schema") ==
             "precision_insertion_guarded_withdrawal_v1" and
             start_evidence.get("status") == "withdrawn_to_preinsert_hold" and
             start_evidence.get("key_still_held") is True and
-            start_evidence.get("safety_abort") is False and
-            start_evidence.get("source") == "commissioned_guarded_controller")
+            start_evidence.get("safety_abort") is stock_force and
+            start_evidence.get("source") in {
+                "commissioned_guarded_controller",
+                "stock_franka_force_stop_follow"})
     if (not valid_start or start_evidence.get("attempt_id") != attempt_id or
             start_evidence.get("candidate_id") != candidate_id):
         raise ValueError("failed return lacks this attempt's held start")

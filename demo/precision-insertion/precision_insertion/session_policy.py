@@ -49,10 +49,10 @@ def decide_after_trial_preflight(report: Mapping) -> SessionDecision:
         return SessionDecision(
             "execution_gate_required", "nominal_pickup_and_insertion_paths_only",
             "/".join(selected), (
-                "commissioned_robot_and_force_limits",
+                "stock_franka_force_stop_12n",
                 "fresh_synchronized_key_and_robot_state",
                 "nominal_v8_key_hand_relation_for_cylinder",
-                "guarded_insertion_controller",
+                "bound_socket_axis_path",
             ))
     if selected is not None:
         raise ValueError("nonpassing trial cannot select a grasp")
@@ -98,9 +98,19 @@ def decide_after_attempt(
     def result(action: str, reason: str, *gates: str) -> SessionDecision:
         return SessionDecision(action, reason, candidate_id, gates)
 
-    if labels["reset_success"] is False or attempt.failure_code in {
-            "force_abort", "reset_failed"}:
+    if labels["reset_success"] is False or attempt.failure_code == "reset_failed":
         return result("stop_for_review", "safety_or_reset_failure")
+    if attempt.failure_code == "force_abort":
+        insertion = next((event for event in reversed(attempt.events)
+                          if event["stage"] == "insertion_success"), None)
+        if (labels["insertion_success"] is False and insertion is not None and
+                insertion["evidence_refs"].get("axial_withdrawal")):
+            return result(
+                "recover_held_key_then_reobserve",
+                "stock_force_stop_withdrawn_restore_original_pose",
+                "measured_reverse_axis_ascent", "fresh_key_pose",
+                "restore_original_pose_and_position")
+        return result("stop_for_review", "force_stop_without_verified_ascent")
     if attempt.failure_code == "perception_unreliable":
         return result("stop_for_review", "key_state_unobservable")
     if attempt.failure_code == "slip":
@@ -198,9 +208,13 @@ def decide_after_attempt(
             "recover_key_then_reobserve", "transfer_or_hold_failed",
             "safe_key_state_or_human_recovery", "fresh_key_pose")
     if labels["preinsert_reached"] is True:
+        insertion_gates = (
+            ("stock_franka_force_stop_12n", "fresh_preinsert_hold")
+            if attempt.mode.family == "cylinder" else
+            ("commissioned_contact_limits", "fresh_alignment_and_grip_check"))
         return result(
             "await_guarded_insertion_and_observation", "preinsert_hold_observed",
-            "commissioned_contact_limits", "fresh_alignment_and_grip_check")
+            *insertion_gates)
     if any(event["stage"] == "preinsert_reached" for event in attempt.events):
         return result(
             "recover_key_then_reobserve", "preinsert_verdict_unknown",

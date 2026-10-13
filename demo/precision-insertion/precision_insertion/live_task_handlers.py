@@ -46,14 +46,14 @@ class LiveTaskHandlers:
     motion_interlock: Callable[[], bool]
     transfer_limits: object
     insertion_limits: object
-    contact_limits: object
     transfer_commissioning_path: Path
-    insertion_watchdog_path: Path
-    insertion_contact_path: Path
     preinsert_parameters: Mapping[str, object]
     handoff_parameters: Mapping[str, object]
     insertion_parameters: Mapping[str, object]
     final_parameters: Mapping[str, object]
+    contact_limits: object | None = None
+    insertion_watchdog_path: Path | None = None
+    insertion_contact_path: Path | None = None
     depth_limits: object | None = None
     depth_capture_parameters: Mapping[str, float] = field(default_factory=dict)
     depth_commissioning_path: Path | None = None
@@ -64,6 +64,11 @@ class LiveTaskHandlers:
     decision_time: Callable[[], float] = time.time
     _preinsert_bundle: Path | None = field(default=None, init=False)
     _preinsert_attempt_id: str | None = field(default=None, init=False)
+    _withdrawn: tuple[str, LiveRobotState, Path] | None = field(
+        default=None, init=False)
+
+    def withdrawn_for_return(self):
+        return self._withdrawn
 
     def _require(self, runner, decision: SessionDecision, action: str):
         if (runner is not self.live.opened.runner or
@@ -184,11 +189,28 @@ class LiveTaskHandlers:
             motion_interlock=self.motion_interlock,
             enable_robot_motion=self.enable_robot_motion,
             **dict(self.insertion_parameters))
+        if (execution.get("safety_abort") is True and
+                execution.get("retreat_completed") is True and
+                execution.get("withdrawal_record_path")):
+            withdrawal = Path(execution["withdrawal_record_path"])
+            self._withdrawn = (
+                attempt.attempt_id, self.read_state(), withdrawal)
+            metric = Path(execution["metric_record"]["path"])
+            completed = self.decision_time()
+            runner.observe_stock_force_stop(
+                metric_record_path=metric,
+                withdrawal_record_path=withdrawal,
+                timestamp_s=completed)
+            runner.record_failure(
+                "force_abort", timestamp_s=self.decision_time(),
+                evidence_refs={"force_trace": str(metric),
+                               "axial_withdrawal": str(withdrawal)})
+            return
         if (execution.get("safety_abort") is not False or
                 execution.get("grasp_held") is not True):
             raise RuntimeError(
-                "guarded insertion aborted or lost the key; keep the terminal "
-                "hold for supervised recovery instead of opening the hand")
+                "insertion ended without a verified force-stop ascent; "
+                "supervised recovery is required")
         metric = Path(execution["metric_record"]["path"])
         if not callable(self.release_and_clear):
             raise RuntimeError(

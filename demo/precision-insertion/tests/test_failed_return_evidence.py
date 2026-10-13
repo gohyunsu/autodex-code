@@ -25,7 +25,7 @@ def _sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _fixture(tmp_path, *, transfer_origin=False):
+def _fixture(tmp_path, *, transfer_origin=False, stock_force=False):
     attempt = "attempt_1"
     candidate = "table/0/3"
     session = "a" * 64
@@ -35,8 +35,9 @@ def _fixture(tmp_path, *, transfer_origin=False):
         "schema": "precision_insertion_guarded_withdrawal_v1",
         "attempt_id": attempt, "candidate_id": candidate,
         "status": "withdrawn_to_preinsert_hold", "completed_at_s": 4.0,
-        "key_still_held": True, "safety_abort": False,
-        "source": "commissioned_guarded_controller",
+        "key_still_held": True, "safety_abort": stock_force,
+        "source": ("stock_franka_force_stop_follow" if stock_force else
+                   "commissioned_guarded_controller"),
     }), encoding="utf-8")
     transfer = tmp_path / "transfer_execution.json"
     transfer.write_text(json.dumps({
@@ -129,6 +130,12 @@ def test_bound_failed_return_execution_is_admitted(tmp_path):
     assert result["release_completed_at_s"] == 7.2
     assert result["exit_completed_at_s"] == 9.2
     assert result["plan_report"]["sha256"] == _sha(report)
+
+
+def test_stock_force_ascent_is_admitted_as_held_return_start(tmp_path):
+    report, _, _, args = _fixture(tmp_path, stock_force=True)
+    assert verify_failed_return_execution(**args)["plan_report"]["path"] == (
+        str(report))
 
 
 def test_completed_held_transfer_uses_same_return_without_fake_withdrawal(tmp_path):
