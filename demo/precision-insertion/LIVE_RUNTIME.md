@@ -215,6 +215,10 @@ FR3 clear view at stock speed and verifies measured waypoints. It returns a
 the guarded metric record. Retry itself has no motion or capture adapter: it
 reuses the saved pre-insertion snapshot. The active released-failure branch
 does not command a guarded withdrawal or take another held-key photograph.
+For a completed held transfer with a visible preinsert failure, the cylinder
+integration also shares the held-return recorder, path limits and return
+parameters with transfer recovery unless that stage overrides them. The same
+stock return plan then takes the still-held key back to the tabletop.
 The older
 `lift_monitor` block still fills only `lift.adapter`. The factory may override
 other stage fields. Neither setting supplies stage limits, interlock or

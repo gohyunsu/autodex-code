@@ -269,6 +269,16 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 "record_execution" not in stages["held_return"]):
             stages["held_return"]["record_execution"] = (
                 StockFailedReturnRecorder(core.executor))
+        if (family == "cylinder" and
+                {"held_return", "transfer_recovery"} <= stages.keys()):
+            # A completed but visibly misaligned transfer returns the held
+            # key through the same stock failed-return path as a force stop.
+            # Keep explicit site overrides for unusual recovery hardware.
+            for field in ("record_execution", "limits", "return_parameters"):
+                if (field not in stages["transfer_recovery"] and
+                        field in stages["held_return"]):
+                    stages["transfer_recovery"][field] = (
+                        stages["held_return"][field])
         if family == "cylinder" and ({"held_return", "repose_execution"} <=
                                       stages.keys()):
             needs_restoration = "execute_restoration" not in stages["held_return"]

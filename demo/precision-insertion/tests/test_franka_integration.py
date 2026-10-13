@@ -111,7 +111,9 @@ def test_cylinder_factory_injects_stock_force_and_release_with_existing_limits(
     interlock = lambda: True
     module.configure = lambda *_: {
         "shared": {"backend": object()},
-        "stages": {"task": {}, "held_return": {"limits": limits},
+        "stages": {"task": {}, "held_return": {
+                       "limits": limits, "return_parameters": {"stock": True}},
+                   "transfer_recovery": {},
                    "pickup": {"motion_interlock": interlock},
                    "repose_execution": {}}}
     monkeypatch.setitem(sys.modules, module.__name__, module)
@@ -150,6 +152,11 @@ def test_cylinder_factory_injects_stock_force_and_release_with_existing_limits(
         assert task["release_and_clear"] is release
         assert kwargs["stages"]["held_return"]["record_execution"] is (
             return_recorder)
+        assert kwargs["stages"]["transfer_recovery"]["record_execution"] is (
+            return_recorder)
+        assert kwargs["stages"]["transfer_recovery"]["limits"] is limits
+        assert kwargs["stages"]["transfer_recovery"]["return_parameters"] == (
+            {"stock": True})
         assert kwargs["stages"]["held_return"]["execute_restoration"] is (
             restoration)
         assert kwargs["stages"]["repose_execution"]["execute_repose"] is (
