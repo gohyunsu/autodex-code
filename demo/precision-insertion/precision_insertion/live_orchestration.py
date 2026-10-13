@@ -86,6 +86,7 @@ def open_live_precision_session(
     *, launch_config_path: Path, endpoint_catalog_path: Path,
     run_output_dir: Path, max_xy_retries: int | None,
     clear_view: ClearViewForPerception, xy_update_weight: float = 1.0,
+    init_ports: tuple[int, int, int] | None = None,
 ) -> Iterator[LivePrecisionSession]:
     """Capture once, open the bound ledger, and retain camera connections.
 
@@ -118,6 +119,11 @@ def open_live_precision_session(
         raise ValueError("XY update weight must be in (0, 1]")
     if not isinstance(clear_view, ClearViewForPerception):
         raise TypeError("live perception needs a measured clear-view controller")
+    if init_ports is not None and (
+            not isinstance(init_ports, tuple) or len(init_ports) != 3 or
+            any(type(port) is not int or not 0 < port < 65536
+                for port in init_ports) or len(set(init_ports)) != 3):
+        raise ValueError("init ports need three distinct TCP port numbers")
     # Reject a stale/incomplete v8 pool before a slow board/socket capture.
     # ``open_verified_session`` repeats this check after capture and binds the
     # measured fixture to the catalogue's exact socket mesh.
@@ -129,7 +135,9 @@ def open_live_precision_session(
     clear_view.prepare_initial()
     with open_autodex_camera_stream(
             launch.pc_list, name="precision_insertion_live"):
-        with open_session_cameras(launch) as cameras:
+        with open_session_cameras(
+                launch, **({} if init_ports is None else
+                           {"init_ports": init_ports})) as cameras:
             started = cameras.start()
             opened = open_verified_session(
                 mode=launch.mode, shared_root=launch.shared_root,
@@ -146,6 +154,7 @@ def run_live_precision_session(
     build_handlers: Callable[[LivePrecisionSession], Mapping[str, ActionHandler]],
     max_steps: int | None = None, xy_update_weight: float = 1.0,
     confirm_initial_key_placement: Callable[[], bool] | None = None,
+    init_ports: tuple[int, int, int] | None = None,
 ) -> ActionLoopResult:
     """Keep the one ChArUco/socket camera session open across trial actions.
 
@@ -166,7 +175,7 @@ def run_live_precision_session(
             run_output_dir=run_output_dir,
             max_xy_retries=max_xy_retries,
             xy_update_weight=xy_update_weight,
-            clear_view=clear_view) as live:
+            clear_view=clear_view, init_ports=init_ports) as live:
         # The fixed socket is measured with the key absent. Match stock
         # run_auto's one initial object-placement gate before key perception.
         # Retry captures never pause here or remeasure the socket.

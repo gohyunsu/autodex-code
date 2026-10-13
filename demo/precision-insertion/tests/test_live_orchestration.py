@@ -61,8 +61,10 @@ def _patch_camera_lifetime(monkeypatch, events):
     monkeypatch.setattr(orchestration, "open_autodex_camera_stream", stream)
 
     @contextmanager
-    def cameras(received):
+    def cameras(received, *, init_ports=None):
         assert received is launch
+        if init_ports is not None:
+            events.append(("init_ports", init_ports))
         events.append("camera_open")
         try:
             yield SimpleNamespace(
@@ -106,6 +108,24 @@ def test_live_session_keeps_same_camera_transport_for_next_key(
         assert live.cameras.init_orchestrator == "same_init"
         assert live.cameras.acquisition_metadata_for_request == "same_provider"
     assert events[-2:] == ["camera_close", "stream_close"]
+
+
+def test_live_session_routes_precision_init_ports_before_socket_capture(
+        tmp_path, monkeypatch):
+    events = []
+    _patch_camera_lifetime(monkeypatch, events)
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(orchestration, "open_verified_session", lambda **_kwargs:
+                        SimpleNamespace(runner="same_runner"))
+    with orchestration.open_live_precision_session(
+            launch_config_path=tmp_path / "launch.json",
+            endpoint_catalog_path=catalog, run_output_dir=tmp_path / "new_run",
+            max_xy_retries=None, clear_view=_clear_view(events),
+            init_ports=(15006, 15007, 16893)):
+        pass
+    assert events.index(("init_ports", (15006, 15007, 16893))) < events.index(
+        "socket_frozen")
 
 
 @pytest.mark.parametrize("reason", ("missing_catalog", "existing_run",

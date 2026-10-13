@@ -32,6 +32,10 @@ For the complete AutoDex-PC execution entry point and required integration
 module, see [LIVE_RUNTIME.md](LIVE_RUNTIME.md). `run_live.py` keeps all
 precision-specific robot-loop code under this demo; stock AutoDex execution
 files remain unchanged.
+On the board-9 robot PC, `bash demo/precision-insertion/run_robot_pc.sh`
+starts missing session services, runs the 20 mm cylinder pipeline, and cleans
+up only services it started. The key is placed after the fixed socket capture
+when the prompt asks for Enter.
 For a board-9, 20 mm key-plus-socket **camera-only** check, use
 [`probe_live_key_socket.py`](probe_live_key_socket.py) as documented in
 [ROBOT_PC_STAGED_BRINGUP.md](ROBOT_PC_STAGED_BRINGUP.md). It saves every raw

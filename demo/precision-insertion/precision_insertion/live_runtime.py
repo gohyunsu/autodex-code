@@ -32,6 +32,7 @@ class RunLiveOptions:
     label_mode: str = "vlm_only"
     annotator: str | None = None
     xy_update_weight: float = 1.0
+    init_ports: tuple[int, int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -193,6 +194,7 @@ def run_integrated_live_session(
             xy_update_weight=options.xy_update_weight,
             clear_view=integration.clear_view,
             build_handlers=handlers, max_steps=options.max_steps,
-            confirm_initial_key_placement=_confirm_initial_key_placement)
+            confirm_initial_key_placement=_confirm_initial_key_placement,
+            init_ports=options.init_ports)
     finally:
         integration.close()

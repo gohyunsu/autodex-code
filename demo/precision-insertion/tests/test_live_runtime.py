@@ -29,6 +29,20 @@ def test_live_cli_imports_stock_and_demo_packages_from_another_cwd(tmp_path):
     assert "--exp-name" in result.stdout
 
 
+def test_live_cli_rejects_implicit_stock_init_ports_before_motion(
+        monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(run_live, "default_run_output", lambda *_args:
+                        pytest.fail("missing init ports reached live setup"))
+    with pytest.raises(SystemExit, match="2"):
+        run_live.main([
+            "--launch-config", str(tmp_path / "launch.json"),
+            "--endpoint-catalog", str(tmp_path / "catalog.json"),
+            "--integration", "precision_insertion.franka_integration:factory",
+            "--enable-robot-motion",
+        ])
+    assert "explicit frame-bound init daemon ports" in capsys.readouterr().err
+
+
 def test_default_exp_path_matches_stock_autodex_hierarchy(monkeypatch, tmp_path):
     mode = select_mode("cylinder", 20)
     monkeypatch.setattr(run_live, "load_session_launch", lambda _path:
@@ -127,12 +141,14 @@ def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path)
 
     def run(**kwargs):
         assert set(kwargs["build_handlers"](live)) == _LIVE_ACTIONS
+        assert kwargs["init_ports"] == (15006, 15007, 16893)
         return result
 
     monkeypatch.setattr(live_runtime, "run_live_precision_session", run)
     options = live_runtime.RunLiveOptions(
         tmp_path / "launch.json", tmp_path / "catalog.json",
-        tmp_path / "run", enable_robot_motion=True)
+        tmp_path / "run", enable_robot_motion=True,
+        init_ports=(15006, 15007, 16893))
     assert live_runtime.run_integrated_live_session(
         options, integration_spec="test_robot_integration:factory") is result
     assert closed == [True]

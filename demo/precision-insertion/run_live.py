@@ -56,6 +56,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="validate static v8 inputs without cameras or robot")
     parser.add_argument("--robot-config", type=Path,
                         help="FR3 config for precision_insertion.franka_integration:factory")
+    parser.add_argument("--init-port-mask", type=int)
+    parser.add_argument("--init-port-pose", type=int)
+    parser.add_argument("--init-port-cmd", type=int)
     parser.add_argument(
         "--max-xy-retries", type=int,
         help="optional cap on failed-trial XY advisories; default has no arbitrary count cap")
@@ -73,6 +76,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not _EXP_NAME.fullmatch(args.exp_name):
         parser.error("exp name must be a single path-safe directory name")
+    ports = (args.init_port_mask, args.init_port_pose, args.init_port_cmd)
+    if any(port is not None for port in ports) and any(
+            port is None for port in ports):
+        parser.error("supply all three precision init daemon ports together")
+    init_ports = None if all(port is None for port in ports) else ports
+    if init_ports is not None and (any(not 0 < port < 65536 for port in ports)
+                                   or len(set(ports)) != 3):
+        parser.error("init daemon ports must be distinct TCP ports")
     if args.preflight:
         if args.integration not in (None,
                                     "precision_insertion.franka_integration:factory"):
@@ -84,6 +95,8 @@ def main(argv: list[str] | None = None) -> int:
         report["exp_name"] = args.exp_name
         print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
         return 0
+    if init_ports is None:
+        parser.error("live run requires explicit frame-bound init daemon ports")
     if args.integration is None:
         parser.error("--integration is required for a live run")
     output_dir = args.output_dir or default_run_output(
@@ -99,7 +112,8 @@ def main(argv: list[str] | None = None) -> int:
         max_steps=args.max_steps,
         enable_robot_motion=args.enable_robot_motion,
         robot_config_path=args.robot_config,
-        label_mode=args.label_mode, annotator=args.annotator)
+        label_mode=args.label_mode, annotator=args.annotator,
+        init_ports=init_ports)
     result = run_integrated_live_session(
         options, integration_spec=args.integration)
     payload = result.to_record()

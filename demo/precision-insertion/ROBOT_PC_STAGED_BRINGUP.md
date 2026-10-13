@@ -802,9 +802,28 @@ host, the `planner` environment imported the FR3/camera integration, saw CUDA,
 and loaded the staged Qwen model. The tool sandbox hides `/dev/nvidia*` and
 the Docker socket, so run this command in an ordinary host terminal.
 
-The operator-run motion command uses the same files. Start the stock ParaDex
-Docker daemon in a separate terminal with
-`bash /home/robot/paradex/cpp/franka_daemon/run_daemon.sh 172.17.1.11 5555 5556`.
+The operator-run motion command uses the same files. The preferred single
+command checks the five capture PCs, starts missing camera/snapshot/precision
+init daemons and the FR3 Docker daemon, runs the pipeline, then stops only the
+daemons it started. The stock init daemons remain on their original ports.
+The camera stream itself is opened and stopped by the existing AutoDex
+session context. From the host terminal:
+
+```bash
+bash /home/robot/autodex-precision-insertion/demo/precision-insertion/run_robot_pc.sh
+```
+
+Use `--check` for a file-only preflight or `--services-only` to test service
+startup and cleanup without commanding the arm. Existing daemons are reused
+and left running because another process may own them. A nonmoving
+`--services-only` trial started and then stopped all five precision init
+daemons and the FR3 Docker container; stock camera/snapshot daemons remained.
+The
+2026-10-13 first live attempt used the stock 5006/5007/6893 ports, so all
+20 mask/pose payloads were rejected for missing bound frame metadata before
+the key-placement prompt. The corrected live CLI requires three explicit
+precision init ports to prevent that repeat. The direct CLI below is for
+diagnosis when the required daemons are already running.
 Remove the key for the board/socket capture; the white fixed socket stays on
 board 9. After the socket is frozen, the program prompts you to place the
 white key; press Enter to start its first capture, or `q` to stop. The live
@@ -820,6 +839,7 @@ PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" \
   --endpoint-catalog "$STAGE/recipient_gap20_endpoint_catalog_20261013.json" \
   --integration precision_insertion.franka_integration:factory \
   --robot-config "$STAGE/franka_runtime_board9_gap20.json" \
+  --init-port-mask 15006 --init-port-pose 15007 --init-port-cmd 16893 \
   --xy-update-weight 1.0 --enable-robot-motion
 ```
 

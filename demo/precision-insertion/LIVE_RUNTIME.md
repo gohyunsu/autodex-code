@@ -522,8 +522,14 @@ PYTHONPATH="$PWD/demo/precision-insertion:$PWD/src:/path/to/robot_pc_integration
   --launch-config /absolute/path/to/live_session.json \
   --endpoint-catalog /absolute/path/to/current_endpoint_catalog.json \
   --integration my_robot_integration:create_integration \
+  --init-port-mask 15006 --init-port-pose 15007 --init-port-cmd 16893 \
   --xy-update-weight 1.0 --enable-robot-motion
 ```
+
+The live CLI requires explicit frame-bound init daemon ports. On the
+board-9 robot PC, `bash demo/precision-insertion/run_robot_pc.sh` manages
+the current capture-PC and FR3 services around this command; it stops only
+services that this invocation started.
 
 The default exp name is `precision-insertion`. The default run directory is
 `~/shared_data/AutoDex/experiment/precision-insertion/inspire/<key_object>/_pipeline_runs/<timestamp>`;
