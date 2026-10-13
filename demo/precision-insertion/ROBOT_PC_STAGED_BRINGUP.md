@@ -599,6 +599,25 @@ allowance is an explicit diagnostic bound for a stationary scene, not a
 measurement that the cameras exposed within 10 s of one another and not a
 live robot motion setting.
 
+With the key removed and the fixed socket still on board 9, start the staged
+separate-port init processes above and run the strict camera-only session:
+
+```bash
+cd /home/robot/autodex-precision-insertion
+QA_BASE=/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" \
+  /home/robot/anaconda3/envs/autodex/bin/python \
+  demo/precision-insertion/probe_live_key_socket.py \
+  --launch-config "$QA_BASE/static_preflight_board9_gap20_20261013/launch_camera_only_static_interval.json" \
+  --evidence-dir "$QA_BASE/strict_camera_only_static_interval_$(date +%Y%m%d_%H%M%S)" \
+  --init-port-mask 15006 --init-port-pose 15007 --init-port-cmd 16893
+```
+
+The CLI first captures the stationary socket, then asks for key placement and
+captures its raw images, masks and FoundPose outputs. It never constructs an
+FR3/Inspire controller. Stop only the staged precision init processes by
+their verified PIDs afterward; leave the stock daemons running.
+
 For a reproducible **historical NAS-frame** QA exercise (not a substitute
 for new recipient-camera frames), run:
 
