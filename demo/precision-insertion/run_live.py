@@ -23,7 +23,7 @@ for module_root in (str(REPO_ROOT), str(SRC_DIR), str(DEMO_DIR)):
         sys.path.insert(0, module_root)
 
 from precision_insertion.live_runtime import (  # noqa: E402
-    RunLiveOptions, run_integrated_live_session,
+    RunLiveOptions, inspect_live_inputs, run_integrated_live_session,
 )
 from precision_insertion.session_launch import load_session_launch  # noqa: E402
 
@@ -50,8 +50,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="AutoDex experiment name (default: precision-insertion)")
     parser.add_argument("--output-dir", type=Path,
                         help="new run directory; defaults to stock AutoDex experiment hierarchy")
-    parser.add_argument("--integration", required=True,
+    parser.add_argument("--integration",
                         help="importable AutoDex-PC module:factory")
+    parser.add_argument("--preflight", action="store_true",
+                        help="validate static v8 inputs without cameras or robot")
     parser.add_argument("--robot-config", type=Path,
                         help="FR3 config for precision_insertion.franka_integration:factory")
     parser.add_argument(
@@ -71,6 +73,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not _EXP_NAME.fullmatch(args.exp_name):
         parser.error("exp name must be a single path-safe directory name")
+    if args.preflight:
+        if args.integration not in (None,
+                                    "precision_insertion.franka_integration:factory"):
+            parser.error("static preflight supports the built-in FR3 integration only")
+        report = inspect_live_inputs(
+            launch_config_path=args.launch_config,
+            endpoint_catalog_path=args.endpoint_catalog,
+            robot_config_path=args.robot_config)
+        report["exp_name"] = args.exp_name
+        print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
+        return 0
+    if args.integration is None:
+        parser.error("--integration is required for a live run")
     output_dir = args.output_dir or default_run_output(
         args.launch_config, args.exp_name)
     if args.output_dir is None:

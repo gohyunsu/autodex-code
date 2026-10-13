@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from importlib import import_module
 import math
 from pathlib import Path
@@ -15,6 +16,7 @@ from .live_orchestration import (
 from .action_loop import ActionLoopResult
 from .labeling import LABEL_MODES
 from .session_launch import load_session_launch
+from .live_session_runner import preflight_endpoint_catalog_file
 
 
 @dataclass(frozen=True)
@@ -44,6 +46,53 @@ class LiveRuntimeIntegration:
     clear_view: ClearViewForPerception
     build_components: Callable[[LivePrecisionSession], Sequence[object]]
     close: Callable[[], None]
+
+
+def inspect_live_inputs(
+    *, launch_config_path: Path, endpoint_catalog_path: Path,
+    robot_config_path: Path | None = None,
+) -> dict:
+    """Check current v8 inputs without cameras, CUDA or robot construction."""
+    launch = load_session_launch(launch_config_path)
+    if launch.mode.family != "cylinder":
+        raise ValueError("live insertion currently supports cylinder mode only")
+    catalog_path = Path(endpoint_catalog_path).expanduser().resolve()
+    catalog = preflight_endpoint_catalog_file(
+        mode=launch.mode, shared_root=launch.shared_root,
+        catalog_path=catalog_path)
+    result = {
+        "schema": "precision_insertion_static_live_preflight_v1",
+        "launch": launch.readiness(),
+        "launch_config_path": str(Path(launch_config_path).expanduser().resolve()),
+        "launch_config_sha256": hashlib.sha256(
+            Path(launch_config_path).expanduser().resolve().read_bytes()).hexdigest(),
+        "endpoint_catalog_path": str(catalog_path),
+        "endpoint_catalog_sha256": hashlib.sha256(
+            catalog_path.read_bytes()).hexdigest(),
+        "candidate_count": len(catalog["candidates"]),
+        "eligible_candidate_count": sum(
+            row.get("eligible") is True for row in catalog["candidates"]),
+        "robot_config": None,
+        "scope": "static_files_only_no_camera_cuda_or_robot_connection",
+        "robot_ready": False,
+    }
+    if robot_config_path is not None:
+        from .franka_integration import load_franka_integration_config
+
+        parsed = load_franka_integration_config(
+            robot_config_path, import_stages=False)
+        source = parsed["source"]
+        result["robot_config"] = {
+            "path": str(source),
+            "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            "stages_factory": parsed["record"]["stages_factory"],
+            "stage_factory_syntax_valid": True,
+            "stage_factory_imported": False,
+            "exposure_sampler_configured": parsed["sampling"] is not None,
+            "held_motion_monitor_configured": (
+                parsed["held_motion_monitor"] is not None),
+        }
+    return result
 
 
 def load_runtime_integration(
@@ -93,8 +142,11 @@ def run_integrated_live_session(
         raise ValueError("manual labeling needs a named annotator")
     if options.label_mode == "evidence_fused":
         raise ValueError("current cylinder live loop needs vlm_only or manual labels")
-    if load_session_launch(options.launch_config_path).mode.family != "cylinder":
+    launch = load_session_launch(options.launch_config_path)
+    if launch.mode.family != "cylinder":
         raise ValueError("live insertion currently supports cylinder mode only")
+    if getattr(launch, "execution_scope", "live") != "live":
+        raise PermissionError("static preflight launch cannot start robot motion")
     integration = load_runtime_integration(integration_spec, options)
     try:
         def handlers(live: LivePrecisionSession):

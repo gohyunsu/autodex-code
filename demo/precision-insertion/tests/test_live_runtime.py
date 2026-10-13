@@ -1,6 +1,7 @@
 """The runnable entry point composes one complete camera-session pipeline."""
 
 import os
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -40,6 +41,45 @@ def test_default_exp_path_matches_stock_autodex_hierarchy(monkeypatch, tmp_path)
     assert output.parent.name == "_pipeline_runs"
     with pytest.raises(ValueError, match="path-safe"):
         run_live.default_run_output(tmp_path / "launch.json", "../other")
+
+
+def test_static_preflight_reads_v8_files_without_opening_robot(
+        monkeypatch, tmp_path):
+    from precision_insertion import franka_integration
+
+    launch_path = tmp_path / "launch.json"
+    catalog_path = tmp_path / "catalog.json"
+    launch_path.write_text("{}\n", encoding="utf-8")
+    catalog_path.write_text("{}\n", encoding="utf-8")
+    mode = select_mode("cylinder", 20)
+    monkeypatch.setattr(live_runtime, "load_session_launch", lambda _path:
+                        SimpleNamespace(mode=mode, shared_root=tmp_path,
+                                        readiness=lambda: {"board_id": "9"}))
+    monkeypatch.setattr(live_runtime, "preflight_endpoint_catalog_file",
+                        lambda **_kwargs: {"candidates": [
+                            {"eligible": True}, {"eligible": False}]})
+    monkeypatch.setattr(franka_integration, "open_franka_core", lambda *_args:
+                        pytest.fail("static preflight opened the robot"))
+    monkeypatch.setattr(franka_integration, "import_module", lambda *_args:
+                        pytest.fail("static preflight imported stage code"))
+    robot_path = tmp_path / "robot.json"
+    robot_path.write_text(json.dumps({
+        "schema": "precision_insertion_franka_integration_v1",
+        "feedback": {
+            "max_arm_hand_skew_s": .1, "max_sample_age_s": 1.,
+            "max_hand_command_error_raw": 20.,
+            "max_arm_update_wait_s": .2,
+            "max_arm_velocity_rad_s": .05},
+        "stages_factory": "static_robot_pc_stages:configure",
+    }), encoding="utf-8")
+    report = live_runtime.inspect_live_inputs(
+        launch_config_path=launch_path, endpoint_catalog_path=catalog_path,
+        robot_config_path=robot_path)
+    assert report["eligible_candidate_count"] == 1
+    assert report["launch"]["board_id"] == "9"
+    assert report["robot_config"]["stage_factory_syntax_valid"] is True
+    assert report["robot_config"]["stage_factory_imported"] is False
+    assert report["robot_ready"] is False
 
 
 def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path):
@@ -136,6 +176,21 @@ def test_square_live_mode_stops_before_constructing_robot_integration(
         tmp_path / "launch.json", tmp_path / "catalog.json",
         tmp_path / "run", enable_robot_motion=True)
     with pytest.raises(ValueError, match="cylinder mode only"):
+        live_runtime.run_integrated_live_session(
+            options, integration_spec="ignored:factory")
+
+
+def test_static_preflight_launch_stops_before_robot_integration(
+        monkeypatch, tmp_path):
+    monkeypatch.setattr(live_runtime, "load_session_launch", lambda _path:
+                        SimpleNamespace(mode=SimpleNamespace(family="cylinder"),
+                                        execution_scope="static_preflight_only"))
+    monkeypatch.setattr(live_runtime, "load_runtime_integration", lambda *_a:
+                        pytest.fail("static launch opened robot integration"))
+    options = live_runtime.RunLiveOptions(
+        tmp_path / "launch.json", tmp_path / "catalog.json",
+        tmp_path / "run", enable_robot_motion=True)
+    with pytest.raises(PermissionError, match="static preflight"):
         live_runtime.run_integrated_live_session(
             options, integration_spec="ignored:factory")
 

@@ -95,6 +95,8 @@ def open_live_precision_session(
     launch = load_session_launch(launch_config_path)
     if launch.mode.family != "cylinder":
         raise ValueError("live insertion currently supports cylinder mode only")
+    if getattr(launch, "execution_scope", "live") != "live":
+        raise PermissionError("static preflight launch cannot start a live session")
     catalog_input = Path(endpoint_catalog_path).expanduser()
     output_input = Path(run_output_dir).expanduser()
     if not catalog_input.is_absolute() or not output_input.is_absolute():

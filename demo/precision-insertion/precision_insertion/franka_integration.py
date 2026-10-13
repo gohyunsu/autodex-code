@@ -83,7 +83,7 @@ def _with_checkpoint_captures(
     return result
 
 
-def _stage_factory(specification: str):
+def _validate_stage_factory_spec(specification: str) -> tuple[str, str]:
     if (not isinstance(specification, str) or
             specification.count(":") != 1):
         raise ValueError("stage factory must be an importable module:function")
@@ -92,6 +92,11 @@ def _stage_factory(specification: str):
             not all(part.isidentifier() for part in module_name.split(".")) or
             not function_name.isidentifier()):
         raise ValueError("stage factory has an invalid module or function name")
+    return module_name, function_name
+
+
+def _stage_factory(specification: str):
+    module_name, function_name = _validate_stage_factory_spec(specification)
     result = getattr(import_module(module_name), function_name)
     if not callable(result):
         raise TypeError("stage factory must be callable")
@@ -112,21 +117,11 @@ def _lift_monitor_settings(value: object) -> tuple[Path, MeasuredLiftMonitorLimi
     return Path(value["daemon_binary_path"]).resolve(), limits
 
 
-def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
-    """Create one complete AutoDex FR3 integration for ``run_live.py``.
-
-    The JSON config holds feedback, optional sampler/VLM settings, and one
-    robot-PC ``module:function``. That factory returns mappings named
-    ``shared`` and ``stages`` (and optional ``held_relation_route``) for the
-    existing ``assemble_live_components``. It receives ``(core, live,
-    options)`` only after the frozen board/socket camera session opens. The
-    core creates no guarded contact controller or camera timestamps.
-    """
-    if not isinstance(options, RunLiveOptions) or options.robot_config_path is None:
-        raise ValueError("built-in FR3 integration needs --robot-config")
-    if options.enable_robot_motion is not True:
-        raise PermissionError("FR3 integration needs explicit robot-motion opt-in")
-    source = Path(options.robot_config_path).expanduser().resolve()
+def load_franka_integration_config(
+    path: Path, *, import_stages: bool = True,
+) -> dict:
+    """Validate settings; optional static mode does not import stage code."""
+    source = Path(path).expanduser().resolve()
     if not source.is_file():
         raise FileNotFoundError(f"FR3 robot config is missing: {source}")
     record = json.loads(source.read_text(encoding="utf-8"))
@@ -162,9 +157,42 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                     if key != "max_samples")):
             raise ValueError("FR3 sampling settings are incomplete or invalid")
         sampling = FrankaSamplingSettings(**supplied)
+    _validate_stage_factory_spec(record["stages_factory"])
+    return {
+        "source": source,
+        "record": record,
+        "feedback": FrankaFeedbackSettings(**record["feedback"]),
+        "sampling": sampling,
+        "vlm": vlm,
+        "lift_monitor": lift_monitor,
+        "held_motion_monitor": held_motion_monitor,
+        "build_stages": (_stage_factory(record["stages_factory"])
+                         if import_stages else None),
+    }
+
+
+def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
+    """Create one complete AutoDex FR3 integration for ``run_live.py``.
+
+    The JSON config holds feedback, optional sampler/VLM settings, and one
+    robot-PC ``module:function``. That factory returns mappings named
+    ``shared`` and ``stages`` (and optional ``held_relation_route``) for the
+    existing ``assemble_live_components``. It receives ``(core, live,
+    options)`` only after the frozen board/socket camera session opens. The
+    core creates no guarded contact controller or camera timestamps.
+    """
+    if not isinstance(options, RunLiveOptions) or options.robot_config_path is None:
+        raise ValueError("built-in FR3 integration needs --robot-config")
+    if options.enable_robot_motion is not True:
+        raise PermissionError("FR3 integration needs explicit robot-motion opt-in")
+    parsed = load_franka_integration_config(options.robot_config_path)
     # Parse/import all static inputs before touching CUDA or a robot daemon.
-    feedback = FrankaFeedbackSettings(**record["feedback"])
-    build_stages = _stage_factory(record["stages_factory"])
+    feedback = parsed["feedback"]
+    sampling = parsed["sampling"]
+    vlm = parsed["vlm"]
+    lift_monitor = parsed["lift_monitor"]
+    held_motion_monitor = parsed["held_motion_monitor"]
+    build_stages = parsed["build_stages"]
     core = open_franka_core(feedback)
     if sampling is not None:
         try:

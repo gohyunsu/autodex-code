@@ -103,6 +103,20 @@ def test_check_only_loads_stock_calibration_and_does_not_connect(
     np.testing.assert_allclose(loaded.extrinsics_full["cam_a"], np.eye(4))
 
 
+def test_static_preflight_launch_cannot_open_camera_capture(tmp_path, monkeypatch):
+    config, record = _config(tmp_path)
+    _stub_time(monkeypatch)
+    record["execution_scope"] = "static_preflight_only"
+    config.write_text(json.dumps(record), encoding="utf-8")
+    loaded = launch.load_session_launch(config)
+    assert loaded.readiness()["execution_scope"] == "static_preflight_only"
+    with pytest.raises(PermissionError, match="static preflight"):
+        launch.capture_session(loaded)
+    with pytest.raises(PermissionError, match="static preflight"):
+        with launch.open_session_cameras(loaded):
+            pytest.fail("static launch opened cameras")
+
+
 def test_missing_one_camera_time_or_existing_output_stops_before_capture(
         tmp_path, monkeypatch):
     config, record = _config(tmp_path)

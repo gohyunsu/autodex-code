@@ -526,7 +526,43 @@ schemas with mocked actuation first; then commission each physical stage
 under the rig operator's procedure. Do not use `--max-steps` as a physical
 single-step controller: stopping the Python loop is not a safe robot hold.
 
-Only after these are implemented and reviewed, the current complete loop is:
+The launch and 20 mm catalog can first be checked without cameras,
+CUDA or robot construction:
+
+```bash
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
+  demo/precision-insertion/run_live.py --preflight \
+  --launch-config /absolute/recipient/new_live_session.json \
+  --endpoint-catalog "$CATALOG20" \
+  --robot-config /absolute/recipient/franka_runtime.json
+```
+
+This checks robot-config syntax without importing the external stage factory
+or claiming physical readiness. A file with
+`"execution_scope": "static_preflight_only"` cannot start camera capture or
+robot motion.
+
+On this robot PC, the exact **non-moving** 20 mm board-9 check is already
+available with the staged recipient files:
+
+```bash
+STAGE=/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" \
+  /home/robot/anaconda3/envs/flir_env/bin/python \
+  demo/precision-insertion/run_live.py --preflight \
+  --launch-config "$STAGE/AutoDex/precision_insertion/cylindrical/static_preflight_board9_gap20_20261013/launch.json" \
+  --endpoint-catalog "$STAGE/AutoDex/precision_insertion/cylindrical/recipient_gap20_endpoint_catalog_20261013.json"
+```
+
+The saved `static_preflight_board9_gap20_20261013/report.json` records 20
+serials present in the camera calibration files and 98 eligible candidates
+out of 112. Its launch uses
+bounded request timing because same-frame exposure calibration is not yet
+commissioned; the `static_preflight_only` scope also prevents that example
+scene and illustrative tolerances from being used for a live run. The report
+has `robot_ready: false` and no camera session was created.
+
+After stage commissioning, the motion command is:
 
 ```bash
 PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src:/absolute/robot_pc_binding" \

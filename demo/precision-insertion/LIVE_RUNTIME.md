@@ -412,8 +412,29 @@ read only after Qwen inference. These are robot-PC receipt timestamps, not
 hardware-latched encoder times; the camera/robot clock assumptions still
 need validation on the recipient PC.
 
-From the repository root, after the integration module and assets are
-installed on the AutoDex PC:
+From the repository root, after the launch files and assets are installed
+on the AutoDex PC:
+
+```bash
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
+  demo/precision-insertion/run_live.py --preflight \
+  --launch-config /absolute/path/to/live_session.json \
+  --endpoint-catalog /absolute/path/to/current_endpoint_catalog.json \
+  --robot-config /absolute/path/to/franka_runtime.json
+```
+
+`--preflight` validates the cylinder launch, camera calibration files, exact
+recipient-bound v8 catalog, and robot config syntax. It does not import the
+external stage factory, construct CUDA/FR3, connect cameras, create a run
+directory or command motion. It always reports `robot_ready: false`; separate
+camera capture, stage assembly and controller commissioning are still needed.
+The `--robot-config` argument may be omitted when only camera/catalog inputs
+are installed. A launch created only to inspect current recipient files may
+set `"execution_scope": "static_preflight_only"`; the camera capture and
+motion entry points reject that launch, while `--preflight` can read it.
+
+For the full motion-enabled loop, after the stage adapters and guarded
+controller are commissioned:
 
 ```bash
 PYTHONPATH="$PWD/demo/precision-insertion:$PWD/src:/path/to/robot_pc_integration" \

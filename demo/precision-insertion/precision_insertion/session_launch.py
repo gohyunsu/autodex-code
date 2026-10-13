@@ -68,6 +68,7 @@ class SessionLaunch:
     minimum_board_corners: int = 54
     board_capture_phase: str = "empty_before_socket"
     camera_time_mode: str = "calibrated_frame_id"
+    execution_scope: str = "live"
 
     def readiness(self) -> dict:
         return {
@@ -81,6 +82,7 @@ class SessionLaunch:
                 serial: row.calibration_id
                 for serial, row in sorted(self.camera_times.items())},
             "camera_time_mode": self.camera_time_mode,
+            "execution_scope": self.execution_scope,
             "board_id": self.board_id,
             "minimum_board_corners": self.minimum_board_corners,
             "board_capture_phase": self.board_capture_phase,
@@ -214,6 +216,9 @@ def load_session_launch(path: Path) -> SessionLaunch:
             (board_id == "11" and minimum_board_corners != 54)):
         raise ValueError("launch minimum_board_corners is invalid")
     board_capture_phase = record.get("board_capture_phase", "empty_before_socket")
+    execution_scope = record.get("execution_scope", "live")
+    if execution_scope not in ("live", "static_preflight_only"):
+        raise ValueError("unknown launch execution_scope")
     if (board_capture_phase == "empty_before_socket" and
             minimum_board_corners != 54 or
             board_capture_phase == "socket_present_partial" and
@@ -318,7 +323,7 @@ def load_session_launch(path: Path) -> SessionLaunch:
         limits, prompt, count, **values, board_id=board_id,
         minimum_board_corners=minimum_board_corners,
         board_capture_phase=board_capture_phase,
-        camera_time_mode=time_mode)
+        camera_time_mode=time_mode, execution_scope=execution_scope)
 
 
 @contextmanager
@@ -334,6 +339,8 @@ def open_session_cameras(
     """
     if not isinstance(launch, SessionLaunch):
         raise TypeError("camera session needs a validated launch")
+    if launch.execution_scope != "live":
+        raise PermissionError("static preflight launch cannot open cameras")
     from autodex.perception.init_orchestrator import InitOrchestrator
     from autodex.perception.snapshot_orchestrator import SnapshotOrchestrator
 
@@ -362,6 +369,8 @@ def open_session_cameras(
 
 def capture_session(launch: SessionLaunch) -> StartedPrecisionSession:
     """One-shot board/socket CLI capture; explicitly no robot connection."""
+    if launch.execution_scope != "live":
+        raise PermissionError("static preflight launch cannot capture cameras")
     def confirm_socket_placement() -> bool:
         try:
             response = input(
