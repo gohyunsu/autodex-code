@@ -589,6 +589,15 @@ A copy of the board-9/gap-20 launch with this option is
 `start-session --config` loaded its 20 real serials and current asset paths
 successfully as a **file-only** preflight. It remains
 `execution_scope: static_preflight_only` and `robot_ready: false`.
+For a separate stationary **camera-only** timing trial, the staged
+`launch_camera_only_static_interval.json` keeps that static execution scope,
+uses the same stock `ignore_sil_loss` mode, and records a 10 s worst-case
+request-window allowance with 90 s for asynchronous PNG writes. File-only
+preflight passed. No images were captured under that setting yet; the
+operator must remove the key before the socket-only first phase. The 10 s
+allowance is an explicit diagnostic bound for a stationary scene, not a
+measurement that the cameras exposed within 10 s of one another and not a
+live robot motion setting.
 
 For a reproducible **historical NAS-frame** QA exercise (not a substitute
 for new recipient-camera frames), run:

@@ -18,8 +18,12 @@ durable storage accessible from the robot PC:
 cd /path/to/autodex-code
 PYTHONPATH="$PWD/demo/precision-insertion:/path/to/paradex" \
   /path/to/paradex-python demo/precision-insertion/precision_camera_daemon.py \
-  --journal-dir /mnt/paradex2/hyunsu/NEW_chunk_clock_run_001
+  --journal-dir /absolute/shared/path/on/capture-PC/NEW_chunk_clock_run_001
 ```
+
+The recipient robot PC mounts the handoff at
+`/home/robot/shared_data/hyunsu/`; use the capture PC's verified path to the
+same storage for `--journal-dir`.
 
 Do not run both camera daemons concurrently. Verify the ParaDex camera
 controller can start/stop normally and compare its image/frame stream with
