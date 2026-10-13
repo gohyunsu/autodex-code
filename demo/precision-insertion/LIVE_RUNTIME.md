@@ -38,6 +38,14 @@ silhouette refinement. Per-view IoU scores and threshold supporters remain
 evidence; a low-scoring view alone no longer vetoes a passing stock result.
 The session still needs acquisition-bound frames and agreement between
 separate socket captures before its fixture pose can be frozen.
+The launch option `socket_perception_mode` defaults to stock `iou`. Set it to
+stock `ignore_sil_loss` only when the absolute 0.003 silhouette-loss cutoff
+blocks a scene that otherwise has reviewable masks: AutoDex still runs the
+same cross-view IoU selection and silhouette optimization. The session saves
+the measured loss and explicitly records that its loss gate was disabled;
+all accepted-view IoU scores, independent socket-capture repeatability,
+frame identity and acquisition-time checks remain in force. The mode does
+not turn a camera-only diagnostic into a robot-ready session.
 
 **Current cylinder contract (2026-10-11):** the assembled held-relation
 handler defaults to the selected v8 nominal hypothesis; cylinder live mode

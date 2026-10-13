@@ -215,6 +215,42 @@ def test_refined_session_rejects_one_bad_view_or_duplicate_request(
             first, replace(second, request_id=first.request_id))})
 
 
+def test_stock_ignore_sil_loss_replays_without_claiming_a_loss_gate(
+        tmp_path, board_measurement):
+    args = _arguments(tmp_path)
+    paths = AssetPaths(tmp_path, args["mode"])
+    paths.socket_collision_mesh.parent.mkdir(parents=True)
+    paths.socket_collision_mesh.write_bytes(args["socket_collision_mesh"].read_bytes())
+    args["socket_collision_mesh"] = paths.socket_collision_mesh
+    args["object_root"] = paths.object_root
+
+    def ignored(refinement):
+        return replace(
+            refinement,
+            per_view_iou={"cam_a": .93, "cam_b": .70},
+            refinement_gate="stock_ignore_sil_loss",
+            stock_selection={
+                **refinement.stock_selection,
+                "perception_mode": "ignore_sil_loss",
+                "silhouette_loss_gate_applied": False,
+                "silhouette_loss_threshold": None,
+                "sil_loss": .0043,
+            })
+
+    first, second = map(ignored, _refinements(args))
+    session = calibrate_session(**{
+        **args, "socket_capture_refinements": (first, second)})
+    saved = write_session_calibration(session, tmp_path / "ignore_loss.json")
+    loaded = load_session_calibration(saved, mode=args["mode"], shared_root=tmp_path)
+    np.testing.assert_allclose(loaded.socket_pose_robot, session.socket_pose_robot)
+    with pytest.raises(ValueError, match="has a loss gate"):
+        calibrate_session(**{
+            **args, "socket_capture_refinements": (
+                replace(first, stock_selection={
+                    **first.stock_selection, "silhouette_loss_gate_applied": True}),
+                second)})
+
+
 @pytest.mark.parametrize("change,error", [
     ({"board_timestamp_source": "publish_time"}, "acquisition timestamps"),
     ({"board_timestamps_s": {"cam_a": 1.0, "cam_b": 1.1}}, "not synchronized"),

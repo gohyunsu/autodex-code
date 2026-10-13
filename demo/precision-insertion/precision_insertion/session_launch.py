@@ -64,6 +64,7 @@ class SessionLaunch:
     max_socket_translation_mm: float
     max_socket_angle_deg: float
     minimum_socket_refined_iou: float
+    socket_perception_mode: str = "iou"
     board_id: str = "11"
     minimum_board_corners: int = 54
     board_capture_phase: str = "empty_before_socket"
@@ -87,6 +88,7 @@ class SessionLaunch:
             "minimum_board_corners": self.minimum_board_corners,
             "board_capture_phase": self.board_capture_phase,
             "minimum_socket_refined_iou": self.minimum_socket_refined_iou,
+            "socket_perception_mode": self.socket_perception_mode,
             "socket_capture_count": self.socket_capture_count,
             "scope": "file_preflight_not_live_camera_or_pose_accuracy",
             "robot_ready": False,
@@ -130,6 +132,7 @@ class OpenSessionCameras:
             max_socket_translation_mm=launch.max_socket_translation_mm,
             max_socket_angle_deg=launch.max_socket_angle_deg,
             minimum_socket_refined_iou=launch.minimum_socket_refined_iou,
+            socket_perception_mode=launch.socket_perception_mode,
             board_id=launch.board_id,
             minimum_board_corners=launch.minimum_board_corners,
             board_capture_phase=launch.board_capture_phase,
@@ -315,6 +318,9 @@ def load_session_launch(
             prompt.strip() == "object"):
         raise ValueError("socket needs repeated captures and a specific SAM prompt")
     reject_incorrect_object_color(prompt)
+    socket_perception_mode = record.get("socket_perception_mode", "iou")
+    if socket_perception_mode not in ("iou", "ignore_sil_loss"):
+        raise ValueError("unknown stock socket perception mode")
     values = {name: _positive(record.get(name), name=name) for name in (
         "board_timeout_s", "socket_timeout_s", "image_write_timeout_s",
         "max_socket_translation_mm", "max_socket_angle_deg",
@@ -325,6 +331,7 @@ def load_session_launch(
         mode, root, capture_root, evidence, tuple(pcs), tuple(ips), camera_ids,
         intrinsics, extrinsics, image_hw, c2r, base_scene, camera_times,
         limits, prompt, count, **values, board_id=board_id,
+        socket_perception_mode=socket_perception_mode,
         minimum_board_corners=minimum_board_corners,
         board_capture_phase=board_capture_phase,
         camera_time_mode=time_mode, execution_scope=execution_scope)

@@ -54,6 +54,7 @@ def start_precision_session(
     max_socket_translation_mm: float,
     max_socket_angle_deg: float,
     minimum_socket_refined_iou: float,
+    socket_perception_mode: str = "iou",
     image_write_timeout_s: float = 5.0,
     request_id_factory: Callable[[], int] | None = None,
     board_id: str = "11",
@@ -98,6 +99,8 @@ def start_precision_session(
             not math.isfinite(minimum_socket_refined_iou) or
             not 0 < minimum_socket_refined_iou <= 1):
         raise ValueError("commissioned minimum_socket_refined_iou must be in (0,1]")
+    if socket_perception_mode not in ("iou", "ignore_sil_loss"):
+        raise ValueError("unknown stock socket perception mode")
     view_limits.validate()
     if (not isinstance(calibrated_camera_ids, set) or
             len(calibrated_camera_ids) < view_limits.minimum_accepted_views or
@@ -211,7 +214,8 @@ def start_precision_session(
             capture=capture, admission=admission,
             init_orchestrator=init_orchestrator,
             socket_object=mode.socket_object, raw_mesh=socket_mesh,
-            minimum_refined_iou=float(minimum_socket_refined_iou)))
+            minimum_refined_iou=float(minimum_socket_refined_iou),
+            perception_mode=socket_perception_mode))
     saved = write_session_bootstrap_artifacts(bootstrap, output)
     manifest = verify_session_evidence_bundle(saved)
     if manifest.get("all_frames_bound_to_acquisition_evidence") is not True:

@@ -246,6 +246,33 @@ def _positive(value: float, name: str) -> float:
     return result
 
 
+def _stock_socket_perception_mode(selection: dict) -> str:
+    """Validate the recorded stock silhouette policy without serializing inf."""
+    mode = selection.get("perception_mode", "iou")
+    if (not isinstance(mode, str) or
+            mode not in ("iou", "ignore_sil_loss")):
+        raise ValueError("unknown saved socket perception mode")
+    try:
+        loss = float(selection["sil_loss"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("socket refinement lacks stock silhouette loss") from exc
+    if not math.isfinite(loss):
+        raise ValueError("socket refinement has nonfinite silhouette loss")
+    if mode == "ignore_sil_loss":
+        if (selection.get("silhouette_loss_gate_applied") is not False or
+                selection.get("silhouette_loss_threshold") is not None):
+            raise ValueError("stock ignore_sil_loss record has a loss gate")
+    else:
+        try:
+            limit = float(selection["silhouette_loss_threshold"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("socket refinement lacks stock silhouette limit") from exc
+        if (not math.isfinite(limit) or limit <= 0 or loss > limit or
+                selection.get("silhouette_loss_gate_applied", True) is not True):
+            raise ValueError("socket refinement failed stock silhouette loss")
+    return mode
+
+
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -322,20 +349,21 @@ def _verify_saved_socket_refinements(
             raise ValueError("saved socket refinement source binding is invalid")
         try:
             threshold = float(row["minimum_refined_iou"])
-            loss = float(selection["sil_loss"])
-            loss_limit = float(selection["silhouette_loss_threshold"])
             scores = [float(per_view[camera]) for camera in cameras]
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("saved socket refinement quality is invalid") from exc
+        perception_mode = _stock_socket_perception_mode(selection)
         gate = row.get("refinement_gate", "all_view_iou")
         if (not 0 < threshold <= 1 or
-                gate not in {"all_view_iou", "stock_silhouette"} or
+                gate not in ("all_view_iou", "stock_silhouette",
+                             "stock_ignore_sil_loss") or
+                (gate == "stock_silhouette" and perception_mode != "iou") or
+                (gate == "stock_ignore_sil_loss" and
+                 perception_mode != "ignore_sil_loss") or
                 any(not math.isfinite(score) or not 0 <= score <= 1
                     for score in scores) or
                 (gate == "all_view_iou" and
-                 any(score < threshold for score in scores)) or
-                not math.isfinite(loss) or not math.isfinite(loss_limit) or
-                loss_limit <= 0 or loss > loss_limit):
+                 any(score < threshold for score in scores))):
             raise ValueError("saved socket refinement quality gate failed")
         seen_captures.add(capture_id)
         seen_requests.add(request_id)
@@ -467,7 +495,8 @@ def calibrate_session(
             threshold = float(refinement.minimum_refined_iou)
             if (not math.isfinite(threshold) or not 0 < threshold <= 1 or
                     refinement.refinement_gate not in
-                    {"all_view_iou", "stock_silhouette"} or
+                    ("all_view_iou", "stock_silhouette",
+                     "stock_ignore_sil_loss") or
                     any(not math.isfinite(float(score)) or
                             not 0 <= float(score) <= 1 or
                             (refinement.refinement_gate == "all_view_iou" and
@@ -490,14 +519,12 @@ def calibrate_session(
                     type(selection.get("silhouette_iterations")) is not int or
                     selection["silhouette_iterations"] <= 0):
                 raise ValueError("socket refinement lacks passing stock selection")
-            try:
-                loss = float(selection["sil_loss"])
-                loss_limit = float(selection["silhouette_loss_threshold"])
-            except (KeyError, TypeError, ValueError) as exc:
-                raise ValueError("socket refinement lacks stock silhouette loss") from exc
-            if (not math.isfinite(loss) or not math.isfinite(loss_limit) or
-                    loss_limit <= 0 or loss > loss_limit):
-                raise ValueError("socket refinement failed stock silhouette loss")
+            perception_mode = _stock_socket_perception_mode(selection)
+            if (refinement.refinement_gate == "stock_silhouette" and
+                    perception_mode != "iou" or
+                    refinement.refinement_gate == "stock_ignore_sil_loss" and
+                    perception_mode != "ignore_sil_loss"):
+                raise ValueError("socket refinement gate differs from stock mode")
             validate_se3(refinement.pose_world, name="refined socket pose_world")
             refined_by_capture[refinement.capture_id] = refinement
         request_ids = [row.request_id for row in refined_by_capture.values()]

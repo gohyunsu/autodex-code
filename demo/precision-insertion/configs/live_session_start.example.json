@@ -33,5 +33,6 @@
   "image_write_timeout_s": 5.0,
   "max_socket_translation_mm": 1.0,
   "max_socket_angle_deg": 1.0,
-  "minimum_socket_refined_iou": 0.8
+  "minimum_socket_refined_iou": 0.8,
+  "socket_perception_mode": "iou"
 }

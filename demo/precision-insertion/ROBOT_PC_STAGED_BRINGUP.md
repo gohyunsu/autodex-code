@@ -570,6 +570,26 @@ socket/key pose or as permission for robot motion. After capture, the five
 temporary precision init processes were stopped; the original stock init
 processes remained running.
 
+An offline replay of those **same saved masks and FoundPose candidates** used
+stock `run_auto.py`'s `ignore_sil_loss` policy: IoU selection and 100-step
+silhouette refinement still ran, with only the absolute 0.003 loss veto
+disabled. The resulting two socket translations differed by 0.152 mm and
+their oriented axes by 0.526°; the full rotations differed by about 120°
+around the cylindrical symmetry axis. Mean cross-view IoU was 0.775 and
+0.761. This explains why the raw selected candidates differed by 11.93 mm
+while the optimized candidates agreed. The precision session now accepts an
+explicit launch setting `"socket_perception_mode": "ignore_sil_loss"`, and
+records that choice and both measured losses. It still needs source-bound
+admission, the configured two-capture pose repeatability check and valid
+camera timing. The replay is a saved-mask fit, not a new image acquisition,
+robot-frame calibration or insertion validation. Its source-hashed report is
+`$QA_BASE/precision_frame_bound_stock_qa_20261013_retry1/stock_ignore_sil_loss_replay.json`.
+A copy of the board-9/gap-20 launch with this option is
+`$QA_BASE/static_preflight_board9_gap20_20261013/launch_ignore_sil_loss.json`;
+`start-session --config` loaded its 20 real serials and current asset paths
+successfully as a **file-only** preflight. It remains
+`execution_scope: static_preflight_only` and `robot_ready: false`.
+
 For a reproducible **historical NAS-frame** QA exercise (not a substitute
 for new recipient-camera frames), run:
 

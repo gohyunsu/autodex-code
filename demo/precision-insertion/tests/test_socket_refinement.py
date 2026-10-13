@@ -90,6 +90,26 @@ def test_uses_stock_silhouette_when_one_view_has_low_iou(
         "cam_a"]
 
 
+def test_stock_ignore_sil_loss_retains_refinement_and_records_policy(
+        tmp_path, monkeypatch):
+    capture, admission, stock, raw_mesh, calls = _setup(
+        tmp_path, monkeypatch, per_view={"cam_a": .92, "cam_b": .72},
+        stock_result=(np.eye(4), {
+            "best_serial": "cam_a", "n_candidates": 2, "n_masks": 2,
+            "sil_loss": .0043}))
+    row = refine_socket_capture(
+        capture=capture, admission=admission, init_orchestrator=stock,
+        socket_object="socket", raw_mesh=raw_mesh, minimum_refined_iou=.8,
+        perception_mode="ignore_sil_loss")
+    assert calls[0]["sil_loss_threshold"] == float("inf")
+    assert calls[0]["selection_mode"] == "iou"
+    assert row.refinement_gate == "stock_ignore_sil_loss"
+    assert row.stock_selection["sil_loss"] == .0043
+    assert row.stock_selection["silhouette_loss_threshold"] is None
+    assert row.stock_selection["silhouette_loss_gate_applied"] is False
+    assert row.stock_selection["perception_mode"] == "ignore_sil_loss"
+
+
 def test_rejects_stock_failure_or_changed_renderer_mesh(tmp_path, monkeypatch):
     capture, admission, stock, raw_mesh, _ = _setup(
         tmp_path, monkeypatch, stock_result=(None, {"sil_reject": True}))

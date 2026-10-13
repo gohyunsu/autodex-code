@@ -152,6 +152,21 @@ def test_bounded_request_launch_needs_no_camera_time_files(tmp_path):
         "bounded_request_interval")
 
 
+def test_stock_socket_perception_mode_is_explicit_in_launch(tmp_path):
+    config, record = _config(tmp_path)
+    record.pop("camera_time_calibrations")
+    record["camera_time_mode"] = "bounded_request_interval"
+    record["socket_perception_mode"] = "ignore_sil_loss"
+    config.write_text(json.dumps(record), encoding="utf-8")
+    loaded = launch.load_session_launch(config)
+    assert loaded.socket_perception_mode == "ignore_sil_loss"
+    assert loaded.readiness()["socket_perception_mode"] == "ignore_sil_loss"
+    record["socket_perception_mode"] = "quality"
+    config.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match="socket perception mode"):
+        launch.load_session_launch(config)
+
+
 def test_board_9_partial_corner_contract_is_explicit(tmp_path):
     config, record = _config(tmp_path)
     record["board_id"] = "9"

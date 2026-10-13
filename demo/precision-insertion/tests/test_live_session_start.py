@@ -165,6 +165,7 @@ def test_empty_board_requires_operator_gate_before_socket_inference(
 def test_session_start_passes_commissioned_refinement_into_bootstrap(
         tmp_path, monkeypatch):
     arguments, _events, _repre = _setup(tmp_path, monkeypatch)
+    arguments["socket_perception_mode"] = "ignore_sil_loss"
     captured = []
     original_bootstrap = start.bootstrap_session
 
@@ -185,6 +186,7 @@ def test_session_start_passes_commissioned_refinement_into_bootstrap(
     assert len(captured) == 1
     assert captured[0]["minimum_refined_iou"] == .8
     assert captured[0]["socket_object"] == arguments["mode"].socket_object
+    assert captured[0]["perception_mode"] == "ignore_sil_loss"
 
 
 def test_missing_canonical_socket_repre_rejects_before_any_capture(

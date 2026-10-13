@@ -25,12 +25,16 @@ def refine_socket_capture(
     init_orchestrator, socket_object: str, raw_mesh: Path,
     minimum_refined_iou: float, silhouette_iterations: int = 100,
     silhouette_loss_threshold: float = 0.003,
+    perception_mode: str = "iou",
 ) -> SocketCaptureRefinement:
     """Run stock IoU selection and silhouette, retaining all view scores.
 
     The supplied IoU threshold labels strong supporting views. When a view
     misses it, use the stock silhouette result rather than imposing an extra
-    all-view veto. Neither gate proves absolute metric accuracy or identity.
+    all-view veto. ``ignore_sil_loss`` matches stock run_auto's named mode:
+    it still selects by IoU and optimizes the silhouette, but records that
+    its absolute loss cutoff was not applied. Neither mode proves absolute
+    metric accuracy or identity.
     """
     if (not isinstance(capture, SocketCaptureInput) or
             not isinstance(admission, SocketCaptureEvidence) or
@@ -43,6 +47,9 @@ def refine_socket_capture(
             type(silhouette_iterations) is not int or
             silhouette_iterations <= 0):
         raise ValueError("socket refinement needs commissioned positive limits")
+    if (not isinstance(perception_mode, str) or
+            perception_mode not in ("iou", "ignore_sil_loss")):
+        raise ValueError("unknown stock socket perception mode")
     accepted = tuple(item.camera_id for item in admission.observations)
     if len(accepted) < 2 or len(set(accepted)) != len(accepted):
         raise ValueError("socket refinement needs at least two admitted views")
@@ -65,7 +72,8 @@ def refine_socket_capture(
     refined, selection = stock.refine_from_payloads(
         capture.masks, capture.poses, subset_serials=list(accepted),
         sil_iters=silhouette_iterations, sil_lr=0.002,
-        sil_loss_threshold=loss_limit, selection_mode="iou")
+        sil_loss_threshold=(float("inf") if perception_mode == "ignore_sil_loss"
+                            else loss_limit), selection_mode="iou")
     if (refined is None or not isinstance(selection, dict) or
             selection.get("best_serial") not in accepted or
             selection.get("n_candidates") != len(accepted) or
@@ -73,7 +81,8 @@ def refine_socket_capture(
             selection.get("sil_reject") or
             selection.get("sil_skipped") or
             not math.isfinite(float(selection.get("sil_loss", float("nan")))) or
-            float(selection["sil_loss"]) > loss_limit):
+            (perception_mode == "iou" and
+             float(selection["sil_loss"]) > loss_limit)):
         raise ValueError("stock socket IoU/silhouette refinement did not pass")
     pose = validate_se3(refined, name="stock refined socket pose")
 
@@ -95,14 +104,18 @@ def refine_socket_capture(
         raise ValueError("refined socket has invalid per-view IoU scores")
     gate = ("all_view_iou" if all(float(score) >= threshold
                                   for score in per_view.values())
-            else "stock_silhouette")
+            else ("stock_ignore_sil_loss" if perception_mode == "ignore_sil_loss"
+                  else "stock_silhouette"))
     stock_record = _json_native(selection)
     stock_record["post_refinement_mean_iou"] = float(mean_iou)
     stock_record["post_refinement_iou_support_camera_ids"] = sorted(
         camera for camera, score in per_view.items() if float(score) >= threshold)
     stock_record["selection_mode"] = "iou"
+    stock_record["perception_mode"] = perception_mode
     stock_record["silhouette_iterations"] = silhouette_iterations
-    stock_record["silhouette_loss_threshold"] = loss_limit
+    stock_record["silhouette_loss_gate_applied"] = perception_mode == "iou"
+    stock_record["silhouette_loss_threshold"] = (
+        loss_limit if perception_mode == "iou" else None)
     return SocketCaptureRefinement(
         capture_id=capture.capture_id, request_id=capture.request_id,
         pose_world=pose, accepted_camera_ids=accepted,
