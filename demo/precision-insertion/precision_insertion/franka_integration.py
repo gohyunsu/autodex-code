@@ -22,6 +22,7 @@ from .franka_measured_lift import (
     FrankaMeasuredLiftAdapter, MeasuredLiftMonitorLimits,
 )
 from .stock_force_insertion import FrankaForceStopInsertionAdapter
+from .stock_socket_release import StockSocketRelease
 from .live_runtime import LiveRuntimeIntegration, RunLiveOptions
 from .labeling import terminal_label_provider
 from .observer import load_vlm_backend
@@ -254,6 +255,14 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             # follower as AutoDex place, including its normal speed.
             stages["task"]["insertion_adapter"] = (
                 FrankaForceStopInsertionAdapter(core.executor))
+            if "release_and_clear" not in stages["task"]:
+                release_limits = (stages.get("held_return", {}).get("limits")
+                                  or shared.get("limits"))
+                if release_limits is not None:
+                    stages["task"]["release_and_clear"] = StockSocketRelease(
+                        executor=core.executor, planner=core.planner,
+                        read_state=core.read_state,
+                        path_limits=release_limits)
         assignments = (
             [("lift", "adapter"), ("task", "transfer_adapter")]
             if held_motion_monitor is not None else

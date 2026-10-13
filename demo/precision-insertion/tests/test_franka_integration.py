@@ -100,6 +100,42 @@ def test_franka_integration_reuses_checked_core_for_pickup_unless_overridden(
     integration.build_components(object())
 
 
+def test_cylinder_factory_injects_stock_force_and_release_with_existing_limits(
+        monkeypatch, tmp_path):
+    core = SimpleNamespace(
+        clear_view=object(), planner=object(), executor=object(),
+        read_state=lambda: None, sampler=None, close=lambda: None)
+    monkeypatch.setattr(franka_integration, "open_franka_core", lambda _: core)
+    module = ModuleType("robot_pc_stages")
+    limits = object()
+    module.configure = lambda *_: {
+        "shared": {"backend": object()},
+        "stages": {"task": {}, "held_return": {"limits": limits}}}
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    force = object()
+    release = object()
+    monkeypatch.setattr(franka_integration, "FrankaForceStopInsertionAdapter",
+                        lambda executor: force if executor is core.executor else None)
+
+    def make_release(**kwargs):
+        assert kwargs == {"executor": core.executor, "planner": core.planner,
+                          "read_state": core.read_state, "path_limits": limits}
+        return release
+
+    monkeypatch.setattr(franka_integration, "StockSocketRelease", make_release)
+
+    def assemble(_live, **kwargs):
+        task = kwargs["stages"]["task"]
+        assert task["insertion_adapter"] is force
+        assert task["release_and_clear"] is release
+        return ()
+
+    monkeypatch.setattr(franka_integration, "assemble_live_components", assemble)
+    live = SimpleNamespace(opened=SimpleNamespace(
+        runner=SimpleNamespace(mode=SimpleNamespace(family="cylinder"))))
+    franka_integration.factory(_options(tmp_path, _config())).build_components(live)
+
+
 def test_franka_integration_builds_measured_lift_adapter_when_configured(
         monkeypatch, tmp_path):
     core = SimpleNamespace(

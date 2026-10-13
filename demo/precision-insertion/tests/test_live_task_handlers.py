@@ -102,8 +102,17 @@ def _handler(tmp_path, enabled=True):
 def test_transfer_hold_then_guarded_20mm_and_vlm_label(tmp_path, monkeypatch):
     bound, runner, first, final = _handler(tmp_path)
     actions = []
-    bound.release_and_clear = lambda *_args: (
-        actions.append(("release_and_clear",)) or tmp_path / "release.json")
+
+    class Release:
+        def prepare(self, _live, _runner, _decision, handoff):
+            assert handoff == tmp_path / "handoff.json"
+            actions.append(("prepare_release",))
+
+        def __call__(self, *_args):
+            actions.append(("release_and_clear",))
+            return tmp_path / "release.json"
+
+    bound.release_and_clear = Release()
     bound.live.clear_view.before_key_capture = lambda: actions.append(
         ("clear_view_gate",))
     monkeypatch.setattr(
@@ -137,9 +146,9 @@ def test_transfer_hold_then_guarded_20mm_and_vlm_label(tmp_path, monkeypatch):
     assert [row[0] for row in runner.events] == [
         "assess_hold", "label_hold", "handoff", "assess_insertion"]
     assert [row[0] for row in actions] == [
-        "transfer", "write", "verify", "insertion", "release_and_clear",
-        "clear_view_gate", "write", "verify"]
-    assert actions[6][1] is final and actions[6][3] == "final_clear_view"
+        "transfer", "write", "verify", "prepare_release", "insertion",
+        "release_and_clear", "clear_view_gate", "write", "verify"]
+    assert actions[7][1] is final and actions[7][3] == "final_clear_view"
     assert runner.events[-1][1]["metric_record_path"] == tmp_path / "metric.json"
     assert runner.events[-1][1]["initial_key_bundle"] == tmp_path / "initial_key"
     capture_root = tmp_path / "attempts" / "attempt_001" / "raw_captures"

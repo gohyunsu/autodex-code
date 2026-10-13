@@ -26,10 +26,11 @@ level must not be reported as success at the next.
    collision rollout, joint limits and retiming while preserving the stock
    world-Z planner. `path_audit.py` checks sampled key, hand and socket
    geometry, progress and lateral error on the dense result. This is a
-   kinematic reference for the robot-side guarded controller, not a force or
-   contact policy and not a measured physical 20 mm stroke.
-3. Following one guarded nominal 20 mm stroke, the robot-PC callback must
-   **open Inspire and move Franka to clear view before final capture**. Each
+   kinematic reference for the stock FR3 force-stop follower, not a measured
+   physical 20 mm stroke.
+3. Following one completed nominal 20 mm stroke, the built-in release callback
+   **opens Inspire and moves Franka to clear view before final capture**. It
+   plans the reverse-axis exit and stock joint retract before insertion. Each
    camera then supplies its initial-tabletop/final-clear-view raw pair to
    the VLM. `inside_socket` is the default experimental task-success label
    and ends the session; it is **not** an independently measured claim that
@@ -64,8 +65,8 @@ active label path.
 | Cameras and perception | AutoDex camera transport, undistortion, SAM/FoundPose orchestration, frozen socket world and raw checkpoint bundles | Supply real serials, intrinsics/extrinsics, camera-to-robot transform, exposure-time metadata and synchronized measured state. Verify socket-only then key-with-socket frames, masks and repeatability on the actual rig. |
 | FR3/Inspire basic resources | `franka_core.open_franka_core` constructs the existing AutoDex planner, completion-checked FR3 executor, measured-state reader and clear-view gate | Use the separate read-only feedback probe for Stage 3. `open_franka_core` creates command-capable controllers and may send setup and hand-angle writes; reserve it for the motion-authorized stage. |
 | Lift and non-contact transfer | Stage handlers, saved paths, FK/path checks, optional measured-motion adapter | Supply stage-specific execution adapters/interlocks and check measured trajectory completion and hand state. The generic trajectory follower is not a contact-insertion controller. |
-| Guarded insertion | 20 mm path/handoff verifier, contact decision/trace schema and execution-evidence verifier | Implement `insertion_adapter.follow_guarded_insertion(...)` and `stop_and_acknowledge()` on the robot side, with a watchdog/contact stop, force/torque acquisition and an authentic bound metric record. Provide reviewed watchdog/contact commissioning records; do not bypass this by replaying joint points through an ordinary follower. |
-| Release and final view | Abort/grasp gate and ordering and SHA-bound `verify_post_insertion_release` record schema | Implement `task.release_and_clear(live, runner, decision, execution)`: after a non-aborted stroke with a verified held key, open the hand, perform the checked exit to clear view, and return a new `precision_insertion_poststroke_release_clear_view_v1` JSON record. An abort or unknown/lost key remains held for supervised recovery. The code checks ordering and later measured clear-view state; it cannot manufacture the physical motion. |
+| Cylinder insertion | 20 mm axial path/handoff verifier, stock FR3 12 N wrist-Z force stop at stock speed, reverse-path ascent on contact, and bound metric record | Supply the stage limits and live interlock. Contact is a failed attempt; the key stays gripped for the held-return action. No separate contact-controller review or contact-site validation is used by this route. |
+| Release and final view | The built-in `StockSocketRelease` plans opening, reverse-axis exit and stock clear-view retract before insertion; after a non-aborted stroke it opens Inspire, executes those paths and saves a SHA-bound `precision_insertion_poststroke_release_clear_view_v1` record | Supply the existing `PathAuditLimits` as `held_return.limits` or `shared.limits`, measured feedback and a valid frozen world. An explicit `task.release_and_clear` can override the default. A force stop does not release at the socket. Plan and offline tests are not evidence of physical insertion depth. |
 | Failed key restoration and reorient | Fresh released-key perception, source-pose/directed-v8 candidate selection and socket-aware reset preflight | Implement `held_return.execute_restoration` and `repose_execution.execute_repose` with authentic execution logs. Plans must be recomputed for each newly observed landing; a seed or one hypothetical passing plan is not a universal path. Observe the landing before declaring the attempt restored. |
 | VLM outcome | Local Qwen default, optional manual label with independent VLM result retained, visual label reports | Test on *real paired AutoDex frames*. A parseable answer or `inside_socket` is not a metric depth test. Decide separately whether an independently verified 20 mm metric is part of the study endpoint. |
 

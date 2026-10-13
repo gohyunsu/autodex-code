@@ -11,13 +11,17 @@ with the key gripped, records `force_abort`, and sends the held key through
 the existing return-to-original-pose action. That failure does not produce
 an XY measurement or open the hand at the socket. The active cylinder route
 does not require a separate contact-controller commissioning record. A
-normal stroke still opens the hand, exits to clear view, and obtains the
-same-camera initial/final visual task label. The stock force record contains
+normal stroke uses the built-in `StockSocketRelease` callback: it preplans
+full hand opening, reversal of the audited socket-axis path, and a stock
+clear-view retract using the frozen socket world. It opens the hand only
+after a completed non-aborted stroke, checks measured clear-view feedback,
+and obtains the same-camera initial/final visual task label. The stock force record contains
 no independent key-penetration measurement; `inside_socket` remains a visual
 label, not measured 20 mm depth. The older guarded-contact sections below
 describe optional or historical contracts and do not gate this cylinder
-route. Robot pickup, release/clear, return execution, and camera callbacks
-still require a working robot-PC stage factory.
+route. Robot pickup, failed-key return/repose execution, and camera callbacks
+still require a working robot-PC stage factory. The built-in release callback
+needs the existing path-audit limits and is not a measured key-depth test.
 
 For the complete AutoDex-PC execution entry point and required integration
 module, see [LIVE_RUNTIME.md](LIVE_RUNTIME.md). `run_live.py` keeps all

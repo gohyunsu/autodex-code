@@ -8,8 +8,10 @@ return/restoration action. No separate contact-controller review file or
 contact site validation is required by this route. The failure remains in
 the episode evidence and does not create an XY correction. A completed stroke
 uses the existing release/clear-view callback and visual task label. The
-robot-PC `stages_factory`, release/return callbacks, and measured feedback
-are still required for a complete live run.
+robot-PC `stages_factory`, return/repose callbacks, stage limits, and measured
+feedback are still required for a complete live run. With existing path-audit
+limits, the FR3 integration constructs the cylinder release/clear-view
+callback from the stock executor and planner.
 
 `run_live.py` is the demo-local replacement for a precision-specific
 `run_pipeline.py`/`run_auto.py` robot loop. It does not modify either stock
@@ -173,14 +175,18 @@ still supply pickup limits and a real motion interlock; the subclass does
 not replace a robot-side watchdog or physical review. The stage factory
 supplies the remaining recovery and repose callbacks.
 An optional [`held_motion_monitor` block](MEASURED_LIFT_ADAPTER.md) builds
-one measured non-contact adapter for lift and first transfer. The task stage
-must additionally supply `release_and_clear`; it opens Inspire after the
+one measured non-contact adapter for lift and first transfer. For cylinder
+mode, the factory injects `task.release_and_clear` if `held_return.limits` or
+`shared.limits` supplies the existing `PathAuditLimits`; an explicit task
+callback remains an override. Before the insertion stroke, the built-in
+callback plans the open-hand axis exit and stock clear-view retract against
+the frozen socket and nominal inserted-key world. It opens Inspire after the
 single 20 mm stroke only when the stock follower reports no force stop
 and the measured hand hold is unchanged. A force stop follows the saved
 axis back to preinsert and selects held-key return without release or final
 task capture. A lost or unknown grasp state stops for review.
-On a permitted release, the callback follows a commissioned collision-checked
-exit to FR3 clear view. The callback returns a
+On a permitted release, the callback follows that planned socket-axis exit to
+FR3 clear view at stock speed and verifies measured waypoints. It returns a
 `precision_insertion_poststroke_release_clear_view_v1` JSON record bound to
 the guarded metric record. Retry itself has no motion or capture adapter: it
 reuses the saved pre-insertion snapshot. The active released-failure branch

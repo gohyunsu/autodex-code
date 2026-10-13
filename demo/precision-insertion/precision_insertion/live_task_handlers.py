@@ -178,6 +178,9 @@ class LiveTaskHandlers:
             measured_start=self.read_state(),
             decision_timestamp_s=self.decision_time(),
             **dict(self.handoff_parameters))
+        prepare_release = getattr(self.release_and_clear, "prepare", None)
+        if callable(prepare_release):
+            prepare_release(self.live, runner, decision, handoff)
         execution = execute_bound_guarded_insertion(
             runner=runner, adapter=self.insertion_adapter,
             handoff_report_path=handoff,
