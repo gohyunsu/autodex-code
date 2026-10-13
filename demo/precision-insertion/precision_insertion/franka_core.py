@@ -147,8 +147,12 @@ def open_franka_core(
         if (getattr(executor, "arm_dof", None) != 7 or
                 getattr(executor, "hand_name", None) not in
                 {"inspire", "inspire_left"} or
-                not callable(getattr(executor, "shutdown", None))):
+                not callable(getattr(executor, "shutdown", None)) or
+                not callable(getattr(executor, "set_speed_profile_planner", None))):
             raise TypeError("FR3 runtime needs the stock Franka/Inspire executor")
+        # Match run_auto.py: generic return/recovery trajectories use this
+        # planner for the stock live object-proximity speed profile.
+        executor.set_speed_profile_planner(planner)
         def read_state() -> LiveRobotState:
             return read_live_franka_inspire_state(
                 arm=executor.arm, hand=executor.hand,

@@ -103,6 +103,10 @@ stock executor performs FR3 stop/recovery/collision setup and the Inspire
 constructor writes angle, speed and force registers. Call it only after
 explicit motion opt-in. For nonmoving connection checks use
 [`probe_robot_feedback_only.py`](probe_robot_feedback_only.py).
+As in stock `run_auto.py`, core construction binds the shared planner to
+`FrankaExecutor.set_speed_profile_planner` before the initial clear-view move,
+so generic return and recovery paths use the stock object-proximity speed
+profile. The demo does not lower the executor's `traj_speed` default.
 Do not use `autodex.executor.real.RealExecutor`: it controls xArm, and the
 clear-view gate rejects it. This core does not supply camera timestamps or
 the remaining hardware callbacks.

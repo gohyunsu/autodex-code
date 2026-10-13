@@ -19,6 +19,8 @@ def _executor(events):
     return SimpleNamespace(
         arm_dof=7, hand_name="inspire", arm=object(), hand=object(),
         home=lambda **_kwargs: events.append("home"),
+        set_speed_profile_planner=lambda planner: events.append(
+            ("speed_profile_planner", planner)),
         shutdown=lambda: events.append("shutdown"))
 
 
@@ -32,11 +34,11 @@ def test_franka_core_uses_stock_fr3_objects_without_homing(monkeypatch):
     core = franka_core.open_franka_core(
         _settings(), executor_factory=lambda: executor,
         planner_factory=lambda: planner)
-    assert events == []
+    assert events == [("speed_profile_planner", planner)]
     assert core.executor is executor and core.planner is planner
     assert core.clear_view.executor is executor
     assert core.read_state() is sample
-    assert events[0]["arm"] is executor.arm
+    assert events[1]["arm"] is executor.arm
     core.close()
     core.close()
     assert events[-1] == "shutdown"
@@ -111,5 +113,6 @@ def test_franka_core_owns_motion_tolerant_exposure_sampler(monkeypatch):
     assert buffer_settings["max_arm_velocity_rad_s"] == .05
     assert buffer_settings["max_sampling_arm_velocity_rad_s"] == 2.
     core.close()
-    assert events == ["sampler_start", "sampler_ready",
+    assert events == [("speed_profile_planner", planner),
+                      "sampler_start", "sampler_ready",
                       "sampler_close", "shutdown"]
