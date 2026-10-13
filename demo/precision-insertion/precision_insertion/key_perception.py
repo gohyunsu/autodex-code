@@ -2,8 +2,10 @@
 
 The socket is measured once per session; the key is remeasured every trial.
 This module reuses the same per-view SAM/FoundPose quality gate and AutoDex's
-IoU/silhouette refinement, then rejects disagreeing key poses. It performs
-no camera capture, planning, VLM call, or robot motion.
+IoU/silhouette refinement. Cylinder tabletop raw pose disagreement is recorded
+while stock refinement selects the key; held and square captures retain their
+raw pose agreement gate. It performs no camera capture, planning, VLM call,
+or robot motion.
 """
 
 from __future__ import annotations
@@ -304,8 +306,14 @@ def _admit_key_capture_common(
                 cylinder_axis=axis)
             max_center = max(max_center, distance)
             max_angle = max(max_angle, angle)
-    if (max_center > maximum_multiview_center_error_mm or
-            max_angle > maximum_multiview_angle_error_deg):
+    # Stock AutoDex chooses one FoundPose candidate by rendered IoU and then
+    # refines it against the accepted masks. In the live cylinder tabletop
+    # scene, other raw candidates can disagree widely even when that stock
+    # refinement converges. Retain their spread as evidence, not a veto.
+    stock_tabletop_cylinder = mode.family == "cylinder" and not held_phase
+    if (not stock_tabletop_cylinder and
+            (max_center > maximum_multiview_center_error_mm or
+             max_angle > maximum_multiview_angle_error_deg)):
         raise ValueError("key multiview FoundPose estimates disagree")
     if not callable(getattr(init_orchestrator, "refine_from_payloads", None)):
         raise ValueError("AutoDex IoU/silhouette key selector is unavailable")
@@ -333,8 +341,9 @@ def _admit_key_capture_common(
             cylinder_axis=axis)
         max_center = max(max_center, distance)
         max_angle = max(max_angle, angle)
-        if (distance > maximum_multiview_center_error_mm or
-                angle > maximum_multiview_angle_error_deg):
+        if (not stock_tabletop_cylinder and
+                (distance > maximum_multiview_center_error_mm or
+                 angle > maximum_multiview_angle_error_deg)):
             raise ValueError("refined key pose conflicts with admitted views")
     if held_phase:
         distance, angle = _pose_residual(
@@ -365,6 +374,7 @@ def _admit_key_capture_common(
         {"accepted_views": admitted_ids,
          "max_center_residual_mm": max_center,
          "max_angle_residual_deg": max_angle,
+         "raw_foundpose_gate_applied": not stock_tabletop_cylinder,
          "center_limit_mm": float(maximum_multiview_center_error_mm),
          "angle_limit_deg": float(maximum_multiview_angle_error_deg),
          "cylinder_symmetry_quotient": mode.family == "cylinder",

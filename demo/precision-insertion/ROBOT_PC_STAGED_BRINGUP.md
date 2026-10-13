@@ -618,6 +618,23 @@ captures its raw images, masks and FoundPose outputs. It never constructs an
 FR3/Inspire controller. Stop only the staged precision init processes by
 their verified PIDs afterward; leave the stock daemons running.
 
+The 2026-10-13 run at
+`$QA_BASE/strict_camera_only_static_interval_20261013_143002/` completed
+with 20 bound camera views. Board 9 yielded 42/54 corners; two socket
+refinements using stock `ignore_sil_loss` differed by 0.213 mm and 0.149°
+of cylinder axis. The key capture saved 20 masks and 20 FoundPose results.
+Key masks from cameras `25322640` and `25322646` covered the fixed socket
+(99.9% and 99.7% overlap with their saved socket masks), so they must be
+excluded from key selection. Offline stock IoU/silhouette replay on the other
+18 saved views selected camera `25322648` with initial IoU 0.837 and final
+silhouette loss 0.000133. Raw per-view key poses disagree strongly; the
+cylinder tabletop admission path now records that spread and uses the stock
+refinement after socket-mask exclusion. Session and key evidence verifiers
+passed. The full request-window skew bounds were 7.58 s, 2.32 s and 3.09 s
+for socket 0, socket 1 and key respectively, so this remains stationary-scene
+camera QA, with `robot_ready: false`; it does not measure exposure-aligned
+robot state or absolute key/socket pose accuracy.
+
 For a reproducible **historical NAS-frame** QA exercise (not a substitute
 for new recipient-camera frames), run:
 

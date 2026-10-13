@@ -1052,9 +1052,11 @@ The first independent helpers are in `precision_insertion/`:
   the live path needs caller-supplied loaded models, and no real key-pose
   accuracy or robot motion has been commissioned yet.
 - `key_perception.admit_key_capture()` reuses the existing AutoDex per-view
-  SAM/FoundPose quality gate, rejects disagreeing multi-view key poses, and
-  calls unchanged `InitOrchestrator.refine_from_payloads` in IoU/silhouette
-  mode. It checks the current camera matrices against the **frozen session
+  SAM/FoundPose quality gate and calls unchanged
+  `InitOrchestrator.refine_from_payloads` in IoU/silhouette mode. For live
+  cylinder tabletop keys, raw FoundPose pose spread is recorded but does not
+  veto the stock selection; square and held-key captures still require raw
+  pose agreement. It checks the current camera matrices against the **frozen session
   camera snapshot**, projects the session-frozen exact socket collision mesh
   into each view, and excludes a view when its proposed key mask covers too
   much of that projected socket. The overlap fraction and pixel dilation

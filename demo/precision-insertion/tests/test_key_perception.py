@@ -244,6 +244,29 @@ def test_cylinder_identical_end_flip_is_one_physical_pose(tmp_path):
     assert result.consistency["max_angle_residual_deg"] == pytest.approx(0.0)
 
 
+def test_cylinder_tabletop_uses_stock_refinement_with_disagreeing_raw_poses(
+        tmp_path):
+    mode = select_mode("cylinder", 20)
+    info = (tmp_path / "object_processing" / mode.key_object /
+            "processed_data" / "info")
+    info.mkdir(parents=True)
+    (info / "symmetry.json").write_text(json.dumps({
+        "type": "Dinf", "center": [0, 0, 0.04],
+        "axes": [{"fold": "inf", "axis": [0, 0, 1]},
+                 {"fold": 2, "axis": [1, 0, 0]}],
+    }), encoding="utf-8")
+    first = np.eye(4)
+    outlier = np.eye(4)
+    outlier[0, 3] = 0.1
+    selector = SelectorStub(mode.key_object)
+    result = _admit(_capture({"cam_a": first, "cam_b": outlier},
+                             tmp_path), mode, tmp_path, selector)
+    assert selector.calls == 1
+    assert result.selected_camera_id == "cam_a"
+    assert result.consistency["raw_foundpose_gate_applied"] is False
+    assert result.consistency["max_center_residual_mm"] > 90
+
+
 def test_fixed_socket_projection_rejects_key_mask_on_socket(tmp_path):
     mode = select_mode("square", 1.5)
     poses = {serial: np.eye(4) for serial in CAMERAS}
