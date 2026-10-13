@@ -146,6 +146,13 @@ For the first-party FR3 resource path, create a robot-PC JSON file such as:
 ```
 
 These numbers illustrate the file format, **not** rig-approved limits.
+For the current board-9 20 mm session, use the accepted values in
+[`ROBOT_PC_LIMIT_PROPOSAL_20261013.md`](ROBOT_PC_LIMIT_PROPOSAL_20261013.md).
+In particular, the illustrative 100-sample / 0.1 s bracket above cannot
+retain the measured 7.582 s bounded camera request through slow key
+perception; the accepted configuration uses 16,384 samples at 0.01 s and a
+10 s bracket. This retains about 164 s of feedback, including the observed
+42.9 s between key-request completion and its QA report being saved.
 All keys and sockets are white. Use a socket SAM prompt such as
 `fixed white cylindrical socket on the ChArUco board` and a key prompt such
 as `loose white cylindrical peg on the tabletop`. The launch and capture

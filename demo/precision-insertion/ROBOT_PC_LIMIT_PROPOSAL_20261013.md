@@ -1,6 +1,7 @@
 # Board 9 / cylindrical 20 mm socket: proposed live values
 
-Status: **proposal for operator approval, not an approved robot configuration**.
+Status: **operator accepted the proposed numeric values in chat on 2026-10-13;
+physical commissioning and full runtime wiring are still incomplete**.
 This file is not loaded by `run_live.py`. It does not assert that insertion,
 camera/robot clock alignment, contact stopping, or recovery has passed a
 physical test. Keep the current board-9 session and fixed white socket/key.
@@ -29,7 +30,7 @@ dataclasses and JSON fields.
 | `feedback` | `max_arm_hand_skew_s` | `0.10 s` | Read-only probe measured about 0.032 s. |
 | `feedback` | `max_sample_age_s`, `max_arm_update_wait_s` | `1.0 s`, `0.20 s` | Fresh state without requiring an exact packet instant. |
 | `feedback` | `max_hand_command_error_raw`, `max_arm_velocity_rad_s` | `30 raw`, `0.05 rad/s` | Probe saw 14 raw and 0.00090 rad/s while stationary; 0.05 matches the completion-check stop bound. |
-| `sampling` | `period_s`, `max_samples` | `0.01 s`, `2048` | About 20 s retained at the requested sampling rate. |
+| `sampling` | `period_s`, `max_samples` | `0.01 s`, `16384` | About 164 s retained at the requested sampling rate. The observed key QA report was saved 42.9 s after its camera request ended, so a 2048-sample/20 s ring would lose the exposure bracket before key inference returned. |
 | `sampling` | `max_bracket_span_s`, `max_key_state_skew_s` | `10.0 s`, `5.0 s` | Actual board-9 socket request bound was 7.582 s; the midpoint can be 3.791 s from either end. Robot must remain stationary throughout the entire bounded request. |
 | Raw camera checkpoints | `max_capture_skew_s`, `max_joint_frame_skew_s` | `10.0 s`, `5.0 s` | Admit the measured bounded-request interval and its midpoint-to-end time; use only with same-request frame IDs and an exposure-bracketing stationary feedback buffer. |
 | `sampling` | `max_arm_hold_drift_rad`, `max_hand_hold_drift_raw` | `0.01 rad`, `30 raw` | Admit small stationary variation while checking all samples in the request interval. |
@@ -59,3 +60,11 @@ Evidence: `task_geometry.json` in the staged 20 mm fixture; the read-only
 `feedback_only_probe_post_home_20261013.json`; and the board-9
 `strict_camera_only_static_interval_20261013_143002` camera manifests under
 `/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical`.
+
+The approved feedback, sampler, local Qwen path and noncontact monitor values
+are staged in that directory as
+`franka_runtime_board9_gap20_approved_values_stage_factory_pending.json`.
+Static `run_live.py --preflight` accepts its syntax with the board-9 launch
+and 20 mm recipient catalog (112 candidates, 98 eligible). Its
+`robot_pc_stages:configure` symbol is still missing, so the JSON is not a
+motion-ready robot configuration.
