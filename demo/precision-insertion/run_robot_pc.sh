@@ -10,6 +10,8 @@ IMAGE=franka3/real:bimanual_control_libfranka0.18.0_v2
 FRANKA_IP=172.17.1.11
 PCS=(capture1 capture2 capture3 capture5 capture6)
 RUN_TAG="$(date +%Y%m%d_%H%M%S)_$$"
+RUN_START_NS="$(date +%s%N)"
+SERVICE_TIMING_FILE="/tmp/precision-insertion-$RUN_TAG-service-timing.tsv"
 FRANKA_NAME="precision-insertion-franka-$RUN_TAG"
 FRANKA_OWNED=0
 MODE="${1:---run}"
@@ -21,6 +23,18 @@ fi
 
 cd "$ROOT"
 export PYTHONPATH="$ROOT:$ROOT/demo/precision-insertion:$ROOT/src"
+
+# Shell-side service startup is outside run_live.py's Python timeline.
+# Logging must never determine whether a robot service may run.
+record_duration() {
+  local label="$1" started_ns="$2" status="${3:-ok}" ended_ns
+  ended_ns="$(date +%s%N)"
+  printf '%s\t%s\t%s\n' "$label" "$status" \
+    "$(((ended_ns - started_ns) / 1000000))" >> "$SERVICE_TIMING_FILE" ||
+    echo "[timing] could not append $SERVICE_TIMING_FILE" >&2
+}
+printf 'stage\tstatus\tduration_ms\n' > "$SERVICE_TIMING_FILE" || true
+echo "[timing] service profile: $SERVICE_TIMING_FILE"
 
 ssh_pc() {
   local host="$1" command="$2"
@@ -47,6 +61,10 @@ stop_remote_owned() {
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
+  if [[ -n "${app_started_ns:-}" && "${app_timing_recorded:-0}" == 0 ]]; then
+    record_duration python_live_session "$app_started_ns" "$status"
+  fi
+  record_duration launcher_before_cleanup "$RUN_START_NS" "$status"
   if [[ "$MODE" == --check ]]; then
     exit "$status"
   fi
@@ -60,6 +78,7 @@ cleanup() {
     stop_remote_owned "$host" snapshot snapshot_daemon.py
     stop_remote_owned "$host" camera server_daemon.py
   done
+  record_duration launcher_total "$RUN_START_NS" "$status"
   echo "[services] session-owned daemons released (exit $status)"
   exit "$status"
 }
@@ -69,10 +88,12 @@ trap 'exit 143' TERM
 
 if [[ "$MODE" == --check ]]; then
   echo "[services] file preflight"
+  check_started_ns="$(date +%s%N)"
   "$CHECK_PY" demo/precision-insertion/run_live.py --preflight \
     --launch-config "$STAGE/live_board9_gap20_20261013/launch.json" \
     --endpoint-catalog "$STAGE/recipient_gap20_endpoint_catalog_20261013.json" \
     --robot-config "$STAGE/franka_runtime_board9_gap20.json" >/dev/null
+  record_duration file_preflight "$check_started_ns"
   echo "[services] file preflight passed; no daemons started"
   exit 0
 fi
@@ -109,6 +130,7 @@ start_remote_if_missing() {
 }
 
 for host in "${PCS[@]}"; do
+  host_started_ns="$(date +%s%N)"
   home="/home/$host"
   start_remote_if_missing "$host" camera \
     '^[^ ]*python src/camera/server_daemon.py$' \
@@ -133,8 +155,10 @@ for host in "${PCS[@]}"; do
     echo "[services] $host precision mask/pose ports are not listening" >&2
     exit 1
   }
+  record_duration "capture_host_$host" "$host_started_ns"
 done
 
+franka_started_ns="$(date +%s%N)"
 existing_franka="$(docker ps -q --filter "ancestor=$IMAGE")"
 if [[ -n "$existing_franka" ]]; then
   if [[ ! "$existing_franka" =~ ^[a-f0-9]+$ ]]; then
@@ -166,6 +190,7 @@ for attempt in {1..30}; do
   fi
   sleep 1
 done
+record_duration franka_daemon "$franka_started_ns"
 
 if [[ "$MODE" == --services-only ]]; then
   echo "[services] all required daemons are available"
@@ -173,6 +198,7 @@ if [[ "$MODE" == --services-only ]]; then
 fi
 
 echo "[services] running board-9 / 20 mm precision insertion"
+app_started_ns="$(date +%s%N)"
 "$PY" demo/precision-insertion/run_live.py \
   --launch-config "$STAGE/live_board9_gap20_20261013/launch.json" \
   --endpoint-catalog "$STAGE/recipient_gap20_endpoint_catalog_20261013.json" \
@@ -180,3 +206,5 @@ echo "[services] running board-9 / 20 mm precision insertion"
   --robot-config "$STAGE/franka_runtime_board9_gap20.json" \
   --init-port-mask 15006 --init-port-pose 15007 --init-port-cmd 16893 \
   --xy-update-weight 1.0 --enable-robot-motion
+record_duration python_live_session "$app_started_ns"
+app_timing_recorded=1

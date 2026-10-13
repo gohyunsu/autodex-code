@@ -30,6 +30,7 @@ from .session_bootstrap import (
     bootstrap_session, verify_session_evidence_bundle,
     write_session_bootstrap_artifacts,
 )
+from .timing_profile import timed
 
 
 @dataclass(frozen=True)
@@ -134,7 +135,8 @@ def start_precision_session(
     if mode.family == "cylinder":
         # Reject source-PC fixture paths or inconsistent CAD before the first
         # board/socket camera request. This does not certify FoundPose.
-        validate_cylinder_socket_fixture(shared_root=root, mode=mode)
+        with timed("socket.fixture_asset_check", phase="socket", kind="io"):
+            validate_cylinder_socket_fixture(shared_root=root, mode=mode)
     socket_mesh = paths.raw_mesh(mode.socket_object)
     socket_repre = paths.foundpose_repre(mode.socket_object)
     socket_collision = paths.socket_collision_mesh
@@ -157,72 +159,86 @@ def start_precision_session(
         used_requests.add(value)
         return value
 
-    board = collect_board_snapshot(
-        snapshot_orchestrator=snapshot_orchestrator,
-        calibrated_camera_ids=calibrated_camera_ids,
-        acquisition_metadata_for_request=acquisition_metadata_for_request,
-        timeout_s=float(board_timeout_s), request_id_factory=next_request_id)
+    with timed("board.capture", phase="board", kind="camera"):
+        board = collect_board_snapshot(
+            snapshot_orchestrator=snapshot_orchestrator,
+            calibrated_camera_ids=calibrated_camera_ids,
+            acquisition_metadata_for_request=acquisition_metadata_for_request,
+            timeout_s=float(board_timeout_s), request_id_factory=next_request_id)
     # Validate the board while its physical scene still matches the selected
     # phase. This is repeated from the same saved frames during final freeze.
     from src.execution.charuco_tabletop import measure_tabletop_from_images
-    measure_tabletop_from_images(
-        board.images_bgr, intrinsics_full, extrinsics_full, c2r,
-        board_id=board_id, minimum_board_corners=minimum_board_corners)
+    with timed("board.charuco_fit", phase="board"):
+        measure_tabletop_from_images(
+            board.images_bgr, intrinsics_full, extrinsics_full, c2r,
+            board_id=board_id, minimum_board_corners=minimum_board_corners)
     if (board_capture_phase == "empty_before_socket" and
-            confirm_socket_placement() is not True):
+            not _confirmed_socket_placement(confirm_socket_placement)):
         raise RuntimeError("operator did not confirm socket placement")
-    prepare_precision_silhouette(
-        init_orchestrator=init_orchestrator,
-        object_name=mode.socket_object, raw_mesh=socket_mesh)
-    init_orchestrator.init_object(
-        obj_name=mode.socket_object, mesh_path=str(socket_mesh),
-        assets_root=str(paths.foundpose_assets_root(mode.socket_object)),
-        intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
-        image_hw=image_hw, mode="live", load_silhouette=False)
+    with timed("socket.model_init", phase="socket"):
+        prepare_precision_silhouette(
+            init_orchestrator=init_orchestrator,
+            object_name=mode.socket_object, raw_mesh=socket_mesh)
+        init_orchestrator.init_object(
+            obj_name=mode.socket_object, mesh_path=str(socket_mesh),
+            assets_root=str(paths.foundpose_assets_root(mode.socket_object)),
+            intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
+            image_hw=image_hw, mode="live", load_silhouette=False)
     captures = []
     for index in range(socket_capture_count):
-        captures.append(collect_socket_capture(
-            init_orchestrator=init_orchestrator,
-            socket_object=mode.socket_object,
-            capture_id=f"socket_{index:03d}", socket_prompt=socket_prompt,
-            capture_root=capture_root,
+        with timed("socket.capture", phase="socket", kind="camera",
+                   capture_index=index, camera_count=len(calibrated_camera_ids)):
+            captures.append(collect_socket_capture(
+                init_orchestrator=init_orchestrator,
+                socket_object=mode.socket_object,
+                capture_id=f"socket_{index:03d}", socket_prompt=socket_prompt,
+                capture_root=capture_root,
+                calibrated_camera_ids=calibrated_camera_ids,
+                acquisition_metadata_for_request=acquisition_metadata_for_request,
+                timeout_s=float(socket_timeout_s),
+                image_write_timeout_s=float(image_write_timeout_s),
+                request_id_factory=next_request_id))
+    with timed("socket.bootstrap_refinement", phase="socket"):
+        bootstrap = bootstrap_session(
+            mode=mode, object_root=paths.object_root,
+            board_request_id=board.request_id,
+            board_images_bgr=board.images_bgr,
+            board_timestamps_s=board.frame_timestamps_s,
+            board_timestamp_source=board.frame_timestamp_source,
+            board_frame_evidence=board.frame_evidence,
+            socket_captures=captures,
             calibrated_camera_ids=calibrated_camera_ids,
-            acquisition_metadata_for_request=acquisition_metadata_for_request,
-            timeout_s=float(socket_timeout_s),
-            image_write_timeout_s=float(image_write_timeout_s),
-            request_id_factory=next_request_id))
-    bootstrap = bootstrap_session(
-        mode=mode, object_root=paths.object_root,
-        board_request_id=board.request_id,
-        board_images_bgr=board.images_bgr,
-        board_timestamps_s=board.frame_timestamps_s,
-        board_timestamp_source=board.frame_timestamp_source,
-        board_frame_evidence=board.frame_evidence,
-        socket_captures=captures,
-        calibrated_camera_ids=calibrated_camera_ids,
-        view_limits=view_limits,
-        intrinsics_full=intrinsics_full,
-        extrinsics_full=extrinsics_full,
-        c2r=c2r, base_scene=base_scene,
-        socket_collision_mesh=socket_collision,
-        board_id=board_id,
-        minimum_board_corners=minimum_board_corners,
-        board_capture_phase=board_capture_phase,
-        max_socket_translation_mm=float(max_socket_translation_mm),
-        max_socket_angle_deg=float(max_socket_angle_deg),
-        socket_refiner=lambda capture, admission: refine_socket_capture(
-            capture=capture, admission=admission,
-            init_orchestrator=init_orchestrator,
-            socket_object=mode.socket_object, raw_mesh=socket_mesh,
-            minimum_refined_iou=float(minimum_socket_refined_iou),
-            perception_mode=socket_perception_mode))
-    saved = write_session_bootstrap_artifacts(bootstrap, output)
-    manifest = verify_session_evidence_bundle(saved)
+            view_limits=view_limits,
+            intrinsics_full=intrinsics_full,
+            extrinsics_full=extrinsics_full,
+            c2r=c2r, base_scene=base_scene,
+            socket_collision_mesh=socket_collision,
+            board_id=board_id,
+            minimum_board_corners=minimum_board_corners,
+            board_capture_phase=board_capture_phase,
+            max_socket_translation_mm=float(max_socket_translation_mm),
+            max_socket_angle_deg=float(max_socket_angle_deg),
+            socket_refiner=lambda capture, admission: refine_socket_capture(
+                capture=capture, admission=admission,
+                init_orchestrator=init_orchestrator,
+                socket_object=mode.socket_object, raw_mesh=socket_mesh,
+                minimum_refined_iou=float(minimum_socket_refined_iou),
+                perception_mode=socket_perception_mode))
+    with timed("socket.evidence_write", phase="socket", kind="io"):
+        saved = write_session_bootstrap_artifacts(bootstrap, output)
+    with timed("socket.evidence_verify", phase="socket", kind="io"):
+        manifest = verify_session_evidence_bundle(saved)
     if manifest.get("all_frames_bound_to_acquisition_evidence") is not True:
         raise ValueError("session evidence lacks acquisition-bound camera frames")
-    reopened = load_session_calibration(
-        saved / "session_calibration.json", mode=mode, shared_root=root)
+    with timed("socket.calibration_reload", phase="socket", kind="io"):
+        reopened = load_session_calibration(
+            saved / "session_calibration.json", mode=mode, shared_root=root)
     return StartedPrecisionSession(
         calibration=reopened, evidence_dir=saved,
         board_request_id=board.request_id,
         socket_request_ids=tuple(capture.request_id for capture in captures))
+
+
+def _confirmed_socket_placement(confirm: Callable[[], bool]) -> bool:
+    with timed("socket.operator_placement_wait", phase="socket", kind="operator"):
+        return confirm() is True

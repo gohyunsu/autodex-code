@@ -23,6 +23,7 @@ from .recoverable_failure import acknowledged_failure
 from .session_policy import SessionDecision
 from .post_insertion_release import verify_post_insertion_release
 from .transfer_execution import execute_bound_held_transfer
+from .timing_profile import timed
 
 
 @dataclass
@@ -86,7 +87,9 @@ class LiveTaskHandlers:
     def _capture(
         self, *, runner, decision, callback, phase: str,
     ) -> tuple[Path, RawCameraCapture]:
-        capture = callback(self.live, runner, decision)
+        with timed(f"trial.{phase}_capture", phase="trial", kind="camera",
+                   attempt_id=runner.active_attempt.attempt_id):
+            capture = callback(self.live, runner, decision)
         if not isinstance(capture, RawCameraCapture):
             raise TypeError(f"{phase} needs same-session raw AutoDex frames")
         cameras = set(self.live.cameras.launch.camera_ids)
@@ -104,13 +107,15 @@ class LiveTaskHandlers:
         attempt = self._require(runner, decision,
                                 "transfer_execution_gate_required")
         try:
-            execute_bound_held_transfer(
-                runner=runner, adapter=self.transfer_adapter,
-                pre_state=self.read_state(), read_post_state=self.read_state,
-                limits=self.transfer_limits,
-                commissioning_record_path=self.transfer_commissioning_path,
-                motion_interlock=self.motion_interlock,
-                enable_robot_motion=self.enable_robot_motion)
+            with timed("trial.transfer_motion", phase="trial", kind="motion",
+                       attempt_id=attempt.attempt_id):
+                execute_bound_held_transfer(
+                    runner=runner, adapter=self.transfer_adapter,
+                    pre_state=self.read_state(), read_post_state=self.read_state,
+                    limits=self.transfer_limits,
+                    commissioning_record_path=self.transfer_commissioning_path,
+                    motion_interlock=self.motion_interlock,
+                    enable_robot_motion=self.enable_robot_motion)
         except Exception:
             # The executor writes this record only after a motion was requested
             # and stop_and_acknowledge() returned. No transfer checkpoint or
@@ -140,17 +145,19 @@ class LiveTaskHandlers:
         state = self.state_for_capture(capture)
         if not isinstance(state, LiveRobotState):
             raise TypeError("pre-insertion exposure needs measured robot state")
-        checkpoint = runner.prepare_observed_preinsert_label(
-            raw_bundle=raw, transfer_execution_path=transfer_log,
-            joint_sample=state, backend=self.backend,
-            label_mode=self.label_mode,
-            manual_annotation=request_annotation(
-                mode=self.label_mode, provider=self.manual_label_provider,
-                stage="preinsert_reached",
-                evidence_dirs=(Path(after_lift_raw), raw),
-                attempt_id=attempt.attempt_id,
-                candidate_id=attempt.candidate_id),
-            **dict(self.preinsert_parameters))
+        with timed("trial.preinsert_label", phase="trial",
+                   attempt_id=attempt.attempt_id):
+            checkpoint = runner.prepare_observed_preinsert_label(
+                raw_bundle=raw, transfer_execution_path=transfer_log,
+                joint_sample=state, backend=self.backend,
+                label_mode=self.label_mode,
+                manual_annotation=request_annotation(
+                    mode=self.label_mode, provider=self.manual_label_provider,
+                    stage="preinsert_reached",
+                    evidence_dirs=(Path(after_lift_raw), raw),
+                    attempt_id=attempt.attempt_id,
+                    candidate_id=attempt.candidate_id),
+                **dict(self.preinsert_parameters))
         report = runner._preinsert_report_path
         refs = {
             "postlift_preflight": str(runner._postlift_report_path),
@@ -174,24 +181,28 @@ class LiveTaskHandlers:
         if (self._preinsert_attempt_id != attempt.attempt_id or
                 self._preinsert_bundle is None):
             raise ValueError("guarded insertion lacks this attempt's pre-insertion frames")
-        handoff = runner.prepare_guarded_axial_handoff(
-            measured_start=self.read_state(),
-            decision_timestamp_s=self.decision_time(),
-            **dict(self.handoff_parameters))
+        with timed("trial.insertion_handoff", phase="planning", kind="planning",
+                   attempt_id=attempt.attempt_id):
+            handoff = runner.prepare_guarded_axial_handoff(
+                measured_start=self.read_state(),
+                decision_timestamp_s=self.decision_time(),
+                **dict(self.handoff_parameters))
         prepare_release = getattr(self.release_and_clear, "prepare", None)
         if callable(prepare_release):
             prepare_release(self.live, runner, decision, handoff)
-        execution = execute_bound_guarded_insertion(
-            runner=runner, adapter=self.insertion_adapter,
-            handoff_report_path=handoff,
-            pre_state=self.read_state(), read_post_state=self.read_state,
-            limits=self.insertion_limits,
-            contact_limits=self.contact_limits,
-            watchdog_commissioning_path=self.insertion_watchdog_path,
-            contact_commissioning_path=self.insertion_contact_path,
-            motion_interlock=self.motion_interlock,
-            enable_robot_motion=self.enable_robot_motion,
-            **dict(self.insertion_parameters))
+        with timed("trial.guarded_insertion_motion", phase="trial",
+                   kind="motion", attempt_id=attempt.attempt_id):
+            execution = execute_bound_guarded_insertion(
+                runner=runner, adapter=self.insertion_adapter,
+                handoff_report_path=handoff,
+                pre_state=self.read_state(), read_post_state=self.read_state,
+                limits=self.insertion_limits,
+                contact_limits=self.contact_limits,
+                watchdog_commissioning_path=self.insertion_watchdog_path,
+                contact_commissioning_path=self.insertion_contact_path,
+                motion_interlock=self.motion_interlock,
+                enable_robot_motion=self.enable_robot_motion,
+                **dict(self.insertion_parameters))
         if (execution.get("safety_abort") is True and
                 execution.get("retreat_completed") is True and
                 execution.get("withdrawal_record_path")):
@@ -218,8 +229,10 @@ class LiveTaskHandlers:
         if not callable(self.release_and_clear):
             raise RuntimeError(
                 "20 mm insertion needs a commissioned release_and_clear callback")
-        release_path = Path(self.release_and_clear(
-            self.live, runner, decision, execution)).expanduser().resolve()
+        with timed("trial.release_and_clear", phase="trial", kind="motion",
+                   attempt_id=attempt.attempt_id):
+            release_path = Path(self.release_and_clear(
+                self.live, runner, decision, execution)).expanduser().resolve()
         verify_post_insertion_release(
             release_path, attempt_id=attempt.attempt_id,
             candidate_id=attempt.candidate_id,
@@ -227,7 +240,9 @@ class LiveTaskHandlers:
             guarded_execution_path=metric)
         # The release callback performs the physical open/exit; this measured
         # gate prevents a final image from being taken with the hand in view.
-        self.live.clear_view.before_key_capture()
+        with timed("trial.final_clear_view", phase="trial", kind="motion",
+                   attempt_id=attempt.attempt_id):
+            self.live.clear_view.before_key_capture()
         final, _capture = self._capture(
             runner=runner, decision=decision,
             callback=self.capture_final, phase="final_clear_view")
@@ -235,21 +250,23 @@ class LiveTaskHandlers:
         initial = runner.initial_key_evidence_dir
         if initial is None:
             raise ValueError("released insertion lacks its initial key perception")
-        runner.prepare_released_insertion_label(
-            initial_key_bundle=initial,
-            preinsert_bundle=self._preinsert_bundle,
-            final_bundle=final, metric_record_path=metric,
-            release_record_path=release_path,
-            backend=self.backend,
-            decision_timestamp_s=decision_at,
-            label_mode=self.label_mode,
-            manual_annotation=request_annotation(
-                mode=self.label_mode, provider=self.manual_label_provider,
-                stage="insertion_success",
-                evidence_dirs=(initial, final),
-                attempt_id=attempt.attempt_id,
-                candidate_id=attempt.candidate_id),
-            **dict(self.final_parameters))
+        with timed("trial.final_label", phase="trial",
+                   attempt_id=attempt.attempt_id):
+            runner.prepare_released_insertion_label(
+                initial_key_bundle=initial,
+                preinsert_bundle=self._preinsert_bundle,
+                final_bundle=final, metric_record_path=metric,
+                release_record_path=release_path,
+                backend=self.backend,
+                decision_timestamp_s=decision_at,
+                label_mode=self.label_mode,
+                manual_annotation=request_annotation(
+                    mode=self.label_mode, provider=self.manual_label_provider,
+                    stage="insertion_success",
+                    evidence_dirs=(initial, final),
+                    attempt_id=attempt.attempt_id,
+                    candidate_id=attempt.candidate_id),
+                **dict(self.final_parameters))
 
     def handlers(self) -> dict[str, ActionHandler]:
         return {

@@ -29,6 +29,7 @@ from scipy.stats import chi2
 from .geometry import validate_se3
 from .grounding_crop import make_native_grounding_crop
 from .observer import ImageVLM, VLMObservation, _backend_model, _parse_object
+from .timing_profile import timed
 from .xy_overlay import CalibratedXYFrame
 
 NEXT_TRIAL_XY_MAX_STEP_M = 0.010
@@ -476,7 +477,10 @@ def observe_grounded_key_axis(
             "Coordinates are original-image pixel centres, origin top-left."
         )
         started = time.perf_counter()
-        answer = backend.infer([frame.raw], prompt)
+        with timed("vlm.infer", phase="vlm", kind="inference",
+                   stage="grounded_landmark", camera_id=frame.camera_id,
+                   model=_backend_model(backend), image_count=1):
+            answer = backend.infer([frame.raw], prompt)
         latency = time.perf_counter() - started
         if not isinstance(answer, str):
             raise TypeError("VLM backend must return text")
@@ -813,7 +817,10 @@ def _observe_grounded_axis_line(
             f"{coordinate_description}"
         )
         started = time.perf_counter()
-        answer = backend.infer([frame.raw], prompt)
+        with timed("vlm.infer", phase="vlm", kind="inference",
+                   stage="grounded_axis", camera_id=frame.camera_id,
+                   model=_backend_model(backend), image_count=1):
+            answer = backend.infer([frame.raw], prompt)
         latency = time.perf_counter() - started
         if not isinstance(answer, str):
             raise TypeError("VLM backend must return text")

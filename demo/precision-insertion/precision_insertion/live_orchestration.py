@@ -9,7 +9,7 @@ robot controller or trial-motion policy is constructed here.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -27,6 +27,7 @@ from .live_session_start import StartedPrecisionSession
 from .session_launch import (
     OpenSessionCameras, load_session_launch, open_session_cameras,
 )
+from .timing_profile import timed
 
 
 @dataclass(frozen=True)
@@ -95,7 +96,8 @@ def open_live_precision_session(
     board/socket evidence exists. If that check fails, the captured evidence
     is retained and all camera connections are still closed.
     """
-    launch = load_session_launch(launch_config_path)
+    with timed("startup.launch_config", phase="startup", kind="io"):
+        launch = load_session_launch(launch_config_path)
     if launch.mode.family != "cylinder":
         raise ValueError("live insertion currently supports cylinder mode only")
     if getattr(launch, "execution_scope", "live") != "live":
@@ -127,24 +129,35 @@ def open_live_precision_session(
     # Reject a stale/incomplete v8 pool before a slow board/socket capture.
     # ``open_verified_session`` repeats this check after capture and binds the
     # measured fixture to the catalogue's exact socket mesh.
-    preflight_endpoint_catalog_file(
-        mode=launch.mode, shared_root=launch.shared_root,
-        catalog_path=catalog)
+    with timed("startup.catalog_precheck", phase="startup", kind="io"):
+        preflight_endpoint_catalog_file(
+            mode=launch.mode, shared_root=launch.shared_root,
+            catalog_path=catalog)
     # Stock AutoDex free-space home is appropriate only before the session's
     # first exposure, not after a failed insertion or tabletop release.
-    clear_view.prepare_initial()
-    with open_autodex_camera_stream(
-            launch.pc_list, name="precision_insertion_live"):
-        with open_session_cameras(
+    with timed("startup.clear_view", phase="startup", kind="motion"):
+        clear_view.prepare_initial()
+    resources = ExitStack()
+    try:
+        with timed("startup.camera_stream_open", phase="startup", kind="io"):
+            resources.enter_context(open_autodex_camera_stream(
+                launch.pc_list, name="precision_insertion_live"))
+        with timed("startup.camera_transport_open", phase="startup", kind="io"):
+            cameras = resources.enter_context(open_session_cameras(
                 launch, **({} if init_ports is None else
-                           {"init_ports": init_ports})) as cameras:
+                           {"init_ports": init_ports})))
+        with timed("startup.board_socket_session", phase="startup"):
             started = cameras.start()
+        with timed("startup.session_ledger_open", phase="startup", kind="io"):
             opened = open_verified_session(
                 mode=launch.mode, shared_root=launch.shared_root,
                 evidence_dir=started.evidence_dir, catalog_path=catalog,
                 output_dir=output, max_xy_retries=max_xy_retries,
                 xy_update_weight=xy_update_weight)
-            yield LivePrecisionSession(started, opened, cameras, clear_view)
+        yield LivePrecisionSession(started, opened, cameras, clear_view)
+    finally:
+        with timed("cleanup.camera_resources", phase="cleanup", kind="io"):
+            resources.close()
 
 
 def run_live_precision_session(
@@ -182,8 +195,14 @@ def run_live_precision_session(
         if (confirm_initial_key_placement is not None and
                 live.opened.runner.current_decision().action ==
                 "capture_fresh_key" and
-                confirm_initial_key_placement() is not True):
+            not _confirmed_key_placement(confirm_initial_key_placement)):
             raise RuntimeError("operator did not confirm initial key placement")
-        return run_session_actions(
-            live.opened.runner, handlers=build_handlers(live),
-            max_steps=max_steps)
+        with timed("live.action_loop", phase="trial"):
+            return run_session_actions(
+                live.opened.runner, handlers=build_handlers(live),
+                max_steps=max_steps)
+
+
+def _confirmed_key_placement(confirm: Callable[[], bool]) -> bool:
+    with timed("startup.key_placement_wait", phase="startup", kind="operator"):
+        return confirm() is True

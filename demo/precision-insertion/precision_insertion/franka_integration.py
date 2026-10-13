@@ -29,6 +29,7 @@ from .live_runtime import LiveRuntimeIntegration, RunLiveOptions
 from .labeling import terminal_label_provider
 from .observer import load_vlm_backend
 from .runtime_assembly import assemble_live_components
+from .timing_profile import timed
 
 
 _SCHEMA = "precision_insertion_franka_integration_v1"
@@ -189,7 +190,8 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
         raise ValueError("built-in FR3 integration needs --robot-config")
     if options.enable_robot_motion is not True:
         raise PermissionError("FR3 integration needs explicit robot-motion opt-in")
-    parsed = load_franka_integration_config(options.robot_config_path)
+    with timed("startup.robot_config", phase="startup", kind="io"):
+        parsed = load_franka_integration_config(options.robot_config_path)
     # Parse/import all static inputs before touching CUDA or a robot daemon.
     feedback = parsed["feedback"]
     sampling = parsed["sampling"]
@@ -197,16 +199,19 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     lift_monitor = parsed["lift_monitor"]
     held_motion_monitor = parsed["held_motion_monitor"]
     build_stages = parsed["build_stages"]
-    core = open_franka_core(feedback)
+    with timed("startup.franka_planner_core", phase="startup"):
+        core = open_franka_core(feedback)
     if sampling is not None:
         try:
-            core.start_feedback_sampler(sampling)
+            with timed("startup.feedback_sampler", phase="startup"):
+                core.start_feedback_sampler(sampling)
         except BaseException:
             core.close()
             raise
 
     def components(live):
-        parameters = build_stages(core, live, options)
+        with timed("startup.robot_pc_stage_factory", phase="startup"):
+            parameters = build_stages(core, live, options)
         if (not isinstance(parameters, Mapping) or
                 set(parameters) not in (
                     {"shared", "stages"},
@@ -231,11 +236,12 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             model_id = (vlm["model_id"] or str(
                 live.cameras.launch.shared_root /
                 "AutoDex/models/Qwen3-VL-2B-Instruct"))
-            shared["backend"] = load_vlm_backend(
-                mode=vlm["mode"], model_id=model_id,
-                max_input_size=native_ceiling,
-                max_new_tokens=vlm["max_new_tokens"],
-                require_native_pixels=vlm["require_native_pixels"])
+            with timed("startup.vlm_model_load", phase="startup"):
+                shared["backend"] = load_vlm_backend(
+                    mode=vlm["mode"], model_id=model_id,
+                    max_input_size=native_ceiling,
+                    max_new_tokens=vlm["max_new_tokens"],
+                    require_native_pixels=vlm["require_native_pixels"])
         shared.update(planner=core.planner, read_state=core.read_state)
         if core.sampler is not None:
             shared.update(
@@ -332,14 +338,15 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 limits=limits)
             for stage, field in missing:
                 stages[stage][field] = adapter
-        return assemble_live_components(
-            live, shared=shared,
-            stages=stages,
-            enable_robot_motion=options.enable_robot_motion,
-            held_relation_route=parameters.get("held_relation_route", "auto"),
-            label_mode=options.label_mode,
-            manual_label_provider=(
-                terminal_label_provider(options.annotator)
-                if options.label_mode == "manual" else None))
+        with timed("startup.assemble_components", phase="startup"):
+            return assemble_live_components(
+                live, shared=shared,
+                stages=stages,
+                enable_robot_motion=options.enable_robot_motion,
+                held_relation_route=parameters.get("held_relation_route", "auto"),
+                label_mode=options.label_mode,
+                manual_label_provider=(
+                    terminal_label_provider(options.annotator)
+                    if options.label_mode == "manual" else None))
 
     return LiveRuntimeIntegration(core.clear_view, components, core.close)

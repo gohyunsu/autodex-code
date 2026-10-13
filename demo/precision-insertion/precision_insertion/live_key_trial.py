@@ -33,6 +33,7 @@ from .registered_key_capture import (
 from .session_runner import SessionRunner
 from .silhouette_compat import prepare_key_silhouette
 from .trial_preflight import TrialPreflight
+from .timing_profile import timed
 
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -124,28 +125,31 @@ def _capture_admitted_key(
                 getattr(registered_key_assistance.foundpose_model,
                         "obj_name", None) != runner.mode.key_object):
             raise ValueError("ROI assistance differs from opened key session")
-    prepare_key_silhouette(
-        init_orchestrator=init_orchestrator,
-        object_name=runner.mode.key_object, raw_mesh=mesh)
-    init_orchestrator.init_object(
-        obj_name=runner.mode.key_object, mesh_path=str(mesh),
-        assets_root=str(paths.foundpose_assets_root(runner.mode.key_object)),
-        intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
-        image_hw=image_hw, mode="live", load_silhouette=False)
+    with timed("key.model_init", phase="key"):
+        prepare_key_silhouette(
+            init_orchestrator=init_orchestrator,
+            object_name=runner.mode.key_object, raw_mesh=mesh)
+        init_orchestrator.init_object(
+            obj_name=runner.mode.key_object, mesh_path=str(mesh),
+            assets_root=str(paths.foundpose_assets_root(runner.mode.key_object)),
+            intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
+            image_hw=image_hw, mode="live", load_silhouette=False)
     validate_session_camera_calibration(
         runner.calibration,
         intrinsics_undist=init_orchestrator.intrinsics_undist,
         extrinsics_full=init_orchestrator.extrinsics,
         calibrated_camera_ids=calibrated_camera_ids)
-    capture = collect_key_capture(
-        init_orchestrator=init_orchestrator,
-        key_object=runner.mode.key_object, capture_id=capture_id,
-        key_prompt=key_prompt, capture_root=root.resolve(),
-        calibrated_camera_ids=calibrated_camera_ids,
-        acquisition_metadata_for_request=acquisition_metadata_for_request,
-        timeout_s=float(capture_timeout_s),
-        image_write_timeout_s=float(image_write_timeout_s),
-        request_id_factory=request_id_factory)
+    with timed("key.capture", phase="key", kind="camera",
+               capture_id=capture_id, camera_count=len(calibrated_camera_ids)):
+        capture = collect_key_capture(
+            init_orchestrator=init_orchestrator,
+            key_object=runner.mode.key_object, capture_id=capture_id,
+            key_prompt=key_prompt, capture_root=root.resolve(),
+            calibrated_camera_ids=calibrated_camera_ids,
+            acquisition_metadata_for_request=acquisition_metadata_for_request,
+            timeout_s=float(capture_timeout_s),
+            image_write_timeout_s=float(image_write_timeout_s),
+            request_id_factory=request_id_factory)
     derivation = None
     if registered_key_assistance is not None:
         capture, derivation = derive_registered_key_capture(
@@ -156,28 +160,30 @@ def _capture_admitted_key(
         diagnostic_dir = write_registered_key_diagnostic(
             capture=capture, derivation_report=derivation)
         verify_registered_key_diagnostic(diagnostic_dir)
-    observation = admit_key_capture(
-        capture=capture, init_orchestrator=init_orchestrator,
-        mode=runner.mode, shared_root=runner.shared_root,
-        calibration=runner.calibration,
-        calibrated_camera_ids=calibrated_camera_ids,
-        view_limits=view_limits,
-        maximum_multiview_center_error_mm=maximum_multiview_center_error_mm,
-        maximum_multiview_angle_error_deg=maximum_multiview_angle_error_deg,
-        maximum_socket_mask_overlap_fraction=(
-            maximum_socket_mask_overlap_fraction),
-        socket_projection_dilation_px=socket_projection_dilation_px,
-        minimum_refinement_iou=minimum_refinement_iou,
-        silhouette_iterations=silhouette_iterations,
-        silhouette_loss_threshold=silhouette_loss_threshold)
+    with timed("key.pose_admission", phase="key"):
+        observation = admit_key_capture(
+            capture=capture, init_orchestrator=init_orchestrator,
+            mode=runner.mode, shared_root=runner.shared_root,
+            calibration=runner.calibration,
+            calibrated_camera_ids=calibrated_camera_ids,
+            view_limits=view_limits,
+            maximum_multiview_center_error_mm=maximum_multiview_center_error_mm,
+            maximum_multiview_angle_error_deg=maximum_multiview_angle_error_deg,
+            maximum_socket_mask_overlap_fraction=(
+                maximum_socket_mask_overlap_fraction),
+            socket_projection_dilation_px=socket_projection_dilation_px,
+            minimum_refinement_iou=minimum_refinement_iou,
+            silhouette_iterations=silhouette_iterations,
+            silhouette_loss_threshold=silhouette_loss_threshold)
     if observation.phase != "tabletop":
         raise ValueError("key capture requires a tabletop observation")
-    if derivation is None:
-        write_key_capture_artifacts(capture, observation, output)
-    else:
-        write_key_capture_artifacts(
-            capture, observation, output, derivation_report=derivation)
-    verify_key_capture_artifacts(output)
+    with timed("key.evidence_write_verify", phase="key", kind="io"):
+        if derivation is None:
+            write_key_capture_artifacts(capture, observation, output)
+        else:
+            write_key_capture_artifacts(
+                capture, observation, output, derivation_report=derivation)
+        verify_key_capture_artifacts(output)
     return observation
 
 
@@ -398,19 +404,20 @@ def prepare_next_live_key(
     observation.require_state_alignment(
         state_timestamp_s=state.sample_timestamp_s,
         maximum_skew_s=max_key_state_skew_s)
-    preflight = runner.preflight_next_key(
-        planner=planner, key_observation=observation,
-        key_evidence_dir=output, live_start_q=state.full_q.copy(),
-        start_q_acquisition_timestamp_s=state.sample_timestamp_s,
-        measured_start_state=state,
-        measured_state_limits={
-            "max_arm_hand_skew_s": max_arm_hand_skew_s,
-            "max_hand_command_error_raw": max_hand_command_error_raw,
-            "max_arm_velocity_rad_s": max_arm_velocity_rad_s,
-        },
-        max_key_state_skew_s=max_key_state_skew_s, limits=limits,
-        max_pose_error_deg=max_pose_error_deg,
-        axial_waypoint_step_m=axial_waypoint_step_m,
-        max_candidate_attempts=max_candidate_attempts,
-        **dict(planning_options))
+    with timed("key.candidate_preflight", phase="planning", kind="planning"):
+        preflight = runner.preflight_next_key(
+            planner=planner, key_observation=observation,
+            key_evidence_dir=output, live_start_q=state.full_q.copy(),
+            start_q_acquisition_timestamp_s=state.sample_timestamp_s,
+            measured_start_state=state,
+            measured_state_limits={
+                "max_arm_hand_skew_s": max_arm_hand_skew_s,
+                "max_hand_command_error_raw": max_hand_command_error_raw,
+                "max_arm_velocity_rad_s": max_arm_velocity_rad_s,
+            },
+            max_key_state_skew_s=max_key_state_skew_s, limits=limits,
+            max_pose_error_deg=max_pose_error_deg,
+            axial_waypoint_step_m=axial_waypoint_step_m,
+            max_candidate_attempts=max_candidate_attempts,
+            **dict(planning_options))
     return PreparedLiveKeyTrial(observation, state, preflight, output)

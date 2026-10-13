@@ -14,6 +14,7 @@ from itertools import count
 from typing import Callable, Mapping, Protocol
 
 from .session_policy import SessionDecision
+from .timing_profile import timed
 
 
 class DecisionRunner(Protocol):
@@ -77,7 +78,9 @@ def run_session_actions(
         handler = handlers.get(decision.action)
         if handler is None:
             return ActionLoopResult("needs_handler", decision, tuple(visited))
-        handler(runner, decision)
+        with timed(f"action.{decision.action}", phase="trial",
+                   kind="action", candidate_id=decision.candidate_id):
+            handler(runner, decision)
         after = runner.current_decision()
         if not isinstance(after, SessionDecision):
             raise TypeError("runner returned no SessionDecision")

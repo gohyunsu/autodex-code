@@ -16,6 +16,7 @@ from .action_loop import ActionHandler
 from .live_key_trial import PreparedLiveKeyTrial, prepare_next_live_key
 from .session_policy import SessionDecision
 from .prompt_contract import reject_incorrect_object_color
+from .timing_profile import timed
 
 
 def _new_capture_id() -> str:
@@ -89,7 +90,8 @@ class LiveKeyPlanningHandlers:
         self._require_decision(
             runner, decision,
             frozenset({"capture_fresh_key", "reobserve_key_and_preflight"}))
-        self.live.clear_view.before_key_capture()
+        with timed("key.clear_view", phase="key", kind="motion"):
+            self.live.clear_view.before_key_capture()
         capture_id = self.capture_id_factory()
         launch = self.live.cameras.launch
 
@@ -126,23 +128,25 @@ class LiveKeyPlanningHandlers:
         parameters = self.key_parameters
         state = previous.state
         options = parameters.get("planning_options")
-        result = runner.preflight_next_key(
-            planner=self.planner,
-            key_observation=previous.observation,
-            key_evidence_dir=previous.key_evidence_dir,
-            live_start_q=state.full_q.copy(),
-            start_q_acquisition_timestamp_s=state.sample_timestamp_s,
-            measured_start_state=state,
-            measured_state_limits={
-                key: parameters[key] for key in (
-                    "max_arm_hand_skew_s", "max_hand_command_error_raw",
-                    "max_arm_velocity_rad_s")},
-            max_key_state_skew_s=parameters["max_key_state_skew_s"],
-            limits=self.limits,
-            max_pose_error_deg=parameters["max_pose_error_deg"],
-            axial_waypoint_step_m=parameters["axial_waypoint_step_m"],
-            max_candidate_attempts=None,
-            **({} if options is None else dict(options)))
+        with timed("key.candidate_preflight", phase="planning", kind="planning",
+                   continued=True):
+            result = runner.preflight_next_key(
+                planner=self.planner,
+                key_observation=previous.observation,
+                key_evidence_dir=previous.key_evidence_dir,
+                live_start_q=state.full_q.copy(),
+                start_q_acquisition_timestamp_s=state.sample_timestamp_s,
+                measured_start_state=state,
+                measured_state_limits={
+                    key: parameters[key] for key in (
+                        "max_arm_hand_skew_s", "max_hand_command_error_raw",
+                        "max_arm_velocity_rad_s")},
+                max_key_state_skew_s=parameters["max_key_state_skew_s"],
+                limits=self.limits,
+                max_pose_error_deg=parameters["max_pose_error_deg"],
+                axial_waypoint_step_m=parameters["axial_waypoint_step_m"],
+                max_candidate_attempts=None,
+                **({} if options is None else dict(options)))
         self.latest = PreparedLiveKeyTrial(
             previous.observation, state, result, previous.key_evidence_dir)
 

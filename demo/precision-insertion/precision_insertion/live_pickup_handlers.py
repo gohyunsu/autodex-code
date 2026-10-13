@@ -18,6 +18,7 @@ from .live_robot_state import LiveRobotState
 from .pickup_execution import PickupExecutionLimits, execute_bound_pickup
 from .recoverable_failure import acknowledged_failure
 from .session_policy import SessionDecision
+from .timing_profile import timed
 
 
 _MEASURED_LIFT_KEYS = frozenset({
@@ -91,12 +92,14 @@ class LivePickupHandlers:
         pickup_log = (Path(runner.output_dir) / "attempts" /
                       attempt.attempt_id / "pickup_execution.json")
         try:
-            execute_bound_pickup(
-                runner=runner, executor=self.executor, planner=self.planner,
-                pre_state=before, read_post_state=read_post_state,
-                limits=self.pickup_limits,
-                motion_interlock=self.motion_interlock,
-                enable_robot_motion=self.enable_robot_motion)
+            with timed("trial.pickup_squeeze", phase="trial", kind="motion",
+                       attempt_id=attempt.attempt_id):
+                execute_bound_pickup(
+                    runner=runner, executor=self.executor, planner=self.planner,
+                    pre_state=before, read_post_state=read_post_state,
+                    limits=self.pickup_limits,
+                    motion_interlock=self.motion_interlock,
+                    enable_robot_motion=self.enable_robot_motion)
         except Exception:
             if not acknowledged_failure(
                     pickup_log,
@@ -109,11 +112,13 @@ class LivePickupHandlers:
             return
         if not isinstance(after, LiveRobotState):
             raise RuntimeError("pickup completed without measured squeeze feedback")
-        chain = runner.prepare_measured_lift_chain(
-            planner=self.planner, pickup_execution_log=pickup_log,
-            joint_sample=after, bounds=self.lift_bounds,
-            limits=self.path_limits,
-            **dict(self.measured_lift_parameters))
+        with timed("trial.measured_lift_preflight", phase="planning",
+                   kind="planning", attempt_id=attempt.attempt_id):
+            chain = runner.prepare_measured_lift_chain(
+                planner=self.planner, pickup_execution_log=pickup_log,
+                joint_sample=after, bounds=self.lift_bounds,
+                limits=self.path_limits,
+                **dict(self.measured_lift_parameters))
         if chain.status not in {
                 "sampled_measured_chain_pass",
                 "sampled_nominal_measured_chain_pass"}:

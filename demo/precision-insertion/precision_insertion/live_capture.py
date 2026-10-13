@@ -24,6 +24,7 @@ import numpy as np
 from .frame_provenance import image_sha256, verify_frame_provenance
 from .prompt_contract import reject_incorrect_object_color
 from .session_bootstrap import SocketCaptureInput
+from .timing_profile import timed
 
 
 AcquisitionProvider = Callable[[int], Mapping]
@@ -81,9 +82,11 @@ def collect_board_snapshot(
         raise ValueError("unsafe calibrated camera ID")
     request_id = _request_id(request_id_factory or (
         lambda: secrets.randbelow(2**31 - 1) + 1))
-    payload, timing = snapshot_orchestrator.snap(
-        n_expected=len(calibrated_camera_ids), timeout_s=timeout_s,
-        request_id=request_id, decode=True)
+    with timed("camera.board_snapshot_request", phase="camera", kind="network",
+               camera_count=len(calibrated_camera_ids)):
+        payload, timing = snapshot_orchestrator.snap(
+            n_expected=len(calibrated_camera_ids), timeout_s=timeout_s,
+            request_id=request_id, decode=True)
     if (not isinstance(timing, Mapping) or
             timing.get("request_id") != request_id):
         raise ValueError("board snapshot request ID mismatch")
@@ -98,9 +101,11 @@ def collect_board_snapshot(
             raise ValueError(f"board snapshot camera {serial} has no BGR frame")
         images[serial] = image
         frame_ids[serial] = entry.get("frame_id")
-    evidence = verify_frame_provenance(
-        acquisition_metadata_for_request(request_id), request_id=request_id,
-        images_bgr=images, frame_ids=frame_ids)
+    with timed("camera.board_frame_provenance", phase="camera", kind="io",
+               camera_count=len(images)):
+        evidence = verify_frame_provenance(
+            acquisition_metadata_for_request(request_id), request_id=request_id,
+            images_bgr=images, frame_ids=frame_ids)
     times = {serial: row["timestamp_s"] for serial, row in evidence.items()}
     return BoardSnapshotInput(
         request_id, images, times, "camera_acquisition", evidence)
@@ -185,10 +190,13 @@ def collect_socket_capture(
         f"{capture_id}_request_{request_id}")
     if capture_dir.exists():
         raise FileExistsError(f"socket capture path already exists: {capture_dir}")
-    masks, poses, timing = init_orchestrator.collect_payloads(
-        prompt=socket_prompt, request_id=request_id,
-        n_expected_serials=len(calibrated_camera_ids), timeout_s=timeout_s,
-        save_capture_dir=str(capture_dir))
+    with timed("camera.foundpose_request", phase="camera", kind="network",
+               capture_id=capture_id, object_name=socket_object,
+               camera_count=len(calibrated_camera_ids)):
+        masks, poses, timing = init_orchestrator.collect_payloads(
+            prompt=socket_prompt, request_id=request_id,
+            n_expected_serials=len(calibrated_camera_ids), timeout_s=timeout_s,
+            save_capture_dir=str(capture_dir))
     if (not isinstance(timing, Mapping) or
             timing.get("request_id") != request_id):
         raise ValueError("FoundPose request ID mismatch")
@@ -197,26 +205,30 @@ def collect_socket_capture(
     payload_ids = set(masks) | set(poses)
     if not payload_ids or payload_ids - calibrated_camera_ids:
         raise ValueError("FoundPose has no calibrated camera payloads")
-    images = _load_saved_frames(
-        capture_dir, payload_ids, image_write_timeout_s)
+    with timed("camera.saved_frame_wait", phase="camera", kind="io",
+               capture_id=capture_id, camera_count=len(payload_ids)):
+        images = _load_saved_frames(
+            capture_dir, payload_ids, image_write_timeout_s)
     frame_ids = {}
-    for serial in images:
-        mask = masks.get(serial, {})
-        pose = poses.get(serial, {})
-        mask_fid = mask.get("frame_id")
-        pose_fid = pose.get("frame_id")
-        if mask_fid != pose_fid:
-            raise ValueError(f"SAM/FoundPose frame ID mismatch for {serial}")
-        digest = image_sha256(images[serial])
-        if any(row.get("image_sha256") != digest or
-               row.get("image_space") != "autodex_undistorted_full_frame"
-               for row in (mask, pose)):
-            raise ValueError(
-                f"SAM/FoundPose source pixels differ from saved frame: {serial}")
-        frame_ids[serial] = mask_fid
-    evidence = verify_frame_provenance(
-        acquisition_metadata_for_request(request_id), request_id=request_id,
-        images_bgr=images, frame_ids=frame_ids)
+    with timed("camera.frame_binding_verify", phase="camera", kind="io",
+               capture_id=capture_id, camera_count=len(images)):
+        for serial in images:
+            mask = masks.get(serial, {})
+            pose = poses.get(serial, {})
+            mask_fid = mask.get("frame_id")
+            pose_fid = pose.get("frame_id")
+            if mask_fid != pose_fid:
+                raise ValueError(f"SAM/FoundPose frame ID mismatch for {serial}")
+            digest = image_sha256(images[serial])
+            if any(row.get("image_sha256") != digest or
+                   row.get("image_space") != "autodex_undistorted_full_frame"
+                   for row in (mask, pose)):
+                raise ValueError(
+                    f"SAM/FoundPose source pixels differ from saved frame: {serial}")
+            frame_ids[serial] = mask_fid
+        evidence = verify_frame_provenance(
+            acquisition_metadata_for_request(request_id), request_id=request_id,
+            images_bgr=images, frame_ids=frame_ids)
     times = {serial: row["timestamp_s"] for serial, row in evidence.items()}
     return SocketCaptureInput(
         capture_id, request_id, socket_prompt, images, dict(masks),

@@ -19,6 +19,7 @@ from typing import Protocol, Sequence
 from PIL import Image
 
 from .xy_voting import ViewVote, XYChoice, validate_choices
+from .timing_profile import timed
 
 
 class ImageVLM(Protocol):
@@ -406,7 +407,12 @@ def _infer_closed_set(
         "evidence must be one short string."
     )
     started = time.perf_counter()
-    answer = backend.infer([frame.image for frame in frames], prompt)
+    camera_ids = sorted({frame.camera_id for frame in frames})
+    with timed("vlm.infer", phase="vlm", kind="inference",
+               stage=stage, camera_id=(camera_ids[0] if len(camera_ids) == 1
+                                      else "multiple"), camera_ids=camera_ids,
+               image_count=len(frames), model=_backend_model(backend)):
+        answer = backend.infer([frame.image for frame in frames], prompt)
     latency = time.perf_counter() - started
     if not isinstance(answer, str):
         raise TypeError("VLM backend must return text")
@@ -905,7 +911,10 @@ def observe_xy_views(
             "one value. Set evidence to one short visual phrase."
         )
         started = time.perf_counter()
-        answer = backend.infer([view.raw, view.overlay], prompt)
+        with timed("vlm.infer", phase="vlm", kind="inference",
+                   stage="legacy_xy_choice", camera_id=view.camera_id,
+                   image_count=2, model=_backend_model(backend)):
+            answer = backend.infer([view.raw, view.overlay], prompt)
         latency = time.perf_counter() - started
         if not isinstance(answer, str):
             raise TypeError("VLM backend must return text")

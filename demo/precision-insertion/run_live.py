@@ -26,6 +26,9 @@ from precision_insertion.live_runtime import (  # noqa: E402
     RunLiveOptions, inspect_live_inputs, run_integrated_live_session,
 )
 from precision_insertion.session_launch import load_session_launch  # noqa: E402
+from precision_insertion.timing_profile import (  # noqa: E402
+    profile_run, timed, timing_directory,
+)
 
 
 _EXP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -114,12 +117,17 @@ def main(argv: list[str] | None = None) -> int:
         robot_config_path=args.robot_config,
         label_mode=args.label_mode, annotator=args.annotator,
         init_ports=init_ports)
-    result = run_integrated_live_session(
-        options, integration_spec=args.integration)
+    with profile_run(output_dir) as profile:
+        with timed("live.session", phase="session"):
+            result = run_integrated_live_session(
+                options, integration_spec=args.integration)
+        if result.status != "success":
+            profile.outcome = result.status
     payload = result.to_record()
     output = options.run_output_dir.expanduser().resolve()
     payload["exp_name"] = args.exp_name
     payload["run_output_dir"] = str(output)
+    payload["timing_dir"] = str(timing_directory(output))
     report_path = output / "action_loop_result.json"
     with report_path.open("x", encoding="utf-8") as stream:
         json.dump(payload, stream, indent=2, sort_keys=True, allow_nan=False)

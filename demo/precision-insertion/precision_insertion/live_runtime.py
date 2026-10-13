@@ -18,6 +18,7 @@ from .action_loop import ActionLoopResult
 from .labeling import LABEL_MODES
 from .session_launch import load_session_launch
 from .live_session_runner import preflight_endpoint_catalog_file
+from .timing_profile import timed
 
 
 @dataclass(frozen=True)
@@ -180,21 +181,25 @@ def run_integrated_live_session(
         raise ValueError("live insertion currently supports cylinder mode only")
     if getattr(launch, "execution_scope", "live") != "live":
         raise PermissionError("static preflight launch cannot start robot motion")
-    integration = load_runtime_integration(integration_spec, options)
+    with timed("startup.integration_factory", phase="startup"):
+        integration = load_runtime_integration(integration_spec, options)
     try:
         def handlers(live: LivePrecisionSession):
-            components = tuple(integration.build_components(live))
-            return compose_live_handlers(live, *components)
+            with timed("startup.build_handlers", phase="startup"):
+                components = tuple(integration.build_components(live))
+                return compose_live_handlers(live, *components)
 
-        return run_live_precision_session(
-            launch_config_path=options.launch_config_path,
-            endpoint_catalog_path=options.endpoint_catalog_path,
-            run_output_dir=options.run_output_dir,
-            max_xy_retries=options.max_xy_retries,
-            xy_update_weight=options.xy_update_weight,
-            clear_view=integration.clear_view,
-            build_handlers=handlers, max_steps=options.max_steps,
-            confirm_initial_key_placement=_confirm_initial_key_placement,
-            init_ports=options.init_ports)
+        with timed("live.orchestration", phase="session"):
+            return run_live_precision_session(
+                launch_config_path=options.launch_config_path,
+                endpoint_catalog_path=options.endpoint_catalog_path,
+                run_output_dir=options.run_output_dir,
+                max_xy_retries=options.max_xy_retries,
+                xy_update_weight=options.xy_update_weight,
+                clear_view=integration.clear_view,
+                build_handlers=handlers, max_steps=options.max_steps,
+                confirm_initial_key_placement=_confirm_initial_key_placement,
+                init_ports=options.init_ports)
     finally:
-        integration.close()
+        with timed("cleanup.integration_close", phase="cleanup", kind="io"):
+            integration.close()

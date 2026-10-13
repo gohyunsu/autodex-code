@@ -43,6 +43,9 @@ view, SAM mask and FoundPose result without opening the robot controller.
 For an implementation-level comparison with the local stock AutoDex v8
 pipeline, source inputs/outputs, active prompts and actual validation scope,
 see [CURRENT_V8_PIPELINE_REVIEW.md](CURRENT_V8_PIPELINE_REVIEW.md).
+For run-by-run startup, socket, planning, motion, VLM and NAS-I/O timing,
+including the report command and optimization experiments, see
+[TIMING_PROFILE.md](TIMING_PROFILE.md).
 
 For a concise distinction between **offline-usable**, staging-only and
 missing assets, see [OFFLINE_ASSET_STATUS.md](OFFLINE_ASSET_STATUS.md). It

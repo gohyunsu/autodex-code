@@ -22,6 +22,7 @@ from .raw_camera_capture import (
 )
 from .recoverable_failure import acknowledged_failure
 from .session_policy import SessionDecision
+from .timing_profile import timed
 
 
 _ASSESS_KEYS = frozenset({
@@ -91,12 +92,14 @@ class LiveLiftHandlers:
         failure_path = (Path(runner.output_dir) / "attempts" /
                         attempt.attempt_id / "lift_failure.json")
         try:
-            execute_bound_measured_lift(
-                runner=runner, adapter=self.adapter, pre_state=before,
-                read_post_state=self.read_state, limits=self.limits,
-                commissioning_record_path=self.commissioning_record_path,
-                motion_interlock=self.motion_interlock,
-                enable_robot_motion=self.enable_robot_motion)
+            with timed("trial.lift_motion", phase="trial", kind="motion",
+                       attempt_id=attempt.attempt_id):
+                execute_bound_measured_lift(
+                    runner=runner, adapter=self.adapter, pre_state=before,
+                    read_post_state=self.read_state, limits=self.limits,
+                    commissioning_record_path=self.commissioning_record_path,
+                    motion_interlock=self.motion_interlock,
+                    enable_robot_motion=self.enable_robot_motion)
         except Exception:
             if not acknowledged_failure(
                     failure_path,
@@ -113,7 +116,9 @@ class LiveLiftHandlers:
             return
         lift_log = (Path(runner.output_dir) / "attempts" /
                     attempt.attempt_id / "lift_execution.json")
-        capture = self.capture_after_lift(self.live, runner, decision)
+        with timed("trial.after_lift_capture", phase="trial", kind="camera",
+                   attempt_id=attempt.attempt_id):
+            capture = self.capture_after_lift(self.live, runner, decision)
         if not isinstance(capture, RawCameraCapture):
             raise TypeError("post-lift AutoDex cameras returned no raw capture")
         camera_ids = set(self.live.cameras.launch.camera_ids)
@@ -129,21 +134,22 @@ class LiveLiftHandlers:
         if not isinstance(exposure_state, LiveRobotState):
             raise TypeError("post-lift camera exposure lacks measured robot state")
         assessment_index = getattr(runner, "_lift_assessment_index", None)
-        checkpoint = runner.prepare_raw_lift_label(
-            after_raw_evidence_dir=evidence_dir,
-            joint_sample=exposure_state, backend=self.backend,
-            lift_execution_log_path=lift_log,
-            decision_timestamp_s=self.decision_time(),
-            label_mode=self.label_mode,
-            manual_annotation=request_annotation(
-                mode=self.label_mode, provider=self.manual_label_provider,
-                stage="grasp_success",
-                evidence_dirs=(
-                    (Path(runner._key_evidence_dir), evidence_dir)
-                    if self.label_mode == "manual" else (evidence_dir,)),
-                attempt_id=attempt.attempt_id,
-                candidate_id=attempt.candidate_id),
-            **dict(self.assessment_parameters))
+        with timed("trial.lift_label", phase="trial", attempt_id=attempt.attempt_id):
+            checkpoint = runner.prepare_raw_lift_label(
+                after_raw_evidence_dir=evidence_dir,
+                joint_sample=exposure_state, backend=self.backend,
+                lift_execution_log_path=lift_log,
+                decision_timestamp_s=self.decision_time(),
+                label_mode=self.label_mode,
+                manual_annotation=request_annotation(
+                    mode=self.label_mode, provider=self.manual_label_provider,
+                    stage="grasp_success",
+                    evidence_dirs=(
+                        (Path(runner._key_evidence_dir), evidence_dir)
+                        if self.label_mode == "manual" else (evidence_dir,)),
+                    attempt_id=attempt.attempt_id,
+                    candidate_id=attempt.candidate_id),
+                **dict(self.assessment_parameters))
         if checkpoint.grasp_success is None:
             if type(assessment_index) is not int:
                 raise ValueError("unknown lift verdict lacks a saved assessment index")

@@ -19,6 +19,7 @@ from .config import TaskMode
 from .session_bootstrap import verify_session_evidence_bundle
 from .session_runner import SessionRunner
 from .session_policy import SessionDecision
+from .timing_profile import timed
 
 
 @dataclass(frozen=True)
@@ -65,12 +66,14 @@ def preflight_endpoint_catalog_file(
     # Verify every indexed pose, including poses with no eligible grasp.
     # This reuses the existing v8 source-hash and endpoint-algorithm checks.
     for stem in sorted({row["tabletop_pose_stem"] for row in rows}):
-        selection = select_pose_candidates(
-            catalog, expected_mode=mode, tabletop_pose_stem=stem)
-        if selection["status"] not in {
-                "candidates_available", "no_eligible_in_screened_pool"}:
-            raise ValueError(f"v8 catalog is stale for pose {stem}: "
-                             f"{selection['status']}")
+        with timed("catalog.pose_source_validation", phase="catalog", kind="io",
+                   tabletop_pose_stem=stem):
+            selection = select_pose_candidates(
+                catalog, expected_mode=mode, tabletop_pose_stem=stem)
+            if selection["status"] not in {
+                    "candidates_available", "no_eligible_in_screened_pool"}:
+                raise ValueError(f"v8 catalog is stale for pose {stem}: "
+                                 f"{selection['status']}")
     return catalog
 
 
@@ -116,25 +119,28 @@ def open_verified_session(
     for name, path in required.items():
         if not path.is_file():
             raise FileNotFoundError(f"{name} is missing: {path}")
-    manifest = verify_session_evidence_bundle(source)
+    with timed("ledger.evidence_verify", phase="ledger", kind="io"):
+        manifest = verify_session_evidence_bundle(source)
     if (manifest.get("all_frames_bound_to_acquisition_evidence") is not True or
             len(manifest.get("socket_capture_ids", [])) < 2):
         raise ValueError("session lacks repeated acquisition-bound socket captures")
     calibration_path = source / "session_calibration.json"
     calibration = load_session_calibration(
         calibration_path, mode=mode, shared_root=root)
-    catalog = preflight_endpoint_catalog_file(
-        mode=mode, shared_root=root, catalog_path=catalog_file)
+    with timed("ledger.catalog_recheck", phase="ledger", kind="io"):
+        catalog = preflight_endpoint_catalog_file(
+            mode=mode, shared_root=root, catalog_path=catalog_file)
     validate_catalog_session(catalog, mode=mode,
                              session_record=calibration.record)
-    source_hashes = {
-        "session_manifest_sha256": _sha(source / "evidence_manifest.json"),
-        "session_calibration_sha256": _sha(calibration_path),
-        "catalog_source_sha256": _sha(catalog_file),
-        "key_foundpose_sha256": _sha(required["key FoundPose representation"]),
-        "socket_foundpose_sha256": _sha(
-            required["socket FoundPose representation"]),
-    }
+    with timed("ledger.source_hash_binding", phase="ledger", kind="io"):
+        source_hashes = {
+            "session_manifest_sha256": _sha(source / "evidence_manifest.json"),
+            "session_calibration_sha256": _sha(calibration_path),
+            "catalog_source_sha256": _sha(catalog_file),
+            "key_foundpose_sha256": _sha(required["key FoundPose representation"]),
+            "socket_foundpose_sha256": _sha(
+                required["socket FoundPose representation"]),
+        }
 
     # All inputs are checked before the SessionRunner creates any output.
     runner = SessionRunner(

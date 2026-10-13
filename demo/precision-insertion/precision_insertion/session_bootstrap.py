@@ -23,6 +23,7 @@ from .calibration import (
 )
 from .config import TaskMode
 from .frame_provenance import bounded_capture_skew_s, verify_frame_provenance
+from .timing_profile import timed
 from .perception_evidence import (
     SocketCaptureEvidence, SocketViewLimits, admit_socket_capture,
 )
@@ -190,7 +191,9 @@ def bootstrap_session(
             calibrated_camera_ids=calibrated_camera_ids, limits=view_limits)
         admissions.append(admission)
         if socket_refiner is not None:
-            refined = socket_refiner(capture, admission)
+            with timed("socket.refine_capture", phase="socket",
+                       capture_id=capture_id):
+                refined = socket_refiner(capture, admission)
             if (not isinstance(refined, SocketCaptureRefinement) or
                     refined.capture_id != capture_id or
                     refined.request_id != request_id or
