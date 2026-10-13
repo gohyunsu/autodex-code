@@ -436,7 +436,9 @@ The camera-only key/socket diagnostic now captures the board and fixed socket
 with the current AutoDex session, pauses while the operator places the white
 key without moving the socket, then collects the same request's 20 raw key
 frames, SAM masks and FoundPose outputs. It uses the staged board-9/gap-20
-launch with a fresh evidence directory and **never opens FR3/Inspire**:
+launch with a fresh evidence directory and **never opens FR3/Inspire**. The
+CLI arms the idle capture PCs at the stock 10 FPS before the first image and
+stops/releases that camera stream on exit:
 
 ```bash
 cd /home/robot/autodex-precision-insertion
@@ -452,6 +454,13 @@ metadata, raw PNG digest, saved mask, prompt and FoundPose result. An empty
 mask or failed pose stays visible in the report. This is **camera-only QA**;
 it does not admit a key pose for robot motion, fabricate measured robot
 state, or prove socket/key pose accuracy. Inspect each view before pickup.
+At 12:35 on 2026-10-13, a fresh 20/20 camera snapshot succeeded after the
+capture PCs were armed. Its contact sheet and frame manifest are in
+`current_scene_snapshot_20261013_123549/` in the cylindrical staging root.
+The workspace was covered by a black cloth, so board 9, the socket and key
+were not visible in the downsampled preview. That capture is a scene check,
+not the required socket/key pose QA. The operator must restore the board and
+white socket before the camera-only diagnostic above can run.
 For a reproducible **historical NAS-frame** QA exercise (not a substitute
 for new recipient-camera frames), run:
 

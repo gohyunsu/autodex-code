@@ -17,6 +17,7 @@ from typing import Callable, Iterator, Mapping
 
 from .action_loop import ActionHandler, ActionLoopResult, run_session_actions
 from .clear_view import ClearViewForPerception
+from .camera_stream import open_autodex_camera_stream
 
 from .live_session_runner import (
     OpenedPrecisionSession, open_verified_session,
@@ -126,14 +127,16 @@ def open_live_precision_session(
     # Stock AutoDex free-space home is appropriate only before the session's
     # first exposure, not after a failed insertion or tabletop release.
     clear_view.prepare_initial()
-    with open_session_cameras(launch) as cameras:
-        started = cameras.start()
-        opened = open_verified_session(
-            mode=launch.mode, shared_root=launch.shared_root,
-            evidence_dir=started.evidence_dir, catalog_path=catalog,
-            output_dir=output, max_xy_retries=max_xy_retries,
-            xy_update_weight=xy_update_weight)
-        yield LivePrecisionSession(started, opened, cameras, clear_view)
+    with open_autodex_camera_stream(
+            launch.pc_list, name="precision_insertion_live"):
+        with open_session_cameras(launch) as cameras:
+            started = cameras.start()
+            opened = open_verified_session(
+                mode=launch.mode, shared_root=launch.shared_root,
+                evidence_dir=started.evidence_dir, catalog_path=catalog,
+                output_dir=output, max_xy_retries=max_xy_retries,
+                xy_update_weight=xy_update_weight)
+            yield LivePrecisionSession(started, opened, cameras, clear_view)
 
 
 def run_live_precision_session(

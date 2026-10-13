@@ -41,11 +41,24 @@ def _clear_view(events):
 
 def _patch_camera_lifetime(monkeypatch, events):
     launch = SimpleNamespace(
-        mode=SimpleNamespace(family="cylinder"), shared_root=Path("/shared"))
+        mode=SimpleNamespace(family="cylinder"), shared_root=Path("/shared"),
+        pc_list=("capture1", "capture2"))
     monkeypatch.setattr(orchestration, "load_session_launch",
                         lambda _path: launch)
     monkeypatch.setattr(orchestration, "preflight_endpoint_catalog_file",
                         lambda **_kwargs: events.append("catalog_preflight"))
+
+    @contextmanager
+    def stream(pc_list, *, name):
+        assert pc_list == launch.pc_list
+        assert name == "precision_insertion_live"
+        events.append("stream_open")
+        try:
+            yield object()
+        finally:
+            events.append("stream_close")
+
+    monkeypatch.setattr(orchestration, "open_autodex_camera_stream", stream)
 
     @contextmanager
     def cameras(received):
@@ -87,12 +100,12 @@ def test_live_session_keeps_same_camera_transport_for_next_key(
             launch_config_path=tmp_path / "launch.json",
             endpoint_catalog_path=catalog, run_output_dir=tmp_path / "new_run",
             max_xy_retries=2, clear_view=_clear_view(events)) as live:
-        assert events == ["catalog_preflight", "home_clear_view", "camera_open",
+        assert events == ["catalog_preflight", "home_clear_view", "stream_open", "camera_open",
                           "socket_frozen", "ledger_open"]
         assert live.opened is opened
         assert live.cameras.init_orchestrator == "same_init"
         assert live.cameras.acquisition_metadata_for_request == "same_provider"
-    assert events[-1] == "camera_close"
+    assert events[-2:] == ["camera_close", "stream_close"]
 
 
 @pytest.mark.parametrize("reason", ("missing_catalog", "existing_run",
@@ -137,8 +150,8 @@ def test_failed_session_catalog_binding_closes_camera_but_keeps_capture(
                 endpoint_catalog_path=catalog, run_output_dir=tmp_path / "run",
                 max_xy_retries=1, clear_view=_clear_view(events)):
             pytest.fail("catalog rejection must not yield")
-    assert events == ["catalog_preflight", "home_clear_view", "camera_open", "socket_frozen",
-                      "catalog_rejected", "camera_close"]
+    assert events == ["catalog_preflight", "home_clear_view", "stream_open", "camera_open", "socket_frozen",
+                      "catalog_rejected", "camera_close", "stream_close"]
 
 
 def test_stale_catalog_preflight_does_not_connect_cameras(tmp_path, monkeypatch):

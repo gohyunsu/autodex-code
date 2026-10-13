@@ -152,6 +152,10 @@ not invent exposure timestamps or measured robot state. The native-pixel
 setting pads only the right/bottom edge to Qwen's patch unit without moving
 source pixels. Images outside the model's pixel-area budget still need the
 existing pixel-preserving ROI route for metric grounding.
+The live session owns the stock AutoDex camera acquisition stream at its
+default 10 FPS while its snapshot/InitOrchestrator requests run. It starts
+that stream after the initial clear-view move and stops it on every exit.
+`SnapshotOrchestrator` alone does not arm idle camera daemons.
 For temporal lift, preinsert and released insertion labels, local Qwen receives
 one same-camera raw before/after pair per call, not all 20 camera pairs in one
 request. A positive visual class needs at least two independently agreeing

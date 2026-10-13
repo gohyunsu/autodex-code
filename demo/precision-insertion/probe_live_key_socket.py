@@ -11,6 +11,7 @@ from pathlib import Path
 from precision_insertion.key_socket_camera_qa import (
     DEFAULT_KEY_PROMPT, run_camera_only_key_socket_qa,
 )
+from precision_insertion.camera_stream import open_autodex_camera_stream
 from precision_insertion.session_launch import load_session_launch
 
 
@@ -38,13 +39,15 @@ def main(argv: list[str] | None = None) -> int:
         "Keep the board empty and the key absent")
     if not _confirm(f"{initial_scene}, keep the robot clear, then press Enter (q to cancel): "):
         return 2
-    report = run_camera_only_key_socket_qa(
-        launch=launch, key_prompt=args.key_prompt,
-        confirm_socket_placement=lambda: _confirm(
-            "Empty board accepted. Place the fixed white socket, then press Enter (q to cancel): "),
-        confirm_key_placement=lambda: _confirm(
-            "Socket measurement saved. Place the white cylindrical key without moving the socket, then press Enter (q to cancel): "),
-    )
+    with open_autodex_camera_stream(
+            launch.pc_list, name="precision_insertion_camera_only"):
+        report = run_camera_only_key_socket_qa(
+            launch=launch, key_prompt=args.key_prompt,
+            confirm_socket_placement=lambda: _confirm(
+                "Empty board accepted. Place the fixed white socket, then press Enter (q to cancel): "),
+            confirm_key_placement=lambda: _confirm(
+                "Socket measurement saved. Place the white cylindrical key without moving the socket, then press Enter (q to cancel): "),
+        )
     print(json.dumps({"report": str(report), "robot_ready": False}, indent=2))
     return 0
 
