@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 import sys
 import time
@@ -115,6 +116,13 @@ def test_static_preflight_launch_cannot_open_camera_capture(tmp_path, monkeypatc
     with pytest.raises(PermissionError, match="static preflight"):
         with launch.open_session_cameras(loaded):
             pytest.fail("static launch opened cameras")
+    diagnostic = replace(launch.load_session_launch(
+        config, evidence_dir_override=tmp_path / "new_camera_qa"),
+        execution_scope="camera_only_diagnostic")
+    assert diagnostic.evidence_dir == tmp_path / "new_camera_qa"
+    assert diagnostic.readiness()["execution_scope"] == "camera_only_diagnostic"
+    with pytest.raises(PermissionError, match="static preflight"):
+        launch.capture_session(diagnostic)
 
 
 def test_missing_one_camera_time_or_existing_output_stops_before_capture(

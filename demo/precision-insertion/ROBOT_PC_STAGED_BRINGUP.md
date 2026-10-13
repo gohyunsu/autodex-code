@@ -432,13 +432,26 @@ is `board9_partial_tabletop_probe.json` beside the JPEGs. These are internal
 fit residuals for the candidate calibration, not independent robot-frame
 accuracy. No key-with-socket image was captured in this probe.
 
-There is presently **no one-command, camera-only live key-with-socket trial**
-in this CLI: key capture is normally coupled to an exposure-aligned robot
-state and the live trial runner. Before physical pickup, review key-plus-
-socket masks in real recipient-camera images, using a saved-image perception
-probe or a robot-PC camera-only adapter that reuses the existing key
-admission code without fabricating a robot state. Do not report the
-socket-only `start-session --capture` as a successful key-perception test.
+The camera-only key/socket diagnostic now captures the board and fixed socket
+with the current AutoDex session, pauses while the operator places the white
+key without moving the socket, then collects the same request's 20 raw key
+frames, SAM masks and FoundPose outputs. It uses the staged board-9/gap-20
+launch with a fresh evidence directory and **never opens FR3/Inspire**:
+
+```bash
+cd /home/robot/autodex-precision-insertion
+QA_BASE=/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
+  demo/precision-insertion/probe_live_key_socket.py \
+  --launch-config "$QA_BASE/static_preflight_board9_gap20_20261013/launch.json" \
+  --evidence-dir "$QA_BASE/key_socket_camera_qa_$(date +%Y%m%d_%H%M%S)"
+```
+
+The exclusive `key_socket_qa/report.json` binds each frame's acquisition
+metadata, raw PNG digest, saved mask, prompt and FoundPose result. An empty
+mask or failed pose stays visible in the report. This is **camera-only QA**;
+it does not admit a key pose for robot motion, fabricate measured robot
+state, or prove socket/key pose accuracy. Inspect each view before pickup.
 For a reproducible **historical NAS-frame** QA exercise (not a substitute
 for new recipient-camera frames), run:
 

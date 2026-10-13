@@ -197,7 +197,9 @@ def _load_stock_camera_calibration(directory: Path, camera_ids: set[str]):
     return intrinsics, extrinsics, image_hw
 
 
-def load_session_launch(path: Path) -> SessionLaunch:
+def load_session_launch(
+    path: Path, *, evidence_dir_override: Path | None = None,
+) -> SessionLaunch:
     """Validate all static inputs without creating outputs or contacting cameras."""
     config_path = _path(str(path), name="launch config", kind="file")
     record = json.loads(config_path.read_text(encoding="utf-8"))
@@ -229,7 +231,9 @@ def load_session_launch(path: Path) -> SessionLaunch:
     root = _path(record.get("shared_root"), name="shared_root", kind="directory")
     capture_root = _path(record.get("capture_root"), name="capture_root",
                          kind="directory")
-    evidence = _path(record.get("evidence_dir"), name="evidence_dir",
+    evidence = _path((str(evidence_dir_override)
+                      if evidence_dir_override is not None else
+                      record.get("evidence_dir")), name="evidence_dir",
                      kind="new directory")
     if evidence.exists():
         raise FileExistsError(f"session evidence already exists: {evidence}")
@@ -339,7 +343,7 @@ def open_session_cameras(
     """
     if not isinstance(launch, SessionLaunch):
         raise TypeError("camera session needs a validated launch")
-    if launch.execution_scope != "live":
+    if launch.execution_scope not in {"live", "camera_only_diagnostic"}:
         raise PermissionError("static preflight launch cannot open cameras")
     from autodex.perception.init_orchestrator import InitOrchestrator
     from autodex.perception.snapshot_orchestrator import SnapshotOrchestrator

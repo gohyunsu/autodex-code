@@ -27,6 +27,10 @@ For the complete AutoDex-PC execution entry point and required integration
 module, see [LIVE_RUNTIME.md](LIVE_RUNTIME.md). `run_live.py` keeps all
 precision-specific robot-loop code under this demo; stock AutoDex execution
 files remain unchanged.
+For a board-9, 20 mm key-plus-socket **camera-only** check, use
+[`probe_live_key_socket.py`](probe_live_key_socket.py) as documented in
+[ROBOT_PC_STAGED_BRINGUP.md](ROBOT_PC_STAGED_BRINGUP.md). It saves every raw
+view, SAM mask and FoundPose result without opening the robot controller.
 For an implementation-level comparison with the local stock AutoDex v8
 pipeline, source inputs/outputs, active prompts and actual validation scope,
 see [CURRENT_V8_PIPELINE_REVIEW.md](CURRENT_V8_PIPELINE_REVIEW.md).
