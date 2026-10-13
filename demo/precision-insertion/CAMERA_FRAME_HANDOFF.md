@@ -45,17 +45,20 @@ Example robot-PC construction, before starting any capture:
 
 ```python
 identities = FrameIdentityRegistry()
+windows = RequestWindowRegistry()
 stock_snap = SnapshotOrchestrator(pc_list, capture_ips)
 tap = SnapshotMetadataTap(capture_ips)
-board_snap = ProvenanceSnapshotAdapter(stock_snap, tap.buffer, identities)
+board_snap = ProvenanceSnapshotAdapter(
+    stock_snap, tap.buffer, identities, request_windows=windows)
 stock_init = InitOrchestrator(pc_list, capture_ips)
-init = PrecisionInitOrchestrator(stock_init, identities)
+init = PrecisionInitOrchestrator(
+    stock_init, identities, request_windows=windows)
 calibrations = {
     serial: CameraTimeCalibration.load(path)
     for serial, path in per_camera_calibration_paths.items()
 }
 acquisition_metadata_for_request = AcquisitionTimeProvider(
-    identities, calibrations)
+    identities, calibrations, request_windows=windows)
 # Pass board_snap to collect_board_snapshot() and init to
 # collect_socket_capture()/collect_key_capture(), using the provider as
 # acquisition_metadata_for_request. Close tap and stock orchestrators when
