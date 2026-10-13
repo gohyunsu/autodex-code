@@ -131,13 +131,18 @@ cd /home/ROBOT_USER/autodex-precision-insertion
 DATA_DIR=/absolute/new/staging/shared_data
 NAS_DIR=/home/robot/shared_data/hyunsu  # use the actual mount on the recipient PC
 CHECK_DIR="$(mktemp -d /tmp/precision-pc-check.XXXXXX)"
-PYTHONPATH="$PWD/demo/precision-insertion:$PWD/src" \
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" \
   python -m pytest -q demo/precision-insertion/tests
 ```
 
 The later examples assume the same shell retains `DATA_DIR`, `NAS_DIR` and
 `CHECK_DIR`; set them again if starting a new shell. `CHECK_DIR` is an
 exclusive disposable report directory, not the runtime asset root.
+On this robot PC, the complete demo test suite passed with
+`/home/robot/anaconda3/envs/flir_env/bin/python` (NumPy 1.26): 907 passed,
+4 skipped on 2026-10-13. `flir_env_2` has NumPy 2 with the installed older
+trimesh, whose `ndarray.ptp()` call raises during mesh tests; use a compatible
+environment when repeating the suite.
 
 Read back the relevant NAS manifests **before installing**. These commands
 do not connect to a camera or robot:
@@ -181,7 +186,7 @@ is `/home/robot/shared_data`:
 test ! -e "$DATA_DIR" && mkdir -p "$DATA_DIR"
 BASE="$NAS_DIR/autodex_precision_insertion_handoff_20261010_652ac909/payload/shared_data"
 cp -a "$BASE/." "$DATA_DIR/"
-PYTHONPATH=demo/precision-insertion:src python \
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/rehydrate_cylinder_socket_handoff.py \
   --source-shared-root "$BASE" \
   --source-origin-shared-root /home/robot/shared_data \
@@ -190,7 +195,7 @@ python demo/precision-insertion/rehydrate_cylinder_key_scenes.py \
   --source-shared-root "$BASE" \
   --source-origin-shared-root /home/robot/shared_data \
   --target-shared-root "$DATA_DIR" --install
-PYTHONPATH=demo/precision-insertion:src python \
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/rehydrate_full_length_cylinder_handoff.py \
   --bundle-root "$NAS_DIR/autodex_precision_insertion_cylinder_full_length_addendum_20261011_eb38993" \
   --target-shared-root "$DATA_DIR" --install
@@ -221,7 +226,7 @@ tar --no-same-owner -xf \
 cp -a /home/robot/shared_data/AutoDex/content/assets/robot/fr3_inspire_description \
   "$DATA_DIR/AutoDex/content/assets/robot/"
 RESET_BUNDLE="$NAS_DIR/autodex_precision_insertion_cylinder_reset1687_addendum_20261012"
-PYTHONPATH=demo/precision-insertion:src python \
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/rehydrate_reset_handoff.py \
   --source-shared-root "$RESET_BUNDLE/payload/shared_data" \
   --source-origin-shared-root /home/hyunsu/shared_data \
@@ -229,20 +234,20 @@ PYTHONPATH=demo/precision-insertion:src python \
   --source-candidate-root "$RESET_BUNDLE/payload/shared_data/AutoDex/precision_insertion/cylindrical/reorient_handoff_seed11012/reset_12" \
   --target-candidate-root "$DATA_DIR/AutoDex/precision_insertion/cylindrical/reorient_handoff_seed11012/reset_12" \
   --source-audit "$RESET_BUNDLE/audit_only/SOURCE_AUDIT.json"
-PYTHONPATH=demo/precision-insertion:src python \
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/install_cylinder_reset_seeds.py \
   --shared-root "$DATA_DIR" \
   --source-reset-root "$DATA_DIR/AutoDex/precision_insertion/cylindrical/reorient_handoff_seed11012/reset_12" \
   --gap-mm 20 --from-pose-stem 1 --to-pose-stem 0 --seed-id 1687 \
   --output-manifest "$CHECK_DIR/reset1687_install.json"
 CURATED="$NAS_DIR/autodex_precision_insertion_reorient_curated_20261011/cylinder"
-PYTHONPATH=demo/precision-insertion:src python \
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/rehydrate_curated_reorient.py \
   --mode cylinder --gap-mm 20 \
   --source-shared-root "$CURATED/source_shared_data" \
   --source-handoff-root "$CURATED" --target-shared-root "$DATA_DIR" \
   --target-handoff-root "$DATA_DIR/AutoDex/precision_insertion/cylindrical/reorient_curated_v8_rehydrated"
-PYTHONPATH=demo/precision-insertion:src python \
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/install_cylinder_reset_seeds.py \
   --shared-root "$DATA_DIR" \
   --source-reset-root "$DATA_DIR/AutoDex/precision_insertion/cylindrical/reorient_curated_v8_rehydrated/reset_12" \
@@ -263,25 +268,31 @@ copy command assumes the robot PC has its existing
 substitute that verified path before copying. A successful file copy is not a
 camera, GPU inference, or robot connection test.
 
-For the current `gap_mm=20` mode, if its canonical catalog path does **not**
-already exist:
+Select the actual source-rebound `gap_mm=20` catalog path on this recipient:
 
 ```bash
-PYTHONPATH=demo/precision-insertion:src python \
+CATALOG20="$DATA_DIR/AutoDex/precision_insertion/cylindrical/endpoint_catalog_full_length_collision_only_gap_20mm_20261011.json"
+```
+
+If that path does **not** already exist, build the catalog there:
+
+```bash
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/run_pipeline.py screen-catalog \
   --shared-root "$DATA_DIR" --mode cylinder --gap-mm 20 \
   --min-hand-clearance-mm 0 \
-  --output "$DATA_DIR/AutoDex/precision_insertion/cylindrical/endpoint_catalog_full_length_collision_only_gap_20mm_20261011.json"
+  --output "$CATALOG20"
 ```
 
 Do not overwrite a pre-existing catalog: audit it first and use a new path
-for regeneration if the source pool changed. Then run:
+for regeneration if the source pool changed. Set `CATALOG20` to that selected
+new absolute path before the remaining commands. Then run:
 
 ```bash
-PYTHONPATH=demo/precision-insertion:src python \
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/run_pipeline.py audit \
   --shared-root "$DATA_DIR" --mode cylinder --gap-mm 20
-PYTHONPATH=demo/precision-insertion:src python \
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/run_pipeline.py audit-reorient \
   --shared-root "$DATA_DIR" --mode cylinder --gap-mm 20 \
   --output "$CHECK_DIR/reorient_audit.json"
@@ -291,13 +302,13 @@ For a source-bound catalog verification on the **selected mode**, run this
 read-only check; the full all-mode profile below is optional:
 
 ```bash
-PYTHONPATH=demo/precision-insertion:src python - "$DATA_DIR" <<'PY'
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python - "$DATA_DIR" "$CATALOG20" <<'PY'
 import sys
 from pathlib import Path
 from precision_insertion.config import select_mode
 from precision_insertion.live_session_runner import preflight_endpoint_catalog_file
 root = Path(sys.argv[1]).resolve()
-catalog = root / "AutoDex/precision_insertion/cylindrical/endpoint_catalog_full_length_collision_only_gap_20mm_20261011.json"
+catalog = Path(sys.argv[2]).resolve()
 result = preflight_endpoint_catalog_file(
     mode=select_mode("cylinder", 20), shared_root=root,
     catalog_path=catalog)
@@ -319,10 +330,17 @@ If **all ten** square/cylinder modes and their staged reset roots were
 installed, also produce the full inventory:
 
 ```bash
-PYTHONPATH=demo/precision-insertion:src python \
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/audit_offline_asset_profile.py \
-  --shared-root "$DATA_DIR" --output "$CHECK_DIR/asset_profile.json"
+  --shared-root "$DATA_DIR" --output "$CHECK_DIR/asset_profile.json" \
+  --catalog-override "cylinder:20=$CATALOG20" \
+  --audit-installed-resets
 ```
+
+This same command is useful on a partial recipient staging root: other
+uninstalled modes will be reported missing. The explicit catalog override
+is rechecked against v8 source hashes and the selected `shared_root`; the
+reset option counts installed canonical v8 cells rather than handoff files.
 
 ## Stage 2 — cameras, board and socket; robot not commanded
 
@@ -335,10 +353,10 @@ The example tolerances are a schema illustration, not rig-approved values.
 With the arm already physically out of the view, use the demo-local CLI:
 
 ```bash
-PYTHONPATH=demo/precision-insertion:src python \
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/run_pipeline.py start-session \
   --config /absolute/recipient/session_launch.json
-PYTHONPATH=demo/precision-insertion:src python \
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/run_pipeline.py start-session \
   --config /absolute/recipient/session_launch.json --capture
 ```
@@ -383,7 +401,7 @@ For a reproducible **historical NAS-frame** QA exercise (not a substitute
 for new recipient-camera frames), run:
 
 ```bash
-PYTHONPATH=demo/precision-insertion:src python \
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/audit_perception_handoff.py \
   --capture-index "$NAS_DIR/autodex_precision_insertion_runtime_addendum_20261010_652ac909/latest_capture_index.json" \
   --candidate-index "$NAS_DIR/autodex_precision_insertion_runtime_addendum_20261010_652ac909/existing_foundpose_candidates.json" \
@@ -448,10 +466,10 @@ single-step controller: stopping the Python loop is not a safe robot hold.
 Only after these are implemented and reviewed, the current complete loop is:
 
 ```bash
-PYTHONPATH="$PWD/demo/precision-insertion:$PWD/src:/absolute/robot_pc_binding" \
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src:/absolute/robot_pc_binding" \
   python demo/precision-insertion/run_live.py \
   --launch-config /absolute/recipient/new_live_session.json \
-  --endpoint-catalog "$DATA_DIR/AutoDex/precision_insertion/cylindrical/endpoint_catalog_full_length_collision_only_gap_20mm_20261011.json" \
+  --endpoint-catalog "$CATALOG20" \
   --output-dir /absolute/new/precision_run \
   --integration precision_insertion.franka_integration:factory \
   --robot-config /absolute/recipient/franka_runtime.json \

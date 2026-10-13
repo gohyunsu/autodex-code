@@ -1323,7 +1323,7 @@ optional dependencies in an
   ~/.venvs/precision-vlm
 ~/.venvs/precision-vlm/bin/python -m pip install \
   -r demo/precision-insertion/requirements-local-vlm.txt
-export PYTHONPATH="$PWD/demo/precision-insertion:$PWD/src"
+export PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src"
 ```
 
 This example reuses the existing hardware-compatible PyTorch installation.

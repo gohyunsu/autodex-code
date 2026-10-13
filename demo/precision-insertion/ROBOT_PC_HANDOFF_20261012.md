@@ -16,7 +16,8 @@ the live CLI a camera-only dry run.
 Reproduce the all-mode audit on a machine where `shared_data` is installed:
 
 ```bash
-python3 demo/precision-insertion/audit_offline_asset_profile.py \
+PYTHONPATH="$PWD:$PWD/src:$PWD/demo/precision-insertion" \
+  python3 demo/precision-insertion/audit_offline_asset_profile.py \
   --shared-root /absolute/shared_data \
   --output /absolute/new_asset_profile.json
 ```

@@ -334,8 +334,6 @@ def audit_v8_reorient_assets(
                         fidelity_eligible_counts.values()),
                 })
             rows.append(row)
-    legacy = (root / "AutoDex" / "object" / "paradex" /
-              mode.key_object / "processed_data" / "info" / "tabletop")
     staging = []
     for manifest in sorted((root / "AutoDex" / "precision_insertion").glob(
             "reorient_candidates*/inspire/reset_*/" + mode.key_object +
@@ -351,7 +349,7 @@ def audit_v8_reorient_assets(
             staging.append({"manifest": str(manifest),
                             "status": "unreadable_staging_manifest"})
     report = {
-        "schema": "precision_insertion_v8_reorient_asset_audit_v4",
+        "schema": "precision_insertion_v8_reorient_asset_audit_v5",
         "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
                  "key_object": mode.key_object},
         "reset_fidelity_rotation_measure": (
@@ -360,10 +358,9 @@ def audit_v8_reorient_assets(
         "v8_pose_stems": list(ids), "directed_pairs": rows,
         "candidate_root": str(candidate_base),
         "candidate_root_is_canonical": candidate_root is None,
-        "legacy_tabletop_tree_present": legacy.is_dir(),
         "stock_reset_runner_compatible": False,
         "stock_reset_runner_reason": (
-            "new key has no verified legacy pose-index map and stock carried "
+            "new v8 key has no stock pose-index map and stock carried "
             "scene omits the fixed socket fixture"),
         "staging_manifests_not_runtime_candidates": staging,
         "robot_ready": False,

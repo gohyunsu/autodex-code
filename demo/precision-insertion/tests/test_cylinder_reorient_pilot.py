@@ -192,7 +192,8 @@ def test_promotes_only_stock_mujoco_pass_and_loads_direct_v8_cell(
     assert handoff["installed_in_canonical_reset_tree"] is False
     mode = select_mode("cylinder", 20)
     asset_audit = audit_v8_reorient_assets(shared_root=tmp_path, mode=mode)
-    assert asset_audit["schema"].endswith("v4")
+    assert asset_audit["schema"].endswith("v5")
+    assert "legacy_tabletop_tree_present" not in asset_audit
     assert asset_audit["directed_pairs"][0][
         "stable_reset_seed_counts_by_height_cm"]["12"] == 1
     handoff_audit = audit_v8_reorient_assets(

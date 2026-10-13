@@ -3,6 +3,8 @@
 from pathlib import Path
 import sys
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import audit_offline_asset_profile as profile  # noqa: E402
@@ -64,3 +66,60 @@ def test_inventory_uses_current_catalogs_and_no_fidelity_cutoff(
     assert result["reorient"]["cylinder"]["fidelity_threshold_applied"] is False
     assert result["reorient"]["cylinder"]["directed_cells"][0][
         "mujoco_stable_12cm"] == 1
+
+
+def test_recipient_catalog_override_is_explicit_and_verified(tmp_path, monkeypatch):
+    path = tmp_path / "recipient_gap20_catalog.json"
+    path.write_text("{}")
+    selected = []
+
+    def catalog(*, mode, shared_root, catalog_path):
+        if mode.family == "cylinder" and mode.gap_mm == 20:
+            selected.append(catalog_path)
+        return {"candidates": [{"eligible": True,
+                                 "tabletop_pose_stem": "000"}]}
+
+    monkeypatch.setattr(profile, "audit_assets", lambda *_: {})
+    monkeypatch.setattr(profile, "preflight_endpoint_catalog_file", catalog)
+    monkeypatch.setattr(profile, "audit_v8_reorient_assets", lambda **_: {
+        "directed_pairs": []})
+    key, parsed = profile._parse_catalog_override(
+        f"cylinder:20={path}")
+    assert key == ("cylinder", 20.0) and parsed == path
+    result = profile.build_profile(tmp_path, catalog_overrides={key: path})
+    assert selected == [path]
+    gap20 = next(row for row in result["modes"] if
+                 row["family"] == "cylinder" and row["gap_mm"] == 20)
+    assert gap20["endpoint_catalog"]["path"] == str(path)
+    assert gap20["endpoint_catalog"]["status"] == "source_verified_complete_scan"
+
+    reset_roots = []
+
+    def installed_resets(*, shared_root, mode, candidate_root):
+        reset_roots.append(candidate_root)
+        return {"directed_pairs": []}
+
+    monkeypatch.setattr(profile, "audit_v8_reorient_assets", installed_resets)
+    installed = profile.build_profile(
+        tmp_path, catalog_overrides={key: path},
+        audit_installed_resets=True)
+    assert reset_roots == [None, None, None]
+    assert installed["reorient"]["cylinder"]["candidate_root"] == str(
+        tmp_path / "AutoDex/candidates/inspire/reset_12")
+
+    def reject_override(*, mode, shared_root, catalog_path):
+        if catalog_path == path:
+            raise ValueError("stale catalog")
+        return {"candidates": [{"eligible": False,
+                                 "tabletop_pose_stem": "000"}]}
+
+    monkeypatch.setattr(profile, "preflight_endpoint_catalog_file", reject_override)
+    with pytest.raises(ValueError, match="explicit catalog override is invalid"):
+        profile.build_profile(tmp_path, catalog_overrides={key: path})
+
+
+def test_catalog_override_rejects_unsupported_or_relative_path():
+    with pytest.raises(ValueError, match="supported mode"):
+        profile._parse_catalog_override("cylinder:2=/tmp/catalog.json")
+    with pytest.raises(ValueError, match="absolute path"):
+        profile._parse_catalog_override("cylinder:20=relative.json")

@@ -22,7 +22,7 @@ unchanged. The only shared source change in this review is
 | Robot feedback boundary | Stock `FrankaExecutor` creates command-capable FR3/Inspire controllers. Its constructor calls `stop_streaming`, possible `error_recovery`, and `set_collision_behavior`; the current Inspire controller constructor writes speed/force/angle registers, including `angleSet=1000`. | Motion-enabled `open_franka_core` still uses that executor after explicit motion opt-in. New `probe_robot_feedback_only.py` instead subscribes only to FR3 state PUB port 5556 and reads Inspire `angleAct`/`angleSet` with Modbus function 03. | The previous Stage-3 guide incorrectly described `open_franka_core` as connection-only. It is corrected. The read-only probe received advancing FR3 state and six actual/commanded Inspire angles, without constructing a motion controller. This is not exposure-aligned 13-joint feedback or contact commissioning. |
 | Preinsert geometry | Stock placing descends relative to the board/world; it has no fixed-socket preinsert or 20 mm key-axis task. Stock `jacobian_stroke.py` is for world-Z strokes. | `T_robot_key = T_robot_socket @ T_socket_key`, `T_robot_hand = T_robot_key @ T_key_hand`. `preflight` creates preinsert, entry and depth target on `R_robot_socket @ insertion_direction_socket`; `axis_jacobian.plan_jacobian_axis_stroke` uses damped numerical Jacobian continuation, fixed wrist orientation, joint limits, collision checking and retiming. `path_audit` samples key/hand/socket clearance and axial/lateral error. | It is a kinematic nominal path, not force-controlled contact. It handles a tilted socket axis without passing that axis into stock world-Z stroke code. |
 | Contact, release and retry | Stock executor follows planned trajectories and places/retracts; it has no socket contact contract. | `follow_guarded_insertion` must be supplied by the robot-PC integration with watchdog, force/torque trace and stop acknowledgement; `release_and_clear` must open the hand only after a non-aborted held-key stroke, then reach a measured clear view. Visual failure may produce next-attempt XY advice; a released key is re-observed and restored before another attempt. | The ordinary stock joint follower is not accepted as a guarded insertion controller. No contact callback or physical reset path was run here. |
-| Directed reset | Stock v8 reset scene/seed loader covers pose transitions, but the stock runner does not include this demo's fixed socket fixture and has no verified map for the new key. | Curated source-bound v8 `000→001/191` and current addendum `001→000/1687` are rehydrated to recipient paths, hash-checked and installed as directed MuJoCo seeds. | Both cells have one stable seed in the recipient audit. A seed is not a socket-aware Franka path or qualified landing. The older reverse `631` stays in noncanonical source staging and is not installed. |
+| Directed reset | Stock v8 reset scene/seed loader covers pose transitions, but the stock runner does not include this demo's fixed socket fixture and has no verified map for the new key. | Curated source-bound v8 `000→001/191` and current addendum `001→000/1687` are rehydrated to recipient paths, hash-checked and installed as directed MuJoCo seeds. The v5 audit reads only the v8 object-processing tree and installed candidate cells. | Both cells have one stable seed in the recipient audit. A seed is not a socket-aware Franka path or qualified landing. The older reverse `631` stays in noncanonical source staging and is not installed. |
 
 ## Exact active prompts and outputs
 
@@ -64,6 +64,21 @@ matched all 10 source files by SHA-256; the staged key and 20 mm socket
 FoundPose PTH hashes matched their recorded handoff digests. Unit/integration
 tests use fixtures or mock adapters; they are not camera, controller, force,
 or physical insertion tests.
+The refreshed v5 reset audit made no query to `AutoDex/object/paradex` and
+still found one stable installed seed in each directed cell; its report is
+`AutoDex/precision_insertion/cylindrical/v8_reorient_audit_no_legacy_20261013.json`
+inside staging.
+The recipient-mode profile with an explicit, source-verified catalog path and
+canonical installed-reset audit reports 98 eligible `gap=20` candidates
+(`000`: 95, `001`: 3) and one seed in each direction. Its report is
+`AutoDex/precision_insertion/cylindrical/offline_asset_profile_installed_v8_20261013.json`.
+The other nine modes are incomplete in this deliberately partial recipient
+staging root; a zero all-mode completion count from the producer-name-only
+profile would misdescribe the installed `gap=20` catalog.
+After these audit changes, the full demo suite passed in the robot PC's
+NumPy-1.26 `flir_env`: **907 passed, 4 skipped**. The separate NumPy-2
+`flir_env_2` run failed mesh tests because its installed trimesh calls removed
+`ndarray.ptp()`; that environment failure did not recur in `flir_env`.
 The first-party Qwen adapter loaded the staged 2B model on CPU and returned
 text for two synthetic white images. That answer used a Markdown JSON fence
 and gave `evidence` as an array, so the strict observer would abstain; this

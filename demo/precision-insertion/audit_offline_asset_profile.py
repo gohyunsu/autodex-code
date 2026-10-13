@@ -9,6 +9,7 @@ representation, or infer a successful robot trajectory.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 import json
 from pathlib import Path
 
@@ -44,15 +45,51 @@ def _reset_root(root: Path, family: str, gap: float) -> Path | None:
     return None
 
 
-def build_profile(root: Path) -> dict:
+def _parse_catalog_override(value: str) -> tuple[tuple[str, float], Path]:
+    """Bind one explicit recipient catalog to a supported mode."""
+    target, separator, path_text = value.partition("=")
+    family, colon, gap_text = target.partition(":")
+    if (not separator or not colon or not path_text or
+            family not in {"square", "cylinder"}):
+        raise ValueError("catalog override needs FAMILY:GAP_MM=/absolute/catalog.json")
+    try:
+        mode = select_mode(family, float(gap_text))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("catalog override needs a supported mode") from exc
+    path = Path(path_text).expanduser()
+    if not path.is_absolute():
+        raise ValueError("catalog override needs an absolute path")
+    return (mode.family, mode.gap_mm), path.resolve()
+
+
+def build_profile(
+    root: Path, *, catalog_overrides: Mapping[tuple[str, float], Path] | None = None,
+    audit_installed_resets: bool = False,
+) -> dict:
     root = Path(root).expanduser().resolve()
+    if type(audit_installed_resets) is not bool:
+        raise TypeError("audit_installed_resets must be explicit bool")
+    installed_reset_root = root / "AutoDex/candidates/inspire"
+    overrides = {} if catalog_overrides is None else dict(catalog_overrides)
+    supported = {(family, select_mode(family, gap).gap_mm)
+                 for family, gaps in (("square", SQUARE_GAPS),
+                                      ("cylinder", CYLINDER_GAPS))
+                 for gap in gaps}
+    if set(overrides) - supported:
+        raise ValueError("catalog override names an unsupported mode")
     modes = []
     for family, gaps in (("square", SQUARE_GAPS),
                          ("cylinder", CYLINDER_GAPS)):
         for gap in gaps:
             mode = select_mode(family, gap)
             files = audit_assets(root, mode)
-            catalog_path = _catalog_path(root, family, gap)
+            key = (family, mode.gap_mm)
+            override = key in overrides
+            catalog_path = (Path(overrides[key]).expanduser().resolve()
+                            if override else _catalog_path(root, family, gap))
+            if override and not catalog_path.is_file():
+                raise FileNotFoundError(
+                    f"explicit catalog override is missing: {catalog_path}")
             try:
                 catalog = preflight_endpoint_catalog_file(
                     mode=mode, shared_root=root, catalog_path=catalog_path)
@@ -65,11 +102,17 @@ def build_profile(root: Path) -> dict:
                 catalog_error = None
             except (FileNotFoundError, ValueError, KeyError, TypeError,
                     OSError) as exc:
+                if override:
+                    raise ValueError(
+                        f"explicit catalog override is invalid for {family} "
+                        f"gap {gap}: {catalog_path}") from exc
                 catalog_status = "missing_or_not_current"
                 eligible = 0
                 poses = []
                 catalog_error = str(exc)
             reset_root = _reset_root(root, family, gap)
+            if audit_installed_resets and reset_root is not None:
+                reset_root = installed_reset_root
             modes.append({
                 "family": family, "gap_mm": gap,
                 "key_object": mode.key_object,
@@ -92,10 +135,12 @@ def build_profile(root: Path) -> dict:
         assert reset_root is not None
         audit = audit_v8_reorient_assets(
             shared_root=root, mode=select_mode(family, gap),
-            candidate_root=reset_root)
+            candidate_root=None if audit_installed_resets else reset_root)
         key = "square_0p5" if family == "square" and gap == 0.5 else family
         reset_audits[key] = {
-            "candidate_root": str(reset_root / "reset_12"),
+            "candidate_root": str((installed_reset_root if
+                                   audit_installed_resets else reset_root) /
+                                  "reset_12"),
             "fidelity_threshold_applied": False,
             "directed_cells": [
                 {"from_pose": row["from_v8_pose"],
@@ -117,9 +162,27 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--shared-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--catalog-override", action="append", default=[],
+        metavar="FAMILY:GAP_MM=ABS_JSON",
+        help="explicit verified recipient catalog for one mode; repeat as needed")
+    parser.add_argument(
+        "--audit-installed-resets", action="store_true",
+        help="audit canonical recipient v8 reset candidates, not handoff staging")
     args = parser.parse_args()
     output = args.output.expanduser().resolve()
-    profile = build_profile(args.shared_root)
+    overrides = {}
+    try:
+        for specification in args.catalog_override:
+            key, path = _parse_catalog_override(specification)
+            if key in overrides:
+                raise ValueError(f"duplicate catalog override for {key}")
+            overrides[key] = path
+        profile = build_profile(
+            args.shared_root, catalog_overrides=overrides,
+            audit_installed_resets=args.audit_installed_resets)
+    except (FileNotFoundError, ValueError) as exc:
+        parser.error(str(exc))
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("x", encoding="utf-8") as stream:
         json.dump(profile, stream, indent=2, sort_keys=True, allow_nan=False)
