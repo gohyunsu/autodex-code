@@ -66,5 +66,6 @@ are staged in that directory as
 `franka_runtime_board9_gap20_approved_values_stage_factory_pending.json`.
 Static `run_live.py --preflight` accepts its syntax with the board-9 launch
 and 20 mm recipient catalog (112 candidates, 98 eligible). Its
-`robot_pc_stages:configure` symbol is still missing, so the JSON is not a
-motion-ready robot configuration.
+`robot_pc_stages:configure` module is still missing
+(`stage_factory_module_on_path: false`), so the JSON is not a motion-ready
+robot configuration.

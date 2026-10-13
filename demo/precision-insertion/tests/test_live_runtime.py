@@ -78,8 +78,25 @@ def test_static_preflight_reads_v8_files_without_opening_robot(
     assert report["eligible_candidate_count"] == 1
     assert report["launch"]["board_id"] == "9"
     assert report["robot_config"]["stage_factory_syntax_valid"] is True
+    assert report["robot_config"]["stage_factory_module_on_path"] is False
     assert report["robot_config"]["stage_factory_imported"] is False
     assert report["robot_ready"] is False
+
+
+def test_stage_module_path_check_does_not_execute_package(monkeypatch, tmp_path):
+    package = tmp_path / "robot_pc_package"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "raise RuntimeError('package must not run in static preflight')\n",
+        encoding="utf-8")
+    (package / "stages.py").write_text(
+        "raise RuntimeError('stage module must not run in static preflight')\n",
+        encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    assert live_runtime._stage_module_on_path(
+        "robot_pc_package.stages:configure") is True
+    assert "robot_pc_package" not in sys.modules
+    assert "robot_pc_package.stages" not in sys.modules
 
 
 def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path):

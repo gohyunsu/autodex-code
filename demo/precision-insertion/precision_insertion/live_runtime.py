@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
+from dataclasses import dataclass
 from importlib import import_module
+from importlib.machinery import PathFinder
 import math
 from pathlib import Path
 from typing import Callable, Sequence
@@ -48,6 +49,24 @@ class LiveRuntimeIntegration:
     close: Callable[[], None]
 
 
+def _stage_module_on_path(specification: str) -> bool:
+    """Check a stage module's path without importing robot-PC code.
+
+    Static preflight must never execute a module that could open FR3 or write
+    Inspire registers. PathFinder resolves ordinary filesystem modules and
+    packages without running their module bodies; custom importers can still
+    be resolved by the actual runtime import.
+    """
+    module = specification.split(":", 1)[0]
+    search_path = None
+    for part in module.split("."):
+        found = PathFinder.find_spec(part, search_path)
+        if found is None:
+            return False
+        search_path = found.submodule_search_locations
+    return True
+
+
 def inspect_live_inputs(
     *, launch_config_path: Path, endpoint_catalog_path: Path,
     robot_config_path: Path | None = None,
@@ -87,6 +106,8 @@ def inspect_live_inputs(
             "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
             "stages_factory": parsed["record"]["stages_factory"],
             "stage_factory_syntax_valid": True,
+            "stage_factory_module_on_path": _stage_module_on_path(
+                parsed["record"]["stages_factory"]),
             "stage_factory_imported": False,
             "exposure_sampler_configured": parsed["sampling"] is not None,
             "held_motion_monitor_configured": (

@@ -751,7 +751,8 @@ PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" \
   /home/robot/anaconda3/envs/flir_env/bin/python \
   demo/precision-insertion/run_live.py --preflight \
   --launch-config "$STAGE/AutoDex/precision_insertion/cylindrical/static_preflight_board9_gap20_20261013/launch.json" \
-  --endpoint-catalog "$STAGE/AutoDex/precision_insertion/cylindrical/recipient_gap20_endpoint_catalog_20261013.json"
+  --endpoint-catalog "$STAGE/AutoDex/precision_insertion/cylindrical/recipient_gap20_endpoint_catalog_20261013.json" \
+  --robot-config "$STAGE/AutoDex/precision_insertion/cylindrical/franka_runtime_board9_gap20_approved_values_stage_factory_pending.json"
 ```
 
 The saved `static_preflight_board9_gap20_20261013/report.json` records 20
@@ -761,6 +762,14 @@ bounded request timing because same-frame exposure calibration is not yet
 commissioned; the `static_preflight_only` scope also prevents that example
 scene and illustrative tolerances from being used for a live run. The report
 has `robot_ready: false` and no camera session was created.
+The additional `approved_values_static_preflight_20261013.json` records the
+operator-accepted feedback/sampler/local-Qwen/noncontact-monitor settings:
+112 catalog candidates, 98 eligible, 20 cameras, and valid JSON syntax.
+Its `robot_pc_stages:configure` factory is still absent:
+`stage_factory_module_on_path` is `false`. Static preflight checks this
+without importing any robot-PC module. The example launch remains
+`static_preflight_only`, so neither this command nor its successful output
+can start the camera session or robot motion.
 
 After stage commissioning, the motion command is:
 
