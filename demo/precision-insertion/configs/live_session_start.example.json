@@ -1,6 +1,9 @@
 {
   "schema": "precision_insertion_live_session_launch_v1",
   "mode": {"family": "cylinder", "gap_mm": 20},
+  "board_id": "9",
+  "board_capture_phase": "socket_present_partial",
+  "minimum_board_corners": 36,
   "shared_root": "/absolute/path/to/shared_data",
   "capture_root": "/absolute/shared/path/for/init_captures",
   "evidence_dir": "/absolute/new/path/for/one_session_evidence",
@@ -23,7 +26,7 @@
     "maximum_capture_skew_s": 0.02,
     "minimum_accepted_views": 2
   },
-  "socket_prompt": "fixed white cylindrical socket on the ChArUco board",
+  "socket_prompt": "white plastic cylindrical socket",
   "socket_capture_count": 2,
   "board_timeout_s": 5.0,
   "socket_timeout_s": 15.0,

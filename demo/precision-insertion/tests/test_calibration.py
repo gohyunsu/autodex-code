@@ -103,9 +103,11 @@ def _refinements(args):
 def board_measurement(monkeypatch):
     calls = []
 
-    def measure(images, intrinsics, extrinsics, c2r):
-        calls.append((tuple(sorted(images)), c2r.copy()))
-        return {"board": "11", "table_surface_z_m": 0.0}
+    def measure(images, intrinsics, extrinsics, c2r, *, board_id="11",
+                minimum_board_corners=54):
+        calls.append((tuple(sorted(images)), c2r.copy(), board_id,
+                      minimum_board_corners))
+        return {"board": board_id, "table_surface_z_m": 0.0}
 
     monkeypatch.setattr(
         "src.execution.charuco_tabletop.measure_tabletop_from_images", measure)
@@ -136,6 +138,18 @@ def test_calibration_freezes_robot_pose_and_adds_socket_without_mutation(
     assert len(result.record["camera_calibration_sha256"]) == 64
     assert set(result.record["camera_calibration"]["extrinsics_full"]) == {
         "cam_a", "cam_b"}
+
+
+def test_board_9_and_partial_corner_limit_reach_stock_measurement(
+    tmp_path, board_measurement,
+):
+    args = _arguments(tmp_path)
+    result = calibrate_session(
+        **args, board_id="9", minimum_board_corners=36,
+        board_capture_phase="socket_present_partial")
+    assert result.board["board"] == "9"
+    assert board_measurement[0][2:] == ("9", 36)
+    assert result.record["board_capture_phase"] == "socket_present_partial"
     assert result.record["robot_ready"] is False
     saved = write_session_calibration(result, tmp_path / "run" / "calibration.json")
     assert json.loads(saved.read_text(encoding="utf-8")) == result.record
@@ -177,10 +191,25 @@ def test_refined_session_counts_captures_not_camera_views_and_replays(
 def test_refined_session_rejects_one_bad_view_or_duplicate_request(
         tmp_path, board_measurement):
     args = _arguments(tmp_path)
+    paths = AssetPaths(tmp_path, args["mode"])
+    paths.socket_collision_mesh.parent.mkdir(parents=True)
+    paths.socket_collision_mesh.write_bytes(args["socket_collision_mesh"].read_bytes())
+    args["socket_collision_mesh"] = paths.socket_collision_mesh
+    args["object_root"] = paths.object_root
     first, second = _refinements(args)
     with pytest.raises(ValueError, match="per-view IoU gate"):
         calibrate_session(**{**args, "socket_capture_refinements": (
             replace(first, per_view_iou={"cam_a": .93, "cam_b": .7}), second)})
+    fallback = replace(
+        first, per_view_iou={"cam_a": .93, "cam_b": .7},
+        refinement_gate="stock_silhouette")
+    session = calibrate_session(**{
+        **args, "socket_capture_refinements": (fallback, second)})
+    assert session.record["socket_capture_refinements"][0][
+        "refinement_gate"] == "stock_silhouette"
+    saved = write_session_calibration(session, tmp_path / "stock_fallback.json")
+    replay = load_session_calibration(saved, mode=args["mode"], shared_root=tmp_path)
+    np.testing.assert_allclose(replay.socket_pose_robot, session.socket_pose_robot)
     with pytest.raises(ValueError, match="request IDs must be unique"):
         calibrate_session(**{**args, "socket_capture_refinements": (
             first, replace(second, request_id=first.request_id))})

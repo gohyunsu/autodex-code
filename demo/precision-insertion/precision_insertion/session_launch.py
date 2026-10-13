@@ -64,6 +64,9 @@ class SessionLaunch:
     max_socket_translation_mm: float
     max_socket_angle_deg: float
     minimum_socket_refined_iou: float
+    board_id: str = "11"
+    minimum_board_corners: int = 54
+    board_capture_phase: str = "empty_before_socket"
     camera_time_mode: str = "calibrated_frame_id"
 
     def readiness(self) -> dict:
@@ -78,6 +81,9 @@ class SessionLaunch:
                 serial: row.calibration_id
                 for serial, row in sorted(self.camera_times.items())},
             "camera_time_mode": self.camera_time_mode,
+            "board_id": self.board_id,
+            "minimum_board_corners": self.minimum_board_corners,
+            "board_capture_phase": self.board_capture_phase,
             "minimum_socket_refined_iou": self.minimum_socket_refined_iou,
             "socket_capture_count": self.socket_capture_count,
             "scope": "file_preflight_not_live_camera_or_pose_accuracy",
@@ -99,7 +105,8 @@ class OpenSessionCameras:
     init_orchestrator: object
     acquisition_metadata_for_request: Callable[[int], dict]
 
-    def start(self) -> StartedPrecisionSession:
+    def start(self, *, confirm_socket_placement: Callable[[], bool] | None = None,
+              ) -> StartedPrecisionSession:
         """Capture ChArUco then repeated socket observations once."""
         launch = self.launch
         return start_precision_session(
@@ -120,7 +127,11 @@ class OpenSessionCameras:
             image_write_timeout_s=launch.image_write_timeout_s,
             max_socket_translation_mm=launch.max_socket_translation_mm,
             max_socket_angle_deg=launch.max_socket_angle_deg,
-            minimum_socket_refined_iou=launch.minimum_socket_refined_iou)
+            minimum_socket_refined_iou=launch.minimum_socket_refined_iou,
+            board_id=launch.board_id,
+            minimum_board_corners=launch.minimum_board_corners,
+            board_capture_phase=launch.board_capture_phase,
+            confirm_socket_placement=confirm_socket_placement)
 
 
 def _path(value, *, name: str, kind: str) -> Path:
@@ -194,6 +205,22 @@ def load_session_launch(path: Path) -> SessionLaunch:
     if not isinstance(mode_record, dict):
         raise ValueError("launch config needs an explicit socket/key mode")
     mode = select_mode(mode_record["family"], mode_record["gap_mm"])
+    board_id = record.get("board_id", "11")
+    if board_id not in ("9", "11"):
+        raise ValueError("launch board_id must be 9 or 11")
+    minimum_board_corners = record.get("minimum_board_corners", 54)
+    if (type(minimum_board_corners) is not int or
+            not 36 <= minimum_board_corners <= 54 or
+            (board_id == "11" and minimum_board_corners != 54)):
+        raise ValueError("launch minimum_board_corners is invalid")
+    board_capture_phase = record.get("board_capture_phase", "empty_before_socket")
+    if (board_capture_phase == "empty_before_socket" and
+            minimum_board_corners != 54 or
+            board_capture_phase == "socket_present_partial" and
+            (board_id != "9" or minimum_board_corners == 54) or
+            board_capture_phase not in
+            ("empty_before_socket", "socket_present_partial")):
+        raise ValueError("launch board_capture_phase conflicts with board/corner contract")
     root = _path(record.get("shared_root"), name="shared_root", kind="directory")
     capture_root = _path(record.get("capture_root"), name="capture_root",
                          kind="directory")
@@ -288,7 +315,10 @@ def load_session_launch(path: Path) -> SessionLaunch:
     return SessionLaunch(
         mode, root, capture_root, evidence, tuple(pcs), tuple(ips), camera_ids,
         intrinsics, extrinsics, image_hw, c2r, base_scene, camera_times,
-        limits, prompt, count, **values, camera_time_mode=time_mode)
+        limits, prompt, count, **values, board_id=board_id,
+        minimum_board_corners=minimum_board_corners,
+        board_capture_phase=board_capture_phase,
+        camera_time_mode=time_mode)
 
 
 @contextmanager
@@ -332,5 +362,14 @@ def open_session_cameras(
 
 def capture_session(launch: SessionLaunch) -> StartedPrecisionSession:
     """One-shot board/socket CLI capture; explicitly no robot connection."""
+    def confirm_socket_placement() -> bool:
+        try:
+            response = input(
+                "Empty board accepted. Place the fixed white socket on the board, "
+                "then press Enter (q to cancel): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        return response == ""
+
     with open_session_cameras(launch) as cameras:
-        return cameras.start()
+        return cameras.start(confirm_socket_placement=confirm_socket_placement)

@@ -130,6 +130,23 @@ def test_bounded_request_launch_needs_no_camera_time_files(tmp_path):
         "bounded_request_interval")
 
 
+def test_board_9_partial_corner_contract_is_explicit(tmp_path):
+    config, record = _config(tmp_path)
+    record["board_id"] = "9"
+    record["minimum_board_corners"] = 36
+    record["board_capture_phase"] = "socket_present_partial"
+    record["camera_time_mode"] = "bounded_request_interval"
+    record.pop("camera_time_calibrations")
+    config.write_text(json.dumps(record), encoding="utf-8")
+    loaded = launch.load_session_launch(config)
+    assert loaded.readiness()["board_id"] == "9"
+    assert loaded.minimum_board_corners == 36
+    record["board_id"] = "11"
+    config.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match="minimum_board_corners"):
+        launch.load_session_launch(config)
+
+
 def test_placeholder_capture_address_fails_file_preflight(tmp_path, monkeypatch):
     config, record = _config(tmp_path)
     _stub_time(monkeypatch)

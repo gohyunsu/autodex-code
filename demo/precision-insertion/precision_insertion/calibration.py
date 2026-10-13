@@ -47,6 +47,7 @@ class SocketCaptureRefinement:
     minimum_refined_iou: float
     stock_selection: dict
     raw_mesh_sha256: str
+    refinement_gate: str = "all_view_iou"
 
     def to_record(self) -> dict:
         return {
@@ -60,6 +61,7 @@ class SocketCaptureRefinement:
             "minimum_refined_iou": self.minimum_refined_iou,
             "stock_selection": dict(self.stock_selection),
             "raw_mesh_sha256": self.raw_mesh_sha256,
+            "refinement_gate": self.refinement_gate,
             "scope": "one_refined_capture_not_independent_pose_ground_truth",
         }
 
@@ -325,9 +327,13 @@ def _verify_saved_socket_refinements(
             scores = [float(per_view[camera]) for camera in cameras]
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("saved socket refinement quality is invalid") from exc
+        gate = row.get("refinement_gate", "all_view_iou")
         if (not 0 < threshold <= 1 or
-                any(not math.isfinite(score) or not threshold <= score <= 1
+                gate not in {"all_view_iou", "stock_silhouette"} or
+                any(not math.isfinite(score) or not 0 <= score <= 1
                     for score in scores) or
+                (gate == "all_view_iou" and
+                 any(score < threshold for score in scores)) or
                 not math.isfinite(loss) or not math.isfinite(loss_limit) or
                 loss_limit <= 0 or loss > loss_limit):
             raise ValueError("saved socket refinement quality gate failed")
@@ -375,6 +381,9 @@ def calibrate_session(
     min_socket_captures: int = 2,
     min_views_per_capture: int = 2,
     socket_capture_refinements: Sequence[SocketCaptureRefinement] | None = None,
+    board_id: str = "11",
+    minimum_board_corners: int = 54,
+    board_capture_phase: str = "empty_before_socket",
 ) -> SessionCalibration:
     """Build one frozen calibration from supplied, already-captured evidence.
 
@@ -398,6 +407,13 @@ def calibrate_session(
         raise ValueError("require at least two socket captures and two views per capture")
     if board_timestamp_source != "camera_acquisition":
         raise ValueError("ChArUco images require camera acquisition timestamps")
+    if board_capture_phase not in ("empty_before_socket", "socket_present_partial"):
+        raise ValueError("unknown board capture phase")
+    if (board_capture_phase == "empty_before_socket" and
+            minimum_board_corners != 54 or
+            board_capture_phase == "socket_present_partial" and
+            (board_id != "9" or minimum_board_corners == 54)):
+        raise ValueError("board capture phase conflicts with board/corner contract")
 
     camera_ids = set(intrinsics_full) & set(extrinsics_full)
     if not camera_ids or set(intrinsics_full) != set(extrinsics_full):
@@ -450,8 +466,12 @@ def calibrate_session(
                 raise ValueError("socket refinement cameras differ from admitted views")
             threshold = float(refinement.minimum_refined_iou)
             if (not math.isfinite(threshold) or not 0 < threshold <= 1 or
+                    refinement.refinement_gate not in
+                    {"all_view_iou", "stock_silhouette"} or
                     any(not math.isfinite(float(score)) or
-                            not threshold <= float(score) <= 1
+                            not 0 <= float(score) <= 1 or
+                            (refinement.refinement_gate == "all_view_iou" and
+                             float(score) < threshold)
                             for score in refinement.per_view_iou.values())):
                 raise ValueError("socket refinement failed per-view IoU gate")
             if (type(refinement.request_id) is not int or
@@ -534,7 +554,8 @@ def calibrate_session(
     from autodex.utils.tabletop_geometry import table_cuboid
 
     board = measure_tabletop_from_images(
-        board_images_bgr, intrinsics_full, extrinsics_full, c2r_matrix)
+        board_images_bgr, intrinsics_full, extrinsics_full, c2r_matrix,
+        board_id=board_id, minimum_board_corners=minimum_board_corners)
     measured_base_scene = copy.deepcopy(base_scene)
     measured_base_scene.setdefault("cuboid", {})["table"] = table_cuboid(board)
     observations_robot: list[np.ndarray] = []
@@ -597,6 +618,7 @@ def calibrate_session(
             "socket_object": mode.socket_object,
         },
         "board": board,
+        "board_capture_phase": board_capture_phase,
         "board_timestamps_s": board_times,
         "board_timestamp_source": board_timestamp_source,
         "socket_observations": source_rows,

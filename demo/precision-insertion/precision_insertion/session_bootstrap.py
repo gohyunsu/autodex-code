@@ -90,6 +90,9 @@ def bootstrap_session(
     board_frame_evidence: Mapping[str, dict] | None = None,
     socket_refiner: Callable[[SocketCaptureInput, SocketCaptureEvidence],
                              SocketCaptureRefinement] | None = None,
+    board_id: str = "11",
+    minimum_board_corners: int = 54,
+    board_capture_phase: str = "empty_before_socket",
 ) -> SessionBootstrap:
     """Admit repeated socket observations, then freeze one AutoDex world.
 
@@ -213,6 +216,9 @@ def bootstrap_session(
         min_views_per_capture=view_limits.minimum_accepted_views,
         socket_capture_refinements=(
             tuple(refinements) if socket_refiner is not None else None),
+        board_id=board_id,
+        minimum_board_corners=minimum_board_corners,
+        board_capture_phase=board_capture_phase,
     )
     return SessionBootstrap(
         calibration, board_request_id, board_images_bgr, board_timestamps_s,

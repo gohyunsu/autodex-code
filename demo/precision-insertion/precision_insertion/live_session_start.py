@@ -56,11 +56,17 @@ def start_precision_session(
     minimum_socket_refined_iou: float,
     image_write_timeout_s: float = 5.0,
     request_id_factory: Callable[[], int] | None = None,
+    board_id: str = "11",
+    minimum_board_corners: int = 54,
+    board_capture_phase: str = "empty_before_socket",
+    confirm_socket_placement: Callable[[], bool] | None = None,
 ) -> StartedPrecisionSession:
     """Acquire and freeze one session, without touching Franka/Inspire.
 
-    Cameras must already be streaming and the key must be absent while the
-    board and fixed socket are measured. The supplied metadata provider must
+    Cameras must already be streaming and the key must be absent. In the
+    empty-board phase, the operator places the fixed socket only after board
+    preflight; the explicit partial-board phase measures around an already
+    placed socket. The supplied metadata provider must
     be the independently commissioned *same-frame* acquisition-time source;
     the normal AutoDex publisher timestamps cannot pass the lower-level gate.
     A failed attempt leaves capture-side files for review and never replaces
@@ -102,6 +108,21 @@ def start_precision_session(
             any(type(size) is not int or size <= 0 for size in image_hw)):
         raise ValueError("undistorted camera image shape must be positive H,W")
     validate_se3(c2r, name="Franka hand-eye C2R")
+    if board_id not in ("9", "11"):
+        raise ValueError("session board_id must be 9 or 11")
+    if (type(minimum_board_corners) is not int or
+            not 36 <= minimum_board_corners <= 54 or
+            (board_id == "11" and minimum_board_corners != 54)):
+        raise ValueError("session minimum_board_corners is invalid")
+    if board_capture_phase not in ("empty_before_socket", "socket_present_partial"):
+        raise ValueError("session board_capture_phase is invalid")
+    if (board_capture_phase == "empty_before_socket" and
+            (minimum_board_corners != 54 or
+             not callable(confirm_socket_placement))):
+        raise ValueError("empty-board session needs all corners and an operator placement gate")
+    if (board_capture_phase == "socket_present_partial" and
+            (board_id != "9" or minimum_board_corners == 54)):
+        raise ValueError("socket-present partial board mode needs board 9 and an explicit lower corner limit")
     if (not isinstance(base_scene, dict) or
             not isinstance(base_scene.get("mesh"), dict) or
             not isinstance(base_scene.get("cuboid"), dict)):
@@ -138,6 +159,15 @@ def start_precision_session(
         calibrated_camera_ids=calibrated_camera_ids,
         acquisition_metadata_for_request=acquisition_metadata_for_request,
         timeout_s=float(board_timeout_s), request_id_factory=next_request_id)
+    # Validate the board while its physical scene still matches the selected
+    # phase. This is repeated from the same saved frames during final freeze.
+    from src.execution.charuco_tabletop import measure_tabletop_from_images
+    measure_tabletop_from_images(
+        board.images_bgr, intrinsics_full, extrinsics_full, c2r,
+        board_id=board_id, minimum_board_corners=minimum_board_corners)
+    if (board_capture_phase == "empty_before_socket" and
+            confirm_socket_placement() is not True):
+        raise RuntimeError("operator did not confirm socket placement")
     prepare_precision_silhouette(
         init_orchestrator=init_orchestrator,
         object_name=mode.socket_object, raw_mesh=socket_mesh)
@@ -172,6 +202,9 @@ def start_precision_session(
         extrinsics_full=extrinsics_full,
         c2r=c2r, base_scene=base_scene,
         socket_collision_mesh=socket_collision,
+        board_id=board_id,
+        minimum_board_corners=minimum_board_corners,
+        board_capture_phase=board_capture_phase,
         max_socket_translation_mm=float(max_socket_translation_mm),
         max_socket_angle_deg=float(max_socket_angle_deg),
         socket_refiner=lambda capture, admission: refine_socket_capture(

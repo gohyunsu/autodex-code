@@ -99,6 +99,9 @@ def _setup(tmp_path, monkeypatch, request_ids=(11, 12, 13)):
                         lambda **_kwargs: {"paths_bound_to_shared_root": True})
     monkeypatch.setattr(start, "prepare_precision_silhouette",
                         lambda **_kwargs: events.append("socket_renderer"))
+    monkeypatch.setattr(
+        "src.execution.charuco_tabletop.measure_tabletop_from_images",
+        lambda *_args, **_kwargs: events.append("board_preflight"))
     identifiers = iter(request_ids)
     arguments = {
         "mode": mode, "shared_root": shared,
@@ -115,6 +118,8 @@ def _setup(tmp_path, monkeypatch, request_ids=(11, 12, 13)):
         "board_timeout_s": 5., "socket_timeout_s": 15.,
         "max_socket_translation_mm": 1., "max_socket_angle_deg": 1.,
         "minimum_socket_refined_iou": .8,
+        "board_id": "9", "minimum_board_corners": 36,
+        "board_capture_phase": "socket_present_partial",
         "request_id_factory": lambda: next(identifiers),
     }
     return arguments, events, repre
@@ -124,13 +129,37 @@ def test_session_start_orders_board_before_socket_and_reloads_frozen_world(
         tmp_path, monkeypatch):
     arguments, events, _repre = _setup(tmp_path, monkeypatch)
     result = start.start_precision_session(**arguments)
-    assert events == ["board", "socket_renderer", "socket_init",
+    assert events == ["board", "board_preflight", "socket_renderer", "socket_init",
                       "socket_000", "socket_001",
                       "freeze_world", "save", "verify", "reload_frozen_world"]
     assert result.board_request_id == 11
     assert result.socket_request_ids == (12, 13)
     assert result.evidence_dir == arguments["evidence_dir"]
     assert result.calibration.record["schema"] == "test"
+
+
+def test_empty_board_requires_operator_gate_before_socket_inference(
+        tmp_path, monkeypatch):
+    arguments, events, _repre = _setup(tmp_path, monkeypatch)
+    arguments.update(
+        board_id="9", minimum_board_corners=54,
+        board_capture_phase="empty_before_socket")
+    with pytest.raises(ValueError, match="operator placement gate"):
+        start.start_precision_session(**arguments)
+    assert events == []
+    arguments["confirm_socket_placement"] = (
+        lambda: events.append("placement_declined") or False)
+    with pytest.raises(RuntimeError, match="did not confirm"):
+        start.start_precision_session(**arguments)
+    assert events == ["board", "board_preflight", "placement_declined"]
+    events.clear()
+    identifiers = iter((11, 12, 13))
+    arguments["request_id_factory"] = lambda: next(identifiers)
+    arguments["confirm_socket_placement"] = (
+        lambda: events.append("socket_placed") or True)
+    start.start_precision_session(**arguments)
+    assert events[:4] == ["board", "board_preflight", "socket_placed",
+                          "socket_renderer"]
 
 
 def test_session_start_passes_commissioned_refinement_into_bootstrap(
@@ -185,7 +214,7 @@ def test_duplicate_request_or_existing_output_never_reuses_a_session(
         tmp_path, monkeypatch, request_ids=(11, 12, 12))
     with pytest.raises(ValueError, match="unique positive int31"):
         start.start_precision_session(**arguments)
-    assert events == ["board", "socket_renderer", "socket_init",
+    assert events == ["board", "board_preflight", "socket_renderer", "socket_init",
                       "socket_000", "socket_001"]
     events.clear()
     arguments["evidence_dir"].mkdir()
@@ -217,7 +246,7 @@ def test_session_rejects_unbound_saved_frame_evidence(tmp_path, monkeypatch):
     monkeypatch.setattr(start, "verify_session_evidence_bundle", unbound)
     with pytest.raises(ValueError, match="acquisition-bound camera frames"):
         start.start_precision_session(**arguments)
-    assert events == ["board", "socket_renderer", "socket_init",
+    assert events == ["board", "board_preflight", "socket_renderer", "socket_init",
                       "socket_000", "socket_001",
                       "freeze_world", "save", "verify"]
     assert arguments["evidence_dir"].is_dir()
