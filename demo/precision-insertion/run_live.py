@@ -9,8 +9,10 @@ supplies commissioned robot/camera adapters and all ten action components.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 from pathlib import Path
+import re
 import sys
 
 DEMO_DIR = Path(__file__).resolve().parent
@@ -23,13 +25,31 @@ for module_root in (str(REPO_ROOT), str(SRC_DIR), str(DEMO_DIR)):
 from precision_insertion.live_runtime import (  # noqa: E402
     RunLiveOptions, run_integrated_live_session,
 )
+from precision_insertion.session_launch import load_session_launch  # noqa: E402
+
+
+_EXP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+
+def default_run_output(launch_config: Path, exp_name: str) -> Path:
+    """Place the session below the current AutoDex experiment hierarchy."""
+    if not _EXP_NAME.fullmatch(exp_name):
+        raise ValueError("exp name must be a single path-safe directory name")
+    launch = load_session_launch(launch_config)
+    object_root = (Path.home() / "shared_data" / "AutoDex" / "experiment" /
+                   exp_name / "inspire" / launch.mode.key_object)
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    return object_root / "_pipeline_runs" / run_id
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--launch-config", type=Path, required=True)
     parser.add_argument("--endpoint-catalog", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--exp-name", "--exp_name", default="precision-insertion",
+                        help="AutoDex experiment name (default: precision-insertion)")
+    parser.add_argument("--output-dir", type=Path,
+                        help="new run directory; defaults to stock AutoDex experiment hierarchy")
     parser.add_argument("--integration", required=True,
                         help="importable AutoDex-PC module:factory")
     parser.add_argument("--robot-config", type=Path,
@@ -49,10 +69,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--enable-robot-motion", action="store_true",
                         help="required: initial clear-view and trial motions")
     args = parser.parse_args(argv)
+    if not _EXP_NAME.fullmatch(args.exp_name):
+        parser.error("exp name must be a single path-safe directory name")
+    output_dir = args.output_dir or default_run_output(
+        args.launch_config, args.exp_name)
+    if args.output_dir is None:
+        output_dir.parent.mkdir(parents=True, exist_ok=True)
     options = RunLiveOptions(
         launch_config_path=args.launch_config,
         endpoint_catalog_path=args.endpoint_catalog,
-        run_output_dir=args.output_dir,
+        run_output_dir=output_dir,
         max_xy_retries=args.max_xy_retries,
         xy_update_weight=args.xy_update_weight,
         max_steps=args.max_steps,
@@ -63,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
         options, integration_spec=args.integration)
     payload = result.to_record()
     output = options.run_output_dir.expanduser().resolve()
+    payload["exp_name"] = args.exp_name
+    payload["run_output_dir"] = str(output)
     report_path = output / "action_loop_result.json"
     with report_path.open("x", encoding="utf-8") as stream:
         json.dump(payload, stream, indent=2, sort_keys=True, allow_nan=False)

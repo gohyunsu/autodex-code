@@ -136,6 +136,45 @@ def test_square_session_effective_xy_weight_and_budget_are_zero(
     assert saved["xy_update_weight"] == 0.0
 
 
+def test_stock_experiment_episode_layout_and_result_index(monkeypatch, tmp_path):
+    source = _runner(monkeypatch, tmp_path)
+    object_root = (tmp_path / "experiment" / "precision-insertion" /
+                   "inspire" / MODE.key_object)
+    runner = session_runner.SessionRunner(
+        mode=MODE, calibration=source.calibration, catalog=source.catalog,
+        shared_root=source.shared_root,
+        output_dir=object_root / "_pipeline_runs" / "run_001",
+        max_xy_retries=1)
+    attempt = begin_attempt(
+        attempt_id="episode_001", mode=MODE,
+        session_record=runner.calibration.record,
+        candidate_id="/".join(KEY_A), tabletop_pose_stem="000",
+        xy_offset_socket_m=(0.0, 0.0), started_at_s=1.0)
+    episode_dir = runner._new_attempt_dir(attempt.attempt_id)
+    assert episode_dir == object_root / "episode_001"
+    assert (runner.output_dir / "attempts" / "episode_001").resolve() == episode_dir
+    runner._attempt = attempt
+    runner._attempt_dir = episode_dir
+    runner._attempt_index = 0
+    first_state = attempt.write_new(episode_dir / "state_000.json")
+    runner._save_episode_result(attempt, first_state)
+    first_result = json.loads((episode_dir / "result.json").read_text())
+    assert first_result["exp_name"] == "precision-insertion"
+    assert first_result["status"] == "in_progress"
+    assert first_result["latest_state"] == "state_000.json"
+    assert json.loads((object_root / "summary.json").read_text())[0][
+        "episode_id"] == "episode_001"
+
+    runner._record(lambda row: row.record_stage(
+        "grasp_success", False, timestamp_s=2.0,
+        evidence_refs={"vlm_observation": "lift.json"}))
+    second_result = json.loads((episode_dir / "result.json").read_text())
+    assert second_result["latest_state"] == "state_001.json"
+    assert second_result["labels"]["grasp_success"] is False
+    assert (episode_dir / "state_000.json").is_file()
+    assert (episode_dir / "state_001.json").is_file()
+
+
 def _save_evidence(runner, observation):
     evidence_dir = runner.output_dir.parent / "key_evidence" / observation.capture_id
     if not evidence_dir.exists():

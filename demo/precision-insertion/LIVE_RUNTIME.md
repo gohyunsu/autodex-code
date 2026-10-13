@@ -230,7 +230,6 @@ Run:
 python demo/precision-insertion/run_live.py \
   --launch-config /absolute/session_launch.json \
   --endpoint-catalog /absolute/endpoint_catalog.json \
-  --output-dir /absolute/new_run \
   --integration precision_insertion.franka_integration:factory \
   --robot-config /absolute/franka_runtime.json \
   --enable-robot-motion
@@ -421,13 +420,20 @@ PYTHONPATH="$PWD/demo/precision-insertion:$PWD/src:/path/to/robot_pc_integration
   python demo/precision-insertion/run_live.py \
   --launch-config /absolute/path/to/live_session.json \
   --endpoint-catalog /absolute/path/to/current_endpoint_catalog.json \
-  --output-dir /absolute/path/to/new_run_directory \
   --integration my_robot_integration:create_integration \
   --xy-update-weight 1.0 --enable-robot-motion
 ```
 
-Use a **new** output directory; the command does not overwrite an earlier
-run. `--enable-robot-motion` is mandatory because the first clear-view move
+The default exp name is `precision-insertion`. The default run directory is
+`~/shared_data/AutoDex/experiment/precision-insertion/inspire/<key_object>/_pipeline_runs/<timestamp>`;
+each physical episode is saved at the sibling `<key_object>/<episode_id>/`
+with `result.json`, append-only `state_*.json`, and its raw/checkpoint evidence.
+The run's `attempts/<episode_id>` is a link to that same episode directory.
+The object-level `summary.json` indexes episode results, and the run keeps
+`action_loop_result.json` plus frozen source bindings. `--exp-name` selects
+another stock experiment directory; `--output-dir` explicitly overrides the
+default run path. New run IDs do not overwrite earlier runs.
+`--enable-robot-motion` is mandatory because the first clear-view move
 occurs before camera capture. `--max-xy-retries 0` disables next-trial XY
 advice; `1` permits one candidate-specific corrected **new physical attempt**
 per session. By default there is no retry-count cap: eligible failures can

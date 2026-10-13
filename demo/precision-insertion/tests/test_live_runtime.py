@@ -12,6 +12,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion import live_runtime  # noqa: E402
 from precision_insertion.live_orchestration import _LIVE_ACTIONS  # noqa: E402
+from precision_insertion.config import select_mode  # noqa: E402
+import run_live  # noqa: E402
 
 
 def test_live_cli_imports_stock_and_demo_packages_from_another_cwd(tmp_path):
@@ -23,6 +25,21 @@ def test_live_cli_imports_stock_and_demo_packages_from_another_cwd(tmp_path):
         capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     assert "--enable-robot-motion" in result.stdout
+    assert "--exp-name" in result.stdout
+
+
+def test_default_exp_path_matches_stock_autodex_hierarchy(monkeypatch, tmp_path):
+    mode = select_mode("cylinder", 20)
+    monkeypatch.setattr(run_live, "load_session_launch", lambda _path:
+                        SimpleNamespace(mode=mode))
+    output = run_live.default_run_output(tmp_path / "launch.json",
+                                         "precision-insertion")
+    assert output.parent.parent == (Path.home() / "shared_data" / "AutoDex" /
+                                    "experiment" / "precision-insertion" /
+                                    "inspire" / mode.key_object)
+    assert output.parent.name == "_pipeline_runs"
+    with pytest.raises(ValueError, match="path-safe"):
+        run_live.default_run_output(tmp_path / "launch.json", "../other")
 
 
 def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path):

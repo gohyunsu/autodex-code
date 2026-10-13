@@ -533,7 +533,6 @@ PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src:/absolute/robot_pc_bindi
   python demo/precision-insertion/run_live.py \
   --launch-config /absolute/recipient/new_live_session.json \
   --endpoint-catalog "$CATALOG20" \
-  --output-dir /absolute/new/precision_run \
   --integration precision_insertion.franka_integration:factory \
   --robot-config /absolute/recipient/franka_runtime.json \
   --label-mode manual --annotator OPERATOR_NAME \
@@ -542,7 +541,12 @@ PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src:/absolute/robot_pc_bindi
 
 For autonomous experimental labels change only `--label-mode` to
 `vlm_only`; manual mode still saves the independent VLM label. The launch
-uses a **new** session evidence path and a **new** run directory. The loop
+uses a **new** session evidence path. `--exp-name` defaults to
+`precision-insertion`; without `--output-dir` the new run goes under stock
+`~/shared_data/AutoDex/experiment/precision-insertion/inspire/<cylinder_key>/_pipeline_runs/`.
+Each physical episode appears beside `_pipeline_runs` with its own
+`result.json`, append-only states and evidence; `summary.json` indexes them.
+The loop
 itself begins with a clear-view move, so omitting `--enable-robot-motion`
 does **not** turn it into a full dry run. Inspect `action_loop_result.json`,
 the three checkpoint reports, raw camera manifests, guarded metric/release

@@ -12,6 +12,7 @@ from copy import deepcopy
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import time
@@ -173,6 +174,13 @@ class SessionRunner:
         self.catalog = catalog
         self.shared_root = root
         self.output_dir = target
+        # A live run placed under the stock AutoDex _pipeline_runs directory
+        # keeps each physical episode at the sibling object root. Existing
+        # run/attempts paths remain available to the live stage handlers.
+        self._episode_root = (target.parent.parent
+                              if target.parent.name == "_pipeline_runs" else None)
+        self.exp_name = (self._episode_root.parent.parent.name
+                         if self._episode_root is not None else None)
         # Square remains an offline planning mode, not an XY-learning mode.
         self.max_xy_retries = max_xy_retries if mode.family == "cylinder" else 0
         self.xy_update_weight = (float(xy_update_weight)
@@ -255,6 +263,7 @@ class SessionRunner:
         self._write_exclusive(target / "endpoint_catalog.json", catalog)
         self._write_exclusive(target / "session_run.json", {
             "schema": "precision_insertion_session_runner_v1",
+            "exp_name": self.exp_name,
             "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
                      "key_object": mode.key_object,
                      "socket_object": mode.socket_object},
@@ -272,6 +281,69 @@ class SessionRunner:
         with path.open("x", encoding="utf-8") as stream:
             json.dump(value, stream, indent=2, sort_keys=True, allow_nan=False)
             stream.write("\n")
+
+    def _new_attempt_dir(self, attempt_id: str) -> Path:
+        alias = self.output_dir / "attempts" / attempt_id
+        if self._episode_root is None:
+            alias.mkdir(parents=True, exist_ok=False)
+            return alias
+        actual = self._episode_root / attempt_id
+        actual.mkdir(parents=True, exist_ok=False)
+        alias.parent.mkdir(parents=True, exist_ok=True)
+        alias.symlink_to(os.path.relpath(actual, alias.parent),
+                         target_is_directory=True)
+        return actual
+
+    def _save_episode_result(self, attempt: AttemptRecord, state_path: Path) -> None:
+        """Keep a compact stock-style result next to the append-only states."""
+        assert self._attempt_dir is not None
+        observed = attempt.labels["insertion_success"]
+        record = {
+            "schema": "precision_insertion_episode_result_v1",
+            "episode_id": attempt.attempt_id,
+            "exp_name": getattr(self, "exp_name", None),
+            "attempt_type": ("repose" if attempt.candidate_id is None
+                             else "insertion"),
+            "status": ("observed_success" if observed is True else
+                       "observed_failure" if observed is False else
+                       "in_progress"),
+            "success": observed,
+            "failure_code": attempt.failure_code,
+            "candidate_id": attempt.candidate_id,
+            "mode": {"family": self.mode.family, "gap_mm": self.mode.gap_mm,
+                     "key_object": self.mode.key_object,
+                     "socket_object": self.mode.socket_object},
+            "started_at_s": attempt.started_at_s,
+            "last_event_at_s": (attempt.events[-1]["timestamp_s"]
+                                if attempt.events else None),
+            "event_count": len(attempt.events),
+            "labels": dict(attempt.labels),
+            "latest_state": state_path.name,
+            "latest_state_sha256": hashlib.sha256(state_path.read_bytes()).hexdigest(),
+            "session_run": str(
+                getattr(self, "output_dir", self._attempt_dir.parent) /
+                "session_run.json"),
+        }
+        result = self._attempt_dir / "result.json"
+        temporary = self._attempt_dir / "result.json.tmp"
+        temporary.write_text(json.dumps(record, indent=2, sort_keys=True,
+                                        allow_nan=False) + "\n", encoding="utf-8")
+        temporary.replace(result)
+        if getattr(self, "_episode_root", None) is not None:
+            rows = []
+            for path in sorted(self._episode_root.glob("*/result.json")):
+                entry = json.loads(path.read_text(encoding="utf-8"))
+                if entry.get("schema") == "precision_insertion_episode_result_v1":
+                    rows.append({"episode_id": entry["episode_id"],
+                                 "status": entry["status"],
+                                 "success": entry["success"],
+                                 "result": str(path)})
+            summary = self._episode_root / "summary.json"
+            temporary_summary = self._episode_root / "summary.json.tmp"
+            temporary_summary.write_text(
+                json.dumps(rows, indent=2, sort_keys=True, allow_nan=False) + "\n",
+                encoding="utf-8")
+            temporary_summary.replace(summary)
 
     @property
     def attempted_candidates(self) -> tuple[tuple[str, str, str], ...]:
@@ -862,8 +934,7 @@ class SessionRunner:
             session_record=self.calibration.record, candidate_id=None,
             tabletop_pose_stem=self._repose_preflight.from_pose_stem,
             xy_offset_socket_m=(0.0, 0.0), started_at_s=started_at_s)
-        attempt_dir = self.output_dir / "attempts" / attempt_id
-        attempt_dir.mkdir(parents=True, exist_ok=False)
+        attempt_dir = self._new_attempt_dir(attempt_id)
         self._write_exclusive(attempt_dir / "repose_preflight_binding.json", {
             "schema": "precision_insertion_repose_attempt_binding_v1",
             "from_pose_stem": self._repose_preflight.from_pose_stem,
@@ -873,10 +944,11 @@ class SessionRunner:
             "session_calibration_sha256": self.session_sha256,
             "robot_ready": False,
         })
-        attempt.write_new(attempt_dir / "state_000.json")
+        state_path = attempt.write_new(attempt_dir / "state_000.json")
         self._used_attempt_ids.add(attempt_id)
         self._attempt = attempt
         self._attempt_dir = attempt_dir
+        self._save_episode_result(attempt, state_path)
         self._postlift_preflight = None
         self._postlift_report_path = None
         self._postlift_report_sha256 = None
@@ -977,8 +1049,7 @@ class SessionRunner:
             tabletop_pose_stem=self._preflight.pose_class["stem"],
             xy_offset_socket_m=(0.0, 0.0), started_at_s=started_at_s,
             wrist_correction_socket_m=correction)
-        attempt_dir = self.output_dir / "attempts" / attempt_id
-        attempt_dir.mkdir(parents=True, exist_ok=False)
+        attempt_dir = self._new_attempt_dir(attempt_id)
         self._write_exclusive(attempt_dir / "preflight_binding.json", {
             "schema": "precision_insertion_attempt_preflight_binding_v1",
             "candidate_id": "/".join(key),
@@ -998,10 +1069,11 @@ class SessionRunner:
             "wrist_correction_socket_m": list(correction),
             "robot_ready": False,
         })
-        attempt.write_new(attempt_dir / "state_000.json")
+        state_path = attempt.write_new(attempt_dir / "state_000.json")
         self._used_attempt_ids.add(attempt_id)
         self._attempt = attempt
         self._attempt_dir = attempt_dir
+        self._save_episode_result(attempt, state_path)
         self._postlift_preflight = None
         self._postlift_report_path = None
         self._postlift_report_sha256 = None
@@ -1035,9 +1107,11 @@ class SessionRunner:
         updated = deepcopy(self._attempt)
         mutation(updated)
         index = self._attempt_index + 1
-        updated.write_new(self._attempt_dir / f"state_{index:03d}.json")
+        state_path = updated.write_new(
+            self._attempt_dir / f"state_{index:03d}.json")
         self._attempt = updated
         self._attempt_index = index
+        self._save_episode_result(updated, state_path)
         if updated.events and updated.candidate_id is not None:
             self._attempted.add(tuple(updated.candidate_id.split("/")))
         return deepcopy(updated)
