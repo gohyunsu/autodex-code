@@ -1,8 +1,8 @@
 """One-capture stock AutoDex socket refinement before fixture calibration.
 
 The original per-view SAM/FoundPose evidence is admitted first. This module
-only selects/refines its poses and scores the result against every admitted
-mask; it does not capture images or command the robot.
+selects/refines its poses and records the score against every admitted mask;
+it does not capture images or command the robot.
 """
 
 from __future__ import annotations
@@ -26,10 +26,11 @@ def refine_socket_capture(
     minimum_refined_iou: float, silhouette_iterations: int = 100,
     silhouette_loss_threshold: float = 0.003,
 ) -> SocketCaptureRefinement:
-    """Run stock IoU selection + silhouette, then require every view to fit.
+    """Run stock IoU selection and silhouette, retaining all view scores.
 
-    The threshold is a commissioned input. Passing it means mask agreement,
-    not absolute metric accuracy or correct object identity.
+    The supplied IoU threshold labels strong supporting views. When a view
+    misses it, use the stock silhouette result rather than imposing an extra
+    all-view veto. Neither gate proves absolute metric accuracy or identity.
     """
     if (not isinstance(capture, SocketCaptureInput) or
             not isinstance(admission, SocketCaptureEvidence) or
@@ -89,11 +90,16 @@ def refine_socket_capture(
     if (set(per_view) != set(accepted) or
             not math.isfinite(float(mean_iou)) or
             any(not math.isfinite(float(score)) or
-                    not threshold <= float(score) <= 1
+                    not 0 <= float(score) <= 1
                     for score in per_view.values())):
-        raise ValueError("refined socket fails commissioned per-view IoU gate")
+        raise ValueError("refined socket has invalid per-view IoU scores")
+    gate = ("all_view_iou" if all(float(score) >= threshold
+                                  for score in per_view.values())
+            else "stock_silhouette")
     stock_record = _json_native(selection)
     stock_record["post_refinement_mean_iou"] = float(mean_iou)
+    stock_record["post_refinement_iou_support_camera_ids"] = sorted(
+        camera for camera, score in per_view.items() if float(score) >= threshold)
     stock_record["selection_mode"] = "iou"
     stock_record["silhouette_iterations"] = silhouette_iterations
     stock_record["silhouette_loss_threshold"] = loss_limit
@@ -103,4 +109,4 @@ def refine_socket_capture(
         selected_camera_id=selection["best_serial"],
         per_view_iou={camera: float(per_view[camera]) for camera in accepted},
         minimum_refined_iou=threshold, stock_selection=stock_record,
-        raw_mesh_sha256=mesh_sha)
+        raw_mesh_sha256=mesh_sha, refinement_gate=gate)

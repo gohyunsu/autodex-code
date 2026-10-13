@@ -10,6 +10,20 @@ multi-view XY update after each eligible failure and accumulates it for the
 next physical attempt, then follows the existing recovery/repose decisions.
 It ends immediately on an admitted insertion-success label.
 
+The default camera startup follows stock AutoDex order: measure the empty
+board, wait for the operator to place the fixed white socket, then capture
+the socket repeatedly. The explicit `socket_present_partial` launch mode
+supports the currently installed board 9 with the socket already present:
+its visible corners must span the board and pass the same reprojection,
+plane, and rigid-fit limits. The stock board-11 default still requires all
+54 corners. Neither mode sends a robot motion command.
+
+Socket initialization uses current AutoDex cross-view IoU selection and
+silhouette refinement. Per-view IoU scores and threshold supporters remain
+evidence; a low-scoring view alone no longer vetoes a passing stock result.
+The session still needs acquisition-bound frames and agreement between
+separate socket captures before its fixture pose can be frozen.
+
 **Current cylinder contract (2026-10-11):** the assembled held-relation
 handler defaults to the selected v8 nominal hypothesis; cylinder live mode
 rejects physical/observed post-grasp key–hand routes. Failed-trial advice is

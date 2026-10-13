@@ -1,4 +1,4 @@
-"""A stock socket refinement is one independently captured, all-view pose."""
+"""A stock socket refinement records all views and can use stock fallback."""
 
 from __future__ import annotations
 
@@ -77,14 +77,17 @@ def test_stock_refinement_is_bound_to_mesh_capture_and_all_views(
     assert calls[0]["subset_serials"] == ["cam_a", "cam_b"]
 
 
-def test_rejects_one_bad_view_even_when_mean_and_stock_loss_pass(
+def test_uses_stock_silhouette_when_one_view_has_low_iou(
         tmp_path, monkeypatch):
     capture, admission, stock, raw_mesh, _ = _setup(
         tmp_path, monkeypatch, per_view={"cam_a": .99, "cam_b": .72})
-    with pytest.raises(ValueError, match="per-view IoU"):
-        refine_socket_capture(
-            capture=capture, admission=admission, init_orchestrator=stock,
-            socket_object="socket", raw_mesh=raw_mesh, minimum_refined_iou=.8)
+    row = refine_socket_capture(
+        capture=capture, admission=admission, init_orchestrator=stock,
+        socket_object="socket", raw_mesh=raw_mesh, minimum_refined_iou=.8)
+    assert row.refinement_gate == "stock_silhouette"
+    assert row.per_view_iou == {"cam_a": .99, "cam_b": .72}
+    assert row.stock_selection["post_refinement_iou_support_camera_ids"] == [
+        "cam_a"]
 
 
 def test_rejects_stock_failure_or_changed_renderer_mesh(tmp_path, monkeypatch):

@@ -76,7 +76,7 @@ The other nine modes are incomplete in this deliberately partial recipient
 staging root; a zero all-mode completion count from the producer-name-only
 profile would misdescribe the installed `gap=20` catalog.
 After these audit changes, the full demo suite passed in the robot PC's
-NumPy-1.26 `flir_env`: **907 passed, 4 skipped**. The separate NumPy-2
+NumPy-1.26 `flir_env`: **911 passed, 4 skipped**. The separate NumPy-2
 `flir_env_2` run failed mesh tests because its installed trimesh calls removed
 `ndarray.ptp()`; that environment failure did not recur in `flir_env`.
 The first-party Qwen adapter loaded the staged 2B model on CPU and returned
@@ -107,6 +107,39 @@ The saved reports are under
 `AutoDex/precision_insertion/cylindrical/live_camera_snapshot_probe_20261013/`
 and `live_camera_stream_probe_20261013/` in staging. No socket-only or
 key-with-socket SAM/FoundPose accuracy was measured.
+
+A later operator-prepared board-9/socket scene produced 20/20 new JPEGs.
+The exact white-object prompt `white plastic cylindrical socket` gave 19
+SAM3 masks and one miss. FoundPose returned 19 saved-image candidates;
+their CAD-center positions spread by up to 425.8 mm. This raw-candidate
+spread is **not** the result of stock multiview selection. Offline replay of
+the unchanged current `InitOrchestrator.refine_from_payloads` on the 19
+pose-bearing views selected camera `25322643`, kept 14/19 views internally
+for silhouette optimization and returned a pose with loss 0.00154 below
+the stock 0.003 limit. Its mean post-refinement IoU was 0.792, with 8/19
+views above the example 0.8 threshold. The demo now records low-score
+views and uses the stock silhouette result when an extra all-view IoU veto
+would have rejected it. This saved-image replay lacks verified acquisition
+times and independent repeated captures, so it does not freeze a live
+socket pose or validate robot-frame accuracy. A board-9 partial-corner
+diagnostic triangulated 42/54 visible
+corners from those same frames with 0.41 px median reprojection error and
+0.30 mm rigid-fit RMS. These internal fit residuals do not validate robot
+frame accuracy. Reports and overlays are in staging under
+`AutoDex/precision_insertion/cylindrical/live_socket_only_camera_probe_stream_20261013/`.
+The key was absent. The default stock sequence still measures an empty
+board before object placement; the demo's explicit `socket_present_partial`
+mode admits an already placed socket only when board-wide coverage and
+the unchanged geometric quality bounds pass.
+
+The installed `InspireControllerIP.get_data()` returns measured hand angles
+as `qpos` and commanded angles as `action`. The demo's lift/transfer monitor
+now reads `qpos`; its previous `joint_value` lookup would abort despite
+valid current feedback. This was checked in tests, without a motion command.
+
+After the operator authorized supervised clear-view movement, a new
+feedback-only preflight got no advancing FR3 state packets; the existing
+daemon logged repeated `Net Exception`. No motion command was issued.
 
 A separate read-only FR3/Inspire probe used only the FR3 state subscription
 and Inspire register reads. It received two advancing FR3 packets with seven

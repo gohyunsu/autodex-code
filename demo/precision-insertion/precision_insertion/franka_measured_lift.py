@@ -96,7 +96,7 @@ class _ObservedArm:
         hand_state = self.hand.get_data()
         if not isinstance(hand_state, dict):
             raise RuntimeError(f"Inspire {self.stage} state stream is absent")
-        measured = _vector(hand_state.get("joint_value"), 6,
+        measured = _vector(hand_state.get("qpos"), 6,
                            "measured Inspire joints")
         commanded = _vector(hand_state.get("action"), 6,
                             "commanded Inspire joints")

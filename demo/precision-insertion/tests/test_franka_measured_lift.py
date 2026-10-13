@@ -38,7 +38,7 @@ class _Hand:
 
     def get_data(self):
         return {"action": self.action.copy(),
-                "joint_value": self.measured.copy(), "time": time.time()}
+                "qpos": self.measured.copy(), "time": time.time()}
 
 
 class _Executor:

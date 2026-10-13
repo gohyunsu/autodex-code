@@ -20,6 +20,14 @@ The runtime rejects stale color words before a SAM request.
   `white plastic cylindrical socket`; this is *not* validated by the key
   probe. Capture the socket without the key on the board.
 
+On 2026-10-13 the active SAM and Qwen object prompts were checked for stale
+object colors. They describe both physical objects as white; the other color
+words in this demo refer to diagnostic overlays or gray image padding. A
+saved live-camera socket-only SAM3 replay using the exact prompt
+`white plastic cylindrical socket` produced a mask in 19 of 20 views and no
+mask in one. This checks the prompt against this scene, not the mask's full
+object coverage or metric pose accuracy.
+
 ## 2. VLM checkpoints: exact per-camera input and proposed short text
 
 Send one camera's image(s) per request to the default local Qwen backend;

@@ -139,7 +139,7 @@ The later examples assume the same shell retains `DATA_DIR`, `NAS_DIR` and
 `CHECK_DIR`; set them again if starting a new shell. `CHECK_DIR` is an
 exclusive disposable report directory, not the runtime asset root.
 On this robot PC, the complete demo test suite passed with
-`/home/robot/anaconda3/envs/flir_env/bin/python` (NumPy 1.26): 907 passed,
+`/home/robot/anaconda3/envs/flir_env/bin/python` (NumPy 1.26): 911 passed,
 4 skipped on 2026-10-13. `flir_env_2` has NumPy 2 with the installed older
 trimesh, whose `ndarray.ptp()` call raises during mesh tests; use a compatible
 environment when repeating the suite.
@@ -362,10 +362,15 @@ PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
 ```
 
 The first invocation validates the launch files only. Before `--capture`,
-start the AutoDex camera streams and place only the fixed socket on the
-ChArUco board; keep the key absent. `--capture` connects to the **AutoDex
-cameras only** and immediately measures the board and repeated socket
-observations without pausing for object placement. It then freezes the
+start the AutoDex camera streams and keep the key absent. With the default
+`empty_before_socket` phase, start with an empty board: the CLI validates
+its full 54-corner measurement, prompts the operator to place the fixed
+white socket, then captures the socket. For the current board-9 scene with
+the socket already present, set `board_id: "9"`,
+`board_capture_phase: "socket_present_partial"`, and an explicit
+`minimum_board_corners` from 36 to 53. This mode checks board-wide corner
+coverage and the same reprojection, plane, and rigid-fit bounds. `--capture`
+connects to the **AutoDex cameras only** and freezes the
 collision world. Inspect raw frames, SAM masks, CAD fit/rim orientation,
 per-view agreement, repeated-pose residuals, camera IDs and exposure times.
 The output path must be new; the command does not drive Franka to clear view.
@@ -389,6 +394,39 @@ serials, and its 1536×2048 dimensions match every saved JPEG (see
 `live_serial_calibration_file_match_20261013.json` in the same cylindrical
 staging directory). This file match does not commission its robot-frame
 accuracy or camera exposure timing.
+
+After the operator changed the scene, a second camera-only probe saved 20/20
+JPEGs showing the ChArUco board and white fixed socket. Its report, images,
+and per-view marker detections are in
+`/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical/live_socket_only_camera_probe_stream_20261013/`.
+The streams were turned off and all five capture PCs returned to `READY`.
+The installed AutoDex SAM3 source, local 2026-10-10 weight, and exact prompt
+`white plastic cylindrical socket` yielded nonempty masks in 19/20 views;
+one view had no mask. On inspected overlays, the mask covered the socket wall
+but omitted part of its base flange. Saved-mask FoundPose replay with the
+recipient v8 gap-20 mesh/repre and candidate `20261012_060559` camera pair
+returned a pose in 19/20 views, but their CAD-center spread reached
+**425.8 mm**. These are raw per-camera candidates, before stock selection.
+A second offline replay used the unchanged current AutoDex IoU/silhouette
+refinement on the 19 pose-bearing views: it selected camera `25322643`,
+kept 14/19 views inside the silhouette optimizer, and returned a pose with
+loss **0.00154** below its **0.003** limit. Mean post-refinement IoU was
+**0.792**; 8/19 views exceeded the example **0.8** per-view threshold.
+The report is `foundpose_stock_refinement_19_views.json` beside the JPEGs.
+The demo records every view score and falls back to this stock result if its
+extra all-view IoU condition would block a capture. The saved replay did not
+verify acquisition times, repeated captures or camera-to-robot accuracy; do
+not freeze a socket pose or plan motion from this diagnostic alone.
+
+The visible board's marker IDs identify **board 9**. The stock tabletop
+preflight defaults to board 11 and all 54 corners; the demo now selects board
+9 explicitly while preserving that default. With the socket present, 42/54
+board-9 corners were triangulated from the saved 20-camera capture. The
+partial-board diagnostic had 0.41 px median / 0.65 px maximum median-corner
+reprojection error, 0.18 mm plane RMS, and 0.30 mm rigid-fit RMS. Its report
+is `board9_partial_tabletop_probe.json` beside the JPEGs. These are internal
+fit residuals for the candidate calibration, not independent robot-frame
+accuracy. No key-with-socket image was captured in this probe.
 
 There is presently **no one-command, camera-only live key-with-socket trial**
 in this CLI: key capture is normally coupled to an exposure-aligned robot
@@ -448,6 +486,12 @@ The saved report is at
 It observed a maximum absolute FR3 velocity of 0.00198 rad/s and maximum
 Inspire actual/command difference of 13 raw units in that one sample. These
 are diagnostic observations, not commissioned hold or exposure-time limits.
+On a later pre-clear-view check the same state subscriber received no two
+advancing FR3 packets within five seconds, although ports 5555/5556 were
+listening. The existing `franka` tmux daemon repeatedly logged `Net
+Exception`. The command-capable controller was not opened and no clear-view
+motion was sent. Recheck FR3 power, Desk/FCI and the robot network, then
+repeat the read-only feedback probe before planning a first free-space move.
 
 ## Stage 4 — full robot loop, only after stage adapters exist
 

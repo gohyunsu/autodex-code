@@ -47,13 +47,14 @@ cd /home/hyunsu/autodex-code
   --output /absolute/new_roi_probe.json
 ```
 
-The explicit board config is essential on this workstation:
-`paradex/system/current/charuco_info.json` lists only boards `1–3`, while the
-saved AutoDex rig uses board `9` from `system/paradex2`. The first replay
-using the workstation's global detector correctly abstained for missing board
-corners. The demo probe now constructs board `9` directly from the supplied
-config without altering that global symlink. The AutoDex PC must likewise
-verify its **actual** board config at session startup.
+The explicit board config is essential. At the original saved-image replay,
+the then-current `paradex/system/current/charuco_info.json` listed only
+boards `1–3`, while the saved AutoDex rig used board `9` from
+`system/paradex2`; that first replay correctly abstained. On this robot PC
+as checked on 2026-10-13, `system/current` includes board `9`. The demo
+probe still constructs the selected board from the supplied config without
+changing that system directory. Current precision-insertion session startup
+must explicitly select board `9` for the board-9 fixture.
 
 On the real saved square 1.5 mm `pose_02` key shot, camera `24122734`:
 

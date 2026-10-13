@@ -2308,8 +2308,10 @@ collects the ChArUco board snapshot **before** initializing socket FoundPose,
 takes at least two unique-request socket captures while the key is absent,
 takes only admitted SAM/FoundPose views from each capture into stock
 `InitOrchestrator.refine_from_payloads(selection_mode="iou")` and its
-silhouette optimizer, then requires a commissioned minimum **per-view**
-post-refinement IoU. Each capture contributes exactly one refined pose to
+silhouette optimizer. It saves every post-refinement per-view IoU and labels
+which views meet the supplied threshold. If some do not, it uses the stock
+silhouette result instead of vetoing the capture solely for those views.
+Each capture contributes exactly one refined pose to
 the repeatability test; the raw per-camera poses remain saved evidence but
 are not counted as independent fixture measurements. It runs
 `bootstrap_session()`, freezes the socket in the collision world, writes
@@ -2317,7 +2319,7 @@ the evidence bundle and reloads the saved calibration to check it. Duplicate
 request IDs or an existing output directory fail closed; partial capture
 files after a failure are retained for review. It does not connect to or
 command Franka/Inspire. Neither silhouette loss nor per-view IoU proves
-absolute socket accuracy; commission the threshold against independently
+absolute socket accuracy; compare the refined pose with independently
 measured fixture truth before a robot trial.
 
 ```python
@@ -2341,8 +2343,11 @@ started = start_precision_session(
         minimum_foundpose_inliers=commissioned_inliers,
         minimum_border_clearance_px=commissioned_border_px,
         maximum_capture_skew_s=commissioned_camera_skew_s),
-    socket_prompt="fixed white cylindrical socket on the ChArUco board",
+    socket_prompt="fixed white square socket on the ChArUco board",
     socket_capture_count=2,
+    board_id="11", board_capture_phase="empty_before_socket",
+    confirm_socket_placement=lambda: input(
+        "Place the white socket after the empty-board capture; Enter=ready: ") == "",
     board_timeout_s=commissioned_board_timeout_s,
     socket_timeout_s=commissioned_socket_timeout_s,
     max_socket_translation_mm=commissioned_socket_repeatability_mm,
