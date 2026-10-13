@@ -12,6 +12,9 @@ import json
 import math
 from pathlib import Path
 
+import numpy as np
+from autodex.utils.robot_config import FR3_CLEAR_VIEW, INSPIRE_INIT
+
 
 SCHEMA = "precision_insertion_repose_execution_evidence_v1"
 PHASES = (
@@ -21,6 +24,7 @@ PHASES = (
 SOURCE_NAMES = frozenset({
     "trajectory_feedback", "safety", "grasp_state", "hand_feedback",
 })
+STOCK_SOURCE = "stock_autodex_franka_executor"
 
 
 def _sha(path: Path) -> str:
@@ -89,7 +93,8 @@ def verify_repose_execution_evidence(
         raise ValueError("repose planned trajectories changed")
     record = json.loads(source.read_text(encoding="utf-8"))
     if (not isinstance(record, dict) or record.get("schema") != SCHEMA or
-            record.get("source") != "commissioned_external_controller" or
+            record.get("source") not in {
+                "commissioned_external_controller", STOCK_SOURCE} or
             record.get("attempt_id") != attempt_id or
             record.get("preflight_report_sha256") != preflight_report_sha256 or
             record.get("planned_trajectories_sha256") != _sha(trajectory) or
@@ -99,6 +104,71 @@ def verify_repose_execution_evidence(
             record.get("safety_abort") is not False or
             record.get("grip_loss_before_release") is not False):
         raise ValueError("repose execution is not bound to this safe directed plan")
+    if record["source"] == STOCK_SOURCE:
+        feedback_ref = record.get("stock_feedback")
+        if (not isinstance(feedback_ref, dict) or
+                set(feedback_ref) != {"path", "sha256"} or
+                not isinstance(feedback_ref["path"], str)):
+            raise ValueError("stock repose lacks bound measured feedback")
+        feedback_path = Path(feedback_ref["path"]).expanduser().resolve()
+        if (feedback_path.parent != source.parent or
+                not feedback_path.is_file() or
+                feedback_path in {source, report_path, trajectory, scene} or
+                _sha(feedback_path) != feedback_ref["sha256"]):
+            raise ValueError("stock repose measured feedback changed")
+        feedback = json.loads(feedback_path.read_text(encoding="utf-8"))
+        checkpoints = feedback.get("checkpoints")
+        if (feedback.get("schema") !=
+                "precision_insertion_stock_repose_feedback_v1" or
+                feedback.get("attempt_id") != attempt_id or
+                feedback.get("preflight_report_sha256") !=
+                preflight_report_sha256 or
+                feedback.get("stop_acknowledgement", {}).get(
+                    "acknowledged") is not True or
+                not isinstance(checkpoints, list) or
+                len(checkpoints) != len(PHASES) or
+                [item.get("name") for item in checkpoints
+                 if isinstance(item, dict)] != list(PHASES)):
+            raise ValueError("stock repose lacks ordered measured checkpoints")
+        with np.load(trajectory, allow_pickle=False) as paths:
+            required = {"held_lift", "held_transfer", "held_descent",
+                        "post_release_lift", "post_release_retract"}
+            if not required <= set(paths.files):
+                raise ValueError("stock repose planned paths are incomplete")
+            expected = tuple(np.asarray(value, dtype=float) for value in (
+                paths["held_lift"][0], paths["held_lift"][-1],
+                paths["held_transfer"][-1], paths["held_descent"][-1],
+                paths["post_release_lift"][0],
+                paths["post_release_lift"][-1],
+                paths["post_release_retract"][-1]))
+        previous = _finite(attempt_started_at_s, "attempt start")
+        for item, endpoint in zip(checkpoints, expected):
+            state = item.get("state")
+            if (not isinstance(state, dict) or state.get("schema") !=
+                    "precision_insertion_live_robot_state_v1" or
+                    state.get("source") != "robot_joint_feedback"):
+                raise ValueError("stock repose checkpoint is not measured state")
+            stamp = _finite(state.get("sample_timestamp_s"), "checkpoint time")
+            q = np.asarray(state.get("full_q"), dtype=float)
+            if (stamp <= previous or q.shape != (13,) or
+                    not np.isfinite(q).all() or
+                    endpoint.shape != (13,) or
+                    np.max(np.abs(q - endpoint)) > 0.05):
+                raise ValueError("stock repose missed its planned checkpoint")
+            previous = stamp
+        final_q = np.asarray(checkpoints[-1]["state"]["full_q"], dtype=float)
+        if (np.max(np.abs(final_q[:7] - FR3_CLEAR_VIEW)) > 0.05 or
+                np.max(np.abs(final_q[7:] - INSPIRE_INIT)) > 0.05):
+            raise ValueError("stock repose did not clear the camera view")
+        return {
+            "path": str(source), "sha256": _sha(source),
+            "release_completed_at_s": checkpoints[4]["state"][
+                "sample_timestamp_s"],
+            "exit_completed_at_s": checkpoints[-1]["state"][
+                "sample_timestamp_s"],
+            "stock_feedback": feedback_ref,
+            "scope": "stock_measured_waypoints_not_key_landing_pose",
+        }
     phases = record.get("phases")
     if (not isinstance(phases, list) or len(phases) != len(PHASES) or
             [row.get("name") for row in phases if isinstance(row, dict)] !=

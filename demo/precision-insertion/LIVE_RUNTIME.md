@@ -8,11 +8,12 @@ return/restoration action. No separate contact-controller review file or
 contact site validation is required by this route. The failure remains in
 the episode evidence and does not create an XY correction. A completed stroke
 uses the existing release/clear-view callback and visual task label. The
-robot-PC `stages_factory`, restoration/repose callbacks, stage limits, and
-measured feedback are still required for a complete live run. The FR3
-integration provides the stock held-return execution recorder. With existing
-path-audit limits, it also constructs the cylinder release/clear-view callback
-from the stock executor and planner.
+robot-PC `stages_factory`, stage limits, interlocks, and measured feedback are
+still required for a complete live run. The FR3 integration provides the
+stock held-return execution recorder. With existing path-audit limits it
+constructs the cylinder release/clear-view callback; with the pickup motion
+interlock it also constructs stock v8 restoration/repose callbacks. These
+callbacks have only offline test coverage so far.
 
 `run_live.py` is the demo-local replacement for a precision-specific
 `run_pipeline.py`/`run_auto.py` robot loop. It does not modify either stock
@@ -224,23 +225,27 @@ provenance. This mode tests whether next-trial XY learning absorbs a
 repeatable translation bias; it does not establish physical held-key pose,
 axis tilt or grasp repeatability.
 
-For released-key original-pose restoration, the robot-PC stage factory must
-provide `stages["held_return"]["execute_restoration"]`. Its callable receives
+For released-key original-pose restoration, the built-in FR3 integration
+injects `stages["held_return"]["execute_restoration"]` and
+`stages["repose_execution"]["execute_repose"]` if the stage factory omits
+them and supplies the existing pickup motion interlock. An explicit callback
+can override either. The restoration callable receives
 `(runner, decision, plan, preflight_report_path)` and returns an absolute
 execution-log path. `plan` is a `ReposeTransitionPreflight` assembled from
 the freshly recaptured key, measured FR3/Inspire joints, the original
 tabletop class/CAD-center XY, eligible v8 pickup candidates or directed reset
 seeds, socket-aware held transfer, and release/exit trajectories. The
-callback must execute that exact plan and write a
+callback executes that exact plan through the stock FR3 executor and writes a
 `precision_insertion_repose_execution_evidence_v1` log for the **current
-failed attempt ID**; the handler verifies it before another clear-view key
+failed attempt ID**. It checks measured squeeze against the saved held path
+before lift and saves measured endpoints for all seven phases. The handler
+verifies the execution before another clear-view key
 capture. The same helper is wired into completed-transfer recovery. If no
 placement is needed, the callback is not called. No new key/socket mesh or
 same-pose reset seed is required: an eligible full-key v8 grasp from the
 source tabletop pose is used for same-pose relocation, with the previous
 attempt's candidate tried first when it is still eligible. Cylinder live
-assembly rejects a missing callback before pickup, instead of discovering
-that gap only after a failed insertion. If neither a directed
+assembly rejects a missing callback or interlock before pickup. If neither a directed
 reset seed nor an eligible source-pose grasp has a complete planned path,
 restoration remains unavailable for that observed scene; it is not reported
 as a successful reset. `restoration_height_cm` defaults to 12 and

@@ -4,9 +4,21 @@
 pickup, held transfer/descent, opening and post-release exit **preflight**. It
 does not command Franka or Inspire. `observe_repose_landing` now rejects an
 arbitrary release-file existence check. The caller must supply a JSON file
-with schema `precision_insertion_repose_execution_evidence_v1`, produced by an
-independently commissioned controller, and a new tabletop key capture after
-the entire release/exit sequence.
+with schema `precision_insertion_repose_execution_evidence_v1` and a new
+tabletop key capture after the entire release/exit sequence. The current
+cylinder FR3 integration can produce this record through the stock AutoDex
+executor; an external controller may still supply the older producer format.
+
+The stock producer uses `source: "stock_autodex_franka_executor"`. It runs the
+saved selected-v8 pickup with `start_from_current=True` and `skip_lift=True`,
+checks measured squeeze against the saved held-lift start, then follows the
+preflighted held lift, transfer, descent, hand opening, upward exit and
+clear-view retract. A bound `stock_feedback` JSON records seven measured
+waypoints and a stopped stream acknowledgement. The verifier replays their
+order, source hashes and joint endpoints. A squeeze mismatch stops before
+the held lift; no physical key landing is inferred from those checkpoints.
+
+For an external producer, the following contract remains available.
 
 The execution file must identify `source: "commissioned_external_controller"`,
 the exact `attempt_id`, selected seed record, frozen session hash, SHA-256 of
@@ -39,6 +51,6 @@ watchdog works, that the key detached, or that the dynamic drop was safe.
 Only a fresh, admitted key pose supported by the board and clear of the
 socket can produce the separate `reorient_success` label. A wrong tabletop
 class is a failure; a missing release phase or ambiguous capture leaves the
-label unknown. No reset controller or robot-motion opt-in is shipped by this
-document or validator. Robot commissioning must supply and test that
-controller before any physical repose attempt.
+label unknown. The stock callback has offline test coverage only; physical
+execution and landing still require staged robot-PC checks and a fresh camera
+observation.

@@ -67,7 +67,7 @@ active label path.
 | Lift and non-contact transfer | Stage handlers, saved paths, FK/path checks, optional measured-motion adapter | Supply stage-specific execution adapters/interlocks and check measured trajectory completion and hand state. The generic trajectory follower is not a contact-insertion controller. |
 | Cylinder insertion | 20 mm axial path/handoff verifier, stock FR3 12 N wrist-Z force stop at stock speed, reverse-path ascent on contact, and bound metric record | Supply the stage limits and live interlock. Contact is a failed attempt; the key stays gripped for the held-return action. No separate contact-controller review or contact-site validation is used by this route. |
 | Release and final view | The built-in `StockSocketRelease` plans opening, reverse-axis exit and stock clear-view retract before insertion; after a non-aborted stroke it opens Inspire, executes those paths and saves a SHA-bound `precision_insertion_poststroke_release_clear_view_v1` record | Supply the existing `PathAuditLimits` as `held_return.limits` or `shared.limits`, measured feedback and a valid frozen world. An explicit `task.release_and_clear` can override the default. A force stop does not release at the socket. Plan and offline tests are not evidence of physical insertion depth. |
-| Failed key restoration and reorient | The built-in stock FR3 held-return recorder saves measured waypoints for the planned transfer, descent, release and clear-view exit after a force stop. Fresh released-key perception and source-pose/directed-v8 candidate selection feed socket-aware reset preflight. | Supply `held_return.execute_restoration` and `repose_execution.execute_repose` with authentic execution logs. Cylinder assembly checks both before pickup. Plans must be recomputed for each newly observed landing; a seed or one hypothetical passing plan is not a universal path. Observe the landing before declaring the attempt restored. |
+| Failed key restoration and reorient | The built-in stock FR3 held-return recorder saves measured waypoints after a force stop. The built-in `StockReposeExecutor` can execute a complete directed v8 pickup, held motion, release and clear-view plan, and saves seven measured checkpoints. | Supply the existing pickup motion interlock and stage parameters; an explicit `execute_restoration` or `execute_repose` may override the stock callback. A newly observed landing requires a fresh plan. Offline passing paths and measured robot waypoints are not evidence of where the key landed; recapture it before declaring restoration. |
 | VLM outcome | Local Qwen default, optional manual label with independent VLM result retained, visual label reports | Test on *real paired AutoDex frames*. A parseable answer or `inside_socket` is not a metric depth test. Decide separately whether an independently verified 20 mm metric is part of the study endpoint. |
 
 The precise callback signatures and record fields are in
@@ -532,9 +532,11 @@ Supply an importable robot-PC `stages_factory` and its commissioned settings
 as in [LIVE_RUNTIME.md](LIVE_RUNTIME.md). Check the factory's ten stage
 mappings before motion. Cylinder insertion uses the built-in stock FR3
 12 N force stop and reverse-axis ascent, without a separate contact
-commissioning record. Provide `release_and_clear`,
-`execute_restoration`, directed `execute_repose`, pickup/lift/transfer
-adapters, motion interlocks and exposure-aligned feedback. The stock
+commissioning record. The FR3 integration injects stock `release_and_clear`
+with the existing path-audit limits and stock `execute_restoration`/
+`execute_repose` with the pickup motion interlock. Supply all ten stage
+mappings, the site limits, pickup/lift/transfer adapters, interlocks and
+exposure-aligned feedback. The stock
 `FrankaExecutor.follow_joint_trajectory` is not the force-stop entry point;
 the cylinder adapter calls `_follow` with `stop_wrench_z=12.0`. Validate
 callback records against the verifier schemas with mocked actuation first.

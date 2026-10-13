@@ -23,6 +23,7 @@ from .franka_measured_lift import (
 )
 from .stock_force_insertion import FrankaForceStopInsertionAdapter
 from .stock_failed_return import StockFailedReturnRecorder
+from .stock_repose_execution import StockReposeExecutor
 from .stock_socket_release import StockSocketRelease
 from .live_runtime import LiveRuntimeIntegration, RunLiveOptions
 from .labeling import terminal_label_provider
@@ -268,6 +269,28 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 "record_execution" not in stages["held_return"]):
             stages["held_return"]["record_execution"] = (
                 StockFailedReturnRecorder(core.executor))
+        if family == "cylinder" and ({"held_return", "repose_execution"} <=
+                                      stages.keys()):
+            needs_restoration = "execute_restoration" not in stages["held_return"]
+            needs_repose = "execute_repose" not in stages["repose_execution"]
+            interlock = (stages.get("pickup", {}).get("motion_interlock") or
+                         shared.get("motion_interlock"))
+            if (needs_restoration or needs_repose) and not callable(interlock):
+                raise ValueError(
+                    "stock v8 reset needs pickup.motion_interlock or "
+                    "shared.motion_interlock before any pickup")
+            if needs_restoration or needs_repose:
+                reset = StockReposeExecutor(
+                    executor=core.executor, planner=core.planner,
+                    clear_view=core.clear_view, read_state=core.read_state,
+                    motion_interlock=interlock,
+                    enable_robot_motion=options.enable_robot_motion)
+                if needs_restoration:
+                    stages["held_return"]["execute_restoration"] = (
+                        reset.execute_restoration)
+                if needs_repose:
+                    stages["repose_execution"]["execute_repose"] = (
+                        reset.execute_repose)
         assignments = (
             [("lift", "adapter"), ("task", "transfer_adapter")]
             if held_motion_monitor is not None else

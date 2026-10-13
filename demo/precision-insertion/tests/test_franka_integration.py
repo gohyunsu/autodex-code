@@ -108,9 +108,12 @@ def test_cylinder_factory_injects_stock_force_and_release_with_existing_limits(
     monkeypatch.setattr(franka_integration, "open_franka_core", lambda _: core)
     module = ModuleType("robot_pc_stages")
     limits = object()
+    interlock = lambda: True
     module.configure = lambda *_: {
         "shared": {"backend": object()},
-        "stages": {"task": {}, "held_return": {"limits": limits}}}
+        "stages": {"task": {}, "held_return": {"limits": limits},
+                   "pickup": {"motion_interlock": interlock},
+                   "repose_execution": {}}}
     monkeypatch.setitem(sys.modules, module.__name__, module)
     force = object()
     release = object()
@@ -127,6 +130,19 @@ def test_cylinder_factory_injects_stock_force_and_release_with_existing_limits(
     monkeypatch.setattr(franka_integration, "StockFailedReturnRecorder",
                         lambda executor: return_recorder
                         if executor is core.executor else None)
+    restoration = lambda *_args: None
+    repose = lambda *_args: None
+
+    def make_reset(**kwargs):
+        assert kwargs["executor"] is core.executor
+        assert kwargs["planner"] is core.planner
+        assert kwargs["read_state"] is core.read_state
+        assert kwargs["motion_interlock"] is interlock
+        assert kwargs["enable_robot_motion"] is True
+        return SimpleNamespace(execute_restoration=restoration,
+                               execute_repose=repose)
+
+    monkeypatch.setattr(franka_integration, "StockReposeExecutor", make_reset)
 
     def assemble(_live, **kwargs):
         task = kwargs["stages"]["task"]
@@ -134,6 +150,10 @@ def test_cylinder_factory_injects_stock_force_and_release_with_existing_limits(
         assert task["release_and_clear"] is release
         assert kwargs["stages"]["held_return"]["record_execution"] is (
             return_recorder)
+        assert kwargs["stages"]["held_return"]["execute_restoration"] is (
+            restoration)
+        assert kwargs["stages"]["repose_execution"]["execute_repose"] is (
+            repose)
         return ()
 
     monkeypatch.setattr(franka_integration, "assemble_live_components", assemble)
