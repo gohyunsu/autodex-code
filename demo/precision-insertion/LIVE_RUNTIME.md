@@ -65,7 +65,7 @@ socket capture and must return these ten components, all bound to that same
 3. `LiveLiftHandlers` — executed lift and fresh Qwen grasp label.
 4. `LiveNominalRelationHandlers` — selected v8 **unmeasured key–hand
    hypothesis** for cylinder live execution; no post-grasp key pose estimate.
-5. `LiveTaskHandlers` — transfer, arrival label, first guarded insertion.
+5. `LiveTaskHandlers` — transfer, arrival label, stock force-stop insertion.
 6. `LiveGroundedRetryHandlers` — read the **saved pre-insertion** raw views
    after a released-key failure and calculate continuous multi-view cylinder
    XY advice; an at-most-10 mm update is saved for a **new pickup**, with no
@@ -175,7 +175,9 @@ Franka/Inspire hold throughout exposure. The stage factory may omit
 completion-checked FR3 executor used for clear-view and feedback. It must
 still supply pickup limits and a real motion interlock; the subclass does
 not replace a robot-side watchdog or physical review. The stage factory
-supplies the remaining recovery and repose callbacks.
+still supplies site limits, prompts and interlocks. The cylinder integration
+fills the stock release, held-return and repose execution callbacks described
+below when their required inputs are present.
 An optional [`held_motion_monitor` block](MEASURED_LIFT_ADAPTER.md) builds
 one measured non-contact adapter for lift and first transfer. For cylinder
 mode, the factory injects `task.release_and_clear` if `held_return.limits` or
@@ -266,8 +268,10 @@ python demo/precision-insertion/run_live.py \
 The JSON/stage module is read before the FR3 connection; the planner is
 initialized before the executor. On process exit, the built-in integration
 shuts down the Franka executor. This command still cannot run with only the
-illustrative file: robot-PC stage callbacks for pickup, failed-key return and
-repose, with their stage parameters, remain required.
+illustrative file: the robot-PC stage factory must supply its stage limits,
+lift/transfer adapters, supervised recovery callback, prompts, interlocks and
+capture parameters. The built-in integration supplies the stock pickup
+executor and cylinder release/return/reset callbacks described above.
 
 The handler composer rejects missing/duplicate actions before any grasp. The
 module should supply commissioned robot-side adapters and may override the
