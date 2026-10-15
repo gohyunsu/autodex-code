@@ -230,3 +230,40 @@ def test_bound_frame_evidence_is_preserved_and_skew_includes_uncertainty(
     with pytest.raises(ValueError, match="timing conflicts"):
         _bootstrap(monkeypatch, captures=captures,
                    board_frame_evidence=board_evidence)
+
+
+def test_static_socket_accepts_slow_same_request_inference(monkeypatch):
+    """A slow FoundPose response cannot establish cross-camera exposure skew."""
+    captures = [_capture("socket_1", 100.0), _capture("socket_2", 101.0)]
+    for capture in captures:
+        window = (capture.frame_timestamps_s["cam_a"] - 23.0,
+                  capture.frame_timestamps_s["cam_a"] + 23.0)
+        midpoint = sum(window) / 2
+        evidence = {}
+        for index, (serial, image) in enumerate(capture.images_bgr.items()):
+            fid = capture.request_id * 10 + index
+            capture.masks[serial]["frame_id"] = fid
+            capture.poses[serial]["frame_id"] = fid
+            evidence[serial] = {
+                "frame_id": fid, "image_sha256": image_sha256(image),
+                "timestamp_s": midpoint, "max_error_s": 23.0,
+                "timestamp_method": "bounded_request_interval",
+                "request_window_start_s": window[0],
+                "request_window_end_s": window[1],
+                "clock_domain": "unix_utc",
+            }
+        object.__setattr__(capture, "frame_timestamps_s", {
+            serial: midpoint for serial in capture.images_bgr})
+        object.__setattr__(capture, "frame_evidence", evidence)
+    result, _ = _bootstrap(monkeypatch, captures=captures)
+    assert len(result.socket_admissions) == 2
+
+    original_digest = captures[0].frame_evidence["cam_b"]["image_sha256"]
+    captures[0].frame_evidence["cam_b"]["image_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="image digest mismatch"):
+        _bootstrap(monkeypatch, captures=captures)
+    captures[0].frame_evidence["cam_b"]["image_sha256"] = original_digest
+
+    captures[0].frame_evidence["cam_b"]["request_window_end_s"] += 1
+    with pytest.raises(ValueError, match="request interval does not bound"):
+        _bootstrap(monkeypatch, captures=captures)

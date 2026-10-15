@@ -66,8 +66,11 @@ page describe optional/historical branches, not the active cylinder loop.
 The script uses the stock FR3 force-stop follower for cylinder insertion; it does not invent camera
 exposure timestamps. The optional `bounded_request_interval` camera mode
 uses the complete new-frame request/response interval as timing uncertainty
-for stationary bring-up; slow FoundPose calls may still fail the unchanged
-camera/feedback timing gates. On the AutoDex PC, an importable `module:factory` must return a
+for stationary bring-up. Board, fixed socket, and tabletop key admission keep
+same-request frame/pixel binding but do not reject a capture solely because
+FoundPose inference exceeds the cross-camera skew limit. Later robot-feedback
+and motion-linked checkpoint gates still use the full uncertainty and may
+reject a slow capture. On the AutoDex PC, an importable `module:factory` must return a
 `LiveRuntimeIntegration(clear_view, build_components, close)`; the factory
 receives `RunLiveOptions`. `build_components(live)` is called after board and
 socket capture and must return these ten components, all bound to that same

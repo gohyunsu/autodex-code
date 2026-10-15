@@ -22,7 +22,9 @@ from .calibration import (
     SessionCalibration, SocketCaptureRefinement, calibrate_session,
 )
 from .config import TaskMode
-from .frame_provenance import bounded_capture_skew_s, verify_frame_provenance
+from .frame_provenance import (
+    exceeds_static_capture_skew_limit, verify_frame_provenance,
+)
 from .timing_profile import timed
 from .perception_evidence import (
     SocketCaptureEvidence, SocketViewLimits, admit_socket_capture,
@@ -124,8 +126,8 @@ def bootstrap_session(
                        board_frame_evidence.items()})
         if (any(board_timestamps_s[s] != row["timestamp_s"] for s, row in
                 board_verified.items()) or
-                bounded_capture_skew_s(board_verified) >
-                view_limits.maximum_capture_skew_s):
+                exceeds_static_capture_skew_limit(
+                    board_verified, view_limits.maximum_capture_skew_s)):
             raise ValueError("board frame timing conflicts with verified evidence")
     if not isinstance(socket_captures, Sequence) or len(socket_captures) < 2:
         raise ValueError("at least two socket captures are required")
@@ -181,8 +183,8 @@ def bootstrap_session(
                 frame_ids=frame_ids)
             if (any(capture.frame_timestamps_s[s] != row["timestamp_s"]
                     for s, row in verified.items()) or
-                    bounded_capture_skew_s(verified) >
-                    view_limits.maximum_capture_skew_s):
+                    exceeds_static_capture_skew_limit(
+                        verified, view_limits.maximum_capture_skew_s)):
                 raise ValueError("socket frame timing conflicts with verified evidence")
         admission = admit_socket_capture(
             capture_id=capture_id, masks=capture.masks, poses=capture.poses,

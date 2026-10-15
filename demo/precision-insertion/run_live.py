@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import json
+import logging
 from pathlib import Path
 import re
 import sys
@@ -21,6 +22,19 @@ SRC_DIR = REPO_ROOT / "src"
 for module_root in (str(REPO_ROOT), str(SRC_DIR), str(DEMO_DIR)):
     if module_root not in sys.path:
         sys.path.insert(0, module_root)
+
+
+class _CuroboCompileNoticeFilter(logging.Filter):
+    """Hide one repetitive cuRobo INFO notice without changing its setting."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.getMessage() != (
+            "Environment variable for CUROBO_TORCH_COMPILE is not set, "
+            "Disabling.")
+
+
+# Install before importing the live runtime, whose cuRobo imports can log.
+logging.getLogger("curobo").addFilter(_CuroboCompileNoticeFilter())
 
 from precision_insertion.live_runtime import (  # noqa: E402
     RunLiveOptions, inspect_live_inputs, run_integrated_live_session,

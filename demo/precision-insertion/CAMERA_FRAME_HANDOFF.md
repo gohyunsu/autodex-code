@@ -89,8 +89,11 @@ counter when a stopped camera stream is armed again.
   only as a representation of `[start, end]`, with `max_error_s` equal to half
   the full interval. This requires no capture-PC clock synchronization and
   never uses publication `ts` as exposure. A slow SAM/FoundPose response can
-  produce seconds of uncertainty; all existing cross-view, frame-age and
-  robot-feedback gates still see that full bound and may refuse the capture.
+  produce seconds of uncertainty. The stationary board, socket and tabletop
+  stationary key admission gates retain exact same-request frame binding but do not
+  compare the inference-inflated interval with a cross-camera exposure-skew
+  limit. Motion-linked frame-age and robot-feedback gates still see the full
+  bound and may refuse the capture.
   It is suitable for stationary bring-up, not measured millimetre-level
   temporal accuracy. It does not work with disk-mode replay, where the frame
   predates the request.

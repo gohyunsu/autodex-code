@@ -135,3 +135,25 @@ def bounded_capture_skew_s(frames: Mapping[str, Mapping]) -> float:
     lower = min(row["timestamp_s"] - row["max_error_s"]
                 for row in frames.values())
     return float(upper - lower)
+
+
+def exceeds_static_capture_skew_limit(
+    frames: Mapping[str, Mapping], limit_s: float,
+) -> bool:
+    """Apply an exposure-skew gate to a stationary scene when measurable.
+
+    In bounded-request mode every frame is bound to the same request, but its
+    uncertainty spans FoundPose processing as well as image acquisition. A
+    long inference cannot establish that a stationary scene was captured
+    asynchronously. Keep the request windows and uncertainty in evidence;
+    never present their midpoint as a measured exposure time.
+    """
+    if not frames:
+        raise ValueError("no frame provenance")
+    if all(row["timestamp_method"] == "bounded_request_interval"
+           for row in frames.values()):
+        windows = {(row["request_window_start_s"],
+                    row["request_window_end_s"])
+                   for row in frames.values()}
+        return len(windows) != 1
+    return bounded_capture_skew_s(frames) > limit_s

@@ -21,7 +21,9 @@ import numpy as np
 
 from .config import TaskMode
 from .calibration import validate_session_camera_calibration
-from .frame_provenance import bounded_capture_skew_s, verify_frame_provenance
+from .frame_provenance import (
+    exceeds_static_capture_skew_limit, verify_frame_provenance,
+)
 from .geometry import pose_angle_deg, validate_se3
 from .live_capture import KeyCaptureInput
 from .perception_evidence import SocketViewLimits, admit_socket_capture
@@ -229,7 +231,8 @@ def _admit_key_capture_common(
             {serial: row["timestamp_s"] for serial, row in verified.items()}):
         raise ValueError("key frame times differ from bound images")
     view_limits.validate()
-    if bounded_capture_skew_s(verified) > view_limits.maximum_capture_skew_s:
+    if exceeds_static_capture_skew_limit(
+            verified, view_limits.maximum_capture_skew_s):
         raise ValueError("key views exceed bounded camera acquisition skew")
     admitted = admit_socket_capture(
         capture_id=capture.capture_id, masks=capture.masks,
