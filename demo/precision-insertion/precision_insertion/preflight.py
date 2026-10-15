@@ -291,6 +291,8 @@ def plan_held_transfer_and_axial(
             "planner_api": "plan_cartesian_pose",
             "constraint_mode": getattr(transfer_result, "constraint_mode", None),
             "failure_stage": getattr(transfer_result, "failure_stage", None),
+            "planner_timing": dict(getattr(transfer_result, "timing", {}) or {}),
+            "hand_lock": dict(getattr(transfer_result, "hand_lock", {}) or {}),
         })
         if not transfer_result.success or transfer_result.trajectory is None:
             return result("transfer_unreachable")
