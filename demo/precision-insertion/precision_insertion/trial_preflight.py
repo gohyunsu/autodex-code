@@ -372,7 +372,7 @@ def plan_fresh_key_trial(
             with timed("planning.v8_pickup", phase="planning", kind="planning",
                        candidate_id=candidate_id):
                 pickup = planner.plan(
-                    scene, mode.key_object, "v8", hand="fr3_inspire",
+                    scene, mode.key_object, "v8", hand="inspire",
                     skip_done=False, success_only=False,
                     candidate_override=override)
             row = {"key": list(key), "pickup_preflight_pass": bool(pickup.success),

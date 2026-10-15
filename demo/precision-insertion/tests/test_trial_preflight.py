@@ -34,6 +34,7 @@ class _Planner:
         self.starts.append(np.asarray(q).copy())
 
     def plan(self, scene, name, version, **kwargs):
+        assert kwargs["hand"] == "inspire"
         key = tuple(kwargs["candidate_override"][3][0])
         self.pickups.append(key)
         if key[-1] == "1":
