@@ -201,26 +201,28 @@ def test_query_or_sampled_geometry_failure_does_not_promote_plan(monkeypatch):
     assert result.to_record()["planner_query_records"][-1]["success"] is False
 
 
-@pytest.mark.parametrize(
-    ("planner_kwargs", "status", "last_stage", "completed_waypoints"), [
-        ({"lift_hand_drift": True}, "held_lift_hand_drift", "held_lift", 0),
-        ({"hand_drift_query": 1}, "transfer_hand_drift", "transfer", 0),
-        ({"hand_drift_query": 4}, "axial_waypoint_hand_drift",
-         "axial_waypoint", 10),
-    ])
-def test_planner_hand_drift_rejects_only_this_candidate(
-    planner_kwargs, status, last_stage, completed_waypoints,
+@pytest.mark.parametrize("planner_kwargs", [
+    {"lift_hand_drift": True},
+    {"hand_drift_query": 1},
+    {"hand_drift_query": 4},
+])
+def test_planner_finger_jitter_is_frozen_before_path_audit(
+    planner_kwargs, monkeypatch,
 ):
+    seen = {}
+
+    def audit(**kwargs):
+        seen.update(kwargs)
+        return {"sampled_clear": True, "failures": []}
+
+    monkeypatch.setattr("precision_insertion.preflight.audit_held_joint_paths", audit)
     result = _run(_Planner(**planner_kwargs), _fixture())
-    assert result.status == status
-    assert result.sampled_planning_pass is False
-    assert result.axial_waypoint_count == completed_waypoints
-    assert result.axial_trajectory is None
-    last_query = result.to_record()["planner_query_records"][-1]
-    assert last_query["stage"] == last_stage
-    assert last_query["success"] is True
-    assert last_query["held_hand_lock_verified"] is False
-    assert last_query["max_abs_hand_delta_rad"] == pytest.approx(0.01)
+    assert result.status == "sampled_planning_pass"
+    assert result.axial_waypoint_count == 10
+    for name in ("lift_trajectory", "transfer_trajectory", "descent_trajectory"):
+        path = seen[name]
+        assert np.array_equal(path[:, 7:],
+                              np.broadcast_to(result.held_hand_q, path[:, 7:].shape))
 
 
 def test_planner_start_state_corruption_still_raises():

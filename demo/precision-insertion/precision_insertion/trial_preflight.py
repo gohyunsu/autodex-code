@@ -402,24 +402,6 @@ def plan_fresh_key_trial(
             if trial.status == "sampled_held_path_rejected":
                 row["sampled_audit_rejection"] = _rejected_path_summary(
                     trial, planner=planner, targets=targets)
-            drift_stages = {
-                "held_lift_hand_drift": "held_lift",
-                "transfer_hand_drift": "transfer",
-                "axial_waypoint_hand_drift": "axial_waypoint",
-            }
-            if trial.status in drift_stages:
-                query = (trial.planner_query_records[-1]
-                         if trial.planner_query_records else {})
-                delta = query.get("max_abs_hand_delta_rad")
-                if (query.get("stage") != drift_stages[trial.status] or
-                        query.get("held_hand_lock_verified") is not False or
-                        not isinstance(delta, (int, float)) or
-                        not math.isfinite(delta) or delta <= 0):
-                    raise ValueError("held hand drift lacks planner evidence")
-                row["held_hand_drift"] = {
-                    "stage": query["stage"],
-                    "max_abs_delta_rad": float(delta),
-                }
             rows.append(row)
             if trial.sampled_planning_pass:
                 selected_key = key

@@ -71,16 +71,6 @@ class InsertionPreflight:
         }
 
 
-class HeldHandPoseDrift(ValueError):
-    """A nominal planner path changed the hand that must hold the key."""
-
-    def __init__(self, name: str, max_abs_delta_rad: float):
-        self.max_abs_delta_rad = max_abs_delta_rad
-        super().__init__(
-            f"{name} does not keep the held Inspire pose "
-            f"(max_abs_delta_rad={max_abs_delta_rad:.6g})")
-
-
 def _path(value: Any, name: str, start_q: np.ndarray,
           held_q: np.ndarray) -> np.ndarray:
     path = np.asarray(value, dtype=np.float64)
@@ -93,9 +83,13 @@ def _path(value: Any, name: str, start_q: np.ndarray,
         raise ValueError(
             f"{name} does not start at the previous joint state "
             f"(max_abs_delta_rad={delta:.6g})")
-    if not np.allclose(path[:, 7:], held_q, atol=1e-4, rtol=0):
-        delta = float(np.max(np.abs(path[:, 7:] - held_q)))
-        raise HeldHandPoseDrift(name, delta)
+    # AutoDex's default Cartesian planner optimizes all 13 joints, even when
+    # the requested start and goal have identical fingers. Its interpolated
+    # path can therefore contain small finger motion. Execute the optimized
+    # arm path with the selected held hand pose instead; the downstream
+    # full-key/hand audit evaluates this exact path before it can be used.
+    path = path.copy()
+    path[:, 7:] = held_q
     return path
 
 
@@ -190,12 +184,7 @@ def plan_insertion_after_pickup(
                           "planner_api": "plan_lift_preflight"})
     if lift_plan is None:
         return result("held_lift_unreachable")
-    try:
-        lift = _path(lift_plan.traj, "held lift", lift_start, held)
-    except HeldHandPoseDrift as exc:
-        query_records[-1]["held_hand_lock_verified"] = False
-        query_records[-1]["max_abs_hand_delta_rad"] = exc.max_abs_delta_rad
-        return result("held_lift_hand_drift")
+    lift = _path(lift_plan.traj, "held lift", lift_start, held)
     lift_goal = validate_se3(planner.fk_wrist(lift[-1]), name="lift endpoint FK")
     expected_lift = requested_wrist.copy()
     expected_lift[2, 3] += 0.10
@@ -296,12 +285,7 @@ def plan_held_transfer_and_axial(
         })
         if not transfer_result.success or transfer_result.trajectory is None:
             return result("transfer_unreachable")
-        try:
-            transfer = _path(transfer_result.trajectory, "held transfer", start, held)
-        except HeldHandPoseDrift as exc:
-            query_records[-1]["held_hand_lock_verified"] = False
-            query_records[-1]["max_abs_hand_delta_rad"] = exc.max_abs_delta_rad
-            return result("transfer_hand_drift")
+        transfer = _path(transfer_result.trajectory, "held transfer", start, held)
         if not _goal_met(validate_se3(planner.fk_wrist(transfer[-1]),
                                       name="transfer endpoint FK"),
                          targets.T_robot_hand_preinsert, limits):
@@ -325,14 +309,8 @@ def plan_held_transfer_and_axial(
         completed = sum(row["success"] is True for row in query.step_records)
         return result("axial_waypoint_unreachable", transfer=transfer,
                       waypoints=completed)
-    try:
-        axial = _path(query.trajectory, "socket-axis Jacobian stroke",
-                      transfer[-1], held)
-    except HeldHandPoseDrift as exc:
-        query_records[-1]["held_hand_lock_verified"] = False
-        query_records[-1]["max_abs_hand_delta_rad"] = exc.max_abs_delta_rad
-        return result("axial_waypoint_hand_drift", transfer=transfer,
-                      waypoints=count)
+    axial = _path(query.trajectory, "socket-axis Jacobian stroke",
+                  transfer[-1], held)
     if not _goal_met(validate_se3(planner.fk_wrist(axial[-1]),
                                   name="axial endpoint FK"),
                      targets.T_robot_hand_verification, limits):

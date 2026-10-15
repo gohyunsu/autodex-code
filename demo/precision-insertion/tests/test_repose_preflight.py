@@ -62,6 +62,7 @@ class _Planner:
         self.reject_postrelease = False
         self.pickup_plan = None
         self.transfer_samples = 11
+        self.transfer_hand_jitter = 0.0
 
     def set_start_state(self, q):
         self.calls.append(("start", tuple(np.asarray(q).shape)))
@@ -93,6 +94,7 @@ class _Planner:
                                  self.transfer_samples)
         path[:, 2] = np.linspace(start[2], goal[2, 3],
                                  self.transfer_samples)
+        path[1:, 7] += self.transfer_hand_jitter
         return SimpleNamespace(success=True, trajectory=path,
                                constraint_mode="test", failure_stage=None)
 
@@ -222,6 +224,16 @@ def test_repose_held_chain_keeps_socket_and_does_not_authorize_release(
         ("descent", ["fixture_socket", "target"]),
     ]
     assert "target" not in calibration.collision_scene["mesh"]
+
+
+def test_repose_transfer_finger_jitter_does_not_abort(tmp_path, monkeypatch):
+    calibration, scene, pickup, rest, limits = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    planner.transfer_hand_jitter = 0.014084
+    result = _plan(tmp_path, calibration, scene, pickup, rest, limits, planner)
+    assert result.status == "sampled_held_path_pass_release_unplanned"
+    assert np.array_equal(result.transfer_trajectory[:, 7:],
+                          np.zeros_like(result.transfer_trajectory[:, 7:]))
 
 
 def test_failed_insertion_can_plan_return_from_withdrawn_held_state(

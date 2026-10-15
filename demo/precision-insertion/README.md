@@ -40,6 +40,16 @@ Each `--run` copies the board-9 launch template to a uniquely named launch
 JSON and points it at a new session-evidence directory, so a prior run's
 evidence is never reused or overwritten. `--check` reads the template only.
 The key is placed after the fixed socket capture when prompted.
+The stock AutoDex default Cartesian planner may put small finger motion in a
+held transfer even when its start and goal hand poses match: its default
+`lock_hand=True` route still optimizes all 13 joints. The live demo now keeps
+the selected held Inspire pose constant in the returned lift, transfer and
+socket-axis paths before auditing the exact path it would execute. It no
+longer aborts a successful repose plan solely because the raw planner path
+has finger jitter (the observed case was 0.014084 rad). Invalid paths, missed
+goals and audited collisions remain planning failures. The live CLI also
+filters cuRobo INFO messages and repeats of three known cache/deprecation
+warnings; it retains other warnings and errors.
 For a board-9, 20 mm key-plus-socket **camera-only** check, use
 [`probe_live_key_socket.py`](probe_live_key_socket.py) as documented in
 [ROBOT_PC_STAGED_BRINGUP.md](ROBOT_PC_STAGED_BRINGUP.md). It saves every raw
@@ -1274,16 +1284,12 @@ preflight = plan_insertion_after_pickup(
 print(preflight.to_record())
 ```
 
-The held hand is checked at **every** sampled joint of the lift, cuRobo
-transfer and demo-local socket-axis Jacobian path. If a nominally successful
-query changes an Inspire
-joint by more than the path contract permits, that grasp receives
-`held_lift_hand_drift`, `transfer_hand_drift`, or
-`axial_waypoint_hand_drift`; the record retains the maximum deviation and
-the per-trial scanner may test the next eligible grasp. It never executes or
-promotes that path. A malformed/non-finite path, incorrect starting joint
-state, incompatible world or unexpected solver exception still raises rather than being
-silently reclassified as ordinary grasp infeasibility.
+The selected held hand pose is applied to **every** sampled joint of the
+lift, cuRobo transfer and demo-local socket-axis Jacobian path before the
+full key/hand path audit. The raw cuRobo hand-column jitter alone does not
+reject the candidate. A malformed/non-finite path, incorrect starting joint
+state, incompatible world or unexpected solver exception still raises rather
+than being silently reclassified as ordinary grasp infeasibility.
 
 `sampled_planning_pass` is **not** a physical success label or execution
 permit. Run this against the actual selected candidate and measured session;
