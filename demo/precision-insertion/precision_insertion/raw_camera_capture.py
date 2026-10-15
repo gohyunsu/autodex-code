@@ -55,6 +55,43 @@ def _write_png_hash(path: Path, image: np.ndarray) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def configured_capture_io_workers() -> int:
+    """Bound local camera-file reads and writes by the same operator setting."""
+    try:
+        configured_workers = int(os.environ.get("PRECISION_CAPTURE_IO_WORKERS", "4"))
+    except ValueError as exc:
+        raise ValueError("PRECISION_CAPTURE_IO_WORKERS must be an integer") from exc
+    if not 1 <= configured_workers <= 8:
+        raise ValueError("PRECISION_CAPTURE_IO_WORKERS must be in 1..8")
+    return configured_workers
+
+
+def write_png_jobs(jobs: list[tuple[str, Path, np.ndarray, str]], *,
+                   phase: str) -> tuple[list[tuple[str, str, str]], int]:
+    """Use the production PNG worker setting for a batch of identified frames."""
+    if not jobs:
+        raise ValueError("PNG batch needs images")
+    def write_one(job):
+        camera, path, image, source = job
+        with timed("evidence.png_write_hash", phase="evidence", kind="io",
+                   camera_id=camera, capture_phase=phase, source=source):
+            return camera, source, _write_png_hash(path, image)
+
+    configured_workers = configured_capture_io_workers()
+    workers = min(configured_workers, len(jobs))
+    with timed("evidence.png_batch_write", phase="evidence", kind="io",
+               capture_phase=phase, image_count=len(jobs), workers=workers):
+        if workers == 1:
+            results = [write_one(job) for job in jobs]
+        else:
+            with ThreadPoolExecutor(max_workers=workers,
+                                    thread_name_prefix="precision-png") as pool:
+                futures = [pool.submit(copy_context().run, write_one, job)
+                           for job in jobs]
+                results = [future.result() for future in futures]
+    return results, workers
+
+
 def write_raw_camera_capture(
     capture: RawCameraCapture, output_dir: Path, *, phase: str,
 ) -> Path:
@@ -128,29 +165,7 @@ def write_raw_camera_capture(
         jobs.extend((camera, source_dir / f"{camera}.png", image, "original")
                     for camera, image in sorted(capture.source_images_bgr.items()))
 
-    def write_one(job):
-        camera, path, image, source = job
-        with timed("evidence.png_write_hash", phase="evidence", kind="io",
-                   camera_id=camera, capture_phase=phase, source=source):
-            return camera, source, _write_png_hash(path, image)
-
-    try:
-        configured_workers = int(os.environ.get("PRECISION_CAPTURE_IO_WORKERS", "4"))
-    except ValueError as exc:
-        raise ValueError("PRECISION_CAPTURE_IO_WORKERS must be an integer") from exc
-    if not 1 <= configured_workers <= 8:
-        raise ValueError("PRECISION_CAPTURE_IO_WORKERS must be in 1..8")
-    workers = min(configured_workers, len(jobs))
-    with timed("evidence.png_batch_write", phase="evidence", kind="io",
-               capture_phase=phase, image_count=len(jobs), workers=workers):
-        if workers == 1:
-            results = [write_one(job) for job in jobs]
-        else:
-            with ThreadPoolExecutor(max_workers=workers,
-                                    thread_name_prefix="precision-png") as pool:
-                futures = [pool.submit(copy_context().run, write_one, job)
-                           for job in jobs]
-                results = [future.result() for future in futures]
+    results, _workers = write_png_jobs(jobs, phase=phase)
     hashes = {camera: digest for camera, source, digest in results
               if source == "undistorted"}
     source_hashes = ({camera: digest for camera, source, digest in results

@@ -19,7 +19,10 @@ from typing import Callable
 import numpy as np
 
 from .key_perception import KeyPoseObservation
-from .live_robot_state import FrankaStateUnavailable, LiveRobotState
+from .live_robot_state import (
+    FeedbackTimeAlignmentUnavailable, FrankaStateUnavailable,
+    HandTrackingUnavailable, LiveRobotState,
+)
 from .raw_camera_capture import RawCameraCapture
 
 
@@ -270,11 +273,12 @@ class RobotFeedbackSampler:
             try:
                 self.buffer.append(self.sample_state())
                 self._ready.set()
-            except FrankaStateUnavailable:
-                # Stock blocking moves can pause the daemon's state publisher.
-                # Skip an unavailable/stale state instead of making
-                # the entire session fail long after the move has completed.
-                # Capture lookups still need measured exposure brackets.
+            except (FrankaStateUnavailable, FeedbackTimeAlignmentUnavailable,
+                    HandTrackingUnavailable):
+                # A missing or mismatched pair is not a usable measurement.
+                # A hand still moving toward its software target is likewise
+                # unusable. Discard this read; exposure lookup still requires
+                # valid measured samples bracketing the camera acquisition.
                 self._stop.wait(self.period_s)
                 continue
             except Exception as exc:

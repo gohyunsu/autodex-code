@@ -60,6 +60,19 @@ def test_fixture_medoid_is_observed_and_repeatable():
     assert report["accepted"] is True
 
 
+def test_single_fixture_pose_is_selected_without_claiming_repeatability():
+    observed = _pose(x_mm=12.0, tilt_deg=3.0)
+    selected, report = freeze_fixture_pose(
+        [observed], continuous_axis_local=[0, 0, 1],
+        translation_limit_mm=1.0, angle_limit_deg=1.0)
+    np.testing.assert_allclose(selected, observed)
+    assert report["method"] == "observed_axisymmetric_se3_single"
+    assert report["sample_count"] == 1
+    assert report["repeatability_checked"] is False
+    with pytest.raises(ValueError, match="at least one"):
+        freeze_fixture_pose([], translation_limit_mm=1.0, angle_limit_deg=1.0)
+
+
 def test_fixture_rejects_outlier_and_invalid_transform():
     with pytest.raises(ValueError, match="not repeatable"):
         freeze_fixture_pose(

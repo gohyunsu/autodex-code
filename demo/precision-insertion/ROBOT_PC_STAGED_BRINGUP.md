@@ -62,7 +62,7 @@ active label path.
 | Concern | Already in this checkout/NAS | Robot-PC task and acceptance evidence |
 | --- | --- | --- |
 | Key/socket and grasp assets | Object meshes, exact fixed-socket collision mesh, FoundPose representations, v8-filtered full-key candidates, per-gap 20 mm endpoint catalogs, Qwen bundle and some directed reset seeds | Rehydrate/rebuild catalogs under the recipient's absolute `shared_data` root. File presence is not pose accuracy or an executable Franka path. |
-| Cameras and perception | AutoDex camera transport, undistortion, SAM/FoundPose orchestration, frozen socket world and raw checkpoint bundles | Supply real serials, intrinsics/extrinsics, camera-to-robot transform, exposure-time metadata and synchronized measured state. Verify socket-only then key-with-socket frames, masks and repeatability on the actual rig. |
+| Cameras and perception | AutoDex camera transport, undistortion, SAM/FoundPose orchestration, frozen socket world and raw checkpoint bundles | Supply real serials, intrinsics/extrinsics, camera-to-robot transform, exposure-time metadata and synchronized measured state. Inspect socket-only then key-with-socket frames and masks on the actual rig. The current one-capture socket configuration does not measure repeatability. |
 | FR3/Inspire basic resources | `franka_core.open_franka_core` constructs the existing AutoDex planner, completion-checked FR3 executor, measured-state reader and clear-view gate | Use the separate read-only feedback probe for Stage 3. `open_franka_core` creates command-capable controllers and may send setup and hand-angle writes; reserve it for the motion-authorized stage. |
 | Lift and non-contact transfer | Stage handlers, saved paths, FK/path checks, optional measured-motion adapter | Supply stage-specific execution adapters/interlocks and check measured trajectory completion and hand state. The generic trajectory follower is not a contact-insertion controller. |
 | Cylinder insertion | 20 mm axial path/handoff verifier, stock FR3 12 N wrist-Z force stop at stock speed, reverse-path ascent on contact, and bound metric record | Supply the stage limits and live interlock. Contact is a failed attempt; the key stays gripped for the held-return action. No separate contact-controller review or contact-site validation is used by this route. |
@@ -583,7 +583,7 @@ around the cylindrical symmetry axis. Mean cross-view IoU was 0.775 and
 while the optimized candidates agreed. The precision session now accepts an
 explicit launch setting `"socket_perception_mode": "ignore_sil_loss"`, and
 records that choice and both measured losses. It still needs source-bound
-admission, the configured two-capture pose repeatability check and valid
+admission, the two-capture pose repeatability check configured at that time and valid
 camera timing. The replay is a saved-mask fit, not a new image acquisition,
 robot-frame calibration or insertion validation. Its source-hashed report is
 `$QA_BASE/precision_frame_bound_stock_qa_20261013_retry1/stock_ignore_sil_loss_replay.json`.
@@ -814,6 +814,28 @@ bash /home/robot/autodex-precision-insertion/demo/precision-insertion/manage_rob
 bash /home/robot/autodex-precision-insertion/demo/precision-insertion/manage_robot_pc_services.sh check
 bash /home/robot/autodex-precision-insertion/demo/precision-insertion/run_robot_pc.sh --run
 ```
+
+When the fixed board-9/20 mm socket has not moved and the white key is already
+on the board, reuse the verified 2026-10-15 board/socket evidence. This avoids
+another socket-only capture and the key-placement prompt. To inspect real
+perception and v8 planning while stopping before pickup motion, run:
+
+```bash
+cd /home/robot/autodex-precision-insertion
+bash demo/precision-insertion/manage_robot_pc_services.sh check
+PRECISION_REUSE_SESSION_EVIDENCE=/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical/live_board9_gap20_20261013/session_evidence_20261015_140513_805015685_553881 \
+PRECISION_KEY_ALREADY_PLACED=1 \
+PRECISION_CAPTURE_IO_WORKERS=4 \
+  bash demo/precision-insertion/run_robot_pc.sh --plan-only
+```
+
+The saved-evidence verifier checks file digests, board ID and calibration
+against the current launch; it cannot observe whether the physical socket
+moved. This command still makes the initial clear-view move. The 15:09 run
+reached real cuRobo pickup planning, but all three sampled candidates failed
+IK and no pickup plan or subsequent robot action was available. An accepted
+pickup plan would yield `planning_ready` before the execution handler; see
+[TIMING_PROFILE.md](TIMING_PROFILE.md) for the measured breakdown.
 
 `run_robot_pc.sh --check` is file-only; it neither connects a robot nor starts
 services. `manage_robot_pc_services.sh check` verifies live listening ports

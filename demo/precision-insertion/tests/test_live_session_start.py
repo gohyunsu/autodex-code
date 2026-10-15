@@ -1,5 +1,6 @@
 """The live session sequence must bind board, socket and one frozen world."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -15,7 +16,7 @@ from precision_insertion.perception_evidence import SocketViewLimits  # noqa: E4
 from precision_insertion import live_session_start as start  # noqa: E402
 
 
-def _setup(tmp_path, monkeypatch, request_ids=(11, 12, 13)):
+def _setup(tmp_path, monkeypatch, request_ids=(11, 12, 13), socket_count=2):
     shared = tmp_path / "shared"
     mode = select_mode("cylinder", 20)
     object_dir = shared / "object_processing" / mode.socket_object
@@ -59,14 +60,17 @@ def _setup(tmp_path, monkeypatch, request_ids=(11, 12, 13)):
         events.append(kwargs["capture_id"])
         assert init.obj_name == mode.socket_object
         assert kwargs["capture_root"] == capture_root
-        return SimpleNamespace(request_id=kwargs["request_id_factory"]())
+        return SimpleNamespace(
+            capture_id=kwargs["capture_id"],
+            request_id=kwargs["request_id_factory"]())
 
     frozen = SimpleNamespace(record={"schema": "test"})
 
     def bootstrap(**kwargs):
         events.append("freeze_world")
         assert kwargs["board_request_id"] == 11
-        assert [row.request_id for row in kwargs["socket_captures"]] == [12, 13]
+        assert [row.request_id for row in kwargs["socket_captures"]] == list(
+            request_ids[1:1 + socket_count])
         assert kwargs["socket_collision_mesh"] == collision
         assert kwargs["object_root"] == shared / "object_processing"
         assert callable(kwargs["socket_refiner"])
@@ -75,11 +79,14 @@ def _setup(tmp_path, monkeypatch, request_ids=(11, 12, 13)):
     def write(_bootstrap, output):
         events.append("save")
         output.mkdir()
+        (output / "evidence_manifest.json").write_text(json.dumps({
+            "schema": "precision_insertion_session_evidence_bundle_v1",
+            "board_request_id": 11,
+            "socket_request_ids": list(request_ids[1:1 + socket_count]),
+            "socket_capture_ids": [f"socket_{i:03d}" for i in range(socket_count)],
+            "all_frames_bound_to_acquisition_evidence": True,
+        }))
         return output
-
-    def verify(_output):
-        events.append("verify")
-        return {"all_frames_bound_to_acquisition_evidence": True}
 
     def reload(_path, **kwargs):
         events.append("reload_frozen_world")
@@ -90,7 +97,6 @@ def _setup(tmp_path, monkeypatch, request_ids=(11, 12, 13)):
                         ("collect_socket_capture", socket),
                         ("bootstrap_session", bootstrap),
                         ("write_session_bootstrap_artifacts", write),
-                        ("verify_session_evidence_bundle", verify),
                         ("load_session_calibration", reload)):
         monkeypatch.setattr(start, name, value)
     # These ordering tests use tiny placeholder assets; the complete CAD
@@ -114,7 +120,8 @@ def _setup(tmp_path, monkeypatch, request_ids=(11, 12, 13)):
         "image_hw": (1536, 2048), "c2r": np.eye(4),
         "base_scene": {"mesh": {}, "cuboid": {}},
         "view_limits": SocketViewLimits(50, .5, 10, 2, .02),
-        "socket_prompt": "fixed white cylindrical socket", "socket_capture_count": 2,
+        "socket_prompt": "fixed white cylindrical socket",
+        "socket_capture_count": socket_count,
         "board_timeout_s": 5., "socket_timeout_s": 15.,
         "max_socket_translation_mm": 1., "max_socket_angle_deg": 1.,
         "minimum_socket_refined_iou": .8,
@@ -129,13 +136,23 @@ def test_session_start_orders_board_before_socket_and_reloads_frozen_world(
         tmp_path, monkeypatch):
     arguments, events, _repre = _setup(tmp_path, monkeypatch)
     result = start.start_precision_session(**arguments)
-    assert events == ["board", "board_preflight", "socket_renderer", "socket_init",
+    assert events == ["board", "socket_renderer", "socket_init",
                       "socket_000", "socket_001",
-                      "freeze_world", "save", "verify", "reload_frozen_world"]
+                      "freeze_world", "save", "reload_frozen_world"]
     assert result.board_request_id == 11
     assert result.socket_request_ids == (12, 13)
     assert result.evidence_dir == arguments["evidence_dir"]
     assert result.calibration.record["schema"] == "test"
+
+
+def test_single_socket_capture_starts_and_saves_one_request(tmp_path, monkeypatch):
+    arguments, events, _repre = _setup(
+        tmp_path, monkeypatch, request_ids=(11, 12), socket_count=1)
+    result = start.start_precision_session(**arguments)
+    assert events == ["board", "socket_renderer", "socket_init",
+                      "socket_000", "freeze_world", "save",
+                      "reload_frozen_world"]
+    assert result.socket_request_ids == (12,)
 
 
 def test_validated_launch_does_not_repeat_fixture_hash_check(
@@ -227,7 +244,7 @@ def test_duplicate_request_or_existing_output_never_reuses_a_session(
         tmp_path, monkeypatch, request_ids=(11, 12, 12))
     with pytest.raises(ValueError, match="unique positive int31"):
         start.start_precision_session(**arguments)
-    assert events == ["board", "board_preflight", "socket_renderer", "socket_init",
+    assert events == ["board", "socket_renderer", "socket_init",
                       "socket_000", "socket_001"]
     events.clear()
     arguments["evidence_dir"].mkdir()
@@ -251,15 +268,20 @@ def test_session_rejects_relative_capture_root_and_bad_camera_set(
 
 def test_session_rejects_unbound_saved_frame_evidence(tmp_path, monkeypatch):
     arguments, events, _repre = _setup(tmp_path, monkeypatch)
+    original_write = start.write_session_bootstrap_artifacts
 
-    def unbound(_output):
-        events.append("verify")
-        return {"all_frames_bound_to_acquisition_evidence": False}
+    def unbound(bootstrap, output):
+        saved = original_write(bootstrap, output)
+        manifest_file = saved / "evidence_manifest.json"
+        manifest = json.loads(manifest_file.read_text())
+        manifest["all_frames_bound_to_acquisition_evidence"] = False
+        manifest_file.write_text(json.dumps(manifest))
+        return saved
 
-    monkeypatch.setattr(start, "verify_session_evidence_bundle", unbound)
+    monkeypatch.setattr(start, "write_session_bootstrap_artifacts", unbound)
     with pytest.raises(ValueError, match="acquisition-bound camera frames"):
         start.start_precision_session(**arguments)
-    assert events == ["board", "board_preflight", "socket_renderer", "socket_init",
+    assert events == ["board", "socket_renderer", "socket_init",
                       "socket_000", "socket_001",
-                      "freeze_world", "save", "verify"]
+                      "freeze_world", "save"]
     assert arguments["evidence_dir"].is_dir()

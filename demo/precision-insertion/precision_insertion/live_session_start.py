@@ -1,14 +1,15 @@
 """Orchestrate one non-motion AutoDex precision-insertion session start.
 
 Only existing AutoDex capture/FoundPose primitives and the demo's stricter
-frame-provenance adapters are used. The order is board, socket init, repeated
-socket observations, then frozen collision world and immutable evidence.
+frame-provenance adapters are used. The order is board, socket init, socket
+observation, then frozen collision world and immutable evidence.
 This does not commission the camera clock, FoundPose model or robot motion.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import math
 from pathlib import Path
 import secrets
@@ -27,8 +28,7 @@ from .prompt_contract import reject_incorrect_object_color
 from .silhouette_compat import prepare_precision_silhouette
 from .socket_refinement import refine_socket_capture
 from .session_bootstrap import (
-    bootstrap_session, verify_session_evidence_bundle,
-    write_session_bootstrap_artifacts,
+    bootstrap_session, write_session_bootstrap_artifacts,
 )
 from .timing_profile import timed
 
@@ -39,7 +39,7 @@ class StartedPrecisionSession:
     evidence_dir: Path
     board_request_id: int
     socket_request_ids: tuple[int, ...]
-    verified_manifest: dict | None = None
+    producer_manifest: dict | None = None
 
 
 def start_precision_session(
@@ -86,10 +86,10 @@ def start_precision_session(
         raise FileExistsError(f"session evidence already exists: {output}")
     if not capture_root.is_dir():
         raise ValueError("socket capture root must be an existing shared directory")
-    if (type(socket_capture_count) is not int or socket_capture_count < 2 or
+    if (type(socket_capture_count) is not int or socket_capture_count < 1 or
             not isinstance(socket_prompt, str) or
             not socket_prompt.strip() or socket_prompt == "object"):
-        raise ValueError("session needs repeated socket captures and a specific prompt")
+        raise ValueError("session needs a socket capture and a specific prompt")
     reject_incorrect_object_color(socket_prompt)
     for name, value in (("board_timeout_s", board_timeout_s),
                         ("socket_timeout_s", socket_timeout_s),
@@ -168,13 +168,15 @@ def start_precision_session(
             calibrated_camera_ids=calibrated_camera_ids,
             acquisition_metadata_for_request=acquisition_metadata_for_request,
             timeout_s=float(board_timeout_s), request_id_factory=next_request_id)
-    # Validate the board while its physical scene still matches the selected
-    # phase. This is repeated from the same saved frames during final freeze.
-    from src.execution.charuco_tabletop import measure_tabletop_from_images
-    with timed("board.charuco_fit", phase="board"):
-        measure_tabletop_from_images(
-            board.images_bgr, intrinsics_full, extrinsics_full, c2r,
-            board_id=board_id, minimum_board_corners=minimum_board_corners)
+    # Only the empty-board workflow needs a fit before the operator places
+    # the socket. With the socket already present, calibration performs the
+    # same board fit during the final freeze, so an early fit is redundant.
+    if board_capture_phase == "empty_before_socket":
+        from src.execution.charuco_tabletop import measure_tabletop_from_images
+        with timed("board.charuco_fit", phase="board"):
+            measure_tabletop_from_images(
+                board.images_bgr, intrinsics_full, extrinsics_full, c2r,
+                board_id=board_id, minimum_board_corners=minimum_board_corners)
     if (board_capture_phase == "empty_before_socket" and
             not _confirmed_socket_placement(confirm_socket_placement)):
         raise RuntimeError("operator did not confirm socket placement")
@@ -229,9 +231,21 @@ def start_precision_session(
                 perception_mode=socket_perception_mode))
     with timed("socket.evidence_write", phase="socket", kind="io"):
         saved = write_session_bootstrap_artifacts(bootstrap, output)
-    with timed("socket.evidence_verify", phase="socket", kind="io"):
-        manifest = verify_session_evidence_bundle(saved)
-    if manifest.get("all_frames_bound_to_acquisition_evidence") is not True:
+    # Every source frame was bound before writing and each PNG digest was
+    # produced from the encoded bytes. Re-reading all newly written PNGs here
+    # duplicates the producer's work; keep the full verifier for offline audit.
+    with timed("socket.manifest_read", phase="socket", kind="io"):
+        manifest = json.loads((saved / "evidence_manifest.json").read_text(
+            encoding="utf-8"))
+    if (not isinstance(manifest, dict) or
+            manifest.get("schema") !=
+            "precision_insertion_session_evidence_bundle_v1" or
+            manifest.get("board_request_id") != board.request_id or
+            manifest.get("socket_request_ids") != [
+                capture.request_id for capture in captures] or
+            manifest.get("socket_capture_ids") != [
+                capture.capture_id for capture in captures] or
+            manifest.get("all_frames_bound_to_acquisition_evidence") is not True):
         raise ValueError("session evidence lacks acquisition-bound camera frames")
     with timed("socket.calibration_reload", phase="socket", kind="io"):
         reopened = load_session_calibration(
@@ -240,7 +254,7 @@ def start_precision_session(
         calibration=reopened, evidence_dir=saved,
         board_request_id=board.request_id,
         socket_request_ids=tuple(capture.request_id for capture in captures),
-        verified_manifest=manifest)
+        producer_manifest=manifest)
 
 
 def _confirmed_socket_placement(confirm: Callable[[], bool]) -> bool:

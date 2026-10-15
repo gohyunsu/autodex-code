@@ -112,7 +112,7 @@ class OpenSessionCameras:
 
     def start(self, *, confirm_socket_placement: Callable[[], bool] | None = None,
               ) -> StartedPrecisionSession:
-        """Capture ChArUco then repeated socket observations once."""
+        """Capture ChArUco then the configured socket observations."""
         launch = self.launch
         return start_precision_session(
             mode=launch.mode, shared_root=launch.shared_root,
@@ -204,6 +204,7 @@ def _load_stock_camera_calibration(directory: Path, camera_ids: set[str]):
 
 def load_session_launch(
     path: Path, *, evidence_dir_override: Path | None = None,
+    allow_existing_evidence: bool = False,
 ) -> SessionLaunch:
     """Validate all static inputs without creating outputs or contacting cameras."""
     config_path = _path(str(path), name="launch config", kind="file")
@@ -240,7 +241,7 @@ def load_session_launch(
                       if evidence_dir_override is not None else
                       record.get("evidence_dir")), name="evidence_dir",
                      kind="new directory")
-    if evidence.exists():
+    if evidence.exists() and not allow_existing_evidence:
         raise FileExistsError(f"session evidence already exists: {evidence}")
     if not evidence.parent.is_dir():
         raise FileNotFoundError("session evidence parent directory is missing")
@@ -315,10 +316,10 @@ def load_session_launch(
         validate_cylinder_socket_fixture(shared_root=root, mode=mode)
     count = record.get("socket_capture_count")
     prompt = record.get("socket_prompt")
-    if (type(count) is not int or count < 2 or
+    if (type(count) is not int or count < 1 or
             not isinstance(prompt, str) or not prompt.strip() or
             prompt.strip() == "object"):
-        raise ValueError("socket needs repeated captures and a specific SAM prompt")
+        raise ValueError("socket needs a capture and a specific SAM prompt")
     reject_incorrect_object_color(prompt)
     socket_perception_mode = record.get("socket_perception_mode", "iou")
     if socket_perception_mode not in ("iou", "ignore_sil_loss"):

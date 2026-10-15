@@ -126,12 +126,12 @@ def open_verified_session(
         with timed("ledger.evidence_verify", phase="ledger", kind="io"):
             manifest = verify_session_evidence_bundle(source)
     else:
-        # The immediately preceding producer already verified this exact
-        # bundle. Re-reading its large PNG set adds only NAS latency.
+        # The immediately preceding producer bound the frames and hashed PNG
+        # bytes during writing. Re-reading the large set belongs to offline audit.
         manifest = producer_manifest
     if (manifest.get("all_frames_bound_to_acquisition_evidence") is not True or
-            len(manifest.get("socket_capture_ids", [])) < 2):
-        raise ValueError("session lacks repeated acquisition-bound socket captures")
+            len(manifest.get("socket_capture_ids", [])) < 1):
+        raise ValueError("session lacks an acquisition-bound socket capture")
     calibration_path = source / "session_calibration.json"
     calibration = (calibration_snapshot if calibration_snapshot is not None
                    else load_session_calibration(

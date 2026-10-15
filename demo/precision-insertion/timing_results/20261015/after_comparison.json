@@ -1,0 +1,86 @@
+{
+  "catalog": "/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical/recipient_gap20_endpoint_catalog_20261013.json",
+  "evidence": "/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical/live_board9_gap20_20261013/session_evidence_001",
+  "label": "after",
+  "runs": [
+    {
+      "iteration": 0,
+      "seconds": {
+        "candidate_selection_000": 0.0009245040128007531,
+        "catalog_preflight": 0.007715763000305742,
+        "known_subset_total": 3.006919897045009,
+        "ledger_open": 0.074858168954961,
+        "one_candidate_override": 0.0019328100024722517,
+        "producer_bundle_verify": 2.912364909017924,
+        "producer_calibration_reload": 0.00912374205654487
+      },
+      "selected_key": [
+        "table",
+        "0",
+        "20071"
+      ]
+    },
+    {
+      "iteration": 1,
+      "seconds": {
+        "candidate_selection_000": 0.0009052209788933396,
+        "catalog_preflight": 0.007212925003841519,
+        "known_subset_total": 2.9761134710279293,
+        "ledger_open": 0.07100424898089841,
+        "one_candidate_override": 0.0017895240453071892,
+        "producer_bundle_verify": 2.8858330700313672,
+        "producer_calibration_reload": 0.009368481987621635
+      },
+      "selected_key": [
+        "table",
+        "0",
+        "20071"
+      ]
+    },
+    {
+      "iteration": 2,
+      "seconds": {
+        "candidate_selection_000": 0.0008681250037625432,
+        "catalog_preflight": 0.006591315963305533,
+        "known_subset_total": 3.0280138900270686,
+        "ledger_open": 0.07212835602695122,
+        "one_candidate_override": 0.001983046007808298,
+        "producer_bundle_verify": 2.9366063449997455,
+        "producer_calibration_reload": 0.00983670202549547
+      },
+      "selected_key": [
+        "table",
+        "0",
+        "20071"
+      ]
+    },
+    {
+      "iteration": 3,
+      "seconds": {
+        "candidate_selection_000": 0.0009080409654416144,
+        "catalog_preflight": 0.006432813010178506,
+        "known_subset_total": 3.0080719219404273,
+        "ledger_open": 0.07140431698644534,
+        "one_candidate_override": 0.001998897991143167,
+        "producer_bundle_verify": 2.9180104949628003,
+        "producer_calibration_reload": 0.009317358024418354
+      },
+      "selected_key": [
+        "table",
+        "0",
+        "20071"
+      ]
+    }
+  ],
+  "scope": "saved_data_cpu_nas_subset_no_camera_robot_planner_vlm",
+  "source_tree": "/home/robot/autodex-precision-insertion",
+  "warm_median_s": {
+    "candidate_selection_000": 0.0009052209788933396,
+    "catalog_preflight": 0.006591315963305533,
+    "known_subset_total": 3.0080719219404273,
+    "ledger_open": 0.07140431698644534,
+    "one_candidate_override": 0.001983046007808298,
+    "producer_bundle_verify": 2.9180104949628003,
+    "producer_calibration_reload": 0.009368481987621635
+  }
+}

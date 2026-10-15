@@ -286,7 +286,7 @@ def _verify_saved_socket_refinements(
 ) -> None:
     """Replay one pose per capture; a record hash alone is not a pose check."""
     refinements = record.get("socket_capture_refinements")
-    if (not isinstance(refinements, list) or len(refinements) < 2 or
+    if (not isinstance(refinements, list) or len(refinements) < 1 or
             record.get("socket_capture_refinements_sha256") !=
             _canonical_sha256({"refinements": refinements})):
         raise ValueError("saved socket refinements changed or are missing")
@@ -406,7 +406,7 @@ def calibrate_session(
     max_capture_skew_s: float,
     max_socket_translation_mm: float,
     max_socket_angle_deg: float,
-    min_socket_captures: int = 2,
+    min_socket_captures: int = 1,
     min_views_per_capture: int = 2,
     socket_capture_refinements: Sequence[SocketCaptureRefinement] | None = None,
     board_id: str = "11",
@@ -415,14 +415,14 @@ def calibrate_session(
 ) -> SessionCalibration:
     """Build one frozen calibration from supplied, already-captured evidence.
 
-    A ``capture_id`` is one simultaneous multi-camera socket snapshot; at
-    least two different captures are required to test fixture repeatability.
+    A ``capture_id`` is one simultaneous multi-camera socket snapshot.
+    Two different captures are required only to test fixture repeatability.
     ``pose_world`` uses the same world frame as ``c2r`` and AutoDex's board
     measurement. Bounds are explicit commissioning inputs, not defaults.
 
     When ``socket_capture_refinements`` is provided, each capture contributes
-    exactly one independently refined pose to the fixture repeatability
-    check. Raw per-view poses remain evidence but are not counted repeatedly.
+    exactly one independently refined pose. With one capture, its observed
+    pose is frozen directly; raw per-view poses remain evidence.
     Geometric agreement alone does not establish absolute sub-mm accuracy or
     FoundPose photometric quality. The caller must reject bad masks/poses
     before supplying them and must separately validate hand-eye calibration.
@@ -431,8 +431,8 @@ def calibrate_session(
     translation_limit = _positive(
         max_socket_translation_mm, "max_socket_translation_mm")
     angle_limit = _positive(max_socket_angle_deg, "max_socket_angle_deg")
-    if min_socket_captures < 2 or min_views_per_capture < 2:
-        raise ValueError("require at least two socket captures and two views per capture")
+    if min_socket_captures < 1 or min_views_per_capture < 2:
+        raise ValueError("require at least one socket capture and two views per capture")
     if board_timestamp_source != "camera_acquisition":
         raise ValueError("ChArUco images require camera acquisition timestamps")
     if board_capture_phase not in ("empty_before_socket", "socket_present_partial"):

@@ -104,6 +104,15 @@ def test_check_only_loads_stock_calibration_and_does_not_connect(
     np.testing.assert_allclose(loaded.extrinsics_full["cam_a"], np.eye(4))
 
 
+def test_single_socket_capture_launch_is_valid_in_static_check(tmp_path, monkeypatch):
+    config, record = _config(tmp_path)
+    _stub_time(monkeypatch)
+    record["socket_capture_count"] = 1
+    config.write_text(json.dumps(record), encoding="utf-8")
+    loaded = launch.load_session_launch(config)
+    assert loaded.socket_capture_count == 1
+
+
 def test_static_preflight_launch_cannot_open_camera_capture(tmp_path, monkeypatch):
     config, record = _config(tmp_path)
     _stub_time(monkeypatch)
@@ -123,6 +132,17 @@ def test_static_preflight_launch_cannot_open_camera_capture(tmp_path, monkeypatc
     assert diagnostic.readiness()["execution_scope"] == "camera_only_diagnostic"
     with pytest.raises(PermissionError, match="static preflight"):
         launch.capture_session(diagnostic)
+
+
+def test_static_check_can_read_occupied_evidence_path_without_reusing_it(
+        tmp_path, monkeypatch):
+    config, record = _config(tmp_path)
+    _stub_time(monkeypatch)
+    Path(record["evidence_dir"]).mkdir()
+    with pytest.raises(FileExistsError, match="session evidence already exists"):
+        launch.load_session_launch(config)
+    checked = launch.load_session_launch(config, allow_existing_evidence=True)
+    assert checked.evidence_dir == Path(record["evidence_dir"])
 
 
 def test_missing_one_camera_time_or_existing_output_stops_before_capture(

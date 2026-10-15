@@ -16,8 +16,13 @@ from pathlib import Path
 from typing import Callable, Iterator, Mapping
 
 from .action_loop import ActionHandler, ActionLoopResult, run_session_actions
+from .assets import AssetPaths
+from .calibration import (
+    load_session_calibration, validate_session_camera_calibration,
+)
 from .clear_view import ClearViewForPerception
 from .camera_stream import open_autodex_camera_stream
+from .silhouette_compat import prepare_precision_silhouette
 
 from .live_session_runner import (
     OpenedPrecisionSession, open_verified_session,
@@ -25,6 +30,7 @@ from .live_session_runner import (
 )
 from .runtime_evidence_cache import live_evidence_cache
 from .live_session_start import StartedPrecisionSession
+from .session_bootstrap import verify_session_evidence_bundle
 from .session_launch import (
     OpenSessionCameras, load_session_launch, open_session_cameras,
 )
@@ -90,6 +96,7 @@ def open_live_precision_session(
     clear_view: ClearViewForPerception, xy_update_weight: float = 1.0,
     init_ports: tuple[int, int, int] | None = None,
     launch_snapshot=None,
+    reuse_session_evidence_dir: Path | None = None,
 ) -> Iterator[LivePrecisionSession]:
     """Capture once, open the bound ledger, and retain camera connections.
 
@@ -138,21 +145,60 @@ def open_live_precision_session(
         catalog_snapshot = preflight_endpoint_catalog_file(
             mode=launch.mode, shared_root=launch.shared_root,
             catalog_path=catalog)
+    saved_session = None
+    if reuse_session_evidence_dir is not None:
+        saved_input = Path(reuse_session_evidence_dir).expanduser()
+        if not saved_input.is_absolute():
+            raise ValueError("reused session evidence path must be absolute")
+        saved_path = saved_input.resolve()
+        with timed("startup.saved_session_verify", phase="startup", kind="io"):
+            manifest = verify_session_evidence_bundle(saved_path)
+            calibration = load_session_calibration(
+                saved_path / "session_calibration.json", mode=launch.mode,
+                shared_root=launch.shared_root)
+            validate_session_camera_calibration(
+                calibration,
+                intrinsics_undist={serial: row["K_undist"] for serial, row in
+                                   launch.intrinsics_full.items()},
+                extrinsics_full=launch.extrinsics_full,
+                calibrated_camera_ids=set(launch.camera_ids))
+            if calibration.record["board"].get("board") != launch.board_id:
+                raise ValueError("saved session board differs from live launch")
+            saved_session = StartedPrecisionSession(
+                calibration=calibration, evidence_dir=saved_path,
+                board_request_id=manifest["board_request_id"],
+                socket_request_ids=tuple(manifest["socket_request_ids"]),
+                producer_manifest=manifest)
     # Stock AutoDex free-space home is appropriate only before the session's
     # first exposure, not after a failed insertion or tabletop release.
     with timed("startup.clear_view", phase="startup", kind="motion"):
         clear_view.prepare_initial()
     resources = ExitStack()
     try:
-        with timed("startup.camera_stream_open", phase="startup", kind="io"):
-            resources.enter_context(open_autodex_camera_stream(
-                launch.pc_list, name="precision_insertion_live"))
         with timed("startup.camera_transport_open", phase="startup", kind="io"):
             cameras = resources.enter_context(open_session_cameras(
                 launch, **({} if init_ports is None else
                            {"init_ports": init_ports})))
-        with timed("startup.board_socket_session", phase="startup"):
-            started = cameras.start()
+        # CUDA renderer warmup can occupy the Python process longer than the
+        # capture daemon's 5 s heartbeat lease. Prepare the object needed by
+        # this session before acquisition starts.
+        with timed(("startup.socket_renderer_warmup" if saved_session is None
+                    else "startup.key_renderer_warmup"), phase="startup"):
+            prepare_precision_silhouette(
+                init_orchestrator=cameras.init_orchestrator,
+                object_name=(launch.mode.socket_object if saved_session is None
+                             else launch.mode.key_object),
+                raw_mesh=AssetPaths(launch.shared_root, launch.mode).raw_mesh(
+                    launch.mode.socket_object if saved_session is None
+                    else launch.mode.key_object))
+        with timed("startup.camera_stream_open", phase="startup", kind="io"):
+            resources.enter_context(open_autodex_camera_stream(
+                launch.pc_list, name="precision_insertion_live"))
+        if saved_session is None:
+            with timed("startup.board_socket_session", phase="startup"):
+                started = cameras.start()
+        else:
+            started = saved_session
         with timed("startup.session_ledger_open", phase="startup", kind="io"):
             opened = open_verified_session(
                 mode=launch.mode, shared_root=launch.shared_root,
@@ -160,7 +206,7 @@ def open_live_precision_session(
                 output_dir=output, max_xy_retries=max_xy_retries,
                 xy_update_weight=xy_update_weight,
                 catalog_snapshot=catalog_snapshot,
-                producer_manifest=getattr(started, "verified_manifest", None),
+                producer_manifest=getattr(started, "producer_manifest", None),
                 calibration_snapshot=getattr(started, "calibration", None))
         yield LivePrecisionSession(started, opened, cameras, clear_view)
     finally:
@@ -174,6 +220,8 @@ def run_live_precision_session(
     clear_view: ClearViewForPerception,
     build_handlers: Callable[[LivePrecisionSession], Mapping[str, ActionHandler]],
     max_steps: int | None = None, xy_update_weight: float = 1.0,
+    stop_after_planning: bool = False,
+    reuse_session_evidence_dir: Path | None = None,
     confirm_initial_key_placement: Callable[[], bool] | None = None,
     init_ports: tuple[int, int, int] | None = None,
     launch_snapshot=None,
@@ -198,7 +246,8 @@ def run_live_precision_session(
             max_xy_retries=max_xy_retries,
             xy_update_weight=xy_update_weight,
             clear_view=clear_view, init_ports=init_ports,
-            launch_snapshot=launch_snapshot) as live:
+            launch_snapshot=launch_snapshot,
+            reuse_session_evidence_dir=reuse_session_evidence_dir) as live:
         # The fixed socket is measured with the key absent. Match stock
         # run_auto's one initial object-placement gate before key perception.
         # Retry captures never pause here or remeasure the socket.
@@ -210,7 +259,11 @@ def run_live_precision_session(
         with timed("live.action_loop", phase="trial"):
             return run_session_actions(
                 live.opened.runner, handlers=build_handlers(live),
-                max_steps=max_steps)
+                max_steps=max_steps,
+                stop_before_actions=({
+                    "execution_gate_required": "planning_ready",
+                    "preflight_repose": "planning_no_candidate",
+                } if stop_after_planning else None))
 
 
 def _confirmed_key_placement(confirm: Callable[[], bool]) -> bool:

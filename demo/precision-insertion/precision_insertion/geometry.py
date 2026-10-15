@@ -56,7 +56,7 @@ def freeze_fixture_pose(
     angle_limit_deg: float,
     continuous_axis_local=None,
 ) -> tuple[np.ndarray, dict]:
-    """Choose an observed medoid and reject non-repeatable measurements.
+    """Choose an observed pose and reject non-repeatable measurements when repeated.
 
     The chosen transform is always one input sample. This avoids averaging
     rotation matrices and keeps the collision pose tied to saved evidence.
@@ -68,8 +68,8 @@ def freeze_fixture_pose(
             else _unit_axis(continuous_axis_local))
     samples = [validate_se3(value, name=f"pose[{i}]")
                for i, value in enumerate(poses)]
-    if len(samples) < 2:
-        raise ValueError("at least two fixture measurements are required")
+    if not samples:
+        raise ValueError("at least one fixture measurement is required")
 
     count = len(samples)
     translation_mm = np.zeros((count, count), dtype=np.float64)
@@ -90,8 +90,10 @@ def freeze_fixture_pose(
     max_translation = float(translation_residuals.max())
     max_angle = float(angle_residuals.max())
     diagnostics = {
-        "method": ("observed_axisymmetric_se3_medoid" if axis is not None
-                   else "observed_se3_medoid"),
+        "method": (("observed_axisymmetric_se3_single" if axis is not None
+                    else "observed_se3_single") if count == 1 else
+                   ("observed_axisymmetric_se3_medoid" if axis is not None
+                    else "observed_se3_medoid")),
         "sample_count": count,
         "selected_index": selected_index,
         "translation_limit_mm": float(translation_limit_mm),
@@ -104,6 +106,8 @@ def freeze_fixture_pose(
         "accepted": (max_translation <= translation_limit_mm
                      and max_angle <= angle_limit_deg),
     }
+    if count == 1:
+        diagnostics["repeatability_checked"] = False
     if not diagnostics["accepted"]:
         raise ValueError(
             "fixture pose measurements are not repeatable: "

@@ -2,7 +2,7 @@
 
 The baseline is a *segmentation aid*, not another socket calibration or a
 replacement for the fixed collision world. It must come from the same saved
-session that admitted the repeated socket captures. Its provenance is checked
+session that admitted the socket capture. Its provenance is checked
 before any key image or model is processed.
 """
 

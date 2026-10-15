@@ -1,0 +1,1207 @@
+{
+  "clock": "time.perf_counter_ns",
+  "groups": {
+    "evidence.png_batch_write": {
+      "count": 2,
+      "failures": 0,
+      "inclusive_s": 3.196517503,
+      "self_s": 0.003331614
+    },
+    "evidence.png_write_hash": {
+      "count": 40,
+      "failures": 0,
+      "inclusive_s": 4.921818957,
+      "self_s": 4.921818957
+    },
+    "replay.catalog_preflight": {
+      "count": 1,
+      "failures": 0,
+      "inclusive_s": 0.00932108,
+      "self_s": 0.00932108
+    },
+    "replay.key_png_read_verify": {
+      "count": 20,
+      "failures": 0,
+      "inclusive_s": 1.028971345,
+      "self_s": 1.028971345
+    },
+    "replay.key_qa_verify": {
+      "count": 1,
+      "failures": 0,
+      "inclusive_s": 1.035409263,
+      "self_s": 0.006437918
+    },
+    "replay.live_small_binding_hashes": {
+      "count": 1,
+      "failures": 0,
+      "inclusive_s": 0.001511168,
+      "self_s": 0.001511168
+    },
+    "replay.session_evidence_verify": {
+      "count": 1,
+      "failures": 0,
+      "inclusive_s": 2.945474976,
+      "self_s": 2.945474976
+    },
+    "replay.total": {
+      "count": 1,
+      "failures": 0,
+      "inclusive_s": 7.189245639,
+      "self_s": 0.001011649
+    }
+  },
+  "schema": "precision_insertion_timing_summary_v1",
+  "spans": [
+    {
+      "attempt_id": null,
+      "attributes": {},
+      "duration_s": 7.189245639,
+      "end_pipeline_s": 7.189841398,
+      "kind": "computation",
+      "name": "replay.total",
+      "outcome": "success",
+      "parent_id": null,
+      "phase": "replay",
+      "self_s": 0.001011649,
+      "span_id": "p000000",
+      "start_pipeline_s": 0.000595759
+    },
+    {
+      "attempt_id": null,
+      "attributes": {},
+      "duration_s": 2.945474976,
+      "end_pipeline_s": 2.946093314,
+      "kind": "io",
+      "name": "replay.session_evidence_verify",
+      "outcome": "success",
+      "parent_id": "p000000",
+      "phase": "evidence",
+      "self_s": 2.945474976,
+      "span_id": "p000001",
+      "start_pipeline_s": 0.000618338
+    },
+    {
+      "attempt_id": null,
+      "attributes": {},
+      "duration_s": 0.00932108,
+      "end_pipeline_s": 2.955559046,
+      "kind": "io",
+      "name": "replay.catalog_preflight",
+      "outcome": "success",
+      "parent_id": "p000000",
+      "phase": "catalog",
+      "self_s": 0.00932108,
+      "span_id": "p000002",
+      "start_pipeline_s": 2.946237966
+    },
+    {
+      "attempt_id": null,
+      "attributes": {},
+      "duration_s": 0.001511168,
+      "end_pipeline_s": 2.957184969,
+      "kind": "io",
+      "name": "replay.live_small_binding_hashes",
+      "outcome": "success",
+      "parent_id": "p000000",
+      "phase": "ledger",
+      "self_s": 0.001511168,
+      "span_id": "p000003",
+      "start_pipeline_s": 2.955673801
+    },
+    {
+      "attempt_id": null,
+      "attributes": {},
+      "duration_s": 1.035409263,
+      "end_pipeline_s": 3.99265263,
+      "kind": "io",
+      "name": "replay.key_qa_verify",
+      "outcome": "success",
+      "parent_id": "p000000",
+      "phase": "key_replay",
+      "self_s": 0.006437918,
+      "span_id": "p000004",
+      "start_pipeline_s": 2.957243367
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "24080331"
+      },
+      "duration_s": 0.051809826,
+      "end_pipeline_s": 3.00952136,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.051809826,
+      "span_id": "p000005",
+      "start_pipeline_s": 2.957711534
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "24122734"
+      },
+      "duration_s": 0.049805155,
+      "end_pipeline_s": 3.059625771,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.049805155,
+      "span_id": "p000006",
+      "start_pipeline_s": 3.009820616
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305460"
+      },
+      "duration_s": 0.051210204,
+      "end_pipeline_s": 3.111136868,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.051210204,
+      "span_id": "p000007",
+      "start_pipeline_s": 3.059926664
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305461"
+      },
+      "duration_s": 0.050237642,
+      "end_pipeline_s": 3.161658519,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.050237642,
+      "span_id": "p000008",
+      "start_pipeline_s": 3.111420877
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305463"
+      },
+      "duration_s": 0.052324018,
+      "end_pipeline_s": 3.214280826,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.052324018,
+      "span_id": "p000009",
+      "start_pipeline_s": 3.161956808
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305464"
+      },
+      "duration_s": 0.051485822,
+      "end_pipeline_s": 3.266060562,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.051485822,
+      "span_id": "p000010",
+      "start_pipeline_s": 3.21457474
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305466"
+      },
+      "duration_s": 0.051628563,
+      "end_pipeline_s": 3.317976692,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.051628563,
+      "span_id": "p000011",
+      "start_pipeline_s": 3.266348129
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305467"
+      },
+      "duration_s": 0.05057862,
+      "end_pipeline_s": 3.368854623,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.05057862,
+      "span_id": "p000012",
+      "start_pipeline_s": 3.318276003
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322638"
+      },
+      "duration_s": 0.0497517,
+      "end_pipeline_s": 3.418910768,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.0497517,
+      "span_id": "p000013",
+      "start_pipeline_s": 3.369159068
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322640"
+      },
+      "duration_s": 0.052288849,
+      "end_pipeline_s": 3.471526016,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.052288849,
+      "span_id": "p000014",
+      "start_pipeline_s": 3.419237167
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322641"
+      },
+      "duration_s": 0.053740827,
+      "end_pipeline_s": 3.525591602,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.053740827,
+      "span_id": "p000015",
+      "start_pipeline_s": 3.471850775
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322643"
+      },
+      "duration_s": 0.051119894,
+      "end_pipeline_s": 3.577017367,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.051119894,
+      "span_id": "p000016",
+      "start_pipeline_s": 3.525897473
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322644"
+      },
+      "duration_s": 0.052812707,
+      "end_pipeline_s": 3.630138759,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.052812707,
+      "span_id": "p000017",
+      "start_pipeline_s": 3.577326052
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322645"
+      },
+      "duration_s": 0.050355021,
+      "end_pipeline_s": 3.680779434,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.050355021,
+      "span_id": "p000018",
+      "start_pipeline_s": 3.630424413
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322646"
+      },
+      "duration_s": 0.050708324,
+      "end_pipeline_s": 3.731777604,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.050708324,
+      "span_id": "p000019",
+      "start_pipeline_s": 3.68106928
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322648"
+      },
+      "duration_s": 0.050667959,
+      "end_pipeline_s": 3.78273145,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.050667959,
+      "span_id": "p000020",
+      "start_pipeline_s": 3.732063491
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322649"
+      },
+      "duration_s": 0.048985955,
+      "end_pipeline_s": 3.831999111,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.048985955,
+      "span_id": "p000021",
+      "start_pipeline_s": 3.783013156
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322650"
+      },
+      "duration_s": 0.051219245,
+      "end_pipeline_s": 3.883502827,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.051219245,
+      "span_id": "p000022",
+      "start_pipeline_s": 3.832283582
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322651"
+      },
+      "duration_s": 0.053642676,
+      "end_pipeline_s": 3.937441178,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.053642676,
+      "span_id": "p000023",
+      "start_pipeline_s": 3.883798502
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322652"
+      },
+      "duration_s": 0.054598338,
+      "end_pipeline_s": 3.992342648,
+      "kind": "io",
+      "name": "replay.key_png_read_verify",
+      "outcome": "success",
+      "parent_id": "p000004",
+      "phase": "key_replay",
+      "self_s": 0.054598338,
+      "span_id": "p000024",
+      "start_pipeline_s": 3.93774431
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "capture_phase": "saved_replay",
+        "image_count": 20,
+        "workers": 1
+      },
+      "duration_s": 2.565358186,
+      "end_pipeline_s": 6.558282284,
+      "kind": "io",
+      "name": "evidence.png_batch_write",
+      "outcome": "success",
+      "parent_id": "p000000",
+      "phase": "evidence",
+      "self_s": 0.002897861,
+      "span_id": "p000025",
+      "start_pipeline_s": 3.992924098
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "24080331",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.131412362,
+      "end_pipeline_s": 4.124386278,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.131412362,
+      "span_id": "p000026",
+      "start_pipeline_s": 3.992973916
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "24122734",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.119985449,
+      "end_pipeline_s": 4.244505193,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.119985449,
+      "span_id": "p000027",
+      "start_pipeline_s": 4.124519744
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305460",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.125070652,
+      "end_pipeline_s": 4.369714474,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.125070652,
+      "span_id": "p000028",
+      "start_pipeline_s": 4.244643822
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305461",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.129637925,
+      "end_pipeline_s": 4.499506398,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.129637925,
+      "span_id": "p000029",
+      "start_pipeline_s": 4.369868473
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305463",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.13092911,
+      "end_pipeline_s": 4.630561088,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.13092911,
+      "span_id": "p000030",
+      "start_pipeline_s": 4.499631978
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305464",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.12949401,
+      "end_pipeline_s": 4.760197082,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.12949401,
+      "span_id": "p000031",
+      "start_pipeline_s": 4.630703072
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305466",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.132051508,
+      "end_pipeline_s": 4.892392334,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.132051508,
+      "span_id": "p000032",
+      "start_pipeline_s": 4.760340826
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305467",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.131620463,
+      "end_pipeline_s": 5.024141617,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.131620463,
+      "span_id": "p000033",
+      "start_pipeline_s": 4.892521154
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322638",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.11920846,
+      "end_pipeline_s": 5.14350373,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.11920846,
+      "span_id": "p000034",
+      "start_pipeline_s": 5.02429527
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322640",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.131363135,
+      "end_pipeline_s": 5.275018185,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.131363135,
+      "span_id": "p000035",
+      "start_pipeline_s": 5.14365505
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322641",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.132272015,
+      "end_pipeline_s": 5.407438772,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.132272015,
+      "span_id": "p000036",
+      "start_pipeline_s": 5.275166757
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322643",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.128580288,
+      "end_pipeline_s": 5.536169618,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.128580288,
+      "span_id": "p000037",
+      "start_pipeline_s": 5.40758933
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322644",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.134105896,
+      "end_pipeline_s": 5.670425128,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.134105896,
+      "span_id": "p000038",
+      "start_pipeline_s": 5.536319232
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322645",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.129825628,
+      "end_pipeline_s": 5.800402184,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.129825628,
+      "span_id": "p000039",
+      "start_pipeline_s": 5.670576556
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322646",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.130359871,
+      "end_pipeline_s": 5.930926048,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.130359871,
+      "span_id": "p000040",
+      "start_pipeline_s": 5.800566177
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322648",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.12749739,
+      "end_pipeline_s": 6.058566004,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.12749739,
+      "span_id": "p000041",
+      "start_pipeline_s": 5.931068614
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322649",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.112150863,
+      "end_pipeline_s": 6.170860698,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.112150863,
+      "span_id": "p000042",
+      "start_pipeline_s": 6.058709835
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322650",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.129975863,
+      "end_pipeline_s": 6.30096912,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.129975863,
+      "span_id": "p000043",
+      "start_pipeline_s": 6.170993257
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322651",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.131555414,
+      "end_pipeline_s": 6.432654314,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.131555414,
+      "span_id": "p000044",
+      "start_pipeline_s": 6.3010989
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322652",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.125364023,
+      "end_pipeline_s": 6.558151455,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000025",
+      "phase": "evidence",
+      "self_s": 0.125364023,
+      "span_id": "p000045",
+      "start_pipeline_s": 6.432787432
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "capture_phase": "saved_replay",
+        "image_count": 20,
+        "workers": 4
+      },
+      "duration_s": 0.631159317,
+      "end_pipeline_s": 7.189704593,
+      "kind": "io",
+      "name": "evidence.png_batch_write",
+      "outcome": "success",
+      "parent_id": "p000000",
+      "phase": "evidence",
+      "self_s": 0.000433753,
+      "span_id": "p000046",
+      "start_pipeline_s": 6.558545276
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "24080331",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.125406664,
+      "end_pipeline_s": 6.684172253,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.125406664,
+      "span_id": "p000047",
+      "start_pipeline_s": 6.558765589
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "24122734",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.119493204,
+      "end_pipeline_s": 6.67841725,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.119493204,
+      "span_id": "p000048",
+      "start_pipeline_s": 6.558924046
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305460",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.111703708,
+      "end_pipeline_s": 6.670770788,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.111703708,
+      "span_id": "p000049",
+      "start_pipeline_s": 6.55906708
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305461",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.115263076,
+      "end_pipeline_s": 6.674445141,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.115263076,
+      "span_id": "p000050",
+      "start_pipeline_s": 6.559182065
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305463",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.116036625,
+      "end_pipeline_s": 6.786941319,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.116036625,
+      "span_id": "p000051",
+      "start_pipeline_s": 6.670904694
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305464",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.114438523,
+      "end_pipeline_s": 6.788995692,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.114438523,
+      "span_id": "p000052",
+      "start_pipeline_s": 6.674557169
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305466",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.134767238,
+      "end_pipeline_s": 6.813294635,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.134767238,
+      "span_id": "p000053",
+      "start_pipeline_s": 6.678527397
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25305467",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.119081322,
+      "end_pipeline_s": 6.803403007,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.119081322,
+      "span_id": "p000054",
+      "start_pipeline_s": 6.684321685
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322638",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.104129717,
+      "end_pipeline_s": 6.891199263,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.104129717,
+      "span_id": "p000055",
+      "start_pipeline_s": 6.787069546
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322640",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.115383536,
+      "end_pipeline_s": 6.904504716,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.115383536,
+      "span_id": "p000056",
+      "start_pipeline_s": 6.78912118
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322641",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.119201605,
+      "end_pipeline_s": 6.922734215,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.119201605,
+      "span_id": "p000057",
+      "start_pipeline_s": 6.80353261
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322643",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.130787453,
+      "end_pipeline_s": 6.944262457,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.130787453,
+      "span_id": "p000058",
+      "start_pipeline_s": 6.813475004
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322644",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.118361041,
+      "end_pipeline_s": 7.009709933,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.118361041,
+      "span_id": "p000059",
+      "start_pipeline_s": 6.891348892
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322645",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.113797776,
+      "end_pipeline_s": 7.018429992,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.113797776,
+      "span_id": "p000060",
+      "start_pipeline_s": 6.904632216
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322646",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.11709675,
+      "end_pipeline_s": 7.039976435,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.11709675,
+      "span_id": "p000061",
+      "start_pipeline_s": 6.922879685
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322648",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.130318911,
+      "end_pipeline_s": 7.074756679,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.130318911,
+      "span_id": "p000062",
+      "start_pipeline_s": 6.944437768
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322649",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.09941453,
+      "end_pipeline_s": 7.109298339,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.09941453,
+      "span_id": "p000063",
+      "start_pipeline_s": 7.009883809
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322650",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.116275529,
+      "end_pipeline_s": 7.134820348,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.116275529,
+      "span_id": "p000064",
+      "start_pipeline_s": 7.018544819
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322651",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.123851738,
+      "end_pipeline_s": 7.163968984,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.123851738,
+      "span_id": "p000065",
+      "start_pipeline_s": 7.040117246
+    },
+    {
+      "attempt_id": null,
+      "attributes": {
+        "camera_id": "25322652",
+        "capture_phase": "saved_replay",
+        "source": "saved_camera"
+      },
+      "duration_s": 0.114549686,
+      "end_pipeline_s": 7.189491153,
+      "kind": "io",
+      "name": "evidence.png_write_hash",
+      "outcome": "success",
+      "parent_id": "p000046",
+      "phase": "evidence",
+      "self_s": 0.114549686,
+      "span_id": "p000066",
+      "start_pipeline_s": 7.074941467
+    }
+  ],
+  "unfinished_span_count": 0,
+  "unfinished_spans": [],
+  "vlm_inference_cumulative_s": 0,
+  "vlm_inference_occupied_s": 0.0,
+  "vlm_inference_overlap_s": 0.0
+}

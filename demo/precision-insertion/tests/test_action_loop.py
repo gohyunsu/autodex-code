@@ -151,6 +151,42 @@ def test_step_budget_reports_nonterminal_decision():
     assert result.decision.action == "reobserve_key_and_preflight"
 
 
+def test_plan_only_continues_candidate_search_and_stops_before_pickup():
+    runner = Runner([_decision("capture_fresh_key"),
+                     _decision("continue_candidate_preflight"),
+                     _decision("execution_gate_required", "table/0/1")])
+    called = []
+
+    def plan(current, decision):
+        called.append(decision.action)
+        current.advance()
+
+    result = run_session_actions(runner, handlers={
+        "capture_fresh_key": plan,
+        "continue_candidate_preflight": plan,
+        "execution_gate_required": lambda *_: pytest.fail("pickup started"),
+    }, stop_before_actions={"execution_gate_required": "planning_ready"})
+    assert result.status == "planning_ready"
+    assert result.decision.candidate_id == "table/0/1"
+    assert called == ["capture_fresh_key", "continue_candidate_preflight"]
+
+
+def test_plan_only_stops_before_repose_when_pickup_planning_fails():
+    runner = Runner([_decision("capture_fresh_key"),
+                     _decision("continue_candidate_preflight"),
+                     _decision("preflight_repose")])
+    result = run_session_actions(runner, handlers={
+        "capture_fresh_key": lambda row, _: row.advance(),
+        "continue_candidate_preflight": lambda row, _: row.advance(),
+        "preflight_repose": lambda *_: pytest.fail("repose planning started"),
+    }, stop_before_actions={
+        "execution_gate_required": "planning_ready",
+        "preflight_repose": "planning_no_candidate",
+    })
+    assert result.status == "planning_no_candidate"
+    assert result.decision.action == "preflight_repose"
+
+
 def test_default_loop_does_not_truncate_repeated_physical_attempts():
     runner = Runner([_decision("capture_fresh_key", str(i))
                      for i in range(125)] +

@@ -16,7 +16,8 @@ from precision_insertion.feedback_buffer import (  # noqa: E402
 )
 from precision_insertion.key_perception import KeyPoseObservation  # noqa: E402
 from precision_insertion.live_robot_state import (  # noqa: E402
-    FrankaStateUnavailable, LiveRobotState,
+    FeedbackTimeAlignmentUnavailable, FrankaStateUnavailable,
+    HandTrackingUnavailable, LiveRobotState,
 )
 from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
 
@@ -172,11 +173,65 @@ def test_sampler_recovers_after_a_transient_fr3_update_timeout():
         assert selected.sample_timestamp_s == 100.02
 
 
+def test_sampler_recovers_after_one_unaligned_arm_hand_pair():
+    buffer = _buffer()
+    resumed = threading.Event()
+    calls = 0
+
+    def reader():
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise FeedbackTimeAlignmentUnavailable(
+                "FR3/Inspire feedback is stale or not time-aligned")
+        if calls == 4:
+            resumed.set()
+        return _state(100. + (calls - (calls > 2)) * .02)
+
+    with RobotFeedbackSampler(buffer, reader, period_s=.001) as sampler:
+        sampler.wait_until_ready(timeout_s=1.)
+        assert resumed.wait(timeout=1.)
+        assert sampler.state_for_observation(_observation()).sample_timestamp_s == 100.02
+
+
+def test_sampler_recovers_after_transient_hand_tracking_error():
+    buffer = _buffer()
+    resumed = threading.Event()
+    calls = 0
+
+    def reader():
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise HandTrackingUnavailable("hand target is still settling")
+        if calls == 4:
+            resumed.set()
+        return _state(100. + (calls - (calls > 2)) * .02)
+
+    with RobotFeedbackSampler(buffer, reader, period_s=.001) as sampler:
+        sampler.wait_until_ready(timeout_s=1.)
+        assert resumed.wait(timeout=1.)
+        assert sampler.state_for_observation(_observation()).sample_timestamp_s == 100.02
+
+
 def test_sampler_never_admits_capture_without_a_live_fr3_update():
     def stalled_reader():
         raise FrankaStateUnavailable("FR3 state stream is stale")
 
     with RobotFeedbackSampler(_buffer(), stalled_reader, period_s=.001) as sampler:
+        with pytest.raises(TimeoutError, match="no measured feedback"):
+            sampler.wait_until_ready(timeout_s=.02)
+        with pytest.raises(ValueError, match="does not bracket"):
+            sampler.state_for_observation(_observation())
+
+
+def test_sampler_never_admits_capture_with_only_unaligned_feedback():
+    def unaligned_reader():
+        raise FeedbackTimeAlignmentUnavailable(
+            "FR3/Inspire feedback is stale or not time-aligned")
+
+    with RobotFeedbackSampler(_buffer(), unaligned_reader,
+                            period_s=.001) as sampler:
         with pytest.raises(TimeoutError, match="no measured feedback"):
             sampler.wait_until_ready(timeout_s=.02)
         with pytest.raises(ValueError, match="does not bracket"):

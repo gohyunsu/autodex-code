@@ -41,7 +41,9 @@ def _clear_view(events):
 
 def _patch_camera_lifetime(monkeypatch, events):
     launch = SimpleNamespace(
-        mode=SimpleNamespace(family="cylinder"), shared_root=Path("/shared"),
+        mode=SimpleNamespace(family="cylinder",
+                             socket_object="precision_socket_cylinder_gap_20mm"),
+        shared_root=Path("/shared"),
         pc_list=("capture1", "capture2"))
     monkeypatch.setattr(orchestration, "load_session_launch",
                         lambda _path: launch)
@@ -59,6 +61,16 @@ def _patch_camera_lifetime(monkeypatch, events):
             events.append("stream_close")
 
     monkeypatch.setattr(orchestration, "open_autodex_camera_stream", stream)
+
+    def warm_socket(*, init_orchestrator, object_name, raw_mesh):
+        assert init_orchestrator == "same_init"
+        assert object_name == launch.mode.socket_object
+        assert raw_mesh == (Path("/shared/object_processing") / object_name /
+                            "raw_mesh" / f"{object_name}.obj")
+        events.append("socket_renderer_warmup")
+
+    monkeypatch.setattr(orchestration, "prepare_precision_silhouette",
+                        warm_socket)
 
     @contextmanager
     def cameras(received, *, init_ports=None):
@@ -103,12 +115,13 @@ def test_live_session_keeps_same_camera_transport_for_next_key(
             launch_config_path=tmp_path / "launch.json",
             endpoint_catalog_path=catalog, run_output_dir=tmp_path / "new_run",
             max_xy_retries=2, clear_view=_clear_view(events)) as live:
-        assert events == ["catalog_preflight", "home_clear_view", "stream_open", "camera_open",
+        assert events == ["catalog_preflight", "home_clear_view", "camera_open",
+                          "socket_renderer_warmup", "stream_open",
                           "socket_frozen", "ledger_open"]
         assert live.opened is opened
         assert live.cameras.init_orchestrator == "same_init"
         assert live.cameras.acquisition_metadata_for_request == "same_provider"
-    assert events[-2:] == ["camera_close", "stream_close"]
+    assert events[-2:] == ["stream_close", "camera_close"]
 
 
 def test_live_session_reuses_already_validated_launch(
@@ -130,6 +143,47 @@ def test_live_session_reuses_already_validated_launch(
             clear_view=_clear_view(events), launch_snapshot=launch):
         pass
     assert events.count("catalog_preflight") == 1
+
+
+def test_reused_socket_evidence_skips_live_board_and_socket_capture(
+        tmp_path, monkeypatch):
+    events = []
+    launch = _patch_camera_lifetime(monkeypatch, events)
+    launch.mode.key_object = "precision_key_cylinder_r15_h80"
+    launch.camera_ids = ("cam_a",)
+    launch.intrinsics_full = {"cam_a": {"K_undist": np.eye(3).tolist()}}
+    launch.extrinsics_full = {"cam_a": np.eye(4)}
+    launch.board_id = "9"
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text("{}", encoding="utf-8")
+    saved = tmp_path / "saved_socket"
+    saved.mkdir()
+    manifest = {"board_request_id": 11, "socket_request_ids": [12],
+                "socket_capture_ids": ["socket_000"]}
+    calibration = SimpleNamespace(record={"board": {"board": "9"}})
+    monkeypatch.setattr(orchestration, "verify_session_evidence_bundle",
+                        lambda path: events.append("saved_evidence_verified") or manifest)
+    monkeypatch.setattr(orchestration, "load_session_calibration",
+                        lambda *args, **kwargs:
+                        events.append("saved_calibration_loaded") or calibration)
+    monkeypatch.setattr(orchestration, "validate_session_camera_calibration",
+                        lambda *args, **kwargs:
+                        events.append("saved_camera_calibration_matched"))
+    monkeypatch.setattr(orchestration, "prepare_precision_silhouette",
+                        lambda **kwargs: events.append("key_renderer_warmup"))
+    monkeypatch.setattr(orchestration, "open_verified_session",
+                        lambda **kwargs: events.append("ledger_open") or
+                        SimpleNamespace(runner="same_runner"))
+    with orchestration.open_live_precision_session(
+            launch_config_path=tmp_path / "launch.json",
+            endpoint_catalog_path=catalog, run_output_dir=tmp_path / "new_run",
+            max_xy_retries=None, clear_view=_clear_view(events),
+            reuse_session_evidence_dir=saved) as live:
+        assert live.started.evidence_dir == saved
+        assert live.started.socket_request_ids == (12,)
+    assert events.index("saved_evidence_verified") < events.index("home_clear_view")
+    assert "key_renderer_warmup" in events
+    assert "socket_frozen" not in events
 
 
 def test_live_session_routes_precision_init_ports_before_socket_capture(
@@ -192,8 +246,9 @@ def test_failed_session_catalog_binding_closes_camera_but_keeps_capture(
                 endpoint_catalog_path=catalog, run_output_dir=tmp_path / "run",
                 max_xy_retries=1, clear_view=_clear_view(events)):
             pytest.fail("catalog rejection must not yield")
-    assert events == ["catalog_preflight", "home_clear_view", "stream_open", "camera_open", "socket_frozen",
-                      "catalog_rejected", "camera_close", "stream_close"]
+    assert events == ["catalog_preflight", "home_clear_view", "camera_open",
+                      "socket_renderer_warmup", "stream_open", "socket_frozen",
+                      "catalog_rejected", "stream_close", "camera_close"]
 
 
 def test_stale_catalog_preflight_does_not_connect_cameras(tmp_path, monkeypatch):
@@ -204,7 +259,9 @@ def test_stale_catalog_preflight_does_not_connect_cameras(tmp_path, monkeypatch)
 
     def stale(**kwargs):
         assert kwargs == {
-            "mode": SimpleNamespace(family="cylinder"),
+            "mode": SimpleNamespace(
+                family="cylinder",
+                socket_object="precision_socket_cylinder_gap_20mm"),
             "shared_root": Path("/shared"),
             "catalog_path": catalog,
         }

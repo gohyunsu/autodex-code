@@ -1,0 +1,86 @@
+{
+  "catalog": "/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical/recipient_gap20_endpoint_catalog_20261013.json",
+  "evidence": "/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical/live_board9_gap20_20261013/session_evidence_001",
+  "label": "before",
+  "runs": [
+    {
+      "iteration": 0,
+      "seconds": {
+        "candidate_selection_000": 0.07040752499597147,
+        "catalog_preflight": 0.9864487159647979,
+        "known_subset_total": 9.746016841032542,
+        "ledger_open": 5.512151814007666,
+        "one_candidate_override": 0.11345594300655648,
+        "producer_bundle_verify": 3.051138114009518,
+        "producer_calibration_reload": 0.012414729048032314
+      },
+      "selected_key": [
+        "table",
+        "0",
+        "20071"
+      ]
+    },
+    {
+      "iteration": 1,
+      "seconds": {
+        "candidate_selection_000": 0.7993443249724805,
+        "catalog_preflight": 0.0822774069965817,
+        "known_subset_total": 7.945126343984157,
+        "ledger_open": 4.099599429988302,
+        "one_candidate_override": 0.12465695396531373,
+        "producer_bundle_verify": 2.8289494790369645,
+        "producer_calibration_reload": 0.010298749024514109
+      },
+      "selected_key": [
+        "table",
+        "0",
+        "20071"
+      ]
+    },
+    {
+      "iteration": 2,
+      "seconds": {
+        "candidate_selection_000": 0.9320828760392033,
+        "catalog_preflight": 0.10001423896756023,
+        "known_subset_total": 7.982839335047174,
+        "ledger_open": 3.9866029220283963,
+        "one_candidate_override": 0.11301906098378822,
+        "producer_bundle_verify": 2.8420219370163977,
+        "producer_calibration_reload": 0.009098300011828542
+      },
+      "selected_key": [
+        "table",
+        "0",
+        "20071"
+      ]
+    },
+    {
+      "iteration": 3,
+      "seconds": {
+        "candidate_selection_000": 0.9779288879944943,
+        "catalog_preflight": 0.0824965059873648,
+        "known_subset_total": 8.010424650972709,
+        "ledger_open": 3.99851707497146,
+        "one_candidate_override": 0.11825413501355797,
+        "producer_bundle_verify": 2.8243520180112682,
+        "producer_calibration_reload": 0.008876028994563967
+      },
+      "selected_key": [
+        "table",
+        "0",
+        "20071"
+      ]
+    }
+  ],
+  "scope": "saved_data_cpu_nas_subset_no_camera_robot_planner_vlm",
+  "source_tree": "/tmp/precision-prepull-8231d85-20261015",
+  "warm_median_s": {
+    "candidate_selection_000": 0.9320828760392033,
+    "catalog_preflight": 0.0824965059873648,
+    "known_subset_total": 7.982839335047174,
+    "ledger_open": 3.99851707497146,
+    "one_candidate_override": 0.11825413501355797,
+    "producer_bundle_verify": 2.8289494790369645,
+    "producer_calibration_reload": 0.009098300011828542
+  }
+}

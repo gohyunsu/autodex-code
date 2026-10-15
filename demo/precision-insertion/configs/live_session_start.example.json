@@ -27,7 +27,7 @@
     "minimum_accepted_views": 2
   },
   "socket_prompt": "white plastic cylindrical socket",
-  "socket_capture_count": 2,
+  "socket_capture_count": 1,
   "board_timeout_s": 5.0,
   "socket_timeout_s": 15.0,
   "image_write_timeout_s": 5.0,

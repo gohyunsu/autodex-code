@@ -188,6 +188,30 @@ def test_refined_session_counts_captures_not_camera_views_and_replays(
         load_session_calibration(tampered, mode=args["mode"], shared_root=tmp_path)
 
 
+def test_single_refined_capture_replays_without_repeatability_claim(
+        tmp_path, board_measurement):
+    args = _arguments(tmp_path, family="cylinder")
+    paths = AssetPaths(tmp_path, args["mode"])
+    paths.socket_collision_mesh.parent.mkdir(parents=True)
+    paths.socket_collision_mesh.write_bytes(args["socket_collision_mesh"].read_bytes())
+    args["socket_collision_mesh"] = paths.socket_collision_mesh
+    args["object_root"] = paths.object_root
+    symmetry = paths.object_root / args["mode"].socket_object / "processed_data/info/symmetry.json"
+    symmetry.parent.mkdir(parents=True, exist_ok=True)
+    symmetry.write_text(json.dumps({
+        "type": "Cinf", "axes": [{"axis": [0, 0, 1], "fold": "inf"}]
+    }), encoding="utf-8")
+    args["socket_observations"] = args["socket_observations"][:2]
+    args["socket_capture_refinements"] = _refinements(args)[:1]
+    session = calibrate_session(**args)
+    assert session.socket_diagnostics["sample_count"] == 1
+    assert session.socket_diagnostics["repeatability_checked"] is False
+    assert session.socket_pose_robot[0, 3] == pytest.approx(.1005)
+    saved = write_session_calibration(session, tmp_path / "single.json")
+    replay = load_session_calibration(saved, mode=args["mode"], shared_root=tmp_path)
+    np.testing.assert_allclose(replay.socket_pose_robot, session.socket_pose_robot)
+
+
 def test_refined_session_rejects_one_bad_view_or_duplicate_request(
         tmp_path, board_measurement):
     args = _arguments(tmp_path)

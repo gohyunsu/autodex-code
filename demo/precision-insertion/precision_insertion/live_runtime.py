@@ -34,6 +34,9 @@ class RunLiveOptions:
     annotator: str | None = None
     xy_update_weight: float = 1.0
     init_ports: tuple[int, int, int] | None = None
+    stop_after_planning: bool = False
+    reuse_session_evidence_dir: Path | None = None
+    key_already_placed: bool = False
 
 
 @dataclass(frozen=True)
@@ -85,7 +88,8 @@ def inspect_live_inputs(
     robot_config_path: Path | None = None,
 ) -> dict:
     """Check current v8 inputs without cameras, CUDA or robot construction."""
-    launch = load_session_launch(launch_config_path)
+    launch = load_session_launch(
+        launch_config_path, allow_existing_evidence=True)
     if launch.mode.family != "cylinder":
         raise ValueError("live insertion currently supports cylinder mode only")
     catalog_path = Path(endpoint_catalog_path).expanduser().resolve()
@@ -98,6 +102,8 @@ def inspect_live_inputs(
         "launch_config_path": str(Path(launch_config_path).expanduser().resolve()),
         "launch_config_sha256": hashlib.sha256(
             Path(launch_config_path).expanduser().resolve().read_bytes()).hexdigest(),
+        "launch_evidence_dir_path": str(launch.evidence_dir),
+        "launch_evidence_dir_exists": launch.evidence_dir.exists(),
         "endpoint_catalog_path": str(catalog_path),
         "endpoint_catalog_sha256": hashlib.sha256(
             catalog_path.read_bytes()).hexdigest(),
@@ -199,7 +205,11 @@ def run_integrated_live_session(
                 xy_update_weight=options.xy_update_weight,
                 clear_view=integration.clear_view,
                 build_handlers=handlers, max_steps=options.max_steps,
-                confirm_initial_key_placement=_confirm_initial_key_placement,
+                stop_after_planning=options.stop_after_planning,
+                reuse_session_evidence_dir=options.reuse_session_evidence_dir,
+                confirm_initial_key_placement=(
+                    None if options.key_already_placed else
+                    _confirm_initial_key_placement),
                 init_ports=options.init_ports, launch_snapshot=launch)
     finally:
         with timed("cleanup.integration_close", phase="cleanup", kind="io"):

@@ -93,6 +93,17 @@ def test_opening_binds_saved_evidence_and_frozen_catalog(tmp_path, monkeypatch):
         opening.open_verified_session(**args)
 
 
+def test_opening_accepts_one_acquisition_bound_socket_capture(
+        tmp_path, monkeypatch):
+    args, _events = _setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(opening, "verify_session_evidence_bundle",
+                        lambda _path: {
+                            "all_frames_bound_to_acquisition_evidence": True,
+                            "socket_capture_ids": ["socket_000"]})
+    opened = opening.open_verified_session(**args)
+    assert opened.next_decision.action == "capture_fresh_key"
+
+
 def test_missing_pth_or_unbound_camera_evidence_fails_before_run(
         tmp_path, monkeypatch):
     args, events = _setup(tmp_path, monkeypatch)

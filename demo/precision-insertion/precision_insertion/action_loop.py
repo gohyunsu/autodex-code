@@ -48,6 +48,7 @@ class ActionLoopResult:
 def run_session_actions(
     runner: DecisionRunner, *, handlers: Mapping[str, ActionHandler],
     max_steps: int | None = None,
+    stop_before_actions: Mapping[str, str] | None = None,
 ) -> ActionLoopResult:
     """Dispatch until the session is terminal, unhandled, or step-limited.
 
@@ -66,6 +67,12 @@ def run_session_actions(
         raise TypeError("action handlers need nonempty action names and callables")
     if max_steps is not None and (type(max_steps) is not int or max_steps < 1):
         raise ValueError("max_steps must be a positive integer or None")
+    if stop_before_actions is not None and (
+            not isinstance(stop_before_actions, Mapping) or
+            any(not isinstance(action, str) or not action or
+                not isinstance(status, str) or not status
+                for action, status in stop_before_actions.items())):
+        raise ValueError("stop_before_actions must map decisions to statuses")
     visited: list[SessionDecision] = []
     for _ in (count() if max_steps is None else range(max_steps)):
         decision = runner.current_decision()
@@ -75,6 +82,9 @@ def run_session_actions(
         if decision.action in _TERMINAL_STATUSES:
             return ActionLoopResult(
                 _TERMINAL_STATUSES[decision.action], decision, tuple(visited))
+        if stop_before_actions and decision.action in stop_before_actions:
+            return ActionLoopResult(
+                stop_before_actions[decision.action], decision, tuple(visited))
         handler = handlers.get(decision.action)
         if handler is None:
             return ActionLoopResult("needs_handler", decision, tuple(visited))

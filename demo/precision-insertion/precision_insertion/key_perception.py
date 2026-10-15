@@ -28,7 +28,7 @@ from .geometry import pose_angle_deg, validate_se3
 from .live_capture import KeyCaptureInput
 from .perception_evidence import SocketViewLimits, admit_socket_capture
 from .runtime_evidence_cache import recalled, remember
-from .session_bootstrap import _safe_id, _write_json, _write_png
+from .session_bootstrap import _safe_id, _write_json
 from .timing_profile import timed
 from .socket_exclusion import (
     key_mask_socket_overlap_fraction, project_frozen_socket_exclusion,
@@ -610,15 +610,18 @@ def write_key_capture_artifacts(
         with config_path.open("xb") as stream:
             stream.write(raw)
         files["board_config.json"] = hashlib.sha256(raw).hexdigest()
+    from .raw_camera_capture import write_png_jobs
+
+    png_jobs = []
     for serial, image in sorted(capture.images_bgr.items()):
         safe = _safe_id(serial, "key camera ID")
         image_path = image_dir / f"{safe}.png"
-        files[str(image_path.relative_to(target))] = _write_png(image_path, image)
+        png_jobs.append((serial, image_path, image, "undistorted"))
         if serial in capture.masks:
             mask_entry = capture.masks[serial]
             mask = np.asarray(mask_entry["mask"], dtype=np.uint8) * 255
             mask_path = mask_dir / f"{safe}.png"
-            files[str(mask_path.relative_to(target))] = _write_png(mask_path, mask)
+            png_jobs.append((serial, mask_path, mask, "mask"))
             payloads["mask_metadata"][serial] = {
                 key: value for key, value in mask_entry.items() if key != "mask"}
         if serial in capture.poses:
@@ -627,6 +630,10 @@ def write_key_capture_artifacts(
                 pose["pose_world"] = np.asarray(pose["pose_world"],
                                                 dtype=float).tolist()
             payloads["pose_payloads"][serial] = pose
+    png_results, _ = write_png_jobs(png_jobs, phase="key")
+    for serial, source, digest in png_results:
+        folder = "images" if source == "undistorted" else "masks"
+        files[f"{folder}/{serial}.png"] = digest
     payload_file = target / "payloads.json"
     files["payloads.json"] = _write_json(payload_file, payloads)
     report_file = target / "key_observation.json"

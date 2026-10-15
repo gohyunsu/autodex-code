@@ -54,10 +54,12 @@ def install_curobo_ik_world_compat() -> bool:
     if getattr(original, "_precision_singleton_world_compat", False):
         return True
     source = inspect.getsource(original)
-    if "self.world_coll_checker.load_batch_collision_model(world)" not in source:
-        raise RuntimeError("unknown cuRobo IK world-update implementation")
     if "isinstance(world, WorldConfig)" in source:
         return False
+    if "self.world_coll_checker.load_collision_model(world)" in source:
+        return False  # current cuRobo accepts one WorldConfig directly
+    if "self.world_coll_checker.load_batch_collision_model(world)" not in source:
+        raise RuntimeError("unknown cuRobo IK world-update implementation")
 
     @wraps(original)
     def with_singleton_list(self, world):

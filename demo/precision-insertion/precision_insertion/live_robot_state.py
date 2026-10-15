@@ -22,6 +22,14 @@ class FrankaStateUnavailable(ValueError):
     """The latest daemon state is absent or older than the allowed age."""
 
 
+class FeedbackTimeAlignmentUnavailable(ValueError):
+    """This read cannot pair recent arm and hand samples."""
+
+
+class HandTrackingUnavailable(ValueError):
+    """This hand sample is still moving toward its software command."""
+
+
 @dataclass(frozen=True)
 class LiveRobotState:
     full_q: np.ndarray
@@ -143,7 +151,8 @@ def read_live_franka_inspire_state(
             abs(arm_time - hand_time) > max_arm_hand_skew_s or
             any(t > now or now - t > max_sample_age_s
                 for t in (arm_time, hand_time))):
-        raise ValueError("FR3/Inspire feedback is stale or not time-aligned")
+        raise FeedbackTimeAlignmentUnavailable(
+            "FR3/Inspire feedback is stale or not time-aligned")
     arm_q = _finite_vector(arm_data.get("qpos"), 7, "FR3 qpos")
     arm_qvel = _finite_vector(arm_data.get("qvel"), 7, "FR3 qvel")
     measured_raw = _finite_vector(hand_data.get("qpos"), 6,
@@ -155,7 +164,9 @@ def read_live_franka_inspire_state(
         raise ValueError("Inspire feedback/action lies outside 0..1000")
     error = float(np.max(np.abs(measured_raw - commanded_raw)))
     if error > max_hand_command_error_raw:
-        raise ValueError("Inspire measured joints do not track the hold command")
+        raise HandTrackingUnavailable(
+            "Inspire measured joints do not track the hold command: "
+            f"{error:.1f} raw units (limit {max_hand_command_error_raw:.1f})")
     hand_q = _finite_vector(convert_inspire_raw(measured_raw[None, :])[0],
                             6, "converted Inspire planner qpos")
     wrench = _finite_vector(arm_data.get("wrench"), 6, "FR3 wrench")

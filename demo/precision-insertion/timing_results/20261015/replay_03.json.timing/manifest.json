@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "run_id": "20261015T040342_429013Z_3368f7e0",
+  "status": "success",
+  "pid": 2,
+  "host": "robot",
+  "argv": [
+    "demo/precision-insertion/replay_saved_timing.py",
+    "--session-evidence",
+    "/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical/live_board9_gap20_20261013/session_evidence_001",
+    "--key-report",
+    "/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical/strict_camera_only_static_interval_20261013_143002/key_socket_qa/report.json",
+    "--catalog",
+    "/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical/recipient_gap20_endpoint_catalog_20261013.json",
+    "--output-root",
+    "/tmp/precision-saved-replay-20261015-v4"
+  ],
+  "started_utc_ns": 1792037022429012926,
+  "started_utc": "2026-10-15T04:03:42.429013+00:00",
+  "clock": {
+    "duration_clock": "time.perf_counter_ns",
+    "sync_clock": "time.time_ns",
+    "origin_monotonic_ns": 272710741982991,
+    "origin_utc_ns": 1792037022429012926
+  },
+  "ended_utc_ns": 1792037029575165455,
+  "ended_utc": "2026-10-15T04:03:49.575166+00:00",
+  "duration_s": 7.146157776,
+  "event_count": 140,
+  "episode_count": 0,
+  "edit_package": "edit/storyboard.json"
+}

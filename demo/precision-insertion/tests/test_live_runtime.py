@@ -67,8 +67,9 @@ def test_static_preflight_reads_v8_files_without_opening_robot(
     launch_path.write_text("{}\n", encoding="utf-8")
     catalog_path.write_text("{}\n", encoding="utf-8")
     mode = select_mode("cylinder", 20)
-    monkeypatch.setattr(live_runtime, "load_session_launch", lambda _path:
+    monkeypatch.setattr(live_runtime, "load_session_launch", lambda _path, **_kwargs:
                         SimpleNamespace(mode=mode, shared_root=tmp_path,
+                                        evidence_dir=tmp_path / "saved_evidence",
                                         readiness=lambda: {"board_id": "9"}))
     monkeypatch.setattr(live_runtime, "preflight_endpoint_catalog_file",
                         lambda **_kwargs: {"candidates": [
@@ -92,6 +93,7 @@ def test_static_preflight_reads_v8_files_without_opening_robot(
         robot_config_path=robot_path)
     assert report["eligible_candidate_count"] == 1
     assert report["launch"]["board_id"] == "9"
+    assert report["launch_evidence_dir_exists"] is False
     assert report["robot_config"]["stage_factory_syntax_valid"] is True
     assert report["robot_config"]["stage_factory_module_on_path"] is False
     assert report["robot_config"]["stage_factory_imported"] is False

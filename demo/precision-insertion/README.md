@@ -36,6 +36,9 @@ On the board-9 robot PC, manage long-lived daemons separately with
 `bash demo/precision-insertion/manage_robot_pc_services.sh start` (or
 `check`/`stop`), then run `bash demo/precision-insertion/run_robot_pc.sh
 --run`. A pipeline exit no longer restarts or stops capture/Franka services.
+Each `--run` copies the board-9 launch template to a uniquely named launch
+JSON and points it at a new session-evidence directory, so a prior run's
+evidence is never reused or overwritten. `--check` reads the template only.
 The key is placed after the fixed socket capture when prompted.
 For a board-9, 20 mm key-plus-socket **camera-only** check, use
 [`probe_live_key_socket.py`](probe_live_key_socket.py) as documented in
@@ -2296,8 +2299,9 @@ mask and FoundPose pose **per camera**, so the new
 size/border clipping, FoundPose quality/inliers, pose validity, calibrated
 camera identity, and cross-camera *acquisition* skew before handing its
 `SocketObservation`s to `calibrate_session()`. Use a socket-specific SAM
-prompt while the key is absent. Repeat at least twice; calibration then
-checks socket-pose repeatability and freezes the collision world. All
+prompt while the key is absent. The current 20 mm launch takes one socket
+capture and freezes its stock-refined pose in the collision world. This
+single observation does not establish pose repeatability. All
 thresholds are explicit commissioning inputs, not silently inferred from a
 VLM score. `collect_and_admit_socket_capture()` now reuses the stricter
 `collect_socket_capture()` adapter and requires an exclusive `capture_root`.
@@ -2310,7 +2314,7 @@ the demo-local capture-PC handoff in
 
 `precision_insertion.session_bootstrap.bootstrap_session()` is the
 non-motion session assembly point. Supply the **raw distorted** empty-board
-BGR snapshots, their request ID and verified acquisition times, and at least two
+BGR snapshots, their request ID and verified acquisition times, and at least one
 `SocketCaptureInput` records (each with a socket-specific SAM prompt,
 **undistorted** BGR frames from the *same* FoundPose request, SAM masks,
 FoundPose payloads, request ID, and verified acquisition times). It calls the existing
@@ -2330,16 +2334,17 @@ frame. `SnapshotOrchestrator.snap()` likewise does not return per-camera
 acquisition timestamps. The admission gate deliberately rejects those
 publication timestamps; saved session records now state and validate
 `camera_acquisition` as their time source. A demo-local acquisition metadata
-side channel (or compatible camera/daemon support) is still needed for the
-board, socket, and per-trial key frames before a live session can be treated
-as synchronized. This is a **live integration blocker**, not a missing CAD
-asset or an invitation to pass one request ID as a timestamp. The offline
-planner and catalogue renderer remain usable without cameras.
+side channel (or compatible camera/daemon support) is needed to bind board,
+socket and per-trial key frames to exposure intervals. The current board-9
+launch uses the demo-local frame-ID-preserving adapters and bounded request
+interval metadata. This provides a bounded exposure timestamp, not a
+sub-frame synchronized camera measurement. A publication timestamp or one
+request ID alone is not an exposure timestamp.
 
 `precision_insertion.live_capture` specifies the demo-local adapters that
 must wrap AutoDex's snapshot and initialized FoundPose collectors. Call
-`collect_board_snapshot()` first, then `collect_socket_capture()` at least
-twice while the socket is fixed and the key is absent, then pass the returned
+`collect_board_snapshot()` first, then `collect_socket_capture()` once for the
+current board-9 launch while the socket is fixed and the key is absent, then pass the returned
 frames/payloads and timestamps to `bootstrap_session()`. Socket frames are
 the **same-request undistorted PNGs** written by the stock init daemon; the
 adapter waits for those asynchronous files and refuses missing images rather
@@ -2348,9 +2353,8 @@ shared by the robot PC and capture PCs (for example, a common absolute NAS
 mount), and preserve those intermediate directories until the evidence bundle
 has been verified. The metadata callback must return the exact request,
 frame IDs, image hashes and bounded exposure times. The unchanged stock
-orchestrators discard frame IDs, so they deliberately fail this gate until
-demo-specific metadata-preserving adapters are deployed. These capture
-helpers alone cannot authorize robot motion.
+orchestrators discard frame IDs; the live demo adapter retains them. These
+capture helpers alone cannot authorize robot motion.
 
 `precision_insertion.live_session_start.start_precision_session()` now joins
 those pieces into **one non-motion startup call** on the AutoDex robot PC. It
@@ -2364,15 +2368,16 @@ agree. A source-PC absolute path now fails **before any camera capture**.
 With an already-streaming AutoDex
 camera rig and an independently commissioned `AcquisitionTimeProvider`, it
 collects the ChArUco board snapshot **before** initializing socket FoundPose,
-takes at least two unique-request socket captures while the key is absent,
+takes the configured number of unique-request socket captures while the key is absent
+(one for the current board-9 / 20 mm launch),
 takes only admitted SAM/FoundPose views from each capture into stock
 `InitOrchestrator.refine_from_payloads(selection_mode="iou")` and its
 silhouette optimizer. It saves every post-refinement per-view IoU and labels
 which views meet the supplied threshold. If some do not, it uses the stock
 silhouette result instead of vetoing the capture solely for those views.
-Each capture contributes exactly one refined pose to
-the repeatability test; the raw per-camera poses remain saved evidence but
-are not counted as independent fixture measurements. It runs
+Each capture contributes exactly one refined pose. With one capture, its
+pose is frozen directly and the record says `repeatability_checked: false`;
+the raw per-camera poses remain saved evidence. It runs
 `bootstrap_session()`, freezes the socket in the collision world, writes
 the evidence bundle and reloads the saved calibration to check it. Duplicate
 request IDs or an existing output directory fail closed; partial capture
@@ -2403,7 +2408,7 @@ started = start_precision_session(
         minimum_border_clearance_px=commissioned_border_px,
         maximum_capture_skew_s=commissioned_camera_skew_s),
     socket_prompt="fixed white square socket on the ChArUco board",
-    socket_capture_count=2,
+    socket_capture_count=1,
     board_id="11", board_capture_phase="empty_before_socket",
     confirm_socket_placement=lambda: input(
         "Place the white socket after the empty-board capture; Enter=ready: ") == "",
@@ -2489,7 +2494,7 @@ For a **single long-running, non-motion process**, use
 It validates the launch files and the complete v8 endpoint catalogue,
 including every indexed pose's source hashes and screening-implementation
 hashes, before opening camera connections. It then collects ChArUco followed
-by repeated socket captures,
+by the configured socket captures,
 opens the source-bound `SessionRunner`, and keeps the **same** initialized
 AutoDex camera transport and acquisition-time provider alive for fresh key
 captures until the context exits:

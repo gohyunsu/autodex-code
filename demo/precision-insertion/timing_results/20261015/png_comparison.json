@@ -1,0 +1,49 @@
+{
+  "camera_count": 20,
+  "image_size_px": [
+    2048,
+    1536
+  ],
+  "runs": [
+    {
+      "iteration": 0,
+      "seconds": {
+        "new_1": 2.2720952599775046,
+        "new_4": 0.6816897240350954,
+        "old_serial": 2.28418255597353
+      }
+    },
+    {
+      "iteration": 1,
+      "seconds": {
+        "new_1": 2.2438827679725364,
+        "new_4": 0.6630543289938942,
+        "old_serial": 2.2478764730039984
+      }
+    },
+    {
+      "iteration": 2,
+      "seconds": {
+        "new_1": 2.249875504989177,
+        "new_4": 0.5762300780043006,
+        "old_serial": 2.2490613310365006
+      }
+    },
+    {
+      "iteration": 3,
+      "seconds": {
+        "new_1": 2.255304648017045,
+        "new_4": 0.5781543430057354,
+        "old_serial": 2.256255664047785
+      }
+    }
+  ],
+  "scope": "same_saved_20_png_pixels_local_tmp_encode_write_hash_only",
+  "source_report": "/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical/strict_camera_only_static_interval_20261013_143002/key_socket_qa/report.json",
+  "source_report_sha256": "9580d2c711db116588f3a2c74aed32e84005f0a9bb5553bc8546a444c2e469f7",
+  "warm_median_s": {
+    "new_1": 2.249875504989177,
+    "new_4": 0.5781543430057354,
+    "old_serial": 2.2490613310365006
+  }
+}

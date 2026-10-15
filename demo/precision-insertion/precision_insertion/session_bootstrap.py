@@ -1,7 +1,7 @@
 """Join existing AutoDex evidence gates into one auditable session bootstrap.
 
 The caller supplies frames and *independently verified* acquisition times.
-This module does no camera I/O or robot motion: it admits repeated socket
+This module does no camera I/O or robot motion: it admits socket
 captures, reuses the existing ChArUco/session calibration, and preserves the
 source images, masks, poses and provenance in a new directory.
 """
@@ -97,7 +97,7 @@ def bootstrap_session(
     minimum_board_corners: int = 54,
     board_capture_phase: str = "empty_before_socket",
 ) -> SessionBootstrap:
-    """Admit repeated socket observations, then freeze one AutoDex world.
+    """Admit socket observations, then freeze one AutoDex world.
 
     The socket-specific SAM prompt and raw images are retained as evidence;
     the key must not be on the board during these captures.  A source labeled
@@ -129,8 +129,8 @@ def bootstrap_session(
                 exceeds_static_capture_skew_limit(
                     board_verified, view_limits.maximum_capture_skew_s)):
             raise ValueError("board frame timing conflicts with verified evidence")
-    if not isinstance(socket_captures, Sequence) or len(socket_captures) < 2:
-        raise ValueError("at least two socket captures are required")
+    if not isinstance(socket_captures, Sequence) or not socket_captures:
+        raise ValueError("at least one socket capture is required")
     admissions: list[SocketCaptureEvidence] = []
     refinements: list[SocketCaptureRefinement] = []
     seen_ids: set[str] = set()
@@ -217,7 +217,7 @@ def bootstrap_session(
         max_capture_skew_s=view_limits.maximum_capture_skew_s,
         max_socket_translation_mm=max_socket_translation_mm,
         max_socket_angle_deg=max_socket_angle_deg,
-        min_socket_captures=2,
+        min_socket_captures=1,
         min_views_per_capture=view_limits.minimum_accepted_views,
         socket_capture_refinements=(
             tuple(refinements) if socket_refiner is not None else None),
@@ -258,14 +258,21 @@ def write_session_bootstrap_artifacts(
     it.  Live hardware use still needs a commissioned acquisition-time adapter.
     """
     target = Path(output_dir).expanduser().resolve()
+    # Import here: raw_camera_capture imports this module's validation helpers.
+    from .raw_camera_capture import write_png_jobs
+
     target.parent.mkdir(parents=True, exist_ok=True)
     target.mkdir(exist_ok=False)
     files: dict[str, str] = {}
     board_dir = target / "board"
     board_dir.mkdir()
-    for camera_id, image in sorted(bootstrap.board_images_bgr.items()):
-        path = board_dir / f"{_safe_id(camera_id, 'camera ID')}.png"
-        files[str(path.relative_to(target))] = _write_png(path, image)
+    board_jobs = [
+        (camera_id, board_dir / f"{_safe_id(camera_id, 'camera ID')}.png",
+         image, "board_original")
+        for camera_id, image in sorted(bootstrap.board_images_bgr.items())]
+    board_results, _ = write_png_jobs(board_jobs, phase="board")
+    for camera_id, _, digest in board_results:
+        files[f"board/{camera_id}.png"] = digest
     socket_root = target / "socket"
     socket_root.mkdir()
     refined_by_capture = {
@@ -292,14 +299,15 @@ def write_session_bootstrap_artifacts(
             "mask_payload_metadata": {},
             "pose_payloads": {},
         }
+        png_jobs = []
         for camera_id, image in sorted(capture.images_bgr.items()):
             image_file = image_dir / f"{camera_id}.png"
-            files[str(image_file.relative_to(target))] = _write_png(image_file, image)
+            png_jobs.append((camera_id, image_file, image, "undistorted"))
             if camera_id in capture.masks:
                 mask_entry = capture.masks[camera_id]
                 mask = np.asarray(mask_entry["mask"], dtype=np.uint8) * 255
                 mask_file = mask_dir / f"{camera_id}.png"
-                files[str(mask_file.relative_to(target))] = _write_png(mask_file, mask)
+                png_jobs.append((camera_id, mask_file, mask, "mask"))
                 payload["mask_payload_metadata"][camera_id] = {
                     key: value for key, value in mask_entry.items() if key != "mask"}
             if camera_id in capture.poses:
@@ -308,6 +316,10 @@ def write_session_bootstrap_artifacts(
                     pose_entry["pose_world"] = np.asarray(
                         pose_entry["pose_world"], dtype=float).tolist()
                 payload["pose_payloads"][camera_id] = pose_entry
+        png_results, _ = write_png_jobs(png_jobs, phase=capture.capture_id)
+        for camera_id, source, digest in png_results:
+            folder = "images" if source == "undistorted" else "masks"
+            files[f"socket/{capture.capture_id}/{folder}/{camera_id}.png"] = digest
         payload_file = capture_dir / "payloads.json"
         files[str(payload_file.relative_to(target))] = _write_json(
             payload_file, payload)

@@ -31,6 +31,49 @@ long-lived services independently with `manage_robot_pc_services.sh`; its
 service-start report is `/tmp/precision-insertion-services-*.tsv`. The
 manager starts the five capture hosts concurrently. Its timing is separate
 from the Python session; do not add service startup to a warm-run comparison.
+Each live invocation creates a new launch JSON with a fresh evidence path;
+the static `--check` only validates the original launch template.
+When `PRECISION_REUSE_SESSION_EVIDENCE` is set, the launch JSON still gets a
+fresh unused evidence path, while the live session verifies and reuses the
+specified saved board/socket images and calibration. Set
+`PRECISION_KEY_ALREADY_PLACED=1` to skip the initial placement prompt. This
+keeps the key on the board for the whole startup and avoids recapturing the
+fixed socket. The live key capture and cuRobo planning still run.
+
+For the board-9, 20 mm socket already measured on 2026-10-15:
+
+```bash
+cd /home/robot/autodex-precision-insertion
+bash demo/precision-insertion/manage_robot_pc_services.sh check
+PRECISION_REUSE_SESSION_EVIDENCE=/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical/live_board9_gap20_20261013/session_evidence_20261015_140513_805015685_553881 \
+PRECISION_KEY_ALREADY_PLACED=1 \
+PRECISION_CAPTURE_IO_WORKERS=4 \
+  bash demo/precision-insertion/run_robot_pc.sh --plan-only
+```
+
+`--plan-only` allows the initial clear-view move and live key perception,
+then stops before pickup motion when a plan is ready. If all candidates fail
+planning, it returns `planning_no_candidate` without trying a repose move.
+This saved socket calibration is applicable only while the board, socket and
+camera calibration remain unchanged. The verifier checks saved file digests,
+board ID and current camera calibration; it cannot detect physical fixture
+movement. `--run` with the same environment variables proceeds beyond
+planning and commands robot actions.
+
+The 2026-10-15 15:09 plan-only attempt reused that socket evidence, captured
+the key and reached real v8/curobo pickup planning. Three pickup candidates
+failed (`IK: 0/1`), so there was no accepted pickup plan or trial motion. Its
+recorded `live.session` duration was 80.872 s: saved-session verification
+2.905 s, clear-view 0.424 s, key capture 43.302 s (40.817 s waiting for
+saved camera frames and 2.245 s FoundPose request), key pose admission
+2.398 s, key evidence write 3.484 s, candidate preflight 14.555 s and v8
+pickup planning 13.004 s across three candidates. These spans are nested and
+must not be summed into the session duration. The first cuRobo candidate
+took 12.464 s including warmup; subsequent candidates took 0.320 and
+0.221 s. The old plan-only dispatcher then spent 3.350 s on repose preflight;
+the current dispatcher stops before that step. See run
+`20261015_150915_090115.timing` for the source trace. No pickup, insertion,
+contact or failed-trial recovery times were measured.
 
 On the robot PC, `run_robot_pc.sh` sets `PRECISION_TIMING_LOCAL_ROOT` to
 `/tmp/precision-insertion-timing` by default. The stock trace writes its
@@ -70,8 +113,8 @@ nested in the trace.
 | Process timeline | Already uses `PipelineTrace` and detailed planning/execution spans. | Reuses the same trace format but a separate demo run and sidecar. | `live.session` |
 | Service startup | Existing AutoDex camera/robot services may already be running. | Independent manager starts missing daemons; pipeline runs reuse them. | Service TSV, outside run trace |
 | ChArUco | Board/camera measurement used for tabletop geometry. | One board capture and fit at session start; the saved frames are also used in the frozen calibration. | `board.*` |
-| Socket | No fixture-pose estimation or socket refinement. | Currently two 20-camera socket acquisitions, each with SAM/FoundPose; two stock silhouette refinements, then repeatability/frozen collision world. | `socket.capture`, `socket.refine_capture` |
-| Source/evidence checks | Stock live entry points do **not** hash the complete grasp pool and session image bundle on each run. Stock trace hashes an artifact only when explicitly written through its helper. | Live catalog parses once and assumes immutable NAS sources; explicit offline audit still rehashes candidate files. Socket evidence is written/verified once, then passed to the ledger in memory. Producer-validated live key/raw manifests are reused in-session; offline replay still checks bytes. | `startup.catalog_load`, `socket.evidence_write`, `socket.evidence_verify`, `ledger.small_binding_hashes`, `evidence.*` |
+| Socket | No fixture-pose estimation or socket refinement. | Current board-9 / 20 mm launch uses one 20-camera SAM/FoundPose acquisition and one stock silhouette refinement, then freezes that observed pose. Repeatability is unmeasured. | `socket.capture`, `socket.refine_capture` |
+| Source/evidence checks | Stock live entry points do **not** hash the complete grasp pool and session image bundle on each run. Stock trace hashes an artifact only when explicitly written through its helper. | Live catalog parses once and assumes immutable NAS sources; explicit offline audit still rehashes candidate files. Socket evidence is written with per-file digests and its small producer manifest is passed to the ledger; the live path no longer rereads all PNGs immediately. Producer-validated live key/raw manifests are reused in-session; offline replay still checks bytes. | `startup.catalog_load`, `socket.evidence_write`, `socket.manifest_read`, `ledger.small_binding_hashes`, `evidence.*` |
 | Per-trial perception | Object SAM/FoundPose for a fresh tabletop pose. | Fresh key SAM/FoundPose with frozen-socket, camera-time and mask admission; repeated after failure/repose. | `key.model_init`, `key.capture`, `key.pose_admission` |
 | Grasp planning | v8 grasp candidates, cuRobo plan, pickup and lift. | Reuses v8 candidate files but adds a 20 mm whole-hand/socket endpoint catalog and per-current-pose full-chain preflight; measured post-squeeze lift chain. | `key.candidate_preflight`, `trial.measured_lift_preflight` |
 | Motion | Grasp/lift, then stock task/coverage/reorientation flow. | Pickup/lift, held transfer, preinsert hold, guarded axial stroke, release/clear; failed trials may include restoration/repose. | `trial.*_motion`, `trial.release_and_clear`, `action.*` |
@@ -112,14 +155,17 @@ session; dynamic key/arm trajectory checks still run for each candidate.
 PNG SHA-256 is calculated from encoded bytes in memory when written,
 instead of rereading every new PNG from NAS. Offline readback remains.
 
-Independent PNG encoding, writes and in-memory SHA-256 for a raw 20-camera
-checkpoint now use at most four workers by default. Set
+Independent camera PNG reads and PNG encoding, writes and in-memory SHA-256
+for board, socket, key and raw checkpoints now use at most four workers by
+default. Set
 `PRECISION_CAPTURE_IO_WORKERS=1` for the previous serial path or `4` for the
-new path; accepted range is 1–8. `evidence.png_batch_write` is the elapsed
-batch time and `evidence.png_write_hash` records every camera/source pair.
-The manifest is written only after every file completes. This does not
-parallelize the upstream synchronized camera snapshot or overwrite prior
-evidence. Measure on the real NAS before assuming a speedup.
+new path; accepted range is 1–8. `camera.saved_frame_read` records each
+camera's source-file wait and decode, `evidence.png_batch_write` is the
+elapsed batch time, and `evidence.png_write_hash` records every written
+camera/source pair. The manifest is written only after every file completes.
+Capture-PC SAM/FoundPose processing remains distributed; this worker setting
+affects robot-PC file I/O only. Measure on the real NAS before assuming a
+speedup.
 
 The local single-GPU Qwen backend still handles same-camera pairs serially.
 Lift, pre-insertion transfer and final released-key labels are **gates**: the
@@ -178,6 +224,18 @@ separates manifest/image load, model load and individual VLM calls.
 Do not report animation/video playback duration or an offline VLM replay as
 a physical trial time.
 
+The 2026-10-15 board-9/gap-20 saved-camera timing measurements, input
+inventory, reproducible commands and unavailable live stages are in
+[`SAVED_REPLAY_TIMING_20261015.md`](SAVED_REPLAY_TIMING_20261015.md).
+`replay_saved_timing.py` profiles the production saved-bundle verifier,
+catalog loader and PNG worker path on real preserved pixels.
+`replay_saved_live_vlm.py` is a separate read-only harness for a later complete
+released checkpoint: it uses the live `inside_socket` function and, when a
+same-failed-attempt preinsert bundle exists, the production grounded XY core.
+Neither tool acquires camera frames or commands the robot. The 2026-10-13
+session stopped before these VLM checkpoints, so there are no valid VLM timing
+numbers for that session.
+
 ## Optimization experiments (one change at a time)
 
 1. First collect one profiled run and separate service/initialization,
@@ -192,14 +250,11 @@ a physical trial time.
    or one high-confidence view. Two separated views are the minimum for metric
    triangulation; three provide redundancy. Qwen currently processes each
    camera pair/grounded view serially, so this is a likely scaling lever.
-3. The fixed socket is already measured only at **session startup**, not every
-   trial. Reducing two captures to one would remove one acquisition/refinement
-   but also remove the independent repeatability check. The present launch,
-   bootstrap, evidence and ledger contracts all require at least two; changing
-   only `socket_capture_count` in JSON will fail. For 20 mm bring-up, a
-   *separate, explicitly marked single-capture exploratory mode* is reasonable
-   after measured pose-quality review, never represented as repeatability-
-   verified or silently reused for tighter gaps.
+3. The fixed socket is measured only at **session startup**, not every trial.
+   The current board-9 / 20 mm launch uses one capture and one stock refinement.
+   Launch, bootstrap, saved calibration replay, evidence and ledger now accept
+   one capture. Its calibration record labels `repeatability_checked: false`;
+   the old two-capture comparison remains available when explicitly configured.
 4. Catalog source hashes and the complete image-bundle reread have moved out
    of the live hot path under an explicit immutable-NAS assumption. Use
    `verify_sources=True` or the standalone evidence verifier for offline

@@ -91,11 +91,23 @@ def test_joins_ch_ar_uco_and_repeated_socket_admissions(monkeypatch):
     assert [row.capture_id for row in received["socket_observations"]] == [
         "socket_1", "socket_1", "socket_2", "socket_2"]
     assert received["max_capture_skew_s"] == 0.02
-    assert received["min_socket_captures"] == 2
+    assert received["min_socket_captures"] == 1
     assert result.socket_admissions[0].per_view["cam_b"][
         "frame_capture_timestamp_s"] == 100.005
     assert result.socket_admissions[0].per_view["cam_b"][
         "pose_publish_timestamp_s"] == 112.0
+
+
+def test_one_socket_capture_reaches_calibration_and_evidence(monkeypatch, tmp_path):
+    result, received = _bootstrap(
+        monkeypatch, captures=[_capture("socket_1", 100.0)])
+    assert {row.capture_id for row in received["socket_observations"]} == {
+        "socket_1"}
+    assert received["min_socket_captures"] == 1
+    target = sb.write_session_bootstrap_artifacts(result, tmp_path / "single")
+    manifest = sb.verify_session_evidence_bundle(target)
+    assert manifest["socket_capture_ids"] == ["socket_1"]
+    assert manifest["socket_request_ids"] == [100]
 
 
 def test_refinement_callback_receives_admitted_views_and_is_saved(

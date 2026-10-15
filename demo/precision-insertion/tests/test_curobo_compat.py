@@ -63,6 +63,18 @@ class _UnknownIK:
         return world
 
 
+class _CurrentIK:
+    def __init__(self):
+        self.received = []
+        self.world_coll_checker = self
+
+    def load_collision_model(self, world):
+        self.received.append(world)
+
+    def update_world(self, world):
+        self.world_coll_checker.load_collision_model(world)
+
+
 def _install_fake_graph(monkeypatch, cls):
     module = ModuleType("curobo.graph.graph_base")
     module.GraphPlanBase = cls
@@ -117,6 +129,17 @@ def test_ik_singleton_world_is_wrapped_for_existing_autodex_call(monkeypatch):
         assert install_curobo_ik_world_compat() is True
     finally:
         _KnownIK.update_world = original
+
+
+def test_current_ik_world_update_needs_no_wrapper(monkeypatch):
+    _install_fake_ik(monkeypatch, _CurrentIK)
+    original = _CurrentIK.update_world
+    assert install_curobo_ik_world_compat() is False
+    assert _CurrentIK.update_world is original
+    solver = _CurrentIK()
+    world = _WorldConfig()
+    solver.update_world(world)
+    assert solver.received == [world]
 
 
 def test_unknown_ik_world_update_fails_closed(monkeypatch):

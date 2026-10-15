@@ -94,6 +94,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--annotator", help="required with --label-mode manual")
     parser.add_argument("--enable-robot-motion", action="store_true",
                         help="required: initial clear-view and trial motions")
+    parser.add_argument("--stop-after-planning", action="store_true",
+                        help="stop when a candidate plan is ready, before pickup motion")
+    parser.add_argument("--reuse-session-evidence", type=Path,
+                        help="use previously verified fixed-socket images and calibration")
+    parser.add_argument("--key-already-placed", action="store_true",
+                        help="skip the initial key-placement prompt")
     args = parser.parse_args(argv)
     if not _EXP_NAME.fullmatch(args.exp_name):
         parser.error("exp name must be a single path-safe directory name")
@@ -134,7 +140,9 @@ def main(argv: list[str] | None = None) -> int:
         enable_robot_motion=args.enable_robot_motion,
         robot_config_path=args.robot_config,
         label_mode=args.label_mode, annotator=args.annotator,
-        init_ports=init_ports)
+        init_ports=init_ports, stop_after_planning=args.stop_after_planning,
+        reuse_session_evidence_dir=args.reuse_session_evidence,
+        key_already_placed=args.key_already_placed)
     with profile_run(output_dir) as profile:
         with timed("live.session", phase="session"):
             result = run_integrated_live_session(
@@ -152,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
         stream.write("\n")
     print(json.dumps({"result": payload, "report_path": str(report_path)},
                      indent=2, sort_keys=True))
-    return 0 if result.status == "success" else 2
+    return 0 if result.status in ("success", "planning_ready") else 2
 
 
 if __name__ == "__main__":

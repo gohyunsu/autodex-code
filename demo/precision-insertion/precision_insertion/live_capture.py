@@ -11,6 +11,8 @@ No robot commands are sent here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 import math
 from pathlib import Path
 import re
@@ -73,7 +75,7 @@ def collect_board_snapshot(
 
     The adapter must expose each JPEG's sensor frame ID. Camera-side evidence
     must bind that ID, decoded pixels and exposure time to the request. The
-    stock orchestrator discards frame IDs, so it cannot yet pass this gate.
+    stock orchestrator discards frame IDs; the demo adapter retains them.
     """
     if not calibrated_camera_ids or not math.isfinite(timeout_s) or timeout_s <= 0:
         raise ValueError("commissioned cameras and positive timeout required")
@@ -117,28 +119,39 @@ def _load_saved_frames(
     """Wait for the stock init daemon's asynchronous same-request PNG writes."""
     if not camera_ids:
         raise ValueError("FoundPose returned no camera payloads")
+    from .raw_camera_capture import configured_capture_io_workers
+
     deadline = time.monotonic() + timeout_s
-    images = {}
-    while time.monotonic() < deadline:
-        for serial in camera_ids - images.keys():
+    def read_one(serial: str) -> np.ndarray:
+        with timed("camera.saved_frame_read", phase="camera", kind="io",
+                   camera_id=serial):
             image_file = capture_dir / "images" / f"{serial}.png"
-            try:
-                with image_file.open("rb") as stream:
-                    stream.seek(-12, 2)
-                    complete = (stream.read(12) ==
-                                b"\x00\x00\x00\x00IEND\xaeB`\x82")
-            except (FileNotFoundError, OSError):
-                complete = False
-            if complete:
-                image = cv2.imread(str(image_file), cv2.IMREAD_COLOR)
-                if image is not None and image.size:
-                    images[serial] = image
-        if set(images) == camera_ids:
-            return images
-        time.sleep(0.02)
-    raise TimeoutError(
-        "the original init daemon did not save all same-request socket frames: "
-        + repr(sorted(camera_ids - images.keys())))
+            while time.monotonic() < deadline:
+                try:
+                    with image_file.open("rb") as stream:
+                        stream.seek(-12, 2)
+                        complete = (stream.read(12) ==
+                                    b"\x00\x00\x00\x00IEND\xaeB`\x82")
+                except (FileNotFoundError, OSError):
+                    complete = False
+                if complete:
+                    image = cv2.imread(str(image_file), cv2.IMREAD_COLOR)
+                    if image is not None and image.size:
+                        return image
+                time.sleep(0.02)
+        raise TimeoutError(
+            "the original init daemon did not save all same-request socket frames: "
+            + repr(serial))
+
+    serials = sorted(camera_ids)
+    workers = min(configured_capture_io_workers(), len(serials))
+    if workers == 1:
+        return {serial: read_one(serial) for serial in serials}
+    with ThreadPoolExecutor(max_workers=workers,
+                            thread_name_prefix="precision-frame") as pool:
+        futures = [(serial, pool.submit(copy_context().run, read_one, serial))
+                   for serial in serials]
+        return {serial: future.result() for serial, future in futures}
 
 
 def collect_socket_capture(

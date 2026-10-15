@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from autodex.executor.real import _convert_inspire  # noqa: E402
 from precision_insertion.live_robot_state import (  # noqa: E402
-    read_live_franka_inspire_state,
+    FeedbackTimeAlignmentUnavailable, read_live_franka_inspire_state,
 )
 
 
@@ -60,7 +60,8 @@ def test_missing_stale_or_disagreeing_feedback_fails_closed(monkeypatch):
         _read(arm, hand, monkeypatch)
     arm, hand, arm_data, hand_data, _ = _devices()
     hand_data["time"] = 99.8
-    with pytest.raises(ValueError, match="stale or not time-aligned"):
+    with pytest.raises(FeedbackTimeAlignmentUnavailable,
+                       match="stale or not time-aligned"):
         _read(arm, hand, monkeypatch)
     arm, hand, arm_data, hand_data, _ = _devices()
     hand_data["qpos"][0] -= 100
