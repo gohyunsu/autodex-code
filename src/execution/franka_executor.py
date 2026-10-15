@@ -83,7 +83,8 @@ class FrankaExecutor:
                  vel_smooth: float = 0.6, traj_dt: float = 0.01,
                  traj_speed: float = 1, max_lead: float = 0.12,
                  land_tol: float = 0.02, follow_timeout_s: float = 90.0,
-                 follow_log_every_s: float = 2.0, accel_max: float = 4.0):
+                 follow_log_every_s: float = 2.0, accel_max: float = 4.0,
+                 link7_to_hand: Optional[np.ndarray] = None):
         assert hand_name in ("inspire", "inspire_left"), \
             f"franka executor supports inspire hands only, got {hand_name}"
         self.dt = dt
@@ -158,7 +159,11 @@ class FrankaExecutor:
         # Last command actually sent to the hand (controller units) — the start
         # point for _ramp_hand, so a ramp never jumps from a stale value.
         self._last_hand_action = _convert_inspire(self._hand_init)
-        self._link6_to_wrist = np.asarray(FR3_INSPIRE_LINK_TO_WRIST, dtype=np.float64)
+        self._link6_to_wrist = np.asarray(
+            FR3_INSPIRE_LINK_TO_WRIST if link7_to_hand is None else link7_to_hand,
+            dtype=np.float64).copy()
+        if self._link6_to_wrist.shape != (4, 4):
+            raise ValueError("FR3 link7-to-hand transform must be 4x4")
         self._convert = _convert_inspire
         self.state_timestamps = []
         # Per-call breakdowns remain runtime diagnostics. Persisted durations

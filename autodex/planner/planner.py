@@ -307,7 +307,8 @@ class GraspPlanner:
 
     def __init__(self, robot_cfg_path: Optional[str] = None, hand_cfg_path: Optional[str] = None,
                  hand: str = "allegro", use_cuda_graph: bool = True,
-                 verbose_planning: bool = False):
+                 verbose_planning: bool = False,
+                 robot_urdf_path: Optional[str] = None):
         if robot_cfg_path is None:
             robot_file, hand_file, self._collision_act_dist, self._num_trajopt_seeds, self._interpolation_type = self.HAND_CONFIGS.get(hand, self.HAND_CONFIGS["allegro"])
             robot_cfg_path = os.path.join(robot_configs_path, robot_file)
@@ -331,6 +332,9 @@ class GraspPlanner:
             _cfg.setdefault("kinematics", {})
             _cfg["kinematics"]["external_robot_configs_path"] = _ext_robot
             _cfg["kinematics"]["external_asset_path"] = _ext_asset
+        if robot_urdf_path is not None:
+            self._robot_cfg["kinematics"]["urdf_path"] = os.path.abspath(
+                robot_urdf_path)
         self._tensor_args = TensorDeviceType()
         self._motion_gen: Optional[MotionGen] = None
         self._plan_cfg: Optional[MotionGenPlanConfig] = None

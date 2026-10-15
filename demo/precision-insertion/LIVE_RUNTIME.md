@@ -8,7 +8,7 @@ return/restoration action. No separate contact-controller review file or
 contact site validation is required by this route. The failure remains in
 the episode evidence and does not create an XY correction. A completed stroke
 uses the existing release/clear-view callback and visual task label. The
-the board-9/20 mm `robot_pc_stages:configure` factory now supplies stage
+board-9/20 mm `robot_pc_stages:configure` factory now supplies stage
 limits and the fresh-feedback interlock; hardware execution and camera/robot
 timing remain unverified. For the first-party measured lift and
 transfer adapter, the execution boundaries verify the exact local stock
@@ -102,7 +102,7 @@ socket capture and must return these ten components, all bound to that same
 The demo provides `open_franka_core(FrankaFeedbackSettings(...))` in
 `precision_insertion.franka_core` for the common robot resources. It creates
 a [demo-local completion-checked subclass](FRANKA_COMPLETION_CHECK.md) of the
-unchanged `src.execution.franka_executor.FrankaExecutor(hand_name="inspire")`,
+stock `src.execution.franka_executor.FrankaExecutor(hand_name="inspire")`,
 `GraspPlanner(hand="fr3_inspire")`, measured FR3/Inspire state reader and
 clear-view gate. The integration factory can pass `core.clear_view` and
 `core.close` to `LiveRuntimeIntegration`, and share `core.planner` and
@@ -111,6 +111,12 @@ stock executor performs FR3 stop/recovery/collision setup and the Inspire
 constructor writes angle, speed and force registers. Call it only after
 explicit motion opt-in. For nonmoving connection checks use
 [`probe_robot_feedback_only.py`](probe_robot_feedback_only.py).
+The robot-PC script selects the recovered October 12 right-angle URDF via
+`PRECISION_FR3_INSPIRE_URDF`. The planner, executor wrist reference, collision
+checks and camera overlays then use the same mount; see
+[ADAPTER_GEOMETRY_AUDIT_20261015.md](ADAPTER_GEOMETRY_AUDIT_20261015.md).
+Direct `run_live.py` invocations must export the same variable; the wrapper
+sets it automatically.
 As in stock `run_auto.py`, core construction binds the shared planner to
 `FrankaExecutor.set_speed_profile_planner` before the initial clear-view move,
 so generic return and recovery paths use the stock object-proximity speed

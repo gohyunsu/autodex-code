@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 
 from .config import TaskMode
@@ -54,6 +55,9 @@ class AssetPaths:
 
     @property
     def robot_urdf(self) -> Path:
+        override = os.environ.get("PRECISION_FR3_INSPIRE_URDF")
+        if override:
+            return Path(override).expanduser().resolve()
         return (self.shared_root / "AutoDex" / "content" / "assets" /
                 "robot" / "fr3_inspire_description" / "fr3_inspire.urdf")
 

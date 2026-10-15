@@ -57,11 +57,12 @@ view, SAM mask and FoundPose result without opening the robot controller.
 For an implementation-level comparison with the local stock AutoDex v8
 pipeline, source inputs/outputs, active prompts and actual validation scope,
 see [CURRENT_V8_PIPELINE_REVIEW.md](CURRENT_V8_PIPELINE_REVIEW.md).
-The October 12 FR3/Inspire execution and the physical right-angle mount are
-traced in [ADAPTER_GEOMETRY_AUDIT_20261015.md](ADAPTER_GEOMETRY_AUDIT_20261015.md).
-The live runner already uses stock v8 grasp planning and Franka execution,
-but the effective NAS URDF does not contain a measured right-angle mount;
-the audit records the stock wrist-reference disagreement and camera evidence.
+The October 12 FR3/Inspire successful grasp and its recovered right-angle
+mount are traced in [ADAPTER_GEOMETRY_AUDIT_20261015.md](ADAPTER_GEOMETRY_AUDIT_20261015.md).
+The robot-PC script selects this recovered URDF for planning, live wrist
+references, collision geometry and camera overlays. The current NAS URDF
+does not reproduce the saved October FK; no NAS or original AutoDex file is
+modified by the precision runner.
 For run-by-run startup, socket, planning, motion, VLM and NAS-I/O timing,
 including the report command and optimization experiments, see
 [TIMING_PROFILE.md](TIMING_PROFILE.md).

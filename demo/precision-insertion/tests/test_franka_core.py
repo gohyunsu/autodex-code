@@ -46,6 +46,40 @@ def test_franka_core_uses_stock_fr3_objects_without_homing(monkeypatch):
     assert "home" not in events
 
 
+def test_franka_core_passes_one_selected_mount_to_planner_and_executor(monkeypatch):
+    from autodex import planner as stock_planner
+    from precision_insertion import franka_completion_checked
+
+    urdf = (Path(__file__).resolve().parents[3] / "autodex" / "planner" /
+            "src" / "curobo" / "content" / "assets" / "robot" /
+            "fr3_inspire_description" / "fr3_inspire_oct12_mount.urdf")
+    monkeypatch.setenv("PRECISION_FR3_INSPIRE_URDF", str(urdf))
+    seen = {}
+
+    def planner_factory(**kwargs):
+        seen["planner"] = kwargs
+        return SimpleNamespace(_n_arm=7, _hand="fr3_inspire")
+
+    def executor_factory(**kwargs):
+        seen["executor"] = kwargs
+        return _executor([])
+
+    monkeypatch.setitem(stock_planner.__dict__, "GraspPlanner", planner_factory)
+    monkeypatch.setattr(franka_completion_checked,
+                        "completion_checked_franka_class",
+                        lambda: executor_factory)
+    core = franka_core.open_franka_core(_settings())
+    assert seen["planner"] == {
+        "hand": "fr3_inspire", "robot_urdf_path": str(urdf)}
+    assert seen["executor"]["hand_name"] == "inspire"
+    from precision_insertion.mount_geometry import link7_to_hand
+    import numpy as np
+
+    np.testing.assert_allclose(seen["executor"]["link7_to_hand"],
+                               link7_to_hand(urdf))
+    core.close()
+
+
 def test_franka_core_rejects_xarm_and_releases_connection():
     events = []
     executor = _executor(events)
