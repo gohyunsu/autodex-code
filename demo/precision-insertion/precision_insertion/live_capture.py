@@ -72,12 +72,16 @@ def collect_board_snapshot(
     *, snapshot_orchestrator, calibrated_camera_ids: set[str],
     acquisition_metadata_for_request: AcquisitionProvider,
     timeout_s: float, request_id_factory: RequestIdFactory | None = None,
+    verify_pixels: bool = True,
 ) -> BoardSnapshotInput:
     """Get the original/distorted ChArUco frames from stock AutoDex.
 
     The adapter must expose each JPEG's sensor frame ID. Camera-side evidence
-    must bind that ID, decoded pixels and exposure time to the request. The
-    stock orchestrator discards frame IDs; the demo adapter retains them.
+    binds that ID and exposure time to the request. Board calibration uses the
+    default decoded-pixel check; an independent VLM-only snapshot may skip
+    that extra original-pixel hash because its saved undistorted pixels are
+    verified by the raw capture writer. The stock orchestrator discards frame
+    IDs; the demo adapter retains them.
     """
     if not calibrated_camera_ids or not math.isfinite(timeout_s) or timeout_s <= 0:
         raise ValueError("commissioned cameras and positive timeout required")
@@ -107,9 +111,14 @@ def collect_board_snapshot(
         frame_ids[serial] = entry.get("frame_id")
     with timed("camera.board_frame_provenance", phase="camera", kind="io",
                camera_count=len(images)):
-        evidence = verify_frame_provenance(
-            acquisition_metadata_for_request(request_id), request_id=request_id,
-            images_bgr=images, frame_ids=frame_ids)
+        metadata = acquisition_metadata_for_request(request_id)
+        if verify_pixels:
+            evidence = verify_frame_provenance(
+                metadata, request_id=request_id,
+                images_bgr=images, frame_ids=frame_ids)
+        else:
+            evidence = verify_frame_metadata(
+                metadata, request_id=request_id, frame_ids=frame_ids)
     times = {serial: row["timestamp_s"] for serial, row in evidence.items()}
     return BoardSnapshotInput(
         request_id, images, times, "camera_acquisition", evidence)

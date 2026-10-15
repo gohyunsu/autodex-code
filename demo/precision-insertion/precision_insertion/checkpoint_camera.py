@@ -24,12 +24,14 @@ def capture_snapshot_checkpoint_frames(
     live: object, *, phase: str, timeout_s: float,
     capture_id: str | None = None,
     snapshot_collector: Callable = collect_board_snapshot,
+    retain_original: bool = True,
 ) -> RawCameraCapture:
     """Get raw VLM frames without asking SAM/FoundPose to recognize a held key.
 
     The stock snapshot returns distorted JPEG pixels. Replay the session's
-    calibrated OpenCV undistortion and retain the original images, exposure
-    metadata and matrices so the saved VLM bundle can recheck derivation.
+    calibrated OpenCV undistortion. Standard checkpoints retain originals for
+    offline derivation replay; initial-tabletop VLM frames can save only the
+    undistorted images because planning does not consume original pixels.
     """
     if phase not in PHASES:
         raise ValueError("unknown AutoDex checkpoint phase")
@@ -40,7 +42,8 @@ def capture_snapshot_checkpoint_frames(
         calibrated_camera_ids=set(launch.camera_ids),
         acquisition_metadata_for_request=(
             cameras.acquisition_metadata_for_request),
-        timeout_s=timeout_s)
+        timeout_s=timeout_s,
+        **({} if retain_original else {"verify_pixels": False}))
     if (set(source.images_bgr) != set(launch.camera_ids) or
             set(source.frame_evidence) != set(launch.camera_ids)):
         raise ValueError("snapshot differs from the open AutoDex cameras")
@@ -64,9 +67,9 @@ def capture_snapshot_checkpoint_frames(
         derived_evidence[camera] = {
             **source.frame_evidence[camera],
             "image_sha256": image_sha256(image)}
-    source_metadata = {
+    source_metadata = ({
         "request_id": source.request_id, "source": "camera_acquisition",
-        "frames": source.frame_evidence}
+        "frames": source.frame_evidence} if retain_original else None)
     return RawCameraCapture(
         capture_id=capture_id or f"{phase}_{uuid4().hex}",
         request_id=source.request_id, images_bgr=undistorted,
@@ -75,9 +78,9 @@ def capture_snapshot_checkpoint_frames(
         acquisition_metadata={
             "request_id": source.request_id,
             "source": "camera_acquisition", "frames": derived_evidence},
-        source_images_bgr=source.images_bgr,
+        source_images_bgr=source.images_bgr if retain_original else None,
         source_acquisition_metadata=source_metadata,
-        undistort_calibration=calibration)
+        undistort_calibration=calibration if retain_original else None)
 
 
 def capture_checkpoint_frames(

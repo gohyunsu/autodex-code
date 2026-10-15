@@ -231,6 +231,13 @@ def test_board_rejects_same_request_but_wrong_frame_id_or_pixels():
             snapshot_orchestrator=SnapshotStub(), calibrated_camera_ids=CAMERAS,
             acquisition_metadata_for_request=wrong_pixels, timeout_s=2.0,
             request_id_factory=lambda: 42)
+    # The independent VLM snapshot keeps the producer's frame identity and
+    # timestamps while its saved undistorted pixels are checked separately.
+    visual = collect_board_snapshot(
+        snapshot_orchestrator=SnapshotStub(), calibrated_camera_ids=CAMERAS,
+        acquisition_metadata_for_request=wrong_pixels, timeout_s=2.0,
+        request_id_factory=lambda: 49, verify_pixels=False)
+    assert visual.frame_evidence["cam_b"]["image_sha256"] == "0" * 64
 
 
 def test_rejects_old_stock_payload_without_frame_id(tmp_path):

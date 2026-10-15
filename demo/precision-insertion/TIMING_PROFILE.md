@@ -82,13 +82,13 @@ robot-PC image pixel hash or saved-PNG comparison is used to admit that pose.
 The pose-only request also omits `save_capture_dir`, so the init daemons do
 not start the unused per-camera PNG writes for that request.
 After pose admission, a separate AutoDex snapshot starts on a worker while
-candidate planning runs. The snapshot's original JPEG-derived pixels and
-calibrated undistorted frames are saved under
+candidate planning runs. Its calibrated undistorted frames are saved under
 `key_captures/.../initial_tabletop/`, with a separate request ID, per-camera
 frame ID and timestamp. Lift/final Qwen comparisons read these visual frames;
 the candidate planner reads the FoundPose pose frames. The action handler joins
-the snapshot worker before it can return to a pickup action. Source snapshot
-image hashes and saved PNG hashes remain in the visual bundle for offline
+the snapshot worker before it can return to a pickup action. The initial
+snapshot does not write a second set of distorted source PNGs or recompute
+their pixel hashes. Undistorted PNG hashes remain in the visual bundle for
 VLM replay; they do not gate the start of candidate planning. The historical
 15:09 numbers above are for the previous pipeline; the new overlap and any
 speedup need a new live timing trace.

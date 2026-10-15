@@ -118,7 +118,8 @@ class LiveKeyPlanningHandlers:
             planner=self.planner, limits=self.limits,
             capture_initial_visual=lambda: capture_snapshot_checkpoint_frames(
                 self.live, phase="initial_tabletop",
-                timeout_s=float(self.key_parameters["capture_timeout_s"])),
+                timeout_s=float(self.key_parameters["capture_timeout_s"]),
+                retain_original=False),
             **dict(self.key_parameters))
         self.latest = prepared
 

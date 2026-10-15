@@ -103,6 +103,18 @@ def test_raw_snapshot_checkpoint_does_not_depend_on_key_pose(tmp_path):
     manifest = verify_raw_camera_capture(path, phase="preinsert")
     assert set(manifest["undistort_derivation"]["source_frame_evidence"]) == {
         "cam_a", "cam_b"}
+    initial = capture_snapshot_checkpoint_frames(
+        live, phase="initial_tabletop", timeout_s=2.0,
+        capture_id="initial_31", snapshot_collector=collect,
+        retain_original=False)
+    assert requests[-1]["verify_pixels"] is False
+    assert initial.source_images_bgr is None
+    initial_path = write_raw_camera_capture(
+        initial, tmp_path / "initial", phase="initial_tabletop")
+    initial_manifest = verify_raw_camera_capture(
+        initial_path, phase="initial_tabletop")
+    assert "undistort_derivation" not in initial_manifest
+    assert not (initial_path / "source_original").exists()
     assert make_checkpoint_capture(
         phase="preinsert", timeout_s=2.0).__name__ == \
         "capture"
