@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from contextlib import nullcontext
 import hashlib
 import io
 import json
@@ -28,6 +29,9 @@ if str(DEMO_DIR) not in sys.path:
 from precision_insertion.observer import (  # noqa: E402
     DEFAULT_LOCAL_VLM_MODEL_ID, LabeledFrame, load_vlm_backend,
     observe_insertion_visual, observe_lift,
+)
+from precision_insertion.timing_profile import (  # noqa: E402
+    profile_run, timed,
 )
 
 
@@ -198,56 +202,72 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-input-width", type=int, default=640)
     parser.add_argument("--max-input-height", type=int, default=640)
     parser.add_argument("--max-new-tokens", type=int, default=512)
+    parser.add_argument("--parallel-views", type=int, default=1,
+                        help="Gemini only: independent same-camera requests (1..8)")
+    parser.add_argument("--profile", action="store_true",
+                        help="save stock-compatible timing beside the output JSON")
     args = parser.parse_args(argv)
     if args.backend == "gemini" and not args.allow_external_images:
         parser.error("Gemini needs explicit --allow-external-images consent")
     if args.backend == "gemini" and not args.model_id:
         parser.error("Gemini needs explicit --model-id")
     if (args.max_input_width <= 0 or args.max_input_height <= 0 or
-            args.max_new_tokens <= 0):
+            args.max_new_tokens <= 0 or
+            not 1 <= args.parallel_views <= 8 or
+            (args.backend == "local" and args.parallel_views != 1)):
         parser.error("positive image/token limits required")
     output = args.output.expanduser().resolve()
     if output.exists():
         raise FileExistsError(f"benchmark report already exists: {output}")
-    manifest_path = args.manifest.expanduser().resolve()
-    cases, manifest_sha = _load_cases(manifest_path)
-    backend = load_vlm_backend(
-        mode=args.backend, model_id=args.model_id,
-        max_input_size=(args.max_input_width, args.max_input_height),
-        max_new_tokens=args.max_new_tokens, require_cuda=not args.allow_cpu,
-        require_native_pixels=False)  # semantic classification only
-    rows = []
-    for case in cases:
-        frames, sources = _frames_for_case(case, manifest_path.parent)
-        observed = (observe_lift(backend, frames) if case["task"] == "lift"
-                    else observe_insertion_visual(backend, frames))
-        field = _LABELS[case["task"]][0]
-        prediction = observed.parsed[field]
-        rows.append({
-            "case_id": case["case_id"], "task": case["task"],
-            "truth": case["truth"], "prediction": prediction,
-            "correct": prediction == case["truth"] and
-                       observed.parse_error is None,
-            "parse_error": observed.parse_error,
-            "annotation_path": case["annotation_path"],
-            "annotation_sha256": case["annotation_sha256"],
-            "source_images": sources, "observation": observed.to_record(),
-        })
-    report = {
-        "schema": "precision_insertion_vlm_visual_benchmark_report_v1",
-        "manifest_path": str(manifest_path),
-        "manifest_sha256": manifest_sha,
-        "backend": args.backend,
-        "model_id": (args.model_id if args.model_id is not None else
-                     DEFAULT_LOCAL_VLM_MODEL_ID),
-        "cases": rows, "summary": _summarize(rows),
-        "scope": "visual_label_dataset_replay_not_physical_task_success",
-        "robot_ready": False,
-    }
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("x", encoding="utf-8") as stream:
-        json.dump(report, stream, indent=2, sort_keys=True, allow_nan=False)
-        stream.write("\n")
+    with (profile_run(output) if args.profile else nullcontext()):
+        manifest_path = args.manifest.expanduser().resolve()
+        with timed("replay.manifest_load", phase="replay", kind="io"):
+            cases, manifest_sha = _load_cases(manifest_path)
+        with timed("replay.model_load", phase="startup"):
+            backend = load_vlm_backend(
+                mode=args.backend, model_id=args.model_id,
+                max_input_size=(args.max_input_width, args.max_input_height),
+                max_new_tokens=args.max_new_tokens,
+                require_cuda=not args.allow_cpu,
+                require_native_pixels=False,
+                parallel_views=args.parallel_views)  # visual labels only
+        rows = []
+        for case in cases:
+            with timed("replay.case", phase="replay", case_id=case["case_id"],
+                       task=case["task"]):
+                with timed("replay.images_load", phase="replay", kind="io"):
+                    frames, sources = _frames_for_case(case, manifest_path.parent)
+                observed = (observe_lift(backend, frames)
+                            if case["task"] == "lift" else
+                            observe_insertion_visual(backend, frames))
+                field = _LABELS[case["task"]][0]
+                prediction = observed.parsed[field]
+                rows.append({
+                    "case_id": case["case_id"], "task": case["task"],
+                    "truth": case["truth"], "prediction": prediction,
+                    "correct": prediction == case["truth"] and
+                               observed.parse_error is None,
+                    "parse_error": observed.parse_error,
+                    "annotation_path": case["annotation_path"],
+                    "annotation_sha256": case["annotation_sha256"],
+                    "source_images": sources, "observation": observed.to_record(),
+                })
+        report = {
+            "schema": "precision_insertion_vlm_visual_benchmark_report_v1",
+            "manifest_path": str(manifest_path),
+            "manifest_sha256": manifest_sha,
+            "backend": args.backend,
+            "model_id": (args.model_id if args.model_id is not None else
+                         DEFAULT_LOCAL_VLM_MODEL_ID),
+            "cases": rows, "summary": _summarize(rows),
+            "scope": "visual_label_dataset_replay_not_physical_task_success",
+            "robot_ready": False,
+        }
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with output.open("x", encoding="utf-8") as stream:
+            json.dump(report, stream, indent=2, sort_keys=True,
+                      allow_nan=False)
+            stream.write("\n")
     print(output)
     return 0
 

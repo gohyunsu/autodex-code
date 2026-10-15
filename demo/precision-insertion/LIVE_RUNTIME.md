@@ -144,6 +144,7 @@ For the first-party FR3 resource path, create a robot-PC JSON file such as:
     "model_id": "/absolute/recipient/qwen3-vl-2b/payload/model",
     "max_new_tokens": 512,
     "require_native_pixels": true,
+    "parallel_views": 1,
     "capture_timeout_s": 10.0
   },
   "stages_factory": "my_robot_pc_binding:configure_stages"
@@ -171,7 +172,11 @@ Set `vlm.model_id` to the recipient's verified NAS Qwen bundle
 may instead supply `backend`. The first-party Transformers loader reads only
 local model files and does not import ZeroDex's `main.vlm_base`. The
 integration uses the active camera image size;
-Gemini requires an explicit `mode: "gemini"` and `model_id`. The
+Gemini requires an explicit `mode: "gemini"` and `model_id`. Keep
+`parallel_views: 1` for local single-GPU Qwen; an explicit Gemini value
+of 2–8 runs independent same-camera visual-label API requests concurrently.
+It does not support native-pixel XY grounding. See
+[TIMING_PROFILE.md](TIMING_PROFILE.md) for latency interpretation. The
 integration also fills missing lift, pre-insertion/final, and retry checkpoint
 callbacks with fresh snapshots from the already-open AutoDex cameras. A
 stage factory may supply a custom callback for any field. These defaults do

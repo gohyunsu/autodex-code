@@ -434,6 +434,15 @@ def test_first_party_qwen_and_fresh_checkpoint_callbacks(monkeypatch, tmp_path):
         "mode": "local", "model_id": str(
             tmp_path / "AutoDex/models/Qwen3-VL-2B-Instruct"),
         "max_input_size": (1920, 1088),
-        "max_new_tokens": 512, "require_native_pixels": True}]
+        "max_new_tokens": 512, "require_native_pixels": True,
+        "parallel_views": 1}]
     assert len(captures) == 3
     assert all(timeout == 6.0 for _phase, timeout in captures)
+
+
+def test_parallel_vlm_views_require_independent_api_backend():
+    assert franka_integration._vlm_settings({
+        "mode": "gemini", "model_id": "test-model", "parallel_views": 3,
+    })["parallel_views"] == 3
+    with pytest.raises(ValueError, match="invalid VLM"):
+        franka_integration._vlm_settings({"parallel_views": 2})

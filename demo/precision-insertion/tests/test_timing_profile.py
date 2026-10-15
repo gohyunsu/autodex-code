@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+import time
+from threading import Barrier
 
 import pytest
 
@@ -13,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.timing_profile import (  # noqa: E402
     profile_run, summarize_events, timed, timing_directory,
 )
+from precision_insertion.view_parallel import map_view_calls  # noqa: E402
 
 
 def test_profile_groups_nested_spans_without_double_counting(tmp_path):
@@ -35,6 +38,37 @@ def test_profile_groups_nested_spans_without_double_counting(tmp_path):
                 "socket.capture")["attributes"]["capture_index"] == 0
     assert summarize_events(directory / "events.jsonl") == summary
     assert not output.exists()
+
+
+def test_parallel_view_spans_retain_parent_and_union_overlap(tmp_path):
+    class ParallelBackend:
+        max_parallel_views = 2
+
+    gate = Barrier(2)
+
+    def run_view(camera):
+        with timed("vlm.infer", phase="vlm", camera_id=camera):
+            gate.wait(timeout=5)
+            time.sleep(.03)
+        return camera
+
+    output = tmp_path / "parallel"
+    with profile_run(output):
+        with timed("trial.final_label", phase="trial"):
+            assert map_view_calls(ParallelBackend(), ["front", "side"],
+                                  run_view) == ["front", "side"]
+    summary = json.loads((timing_directory(output) /
+                          "timing_summary.json").read_text())
+    parent = next(row for row in summary["spans"]
+                  if row["name"] == "trial.final_label")
+    batch = next(row for row in summary["spans"]
+                 if row["name"] == "vlm.view_batch")
+    infer = [row for row in summary["spans"] if row["name"] == "vlm.infer"]
+    assert len(infer) == 2
+    assert batch["parent_id"] == parent["span_id"]
+    assert all(row["parent_id"] == batch["span_id"] for row in infer)
+    assert summary["vlm_inference_overlap_s"] > 0
+    assert parent["self_s"] < parent["duration_s"]
 
 
 def test_profile_keeps_failure_trace(tmp_path):

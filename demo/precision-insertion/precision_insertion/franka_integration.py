@@ -36,7 +36,8 @@ _SCHEMA = "precision_insertion_franka_integration_v1"
 _FEEDBACK_KEYS = frozenset(FrankaFeedbackSettings.__dataclass_fields__)
 _SAMPLING_KEYS = frozenset(FrankaSamplingSettings.__dataclass_fields__)
 _VLM_KEYS = frozenset({"mode", "model_id", "max_new_tokens",
-                       "require_native_pixels", "capture_timeout_s"})
+                       "require_native_pixels", "capture_timeout_s",
+                       "parallel_views"})
 _LIFT_MONITOR_KEYS = frozenset({
     "daemon_binary_path", "max_force_norm_n", "max_torque_norm_nm",
     "max_hand_tracking_error_raw", "max_state_gap_s", "minimum_samples",
@@ -53,7 +54,7 @@ def _vlm_settings(value: object) -> dict:
     if value is None:
         return {"mode": "local", "model_id": None,
                 "max_new_tokens": 512, "require_native_pixels": True,
-                "capture_timeout_s": 10.0}
+                "capture_timeout_s": 10.0, "parallel_views": 1}
     if not isinstance(value, dict) or set(value) - _VLM_KEYS:
         raise ValueError("VLM settings contain unknown fields")
     settings = {**_vlm_settings(None), **value}
@@ -67,6 +68,9 @@ def _vlm_settings(value: object) -> dict:
             type(settings["capture_timeout_s"]) not in (int, float) or
             not math.isfinite(settings["capture_timeout_s"]) or
             settings["capture_timeout_s"] <= 0 or
+            type(settings["parallel_views"]) is not int or
+            not 1 <= settings["parallel_views"] <= 8 or
+            settings["mode"] == "local" and settings["parallel_views"] != 1 or
             settings["mode"] == "gemini" and settings["model_id"] is None):
         raise ValueError("invalid VLM mode, model or checkpoint timeout")
     return settings
@@ -241,7 +245,8 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                     mode=vlm["mode"], model_id=model_id,
                     max_input_size=native_ceiling,
                     max_new_tokens=vlm["max_new_tokens"],
-                    require_native_pixels=vlm["require_native_pixels"])
+                    require_native_pixels=vlm["require_native_pixels"],
+                    parallel_views=vlm["parallel_views"])
         shared.update(planner=core.planner, read_state=core.read_state)
         if core.sampler is not None:
             shared.update(

@@ -30,6 +30,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"trace: {events}")
     print(f"completed spans: {len(spans)}; unfinished: "
           f"{summary['unfinished_span_count']}")
+    print("VLM inference: "
+          f"{summary['vlm_inference_cumulative_s']:.3f}s cumulative, "
+          f"{summary['vlm_inference_occupied_s']:.3f}s occupied, "
+          f"{summary['vlm_inference_overlap_s']:.3f}s overlap")
     print("\nOperation                         count  inclusive_s     self_s")
     for name, group in sorted(summary["groups"].items(),
                               key=lambda item: item[1]["self_s"], reverse=True):
@@ -38,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     by_phase = defaultdict(float)
     for row in spans:
         by_phase[row["phase"]] += row["self_s"]
-    print("\nPhase                              exclusive_s")
+    print("\nPhase                              work_s (overlap possible)")
     for phase, seconds in sorted(by_phase.items(),
                                  key=lambda item: item[1], reverse=True):
         print(f"{phase[:33]:33} {seconds:11.3f}")
@@ -56,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         if candidate is not None:
             by_candidate[str(candidate)][row["name"]] += row["self_s"]
     if by_candidate:
-        print("\nCandidate                          operation                          self_s")
+        print("\nCandidate                          operation                          work_s")
         for candidate, operations in sorted(by_candidate.items()):
             for name, seconds in sorted(operations.items(),
                                         key=lambda item: item[1], reverse=True):

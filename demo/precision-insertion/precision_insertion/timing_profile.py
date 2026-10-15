@@ -99,7 +99,14 @@ def timed(name: str, *, phase: str, kind: str = "computation",
 
 
 def summarize_events(events_path: Path) -> dict:
-    """Summarize completed spans without adding nested durations twice."""
+    """Summarize completed spans, unioning overlapping direct child intervals."""
+    def occupied(intervals: list[tuple[float, float]]) -> float:
+        total, end = 0.0, float("-inf")
+        for start, stop in sorted(intervals):
+            total += max(0.0, stop - max(start, end))
+            end = max(end, stop)
+        return total
+
     starts: dict[str, dict] = {}
     completed: list[dict] = []
     for line in Path(events_path).read_text(encoding="utf-8").splitlines():
@@ -122,14 +129,20 @@ def summarize_events(events_path: Path) -> dict:
                 "start_pipeline_s": begun["pipeline_time_s"],
                 "end_pipeline_s": row["pipeline_time_s"],
             })
-    child_time = defaultdict(float)
+    children: dict[str, list[tuple[float, float]]] = defaultdict(list)
     for row in completed:
         if row["parent_id"] is not None:
-            child_time[row["parent_id"]] += row["duration_s"]
+            children[row["parent_id"]].append((
+                row["start_pipeline_s"], row["end_pipeline_s"]))
     groups: dict[str, dict] = {}
     for row in completed:
-        row["self_s"] = round(max(
-            0.0, row["duration_s"] - child_time[row["span_id"]]), 9)
+        covered = occupied([
+            (max(row["start_pipeline_s"], start),
+             min(row["end_pipeline_s"], stop))
+            for start, stop in children[row["span_id"]]
+            if min(row["end_pipeline_s"], stop) >
+            max(row["start_pipeline_s"], start)])
+        row["self_s"] = round(max(0.0, row["duration_s"] - covered), 9)
         group = groups.setdefault(row["name"], {
             "count": 0, "inclusive_s": 0.0, "self_s": 0.0,
             "failures": 0})
@@ -140,9 +153,18 @@ def summarize_events(events_path: Path) -> dict:
     for group in groups.values():
         group["inclusive_s"] = round(group["inclusive_s"], 9)
         group["self_s"] = round(group["self_s"], 9)
+    inference = [row for row in completed if row["name"] == "vlm.infer"]
+    inference_sum = sum(row["duration_s"] for row in inference)
+    inference_wall = occupied([
+        (row["start_pipeline_s"], row["end_pipeline_s"])
+        for row in inference])
     return {
         "schema": "precision_insertion_timing_summary_v1",
         "clock": "time.perf_counter_ns",
+        "vlm_inference_cumulative_s": round(inference_sum, 9),
+        "vlm_inference_occupied_s": round(inference_wall, 9),
+        "vlm_inference_overlap_s": round(max(0.0, inference_sum -
+                                             inference_wall), 9),
         "unfinished_span_count": len(starts),
         "unfinished_spans": [row["name"] for row in starts.values()],
         "groups": dict(sorted(groups.items())),

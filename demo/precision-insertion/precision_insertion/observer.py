@@ -20,6 +20,7 @@ from PIL import Image
 
 from .xy_voting import ViewVote, XYChoice, validate_choices
 from .timing_profile import timed
+from .view_parallel import map_view_calls
 
 
 class ImageVLM(Protocol):
@@ -121,20 +122,27 @@ class ZeroDexGeminiBackend:
     The key is never persisted or included in observation records.
     """
 
-    def __init__(self, client, model: str, *, thinking_level: str = "LOW"):
+    def __init__(self, client, model: str, *, thinking_level: str = "LOW",
+                 parallel_views: int = 1, client_factory=None):
         if (client is None or not isinstance(model, str) or not model.strip() or
-                thinking_level not in {"MINIMAL", "LOW", "MEDIUM", "HIGH"}):
+                thinking_level not in {"MINIMAL", "LOW", "MEDIUM", "HIGH"} or
+                type(parallel_views) is not int or not 1 <= parallel_views <= 8 or
+                (parallel_views > 1 and not callable(client_factory))):
             raise ValueError("Gemini needs a client, model and valid thinking level")
         self.client = client
         self.model = model
         self.thinking_level = thinking_level
+        self.max_parallel_views = parallel_views
+        self.preferred_image_batch_size = 2 if parallel_views > 1 else None
+        self._client_factory = client_factory
         # The API may transform image resolution internally; no reversible
         # original-pixel mapping is exposed by this narrow adapter.
         self.native_pixel_coordinates = False
 
     @classmethod
     def from_env(cls, *, model: str, env_name: str = "GEMINI_API_KEY",
-                 thinking_level: str = "LOW") -> "ZeroDexGeminiBackend":
+                 thinking_level: str = "LOW",
+                 parallel_views: int = 1) -> "ZeroDexGeminiBackend":
         """Explicit opt-in; fail closed if SDK/key is absent (no API call)."""
         if env_name != "GEMINI_API_KEY":
             raise ValueError("precision Gemini key must use GEMINI_API_KEY")
@@ -146,7 +154,9 @@ class ZeroDexGeminiBackend:
         except ImportError as exc:
             raise RuntimeError("Install google-genai for Gemini inference") from exc
         return cls(genai.Client(api_key=key), model,
-                   thinking_level=thinking_level)
+                   thinking_level=thinking_level, parallel_views=parallel_views,
+                   client_factory=(lambda: genai.Client(api_key=key))
+                   if parallel_views > 1 else None)
 
     def infer(self, images: list[Image.Image], prompt: str) -> str:
         if (not isinstance(prompt, str) or not prompt.strip() or
@@ -165,13 +175,19 @@ class ZeroDexGeminiBackend:
             parts.append(types.Part.from_bytes(
                 data=stream.getvalue(), mime_type="image/png"))
         parts.append(types.Part.from_text(text=prompt))
-        response = self.client.models.generate_content(
-            model=self.model,
-            contents=[types.Content(role="user", parts=parts)],
-            config=types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(
-                    thinking_level=self.thinking_level)),
-        )
+        client = (self._client_factory() if self._client_factory is not None
+                  else self.client)
+        try:
+            response = client.models.generate_content(
+                model=self.model,
+                contents=[types.Content(role="user", parts=parts)],
+                config=types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(
+                        thinking_level=self.thinking_level)),
+            )
+        finally:
+            if client is not self.client and callable(getattr(client, "close", None)):
+                client.close()
         return (response.text or "").strip()
 
 
@@ -293,7 +309,7 @@ def load_vlm_backend(
     *, mode: str = "local", model_id: str | None = None,
     max_input_size: tuple[int, int] | None = None,
     max_new_tokens: int = 512, require_cuda: bool = True,
-    require_native_pixels: bool = True,
+    require_native_pixels: bool = True, parallel_views: int = 1,
 ) -> ImageVLM:
     """Choose one VLM for existing read-only checkpoint/grounding calls.
 
@@ -303,8 +319,11 @@ def load_vlm_backend(
     if mode == "gemini":
         if not isinstance(model_id, str) or not model_id.strip():
             raise ValueError("Gemini needs an explicit model ID")
-        return ZeroDexGeminiBackend.from_env(model=model_id)
+        return ZeroDexGeminiBackend.from_env(
+            model=model_id, parallel_views=parallel_views)
     if mode == "local":
+        if parallel_views != 1:
+            raise ValueError("single-GPU local Qwen does not support parallel views")
         selected_model = (DEFAULT_LOCAL_VLM_MODEL_ID if model_id is None
                           else model_id)
         if max_input_size is None:
@@ -454,14 +473,14 @@ def _per_view_consensus(
     _require_temporal_camera_pairs(frames, before=before, after=after)
     order = _frame_order(frames)
     cameras = sorted({frame.camera_id for frame in frames})
-    observations = []
-    for camera in cameras:
+    def observe_camera(camera: str) -> VLMObservation:
         pair = [next(frame for frame in frames
                      if frame.camera_id == camera and frame.phase == phase)
                 for phase in (before, after)]
-        observations.append(_infer_closed_set(
+        return _infer_closed_set(
             backend, stage=stage, frames=pair, prompt_body=prompt_body,
-            field=field, allowed=allowed, fallback=fallback))
+            field=field, allowed=allowed, fallback=fallback)
+    observations = map_view_calls(backend, cameras, observe_camera)
     parsed = _consensus_parsed(
         [row.to_record() for row in observations], field=field,
         fallback=fallback, cameras=cameras)
@@ -829,11 +848,10 @@ def observe_preinsert_temporal_views(
         times = [frame.timestamp_s for frame in grouped[phase].values()]
         if max(times) - min(times) > max_capture_skew_s:
             raise ValueError("preinsert pair has asynchronous camera views")
-    observations = []
-    for camera in cameras:
+    def observe_camera(camera: str) -> VLMObservation:
         before = grouped["after_lift"][camera]
         after = grouped["preinsert"][camera]
-        observations.append(_infer_closed_set(
+        return _infer_closed_set(
             backend, stage="preinsert_visual", frames=(before, after),
             prompt_body=(
                 "Image 1 is the RAW after-lift view; image 2 is the RAW "
@@ -852,7 +870,8 @@ def observe_preinsert_temporal_views(
                 "coarse_match", "gross_misalignment", "slip_or_miss",
                 "unobservable",
             }), fallback="unobservable",
-        ))
+        )
+    observations = map_view_calls(backend, cameras, observe_camera)
     decisive: dict[str, list[str]] = {}
     for camera, observed in zip(cameras, observations):
         category = observed.parsed["class"]

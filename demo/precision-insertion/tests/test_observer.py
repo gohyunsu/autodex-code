@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
+from threading import Barrier
 
 from PIL import Image
 import pytest
@@ -235,6 +236,32 @@ def test_local_temporal_vlm_queries_camera_pairs_and_replays_consensus():
             record, field="class", fallback="unobservable",
             cameras={"front", "side", "top"},
             before="before_grasp", after="after_lift")
+
+
+def test_opt_in_independent_view_calls_overlap_and_preserve_camera_order():
+    gate = Barrier(2)
+
+    class ParallelBackend:
+        preferred_image_batch_size = 2
+        max_parallel_views = 2
+
+        def infer(self, images, prompt):
+            camera = "front" if "Valid camera IDs: front." in prompt else "side"
+            assert len(images) == 2
+            gate.wait(timeout=5)
+            return json.dumps({
+                "class": "held", "evidence_views": [camera],
+                "evidence": "key follows hand"})
+
+    frames = [LabeledFrame(camera, phase, stamp, _image())
+              for camera in ("side", "front")
+              for phase, stamp in (("before_grasp", 1.0), ("after_lift", 2.0))]
+    observed = observe_lift(ParallelBackend(), frames)
+    assert observed.parsed["evidence_views"] == ["front", "side"]
+    verify_per_view_consensus(
+        observed.to_record(), field="class", fallback="unobservable",
+        cameras={"front", "side"},
+        before="before_grasp", after="after_lift")
 
 
 def test_local_temporal_vlm_conflicting_views_abstain():

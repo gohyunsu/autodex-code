@@ -151,3 +151,28 @@ def test_benchmark_defaults_to_local_qwen(tmp_path, monkeypatch):
     assert loaded[0]["model_id"] is None
     assert json.loads(output.read_text())["model_id"] == (
         evaluate_saved_vlm.DEFAULT_LOCAL_VLM_MODEL_ID)
+
+
+def test_saved_replay_profile_records_load_and_each_inference(tmp_path,
+                                                             monkeypatch):
+    manifest = _dataset(tmp_path / "dataset")
+
+    class Backend:
+        def infer(self, _images, prompt):
+            if "after_lift" in prompt:
+                return ('{"class":"miss","evidence_views":["front"],'
+                        '"evidence":"visible key"}')
+            return ('{"visual_class":"rim_jam",'
+                    '"evidence_views":["front"],"evidence":"visible rim"}')
+
+    monkeypatch.setattr(evaluate_saved_vlm, "load_vlm_backend",
+                        lambda **_kwargs: Backend())
+    output = tmp_path / "profiled.json"
+    assert evaluate_saved_vlm.main([
+        "--manifest", str(manifest), "--output", str(output), "--profile",
+    ]) == 0
+    summary = json.loads((tmp_path / "profiled.json.timing" /
+                          "timing_summary.json").read_text())
+    assert summary["groups"]["replay.model_load"]["count"] == 1
+    assert summary["groups"]["replay.case"]["count"] == 2
+    assert summary["groups"]["vlm.infer"]["count"] == 2
