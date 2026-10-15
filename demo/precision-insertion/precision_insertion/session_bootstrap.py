@@ -230,9 +230,13 @@ def bootstrap_session(
 
 
 def _write_png(path: Path, image: np.ndarray) -> str:
-    if not cv2.imwrite(str(path), image):
+    encoded, payload = cv2.imencode(".png", image)
+    if not encoded:
         raise OSError(f"failed to write image {path}")
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    data = payload.tobytes()
+    with path.open("xb") as stream:
+        stream.write(data)
+    return hashlib.sha256(data).hexdigest()
 
 
 def _write_json(path: Path, value: dict) -> str:

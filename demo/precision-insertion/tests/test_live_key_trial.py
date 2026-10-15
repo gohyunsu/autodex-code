@@ -109,15 +109,9 @@ def _setup(tmp_path, monkeypatch, *, state_timestamp=100.005):
         events.append("save_key_evidence")
         output.mkdir()
 
-    def verify(output):
-        events.append("verify_key_evidence")
-        assert output.is_dir()
-        return {}
-
     for name, value in (("collect_key_capture", collect),
                         ("admit_key_capture", admit),
-                        ("write_key_capture_artifacts", write),
-                        ("verify_key_capture_artifacts", verify)):
+                        ("write_key_capture_artifacts", write)):
         monkeypatch.setattr(trial, name, value)
 
     def prepare_renderer(**kwargs):
@@ -169,7 +163,7 @@ def test_live_key_capture_state_and_preflight_order(tmp_path, monkeypatch):
     result = trial.prepare_next_live_key(**arguments)
     assert events == ["compatible_renderer", "init_key", "verify_frozen_camera",
                       "capture", "admit", "save_key_evidence",
-                      "verify_key_evidence", "measured_state_at_exposure",
+                      "measured_state_at_exposure",
                       "preflight"]
     assert result.observation.capture_id == "key_001"
     assert result.preflight.status == "sampled_planning_pass"
@@ -202,7 +196,7 @@ def test_reset_landing_reuses_same_camera_key_capture_without_grasp_preflight(
     assert events == [
         "clear_view_before", "compatible_renderer", "init_key",
         "verify_frozen_camera", "capture", "admit", "save_key_evidence",
-        "verify_key_evidence", "measured_state_at_exposure",
+        "measured_state_at_exposure",
         "clear_view_at_exposure",
     ]
 
@@ -276,7 +270,7 @@ def test_optional_registered_roi_replaces_only_perception_outputs(
         "compatible_renderer", "init_key", "verify_frozen_camera",
         "capture", "registered_roi_on_same_capture",
         "save_roi_diagnostic", "verify_roi_diagnostic", "admit",
-        "save_key_evidence", "verify_key_evidence",
+        "save_key_evidence",
         "measured_state_at_exposure", "preflight",
     ]
 

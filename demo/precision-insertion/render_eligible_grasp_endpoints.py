@@ -70,7 +70,8 @@ def eligible_rows(catalog: dict) -> tuple[object, list[dict]]:
     selected = []
     for stem in sorted(stems):
         result = select_pose_candidates(
-            catalog, expected_mode=mode, tabletop_pose_stem=stem)
+            catalog, expected_mode=mode, tabletop_pose_stem=stem,
+            verify_sources=True)
         if result["status"] not in (
                 "candidates_available", "no_eligible_in_screened_pool"):
             raise ValueError(f"catalogue is stale: {result['reason']}")

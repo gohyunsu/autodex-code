@@ -802,22 +802,27 @@ host, the `planner` environment imported the FR3/camera integration, saw CUDA,
 and loaded the staged Qwen model. The tool sandbox hides `/dev/nvidia*` and
 the Docker socket, so run this command in an ordinary host terminal.
 
-The operator-run motion command uses the same files. The preferred single
-command checks the five capture PCs, starts missing camera/snapshot/precision
-init daemons and the FR3 Docker daemon, runs the pipeline, then stops only the
-daemons it started. The stock init daemons remain on their original ports.
-The camera stream itself is opened and stopped by the existing AutoDex
-session context. From the host terminal:
+The operator-run motion command uses the same files. Service management is
+separate so the five capture-PC camera/snapshot/precision daemons and FR3
+Docker daemon can remain warm between pipeline runs. The stock init daemons
+remain on their original ports. The camera stream itself is opened and
+stopped by the existing AutoDex session context. From the host terminal:
 
 ```bash
-bash /home/robot/autodex-precision-insertion/demo/precision-insertion/run_robot_pc.sh
+bash /home/robot/autodex-precision-insertion/demo/precision-insertion/run_robot_pc.sh --check
+bash /home/robot/autodex-precision-insertion/demo/precision-insertion/manage_robot_pc_services.sh start
+bash /home/robot/autodex-precision-insertion/demo/precision-insertion/manage_robot_pc_services.sh check
+bash /home/robot/autodex-precision-insertion/demo/precision-insertion/run_robot_pc.sh --run
 ```
 
-Use `--check` for a file-only preflight or `--services-only` to test service
-startup and cleanup without commanding the arm. Existing daemons are reused
-and left running because another process may own them. A nonmoving
-`--services-only` trial started and then stopped all five precision init
-daemons and the FR3 Docker container; stock camera/snapshot daemons remained.
+`run_robot_pc.sh --check` is file-only; it neither connects a robot nor starts
+services. `manage_robot_pc_services.sh check` verifies live listening ports
+without moving the arm. To stop services started by this manager, run
+`manage_robot_pc_services.sh stop` separately. Do not use its `restart`
+action while another AutoDex experiment is using the daemons. Existing
+borrowed daemons are reused and are not stopped by the manager. The earlier
+`--services-only` experiment used the previous combined launcher and does
+not describe the current script.
 The
 2026-10-13 first live attempt used the stock 5006/5007/6893 ports, so all
 20 mask/pose payloads were rejected for missing bound frame metadata before

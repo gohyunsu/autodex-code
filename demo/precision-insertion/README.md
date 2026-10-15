@@ -32,10 +32,11 @@ For the complete AutoDex-PC execution entry point and required integration
 module, see [LIVE_RUNTIME.md](LIVE_RUNTIME.md). `run_live.py` keeps all
 precision-specific robot-loop code under this demo; stock AutoDex execution
 files remain unchanged.
-On the board-9 robot PC, `bash demo/precision-insertion/run_robot_pc.sh`
-starts missing session services, runs the 20 mm cylinder pipeline, and cleans
-up only services it started. The key is placed after the fixed socket capture
-when the prompt asks for Enter.
+On the board-9 robot PC, manage long-lived daemons separately with
+`bash demo/precision-insertion/manage_robot_pc_services.sh start` (or
+`check`/`stop`), then run `bash demo/precision-insertion/run_robot_pc.sh
+--run`. A pipeline exit no longer restarts or stops capture/Franka services.
+The key is placed after the fixed socket capture when prompted.
 For a board-9, 20 mm key-plus-socket **camera-only** check, use
 [`probe_live_key_socket.py`](probe_live_key_socket.py) as documented in
 [ROBOT_PC_STAGED_BRINGUP.md](ROBOT_PC_STAGED_BRINGUP.md). It saves every raw
@@ -46,6 +47,8 @@ see [CURRENT_V8_PIPELINE_REVIEW.md](CURRENT_V8_PIPELINE_REVIEW.md).
 For run-by-run startup, socket, planning, motion, VLM and NAS-I/O timing,
 including the report command and optimization experiments, see
 [TIMING_PROFILE.md](TIMING_PROFILE.md).
+For the operation-by-operation latency comparison against AutoDex v8 and
+remaining avoidable costs, see [LATENCY_COMPARISON.md](LATENCY_COMPARISON.md).
 
 For a concise distinction between **offline-usable**, staging-only and
 missing assets, see [OFFLINE_ASSET_STATUS.md](OFFLINE_ASSET_STATUS.md). It
@@ -1118,10 +1121,13 @@ The first independent helpers are in `precision_insertion/`:
   catalogue distinguishes a complete finite scan from missing or truncated
   input. Per-trial selection matches the observed tabletop pose, excludes
   session-attempted grasps, optionally ranks by v8 coverage, and rejects a
-  different selected key/socket/gap or changed source files. AutoDex's
-  `load_candidate` is reused with an explicit
-  root and whitelist to form a planner `candidate_override`; this does not
-  extend AutoDex's lift-only planner to transfer or insertion.
+  different selected key/socket/gap. Full changed-source SHA checks are an
+  explicit offline audit; the live catalog assumes immutable NAS assets.
+  For a planner `candidate_override`, the demo reads only the exact
+  catalog-selected v8 NPY files. Stock `load_candidate` walks the entire
+  object candidate tree even with a one-grasp whitelist, which would repeat
+  NAS enumeration for every attempted grasp. The AutoDex planner itself is
+  unchanged and still stops at pickup/lift.
 - `reset_candidates.py` reads only provenance-bound, full-key MuJoCo-stable
   directed v8 reset seeds. `repose_policy.py` cross-checks alternative poses
   with insertion-eligible grasps and reset seed availability at each AutoDex

@@ -40,12 +40,12 @@ def _sha(path: Path) -> str:
 
 def preflight_endpoint_catalog_file(
     *, mode: TaskMode, shared_root: Path, catalog_path: Path,
+    verify_sources: bool = False,
 ) -> dict:
-    """Check the complete v8 catalogue without needing camera evidence.
+    """Load one offline-screened catalog; optionally run an offline audit.
 
-    The measured socket/CAD binding still requires a captured session and is
-    checked separately by ``validate_catalog_session``. Call this again when
-    opening the ledger so a file changed during capture cannot slip through.
+    Live sessions assume immutable NAS assets. Their hot path performs only
+    cheap schema/identity checks, never an all-candidate source-hash scan.
     """
     root = Path(shared_root).expanduser().resolve()
     source = Path(catalog_path).expanduser().resolve()
@@ -63,17 +63,17 @@ def preflight_endpoint_catalog_file(
                 not isinstance(row.get("tabletop_pose_stem"), str) or
                 not row["tabletop_pose_stem"] for row in rows)):
         raise ValueError("complete v8 catalog needs pose-indexed candidate rows")
-    # Verify every indexed pose, including poses with no eligible grasp.
-    # This reuses the existing v8 source-hash and endpoint-algorithm checks.
-    for stem in sorted({row["tabletop_pose_stem"] for row in rows}):
-        with timed("catalog.pose_source_validation", phase="catalog", kind="io",
-                   tabletop_pose_stem=stem):
-            selection = select_pose_candidates(
-                catalog, expected_mode=mode, tabletop_pose_stem=stem)
-            if selection["status"] not in {
-                    "candidates_available", "no_eligible_in_screened_pool"}:
-                raise ValueError(f"v8 catalog is stale for pose {stem}: "
-                                 f"{selection['status']}")
+    if verify_sources:
+        for stem in sorted({row["tabletop_pose_stem"] for row in rows}):
+            with timed("catalog.pose_source_validation", phase="catalog", kind="io",
+                       tabletop_pose_stem=stem):
+                selection = select_pose_candidates(
+                    catalog, expected_mode=mode, tabletop_pose_stem=stem,
+                    verify_sources=True)
+                if selection["status"] not in {
+                        "candidates_available", "no_eligible_in_screened_pool"}:
+                    raise ValueError(f"v8 catalog is stale for pose {stem}: "
+                                     f"{selection['status']}")
     return catalog
 
 
@@ -81,6 +81,9 @@ def open_verified_session(
     *, mode: TaskMode, shared_root: Path, evidence_dir: Path,
     catalog_path: Path, output_dir: Path, max_xy_retries: int | None,
     xy_update_weight: float = 1.0,
+    catalog_snapshot: dict | None = None,
+    producer_manifest: dict | None = None,
+    calibration_snapshot=None,
 ) -> OpenedPrecisionSession:
     """Fail before creating a run if camera/fixture/candidate evidence is stale.
 
@@ -119,27 +122,36 @@ def open_verified_session(
     for name, path in required.items():
         if not path.is_file():
             raise FileNotFoundError(f"{name} is missing: {path}")
-    with timed("ledger.evidence_verify", phase="ledger", kind="io"):
-        manifest = verify_session_evidence_bundle(source)
+    if producer_manifest is None:
+        with timed("ledger.evidence_verify", phase="ledger", kind="io"):
+            manifest = verify_session_evidence_bundle(source)
+    else:
+        # The immediately preceding producer already verified this exact
+        # bundle. Re-reading its large PNG set adds only NAS latency.
+        manifest = producer_manifest
     if (manifest.get("all_frames_bound_to_acquisition_evidence") is not True or
             len(manifest.get("socket_capture_ids", [])) < 2):
         raise ValueError("session lacks repeated acquisition-bound socket captures")
     calibration_path = source / "session_calibration.json"
-    calibration = load_session_calibration(
-        calibration_path, mode=mode, shared_root=root)
-    with timed("ledger.catalog_recheck", phase="ledger", kind="io"):
-        catalog = preflight_endpoint_catalog_file(
-            mode=mode, shared_root=root, catalog_path=catalog_file)
+    calibration = (calibration_snapshot if calibration_snapshot is not None
+                   else load_session_calibration(
+                       calibration_path, mode=mode, shared_root=root))
+    if catalog_snapshot is None:
+        with timed("ledger.catalog_load", phase="ledger", kind="io"):
+            catalog = preflight_endpoint_catalog_file(
+                mode=mode, shared_root=root, catalog_path=catalog_file)
+    else:
+        catalog = catalog_snapshot
     validate_catalog_session(catalog, mode=mode,
                              session_record=calibration.record)
-    with timed("ledger.source_hash_binding", phase="ledger", kind="io"):
+    # Small JSON identities are retained for legacy session consumers. The
+    # multi-megabyte FoundPose weights are only checked for existence here;
+    # hashing them on every live start adds no value under immutable NAS.
+    with timed("ledger.small_binding_hashes", phase="ledger", kind="io"):
         source_hashes = {
             "session_manifest_sha256": _sha(source / "evidence_manifest.json"),
             "session_calibration_sha256": _sha(calibration_path),
             "catalog_source_sha256": _sha(catalog_file),
-            "key_foundpose_sha256": _sha(required["key FoundPose representation"]),
-            "socket_foundpose_sha256": _sha(
-                required["socket FoundPose representation"]),
         }
 
     # All inputs are checked before the SessionRunner creates any output.

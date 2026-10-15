@@ -17,7 +17,7 @@ from .guarded_insertion_execution import execute_bound_guarded_insertion
 from .live_robot_state import LiveRobotState
 from .labeling import request_annotation
 from .raw_camera_capture import (
-    RawCameraCapture, verify_raw_camera_capture, write_raw_camera_capture,
+    RawCameraCapture, write_raw_camera_capture,
 )
 from .recoverable_failure import acknowledged_failure
 from .session_policy import SessionDecision
@@ -100,7 +100,7 @@ class LiveTaskHandlers:
                   attempt.attempt_id / "raw_captures" / phase /
                   capture.capture_id)
         write_raw_camera_capture(capture, output, phase=phase)
-        verify_raw_camera_capture(output, phase=phase)
+        # Downstream checkpoint readers perform the one required disk read.
         return output, capture
 
     def transfer_and_observe(self, runner, decision: SessionDecision) -> None:

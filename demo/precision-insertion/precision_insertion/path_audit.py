@@ -9,11 +9,13 @@ samples, and a passing report is never a robot motion authorization.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import hashlib
 import json
 import math
 from pathlib import Path
 from typing import Any
+import weakref
 
 import numpy as np
 
@@ -26,7 +28,13 @@ from .endpoint import (_coal_mesh, _coal_models_report, _hand_link_meshes,
 from .geometry import pose_angle_deg, validate_se3
 from .solid_occupancy import CylinderSocketOccupancy, SolidMeshOccupancy
 from .targets import InsertionTargets, build_rigid_insertion_targets
+from .timing_profile import timed
 from .world import validated_frozen_socket_pose
+
+
+# One frozen calibration object per session; only fixed world geometry is
+# cached. A weak reference prevents retaining old sessions indefinitely.
+_FIXED_WORLD_CACHE: dict[int, tuple[weakref.ReferenceType, tuple, tuple]] = {}
 
 
 @dataclass(frozen=True)
@@ -58,6 +66,20 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+@lru_cache(maxsize=16)
+def _immutable_file_sha256(path: str) -> str:
+    """Hash an immutable runtime asset at most once per process."""
+    return _sha256(Path(path))
+
+
+@lru_cache(maxsize=8)
+def _immutable_key_model(path: str):
+    mesh = _load_mesh(Path(path))
+    if not mesh.is_watertight:
+        raise ValueError("full key CAD mesh is not watertight")
+    return _coal_mesh(mesh), mesh
+
+
 def _array_sha256(value: np.ndarray) -> str:
     array = np.ascontiguousarray(value, dtype=np.float64)
     digest = hashlib.sha256()
@@ -87,7 +109,29 @@ def _joint_path(value: np.ndarray, name: str,
 
 
 def _fixed_world_models(calibration, *, mode, shared_root: Path) -> tuple[dict, dict]:
-    """Build Coal surfaces and solid occupancy for the frozen world."""
+    """Reuse Coal surfaces and occupancy for this frozen session world."""
+    signature = (mode.family, mode.gap_mm,
+                 str(Path(shared_root).expanduser().resolve()))
+    key = id(calibration)
+    cached = _FIXED_WORLD_CACHE.get(key)
+    if cached is not None and cached[0]() is calibration and cached[1] == signature:
+        with timed("audit.fixed_world_lookup", phase="planning", hit=True):
+            return cached[2]
+    with timed("audit.fixed_world_build", phase="planning", kind="geometry"):
+        result = _build_fixed_world_models(
+            calibration, mode=mode, shared_root=shared_root)
+    try:
+        reference = weakref.ref(
+            calibration, lambda _ref: _FIXED_WORLD_CACHE.pop(key, None))
+    except TypeError:
+        return result
+    _FIXED_WORLD_CACHE[key] = (reference, signature, result)
+    return result
+
+
+def _build_fixed_world_models(calibration, *, mode,
+                              shared_root: Path) -> tuple[dict, dict]:
+    """Build the immutable fixed-world models once per session."""
     import coal  # noqa: F401 -- must precede trimesh on the AutoDex host
     import trimesh
 
@@ -187,13 +231,12 @@ def _audit_held_geometry_samples(
     robot_path = paths.robot_urdf
     if not key_path.is_file() or not robot_path.is_file():
         raise FileNotFoundError("full key CAD and Franka/Inspire URDF are required")
-    key_mesh = _load_mesh(key_path)
-    if not key_mesh.is_watertight:
-        raise ValueError("full key CAD mesh is not watertight")
-    moving = {"key": (_coal_mesh(key_mesh), key_mesh)}
-    moving.update({f"hand/{name}": (_coal_mesh(mesh), mesh)
-                   for name, mesh in _hand_link_meshes(
-                       robot_path, held_hand_q).items()})
+    with timed("audit.key_model_lookup", phase="planning", kind="geometry"):
+        moving = {"key": _immutable_key_model(str(key_path))}
+    with timed("audit.hand_urdf_fk", phase="planning", kind="geometry"):
+        moving.update({f"hand/{name}": (_coal_mesh(mesh), mesh)
+                       for name, mesh in _hand_link_meshes(
+                           robot_path, held_hand_q).items()})
     key_in_hand = np.linalg.inv(validate_se3(
         T_key_hand, name="sampled held T_key_hand"))
     failures: list[dict] = []
@@ -228,7 +271,8 @@ def _audit_held_geometry_samples(
                                          "distance_m": distance,
                                          "required_clearance_m": required})
     return failures, minimum_distances, {
-        "key_mesh": _sha256(key_path), "robot_urdf": _sha256(robot_path),
+        "key_mesh": _immutable_file_sha256(str(key_path)),
+        "robot_urdf": _immutable_file_sha256(str(robot_path)),
         **world_hashes,
     }
 
@@ -250,8 +294,8 @@ def audit_held_joint_paths(
     limits.validate()
     root = Path(shared_root).expanduser().resolve()
     mode = targets.mode
-    # Revalidate CAD hashes, frozen fixture and every target; a stale target
-    # must not be silently checked against a newly modified socket/geometry.
+    # Recompute the small CAD target record against this frozen session. NAS
+    # mesh bytes are assumed immutable during live execution.
     refreshed = build_rigid_insertion_targets(
         mode=mode, shared_root=root, calibration=calibration,
         T_key_hand=targets.T_key_hand,
@@ -285,11 +329,13 @@ def audit_held_joint_paths(
     stages = ({"lift": lift, "transfer": transfer, "descent": descent}
               if lift is not None else
               {"transfer": transfer, "descent": descent})
-    wrist = {
-        stage: [validate_se3(planner.fk_wrist(q), name=f"{stage} FK[{i}]")
-                for i, q in enumerate(path)]
-        for stage, path in stages.items()
-    }
+    with timed("audit.wrist_fk_rollout", phase="planning", kind="geometry",
+               sample_count=sum(len(path) for path in stages.values())):
+        wrist = {
+            stage: [validate_se3(planner.fk_wrist(q), name=f"{stage} FK[{i}]")
+                    for i, q in enumerate(path)]
+            for stage, path in stages.items()
+        }
     if not _poses_match(wrist["transfer"][-1], targets.T_robot_hand_preinsert,
                         limits):
         raise ValueError("transfer does not reach pre-insertion hand target")
@@ -377,13 +423,15 @@ def audit_held_joint_paths(
                                      "height_m": height})
                 prior_height = height
 
-    geometry_failures, minimum_distances, geometry_hashes = (
-        _audit_held_geometry_samples(
-            shared_root=root, mode=mode, calibration=calibration,
-            wrist=wrist, T_key_hand=targets.T_key_hand,
-            held_hand_q=hand_q,
-            minimum_hand_clearance_m=limits.minimum_hand_clearance_m,
-            allow_initial_key_table_support=lift is not None))
+    with timed("audit.geometry_samples", phase="planning", kind="geometry",
+               sample_count=sum(len(path) for path in stages.values())):
+        geometry_failures, minimum_distances, geometry_hashes = (
+            _audit_held_geometry_samples(
+                shared_root=root, mode=mode, calibration=calibration,
+                wrist=wrist, T_key_hand=targets.T_key_hand,
+                held_hand_q=hand_q,
+                minimum_hand_clearance_m=limits.minimum_hand_clearance_m,
+                allow_initial_key_table_support=lift is not None))
     failures.extend(geometry_failures)
 
     return {

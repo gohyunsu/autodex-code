@@ -18,7 +18,7 @@ from .lift_execution import LiftExecutionLimits, execute_bound_measured_lift
 from .labeling import request_annotation
 from .live_robot_state import LiveRobotState
 from .raw_camera_capture import (
-    RawCameraCapture, verify_raw_camera_capture, write_raw_camera_capture,
+    RawCameraCapture, write_raw_camera_capture,
 )
 from .recoverable_failure import acknowledged_failure
 from .session_policy import SessionDecision
@@ -129,7 +129,7 @@ class LiveLiftHandlers:
                         attempt.attempt_id / "raw_after_lift" /
                         capture.capture_id)
         write_raw_camera_capture(capture, evidence_dir, phase="after_lift")
-        verify_raw_camera_capture(evidence_dir, phase="after_lift")
+        # The checkpoint reader verifies these bytes once before inference.
         exposure_state = self.state_for_capture(capture)
         if not isinstance(exposure_state, LiveRobotState):
             raise TypeError("post-lift camera exposure lacks measured robot state")

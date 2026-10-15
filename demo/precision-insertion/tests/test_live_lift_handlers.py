@@ -101,17 +101,13 @@ def test_lift_then_same_session_raw_capture_then_qwen_label(
     def write(value, output, *, phase):
         runner.events.append(("write", value, output, phase))
 
-    def verify(output, *, phase):
-        runner.events.append(("verify", output, phase))
-
     monkeypatch.setattr(live_lift_handlers, "execute_bound_measured_lift",
                         execute)
     monkeypatch.setattr(live_lift_handlers, "write_raw_camera_capture", write)
-    monkeypatch.setattr(live_lift_handlers, "verify_raw_camera_capture", verify)
     bound.handlers()["await_lift_observation"](
         runner, runner.current_decision())
     assert [row[0] for row in runner.events] == [
-        "lift", "capture", "write", "verify", "exposure", "assess"]
+        "lift", "capture", "write", "exposure", "assess"]
     assert runner.events[2][1] is capture
     assert runner.events[2][3] == "after_lift"
     assessed = runner.events[-1][1]
@@ -165,8 +161,6 @@ def test_vlm_abstention_is_recorded_once_for_supervised_recovery(
     monkeypatch.setattr(live_lift_handlers, "execute_bound_measured_lift",
                         lambda **_kwargs: None)
     monkeypatch.setattr(live_lift_handlers, "write_raw_camera_capture",
-                        lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(live_lift_handlers, "verify_raw_camera_capture",
                         lambda *_args, **_kwargs: None)
 
     def abstain(**_kwargs):

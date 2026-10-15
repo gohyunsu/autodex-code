@@ -23,6 +23,7 @@ from .axis_jacobian import plan_jacobian_axis_stroke
 from .geometry import pose_angle_deg, validate_se3
 from .path_audit import PathAuditLimits, audit_held_joint_paths
 from .targets import InsertionTargets
+from .timing_profile import timed
 
 
 @dataclass(frozen=True)
@@ -182,7 +183,9 @@ def plan_insertion_after_pickup(
                                   waypoints, held.copy(), held_hand_source,
                                   tuple(query_records))
 
-    lift_plan = planner.plan_lift_preflight(lift_start, trial_scene, lift_h=0.10)
+    with timed("planning.held_lift", phase="planning", kind="planning"):
+        lift_plan = planner.plan_lift_preflight(
+            lift_start, trial_scene, lift_h=0.10)
     query_records.append({"stage": "held_lift", "success": lift_plan is not None,
                           "planner_api": "plan_lift_preflight"})
     if lift_plan is None:
@@ -277,11 +280,12 @@ def plan_held_transfer_and_axial(
             "executable_transfer": False,
         })
     else:
-        transfer_result = planner.plan_cartesian_pose(
-            start, targets.T_robot_hand_preinsert,
-            scene_cfg=trial_scene, include_obj_obstacle=False,
-            return_result=True, lock_hand=True,
-            timing_phase="precision_insertion_preflight")
+        with timed("planning.held_transfer", phase="planning", kind="planning"):
+            transfer_result = planner.plan_cartesian_pose(
+                start, targets.T_robot_hand_preinsert,
+                scene_cfg=trial_scene, include_obj_obstacle=False,
+                return_result=True, lock_hand=True,
+                timing_phase="precision_insertion_preflight")
         query_records.append({
             "stage": "transfer", "success": bool(transfer_result.success),
             "planner_api": "plan_cartesian_pose",
@@ -305,11 +309,13 @@ def plan_held_transfer_and_axial(
     count = int(math.ceil(travel / step))
     if count < 1:
         raise ValueError("insertion travel is invalid")
-    query = plan_jacobian_axis_stroke(
-        planner, transfer[-1], targets.T_robot_hand_preinsert,
-        targets.T_robot_hand_verification,
-        axis_robot=targets.insertion_axis_robot, scene_cfg=trial_scene,
-        expected_travel_m=travel, step_m=step)
+    with timed("planning.axial_jacobian", phase="planning", kind="planning",
+               waypoint_count=count):
+        query = plan_jacobian_axis_stroke(
+            planner, transfer[-1], targets.T_robot_hand_preinsert,
+            targets.T_robot_hand_verification,
+            axis_robot=targets.insertion_axis_robot, scene_cfg=trial_scene,
+            expected_travel_m=travel, step_m=step)
     query_records.extend({
         **row, "planner_api": "plan_jacobian_axis_stroke",
     } for row in query.step_records)
@@ -331,11 +337,15 @@ def plan_held_transfer_and_axial(
         return result("axial_waypoint_goal_residual", transfer=transfer,
                       waypoints=count)
     query_records[-1]["execution_validation"] = query.validation
-    sampled = audit_held_joint_paths(
-        shared_root=shared_root, calibration=calibration, targets=targets,
-        planner=planner, transfer_trajectory=transfer,
-        descent_trajectory=axial, held_hand_q=held, limits=limits,
-        lift_trajectory=lift)
+    with timed("planning.held_path_audit", phase="planning", kind="geometry",
+               sample_count=sum(len(path) for path in (transfer, axial)
+                                if path is not None) +
+               (0 if lift is None else len(lift))):
+        sampled = audit_held_joint_paths(
+            shared_root=shared_root, calibration=calibration, targets=targets,
+            planner=planner, transfer_trajectory=transfer,
+            descent_trajectory=axial, held_hand_q=held, limits=limits,
+            lift_trajectory=lift)
     if not sampled["sampled_clear"]:
         return result("sampled_held_path_rejected",
                       transfer=transfer, axial=axial, audit=sampled,

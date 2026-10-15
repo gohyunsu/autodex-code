@@ -136,7 +136,7 @@ def test_catalog_selects_pose_and_reuses_v8_loader(tmp_path):
     outdated = {**catalog, "endpoint_implementation_sha256": {"endpoint.py": "old"}}
     assert select_pose_candidates(
         outdated, expected_mode=mode,
-        tabletop_pose_stem="000")["status"] == "catalog_stale"
+        tabletop_pose_stem="000", verify_sources=True)["status"] == "catalog_stale"
     assert [row["key"] for row in selected["candidates"]] == [["table", "0", "1"]]
     assert selected["candidates"][0]["uncovered_scene_gain"] == 2
 
@@ -160,6 +160,27 @@ def test_catalog_selects_pose_and_reuses_v8_loader(tmp_path):
     assert "not impossibility proof" in excluded["reason"]
 
 
+def test_exact_candidate_override_does_not_walk_entire_nas_pool(
+        tmp_path, monkeypatch):
+    mode, paths, _candidates, screen = _candidate_fixture(tmp_path)
+    catalog = build_endpoint_catalog(
+        shared_root=tmp_path, mode=mode,
+        minimum_hand_clearance_m=0.0002, screen=screen)
+    selected = select_pose_candidates(
+        catalog, expected_mode=mode, tabletop_pose_stem="000")
+    monkeypatch.setattr(
+        "autodex.utils.path.os.walk",
+        lambda *_args, **_kwargs: pytest.fail(
+            "one selected grasp triggered whole-pool os.walk"))
+    wrist, pregrasp, grasp, info, _openposes = planner_candidate_override(
+        catalog=catalog, selected=selected["candidates"], mode=mode,
+        session_record=_session_record(mode, paths),
+        pose_robot_key=np.eye(4), tabletop_pose_stem="000")
+    assert wrist.shape == (1, 4, 4)
+    assert pregrasp.shape == grasp.shape == (1, 6)
+    assert info == [("table", "0", "1")]
+
+
 def test_catalog_detects_changed_scene_and_evidence(tmp_path):
     mode, paths, candidates, screen = _candidate_fixture(tmp_path)
     catalog = build_endpoint_catalog(
@@ -167,7 +188,8 @@ def test_catalog_detects_changed_scene_and_evidence(tmp_path):
         minimum_hand_clearance_m=0.0002, screen=screen)
     (candidates[0] / "sim_eval.json").write_text('{"success": false}')
     result = select_pose_candidates(
-        catalog, expected_mode=mode, tabletop_pose_stem="000")
+        catalog, expected_mode=mode, tabletop_pose_stem="000",
+        verify_sources=True)
     assert result["status"] == "catalog_stale"
     assert "grasp evidence changed" in result["reason"]
 
@@ -289,7 +311,8 @@ def test_changed_candidate_pool_and_unapproved_override_rejected(tmp_path):
     new_dir = paths.candidate_dir / "table" / "1" / "4"
     new_dir.mkdir()
     changed = select_pose_candidates(
-        catalog, expected_mode=mode, tabletop_pose_stem="000")
+        catalog, expected_mode=mode, tabletop_pose_stem="000",
+        verify_sources=True)
     assert changed["status"] == "catalog_stale"
 
 
@@ -357,4 +380,23 @@ def test_cylinder_grasps_shared_but_socket_catalogs_are_not_interchangeable(
     stale_session["socket_collision_mesh_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="mesh path/hash"):
         validate_catalog_session(
-            tight_catalog, mode=tight, session_record=stale_session)
+            tight_catalog, mode=tight, session_record=stale_session,
+            verify_socket_hash=True)
+
+
+def test_live_catalog_selection_does_not_rehash_immutable_nas(tmp_path, monkeypatch):
+    mode, paths, _candidates, screen = _candidate_fixture(tmp_path)
+    catalog = build_endpoint_catalog(
+        shared_root=tmp_path, mode=mode,
+        minimum_hand_clearance_m=0.0, screen=screen)
+    monkeypatch.setattr(
+        "precision_insertion.candidates._sha256",
+        lambda _path: (_ for _ in ()).throw(AssertionError("live hash")))
+    monkeypatch.setattr(
+        "precision_insertion.candidates._candidate_dirs",
+        lambda _path: (_ for _ in ()).throw(AssertionError("live scan")))
+    selected = select_pose_candidates(
+        catalog, expected_mode=mode, tabletop_pose_stem="000")
+    assert selected["status"] == "candidates_available"
+    validate_catalog_session(
+        catalog, mode=mode, session_record=_session_record(mode, paths))

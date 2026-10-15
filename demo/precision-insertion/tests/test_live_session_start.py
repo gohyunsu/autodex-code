@@ -138,6 +138,17 @@ def test_session_start_orders_board_before_socket_and_reloads_frozen_world(
     assert result.calibration.record["schema"] == "test"
 
 
+def test_validated_launch_does_not_repeat_fixture_hash_check(
+        tmp_path, monkeypatch):
+    arguments, events, _repre = _setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        start, "validate_cylinder_socket_fixture",
+        lambda **_kwargs: pytest.fail("fixture contract checked twice"))
+    start.start_precision_session(
+        **arguments, fixture_contract_validated=True)
+    assert "socket_init" in events
+
+
 def test_empty_board_requires_operator_gate_before_socket_inference(
         tmp_path, monkeypatch):
     arguments, events, _repre = _setup(tmp_path, monkeypatch)

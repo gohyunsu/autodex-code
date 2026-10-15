@@ -35,7 +35,7 @@ from .observed_retry_transfer_execution import (
 )
 from .observer import LabeledFrame
 from .raw_camera_capture import (
-    RawCameraCapture, verify_raw_camera_capture, write_raw_camera_capture,
+    RawCameraCapture, write_raw_camera_capture,
 )
 from .session_policy import SessionDecision
 
@@ -149,7 +149,7 @@ class LiveObservedXYRetryHandlers:
         raw_dir = (Path(runner._attempt_dir) / "raw_captures" /
                    "retry_held" / capture_id)
         write_raw_camera_capture(raw, raw_dir, phase="preinsert")
-        verify_raw_camera_capture(raw_dir, phase="preinsert")
+        # The observation consumer verifies the saved capture once.
         measured = self.state_for_capture(raw)
         if not isinstance(measured, LiveRobotState):
             raise TypeError("retry FoundPose exposure lacks measured feedback")
@@ -208,7 +208,7 @@ class LiveObservedXYRetryHandlers:
         output = (Path(runner._attempt_dir) / "raw_captures" / phase /
                   capture.capture_id)
         write_raw_camera_capture(capture, output, phase=phase)
-        verify_raw_camera_capture(output, phase=phase)
+        # The observation consumer verifies the saved capture once.
         state = self.state_for_capture(capture)
         if not isinstance(state, LiveRobotState):
             raise TypeError(f"{phase} exposure lacks measured robot state")

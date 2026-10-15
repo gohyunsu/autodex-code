@@ -70,6 +70,7 @@ class SessionLaunch:
     board_capture_phase: str = "empty_before_socket"
     camera_time_mode: str = "calibrated_frame_id"
     execution_scope: str = "live"
+    fixture_contract_validated: bool = False
 
     def readiness(self) -> dict:
         return {
@@ -136,6 +137,7 @@ class OpenSessionCameras:
             board_id=launch.board_id,
             minimum_board_corners=launch.minimum_board_corners,
             board_capture_phase=launch.board_capture_phase,
+            fixture_contract_validated=launch.fixture_contract_validated,
             confirm_socket_placement=confirm_socket_placement)
 
 
@@ -334,7 +336,8 @@ def load_session_launch(
         socket_perception_mode=socket_perception_mode,
         minimum_board_corners=minimum_board_corners,
         board_capture_phase=board_capture_phase,
-        camera_time_mode=time_mode, execution_scope=execution_scope)
+        camera_time_mode=time_mode, execution_scope=execution_scope,
+        fixture_contract_validated=mode.family == "cylinder")
 
 
 @contextmanager

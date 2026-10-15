@@ -86,7 +86,8 @@ def test_opening_binds_saved_evidence_and_frozen_catalog(tmp_path, monkeypatch):
     assert record["robot_ready"] is False
     assert record["session_evidence_dir"] == str(args["evidence_dir"])
     assert record["catalog_source_path"] == str(args["catalog_path"])
-    assert record["key_foundpose_sha256"] == record["socket_foundpose_sha256"]
+    assert "key_foundpose_sha256" not in record
+    assert "socket_foundpose_sha256" not in record
     assert (opened.runner.output_dir / "frozen_session_calibration.json").is_file()
     with pytest.raises(FileExistsError, match="already exists"):
         opening.open_verified_session(**args)
@@ -124,10 +125,12 @@ def test_wrong_root_catalog_fails_before_session_ledger(tmp_path, monkeypatch):
     assert not args["output_dir"].exists()
 
 
-def test_stale_candidate_catalog_fails_before_session_ledger(tmp_path, monkeypatch):
+def test_explicit_offline_catalog_audit_still_detects_stale_sources(tmp_path, monkeypatch):
     args, _events = _setup(tmp_path, monkeypatch)
     monkeypatch.setattr(opening, "select_pose_candidates",
                         lambda *_args, **_kwargs: {"status": "catalog_stale"})
     with pytest.raises(ValueError, match="stale for pose 004"):
-        opening.open_verified_session(**args)
+        opening.preflight_endpoint_catalog_file(
+            mode=args["mode"], shared_root=args["shared_root"],
+            catalog_path=args["catalog_path"], verify_sources=True)
     assert not args["output_dir"].exists()

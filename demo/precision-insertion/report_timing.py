@@ -35,6 +35,32 @@ def main(argv: list[str] | None = None) -> int:
                               key=lambda item: item[1]["self_s"], reverse=True):
         print(f"{name[:33]:33} {group['count']:5d} "
               f"{group['inclusive_s']:12.3f} {group['self_s']:10.3f}")
+    by_phase = defaultdict(float)
+    for row in spans:
+        by_phase[row["phase"]] += row["self_s"]
+    print("\nPhase                              exclusive_s")
+    for phase, seconds in sorted(by_phase.items(),
+                                 key=lambda item: item[1], reverse=True):
+        print(f"{phase[:33]:33} {seconds:11.3f}")
+
+    indexed = {row["span_id"]: row for row in spans}
+    by_candidate = defaultdict(lambda: defaultdict(float))
+    for row in spans:
+        parent = row
+        candidate = None
+        while parent is not None:
+            candidate = parent["attributes"].get("candidate_id")
+            if candidate is not None:
+                break
+            parent = indexed.get(parent["parent_id"])
+        if candidate is not None:
+            by_candidate[str(candidate)][row["name"]] += row["self_s"]
+    if by_candidate:
+        print("\nCandidate                          operation                          self_s")
+        for candidate, operations in sorted(by_candidate.items()):
+            for name, seconds in sorted(operations.items(),
+                                        key=lambda item: item[1], reverse=True):
+                print(f"{candidate[:34]:34} {name[:34]:34} {seconds:8.3f}")
     by_stage = defaultdict(lambda: [0, 0.0])
     for row in spans:
         if row["name"] == "vlm.infer":

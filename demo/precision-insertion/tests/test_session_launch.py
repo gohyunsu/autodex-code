@@ -286,6 +286,8 @@ def test_open_camera_context_survives_socket_start_until_trial_is_done(
     def start(**kwargs):
         events.append("socket_frozen")
         assert isinstance(kwargs["init_orchestrator"], Init)
+        assert kwargs["fixture_contract_validated"] is (
+            loaded.mode.family == "cylinder")
         return object()
 
     monkeypatch.setattr(launch, "start_precision_session", start)

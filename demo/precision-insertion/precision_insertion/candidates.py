@@ -4,8 +4,9 @@ Offline eligibility is MuJoCo-supported grasp stability plus a centered,
 *nominal-key-in-hand* 20 mm whole-hand/socket endpoint. The stock gravity
 test does not certify that the key retained that nominal relation during
 squeeze. It is not continuous arm planning, contact control, or physical
-success. AutoDex's v8 NPY loader is reused only after this module has
-resolved exact candidate keys under the selected shared root.
+success. The demo loads only the exact catalog-selected v8 NPY files before
+passing them to the unchanged AutoDex planner. The stock directory-discovery
+loader would walk the entire NAS candidate tree for every one-grasp override.
 """
 
 from __future__ import annotations
@@ -351,13 +352,17 @@ def select_pose_candidates(
     tabletop_pose_stem: str,
     attempted: Iterable[tuple[str, str, str]] = (),
     covered_scenes: Iterable[int] = (),
+    verify_sources: bool = False,
 ) -> dict:
     """Select only eligible grasps matching a freshly observed v8 tabletop.
 
     Missing coverage JSON leaves deterministic candidate order; coverage
     gains are optional ranking metadata, never a substitute for endpoint
     evidence. A successful insertion (not merely a lift) should advance
-    task-level covered scenes in the caller's private trial record.
+    task-level covered scenes in the caller's private trial record. Live runs
+    trust the offline catalog and immutable NAS: they do not recursively scan
+    and hash every candidate on each selection. Offline audits may request
+    the former full source verification explicitly.
     """
     identity = catalog["mode"]
     mode = select_mode(expected_mode.family, expected_mode.gap_mm)
@@ -372,7 +377,8 @@ def select_pose_candidates(
     if not catalog.get("complete_scan"):
         return {"status": "catalog_incomplete", "candidates": [],
                 "reason": "full endpoint screen or source pool is missing"}
-    if catalog.get("endpoint_implementation_sha256") != _endpoint_implementation_sha256():
+    if (verify_sources and catalog.get("endpoint_implementation_sha256") !=
+            _endpoint_implementation_sha256()):
         return {"status": "catalog_stale", "candidates": [],
                 "reason": "endpoint collision implementation changed"}
     root = Path(catalog["shared_root"])
@@ -380,11 +386,12 @@ def select_pose_candidates(
     if Path(catalog["candidate_root"]).resolve() != paths.candidate_dir.resolve():
         raise ValueError("catalog candidate root does not match shared root")
     key_name = mode.key_object
-    current_keys = [list(path.relative_to(paths.candidate_dir).parts)
-                    for path in _candidate_dirs(paths.candidate_dir)]
-    if current_keys != [row["key"] for row in catalog["candidates"]]:
-        return {"status": "catalog_stale", "candidates": [],
-                "reason": "v8 candidate directory set changed"}
+    if verify_sources:
+        current_keys = [list(path.relative_to(paths.candidate_dir).parts)
+                        for path in _candidate_dirs(paths.candidate_dir)]
+        if current_keys != [row["key"] for row in catalog["candidates"]]:
+            return {"status": "catalog_stale", "candidates": [],
+                    "reason": "v8 candidate directory set changed"}
     pose_file = paths.key_tabletop_dir / f"{tabletop_pose_stem}.npy"
     if not pose_file.is_file():
         raise FileNotFoundError(f"unknown v8 tabletop pose: {pose_file}")
@@ -408,48 +415,50 @@ def select_pose_candidates(
         candidate_key = tuple(row["key"])
         if row["tabletop_pose_stem"] != tabletop_pose_stem:
             continue
-        scene = Path(row["scene_path"])
-        if not scene.is_file() or _sha256(scene) != row["scene_sha256"]:
-            return {"status": "catalog_stale", "candidates": [],
-                    "reason": f"v8 scene changed: {scene}"}
         candidate = Path(row["candidate_dir"])
-        sources = {
-            "key_planning_mesh": paths.key_planning_mesh,
-            "wrist_se3": candidate / "wrist_se3.npy",
-            "pregrasp_pose": candidate / "pregrasp_pose.npy",
-            "grasp_pose": candidate / "grasp_pose.npy",
-            "sim_eval": candidate / "sim_eval.json",
-            "simulation_validation": candidate / "simulation_validation.json",
-            "bodex_info": candidate / "bodex_info.npy",
-            "sim_traj": candidate / "sim_traj.json",
-            "coll_valid": candidate / "coll_valid.npy",
-            "nominal_endpoint_screen": (
-                candidate / "nominal_endpoint_screen.json"),
-            "highres_report_copy": candidate.parent / "highres_report.json",
-        }
-        for name, saved_hash in row["grasp_input_sha256"].items():
-            source = sources[name]
-            current_hash = _sha256(source) if source.is_file() else None
-            if current_hash != saved_hash:
+        if verify_sources:
+            scene = Path(row["scene_path"])
+            if not scene.is_file() or _sha256(scene) != row["scene_sha256"]:
                 return {"status": "catalog_stale", "candidates": [],
-                        "reason": f"grasp evidence changed: {source}"}
+                        "reason": f"v8 scene changed: {scene}"}
+            sources = {
+                "key_planning_mesh": paths.key_planning_mesh,
+                "wrist_se3": candidate / "wrist_se3.npy",
+                "pregrasp_pose": candidate / "pregrasp_pose.npy",
+                "grasp_pose": candidate / "grasp_pose.npy",
+                "sim_eval": candidate / "sim_eval.json",
+                "simulation_validation": candidate / "simulation_validation.json",
+                "bodex_info": candidate / "bodex_info.npy",
+                "sim_traj": candidate / "sim_traj.json",
+                "coll_valid": candidate / "coll_valid.npy",
+                "nominal_endpoint_screen": (
+                    candidate / "nominal_endpoint_screen.json"),
+                "highres_report_copy": candidate.parent / "highres_report.json",
+            }
+            for name, saved_hash in row["grasp_input_sha256"].items():
+                source = sources[name]
+                current_hash = _sha256(source) if source.is_file() else None
+                if current_hash != saved_hash:
+                    return {"status": "catalog_stale", "candidates": [],
+                            "reason": f"grasp evidence changed: {source}"}
         if not row["eligible"] or candidate_key in excluded:
             continue
-        report = row["endpoint_report"]
-        endpoint_sources = {
-            "key_mesh": paths.raw_mesh(key_name),
-            "socket_mesh": paths.socket_collision_mesh,
-            "task_geometry": paths.task_geometry,
-            "robot_urdf": paths.robot_urdf,
-            "wrist_se3": candidate / "wrist_se3.npy",
-            "pregrasp_pose": candidate / "pregrasp_pose.npy",
-            "grasp_pose": candidate / "grasp_pose.npy",
-        }
-        for name, saved_hash in report["input_sha256"].items():
-            source = endpoint_sources.get(name)
-            if source is None or not source.is_file() or _sha256(source) != saved_hash:
-                return {"status": "catalog_stale", "candidates": [],
-                        "reason": f"endpoint input changed: {name}"}
+        if verify_sources:
+            report = row["endpoint_report"]
+            endpoint_sources = {
+                "key_mesh": paths.raw_mesh(key_name),
+                "socket_mesh": paths.socket_collision_mesh,
+                "task_geometry": paths.task_geometry,
+                "robot_urdf": paths.robot_urdf,
+                "wrist_se3": candidate / "wrist_se3.npy",
+                "pregrasp_pose": candidate / "pregrasp_pose.npy",
+                "grasp_pose": candidate / "grasp_pose.npy",
+            }
+            for name, saved_hash in report["input_sha256"].items():
+                source = endpoint_sources.get(name)
+                if source is None or not source.is_file() or _sha256(source) != saved_hash:
+                    return {"status": "catalog_stale", "candidates": [],
+                            "reason": f"endpoint input changed: {name}"}
         matching.append({
             "key": row["key"], "candidate_dir": row["candidate_dir"],
             "uncovered_scene_gain": gains.get(candidate_key),
@@ -473,11 +482,13 @@ def select_pose_candidates(
 
 def validate_catalog_session(
     catalog: dict, *, mode: TaskMode, session_record: dict,
+    verify_socket_hash: bool = False,
 ) -> None:
     """Bind a motion-bound candidate list to this measured socket session.
 
-    This checks the declared fixture identity and CAD bytes, not the physical
-    socket size: a fixture label or operator check must establish that separately.
+    Live runs check fixture identity without rehashing immutable NAS assets.
+    Offline audits may opt into byte verification. Physical size still needs
+    fixture identification by the operator.
     """
     if session_record.get("schema") != "precision_insertion_session_calibration_v1":
         raise ValueError("session calibration record has an unknown schema")
@@ -495,7 +506,8 @@ def validate_catalog_session(
         raise FileNotFoundError(f"session socket mesh is missing: {socket}")
     if (Path(session_record.get("socket_collision_mesh", "")).resolve()
             != socket.resolve() or
-            session_record.get("socket_collision_mesh_sha256") != _sha256(socket)):
+            (verify_socket_hash and
+             session_record.get("socket_collision_mesh_sha256") != _sha256(socket))):
         raise ValueError("session socket mesh path/hash does not match catalog fixture")
     validate_se3(np.asarray(session_record.get("socket_pose_robot")),
                  name="session T_robot_socket")
@@ -506,9 +518,13 @@ def planner_candidate_override(
     mode: TaskMode, session_record: dict,
     pose_robot_key: np.ndarray, tabletop_pose_stem: str,
 ) -> tuple:
-    """Reuse AutoDex's v8 transform/NPY loader with an explicit whitelist.
+    """Load only the selected v8 files with an explicit catalog whitelist.
 
-    This is input to unchanged ``GraspPlanner.plan(candidate_override=...)``;
+    Stock ``load_candidate`` walks the entire object tree even when given one
+    `candidate_order` key. That is unnecessary for catalog-known NAS paths,
+    especially inside the per-candidate planning loop. The returned arrays
+    use its exact object-to-robot wrist convention and are input to unchanged
+    ``GraspPlanner.plan(candidate_override=...)``;
     that planner still stops at pickup/lift and needs demo-local transfer and
     insertion preflight before the candidate can be executed.
     """
@@ -522,8 +538,6 @@ def planner_candidate_override(
         catalog, expected_mode=mode, tabletop_pose_stem=tabletop_pose_stem)
     if current["status"] != "candidates_available":
         raise ValueError(f"catalog cannot supply live candidates: {current['status']}")
-    root = Path(catalog["shared_root"])
-    name = catalog["mode"]["key_object"]
     order = [tuple(row["key"]) for row in selected]
     if len(order) != len(set(order)):
         raise ValueError("selected candidate keys must be unique")
@@ -534,15 +548,34 @@ def planner_candidate_override(
            selected_row.get("candidate_dir") != approved[key]["candidate_dir"]
            for key, selected_row in zip(order, selected)):
         raise ValueError("selected candidates do not match eligible pose rows")
-    from autodex.utils.path import load_candidate
-
-    wrist, pregrasp, grasp, info = load_candidate(
-        name, pose, "v8", hand="inspire", shuffle=False,
-        skip_done=False, candidate_order=order,
-        candidates_root=root / "AutoDex" / "candidates" / "inspire",
-    )
-    if [tuple(entry) for entry in info] != order:
-        raise RuntimeError("v8 loader returned a different candidate order")
+    candidate_root = AssetPaths(Path(catalog["shared_root"]), mode).candidate_dir
+    wrist_rows = []
+    pregrasp_rows = []
+    grasp_rows = []
+    for key, row in zip(order, selected, strict=True):
+        candidate = Path(row["candidate_dir"]).resolve()
+        if candidate != candidate_root.joinpath(*key).resolve():
+            raise ValueError("selected v8 candidate path escapes catalog root")
+        wrist_key = validate_se3(np.load(
+            candidate / "wrist_se3.npy", allow_pickle=False),
+            name="selected v8 T_key_hand")
+        pre = np.asarray(np.load(
+            candidate / "pregrasp_pose.npy", allow_pickle=False),
+            dtype=np.float64)
+        held = np.asarray(np.load(
+            candidate / "grasp_pose.npy", allow_pickle=False),
+            dtype=np.float64)
+        if (pre.shape != (6,) or held.shape != (6,) or
+                not np.all(np.isfinite(pre)) or
+                not np.all(np.isfinite(held))):
+            raise ValueError(f"selected v8 grasp has invalid hand joints: {candidate}")
+        wrist_rows.append(pose @ wrist_key)
+        pregrasp_rows.append(pre)
+        grasp_rows.append(held)
+    wrist = np.stack(wrist_rows)
+    pregrasp = np.stack(pregrasp_rows)
+    grasp = np.stack(grasp_rows)
+    info = order
     openposes = []
     for row in selected:
         candidate = Path(row["candidate_dir"])

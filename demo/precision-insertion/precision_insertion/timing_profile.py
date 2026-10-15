@@ -12,7 +12,9 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
+import shutil
 from typing import Iterator
 
 from autodex.pipeline_trace import PipelineTrace
@@ -36,10 +38,18 @@ def timing_directory(run_output_dir: Path) -> Path:
     return target.with_name(target.name + ".timing")
 
 
+def _active_timing_directory(run_output_dir: Path) -> Path:
+    local_root = os.environ.get("PRECISION_TIMING_LOCAL_ROOT", "").strip()
+    if not local_root:
+        return timing_directory(run_output_dir)
+    root = Path(local_root).expanduser().resolve()
+    return root / timing_directory(run_output_dir).name
+
+
 @contextmanager
 def profile_run(run_output_dir: Path) -> Iterator[RunProfile]:
     """Keep a stock AutoDex trace open across startup, actions and cleanup."""
-    destination = timing_directory(run_output_dir)
+    destination = _active_timing_directory(run_output_dir)
     trace = PipelineTrace(destination)
     profile = RunProfile(trace)
     token = _TRACE.set(trace)
@@ -57,6 +67,12 @@ def profile_run(run_output_dir: Path) -> Iterator[RunProfile]:
         (destination / "timing_summary.json").write_text(
             json.dumps(summary, indent=2, sort_keys=True) + "\n",
             encoding="utf-8")
+        remote = timing_directory(run_output_dir)
+        if destination != remote:
+            # One bulk copy after the run keeps per-span flushes off NAS.
+            # On an interrupted run, the local append-only trace remains.
+            remote.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(destination, remote)
 
 
 @contextmanager

@@ -176,7 +176,8 @@ def run_integrated_live_session(
         raise ValueError("manual labeling needs a named annotator")
     if options.label_mode == "evidence_fused":
         raise ValueError("current cylinder live loop needs vlm_only or manual labels")
-    launch = load_session_launch(options.launch_config_path)
+    with timed("startup.launch_config", phase="startup", kind="io"):
+        launch = load_session_launch(options.launch_config_path)
     if launch.mode.family != "cylinder":
         raise ValueError("live insertion currently supports cylinder mode only")
     if getattr(launch, "execution_scope", "live") != "live":
@@ -199,7 +200,7 @@ def run_integrated_live_session(
                 clear_view=integration.clear_view,
                 build_handlers=handlers, max_steps=options.max_steps,
                 confirm_initial_key_placement=_confirm_initial_key_placement,
-                init_ports=options.init_ports)
+                init_ports=options.init_ports, launch_snapshot=launch)
     finally:
         with timed("cleanup.integration_close", phase="cleanup", kind="io"):
             integration.close()

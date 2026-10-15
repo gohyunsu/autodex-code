@@ -61,3 +61,16 @@ def test_profile_can_record_nonexception_terminal_status(tmp_path):
 def test_timed_without_live_profile_is_noop():
     with timed("standalone", phase="test"):
         pass
+
+
+def test_local_trace_flushes_to_nas_only_after_run(tmp_path, monkeypatch):
+    local = tmp_path / "local"
+    output = tmp_path / "nas" / "session_001"
+    monkeypatch.setenv("PRECISION_TIMING_LOCAL_ROOT", str(local))
+    with profile_run(output):
+        assert not timing_directory(output).exists()
+        with timed("planning.v8_pickup", phase="planning", candidate_id="table/0/1"):
+            pass
+    assert (local / "session_001.timing" / "events.jsonl").is_file()
+    summary = json.loads((timing_directory(output) / "timing_summary.json").read_text())
+    assert summary["groups"]["planning.v8_pickup"]["count"] == 1

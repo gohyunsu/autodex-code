@@ -9,6 +9,8 @@ not alter FoundPose's representation or relax any perception-quality gate.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 import hashlib
 from pathlib import Path
 
@@ -42,6 +44,11 @@ class SolidMtlSilhouetteOptimizer(SilhouetteOptimizer):
         return mesh
 
 
+@lru_cache(maxsize=8)
+def _mesh_digest_at_stat(path: str, size: int, mtime_ns: int) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
 def prepare_precision_silhouette(
     *, init_orchestrator, object_name: str, raw_mesh: Path,
 ) -> str:
@@ -62,7 +69,8 @@ def prepare_precision_silhouette(
     device = getattr(stock, "device", None)
     if not isinstance(device, str) or not device:
         raise ValueError("stock init orchestrator has no renderer device")
-    digest = hashlib.sha256(mesh.read_bytes()).hexdigest()
+    stat = mesh.stat()
+    digest = _mesh_digest_at_stat(str(mesh), stat.st_size, stat.st_mtime_ns)
     current = getattr(stock, "_sil", None)
     if (isinstance(current, SolidMtlSilhouetteOptimizer) and
             getattr(current, "_obj_name", None) == object_name and

@@ -18,7 +18,7 @@ from .assets import AssetPaths
 from .calibration import validate_session_camera_calibration
 from .clear_view import ClearViewForPerception
 from .key_perception import (
-    KeyPoseObservation, admit_key_capture, verify_key_capture_artifacts,
+    KeyPoseObservation, admit_key_capture,
     write_key_capture_artifacts,
 )
 from .live_capture import collect_key_capture
@@ -129,11 +129,12 @@ def _capture_admitted_key(
         prepare_key_silhouette(
             init_orchestrator=init_orchestrator,
             object_name=runner.mode.key_object, raw_mesh=mesh)
-        init_orchestrator.init_object(
-            obj_name=runner.mode.key_object, mesh_path=str(mesh),
-            assets_root=str(paths.foundpose_assets_root(runner.mode.key_object)),
-            intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
-            image_hw=image_hw, mode="live", load_silhouette=False)
+        if getattr(init_orchestrator, "obj_name", None) != runner.mode.key_object:
+            init_orchestrator.init_object(
+                obj_name=runner.mode.key_object, mesh_path=str(mesh),
+                assets_root=str(paths.foundpose_assets_root(runner.mode.key_object)),
+                intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
+                image_hw=image_hw, mode="live", load_silhouette=False)
     validate_session_camera_calibration(
         runner.calibration,
         intrinsics_undist=init_orchestrator.intrinsics_undist,
@@ -177,13 +178,14 @@ def _capture_admitted_key(
             silhouette_loss_threshold=silhouette_loss_threshold)
     if observation.phase != "tabletop":
         raise ValueError("key capture requires a tabletop observation")
-    with timed("key.evidence_write_verify", phase="key", kind="io"):
+    with timed("key.evidence_write", phase="key", kind="io"):
         if derivation is None:
             write_key_capture_artifacts(capture, observation, output)
         else:
             write_key_capture_artifacts(
                 capture, observation, output, derivation_report=derivation)
-        verify_key_capture_artifacts(output)
+    # preflight_next_key reads and verifies this bundle immediately below;
+    # a producer-side full reread here would duplicate the same NAS work.
     return observation
 
 

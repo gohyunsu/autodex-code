@@ -39,6 +39,7 @@ class StartedPrecisionSession:
     evidence_dir: Path
     board_request_id: int
     socket_request_ids: tuple[int, ...]
+    verified_manifest: dict | None = None
 
 
 def start_precision_session(
@@ -62,6 +63,7 @@ def start_precision_session(
     minimum_board_corners: int = 54,
     board_capture_phase: str = "empty_before_socket",
     confirm_socket_placement: Callable[[], bool] | None = None,
+    fixture_contract_validated: bool = False,
 ) -> StartedPrecisionSession:
     """Acquire and freeze one session, without touching Franka/Inspire.
 
@@ -132,9 +134,10 @@ def start_precision_session(
             not isinstance(base_scene.get("cuboid"), dict)):
         raise ValueError("base cuRobo scene needs mesh and cuboid dictionaries")
     paths = AssetPaths(root, mode)
-    if mode.family == "cylinder":
+    if mode.family == "cylinder" and not fixture_contract_validated:
         # Reject source-PC fixture paths or inconsistent CAD before the first
-        # board/socket camera request. This does not certify FoundPose.
+        # board/socket camera request. The validated SessionLaunch passes its
+        # one-time result into this capture boundary; direct callers recheck.
         with timed("socket.fixture_asset_check", phase="socket", kind="io"):
             validate_cylinder_socket_fixture(shared_root=root, mode=mode)
     socket_mesh = paths.raw_mesh(mode.socket_object)
@@ -236,7 +239,8 @@ def start_precision_session(
     return StartedPrecisionSession(
         calibration=reopened, evidence_dir=saved,
         board_request_id=board.request_id,
-        socket_request_ids=tuple(capture.request_id for capture in captures))
+        socket_request_ids=tuple(capture.request_id for capture in captures),
+        verified_manifest=manifest)
 
 
 def _confirmed_socket_placement(confirm: Callable[[], bool]) -> bool:

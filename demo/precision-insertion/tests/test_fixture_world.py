@@ -183,10 +183,13 @@ def test_trial_scene_rejects_wrong_socket_mode_or_changed_mesh(tmp_path, monkeyp
             mode=select_mode("square", 1.0), shared_root=tmp_path,
             calibration=session, key_pose_world=np.eye(4))
     mesh.write_text("v 1 0 0\n", encoding="utf-8")
+    # Live trials assume immutable NAS assets; the explicit offline audit
+    # retains the byte-level stale-asset check.
+    from precision_insertion.world import validated_frozen_socket_pose
     with pytest.raises(ValueError, match="differs from frozen session asset"):
-        build_trial_scene_from_session(
+        validated_frozen_socket_pose(
             mode=mode, shared_root=tmp_path, calibration=session,
-            key_pose_world=np.eye(4))
+            verify_source_hash=True)
 
 
 def test_trial_scene_rejects_inconsistent_frozen_socket_record(tmp_path):

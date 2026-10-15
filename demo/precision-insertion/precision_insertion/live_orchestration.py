@@ -23,6 +23,7 @@ from .live_session_runner import (
     OpenedPrecisionSession, open_verified_session,
     preflight_endpoint_catalog_file,
 )
+from .runtime_evidence_cache import live_evidence_cache
 from .live_session_start import StartedPrecisionSession
 from .session_launch import (
     OpenSessionCameras, load_session_launch, open_session_cameras,
@@ -88,6 +89,7 @@ def open_live_precision_session(
     run_output_dir: Path, max_xy_retries: int | None,
     clear_view: ClearViewForPerception, xy_update_weight: float = 1.0,
     init_ports: tuple[int, int, int] | None = None,
+    launch_snapshot=None,
 ) -> Iterator[LivePrecisionSession]:
     """Capture once, open the bound ledger, and retain camera connections.
 
@@ -96,8 +98,11 @@ def open_live_precision_session(
     board/socket evidence exists. If that check fails, the captured evidence
     is retained and all camera connections are still closed.
     """
-    with timed("startup.launch_config", phase="startup", kind="io"):
-        launch = load_session_launch(launch_config_path)
+    if launch_snapshot is None:
+        with timed("startup.launch_config", phase="startup", kind="io"):
+            launch = load_session_launch(launch_config_path)
+    else:
+        launch = launch_snapshot
     if launch.mode.family != "cylinder":
         raise ValueError("live insertion currently supports cylinder mode only")
     if getattr(launch, "execution_scope", "live") != "live":
@@ -126,11 +131,11 @@ def open_live_precision_session(
             any(type(port) is not int or not 0 < port < 65536
                 for port in init_ports) or len(set(init_ports)) != 3):
         raise ValueError("init ports need three distinct TCP port numbers")
-    # Reject a stale/incomplete v8 pool before a slow board/socket capture.
-    # ``open_verified_session`` repeats this check after capture and binds the
-    # measured fixture to the catalogue's exact socket mesh.
-    with timed("startup.catalog_precheck", phase="startup", kind="io"):
-        preflight_endpoint_catalog_file(
+    # Offline-screened assets are immutable for the duration of this session.
+    # Load the catalog once before capture, then reuse the same in-memory
+    # snapshot in the ledger and every trial.
+    with timed("startup.catalog_load", phase="startup", kind="io"):
+        catalog_snapshot = preflight_endpoint_catalog_file(
             mode=launch.mode, shared_root=launch.shared_root,
             catalog_path=catalog)
     # Stock AutoDex free-space home is appropriate only before the session's
@@ -153,7 +158,10 @@ def open_live_precision_session(
                 mode=launch.mode, shared_root=launch.shared_root,
                 evidence_dir=started.evidence_dir, catalog_path=catalog,
                 output_dir=output, max_xy_retries=max_xy_retries,
-                xy_update_weight=xy_update_weight)
+                xy_update_weight=xy_update_weight,
+                catalog_snapshot=catalog_snapshot,
+                producer_manifest=getattr(started, "verified_manifest", None),
+                calibration_snapshot=getattr(started, "calibration", None))
         yield LivePrecisionSession(started, opened, cameras, clear_view)
     finally:
         with timed("cleanup.camera_resources", phase="cleanup", kind="io"):
@@ -168,6 +176,7 @@ def run_live_precision_session(
     max_steps: int | None = None, xy_update_weight: float = 1.0,
     confirm_initial_key_placement: Callable[[], bool] | None = None,
     init_ports: tuple[int, int, int] | None = None,
+    launch_snapshot=None,
 ) -> ActionLoopResult:
     """Keep the one ChArUco/socket camera session open across trial actions.
 
@@ -182,13 +191,14 @@ def run_live_precision_session(
         raise TypeError("live action loop needs a handler factory")
     if max_steps is not None and (type(max_steps) is not int or max_steps < 1):
         raise ValueError("max_steps must be a positive integer or None")
-    with open_live_precision_session(
+    with live_evidence_cache(), open_live_precision_session(
             launch_config_path=launch_config_path,
             endpoint_catalog_path=endpoint_catalog_path,
             run_output_dir=run_output_dir,
             max_xy_retries=max_xy_retries,
             xy_update_weight=xy_update_weight,
-            clear_view=clear_view, init_ports=init_ports) as live:
+            clear_view=clear_view, init_ports=init_ports,
+            launch_snapshot=launch_snapshot) as live:
         # The fixed socket is measured with the key absent. Match stock
         # run_auto's one initial object-placement gate before key perception.
         # Retry captures never pause here or remeasure the socket.

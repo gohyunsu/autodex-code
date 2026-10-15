@@ -25,7 +25,7 @@ for module_root in (str(REPO_ROOT), str(SRC_DIR), str(DEMO_DIR)):
 from precision_insertion.live_runtime import (  # noqa: E402
     RunLiveOptions, inspect_live_inputs, run_integrated_live_session,
 )
-from precision_insertion.session_launch import load_session_launch  # noqa: E402
+from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.timing_profile import (  # noqa: E402
     profile_run, timed, timing_directory,
 )
@@ -35,12 +35,16 @@ _EXP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
 def default_run_output(launch_config: Path, exp_name: str) -> Path:
-    """Place the session below the current AutoDex experiment hierarchy."""
+    """Derive an output path; full launch validation runs inside the trace."""
     if not _EXP_NAME.fullmatch(exp_name):
         raise ValueError("exp name must be a single path-safe directory name")
-    launch = load_session_launch(launch_config)
+    record = json.loads(Path(launch_config).read_text(encoding="utf-8"))
+    if not isinstance(record, dict) or not isinstance(record.get("mode"), dict):
+        raise ValueError("launch config needs an explicit socket/key mode")
+    mode = select_mode(record["mode"].get("family"),
+                       record["mode"].get("gap_mm"))
     object_root = (Path.home() / "shared_data" / "AutoDex" / "experiment" /
-                   exp_name / "inspire" / launch.mode.key_object)
+                   exp_name / "inspire" / mode.key_object)
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     return object_root / "_pipeline_runs" / run_id
 

@@ -17,6 +17,7 @@ import numpy as np
 from .frame_provenance import image_sha256
 from .live_capture import collect_board_snapshot, collect_key_capture
 from .raw_camera_capture import PHASES, RawCameraCapture
+from .timing_profile import timed
 
 
 def capture_snapshot_checkpoint_frames(
@@ -51,7 +52,11 @@ def capture_snapshot_checkpoint_frames(
         K_orig = np.asarray(row["K_orig"], dtype=np.float64)
         K_undist = np.asarray(row["K_undist"], dtype=np.float64)
         distortion = np.asarray(row["dist_params"], dtype=np.float64)
-        image = cv2.undistort(original, K_orig, distortion, None, K_undist)
+        with timed("camera.undistort_generation", phase="camera",
+                   kind="image", camera_id=camera,
+                   capture_phase=phase):
+            image = cv2.undistort(
+                original, K_orig, distortion, None, K_undist)
         undistorted[camera] = image
         calibration[camera] = {
             "K_orig": K_orig, "K_undist": K_undist,

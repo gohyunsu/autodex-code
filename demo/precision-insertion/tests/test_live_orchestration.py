@@ -93,7 +93,8 @@ def test_live_session_keeps_same_camera_transport_for_next_key(
             "mode": launch.mode, "shared_root": Path("/shared"),
             "evidence_dir": Path("/evidence"), "catalog_path": catalog,
             "output_dir": tmp_path / "new_run", "max_xy_retries": 2,
-            "xy_update_weight": 1.0,
+            "xy_update_weight": 1.0, "catalog_snapshot": None,
+            "producer_manifest": None, "calibration_snapshot": None,
         }
         return opened
 
@@ -108,6 +109,27 @@ def test_live_session_keeps_same_camera_transport_for_next_key(
         assert live.cameras.init_orchestrator == "same_init"
         assert live.cameras.acquisition_metadata_for_request == "same_provider"
     assert events[-2:] == ["camera_close", "stream_close"]
+
+
+def test_live_session_reuses_already_validated_launch(
+        tmp_path, monkeypatch):
+    events = []
+    launch = _patch_camera_lifetime(monkeypatch, events)
+    monkeypatch.setattr(
+        orchestration, "load_session_launch",
+        lambda _path: pytest.fail("live launch was parsed twice"))
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        orchestration, "open_verified_session",
+        lambda **_kwargs: SimpleNamespace(runner="same_runner"))
+    with orchestration.open_live_precision_session(
+            launch_config_path=tmp_path / "launch.json",
+            endpoint_catalog_path=catalog,
+            run_output_dir=tmp_path / "new_run", max_xy_retries=2,
+            clear_view=_clear_view(events), launch_snapshot=launch):
+        pass
+    assert events.count("catalog_preflight") == 1
 
 
 def test_live_session_routes_precision_init_ports_before_socket_capture(

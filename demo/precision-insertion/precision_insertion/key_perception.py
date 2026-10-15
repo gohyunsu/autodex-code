@@ -25,7 +25,9 @@ from .frame_provenance import bounded_capture_skew_s, verify_frame_provenance
 from .geometry import pose_angle_deg, validate_se3
 from .live_capture import KeyCaptureInput
 from .perception_evidence import SocketViewLimits, admit_socket_capture
+from .runtime_evidence_cache import recalled, remember
 from .session_bootstrap import _safe_id, _write_json, _write_png
+from .timing_profile import timed
 from .socket_exclusion import (
     key_mask_socket_overlap_fraction, project_frozen_socket_exclusion,
 )
@@ -627,20 +629,27 @@ def write_key_capture_artifacts(
     report_file = target / "key_observation.json"
     files["key_observation.json"] = _write_json(
         report_file, observation.to_record())
-    _write_json(target / "evidence_manifest.json", {
+    manifest = {
         "schema": "precision_insertion_key_capture_evidence_v1",
         "capture_id": capture.capture_id,
         "request_id": capture.request_id,
         "files_sha256": files,
         "scope": "saved_fresh_key_pose_not_physical_grasp_or_motion",
         "robot_ready": False,
-    })
+    }
+    _write_json(target / "evidence_manifest.json", manifest)
+    remember("key_capture", target, "key", manifest)
     return target
 
 
 def verify_key_capture_artifacts(output_dir: Path) -> dict:
     """Recheck a saved key bundle's bytes and frame-to-pose binding."""
     root = Path(output_dir).expanduser().resolve()
+    cached = recalled("key_capture", root, "key")
+    if cached is not None:
+        with timed("evidence.live_manifest_reuse", phase="evidence",
+                   kind="io", capture_phase="key"):
+            return cached
     manifest = json.loads((root / "evidence_manifest.json").read_text(
         encoding="utf-8"))
     if (not isinstance(manifest, dict) or manifest.get("schema") !=

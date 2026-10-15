@@ -527,9 +527,12 @@ PYTHONPATH="$PWD/demo/precision-insertion:$PWD/src:/path/to/robot_pc_integration
 ```
 
 The live CLI requires explicit frame-bound init daemon ports. On the
-board-9 robot PC, `bash demo/precision-insertion/run_robot_pc.sh` manages
-the current capture-PC and FR3 services around this command; it stops only
-services that this invocation started.
+board-9 robot PC, start or check the long-lived capture-PC and FR3 services
+with `bash demo/precision-insertion/manage_robot_pc_services.sh start` or
+`check`; then run `bash demo/precision-insertion/run_robot_pc.sh --run`.
+The run script never starts or stops services, so consecutive trials can
+reuse warm daemons. `manage_robot_pc_services.sh stop` stops only services
+started by that manager, and must be invoked separately.
 
 The default exp name is `precision-insertion`. The default run directory is
 `~/shared_data/AutoDex/experiment/precision-insertion/inspire/<key_object>/_pipeline_runs/<timestamp>`;

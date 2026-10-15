@@ -16,7 +16,9 @@ import cv2
 import numpy as np
 
 from .frame_provenance import verify_frame_provenance
+from .runtime_evidence_cache import recalled, remember
 from .session_bootstrap import _safe_id
+from .timing_profile import timed
 
 
 PHASES = frozenset({"after_lift", "preinsert", "post_lateral_hold",
@@ -37,6 +39,17 @@ class RawCameraCapture:
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_png_hash(path: Path, image: np.ndarray) -> str:
+    """Hash the encoded bytes once, without reading the new NAS file again."""
+    encoded, payload = cv2.imencode(".png", image)
+    if not encoded:
+        raise OSError(f"could not encode raw camera frame: {path}")
+    data = payload.tobytes()
+    with path.open("xb") as stream:
+        stream.write(data)
+    return hashlib.sha256(data).hexdigest()
 
 
 def write_raw_camera_capture(
@@ -87,10 +100,14 @@ def write_raw_camera_capture(
             if (original.shape != (3, 3) or target.shape != (3, 3) or
                     not np.all(np.isfinite(original)) or
                     not np.all(np.isfinite(target)) or
-                    not np.all(np.isfinite(distortion)) or
-                    not np.array_equal(cv2.undistort(
-                        capture.source_images_bgr[camera], original,
-                        distortion, None, target), image)):
+                    not np.all(np.isfinite(distortion))):
+                raise ValueError("invalid undistortion calibration")
+            with timed("evidence.undistort_validate", phase="evidence",
+                       kind="image", camera_id=camera, capture_phase=phase):
+                pixels_match = np.array_equal(cv2.undistort(
+                    capture.source_images_bgr[camera], original,
+                    distortion, None, target), image)
+            if not pixels_match:
                 raise ValueError("undistorted frame differs from original snapshot")
             calibrations[camera] = {
                 "K_orig": original.tolist(), "K_undist": target.tolist(),
@@ -103,9 +120,9 @@ def write_raw_camera_capture(
     hashes = {}
     for camera, image in sorted(capture.images_bgr.items()):
         path = image_dir / f"{camera}.png"
-        if not cv2.imwrite(str(path), image):
-            raise OSError(f"could not save raw camera frame: {path}")
-        hashes[camera] = _sha(path)
+        with timed("evidence.png_write_hash", phase="evidence", kind="io",
+                   camera_id=camera, capture_phase=phase, source="undistorted"):
+            hashes[camera] = _write_png_hash(path, image)
     source_hashes = None
     if derived:
         source_dir = target / "source_original"
@@ -113,9 +130,9 @@ def write_raw_camera_capture(
         source_hashes = {}
         for camera, image in sorted(capture.source_images_bgr.items()):
             path = source_dir / f"{camera}.png"
-            if not cv2.imwrite(str(path), image):
-                raise OSError(f"could not save original snapshot: {path}")
-            source_hashes[camera] = _sha(path)
+            with timed("evidence.png_write_hash", phase="evidence", kind="io",
+                       camera_id=camera, capture_phase=phase, source="original"):
+                source_hashes[camera] = _write_png_hash(path, image)
     manifest = {
         "schema": "precision_insertion_raw_capture_v1",
         "phase": phase,
@@ -136,6 +153,7 @@ def write_raw_camera_capture(
     with (target / "manifest.json").open("x", encoding="utf-8") as stream:
         json.dump(manifest, stream, indent=2, allow_nan=False)
         stream.write("\n")
+    remember("raw_camera", target, phase, manifest)
     return target
 
 
@@ -144,6 +162,11 @@ def verify_raw_camera_capture(output_dir: Path, *, phase: str) -> dict:
     if phase not in PHASES:
         raise ValueError("unknown raw camera capture phase")
     root = Path(output_dir).expanduser().resolve()
+    cached = recalled("raw_camera", root, phase)
+    if cached is not None:
+        with timed("evidence.live_manifest_reuse", phase="evidence",
+                   kind="io", capture_phase=phase):
+            return cached
     report = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     if (not isinstance(report, dict) or
             report.get("schema") != "precision_insertion_raw_capture_v1" or
@@ -157,10 +180,12 @@ def verify_raw_camera_capture(output_dir: Path, *, phase: str) -> dict:
     images, frame_ids = {}, {}
     for camera, source in report["frame_evidence"].items():
         path = root / "images" / f"{_safe_id(camera, 'camera ID')}.png"
-        if not path.is_file() or _sha(path) != report["image_file_sha256"][camera]:
-            raise ValueError(("final " if phase == "final_or_abort" else "") +
-                             "raw camera PNG changed")
-        image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        with timed("evidence.png_read_verify", phase="evidence", kind="io",
+                   camera_id=camera, capture_phase=phase, source="undistorted"):
+            if not path.is_file() or _sha(path) != report["image_file_sha256"][camera]:
+                raise ValueError(("final " if phase == "final_or_abort" else "") +
+                                 "raw camera PNG changed")
+            image = cv2.imread(str(path), cv2.IMREAD_COLOR)
         if image is None:
             raise ValueError("raw camera PNG cannot be decoded")
         images[camera] = image
@@ -182,18 +207,22 @@ def verify_raw_camera_capture(output_dir: Path, *, phase: str) -> dict:
         originals = {}
         for camera, image in images.items():
             source = root / "source_original" / f"{camera}.png"
-            if (not source.is_file() or _sha(source) !=
-                    derivation["source_image_file_sha256"][camera]):
-                raise ValueError("original snapshot PNG changed")
-            original = cv2.imread(str(source), cv2.IMREAD_COLOR)
+            with timed("evidence.png_read_verify", phase="evidence", kind="io",
+                       camera_id=camera, capture_phase=phase, source="original"):
+                if (not source.is_file() or _sha(source) !=
+                        derivation["source_image_file_sha256"][camera]):
+                    raise ValueError("original snapshot PNG changed")
+                original = cv2.imread(str(source), cv2.IMREAD_COLOR)
             if original is None:
                 raise ValueError("original snapshot PNG cannot be decoded")
             originals[camera] = original
             row = derivation["calibration"][camera]
-            rebuilt = cv2.undistort(
-                original, np.asarray(row["K_orig"], dtype=float),
-                np.asarray(row["dist_params"], dtype=float), None,
-                np.asarray(row["K_undist"], dtype=float))
+            with timed("evidence.undistort_replay", phase="evidence",
+                       kind="image", camera_id=camera, capture_phase=phase):
+                rebuilt = cv2.undistort(
+                    original, np.asarray(row["K_orig"], dtype=float),
+                    np.asarray(row["dist_params"], dtype=float), None,
+                    np.asarray(row["K_undist"], dtype=float))
             if not np.array_equal(rebuilt, image):
                 raise ValueError("raw frame differs from original undistortion")
         source_evidence = verify_frame_provenance(

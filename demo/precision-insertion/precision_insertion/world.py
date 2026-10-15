@@ -67,8 +67,13 @@ def _sha256(path: Path) -> str:
 
 def validated_frozen_socket_pose(
     *, mode: TaskMode, shared_root: Path, calibration: SessionCalibration,
+    verify_source_hash: bool = False,
 ) -> np.ndarray:
-    """Verify the session's socket identity, CAD bytes and collision pose."""
+    """Check frozen socket identity/pose without runtime NAS rehashing.
+
+    ``verify_source_hash`` is an explicit offline audit of CAD bytes. Live
+    execution assumes the session's NAS assets do not change.
+    """
     root = Path(shared_root).expanduser().resolve()
     paths = AssetPaths(root, mode)
     identity = calibration.record.get("mode")
@@ -95,8 +100,9 @@ def validated_frozen_socket_pose(
         raise FileNotFoundError(f"frozen socket collision mesh missing: {socket_mesh}")
     if (Path(fixture.get("file_path", "")).resolve() != socket_mesh or
             calibration.record.get("socket_collision_mesh") != str(socket_mesh) or
-            calibration.record.get("socket_collision_mesh_sha256") !=
-            _sha256(socket_mesh)):
+            (verify_source_hash and
+             calibration.record.get("socket_collision_mesh_sha256") !=
+             _sha256(socket_mesh))):
         raise ValueError("socket collision mesh differs from frozen session asset")
     record_socket = validate_se3(
         calibration.record.get("socket_pose_robot"),

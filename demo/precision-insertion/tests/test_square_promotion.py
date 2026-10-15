@@ -124,7 +124,8 @@ def test_complete_square_pilot_promotes_once_and_catalog_binds_bytes(tmp_path):
         ["table", "4", "104"]]
     (output / "highres_report.json").write_text("{}", encoding="utf-8")
     assert select_pose_candidates(
-        catalog, expected_mode=mode, tabletop_pose_stem="004")[
+        catalog, expected_mode=mode, tabletop_pose_stem="004",
+        verify_sources=True)[
             "status"] == "catalog_stale"
     (output / "104" / "sim_traj.json").write_text("{}", encoding="utf-8")
     stale = build_endpoint_catalog(

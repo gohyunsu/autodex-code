@@ -45,8 +45,9 @@ def test_live_cli_rejects_implicit_stock_init_ports_before_motion(
 
 def test_default_exp_path_matches_stock_autodex_hierarchy(monkeypatch, tmp_path):
     mode = select_mode("cylinder", 20)
-    monkeypatch.setattr(run_live, "load_session_launch", lambda _path:
-                        SimpleNamespace(mode=mode))
+    launch = tmp_path / "launch.json"
+    launch.write_text(json.dumps({"mode": {"family": "cylinder",
+                                           "gap_mm": 20}}), encoding="utf-8")
     output = run_live.default_run_output(tmp_path / "launch.json",
                                          "precision-insertion")
     assert output.parent.parent == (Path.home() / "shared_data" / "AutoDex" /

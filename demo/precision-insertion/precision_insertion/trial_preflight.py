@@ -33,6 +33,7 @@ from .pose_selection import classify_key_tabletop_pose
 from .preflight import InsertionPreflight, plan_insertion_after_pickup
 from .repose_policy import assess_repose_options
 from .targets import build_rigid_insertion_targets
+from .timing_profile import timed
 from .world import build_trial_scene_from_session
 
 
@@ -296,19 +297,23 @@ def plan_fresh_key_trial(
                            for key in attempted)
     covered_ids = tuple(int(value) for value in covered_scenes)
 
-    scene = build_trial_scene_from_session(
-        mode=mode, shared_root=root, calibration=calibration,
-        key_pose_world=pose_world, max_axis_error_deg=max_pose_error_deg)
+    with timed("planning.scene_build", phase="planning"):
+        scene = build_trial_scene_from_session(
+            mode=mode, shared_root=root, calibration=calibration,
+            key_pose_world=pose_world, max_axis_error_deg=max_pose_error_deg)
     pose_robot = validate_se3(cart2se3(np.asarray(
         scene["mesh"]["target"]["pose"], dtype=float)),
         name="fresh trial T_robot_key")
-    pose_class = classify_key_tabletop_pose(
-        mode=mode, shared_root=root, pose_robot_key=pose_robot,
-        max_rotation_error_deg=max_pose_error_deg)
+    with timed("planning.pose_classification", phase="planning"):
+        pose_class = classify_key_tabletop_pose(
+            mode=mode, shared_root=root, pose_robot_key=pose_robot,
+            max_rotation_error_deg=max_pose_error_deg)
     stem = pose_class["stem"]
-    selected = select_pose_candidates(
-        catalog, expected_mode=mode, tabletop_pose_stem=stem,
-        attempted=attempted_keys, covered_scenes=covered_ids)
+    with timed("planning.catalog_select", phase="planning", kind="io",
+               tabletop_pose_stem=stem):
+        selected = select_pose_candidates(
+            catalog, expected_mode=mode, tabletop_pose_stem=stem,
+            attempted=attempted_keys, covered_scenes=covered_ids)
 
     def alternative_stems() -> tuple[str, ...]:
         candidates = sorted({row["tabletop_pose_stem"]
@@ -353,18 +358,23 @@ def plan_fresh_key_trial(
                     else candidates[:max_candidate_attempts])
         for candidate in budgeted:
             key = tuple(candidate["key"])
-            override = planner_candidate_override(
-                catalog=catalog, selected=[candidate], mode=mode,
-                session_record=calibration.record, pose_robot_key=pose_robot,
-                tabletop_pose_stem=stem)
+            candidate_id = "/".join(key)
+            with timed("planning.candidate_load", phase="planning", kind="io",
+                       candidate_id=candidate_id):
+                override = planner_candidate_override(
+                    catalog=catalog, selected=[candidate], mode=mode,
+                    session_record=calibration.record, pose_robot_key=pose_robot,
+                    tabletop_pose_stem=stem)
             if len(override[0]) != 1 or tuple(override[3][0]) != key:
                 raise ValueError("v8 loader did not return exactly the selected grasp")
             install_curobo_planner_compat()
             planner.set_start_state(start)
-            pickup = planner.plan(
-                scene, mode.key_object, "v8", hand="fr3_inspire",
-                skip_done=False, success_only=False,
-                candidate_override=override)
+            with timed("planning.v8_pickup", phase="planning", kind="planning",
+                       candidate_id=candidate_id):
+                pickup = planner.plan(
+                    scene, mode.key_object, "v8", hand="fr3_inspire",
+                    skip_done=False, success_only=False,
+                    candidate_override=override)
             row = {"key": list(key), "pickup_preflight_pass": bool(pickup.success),
                    "insertion_preflight_status": None}
             if not pickup.success:
@@ -381,11 +391,13 @@ def plan_fresh_key_trial(
             hold = nominal_inspire_hold_poses(
                 pickup.pregrasp_pose, pickup.grasp_pose,
             )["autodex_default_controller_hold"]
-            trial = plan_insertion_after_pickup(
-                planner=planner, pickup_plan=pickup, trial_scene=scene,
-                shared_root=root, calibration=calibration, targets=targets,
-                held_hand_q=hold, held_hand_source="commanded_nominal",
-                limits=limits, axial_waypoint_step_m=axial_waypoint_step_m)
+            with timed("planning.nominal_insertion", phase="planning",
+                       kind="planning", candidate_id=candidate_id):
+                trial = plan_insertion_after_pickup(
+                    planner=planner, pickup_plan=pickup, trial_scene=scene,
+                    shared_root=root, calibration=calibration, targets=targets,
+                    held_hand_q=hold, held_hand_source="commanded_nominal",
+                    limits=limits, axial_waypoint_step_m=axial_waypoint_step_m)
             row["insertion_preflight_status"] = trial.status
             if trial.status == "sampled_held_path_rejected":
                 row["sampled_audit_rejection"] = _rejected_path_summary(
