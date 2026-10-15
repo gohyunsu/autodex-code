@@ -20,6 +20,7 @@ from .repose_target_selector import (
 )
 from .reset_candidates import load_v8_reset_seeds
 from .session_policy import SessionDecision
+from .timing_profile import timed
 
 
 _ACTIONS = (
@@ -87,13 +88,14 @@ class LiveReposePlanningHandlers:
         # configure a larger key clearance for their printed object.
         parameters.setdefault("retreat_goal_arm_q", FR3_CLEAR_VIEW)
         parameters.setdefault("minimum_release_key_clearance_m", .005)
-        runner.preflight_repose(
-            planner=self.planner,
-            key_observation=latest.observation,
-            live_start_q=latest.state.full_q,
-            start_q_acquisition_timestamp_s=latest.state.sample_timestamp_s,
-            limits=self.path_limits, **dict(target),
-            **parameters)
+        with timed("repose.preflight", phase="repose", kind="planning"):
+            runner.preflight_repose(
+                planner=self.planner,
+                key_observation=latest.observation,
+                live_start_q=latest.state.full_q,
+                start_q_acquisition_timestamp_s=latest.state.sample_timestamp_s,
+                limits=self.path_limits, **dict(target),
+                **parameters)
 
     def handlers(self) -> dict[str, ActionHandler]:
         return {action: self.plan for action in _ACTIONS}

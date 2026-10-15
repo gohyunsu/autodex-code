@@ -29,6 +29,7 @@ from .original_pose_restoration import (
 from .repose_artifacts import write_repose_preflight_artifacts
 from .repose_execution_evidence import verify_repose_execution_evidence
 from .session_policy import SessionDecision
+from .timing_profile import timed
 
 
 _CAPTURE_KEYS = frozenset({
@@ -112,25 +113,28 @@ class LiveHeldReturnHandlers:
                     f"{sorted(unknown)}")
 
     def _capture_landing(self, runner, launch, decision):
-        self.live.clear_view.before_key_capture()
+        with timed("recovery.clear_view", phase="recovery", kind="motion"):
+            self.live.clear_view.before_key_capture()
         capture_id = self.capture_id_factory()
-        return capture_returned_key_for_reset(
-            runner=runner, clear_view=self.live.clear_view,
-            init_orchestrator=self.live.cameras.init_orchestrator,
-            acquisition_metadata_for_request=(
-                self.live.cameras.acquisition_metadata_for_request),
-            state_for_observation=self.state_for_observation,
-            capture_root=launch.capture_root,
-            key_evidence_dir=(runner.output_dir / "reset_key_captures" /
-                              capture_id),
-            capture_id=capture_id,
-            calibrated_camera_ids=set(launch.camera_ids),
-            intrinsics_full=launch.intrinsics_full,
-            extrinsics_full=launch.extrinsics_full,
-            image_hw=launch.image_hw, key_prompt=self.key_prompt,
-            view_limits=launch.view_limits,
-            expected_action=decision.action,
-            **dict(self.capture_parameters))
+        with timed("recovery.key_capture", phase="recovery", kind="camera",
+                   capture_id=capture_id):
+            return capture_returned_key_for_reset(
+                runner=runner, clear_view=self.live.clear_view,
+                init_orchestrator=self.live.cameras.init_orchestrator,
+                acquisition_metadata_for_request=(
+                    self.live.cameras.acquisition_metadata_for_request),
+                state_for_observation=self.state_for_observation,
+                capture_root=launch.capture_root,
+                key_evidence_dir=(runner.output_dir / "reset_key_captures" /
+                                  capture_id),
+                capture_id=capture_id,
+                calibrated_camera_ids=set(launch.camera_ids),
+                intrinsics_full=launch.intrinsics_full,
+                extrinsics_full=launch.extrinsics_full,
+                image_hw=launch.image_hw, key_prompt=self.key_prompt,
+                view_limits=launch.view_limits,
+                expected_action=decision.action,
+                **dict(self.capture_parameters))
 
     def restore_until_original(self, runner, decision, landed, launch):
         """Correct a misplaced key inside the same failed physical attempt."""
@@ -144,8 +148,10 @@ class LiveHeldReturnHandlers:
                     geometry["center_xy_displacement_m"] <=
                     self.landing_parameters["max_return_center_shift_m"]):
                 break
-            restoration_log, completed_at = self._restore_original(
-                runner, decision, landed, index)
+            with timed("recovery.restore_attempt", phase="recovery",
+                       restoration_index=index):
+                restoration_log, completed_at = self._restore_original(
+                    runner, decision, landed, index)
             restoration_logs.append(restoration_log)
             landed = self._capture_landing(runner, launch, decision)
             if landed.observation.acquisition_interval_s[0] <= completed_at:
@@ -160,32 +166,34 @@ class LiveHeldReturnHandlers:
         geometry = runner.reset_landing_geometry(
             key_observation=landed.observation,
             max_pose_error_deg=self.landing_parameters["max_pose_error_deg"])
-        plan, scene = plan_original_pose_restoration(
-            planner=self.planner, shared_root=runner.shared_root,
-            mode=runner.mode, calibration=runner.calibration,
-            catalog=runner.catalog, key_observation=landed.observation,
-            measured_start_q=landed.state.full_q,
-            start_q_timestamp_s=landed.state.sample_timestamp_s,
-            max_state_skew_s=self.capture_parameters["max_key_state_skew_s"],
-            target_pose_stem=geometry["target_pose_stem"],
-            target_xy_robot_m=original_center_release_xy(
-                shared_root=runner.shared_root, mode=runner.mode,
+        with timed("recovery.restore_plan", phase="recovery", kind="planning",
+                   restoration_index=index):
+            plan, scene = plan_original_pose_restoration(
+                planner=self.planner, shared_root=runner.shared_root,
+                mode=runner.mode, calibration=runner.calibration,
+                catalog=runner.catalog, key_observation=landed.observation,
+                measured_start_q=landed.state.full_q,
+                start_q_timestamp_s=landed.state.sample_timestamp_s,
+                max_state_skew_s=self.capture_parameters["max_key_state_skew_s"],
                 target_pose_stem=geometry["target_pose_stem"],
-                original_center_xy_robot_m=(
-                    geometry["original_center_xy_robot_m"]),
-                key_center_local_m=geometry["key_center_local_m"]),
-            release_height_cm=self.restoration_height_cm,
-            max_pose_error_deg=self.landing_parameters["max_pose_error_deg"],
-            minimum_rest_socket_clearance_m=(
-                self.landing_parameters["minimum_rest_socket_clearance_m"]),
-            minimum_board_edge_clearance_m=(
-                self.landing_parameters["minimum_board_edge_clearance_m"]),
-            minimum_release_key_clearance_m=(
-                self.return_parameters["minimum_release_key_clearance_m"]),
-            retreat_goal_arm_q=np.asarray(FR3_CLEAR_VIEW, dtype=float),
-            limits=self.limits,
-            preferred_candidate_key=tuple(
-                runner.active_attempt.candidate_id.split("/")))
+                target_xy_robot_m=original_center_release_xy(
+                    shared_root=runner.shared_root, mode=runner.mode,
+                    target_pose_stem=geometry["target_pose_stem"],
+                    original_center_xy_robot_m=(
+                        geometry["original_center_xy_robot_m"]),
+                    key_center_local_m=geometry["key_center_local_m"]),
+                release_height_cm=self.restoration_height_cm,
+                max_pose_error_deg=self.landing_parameters["max_pose_error_deg"],
+                minimum_rest_socket_clearance_m=(
+                    self.landing_parameters["minimum_rest_socket_clearance_m"]),
+                minimum_board_edge_clearance_m=(
+                    self.landing_parameters["minimum_board_edge_clearance_m"]),
+                minimum_release_key_clearance_m=(
+                    self.return_parameters["minimum_release_key_clearance_m"]),
+                retreat_goal_arm_q=np.asarray(FR3_CLEAR_VIEW, dtype=float),
+                limits=self.limits,
+                preferred_candidate_key=tuple(
+                    runner.active_attempt.candidate_id.split("/")))
         if plan.status != "nominal_reset_preflight_pass_drop_unobserved":
             raise RuntimeError(f"original-pose restoration unavailable: {plan.status}")
         folder = Path(runner._attempt_dir) / "reset_restoration" / f"{index:03d}"
@@ -205,8 +213,10 @@ class LiveHeldReturnHandlers:
                 "catalog": runner.output_dir / "endpoint_catalog.json",
                 "key_pose_world": key_file, "live_start_q": state_file,
                 "limits": limits_file}) / "report.json"
-        execution = Path(self.execute_restoration(
-            runner, decision, plan, report)).expanduser().resolve()
+        with timed("recovery.restore_motion", phase="recovery", kind="motion",
+                   restoration_index=index):
+            execution = Path(self.execute_restoration(
+                runner, decision, plan, report)).expanduser().resolve()
         verified = verify_repose_execution_evidence(
             path=execution, attempt_id=runner.active_attempt.attempt_id,
             attempt_started_at_s=runner.active_attempt.started_at_s,

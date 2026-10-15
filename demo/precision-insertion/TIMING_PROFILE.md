@@ -102,6 +102,10 @@ Important nested stages include:
 - `evidence.undistort_validate`, `evidence.png_write_hash`,
   `evidence.png_read_verify`, `evidence.undistort_replay` and
   `evidence.live_manifest_reuse`.
+- Failed-trial `recovery.clear_view`, `recovery.key_capture`,
+  `recovery.restore_plan`, `recovery.restore_motion` and
+  `recovery.restore_attempt`; pose-exhaustion `repose.preflight`,
+  `repose.motion`, `repose.key_capture` and `repose.landing_assessment`.
 
 `audit.fixed_world_build` should normally occur once per immutable socket
 session; dynamic key/arm trajectory checks still run for each candidate.

@@ -20,6 +20,7 @@ from .failed_return_evidence import verify_failed_return_execution
 from .live_key_trial import capture_returned_key_for_reset
 from .preinsert_checkpoint import _transfer_log, visible_held_transfer_return
 from .session_policy import SessionDecision
+from .timing_profile import timed
 
 
 @dataclass
@@ -139,38 +140,48 @@ class LiveTransferRecoveryHandlers:
                          callable(self.record_execution),
                          isinstance(self.return_parameters, Mapping)))
         if runner.active_attempt.labels["grasp_success"] is False:
-            recovery_log = self._recover_missed_grasp(runner)
+            with timed("recovery.missed_grasp_clear", phase="recovery",
+                       kind="motion"):
+                recovery_log = self._recover_missed_grasp(runner)
         elif automatic and self._completed_held_transfer(runner):
-            recovery_log = self._return_held_key(runner, decision)
+            with timed("recovery.held_transfer_return", phase="recovery",
+                       kind="motion"):
+                recovery_log = self._return_held_key(runner, decision)
         else:
-            recovery_log = Path(self.recover_to_tabletop(
-                runner, decision)).expanduser().resolve()
+            with timed("recovery.supervised_return", phase="recovery",
+                       kind="motion"):
+                recovery_log = Path(self.recover_to_tabletop(
+                    runner, decision)).expanduser().resolve()
         if not recovery_log.is_file():
             raise FileNotFoundError("transfer recovery returned no completion log")
-        self.live.clear_view.before_key_capture()
+        with timed("recovery.clear_view", phase="recovery", kind="motion"):
+            self.live.clear_view.before_key_capture()
         launch = self.live.cameras.launch
         capture_id = self.capture_id_factory()
-        landed = capture_returned_key_for_reset(
-            runner=runner, clear_view=self.live.clear_view,
-            init_orchestrator=self.live.cameras.init_orchestrator,
-            acquisition_metadata_for_request=(
-                self.live.cameras.acquisition_metadata_for_request),
-            state_for_observation=self.state_for_observation,
-            capture_root=launch.capture_root,
-            key_evidence_dir=(runner.output_dir / "transfer_reset_key_captures" /
-                              capture_id),
-            capture_id=capture_id,
-            calibrated_camera_ids=set(launch.camera_ids),
-            intrinsics_full=launch.intrinsics_full,
-            extrinsics_full=launch.extrinsics_full,
-            image_hw=launch.image_hw, key_prompt=self.key_prompt,
-            view_limits=launch.view_limits,
-            expected_action="recover_key_then_reobserve",
-            **dict(self.capture_parameters))
+        with timed("recovery.key_capture", phase="recovery", kind="camera",
+                   capture_id=capture_id):
+            landed = capture_returned_key_for_reset(
+                runner=runner, clear_view=self.live.clear_view,
+                init_orchestrator=self.live.cameras.init_orchestrator,
+                acquisition_metadata_for_request=(
+                    self.live.cameras.acquisition_metadata_for_request),
+                state_for_observation=self.state_for_observation,
+                capture_root=launch.capture_root,
+                key_evidence_dir=(runner.output_dir / "transfer_reset_key_captures" /
+                                  capture_id),
+                capture_id=capture_id,
+                calibrated_camera_ids=set(launch.camera_ids),
+                intrinsics_full=launch.intrinsics_full,
+                extrinsics_full=launch.extrinsics_full,
+                image_hw=launch.image_hw, key_prompt=self.key_prompt,
+                view_limits=launch.view_limits,
+                expected_action="recover_key_then_reobserve",
+                **dict(self.capture_parameters))
         restoration_logs = ()
         if callable(self.restore_original):
-            landed, restoration_logs = self.restore_original(
-                runner, decision, landed, launch)
+            with timed("recovery.restore_until_original", phase="recovery"):
+                landed, restoration_logs = self.restore_original(
+                    runner, decision, landed, launch)
         runner.observe_reset_landing(
             key_observation=landed.observation,
             key_evidence_dir=landed.key_evidence_dir,
