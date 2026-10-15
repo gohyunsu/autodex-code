@@ -1051,8 +1051,9 @@ The first independent helpers are in `precision_insertion/`:
   and excessive measured-versus-commanded hand error or arm velocity, then
   supplies a typed `LiveRobotState` to the post-lift preflight. Do **not** use
   `FrankaExecutor.get_hand_qpos()` for this: it returns `commanded_nominal`.
-  Franka `get_data()["time"]` is controller uptime, so this adapter waits for
-  an advanced state and stamps robot-PC receipt time; Inspire time is a
+  Franka `get_data()["time"]` comes from the local daemon's host monotonic
+  clock. This adapter converts that timestamp to robot-PC wall time and
+  rejects stale states without waiting for another packet; Inspire time is a
   software read time. Their skew check does not prove hardware-level
   simultaneity or camera synchronization. Thresholds must be commissioned.
 - `live_capture.collect_key_capture()` reuses the socket capture's strict
@@ -1176,12 +1177,11 @@ joint_sample = read_live_franka_inspire_state(
     max_arm_hand_skew_s=commissioned_arm_hand_skew_s,
     max_sample_age_s=commissioned_state_age_s,
     max_hand_command_error_raw=commissioned_hand_tracking_error_raw,
-    max_arm_update_wait_s=commissioned_state_update_wait_s,
     max_arm_velocity_rad_s=commissioned_stationary_velocity_rad_s,
 )
 ```
 
-The five limits are experiment-specific measurements, not values inferred by
+The four limits are experiment-specific measurements, not values inferred by
 this helper. Pass `joint_sample` to `plan_postlift_observed_transfer` along
 with the same arm–hand skew, hand-error and velocity limits for boundary
 revalidation. The sample's single wrench vector is diagnostic only; guarded
@@ -2718,7 +2718,6 @@ feedback_sampler = RobotFeedbackSampler(
         max_arm_hand_skew_s=commissioned_arm_hand_skew_s,
         max_sample_age_s=commissioned_feedback_age_s,
         max_hand_command_error_raw=commissioned_hand_error_raw,
-        max_arm_update_wait_s=commissioned_arm_update_wait_s,
         max_arm_velocity_rad_s=commissioned_hold_velocity_rad_s,
     ),
     period_s=commissioned_feedback_period_s,

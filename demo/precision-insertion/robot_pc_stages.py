@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from precision_insertion.grounded_alignment import AlignmentLimits
 from precision_insertion.lift_execution import LiftExecutionLimits
-from precision_insertion.live_robot_state import LiveRobotState
 from precision_insertion.path_audit import PathAuditLimits
 from precision_insertion.pickup_execution import PickupExecutionLimits
 from precision_insertion.retry_session import RetrySessionLimits
@@ -90,11 +89,9 @@ def configure(core, live, options) -> dict:
         raise PermissionError("FR3 stages require explicit robot motion opt-in")
 
     def motion_interlock() -> bool:
-        # A fresh measured read and the CLI opt-in are the software gate.
-        # The operator's physical E-stop remains independent of this callback.
-        if options.enable_robot_motion is not True:
-            return False
-        return isinstance(core.read_state(), LiveRobotState)
+        # Each motion boundary already checks its own fresh measured start.
+        # Do not add a second FR3 read that can fail after that check passes.
+        return options.enable_robot_motion is True
 
     path = _path_limits()
     motion = _motion_limits()

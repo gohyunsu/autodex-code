@@ -186,7 +186,6 @@ core = open_franka_core(FrankaFeedbackSettings(
     max_arm_hand_skew_s=commissioned_key_parameters["max_arm_hand_skew_s"],
     max_sample_age_s=commissioned_feedback_age_s,
     max_hand_command_error_raw=commissioned_key_parameters["max_hand_command_error_raw"],
-    max_arm_update_wait_s=commissioned_arm_update_wait_s,
     max_arm_velocity_rad_s=commissioned_key_parameters["max_arm_velocity_rad_s"],
 ))
 franka_executor, planner = core.executor, core.planner

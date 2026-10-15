@@ -34,6 +34,7 @@ from .timing_profile import timed
 
 _SCHEMA = "precision_insertion_franka_integration_v1"
 _FEEDBACK_KEYS = frozenset(FrankaFeedbackSettings.__dataclass_fields__)
+_OBSOLETE_FEEDBACK_KEYS = frozenset({"max_arm_update_wait_s"})
 _SAMPLING_KEYS = frozenset(FrankaSamplingSettings.__dataclass_fields__)
 _VLM_KEYS = frozenset({"mode", "model_id", "max_new_tokens",
                        "require_native_pixels", "capture_timeout_s",
@@ -140,7 +141,8 @@ def load_franka_integration_config(
                            "stages_factory", "vlm", "lift_monitor",
                            "held_motion_monitor"} or
             not isinstance(record["feedback"], dict) or
-            set(record["feedback"]) != _FEEDBACK_KEYS):
+            not _FEEDBACK_KEYS <= set(record["feedback"]) <= (
+                _FEEDBACK_KEYS | _OBSOLETE_FEEDBACK_KEYS)):
         raise ValueError("FR3 robot config needs schema, feedback and stages_factory")
     if any(type(value) not in (float, int) or
            not math.isfinite(value) or value <= 0
@@ -170,7 +172,8 @@ def load_franka_integration_config(
     return {
         "source": source,
         "record": record,
-        "feedback": FrankaFeedbackSettings(**record["feedback"]),
+        "feedback": FrankaFeedbackSettings(**{
+            key: record["feedback"][key] for key in _FEEDBACK_KEYS}),
         "sampling": sampling,
         "vlm": vlm,
         "lift_monitor": lift_monitor,

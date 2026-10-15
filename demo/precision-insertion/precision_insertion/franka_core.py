@@ -24,7 +24,6 @@ class FrankaFeedbackSettings:
     max_arm_hand_skew_s: float
     max_sample_age_s: float
     max_hand_command_error_raw: float
-    max_arm_update_wait_s: float
     max_arm_velocity_rad_s: float
 
 
@@ -84,7 +83,6 @@ class FrankaRuntimeCore:
                 max_sample_age_s=self.feedback.max_sample_age_s,
                 max_hand_command_error_raw=(
                     settings.max_sampling_hand_command_error_raw),
-                max_arm_update_wait_s=self.feedback.max_arm_update_wait_s,
                 max_arm_velocity_rad_s=(
                     settings.max_sampling_arm_velocity_rad_s))
 
@@ -159,7 +157,6 @@ def open_franka_core(
                 max_arm_hand_skew_s=feedback.max_arm_hand_skew_s,
                 max_sample_age_s=feedback.max_sample_age_s,
                 max_hand_command_error_raw=feedback.max_hand_command_error_raw,
-                max_arm_update_wait_s=feedback.max_arm_update_wait_s,
                 max_arm_velocity_rad_s=feedback.max_arm_velocity_rad_s)
 
         clear_view = ClearViewForPerception(

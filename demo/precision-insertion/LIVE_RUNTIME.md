@@ -128,7 +128,6 @@ For the first-party FR3 resource path, create a robot-PC JSON file such as:
     "max_arm_hand_skew_s": 0.1,
     "max_sample_age_s": 1.0,
     "max_hand_command_error_raw": 20.0,
-    "max_arm_update_wait_s": 0.2,
     "max_arm_velocity_rad_s": 0.05
   },
   "sampling": {

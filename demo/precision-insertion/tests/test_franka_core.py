@@ -12,7 +12,7 @@ from precision_insertion import franka_core  # noqa: E402
 
 
 def _settings():
-    return franka_core.FrankaFeedbackSettings(.1, 1., 20., .2, .05)
+    return franka_core.FrankaFeedbackSettings(.1, 1., 20., .05)
 
 
 def _executor(events):

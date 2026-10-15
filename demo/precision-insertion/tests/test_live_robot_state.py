@@ -25,13 +25,7 @@ def _devices():
                 "qvel": np.zeros(7),
                 "wrench": np.arange(6) * 0.1, "time": 10.0}
     hand_data = {"qpos": raw.copy(), "action": raw.copy(), "time": 100.01}
-    reads = {"count": 0}
-
-    def arm_read():
-        reads["count"] += 1
-        return {**arm_data, "time": (10.0 if reads["count"] == 1 else 10.001)}
-
-    arm = SimpleNamespace(get_data=arm_read)
+    arm = SimpleNamespace(get_data=lambda: arm_data)
     hand = SimpleNamespace(get_data=lambda: hand_data)
     return arm, hand, arm_data, hand_data, hand_planner
 
@@ -39,10 +33,12 @@ def _devices():
 def _read(arm, hand, monkeypatch):
     monkeypatch.setattr("precision_insertion.live_robot_state.time.time",
                         lambda: 100.0)
+    monkeypatch.setattr("precision_insertion.live_robot_state.time.monotonic",
+                        lambda: 10.0)
     return read_live_franka_inspire_state(
         arm=arm, hand=hand, max_arm_hand_skew_s=0.03,
         max_sample_age_s=0.05, max_hand_command_error_raw=30,
-        max_arm_update_wait_s=0.02, max_arm_velocity_rad_s=0.05,
+        max_arm_velocity_rad_s=0.05,
         now_s=100.02)
 
 
@@ -52,7 +48,7 @@ def test_measured_raw_hand_becomes_planner_joint_order(monkeypatch):
     np.testing.assert_allclose(result.full_q[:7], np.arange(7) * 0.01)
     np.testing.assert_allclose(result.full_q[7:], expected_hand, atol=1e-10)
     assert result.sample_timestamp_s == pytest.approx(100.005)
-    assert result.arm_robot_uptime_s == pytest.approx(10.001)
+    assert result.arm_robot_uptime_s == pytest.approx(10.0)
     assert result.source == "robot_joint_feedback"
     assert result.to_record()["hand_raw_measured"] != expected_hand.tolist()
 
@@ -92,14 +88,22 @@ def test_invalid_raw_range_and_wrench_are_rejected(monkeypatch):
         _read(arm, hand, monkeypatch)
 
 
-def test_franka_uptime_without_a_new_state_is_not_a_wall_clock(monkeypatch):
+def test_recent_daemon_state_needs_no_second_packet_but_stale_state_rejects(
+        monkeypatch):
     arm, hand, arm_data, _, _ = _devices()
-    arm.get_data = lambda: arm_data
     monkeypatch.setattr("precision_insertion.live_robot_state.time.time",
                         lambda: 100.0)
-    with pytest.raises(TimeoutError, match="did not advance"):
+    monkeypatch.setattr("precision_insertion.live_robot_state.time.monotonic",
+                        lambda: 10.0)
+    result = read_live_franka_inspire_state(
+        arm=arm, hand=hand, max_arm_hand_skew_s=0.03,
+        max_sample_age_s=0.05, max_hand_command_error_raw=30,
+        max_arm_velocity_rad_s=0.05, now_s=100.02)
+    assert result.arm_robot_uptime_s == arm_data["time"]
+    monkeypatch.setattr("precision_insertion.live_robot_state.time.monotonic",
+                        lambda: 10.1)
+    with pytest.raises(ValueError, match="stale or not on the host clock"):
         read_live_franka_inspire_state(
             arm=arm, hand=hand, max_arm_hand_skew_s=0.03,
             max_sample_age_s=0.05, max_hand_command_error_raw=30,
-            max_arm_update_wait_s=0.01, max_arm_velocity_rad_s=0.05,
-            now_s=100.02)
+            max_arm_velocity_rad_s=0.05, now_s=100.02)

@@ -18,6 +18,10 @@ import numpy as np
 from autodex.utils.sync import convert_inspire_raw
 
 
+class FrankaStateUnavailable(ValueError):
+    """The latest daemon state is absent or older than the allowed age."""
+
+
 @dataclass(frozen=True)
 class LiveRobotState:
     full_q: np.ndarray
@@ -101,49 +105,38 @@ def _finite_vector(value, size: int, name: str) -> np.ndarray:
 def read_live_franka_inspire_state(
     *, arm, hand, max_arm_hand_skew_s: float,
     max_sample_age_s: float, max_hand_command_error_raw: float,
-    max_arm_update_wait_s: float, max_arm_velocity_rad_s: float,
+    max_arm_velocity_rad_s: float,
     now_s: float | None = None,
 ) -> LiveRobotState:
-    """Read two controller snapshots on an externally verified common clock.
+    """Read measured joints using the daemon's host monotonic timestamp.
 
-    Read these during a stationary hold. ParaDex Franka ``get_data()['time']``
-    is controller uptime, **not** Unix time. Wait for a *new* streamed state
-    and stamp its receipt on the robot PC wall clock. ParaDex hand
-    ``get_data()['time']`` is a software read time, not a motor-latched time.
-    Their small skew is necessary but not sufficient proof of simultaneity.
+    The stock ParaDex daemon stamps state with ``steady_clock`` on this PC;
+    the live container uses its host clock. Convert its age to a wall-clock
+    timestamp without waiting for another state packet. A blocking FR3 move
+    can pause the publisher, so only the actual state age is relevant here.
+    The hand's ``time`` is a software read time, not a motor-latched time.
     The camera clock still needs separate commissioning.
     """
     thresholds = (max_arm_hand_skew_s, max_sample_age_s,
-                  max_hand_command_error_raw, max_arm_update_wait_s,
-                  max_arm_velocity_rad_s)
+                  max_hand_command_error_raw, max_arm_velocity_rad_s)
     if not all(math.isfinite(float(v)) and float(v) > 0 for v in thresholds):
         raise ValueError("joint age, skew and hand-error limits must be positive")
-    baseline = arm.get_data()
-    if not isinstance(baseline, dict):
-        raise ValueError("FR3 state stream is unavailable")
-    baseline_uptime = float(baseline.get("time", float("nan")))
-    if not math.isfinite(baseline_uptime):
-        raise ValueError("FR3 controller uptime is invalid")
-    deadline = time.monotonic() + max_arm_update_wait_s
-    arm_data = None
-    arm_receipt_time = None
-    while time.monotonic() < deadline:
-        sample = arm.get_data()
-        if isinstance(sample, dict):
-            uptime = float(sample.get("time", float("nan")))
-            if math.isfinite(uptime) and uptime > baseline_uptime:
-                arm_data = sample
-                arm_receipt_time = time.time()
-                break
-        time.sleep(0.002)
-    if arm_data is None:
-        raise TimeoutError("FR3 state stream did not advance after sampling began")
+    arm_data = arm.get_data()
+    if not isinstance(arm_data, dict):
+        raise FrankaStateUnavailable("FR3 state stream is unavailable")
+    arm_uptime = float(arm_data.get("time", float("nan")))
+    host_monotonic = time.monotonic()
+    host_wall = time.time()
+    state_age = host_monotonic - arm_uptime
+    if (not math.isfinite(state_age) or state_age < 0 or
+            state_age > max_sample_age_s):
+        raise FrankaStateUnavailable(
+            "FR3 state stream is stale or not on the host clock")
+    arm_time = host_wall - state_age
     hand_data = hand.get_data()
     now = time.time() if now_s is None else float(now_s)
     if not isinstance(hand_data, dict):
         raise ValueError("FR3 and Inspire feedback must both be available")
-    arm_time = float(arm_receipt_time)
-    arm_uptime = float(arm_data["time"])
     hand_time = float(hand_data.get("time", float("nan")))
     if (not all(math.isfinite(t) and t > 0 for t in
                 (now, arm_time, hand_time)) or

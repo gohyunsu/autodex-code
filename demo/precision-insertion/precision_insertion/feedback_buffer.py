@@ -19,7 +19,7 @@ from typing import Callable
 import numpy as np
 
 from .key_perception import KeyPoseObservation
-from .live_robot_state import LiveRobotState
+from .live_robot_state import FrankaStateUnavailable, LiveRobotState
 from .raw_camera_capture import RawCameraCapture
 
 
@@ -236,8 +236,8 @@ class RobotFeedbackSampler:
     sampler never creates controllers or sends arm/hand commands. For a
     session-long sampler, use the buffer's wider *sampling* limits and pass
     those same limits to the state reader: motion is recorded, then rejected
-    if it overlaps a camera exposure. A read or invalid-sample error stops
-    sampling and makes later lookups fail closed.
+    if it overlaps a camera exposure. A stale sample is simply omitted;
+    the next exposure lookup still requires actual feedback on both sides.
     """
 
     def __init__(
@@ -270,6 +270,13 @@ class RobotFeedbackSampler:
             try:
                 self.buffer.append(self.sample_state())
                 self._ready.set()
+            except FrankaStateUnavailable:
+                # Stock blocking moves can pause the daemon's state publisher.
+                # Skip an unavailable/stale state instead of making
+                # the entire session fail long after the move has completed.
+                # Capture lookups still need measured exposure brackets.
+                self._stop.wait(self.period_s)
+                continue
             except Exception as exc:
                 self._failure = exc
                 self._stop.set()

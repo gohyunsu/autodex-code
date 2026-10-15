@@ -15,7 +15,9 @@ from precision_insertion.feedback_buffer import (  # noqa: E402
     ExposureStateBuffer, RobotFeedbackSampler,
 )
 from precision_insertion.key_perception import KeyPoseObservation  # noqa: E402
-from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
+from precision_insertion.live_robot_state import (  # noqa: E402
+    FrankaStateUnavailable, LiveRobotState,
+)
 from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
 
 
@@ -141,6 +143,44 @@ def test_nonmonotone_feedback_and_reader_failure_reject():
     with pytest.raises(RuntimeError, match="sampling failed"):
         sampler.state_for_observation(_observation())
     sampler.close()
+
+
+def test_sampler_recovers_after_a_transient_fr3_update_timeout():
+    buffer = _buffer()
+    resumed = threading.Event()
+    append = buffer.append
+
+    def record_append(state):
+        append(state)
+        if state.sample_timestamp_s >= 100.04:
+            resumed.set()
+
+    buffer.append = record_append
+    calls = 0
+
+    def reader():
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise FrankaStateUnavailable("FR3 state stream is stale")
+        return _state(100. + (calls - (calls > 2)) * .02)
+
+    with RobotFeedbackSampler(buffer, reader, period_s=.001) as sampler:
+        sampler.wait_until_ready(timeout_s=1.)
+        assert resumed.wait(timeout=1.)
+        selected = sampler.state_for_observation(_observation())
+        assert selected.sample_timestamp_s == 100.02
+
+
+def test_sampler_never_admits_capture_without_a_live_fr3_update():
+    def stalled_reader():
+        raise FrankaStateUnavailable("FR3 state stream is stale")
+
+    with RobotFeedbackSampler(_buffer(), stalled_reader, period_s=.001) as sampler:
+        with pytest.raises(TimeoutError, match="no measured feedback"):
+            sampler.wait_until_ready(timeout_s=.02)
+        with pytest.raises(ValueError, match="does not bracket"):
+            sampler.state_for_observation(_observation())
 
 
 def test_sampler_warms_up_before_camera_and_rejects_reuse_after_close():

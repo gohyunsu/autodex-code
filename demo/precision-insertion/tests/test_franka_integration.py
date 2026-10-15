@@ -35,6 +35,18 @@ def _config():
     }
 
 
+def test_obsolete_update_wait_is_ignored_in_existing_robot_config(tmp_path):
+    old = _config()
+    path = _options(tmp_path, old).robot_config_path
+    with_old = franka_integration.load_franka_integration_config(
+        path, import_stages=False)["feedback"]
+    old["feedback"].pop("max_arm_update_wait_s")
+    path.write_text(json.dumps(old), encoding="utf-8")
+    without_old = franka_integration.load_franka_integration_config(
+        path, import_stages=False)["feedback"]
+    assert with_old == without_old
+
+
 def test_franka_integration_reuses_core_and_existing_stage_assembly(
         monkeypatch, tmp_path):
     events = []

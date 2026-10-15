@@ -28,7 +28,7 @@ dataclasses and JSON fields.
 | Group | Field(s) | Proposed value | Reason |
 | --- | --- | ---: | --- |
 | `feedback` | `max_arm_hand_skew_s` | `0.10 s` | Read-only probe measured about 0.032 s. |
-| `feedback` | `max_sample_age_s`, `max_arm_update_wait_s` | `1.0 s`, `0.20 s` | Fresh state without requiring an exact packet instant. |
+| `feedback` | `max_sample_age_s` | `1.0 s` | Compare the daemon's host-monotonic state timestamp to the robot PC clock; no second-packet wait. |
 | `feedback` | `max_hand_command_error_raw`, `max_arm_velocity_rad_s` | `30 raw`, `0.05 rad/s` | Probe saw 14 raw and 0.00090 rad/s while stationary; 0.05 matches the completion-check stop bound. |
 | `sampling` | `period_s`, `max_samples` | `0.01 s`, `16384` | About 164 s retained at the requested sampling rate. The observed key QA report was saved 42.9 s after its camera request ended, so a 2048-sample/20 s ring would lose the exposure bracket before key inference returned. |
 | `sampling` | `max_bracket_span_s`, `max_key_state_skew_s` | `10.0 s`, `5.0 s` | Actual board-9 socket request bound was 7.582 s; the midpoint can be 3.791 s from either end. Robot must remain stationary throughout the entire bounded request. |
