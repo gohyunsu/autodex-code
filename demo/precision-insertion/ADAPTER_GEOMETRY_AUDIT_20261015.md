@@ -11,6 +11,12 @@ The saved manifest at
 records `run_pipeline.py --obj pepsi --arm franka --hand inspire --grasp_version
 v8 --auto`. Its code path in `src/execution/run_auto.py`:
 
+The inspected `/home/robot/AutoDex` checkout is clean at `448732d` dated
+2026-09-30; the four traced stock source files have September modification
+times. The October 12 manifest does not record a source commit, so the exact
+runtime source hash is inferred from this unchanged local checkout rather
+than independently proved by the episode manifest.
+
 1. Loads the current camera calibration, distributed FoundPose result, and
    object-processing mesh. `save_arm_C2R` saves the latest hand-eye transform;
    this episode's `C2R_meta.json` identifies `fr3_link8` and session
