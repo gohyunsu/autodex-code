@@ -22,7 +22,8 @@ import numpy as np
 from .config import TaskMode
 from .calibration import validate_session_camera_calibration
 from .frame_provenance import (
-    exceeds_static_capture_skew_limit, verify_frame_provenance,
+    exceeds_static_capture_skew_limit, verify_frame_metadata,
+    verify_frame_provenance,
 )
 from .geometry import pose_angle_deg, validate_se3
 from .live_capture import KeyCaptureInput
@@ -182,8 +183,10 @@ def _admit_key_capture_common(
         raise TypeError("fresh key capture must be KeyCaptureInput")
     if mode.key_object != getattr(init_orchestrator, "obj_name", None):
         raise ValueError("FoundPose is not initialized for selected v8 key")
-    if (not capture.images_bgr or
-            not set(capture.images_bgr) <= calibrated_camera_ids or
+    pose_only = not capture.images_bgr
+    camera_ids = set(capture.masks) if pose_only else set(capture.images_bgr)
+    if (not camera_ids or not camera_ids <= calibrated_camera_ids or
+            (pose_only and held_phase) or
             set(getattr(init_orchestrator, "intrinsics_undist", {})) !=
             calibrated_camera_ids or
             set(getattr(init_orchestrator, "extrinsics", {})) !=
@@ -198,7 +201,7 @@ def _admit_key_capture_common(
             "perception_method", "stock_full_frame_sam3_foundpose"),
          capture.poses.get(serial, {}).get(
             "perception_method", "stock_full_frame_sam3_foundpose"))
-        for serial in capture.images_bgr}
+        for serial in camera_ids}
     if (len(perception_inputs) != 1 or
             next(iter(perception_inputs))[0] !=
             next(iter(perception_inputs))[1]):
@@ -216,17 +219,23 @@ def _admit_key_capture_common(
             silhouette_loss_threshold <= 0):
         raise ValueError("key consistency/refinement limits must be commissioned")
     frame_ids = {}
-    for serial in capture.images_bgr:
+    for serial in camera_ids:
         mask_fid = capture.masks.get(serial, {}).get("frame_id")
         pose_fid = capture.poses.get(serial, {}).get("frame_id")
         if mask_fid != pose_fid:
             raise ValueError("key SAM/FoundPose frame IDs differ")
         frame_ids[serial] = mask_fid
-    verified = verify_frame_provenance(
-        {"request_id": capture.request_id, "source": capture.frame_timestamp_source,
-         "frames": capture.frame_evidence},
-        request_id=capture.request_id, images_bgr=capture.images_bgr,
-        frame_ids=frame_ids)
+    metadata = {
+        "request_id": capture.request_id,
+        "source": capture.frame_timestamp_source,
+        "frames": capture.frame_evidence}
+    if pose_only:
+        verified = verify_frame_metadata(
+            metadata, request_id=capture.request_id, frame_ids=frame_ids)
+    else:
+        verified = verify_frame_provenance(
+            metadata, request_id=capture.request_id,
+            images_bgr=capture.images_bgr, frame_ids=frame_ids)
     if (capture.frame_timestamps_s !=
             {serial: row["timestamp_s"] for serial, row in verified.items()}):
         raise ValueError("key frame times differ from bound images")
@@ -282,7 +291,10 @@ def _admit_key_capture_common(
             images_bgr=capture.images_bgr,
             intrinsics_undist=init_orchestrator.intrinsics_undist,
             extrinsics_full=init_orchestrator.extrinsics,
-            dilation_px=socket_projection_dilation_px)
+            dilation_px=socket_projection_dilation_px,
+            image_shapes=(
+                {serial: tuple(np.asarray(capture.masks[serial]["mask"]).shape)
+                 for serial in camera_ids} if pose_only else None))
         for row in admitted.observations:
             serial = row.camera_id
             overlap = key_mask_socket_overlap_fraction(
@@ -652,6 +664,84 @@ def write_key_capture_artifacts(
     return target
 
 
+def write_key_pose_artifacts(
+    capture: KeyCaptureInput, observation: KeyPoseObservation,
+    output_dir: Path,
+) -> Path:
+    """Save FoundPose planning inputs without waiting for daemon image PNGs.
+
+    The independent initial-tabletop visual capture is saved separately and
+    carries its own request, frame IDs, timestamps and undistortion evidence.
+    """
+    if (capture.images_bgr or observation.phase != "tabletop" or
+            capture.capture_id != observation.capture_id or
+            capture.request_id != observation.request_id or
+            capture.frame_evidence != observation.frame_evidence or
+            set(capture.masks) != set(capture.poses) or
+            set(capture.masks) != set(capture.frame_evidence)):
+        raise ValueError("pose-only key evidence has mismatched inputs")
+    frame_ids = {}
+    for serial in capture.masks:
+        mask_fid = capture.masks[serial].get("frame_id")
+        if mask_fid != capture.poses[serial].get("frame_id"):
+            raise ValueError("key SAM/FoundPose frame IDs differ")
+        frame_ids[serial] = mask_fid
+    verified = verify_frame_metadata(
+        {"request_id": capture.request_id,
+         "source": capture.frame_timestamp_source,
+         "frames": capture.frame_evidence},
+        request_id=capture.request_id, frame_ids=frame_ids)
+    if (capture.frame_timestamps_s !=
+            {serial: row["timestamp_s"] for serial, row in verified.items()}):
+        raise ValueError("key pose timestamps differ from source frames")
+    target = Path(output_dir).expanduser().resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.mkdir(exist_ok=False)
+    mask_dir = target / "masks"
+    mask_dir.mkdir()
+    payloads = {
+        "capture_id": capture.capture_id,
+        "request_id": capture.request_id,
+        "sam_prompt": capture.prompt,
+        "frame_timestamp_source": capture.frame_timestamp_source,
+        "frame_evidence": verified,
+        "mask_metadata": {}, "pose_payloads": {},
+        "perception_derivation": None,
+    }
+    for serial in sorted(capture.masks):
+        safe = _safe_id(serial, "key camera ID")
+        entry = capture.masks[serial]
+        mask = np.asarray(entry["mask"], dtype=np.uint8) * 255
+        if mask.ndim != 2 or not mask.size:
+            raise ValueError(f"invalid key mask: {serial}")
+        with (mask_dir / f"{safe}.png").open("xb") as stream:
+            encoded, data = cv2.imencode(".png", mask)
+            if not encoded:
+                raise OSError(f"could not save key mask: {serial}")
+            stream.write(data.tobytes())
+        payloads["mask_metadata"][serial] = {
+            key: value for key, value in entry.items() if key != "mask"}
+        pose = dict(capture.poses[serial])
+        if "pose_world" in pose:
+            pose["pose_world"] = np.asarray(pose["pose_world"],
+                                            dtype=float).tolist()
+        payloads["pose_payloads"][serial] = pose
+    _write_json(target / "payloads.json", payloads)
+    _write_json(target / "key_observation.json", observation.to_record())
+    manifest = {
+        "schema": "precision_insertion_key_pose_evidence_v2",
+        "capture_id": capture.capture_id,
+        "request_id": capture.request_id,
+        "camera_ids": sorted(verified),
+        "image_source": "independent_initial_tabletop_snapshot",
+        "scope": "foundpose_pose_and_masks_no_saved_source_image_gate",
+        "robot_ready": False,
+    }
+    _write_json(target / "evidence_manifest.json", manifest)
+    remember("key_capture", target, "key", manifest)
+    return target
+
+
 def verify_key_capture_artifacts(output_dir: Path) -> dict:
     """Recheck a saved key bundle's bytes and frame-to-pose binding."""
     root = Path(output_dir).expanduser().resolve()
@@ -662,6 +752,10 @@ def verify_key_capture_artifacts(output_dir: Path) -> dict:
             return cached
     manifest = json.loads((root / "evidence_manifest.json").read_text(
         encoding="utf-8"))
+    if isinstance(manifest, dict) and manifest.get("schema") == (
+            "precision_insertion_key_pose_evidence_v2"):
+        _verify_key_pose_artifacts(root, manifest)
+        return manifest
     if (not isinstance(manifest, dict) or manifest.get("schema") !=
             "precision_insertion_key_capture_evidence_v1"):
         raise ValueError("unknown key evidence bundle schema")
@@ -757,6 +851,56 @@ def verify_key_capture_artifacts(output_dir: Path) -> dict:
             report.get("acquisition_interval_s") != expected_interval):
         raise ValueError("saved key timing differs from source frames")
     return manifest
+
+
+def _verify_key_pose_artifacts(root: Path, manifest: dict) -> None:
+    payloads = json.loads((root / "payloads.json").read_text(encoding="utf-8"))
+    report = json.loads((root / "key_observation.json").read_text(
+        encoding="utf-8"))
+    camera_ids = set(manifest.get("camera_ids", []))
+    if (report.get("phase") != "tabletop" or
+            report.get("capture_id") != manifest.get("capture_id") or
+            report.get("request_id") != manifest.get("request_id") or
+            payloads.get("capture_id") != manifest.get("capture_id") or
+            payloads.get("request_id") != manifest.get("request_id") or
+            camera_ids != set(report.get("frame_evidence", {})) or
+            camera_ids != set(payloads.get("frame_evidence", {})) or
+            camera_ids != set(payloads.get("mask_metadata", {})) or
+            camera_ids != set(payloads.get("pose_payloads", {})) or
+            payloads["frame_evidence"] != report["frame_evidence"] or
+            payloads.get("perception_derivation") is not None):
+        raise ValueError("pose-only key evidence identities conflict")
+    _verify_perception_derivation(
+        payloads["mask_metadata"], payloads["pose_payloads"],
+        payloads["frame_evidence"], None,
+        manifest["capture_id"], manifest["request_id"])
+    frame_ids = {}
+    for serial in camera_ids:
+        mask = payloads["mask_metadata"][serial]
+        pose = payloads["pose_payloads"][serial]
+        if mask.get("frame_id") != pose.get("frame_id"):
+            raise ValueError("saved key pose frame IDs differ")
+        if not (root / "masks" / f"{_safe_id(serial, 'camera ID')}.png").is_file():
+            raise ValueError("saved key pose mask is missing")
+        frame_ids[serial] = mask["frame_id"]
+    verified = verify_frame_metadata(
+        {"request_id": manifest["request_id"],
+         "source": payloads.get("frame_timestamp_source"),
+         "frames": payloads["frame_evidence"]},
+        request_id=manifest["request_id"], frame_ids=frame_ids)
+    selected = report.get("selected_camera_id")
+    used = report.get("consistency", {}).get("accepted_views")
+    if (not isinstance(used, list) or len(used) < 2 or
+            not set(used) <= camera_ids or selected not in used or
+            report.get("selected_acquisition_timestamp_s") !=
+            verified[selected]["timestamp_s"] or
+            report.get("acquisition_interval_s") != [
+                min(verified[c]["timestamp_s"] - verified[c]["max_error_s"]
+                    for c in used),
+                max(verified[c]["timestamp_s"] + verified[c]["max_error_s"]
+                    for c in used)]):
+        raise ValueError("saved key pose timing differs from admission")
+    validate_se3(report.get("pose_world"), name="saved key pose")
 
 
 def _verify_perception_derivation(

@@ -23,7 +23,8 @@ from .config import TaskMode
 from .endpoint import _load_mesh
 from .frame_provenance import bounded_capture_skew_s, image_sha256
 from .geometry import validate_se3
-from .key_perception import KeyPoseObservation, verify_key_capture_artifacts
+from .key_perception import KeyPoseObservation
+from .initial_visual import initial_visual_source
 from .labeling import resolve_label
 from .live_robot_state import LiveRobotState
 from .observer import (
@@ -105,9 +106,7 @@ class LiftCheckpoint:
 
 def _saved_capture(root: Path) -> tuple[dict, str]:
     directory = Path(root).expanduser().resolve()
-    verify_key_capture_artifacts(directory)
-    record = json.loads((directory / "key_observation.json").read_text(
-        encoding="utf-8"))
+    _, record = initial_visual_source(directory)
     digest = hashlib.sha256(
         (directory / "evidence_manifest.json").read_bytes()).hexdigest()
     return record, digest
@@ -175,6 +174,8 @@ def assess_lift_checkpoint(
     after_root = Path(after_bundle).expanduser().resolve()
     before, before_hash = _saved_capture(before_root)
     after, after_hash = _saved_capture(after_root)
+    before_image_root = (before_root / "initial_tabletop"
+                         if "pose_frame_evidence" in before else before_root)
     if (before.get("phase") != "tabletop" or
             before.get("capture_id") != before_capture_id or
             before.get("key_object") != mode.key_object or
@@ -201,7 +202,7 @@ def assess_lift_checkpoint(
     if len(cameras) < minimum_visual_views:
         raise ValueError("lift checkpoint has too few paired camera views")
     phase_rows = {
-        "before_grasp": (before_root, before),
+        "before_grasp": (before_image_root, before),
         "after_lift": (after_root, after),
     }
     for _phase, (_root, record) in phase_rows.items():
@@ -322,6 +323,8 @@ def assess_raw_lift_checkpoint(
     before_root = Path(before_bundle).expanduser().resolve()
     after_root = Path(after_bundle).expanduser().resolve()
     before, before_hash = _saved_capture(before_root)
+    before_image_root = (before_root / "initial_tabletop"
+                         if "pose_frame_evidence" in before else before_root)
     after = verify_raw_camera_capture(after_root, phase="after_lift")
     after_hash = hashlib.sha256((after_root / "manifest.json").read_bytes()).hexdigest()
     if (before.get("phase") != "tabletop" or
@@ -355,7 +358,7 @@ def assess_raw_lift_checkpoint(
         raise ValueError("raw lift images do not bracket the physical lift")
     frames, inputs = [], []
     for phase, (root, source) in {
-            "before_grasp": (before_root, before),
+            "before_grasp": (before_image_root, before),
             "after_lift": (after_root, after)}.items():
         for camera in cameras:
             path = root / "images" / f"{_safe_id(camera, 'camera ID')}.png"
@@ -461,7 +464,11 @@ def verify_lift_checkpoint(report_path: Path) -> dict:
         if camera in phase_cameras[phase]:
             raise ValueError("duplicate lift VLM camera input")
         phase_cameras[phase].add(camera)
-        target = bundles[phase] / "images" / f"{_safe_id(camera, 'camera ID')}.png"
+        image_root = (bundles[phase] / "initial_tabletop"
+                      if phase == "before_grasp" and
+                      "pose_frame_evidence" in saved[phase]
+                      else bundles[phase])
+        target = image_root / "images" / f"{_safe_id(camera, 'camera ID')}.png"
         if Path(row.get("path", "")).expanduser().resolve() != target:
             raise ValueError("lift image path differs from source capture")
         if hashlib.sha256(target.read_bytes()).hexdigest() != row.get(

@@ -16,6 +16,7 @@ from .action_loop import ActionHandler
 from .guarded_insertion_execution import execute_bound_guarded_insertion
 from .live_robot_state import LiveRobotState
 from .labeling import request_annotation
+from .initial_visual import initial_visual_source
 from .raw_camera_capture import (
     RawCameraCapture, write_raw_camera_capture,
 )
@@ -263,7 +264,9 @@ class LiveTaskHandlers:
                 manual_annotation=request_annotation(
                     mode=self.label_mode, provider=self.manual_label_provider,
                     stage="insertion_success",
-                    evidence_dirs=(initial, final),
+                    evidence_dirs=(
+                        (initial_visual_source(initial)[0], final)
+                        if self.label_mode == "manual" else (final,)),
                     attempt_id=attempt.attempt_id,
                     candidate_id=attempt.candidate_id),
                 **dict(self.final_parameters))

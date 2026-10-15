@@ -13,6 +13,7 @@ from typing import Callable, Mapping
 from uuid import uuid4
 
 from .action_loop import ActionHandler
+from .checkpoint_camera import capture_snapshot_checkpoint_frames
 from .live_key_trial import PreparedLiveKeyTrial, prepare_next_live_key
 from .session_policy import SessionDecision
 from .prompt_contract import reject_incorrect_object_color
@@ -115,6 +116,9 @@ class LiveKeyPlanningHandlers:
             image_hw=launch.image_hw,
             key_prompt=self.key_prompt, view_limits=launch.view_limits,
             planner=self.planner, limits=self.limits,
+            capture_initial_visual=lambda: capture_snapshot_checkpoint_frames(
+                self.live, phase="initial_tabletop",
+                timeout_s=float(self.key_parameters["capture_timeout_s"])),
             **dict(self.key_parameters))
         self.latest = prepared
 

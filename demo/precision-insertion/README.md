@@ -1059,12 +1059,14 @@ The first independent helpers are in `precision_insertion/`:
   rejects stale states without waiting for another packet; Inspire time is a
   software read time. Their skew check does not prove hardware-level
   simultaneity or camera synchronization. Thresholds must be commissioned.
-- `live_capture.collect_key_capture()` reuses the socket capture's strict
-  same-request image/ID/hash/exposure-time gate after FoundPose has been
-  reinitialized for the selected key's v8 representation. Use a key-specific
-  SAM prompt; the loose key and fixed socket must not be conflated. Stock
-  camera daemons still lack the required provenance output, so this is an
-  adapter contract rather than a live runnable capture command.
+- `live_capture.collect_key_capture()` uses the selected key's v8 FoundPose
+  representation and a key-specific SAM prompt. The live tabletop path takes
+  `pose_only=True`: it keeps same-request mask/pose frame IDs and exposure
+  times, and begins v8 planning without waiting for the init daemon's PNGs or
+  comparing image hashes. Socket and held-key captures retain their existing
+  same-request image path. The separate initial tabletop VLM snapshot is
+  taken with the already-open AutoDex cameras while candidate planning runs;
+  its own request/frame IDs and timestamps are saved with undistorted images.
 - [`registered_key_roi.py`](precision_insertion/registered_key_roi.py) and
   [`registered_key_capture.py`](precision_insertion/registered_key_capture.py)
   provide an **opt-in** ChArUco-registered socket-only baseline → cropped
@@ -1094,10 +1096,11 @@ The first independent helpers are in `precision_insertion/`:
   object or that hand-eye calibration is sub-millimetre accurate. The socket
   projection is a conservative convex hull: a genuine key close to/behind
   the socket may be rejected, so this is a veto, not a key segmentor.
-  `write_key_capture_artifacts(capture, observation, new_dir)` stores the
-  same-request images, masks, poses, frame provenance and selected pose in
-  an exclusive per-trial evidence bundle;
-  `verify_key_capture_artifacts(new_dir)` checks it before replay/handoff.
+  Live tabletop trials use `write_key_pose_artifacts` to store masks, poses,
+  frame metadata and selected pose in an exclusive per-trial bundle, plus an
+  independent `initial_tabletop` raw visual bundle. Other captures use
+  `write_key_capture_artifacts` for same-request images and pose evidence.
+  `verify_key_capture_artifacts` accepts both formats for replay/handoff.
   `admit_postlift_key_capture()` uses the selected BODex relation and
   measured wrist only as a bounded first-lift search prior; it checks
   multi-view agreement and mask/silhouette IoU without the tabletop socket
@@ -2642,10 +2645,11 @@ non-motion boundary. It only accepts the runner's `capture_fresh_key` or
 `reobserve_key_and_preflight` decision. It prechecks the v8 key raw mesh and
 canonical FoundPose `repre.pth`, initializes the key in the existing AutoDex
 FoundPose orchestrator with silhouette refinement, takes a new
-acquisition-bound multi-view capture, rejects masks that include the frozen
-socket, saves and verifies that capture, checks **measured** 13-DOF
-Franka/Inspire feedback against the camera exposure interval, and calls the
-runner's existing pose-conditioned v8 pickup/transfer/20 mm preflight.
+acquisition-bound multi-view pose capture, rejects masks that include the
+frozen socket, saves that pose and checks **measured** 13-DOF Franka/Inspire
+feedback against its exposure interval. The runner's existing pose-conditioned
+v8 pickup/transfer/20 mm preflight overlaps a new raw initial-tabletop VLM
+snapshot. The snapshot must be saved before this non-motion handler returns.
 It does not use the socket FoundPose result as the key pose, reuse an old key
 image, mark a physical grasp successful, or send a robot command.
 

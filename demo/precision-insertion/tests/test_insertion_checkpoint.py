@@ -31,7 +31,9 @@ from precision_insertion.insertion_checkpoint import (  # noqa: E402
 from precision_insertion import insertion_checkpoint as checkpoint_module  # noqa: E402
 from precision_insertion.key_perception import (  # noqa: E402
     admit_held_key_capture, admit_key_capture, write_key_capture_artifacts,
+    write_key_pose_artifacts,
 )
+from precision_insertion.initial_visual import write_initial_visual_capture  # noqa: E402
 from precision_insertion.raw_camera_capture import (  # noqa: E402
     RawCameraCapture, write_raw_camera_capture,
 )
@@ -211,7 +213,9 @@ def test_multiview_appearance_cannot_certify_unverified_depth(tmp_path):
         verify_insertion_checkpoint(saved)
 
 
-def test_released_label_pairs_initial_and_clear_view_raw_per_camera(tmp_path):
+@pytest.mark.parametrize("separate_visual", [False, True])
+def test_released_label_pairs_initial_and_clear_view_raw_per_camera(
+        tmp_path, separate_visual):
     args, _ = _setup(tmp_path)
     mode = select_mode("square", 1.5)
     pose = np.eye(4)
@@ -230,6 +234,25 @@ def test_released_label_pairs_initial_and_clear_view_raw_per_camera(tmp_path):
         minimum_refinement_iou=0.5)
     initial = write_key_capture_artifacts(
         initial_capture, initial_observation, tmp_path / "initial_tabletop")
+    if separate_visual:
+        initial = write_key_pose_artifacts(
+            replace(initial_capture, images_bgr={}), initial_observation,
+            tmp_path / "initial_pose_only")
+        image = np.ones((24, 32, 3), dtype=np.uint8) * 60
+        images = {camera: image.copy() for camera in CAMERAS}
+        rows = {camera: {
+            "frame_id": 60 + index,
+            "image_sha256": image_sha256(image),
+            "timestamp_s": 100.2 + .005 * index,
+            "max_error_s": .001,
+            "timestamp_method": "hardware_exposure",
+            "clock_domain": "unix_utc",
+        } for index, camera in enumerate(CAMERAS)}
+        write_initial_visual_capture(initial, RawCameraCapture(
+            "initial_raw", 60, images,
+            {camera: row["frame_id"] for camera, row in rows.items()},
+            {"request_id": 60, "source": "camera_acquisition",
+             "frames": rows}))
 
     def raw_bundle(name, phase, request, timestamp):
         image = np.ones((24, 32, 3), dtype=np.uint8) * request

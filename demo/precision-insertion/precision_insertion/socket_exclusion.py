@@ -65,6 +65,7 @@ def project_frozen_socket_exclusion(
     intrinsics_undist: Mapping[str, np.ndarray],
     extrinsics_full: Mapping[str, np.ndarray],
     dilation_px: int,
+    image_shapes: Mapping[str, tuple[int, int]] | None = None,
 ) -> SocketImageExclusion:
     """Return a per-camera socket hull using the *frozen* session world.
 
@@ -73,8 +74,10 @@ def project_frozen_socket_exclusion(
     """
     if type(dilation_px) is not int or dilation_px < 0:
         raise ValueError("socket exclusion dilation must be nonnegative pixels")
-    if (not images_bgr or set(images_bgr) - set(intrinsics_undist) or
-            set(images_bgr) - set(extrinsics_full)):
+    camera_ids = set(image_shapes) if image_shapes is not None else set(images_bgr)
+    if (not camera_ids or camera_ids - set(intrinsics_undist) or
+            camera_ids - set(extrinsics_full) or
+            (image_shapes is not None and images_bgr)):
         raise ValueError("socket projection needs calibrated key cameras")
     root = Path(shared_root).expanduser().resolve()
     socket_pose = validated_frozen_socket_pose(
@@ -86,12 +89,19 @@ def project_frozen_socket_exclusion(
                                name="session C2R")
     masks = {}
     diagnostics = {}
-    for serial, image in images_bgr.items():
-        if (not isinstance(image, np.ndarray) or image.ndim != 3 or
-                image.shape[2] != 3 or image.dtype != np.uint8 or
-                not image.size):
-            raise ValueError(f"invalid key camera image: {serial}")
-        height, width = image.shape[:2]
+    for serial in sorted(camera_ids):
+        if image_shapes is None:
+            image = images_bgr[serial]
+            if (not isinstance(image, np.ndarray) or image.ndim != 3 or
+                    image.shape[2] != 3 or image.dtype != np.uint8 or
+                    not image.size):
+                raise ValueError(f"invalid key camera image: {serial}")
+            height, width = image.shape[:2]
+        else:
+            height, width = image_shapes[serial]
+            if (type(height) is not int or type(width) is not int or
+                    height <= 0 or width <= 0):
+                raise ValueError(f"invalid key mask shape: {serial}")
         if dilation_px >= min(height, width):
             raise ValueError("socket exclusion dilation exceeds image size")
         K = np.asarray(intrinsics_undist[serial], dtype=float)

@@ -21,7 +21,7 @@ from .frame_provenance import bounded_capture_skew_s, image_sha256
 from .insertion_checkpoint import (
     _admitted_measurement, _metric_record, verify_preinsert_raw_capture,
 )
-from .key_perception import verify_key_capture_artifacts
+from .initial_visual import initial_visual_source
 from .observer import (
     ImageVLM, LabeledFrame, _parse_object,
     observe_released_insertion_visual, verify_per_view_consensus,
@@ -86,9 +86,7 @@ def assess_released_insertion_checkpoint(
     final_root = Path(final_bundle).expanduser().resolve()
     metric_path = Path(metric_record_path).expanduser().resolve()
     release_path = Path(release_record_path).expanduser().resolve()
-    verify_key_capture_artifacts(initial_root)
-    initial = json.loads((initial_root / "key_observation.json").read_text(
-        encoding="utf-8"))
+    initial_image_root, initial = initial_visual_source(initial_root)
     if initial.get("phase") != "tabletop":
         raise ValueError("success comparison needs the initial tabletop key capture")
     preinsert = verify_preinsert_raw_capture(preinsert_root)
@@ -134,14 +132,14 @@ def assess_released_insertion_checkpoint(
         raise ValueError(
             "initial, preinsert, stroke, release and final images are not ordered")
     frames, inputs = _image_frames(
-        initial_root, initial, cameras, "initial_tabletop")
+        initial_image_root, initial, cameras, "initial_tabletop")
     later, later_inputs = _image_frames(
         final_root, final, cameras, "final_clear_view")
     frames.extend(later)
     inputs.extend(later_inputs)
     for camera in cameras:
         name = _safe_id(camera, "camera ID")
-        before = cv2.imread(str(initial_root / "images" / f"{name}.png"))
+        before = cv2.imread(str(initial_image_root / "images" / f"{name}.png"))
         after = cv2.imread(str(final_root / "images" / f"{name}.png"))
         if before is None or after is None or before.shape != after.shape:
             raise ValueError("initial/final temporal pair changed image geometry")
@@ -213,9 +211,7 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
     initial_root = Path(report["initial_key_bundle"])
     preinsert_root = Path(report["preinsert_bundle"])
     final_root = Path(report["final_bundle"])
-    verify_key_capture_artifacts(initial_root)
-    initial = json.loads((initial_root / "key_observation.json").read_text(
-        encoding="utf-8"))
+    initial_image_root, initial = initial_visual_source(initial_root)
     preinsert = verify_preinsert_raw_capture(preinsert_root)
     final = verify_raw_camera_capture(final_root, phase="final_clear_view")
     if (_sha(initial_root / "evidence_manifest.json") !=
@@ -241,7 +237,7 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
         if phase not in grouped or camera in grouped[phase]:
             raise ValueError("duplicate released-insertion VLM frame")
         grouped[phase].add(camera)
-        root, source = ((initial_root, initial) if phase == "initial_tabletop"
+        root, source = ((initial_image_root, initial) if phase == "initial_tabletop"
                         else (final_root, final))
         image_path = root / "images" / f"{_safe_id(camera, 'camera ID')}.png"
         image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)

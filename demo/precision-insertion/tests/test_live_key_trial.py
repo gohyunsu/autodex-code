@@ -1,6 +1,7 @@
 """A fresh key observation must precede and bind the v8 trial preflight."""
 
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -14,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from autodex.utils.sync import convert_inspire_raw  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.key_perception import KeyPoseObservation  # noqa: E402
+from precision_insertion.live_capture import KeyCaptureInput  # noqa: E402
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.clear_view import ClearViewForPerception  # noqa: E402
 from precision_insertion.perception_evidence import SocketViewLimits  # noqa: E402
@@ -167,6 +169,48 @@ def test_live_key_capture_state_and_preflight_order(tmp_path, monkeypatch):
                       "preflight"]
     assert result.observation.capture_id == "key_001"
     assert result.preflight.status == "sampled_planning_pass"
+
+
+def test_initial_visual_capture_overlaps_key_candidate_planning(
+        tmp_path, monkeypatch):
+    arguments, events, _ = _setup(tmp_path, monkeypatch)
+    visual_started = threading.Event()
+    planning_done = threading.Event()
+    def pose_collect(**kwargs):
+        assert kwargs["pose_only"] is True
+        events.append("capture")
+        return KeyCaptureInput(
+            "key_001", 25, "white precision key", {}, {}, {}, {},
+            "camera_acquisition", {}, tmp_path / "unused")
+
+    def save_pose(_capture, _observation, output):
+        events.append("save_pose")
+        output.mkdir()
+
+    def capture_visual():
+        visual_started.set()
+        assert planning_done.wait(2)
+        return object()
+
+    def save_visual(output, _capture):
+        events.append("save_visual")
+        return output / "initial_tabletop"
+
+    def plan(**_kwargs):
+        assert visual_started.wait(2)
+        events.append("plan_while_visual_busy")
+        planning_done.set()
+        return SimpleNamespace(status="sampled_planning_pass")
+
+    monkeypatch.setattr(trial, "collect_key_capture", pose_collect)
+    monkeypatch.setattr(trial, "write_key_pose_artifacts", save_pose)
+    monkeypatch.setattr(trial, "write_initial_visual_capture", save_visual)
+    monkeypatch.setattr(trial, "initial_visual_source", lambda _output: None)
+    arguments["runner"].preflight_next_key = plan
+    result = trial.prepare_next_live_key(
+        **arguments, capture_initial_visual=capture_visual)
+    assert result.preflight.status == "sampled_planning_pass"
+    assert events.index("plan_while_visual_busy") < events.index("save_visual")
 
 
 def test_reset_landing_reuses_same_camera_key_capture_without_grasp_preflight(

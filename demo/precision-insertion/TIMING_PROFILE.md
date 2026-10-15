@@ -75,6 +75,30 @@ the current dispatcher stops before that step. See run
 `20261015_150915_090115.timing` for the source trace. No pickup, insertion,
 contact or failed-trial recovery times were measured.
 
+The current live tabletop-key path no longer waits for the init daemon's
+same-request PNG files before v8 planning. FoundPose mask/pose frame IDs and
+camera acquisition times produce a pose-only `key_captures/...` bundle; no
+robot-PC image pixel hash or saved-PNG comparison is used to admit that pose.
+The pose-only request also omits `save_capture_dir`, so the init daemons do
+not start the unused per-camera PNG writes for that request.
+After pose admission, a separate AutoDex snapshot starts on a worker while
+candidate planning runs. The snapshot's original JPEG-derived pixels and
+calibrated undistorted frames are saved under
+`key_captures/.../initial_tabletop/`, with a separate request ID, per-camera
+frame ID and timestamp. Lift/final Qwen comparisons read these visual frames;
+the candidate planner reads the FoundPose pose frames. The action handler joins
+the snapshot worker before it can return to a pickup action. Source snapshot
+image hashes and saved PNG hashes remain in the visual bundle for offline
+VLM replay; they do not gate the start of candidate planning. The historical
+15:09 numbers above are for the previous pipeline; the new overlap and any
+speedup need a new live timing trace.
+
+Static validation used `run_robot_pc.sh --check` (no camera or robot
+connection) and the planner environment's pytest suite for live capture,
+pose admission, concurrent planning, raw lift and released-insertion replay.
+This path was not exercised with `--run`; no motor, network-round-trip or new
+live latency number is implied by these tests.
+
 On the robot PC, `run_robot_pc.sh` sets `PRECISION_TIMING_LOCAL_ROOT` to
 `/tmp/precision-insertion-timing` by default. The stock trace writes its
 events there during the run; orderly exit copies the complete sidecar once
@@ -114,7 +138,7 @@ nested in the trace.
 | Service startup | Existing AutoDex camera/robot services may already be running. | Independent manager starts missing daemons; pipeline runs reuse them. | Service TSV, outside run trace |
 | ChArUco | Board/camera measurement used for tabletop geometry. | One board capture and fit at session start; the saved frames are also used in the frozen calibration. | `board.*` |
 | Socket | No fixture-pose estimation or socket refinement. | Current board-9 / 20 mm launch uses one 20-camera SAM/FoundPose acquisition and one stock silhouette refinement, then freezes that observed pose. Repeatability is unmeasured. | `socket.capture`, `socket.refine_capture` |
-| Source/evidence checks | Stock live entry points do **not** hash the complete grasp pool and session image bundle on each run. Stock trace hashes an artifact only when explicitly written through its helper. | Live catalog parses once and assumes immutable NAS sources; explicit offline audit still rehashes candidate files. Socket evidence is written with per-file digests and its small producer manifest is passed to the ledger; the live path no longer rereads all PNGs immediately. Producer-validated live key/raw manifests are reused in-session; offline replay still checks bytes. | `startup.catalog_load`, `socket.evidence_write`, `socket.manifest_read`, `ledger.small_binding_hashes`, `evidence.*` |
+| Source/evidence checks | Stock live entry points do **not** hash the complete grasp pool and session image bundle on each run. Stock trace hashes an artifact only when explicitly written through its helper. | Live catalog parses once and assumes immutable NAS sources; explicit offline audit still rehashes candidate files. Socket evidence keeps its existing source checks. A live tabletop key pose uses frame IDs and timestamps without waiting for or hashing its FoundPose PNGs; its independent VLM snapshot is saved concurrently with planning and keeps its own raw visual provenance. | `startup.catalog_load`, `socket.evidence_write`, `key.capture`, `key.initial_visual_capture`, `key.candidate_preflight` |
 | Per-trial perception | Object SAM/FoundPose for a fresh tabletop pose. | Fresh key SAM/FoundPose with frozen-socket, camera-time and mask admission; repeated after failure/repose. | `key.model_init`, `key.capture`, `key.pose_admission` |
 | Grasp planning | v8 grasp candidates, cuRobo plan, pickup and lift. | Reuses v8 candidate files but adds a 20 mm whole-hand/socket endpoint catalog and per-current-pose full-chain preflight; measured post-squeeze lift chain. | `key.candidate_preflight`, `trial.measured_lift_preflight` |
 | Motion | Grasp/lift, then stock task/coverage/reorientation flow. | Pickup/lift, held transfer, preinsert hold, guarded axial stroke, release/clear; failed trials may include restoration/repose. | `trial.*_motion`, `trial.release_and_clear`, `action.*` |
@@ -142,6 +166,10 @@ Important nested stages include:
 - `camera.foundpose_request`, `camera.saved_frame_wait`,
   `camera.frame_binding_verify`, `camera.undistort_generation` and
   `socket.refine_capture`;
+- Live tabletop key `key.initial_visual_capture` overlaps
+  `key.candidate_preflight`; `key.initial_visual_join` is only the remaining
+  wait after planning. `camera.saved_frame_wait` remains for socket and held
+  key captures, not for the new tabletop pose-only path;
 - `evidence.undistort_validate`, `evidence.png_write_hash`,
   `evidence.png_read_verify`, `evidence.undistort_replay` and
   `evidence.live_manifest_reuse`.

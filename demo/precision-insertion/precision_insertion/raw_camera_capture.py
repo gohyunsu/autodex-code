@@ -24,7 +24,7 @@ from .session_bootstrap import _safe_id
 from .timing_profile import timed
 
 
-PHASES = frozenset({"after_lift", "preinsert", "post_lateral_hold",
+PHASES = frozenset({"initial_tabletop", "after_lift", "preinsert", "post_lateral_hold",
                     "final_or_abort", "final_clear_view"})
 
 

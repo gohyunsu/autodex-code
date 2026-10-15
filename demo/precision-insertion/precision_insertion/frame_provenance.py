@@ -45,16 +45,35 @@ def verify_frame_provenance(
     wait for *new* frames after dispatch; its midpoint is not an exposure
     measurement. Receipt/processing/publication times alone are not admitted.
     """
+    if set(images_bgr) != set(frame_ids):
+        raise ValueError("every image needs a matching frame ID")
+    verified = verify_frame_metadata(
+        metadata, request_id=request_id, frame_ids=frame_ids)
+    for serial, image in images_bgr.items():
+        if verified[serial]["image_sha256"] != image_sha256(image):
+            raise ValueError(f"image digest mismatch for {serial}")
+    return verified
+
+
+def verify_frame_metadata(
+    metadata: Mapping, *, request_id: int,
+    frame_ids: Mapping[str, int],
+) -> dict[str, dict]:
+    """Validate producer IDs and exposure times without reading image files.
+
+    This is for pose-only planning. It does not assert that a saved PNG matches
+    the perception pixels; raw visual checkpoints retain their own provenance.
+    """
     if not isinstance(metadata, Mapping) or metadata.get("request_id") != request_id:
         raise ValueError("camera acquisition metadata has wrong request ID")
     if metadata.get("source") != "camera_acquisition":
         raise ValueError("camera acquisition-time metadata is required")
     frames = metadata.get("frames")
     if (not isinstance(frames, Mapping) or not frames or
-            set(frames) != set(images_bgr) or set(frame_ids) != set(images_bgr)):
-        raise ValueError("every image needs matching per-camera frame provenance")
+            set(frames) != set(frame_ids)):
+        raise ValueError("every frame needs matching per-camera provenance")
     verified = {}
-    for serial, image in images_bgr.items():
+    for serial in frame_ids:
         row = frames[serial]
         if not isinstance(row, Mapping):
             raise ValueError(f"invalid frame provenance for {serial}")
@@ -64,9 +83,8 @@ def verify_frame_provenance(
                 type(observed_fid) is not int or fid != observed_fid):
             raise ValueError(f"frame ID mismatch for {serial}")
         digest = row.get("image_sha256")
-        if (not isinstance(digest, str) or not _DIGEST.fullmatch(digest) or
-                digest != image_sha256(image)):
-            raise ValueError(f"image digest mismatch for {serial}")
+        if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
+            raise ValueError(f"invalid producer digest for {serial}")
         stamp = row.get("timestamp_s")
         error = row.get("max_error_s")
         if (type(stamp) not in (int, float) or not math.isfinite(stamp) or

@@ -7,7 +7,9 @@ sampling only after slow SAM/FoundPose inference is not equivalent.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 import json
 import math
 from pathlib import Path
@@ -19,8 +21,9 @@ from .calibration import validate_session_camera_calibration
 from .clear_view import ClearViewForPerception
 from .key_perception import (
     KeyPoseObservation, admit_key_capture,
-    write_key_capture_artifacts,
+    write_key_capture_artifacts, write_key_pose_artifacts,
 )
+from .initial_visual import initial_visual_source, write_initial_visual_capture
 from .live_capture import collect_key_capture
 from .live_robot_state import LiveRobotState
 from .path_audit import PathAuditLimits
@@ -69,6 +72,7 @@ def _capture_admitted_key(
     capture_timeout_s: float, image_write_timeout_s: float,
     request_id_factory: Callable[[], int] | None,
     registered_key_assistance: RegisteredKeyAssistance | None,
+    pose_only: bool = False,
 ) -> KeyPoseObservation:
     """Shared AutoDex SAM/FoundPose capture; no candidate planning here."""
     if (not isinstance(capture_id, str) or not _SAFE_ID.fullmatch(capture_id) or
@@ -111,6 +115,8 @@ def _capture_admitted_key(
             set(extrinsics_full) != calibrated_camera_ids):
         raise ValueError("key cameras differ from frozen session calibration")
     if registered_key_assistance is not None:
+        if pose_only:
+            raise ValueError("registered ROI assistance requires its source images")
         if not isinstance(registered_key_assistance, RegisteredKeyAssistance):
             raise TypeError("registered key assistance needs a prepared context")
         binding = json.loads((runner.output_dir / "source_evidence_binding.json")
@@ -150,7 +156,10 @@ def _capture_admitted_key(
             acquisition_metadata_for_request=acquisition_metadata_for_request,
             timeout_s=float(capture_timeout_s),
             image_write_timeout_s=float(image_write_timeout_s),
-            request_id_factory=request_id_factory)
+            request_id_factory=request_id_factory,
+            pose_only=pose_only)
+    if pose_only:
+        capture = replace(capture, capture_dir=output)
     derivation = None
     if registered_key_assistance is not None:
         capture, derivation = derive_registered_key_capture(
@@ -179,7 +188,9 @@ def _capture_admitted_key(
     if observation.phase != "tabletop":
         raise ValueError("key capture requires a tabletop observation")
     with timed("key.evidence_write", phase="key", kind="io"):
-        if derivation is None:
+        if pose_only:
+            write_key_pose_artifacts(capture, observation, output)
+        elif derivation is None:
             write_key_capture_artifacts(capture, observation, output)
         else:
             write_key_capture_artifacts(
@@ -283,6 +294,7 @@ def prepare_next_live_key(
     planning_options: Mapping | None = None,
     request_id_factory: Callable[[], int] | None = None,
     registered_key_assistance: RegisteredKeyAssistance | None = None,
+    capture_initial_visual: Callable[[], object] | None = None,
 ) -> PreparedLiveKeyTrial:
     """Capture, admit, save, and preflight one fresh tabletop key.
 
@@ -395,31 +407,53 @@ def prepare_next_live_key(
         capture_timeout_s=capture_timeout_s,
         image_write_timeout_s=image_write_timeout_s,
         request_id_factory=request_id_factory,
-        registered_key_assistance=registered_key_assistance)
-    state = state_for_observation(observation)
-    if not isinstance(state, LiveRobotState):
-        raise TypeError("key trial needs measured Franka/Inspire state")
-    state.validate(
-        max_arm_hand_skew_s=max_arm_hand_skew_s,
-        max_hand_command_error_raw=max_hand_command_error_raw,
-        max_arm_velocity_rad_s=max_arm_velocity_rad_s)
-    observation.require_state_alignment(
-        state_timestamp_s=state.sample_timestamp_s,
-        maximum_skew_s=max_key_state_skew_s)
-    with timed("key.candidate_preflight", phase="planning", kind="planning"):
-        preflight = runner.preflight_next_key(
-            planner=planner, key_observation=observation,
-            key_evidence_dir=output, live_start_q=state.full_q.copy(),
-            start_q_acquisition_timestamp_s=state.sample_timestamp_s,
-            measured_start_state=state,
-            measured_state_limits={
-                "max_arm_hand_skew_s": max_arm_hand_skew_s,
-                "max_hand_command_error_raw": max_hand_command_error_raw,
-                "max_arm_velocity_rad_s": max_arm_velocity_rad_s,
-            },
-            max_key_state_skew_s=max_key_state_skew_s, limits=limits,
-            max_pose_error_deg=max_pose_error_deg,
-            axial_waypoint_step_m=axial_waypoint_step_m,
-            max_candidate_attempts=max_candidate_attempts,
-            **dict(planning_options))
+        registered_key_assistance=registered_key_assistance,
+        pose_only=capture_initial_visual is not None)
+    visual_pool = None
+    visual_future = None
+    if capture_initial_visual is not None:
+        if not callable(capture_initial_visual):
+            raise TypeError("initial visual capture must be callable")
+        visual_pool = ThreadPoolExecutor(max_workers=1,
+                                         thread_name_prefix="initial-visual")
+        context = copy_context()
+        def save_visual():
+            with timed("key.initial_visual_capture", phase="key", kind="camera"):
+                raw = capture_initial_visual()
+                return write_initial_visual_capture(output, raw)
+        visual_future = visual_pool.submit(context.run, save_visual)
+    try:
+        state = state_for_observation(observation)
+        if not isinstance(state, LiveRobotState):
+            raise TypeError("key trial needs measured Franka/Inspire state")
+        state.validate(
+            max_arm_hand_skew_s=max_arm_hand_skew_s,
+            max_hand_command_error_raw=max_hand_command_error_raw,
+            max_arm_velocity_rad_s=max_arm_velocity_rad_s)
+        observation.require_state_alignment(
+            state_timestamp_s=state.sample_timestamp_s,
+            maximum_skew_s=max_key_state_skew_s)
+        with timed("key.candidate_preflight", phase="planning", kind="planning"):
+            preflight = runner.preflight_next_key(
+                planner=planner, key_observation=observation,
+                key_evidence_dir=output, live_start_q=state.full_q.copy(),
+                start_q_acquisition_timestamp_s=state.sample_timestamp_s,
+                measured_start_state=state,
+                measured_state_limits={
+                    "max_arm_hand_skew_s": max_arm_hand_skew_s,
+                    "max_hand_command_error_raw": max_hand_command_error_raw,
+                    "max_arm_velocity_rad_s": max_arm_velocity_rad_s,
+                },
+                max_key_state_skew_s=max_key_state_skew_s, limits=limits,
+                max_pose_error_deg=max_pose_error_deg,
+                axial_waypoint_step_m=axial_waypoint_step_m,
+                max_candidate_attempts=max_candidate_attempts,
+                **dict(planning_options))
+        if visual_future is not None:
+            with timed("key.initial_visual_join", phase="key", kind="wait"):
+                visual_future.result()
+            initial_visual_source(output)
+    finally:
+        if visual_pool is not None:
+            visual_pool.shutdown(wait=True)
     return PreparedLiveKeyTrial(observation, state, preflight, output)

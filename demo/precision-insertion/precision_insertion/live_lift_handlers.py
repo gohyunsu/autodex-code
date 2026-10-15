@@ -15,6 +15,7 @@ from typing import Callable, Mapping
 
 from .action_loop import ActionHandler
 from .lift_execution import LiftExecutionLimits, execute_bound_measured_lift
+from .initial_visual import initial_visual_source
 from .labeling import request_annotation
 from .live_robot_state import LiveRobotState
 from .raw_camera_capture import (
@@ -145,7 +146,8 @@ class LiveLiftHandlers:
                     mode=self.label_mode, provider=self.manual_label_provider,
                     stage="grasp_success",
                     evidence_dirs=(
-                        (Path(runner._key_evidence_dir), evidence_dir)
+                        (initial_visual_source(
+                            Path(runner._key_evidence_dir))[0], evidence_dir)
                         if self.label_mode == "manual" else (evidence_dir,)),
                     attempt_id=attempt.attempt_id,
                     candidate_id=attempt.candidate_id),

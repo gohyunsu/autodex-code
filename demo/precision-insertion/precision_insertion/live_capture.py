@@ -23,7 +23,9 @@ from typing import Callable, Mapping
 import cv2
 import numpy as np
 
-from .frame_provenance import image_sha256, verify_frame_provenance
+from .frame_provenance import (
+    image_sha256, verify_frame_metadata, verify_frame_provenance,
+)
 from .prompt_contract import reject_incorrect_object_color
 from .session_bootstrap import SocketCaptureInput
 from .timing_profile import timed
@@ -161,6 +163,7 @@ def collect_socket_capture(
     acquisition_metadata_for_request: AcquisitionProvider,
     timeout_s: float, image_write_timeout_s: float = 5.0,
     request_id_factory: RequestIdFactory | None = None,
+    pose_only: bool = False,
 ) -> SocketCaptureInput:
     """Collect same-request undistorted frames, SAM masks and FoundPose poses.
 
@@ -209,7 +212,7 @@ def collect_socket_capture(
         masks, poses, timing = init_orchestrator.collect_payloads(
             prompt=socket_prompt, request_id=request_id,
             n_expected_serials=len(calibrated_camera_ids), timeout_s=timeout_s,
-            save_capture_dir=str(capture_dir))
+            save_capture_dir=(None if pose_only else str(capture_dir)))
     if (not isinstance(timing, Mapping) or
             timing.get("request_id") != request_id):
         raise ValueError("FoundPose request ID mismatch")
@@ -218,30 +221,40 @@ def collect_socket_capture(
     payload_ids = set(masks) | set(poses)
     if not payload_ids or payload_ids - calibrated_camera_ids:
         raise ValueError("FoundPose has no calibrated camera payloads")
-    with timed("camera.saved_frame_wait", phase="camera", kind="io",
-               capture_id=capture_id, camera_count=len(payload_ids)):
-        images = _load_saved_frames(
-            capture_dir, payload_ids, image_write_timeout_s)
+    images = {}
+    if not pose_only:
+        with timed("camera.saved_frame_wait", phase="camera", kind="io",
+                   capture_id=capture_id, camera_count=len(payload_ids)):
+            images = _load_saved_frames(
+                capture_dir, payload_ids, image_write_timeout_s)
     frame_ids = {}
     with timed("camera.frame_binding_verify", phase="camera", kind="io",
-               capture_id=capture_id, camera_count=len(images)):
-        for serial in images:
+               capture_id=capture_id, camera_count=len(payload_ids)):
+        for serial in payload_ids:
             mask = masks.get(serial, {})
             pose = poses.get(serial, {})
             mask_fid = mask.get("frame_id")
             pose_fid = pose.get("frame_id")
             if mask_fid != pose_fid:
                 raise ValueError(f"SAM/FoundPose frame ID mismatch for {serial}")
-            digest = image_sha256(images[serial])
-            if any(row.get("image_sha256") != digest or
-                   row.get("image_space") != "autodex_undistorted_full_frame"
-                   for row in (mask, pose)):
-                raise ValueError(
-                    f"SAM/FoundPose source pixels differ from saved frame: {serial}")
+            if any(row.get("image_space") !=
+                   "autodex_undistorted_full_frame" for row in (mask, pose)):
+                raise ValueError(f"unexpected FoundPose image space: {serial}")
+            if not pose_only:
+                digest = image_sha256(images[serial])
+                if any(row.get("image_sha256") != digest
+                       for row in (mask, pose)):
+                    raise ValueError(
+                        f"SAM/FoundPose source pixels differ from saved frame: {serial}")
             frame_ids[serial] = mask_fid
-        evidence = verify_frame_provenance(
-            acquisition_metadata_for_request(request_id), request_id=request_id,
-            images_bgr=images, frame_ids=frame_ids)
+        metadata = acquisition_metadata_for_request(request_id)
+        if pose_only:
+            evidence = verify_frame_metadata(
+                metadata, request_id=request_id, frame_ids=frame_ids)
+        else:
+            evidence = verify_frame_provenance(
+                metadata, request_id=request_id,
+                images_bgr=images, frame_ids=frame_ids)
     times = {serial: row["timestamp_s"] for serial, row in evidence.items()}
     return SocketCaptureInput(
         capture_id, request_id, socket_prompt, images, dict(masks),
@@ -255,6 +268,7 @@ def collect_key_capture(
     acquisition_metadata_for_request: AcquisitionProvider,
     timeout_s: float, image_write_timeout_s: float = 5.0,
     request_id_factory: RequestIdFactory | None = None,
+    pose_only: bool = False,
 ) -> KeyCaptureInput:
     """Reuse the strict FoundPose capture boundary for a fresh trial key.
 
@@ -275,7 +289,7 @@ def collect_key_capture(
         calibrated_camera_ids=calibrated_camera_ids,
         acquisition_metadata_for_request=acquisition_metadata_for_request,
         timeout_s=timeout_s, image_write_timeout_s=image_write_timeout_s,
-        request_id_factory=request_id_factory)
+        request_id_factory=request_id_factory, pose_only=pose_only)
     return KeyCaptureInput(
         capture.capture_id, capture.request_id, capture.prompt,
         dict(capture.images_bgr), dict(capture.masks), dict(capture.poses),

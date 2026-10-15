@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 import sys
 from types import SimpleNamespace
 
 import cv2
+import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.frame_provenance import image_sha256  # noqa: E402
+from precision_insertion.initial_visual import write_initial_visual_capture  # noqa: E402
+from precision_insertion.key_perception import write_key_pose_artifacts  # noqa: E402
 from precision_insertion.lift_checkpoint import (  # noqa: E402
     assess_raw_lift_checkpoint, verify_lift_checkpoint,
     write_lift_checkpoint,
@@ -23,7 +27,9 @@ from precision_insertion.raw_camera_capture import (  # noqa: E402
 from precision_insertion.records import begin_attempt  # noqa: E402
 from precision_insertion import session_runner  # noqa: E402
 from test_lift_checkpoint import _setup  # noqa: E402
-from test_key_perception import CAMERAS, _session  # noqa: E402
+from test_key_perception import (  # noqa: E402
+    CAMERAS, SelectorStub, _admit, _capture, _session,
+)
 
 
 def _raw_case(tmp_path, *, answer=None):
@@ -77,6 +83,38 @@ def test_raw_visible_held_report_is_not_a_key_pose(tmp_path):
     assert saved["center_rise_m"] is None
     assert saved["scope"] == "saved_raw_multiview_visible_key_not_6d_pose_or_contact_proof"
     assert saved["visual"]["raw_answer"]
+
+
+def test_raw_lift_reads_independent_initial_visual_snapshot(tmp_path):
+    args, _backend = _raw_case(tmp_path)
+    source = _capture({camera: np.eye(4) for camera in CAMERAS}, tmp_path)
+    pose_only = replace(source, images_bgr={})
+    observation = _admit(
+        pose_only, args["mode"], tmp_path,
+        SelectorStub(args["mode"].key_object))
+    root = write_key_pose_artifacts(
+        pose_only, observation, tmp_path / "before_pose_only")
+    image = np.full((24, 32, 3), 17, dtype=np.uint8)
+    images = {camera: image.copy() for camera in CAMERAS}
+    rows = {camera: {
+        "frame_id": 41 + index,
+        "image_sha256": image_sha256(image),
+        "timestamp_s": 100.2 + .005 * index,
+        "max_error_s": .001,
+        "timestamp_method": "hardware_exposure",
+        "clock_domain": "unix_utc",
+    } for index, camera in enumerate(CAMERAS)}
+    write_initial_visual_capture(root, RawCameraCapture(
+        "before_visual", 61, images,
+        {camera: row["frame_id"] for camera, row in rows.items()},
+        {"request_id": 61, "source": "camera_acquisition",
+         "frames": rows}))
+    result = assess_raw_lift_checkpoint(**{**args, "before_bundle": root})
+    assert result.grasp_success is True
+    assert all(row["frame_id"] in {41, 42}
+               for row in result.frames if row["phase"] == "before_grasp")
+    path = write_lift_checkpoint(result, tmp_path / "separate_raw_report")
+    assert verify_lift_checkpoint(path / "report.json")["grasp_success"] is True
 
 
 def test_one_view_raw_held_abstains(tmp_path):

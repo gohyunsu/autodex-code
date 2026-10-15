@@ -19,8 +19,13 @@ from precision_insertion.frame_provenance import image_sha256  # noqa: E402
 from precision_insertion.key_perception import (  # noqa: E402
     admit_held_key_capture, admit_key_capture, admit_postlift_key_capture,
     verify_key_capture_artifacts, write_key_capture_artifacts,
+    write_key_pose_artifacts,
+)
+from precision_insertion.initial_visual import (  # noqa: E402
+    initial_visual_source, write_initial_visual_capture,
 )
 from precision_insertion.live_capture import KeyCaptureInput  # noqa: E402
+from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
 from precision_insertion.perception_evidence import SocketViewLimits  # noqa: E402
 from precision_insertion.world import add_fixed_mesh_fixtures  # noqa: E402
 from autodex.utils.conversion import se32cart  # noqa: E402
@@ -167,6 +172,48 @@ def test_square_key_uses_agreeing_iou_selected_pose_and_full_capture_interval(
     (bundle / "images" / "cam_a.png").write_bytes(b"changed")
     with pytest.raises(ValueError, match="key evidence changed"):
         verify_key_capture_artifacts(bundle)
+
+
+def test_pose_only_key_plans_without_saved_foundpose_images_and_keeps_visual_ids(
+        tmp_path):
+    mode = select_mode("square", 1.5)
+    poses = {camera: np.eye(4) for camera in CAMERAS}
+    source = _capture(poses, tmp_path)
+    pose_only = replace(source, images_bgr={})
+    observation = _admit(
+        pose_only, mode, tmp_path, SelectorStub(mode.key_object))
+    bundle = write_key_pose_artifacts(
+        pose_only, observation, tmp_path / "pose_only")
+    assert verify_key_capture_artifacts(bundle)["schema"] == (
+        "precision_insertion_key_pose_evidence_v2")
+    assert not (bundle / "images").exists()
+
+    image = np.full((24, 32, 3), 11, dtype=np.uint8)
+    visual = RawCameraCapture(
+        capture_id="visual_001", request_id=52,
+        images_bgr={camera: image.copy() for camera in CAMERAS},
+        frame_ids={"cam_a": 31, "cam_b": 32},
+        acquisition_metadata={
+            "request_id": 52, "source": "camera_acquisition",
+            "frames": {
+                camera: {
+                    "frame_id": fid, "image_sha256": image_sha256(image),
+                    "timestamp_s": 101.0 + index * .005,
+                    "max_error_s": .001,
+                    "timestamp_method": "hardware_exposure",
+                    "clock_domain": "unix_utc",
+                }
+                for index, (camera, fid) in enumerate(
+                    (("cam_a", 31), ("cam_b", 32)))}})
+    write_initial_visual_capture(bundle, visual)
+    visual_root, visual_record = initial_visual_source(bundle)
+    assert visual_root == bundle / "initial_tabletop"
+    assert visual_record["pose_frame_evidence"]["cam_a"]["frame_id"] == 21
+    assert visual_record["frame_evidence"]["cam_a"]["frame_id"] == 31
+    assert visual_record["frame_evidence"]["cam_a"]["timestamp_s"] == 101.0
+    with pytest.raises(ValueError, match="new request"):
+        write_initial_visual_capture(
+            bundle, replace(visual, request_id=51))
 
 
 def test_roi_pose_inputs_reuse_stock_selector_without_mixing_views(tmp_path):

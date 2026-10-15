@@ -60,8 +60,9 @@ class FoundPoseStub:
     def collect_payloads(self, **kwargs):
         assert kwargs["prompt"] == "white socket"
         assert kwargs["n_expected_serials"] == 2
-        capture_dir = Path(kwargs["save_capture_dir"])
-        if self.write_images:
+        capture_dir = (None if kwargs["save_capture_dir"] is None else
+                       Path(kwargs["save_capture_dir"]))
+        if self.write_images and capture_dir is not None:
             image_dir = capture_dir / "images"
             image_dir.mkdir(parents=True)
             for serial in CAMERAS:
@@ -287,3 +288,25 @@ def test_key_capture_reuses_strict_foundpose_frame_binding(tmp_path):
             capture_root=tmp_path, calibrated_camera_ids=CAMERAS,
             acquisition_metadata_for_request=_provider, timeout_s=2.0,
             request_id_factory=lambda: 47)
+
+
+def test_pose_only_key_capture_does_not_wait_for_daemon_pngs(tmp_path):
+    class KeyFoundPoseStub(FoundPoseStub):
+        obj_name = "key_model"
+
+        def collect_payloads(self, **kwargs):
+            kwargs["prompt"] = "white socket"
+            return super().collect_payloads(**kwargs)
+
+    result = collect_key_capture(
+        init_orchestrator=KeyFoundPoseStub(write_images=False),
+        key_object="key_model", capture_id="key_pose_only",
+        key_prompt="white key on tabletop", capture_root=tmp_path,
+        calibrated_camera_ids=CAMERAS,
+        acquisition_metadata_for_request=_provider,
+        timeout_s=2.0, image_write_timeout_s=.001,
+        request_id_factory=lambda: 48, pose_only=True)
+    assert result.images_bgr == {}
+    assert not (tmp_path / "key_pose_only_request_48").exists()
+    assert result.frame_timestamps_s == TIMES
+    assert result.frame_evidence["cam_b"]["frame_id"] == FRAME_IDS["cam_b"]
