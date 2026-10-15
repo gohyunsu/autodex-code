@@ -85,8 +85,10 @@ After pose admission, a separate AutoDex snapshot starts on a worker while
 candidate planning runs. Its calibrated undistorted frames are saved under
 `key_captures/.../initial_tabletop/`, with a separate request ID, per-camera
 frame ID and timestamp. Lift/final Qwen comparisons read these visual frames;
-the candidate planner reads the FoundPose pose frames. The action handler joins
-the snapshot worker before it can return to a pickup action. The initial
+the candidate planner reads the FoundPose pose frames. Before pickup, the
+action handler waits only for the initial snapshot exposure/undistortion;
+its PNG save continues in the background. The first VLM consumer waits for
+that save if it is still pending, and run cleanup drains remaining saves. The initial
 snapshot does not write a second set of distorted source PNGs or recompute
 their pixel hashes. Undistorted PNG hashes remain in the visual bundle for
 VLM replay; they do not gate the start of candidate planning. The historical
@@ -166,9 +168,10 @@ Important nested stages include:
 - `camera.foundpose_request`, `camera.saved_frame_wait`,
   `camera.frame_binding_verify`, `camera.undistort_generation` and
   `socket.refine_capture`;
-- Live tabletop key `key.initial_visual_capture` overlaps
-  `key.candidate_preflight`; `key.initial_visual_join` is only the remaining
-  wait after planning. `camera.saved_frame_wait` remains for socket and held
+- Live tabletop key `key.initial_visual_acquire` and
+  `key.initial_visual_save` overlap `key.candidate_preflight`;
+  `key.initial_visual_acquisition_wait` is only the remaining capture wait
+  after planning. `camera.saved_frame_wait` remains for socket and held
   key captures, not for the new tabletop pose-only path;
 - `evidence.undistort_validate`, `evidence.png_write_hash`,
   `evidence.png_read_verify`, `evidence.undistort_replay` and

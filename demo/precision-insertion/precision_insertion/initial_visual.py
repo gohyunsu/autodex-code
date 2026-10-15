@@ -3,12 +3,46 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import Future
 from pathlib import Path
+from threading import Lock
 
 from .key_perception import verify_key_capture_artifacts
 from .raw_camera_capture import (
     RawCameraCapture, verify_raw_camera_capture, write_raw_camera_capture,
 )
+
+
+_PENDING: dict[Path, Future] = {}
+_PENDING_LOCK = Lock()
+
+
+def register_pending_initial_visual(key_bundle: Path, future: Future) -> None:
+    """Track a save that may finish after candidate planning and pickup."""
+    root = Path(key_bundle).expanduser().resolve()
+    with _PENDING_LOCK:
+        if root in _PENDING:
+            raise ValueError("initial visual save is already pending")
+        _PENDING[root] = future
+
+
+def _wait_for_initial_visual(key_bundle: Path) -> None:
+    root = Path(key_bundle).expanduser().resolve()
+    with _PENDING_LOCK:
+        pending = _PENDING.get(root)
+    if pending is not None:
+        pending.result()
+        with _PENDING_LOCK:
+            if _PENDING.get(root) is pending:
+                _PENDING.pop(root, None)
+
+
+def drain_pending_initial_visuals() -> None:
+    """Finish any remaining evidence saves before the live trace closes."""
+    with _PENDING_LOCK:
+        roots = list(_PENDING)
+    for root in roots:
+        _wait_for_initial_visual(root)
 
 
 def write_initial_visual_capture(
@@ -44,6 +78,7 @@ def write_initial_visual_capture(
 def initial_visual_source(key_bundle: Path) -> tuple[Path, dict]:
     """Return the actual raw VLM frame root and its independently timed rows."""
     root = Path(key_bundle).expanduser().resolve()
+    _wait_for_initial_visual(root)
     manifest = verify_key_capture_artifacts(root)
     if manifest["schema"] == "precision_insertion_key_capture_evidence_v1":
         record = json.loads((root / "key_observation.json").read_text(

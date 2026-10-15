@@ -21,6 +21,7 @@ from .calibration import (
     load_session_calibration, validate_session_camera_calibration,
 )
 from .clear_view import ClearViewForPerception
+from .initial_visual import drain_pending_initial_visuals
 from .camera_stream import open_autodex_camera_stream
 from .silhouette_compat import prepare_precision_silhouette
 
@@ -257,13 +258,16 @@ def run_live_precision_session(
             not _confirmed_key_placement(confirm_initial_key_placement)):
             raise RuntimeError("operator did not confirm initial key placement")
         with timed("live.action_loop", phase="trial"):
-            return run_session_actions(
-                live.opened.runner, handlers=build_handlers(live),
-                max_steps=max_steps,
-                stop_before_actions=({
-                    "execution_gate_required": "planning_ready",
-                    "preflight_repose": "planning_no_candidate",
-                } if stop_after_planning else None))
+            try:
+                return run_session_actions(
+                    live.opened.runner, handlers=build_handlers(live),
+                    max_steps=max_steps,
+                    stop_before_actions=({
+                        "execution_gate_required": "planning_ready",
+                        "preflight_repose": "planning_no_candidate",
+                    } if stop_after_planning else None))
+            finally:
+                drain_pending_initial_visuals()
 
 
 def _confirmed_key_placement(confirm: Callable[[], bool]) -> bool:

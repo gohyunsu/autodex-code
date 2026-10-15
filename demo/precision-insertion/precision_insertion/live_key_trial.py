@@ -8,7 +8,7 @@ sampling only after slow SAM/FoundPose inference is not equivalent.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextvars import copy_context
 import json
 import math
@@ -23,7 +23,9 @@ from .key_perception import (
     KeyPoseObservation, admit_key_capture,
     write_key_capture_artifacts, write_key_pose_artifacts,
 )
-from .initial_visual import initial_visual_source, write_initial_visual_capture
+from .initial_visual import (
+    register_pending_initial_visual, write_initial_visual_capture,
+)
 from .live_capture import collect_key_capture
 from .live_robot_state import LiveRobotState
 from .path_audit import PathAuditLimits
@@ -409,19 +411,31 @@ def prepare_next_live_key(
         request_id_factory=request_id_factory,
         registered_key_assistance=registered_key_assistance,
         pose_only=capture_initial_visual is not None)
-    visual_pool = None
     visual_future = None
+    visual_ready = None
     if capture_initial_visual is not None:
         if not callable(capture_initial_visual):
             raise TypeError("initial visual capture must be callable")
         visual_pool = ThreadPoolExecutor(max_workers=1,
                                          thread_name_prefix="initial-visual")
+        visual_ready = Future()
         context = copy_context()
         def save_visual():
-            with timed("key.initial_visual_capture", phase="key", kind="camera"):
-                raw = capture_initial_visual()
-                return write_initial_visual_capture(output, raw)
+            try:
+                with timed("key.initial_visual_acquire", phase="key",
+                           kind="camera"):
+                    raw = capture_initial_visual()
+                visual_ready.set_result(None)
+                with timed("key.initial_visual_save", phase="key", kind="io"):
+                    return write_initial_visual_capture(output, raw)
+            except BaseException as exc:
+                if not visual_ready.done():
+                    visual_ready.set_exception(exc)
+                raise
         visual_future = visual_pool.submit(context.run, save_visual)
+        register_pending_initial_visual(output, visual_future)
+        visual_future.add_done_callback(
+            lambda _future: visual_pool.shutdown(wait=False))
     try:
         state = state_for_observation(observation)
         if not isinstance(state, LiveRobotState):
@@ -449,11 +463,11 @@ def prepare_next_live_key(
                 axial_waypoint_step_m=axial_waypoint_step_m,
                 max_candidate_attempts=max_candidate_attempts,
                 **dict(planning_options))
-        if visual_future is not None:
-            with timed("key.initial_visual_join", phase="key", kind="wait"):
-                visual_future.result()
-            initial_visual_source(output)
     finally:
-        if visual_pool is not None:
-            visual_pool.shutdown(wait=True)
+        if visual_ready is not None:
+            with timed("key.initial_visual_acquisition_wait", phase="key",
+                       kind="wait"):
+                visual_ready.result()
+            if visual_future.done():
+                visual_future.result()
     return PreparedLiveKeyTrial(observation, state, preflight, output)

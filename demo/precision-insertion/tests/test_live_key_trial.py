@@ -16,6 +16,7 @@ from autodex.utils.sync import convert_inspire_raw  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.key_perception import KeyPoseObservation  # noqa: E402
 from precision_insertion.live_capture import KeyCaptureInput  # noqa: E402
+from precision_insertion.initial_visual import drain_pending_initial_visuals  # noqa: E402
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.clear_view import ClearViewForPerception  # noqa: E402
 from precision_insertion.perception_evidence import SocketViewLimits  # noqa: E402
@@ -176,6 +177,7 @@ def test_initial_visual_capture_overlaps_key_candidate_planning(
     arguments, events, _ = _setup(tmp_path, monkeypatch)
     visual_started = threading.Event()
     planning_done = threading.Event()
+    allow_save = threading.Event()
     def pose_collect(**kwargs):
         assert kwargs["pose_only"] is True
         events.append("capture")
@@ -193,7 +195,9 @@ def test_initial_visual_capture_overlaps_key_candidate_planning(
         return object()
 
     def save_visual(output, _capture):
-        events.append("save_visual")
+        events.append("save_visual_started")
+        assert allow_save.wait(2)
+        events.append("save_visual_done")
         return output / "initial_tabletop"
 
     def plan(**_kwargs):
@@ -205,12 +209,15 @@ def test_initial_visual_capture_overlaps_key_candidate_planning(
     monkeypatch.setattr(trial, "collect_key_capture", pose_collect)
     monkeypatch.setattr(trial, "write_key_pose_artifacts", save_pose)
     monkeypatch.setattr(trial, "write_initial_visual_capture", save_visual)
-    monkeypatch.setattr(trial, "initial_visual_source", lambda _output: None)
     arguments["runner"].preflight_next_key = plan
     result = trial.prepare_next_live_key(
         **arguments, capture_initial_visual=capture_visual)
     assert result.preflight.status == "sampled_planning_pass"
-    assert events.index("plan_while_visual_busy") < events.index("save_visual")
+    assert "save_visual_done" not in events
+    allow_save.set()
+    drain_pending_initial_visuals()
+    assert events.index("plan_while_visual_busy") < events.index(
+        "save_visual_done")
 
 
 def test_reset_landing_reuses_same_camera_key_capture_without_grasp_preflight(

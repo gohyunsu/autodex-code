@@ -698,10 +698,7 @@ class SessionRunner:
         if (_digest(self.calibration.record) != self.session_sha256 or
                 _digest(self.catalog) != self.catalog_sha256):
             raise ValueError("frozen session or endpoint catalogue changed")
-        key_manifest = verify_key_capture_artifacts(self._key_evidence_dir)
-        if key_manifest.get("schema") == "precision_insertion_key_pose_evidence_v2":
-            from .initial_visual import initial_visual_source
-            initial_visual_source(self._key_evidence_dir)
+        verify_key_capture_artifacts(self._key_evidence_dir)
         manifest_path = self._key_evidence_dir / "evidence_manifest.json"
         if (not manifest_path.is_file() or
                 hashlib.sha256(manifest_path.read_bytes()).hexdigest() !=

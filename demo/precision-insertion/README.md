@@ -2649,7 +2649,9 @@ acquisition-bound multi-view pose capture, rejects masks that include the
 frozen socket, saves that pose and checks **measured** 13-DOF Franka/Inspire
 feedback against its exposure interval. The runner's existing pose-conditioned
 v8 pickup/transfer/20 mm preflight overlaps a new raw initial-tabletop VLM
-snapshot. The snapshot must be saved before this non-motion handler returns.
+snapshot. The snapshot exposure must finish before this non-motion handler
+returns; PNG persistence continues in the background and is joined by the
+first VLM reader or run cleanup.
 It does not use the socket FoundPose result as the key pose, reuse an old key
 image, mark a physical grasp successful, or send a robot command.
 
