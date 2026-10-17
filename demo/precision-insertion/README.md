@@ -1,5 +1,8 @@
 # Precision insertion demo
 
+The current cylinder frame conventions and live gate audit are in
+[SYMMETRY_AND_LIVE_GATES.md](SYMMETRY_AND_LIVE_GATES.md).
+
 ## Active cylinder force-stop route (2026-10-13)
 
 The 20 mm cylinder stroke now uses the current AutoDex FR3 executor's
