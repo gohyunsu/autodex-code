@@ -727,9 +727,9 @@ Unknown key state after a controller abort still stops for supervised
 recovery; the stock planner cannot infer a safe key position from that event.
 For the cylinder's measured post-squeeze replan, set `pickup.lift_bounds=None`
 only if the run intentionally uses the stock nominal CAD path. This produces
-`sampled_nominal_measured_chain_pass` and records the future key/hand surface
-margin as unassessed; it still requires the measured start, exact endpoint and
-sampled full-path collision audit. The separate lift/transfer execution
+`measured_nominal_lift_pass` and records the future key/hand surface
+margin as unassessed; it plans the measured lift first, then the transfer and
+axial path after the lift observation. The separate lift/transfer execution
 boundaries accept the first-party measured adapter only when the exact audited
 ParaDex binary is running locally with its stream expiry at most 200 ms.
 External adapters still require a reviewed watchdog record. Static preflight

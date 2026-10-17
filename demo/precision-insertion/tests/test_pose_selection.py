@@ -32,7 +32,7 @@ def _assets(tmp_path, mode):
     if mode.family == "cylinder":
         info = paths.key_tabletop_dir.parent
         (info / "symmetry.json").write_text(json.dumps({
-            "type": "Dinf", "axes": [
+            "type": "Dinf", "center": [0, 0, 0.04], "axes": [
                 {"axis": [0, 0, 1], "fold": "inf"},
                 {"axis": [1, 0, 0], "fold": 2},
             ],

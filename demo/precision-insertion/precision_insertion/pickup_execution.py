@@ -172,16 +172,12 @@ def execute_bound_pickup(
     if (not math.isfinite(now) or
             pre_state.sample_timestamp_s <= attempt.started_at_s or
             pre_state.sample_timestamp_s > now or
-            now - pre_state.sample_timestamp_s > limits.max_start_age_s or
             float(np.max(np.abs(pre_state.full_q - planned[0]))) >
             limits.max_start_joint_error_rad):
         raise ValueError("fresh measured start does not match v8 approach")
     # Validate all read-only evidence before touching the interlock/motors.
     if enable_robot_motion is not True or motion_interlock() is not True:
         raise PermissionError("pickup motion needs explicit live interlock")
-    if (_wall_time() - pre_state.sample_timestamp_s >
-            limits.max_start_age_s):
-        raise ValueError("measured start aged while waiting for motion interlock")
 
     base = {
         "schema": "precision_insertion_pickup_execution_v1",

@@ -59,7 +59,7 @@ def _build_record(
     *, postlift_report_path: Path, preinsert_report_path: Path,
     mode: TaskMode, attempt_id: str, candidate_id: str,
     session_calibration_sha256: str, measured_start: LiveRobotState,
-    decision_timestamp_s: float, max_state_age_s: float,
+    decision_timestamp_s: float,
     max_start_joint_error_rad: float, max_arm_hand_skew_s: float,
     max_hand_command_error_raw: float, max_arm_velocity_rad_s: float,
 ) -> dict:
@@ -74,7 +74,6 @@ def _build_record(
             not isinstance(measured_start, LiveRobotState)):
         raise ValueError("axial handoff needs mode, attempt and measured state")
     limits = {
-        "max_state_age_s": _positive(max_state_age_s, "state age"),
         "max_start_joint_error_rad": _positive(
             max_start_joint_error_rad, "start joint error"),
         "max_arm_hand_skew_s": _positive(max_arm_hand_skew_s, "arm/hand skew"),
@@ -189,10 +188,9 @@ def _build_record(
     if (not all(math.isfinite(value) for value in
                 (observed_at, decision_at, sample_at)) or
             not observed_at < sample_at <= decision_at or
-            decision_at - sample_at > limits["max_state_age_s"] or
-            np.max(np.abs(measured_start.full_q - axial[0])) >
+            np.max(np.abs(measured_start.full_q[:7] - axial[0, :7])) >
             limits["max_start_joint_error_rad"]):
-        raise ValueError("measured hold is stale or differs from the axial start")
+        raise ValueError("measured hold predates observation or differs from axial start")
     return {
         "schema": _SCHEMA,
         "attempt_id": attempt_id,
@@ -221,7 +219,7 @@ def prepare_guarded_axial_handoff(
     *, postlift_report_path: Path, preinsert_report_path: Path,
     mode: TaskMode, attempt_id: str, candidate_id: str,
     session_calibration_sha256: str, measured_start: LiveRobotState,
-    decision_timestamp_s: float, max_state_age_s: float,
+    decision_timestamp_s: float,
     max_start_joint_error_rad: float, max_arm_hand_skew_s: float,
     max_hand_command_error_raw: float, max_arm_velocity_rad_s: float,
     output_dir: Path,
@@ -234,7 +232,6 @@ def prepare_guarded_axial_handoff(
         session_calibration_sha256=session_calibration_sha256,
         measured_start=measured_start,
         decision_timestamp_s=decision_timestamp_s,
-        max_state_age_s=max_state_age_s,
         max_start_joint_error_rad=max_start_joint_error_rad,
         max_arm_hand_skew_s=max_arm_hand_skew_s,
         max_hand_command_error_raw=max_hand_command_error_raw,
@@ -269,7 +266,6 @@ def verify_guarded_axial_handoff(report_path: Path) -> dict:
         session_calibration_sha256=record["session_calibration_sha256"],
         measured_start=_state_from_record(record["measured_start"]),
         decision_timestamp_s=record["decision_timestamp_s"],
-        max_state_age_s=limits["max_state_age_s"],
         max_start_joint_error_rad=limits["max_start_joint_error_rad"],
         max_arm_hand_skew_s=limits["max_arm_hand_skew_s"],
         max_hand_command_error_raw=limits["max_hand_command_error_raw"],

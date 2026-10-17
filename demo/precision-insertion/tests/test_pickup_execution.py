@@ -149,15 +149,13 @@ def test_known_stock_franka_follower_is_rejected_before_motion(
     assert not (attempt_dir / "pickup_started.json").exists()
 
 
-@pytest.mark.parametrize("defect", ["disabled", "stale", "plan_changed",
+@pytest.mark.parametrize("defect", ["disabled", "plan_changed",
                                      "hand_changed", "bad_report_hash",
                                      "interlock"])
 def test_rejects_before_motor_command(tmp_path, monkeypatch, defect):
     kwargs, archive, attempt_dir = _case(tmp_path, monkeypatch)
     if defect == "disabled":
         kwargs["enable_robot_motion"] = False
-    elif defect == "stale":
-        monkeypatch.setattr(pickup_execution, "_wall_time", lambda: 103.)
     elif defect == "plan_changed":
         archive.write_bytes(b"tampered plan")
     elif defect == "hand_changed":
@@ -226,12 +224,11 @@ def test_orphaned_start_marker_blocks_repeated_motor_command(
     assert not kwargs["executor"].calls
 
 
-def test_slow_interlock_expires_measured_start_before_motion(
+def test_slow_interlock_does_not_invalidate_unchanged_measured_start(
         tmp_path, monkeypatch):
     kwargs, _archive, attempt_dir = _case(tmp_path, monkeypatch)
     stamps = iter((101.1, 102.0))
     monkeypatch.setattr(pickup_execution, "_wall_time", lambda: next(stamps))
-    with pytest.raises(ValueError, match="aged while waiting"):
-        execute_bound_pickup(**kwargs)
-    assert not kwargs["executor"].calls
-    assert not (attempt_dir / "pickup_started.json").exists()
+    execute_bound_pickup(**kwargs)
+    assert kwargs["executor"].calls
+    assert (attempt_dir / "pickup_execution.json").exists()

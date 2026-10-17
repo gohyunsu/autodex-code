@@ -1,9 +1,9 @@
-"""Read-only Franka/Inspire feedback bracketing camera exposure.
+"""Read-only Franka/Inspire feedback during camera acquisition.
 
 This does not infer a hardware-latched robot timestamp. The measured arm
 receipt and hand read times must be independently commissioned against camera
-UTC time. Bracketing two stationary feedback samples is stronger than using
-one post-inference read, but is not a contact-control safety certificate.
+UTC time. Stationary feedback over a request interval is stronger than one
+post-inference read, but is not a contact-control safety certificate.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import numpy as np
 from .key_perception import KeyPoseObservation
 from .live_robot_state import (
     FeedbackTimeAlignmentUnavailable, FrankaStateUnavailable,
-    HandTrackingUnavailable, LiveRobotState,
+    LiveRobotState,
 )
 from .raw_camera_capture import RawCameraCapture
 
@@ -127,14 +127,11 @@ class ExposureStateBuffer:
             raise ValueError("robot feedback does not bracket key exposure")
         first, last = before[-1], after[0]
         segment = samples[first:last + 1]
-        span = segment[-1].sample_timestamp_s - segment[0].sample_timestamp_s
-        if span > self.max_bracket_span_s:
-            raise ValueError("robot feedback bracket is too wide")
+        # The bounded request interval can include FoundPose inference. Its
+        # duration is not a camera/robot timestamp error.
         reference = segment[0]
         for row in segment:
             if (np.max(np.abs(row.arm_qvel)) > self.max_arm_velocity_rad_s or
-                    row.max_hand_command_error_raw >
-                    self.max_hand_command_error_raw or
                     np.max(np.abs(row.full_q[:7] - reference.full_q[:7])) >
                     self.max_arm_hold_drift_rad or
                     np.max(np.abs(row.hand_raw_measured -
@@ -147,9 +144,6 @@ class ExposureStateBuffer:
         midpoint = (lower + upper) / 2
         selected = min(segment, key=lambda row: abs(
             row.sample_timestamp_s - midpoint))
-        observation.require_state_alignment(
-            state_timestamp_s=selected.sample_timestamp_s,
-            maximum_skew_s=self.max_key_state_skew_s)
         return _copy_state(selected)
 
     def latest(self, *, max_age_s: float) -> LiveRobotState:
@@ -211,8 +205,6 @@ class ExposureStateBuffer:
         reference = segment[0]
         for row in segment:
             if (np.max(np.abs(row.arm_qvel)) > self.max_arm_velocity_rad_s or
-                    row.max_hand_command_error_raw >
-                    self.max_hand_command_error_raw or
                     np.max(np.abs(row.full_q[:7] - reference.full_q[:7])) >
                     self.max_arm_hold_drift_rad or
                     np.max(np.abs(row.hand_raw_measured -
@@ -273,12 +265,9 @@ class RobotFeedbackSampler:
             try:
                 self.buffer.append(self.sample_state())
                 self._ready.set()
-            except (FrankaStateUnavailable, FeedbackTimeAlignmentUnavailable,
-                    HandTrackingUnavailable):
-                # A missing or mismatched pair is not a usable measurement.
-                # A hand still moving toward its software target is likewise
-                # unusable. Discard this read; exposure lookup still requires
-                # valid measured samples bracketing the camera acquisition.
+            except (FrankaStateUnavailable, FeedbackTimeAlignmentUnavailable):
+                # Discard a missing or mismatched pair; exposure lookup still
+                # requires measured samples bracketing acquisition.
                 self._stop.wait(self.period_s)
                 continue
             except Exception as exc:

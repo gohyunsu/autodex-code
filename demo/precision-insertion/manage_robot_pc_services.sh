@@ -74,7 +74,7 @@ start_host() {
   home="/home/$host"
   start_remote_if_missing "$host" camera \
     '^[^ ]*python src/camera/server_daemon.py$' \
-    "cd $home/paradex && exec env PYTHONPATH=$home/paradex $home/anaconda3/envs/flir_env/bin/python src/camera/server_daemon.py" 5480
+    "cd $home/paradex && exec env PYTHONPATH=$home/paradex PARADEX_CAMERA_IDLE_TIMEOUT_S=60 $home/anaconda3/envs/flir_env/bin/python src/camera/server_daemon.py" 5480
   start_remote_if_missing "$host" snapshot '[s]napshot_daemon.py' \
     "exec $home/anaconda3/envs/gotrack_cu128/bin/python $home/AutoDex/src/execution/daemon/snapshot_daemon.py" 6894
   adapter="$home/precision_init_adapter_20261013_983ba80"

@@ -13,6 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from autodex.executor.real import _convert_inspire  # noqa: E402
+from autodex.utils.sync import convert_inspire_raw  # noqa: E402
 from precision_insertion.live_robot_state import (  # noqa: E402
     FeedbackTimeAlignmentUnavailable, read_live_franka_inspire_state,
 )
@@ -65,8 +66,10 @@ def test_missing_stale_or_disagreeing_feedback_fails_closed(monkeypatch):
         _read(arm, hand, monkeypatch)
     arm, hand, arm_data, hand_data, _ = _devices()
     hand_data["qpos"][0] -= 100
-    with pytest.raises(ValueError, match="do not track"):
-        _read(arm, hand, monkeypatch)
+    held = _read(arm, hand, monkeypatch)
+    assert held.max_hand_command_error_raw == 100
+    np.testing.assert_allclose(
+        held.full_q[7:], convert_inspire_raw(hand_data["qpos"][None, :])[0])
     arm, hand, arm_data, hand_data, _ = _devices()
     hand_data.pop("qpos")
     hand_data["joint_value"] = hand_data["action"]

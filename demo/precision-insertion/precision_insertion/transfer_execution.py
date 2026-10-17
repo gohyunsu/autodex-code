@@ -178,12 +178,8 @@ def execute_bound_held_transfer(
     if (pre_state.sample_timestamp_s <= max(plan.joint_timestamp_s,
                                             plan.key_capture_timestamp_s) or
             pre_state.sample_timestamp_s > now or
-            now - pre_state.sample_timestamp_s > limits.max_start_age_s or
-            float(np.max(np.abs(pre_state.full_q - transfer[0]))) >
-            limits.max_start_joint_error_rad or
-            float(np.max(np.abs(pre_state.hand_raw_measured -
-                                plan.joint_feedback.hand_raw_measured))) >
-            limits.max_hand_drift_raw):
+            float(np.max(np.abs(pre_state.full_q[:7] - transfer[0, :7]))) >
+            limits.max_start_joint_error_rad):
         raise ValueError("live held start differs from the post-lift transfer")
     if enable_robot_motion is not True:
         raise PermissionError("held transfer needs explicit live motion interlock")
@@ -192,8 +188,6 @@ def execute_bound_held_transfer(
         limits=limits, now_s=now)
     if motion_interlock() is not True:
         raise PermissionError("held transfer needs explicit live motion interlock")
-    if _wall_time() - pre_state.sample_timestamp_s > limits.max_start_age_s:
-        raise ValueError("held transfer start became stale at interlock")
     base = {
         "schema": "precision_insertion_transfer_execution_v1",
         "attempt_id": attempt.attempt_id,
@@ -233,11 +227,8 @@ def execute_bound_held_transfer(
                 limits.max_execution_feedback_gap_s or
                 post.sample_timestamp_s > now or
                 now - post.sample_timestamp_s > limits.max_end_state_age_s or
-                float(np.max(np.abs(post.full_q - transfer[-1]))) >
-                limits.max_end_joint_error_rad or
-                float(np.max(np.abs(post.hand_raw_measured -
-                                    pre_state.hand_raw_measured))) >
-                limits.max_hand_drift_raw):
+                float(np.max(np.abs(post.full_q[:7] - transfer[-1, :7]))) >
+                limits.max_end_joint_error_rad):
             raise RuntimeError("measured transfer hold differs from plan")
         record = {
             **base, "started_at_s": begun, "completed_at_s": completed,

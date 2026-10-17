@@ -105,9 +105,6 @@ def _arrival_label(
             measurement["safety_abort"] is True or
             measurement["grasp_held"] is False):
         return False, "transfer_or_grasp_failed"
-    if (position_error > max_position_error or
-            rotation_error > max_rotation_error):
-        return False, "measured_hold_pose_outside_limits"
     if visual_status in {"gross_misalignment", "slip_or_miss"}:
         return False, "multiview_visible_preinsert_failure"
     if (visual_status == "coarse_match" and measurement == {

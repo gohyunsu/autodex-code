@@ -8,7 +8,6 @@ different CAD frame must not look like grasp slip or change its center.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 import math
 from pathlib import Path
 
@@ -78,10 +77,7 @@ def resolve_postlift_held_relation(
         if (not symmetry.end_exchange or
                 not np.allclose(np.abs(symmetry.axis_local), [0, 0, 1], atol=1e-8)):
             raise ValueError("cylindrical key requires local-Z Dinf symmetry")
-        data = json.loads((info / "symmetry.json").read_text(encoding="utf-8"))
-        local_center = np.asarray(data.get("center"), dtype=np.float64)
-        if local_center.shape != (3,) or not np.all(np.isfinite(local_center)):
-            raise ValueError("cylinder symmetry center is missing or invalid")
+        local_center = symmetry.center_local
         center = observed[:3, :3] @ local_center + observed[:3, 3]
         desired = hand[:3, :3] @ nominal[:3, :3].T
         relative = observed[:3, :3].T @ desired

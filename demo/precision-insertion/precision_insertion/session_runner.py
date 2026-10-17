@@ -1189,9 +1189,7 @@ class SessionRunner:
     def prepare_measured_lift_chain(
         self, *, planner, pickup_execution_log: Path,
         joint_sample: LiveRobotState, bounds: SurfaceDeviationBounds | None,
-        limits: PathAuditLimits, max_state_age_s: float,
-        max_post_squeeze_arm_drift_rad: float,
-        max_post_squeeze_hand_drift_raw: float,
+        limits: PathAuditLimits,
         max_arm_hand_skew_s: float,
         max_hand_command_error_raw: float,
         max_arm_velocity_rad_s: float,
@@ -1211,15 +1209,12 @@ class SessionRunner:
                 (self._measured_lift_preflight is not None and
                  self._measured_lift_preflight.status in {
                      "sampled_measured_chain_pass",
-                     "sampled_nominal_measured_chain_pass"})):
+                     "measured_nominal_lift_pass"})):
             raise ValueError("measured lift is absent or already preflighted")
         result = plan_measured_lift_chain(
             runner=self, planner=planner,
             pickup_execution_log=pickup_execution_log,
             joint_sample=joint_sample, bounds=bounds, limits=limits,
-            max_state_age_s=max_state_age_s,
-            max_post_squeeze_arm_drift_rad=max_post_squeeze_arm_drift_rad,
-            max_post_squeeze_hand_drift_raw=max_post_squeeze_hand_drift_raw,
             max_arm_hand_skew_s=max_arm_hand_skew_s,
             max_hand_command_error_raw=max_hand_command_error_raw,
             max_arm_velocity_rad_s=max_arm_velocity_rad_s,
@@ -1586,10 +1581,8 @@ class SessionRunner:
 
     def prepare_nominal_postlift_transfer(
         self, *, planner, joint_sample: LiveRobotState,
-        max_state_age_s: float, max_arm_hand_skew_s: float,
+        max_arm_hand_skew_s: float,
         max_hand_command_error_raw: float, max_arm_velocity_rad_s: float,
-        max_postlift_arm_drift_rad: float,
-        max_postlift_hand_drift_raw: float,
         limits: PathAuditLimits, axial_waypoint_step_m: float,
     ) -> NominalPostLiftPreflight:
         """Explicit v8 relation hypothesis for repeatable-bias experiments.
@@ -1619,12 +1612,9 @@ class SessionRunner:
             raw_lift=self._lift_checkpoint,
             raw_lift_report_path=self._lift_report_path,
             joint_sample=joint_sample,
-            max_state_age_s=max_state_age_s,
             max_arm_hand_skew_s=max_arm_hand_skew_s,
             max_hand_command_error_raw=max_hand_command_error_raw,
             max_arm_velocity_rad_s=max_arm_velocity_rad_s,
-            max_postlift_arm_drift_rad=max_postlift_arm_drift_rad,
-            max_postlift_hand_drift_raw=max_postlift_hand_drift_raw,
             limits=limits, axial_waypoint_step_m=axial_waypoint_step_m)
         output = (self._attempt_dir / "postlift_preflights" /
                   f"{self._postlift_index:03d}")
@@ -1735,7 +1725,7 @@ class SessionRunner:
 
     def prepare_guarded_axial_handoff(
         self, *, measured_start: LiveRobotState,
-        decision_timestamp_s: float, max_state_age_s: float,
+        decision_timestamp_s: float,
         max_start_joint_error_rad: float, max_arm_hand_skew_s: float,
         max_hand_command_error_raw: float,
         max_arm_velocity_rad_s: float,
@@ -1771,7 +1761,6 @@ class SessionRunner:
             session_calibration_sha256=self.session_sha256,
             measured_start=measured_start,
             decision_timestamp_s=decision_timestamp_s,
-            max_state_age_s=max_state_age_s,
             max_start_joint_error_rad=max_start_joint_error_rad,
             max_arm_hand_skew_s=max_arm_hand_skew_s,
             max_hand_command_error_raw=max_hand_command_error_raw,

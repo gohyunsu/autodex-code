@@ -272,10 +272,11 @@ endpoint and sampled path audit, and records the physical margin as
 unassessed; it is not a physical clearance certificate. A supplied
 `SurfaceDeviationBounds` retains the bounded audit.
 Its `held_relation` stage supplies `limits` (`PathAuditLimits`) and a
-`parameters` mapping containing `max_state_age_s`, `max_arm_hand_skew_s`,
-`max_hand_command_error_raw`, `max_arm_velocity_rad_s`,
-`max_postlift_arm_drift_rad`, `max_postlift_hand_drift_raw`, and
-`axial_waypoint_step_m`. These values come from the actual robot setup.
+`parameters` mapping containing `max_arm_hand_skew_s`,
+`max_hand_command_error_raw`, `max_arm_velocity_rad_s`, and
+`axial_waypoint_step_m`. The robot-state reader checks packet age; the
+planner does not reject a current state because earlier evidence took time
+to save or verify.
 The selected v8 `wrist_se3.npy` is an *assumed* key–hand relation, never a
 post-squeeze measurement. A fresh measured joint state, the exact 20 mm
 endpoint screen and sampled transfer/axial preflight still run. The saved

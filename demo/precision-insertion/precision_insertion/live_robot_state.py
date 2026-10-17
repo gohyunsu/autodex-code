@@ -26,10 +26,6 @@ class FeedbackTimeAlignmentUnavailable(ValueError):
     """This read cannot pair recent arm and hand samples."""
 
 
-class HandTrackingUnavailable(ValueError):
-    """This hand sample is still moving toward its software command."""
-
-
 @dataclass(frozen=True)
 class LiveRobotState:
     full_q: np.ndarray
@@ -70,10 +66,9 @@ class LiveRobotState:
                            atol=1e-8, rtol=0):
             raise ValueError("planner hand joints disagree with measured raw motors")
         error = float(np.max(np.abs(measured - commanded)))
-        if (not math.isclose(error, float(self.max_hand_command_error_raw),
-                             abs_tol=1e-8) or
-                error > max_hand_command_error_raw):
-            raise ValueError("Inspire measured joints do not track hold command")
+        if not math.isclose(error, float(self.max_hand_command_error_raw),
+                            abs_tol=1e-8):
+            raise ValueError("recorded Inspire command error differs from feedback")
         times = (self.sample_timestamp_s, self.arm_timestamp_s,
                  self.hand_timestamp_s, self.arm_robot_uptime_s)
         if (not all(math.isfinite(t) and t > 0 for t in times) or
@@ -162,11 +157,10 @@ def read_live_franka_inspire_state(
     if (np.any(measured_raw < 0) or np.any(measured_raw > 1000) or
             np.any(commanded_raw < 0) or np.any(commanded_raw > 1000)):
         raise ValueError("Inspire feedback/action lies outside 0..1000")
+    # A held object prevents the fingers from reaching their close command.
+    # AutoDex holds that command through lift and transfer; the difference is
+    # useful evidence, not a reason to reject the measured joint state.
     error = float(np.max(np.abs(measured_raw - commanded_raw)))
-    if error > max_hand_command_error_raw:
-        raise HandTrackingUnavailable(
-            "Inspire measured joints do not track the hold command: "
-            f"{error:.1f} raw units (limit {max_hand_command_error_raw:.1f})")
     hand_q = _finite_vector(convert_inspire_raw(measured_raw[None, :])[0],
                             6, "converted Inspire planner qpos")
     wrench = _finite_vector(arm_data.get("wrench"), 6, "FR3 wrench")

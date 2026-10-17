@@ -17,7 +17,7 @@ from precision_insertion.feedback_buffer import (  # noqa: E402
 from precision_insertion.key_perception import KeyPoseObservation  # noqa: E402
 from precision_insertion.live_robot_state import (  # noqa: E402
     FeedbackTimeAlignmentUnavailable, FrankaStateUnavailable,
-    HandTrackingUnavailable, LiveRobotState,
+    LiveRobotState,
 )
 from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
 
@@ -111,7 +111,7 @@ def test_raw_vlm_capture_rejects_motion_even_if_arm_returns_to_same_pose():
         buffer.state_for_capture(capture)
 
 
-def test_missing_or_wide_bracket_rejects_and_input_arrays_are_copied():
+def test_missing_bracket_rejects_but_long_stationary_request_is_allowed():
     buffer = _buffer()
     original = _state(100.)
     buffer.append(original)
@@ -119,8 +119,7 @@ def test_missing_or_wide_bracket_rejects_and_input_arrays_are_copied():
     with pytest.raises(ValueError, match="does not bracket"):
         buffer.state_for_observation(_observation())
     buffer.append(_state(100.10))
-    with pytest.raises(ValueError, match="bracket is too wide"):
-        buffer.state_for_observation(_observation())
+    assert buffer.state_for_observation(_observation()).full_q[0] == 0.
 
 
 def test_nonmonotone_feedback_and_reader_failure_reject():
@@ -194,24 +193,13 @@ def test_sampler_recovers_after_one_unaligned_arm_hand_pair():
         assert sampler.state_for_observation(_observation()).sample_timestamp_s == 100.02
 
 
-def test_sampler_recovers_after_transient_hand_tracking_error():
+def test_held_object_command_gap_does_not_reject_stationary_exposure():
     buffer = _buffer()
-    resumed = threading.Event()
-    calls = 0
-
-    def reader():
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise HandTrackingUnavailable("hand target is still settling")
-        if calls == 4:
-            resumed.set()
-        return _state(100. + (calls - (calls > 2)) * .02)
-
-    with RobotFeedbackSampler(buffer, reader, period_s=.001) as sampler:
-        sampler.wait_until_ready(timeout_s=1.)
-        assert resumed.wait(timeout=1.)
-        assert sampler.state_for_observation(_observation()).sample_timestamp_s == 100.02
+    for timestamp in (100., 100.02, 100.04):
+        buffer.append(_state(timestamp, hand_command_error=80.))
+    selected = buffer.state_for_observation(_observation())
+    assert selected.max_hand_command_error_raw == 80.
+    assert selected.sample_timestamp_s == 100.02
 
 
 def test_sampler_never_admits_capture_without_a_live_fr3_update():

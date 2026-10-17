@@ -10,6 +10,7 @@ or robot motion.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import hashlib
 import json
@@ -29,6 +30,7 @@ from .geometry import pose_angle_deg, validate_se3
 from .live_capture import KeyCaptureInput
 from .perception_evidence import SocketViewLimits, admit_socket_capture
 from .runtime_evidence_cache import recalled, remember
+from .raw_camera_capture import configured_capture_io_workers
 from .session_bootstrap import _safe_id, _write_json
 from .timing_profile import timed
 from .socket_exclusion import (
@@ -79,12 +81,19 @@ class KeyPoseObservation:
     def require_state_alignment(
         self, *, state_timestamp_s: float, maximum_skew_s: float,
     ) -> None:
-        """Check the measured robot state against *all* camera time bounds."""
+        """Check state time without treating inference time as exposure skew."""
         state = float(state_timestamp_s)
         limit = float(maximum_skew_s)
-        if (not math.isfinite(state) or not math.isfinite(limit) or limit <= 0 or
-                max(abs(state - endpoint)
-                    for endpoint in self.acquisition_interval_s) > limit):
+        if not math.isfinite(state) or not math.isfinite(limit) or limit <= 0:
+            raise ValueError("robot state is not aligned to every key view")
+        lower, upper = self.acquisition_interval_s
+        bounded_request = bool(self.frame_evidence) and all(
+            row.get("timestamp_method") == "bounded_request_interval"
+            for row in self.frame_evidence.values())
+        aligned = (lower <= state <= upper if bounded_request else
+                   max(abs(state - endpoint)
+                       for endpoint in self.acquisition_interval_s) <= limit)
+        if not aligned:
             raise ValueError("robot state is not aligned to every key view")
 
 
@@ -94,11 +103,7 @@ def _cylinder_symmetry(mode: TaskMode, shared_root: Path):
     symmetry = load_axial_symmetry(info.parent.parent.parent, mode.key_object)
     if not symmetry.end_exchange:
         raise ValueError("cylindrical key must have Dinf end symmetry")
-    data = json.loads((info / "symmetry.json").read_text(encoding="utf-8"))
-    center = np.asarray(data.get("center"), dtype=float)
-    if center.shape != (3,) or not np.all(np.isfinite(center)):
-        raise ValueError("cylinder symmetry center is missing or invalid")
-    return center, symmetry.axis_local
+    return symmetry.center_local, symmetry.axis_local
 
 
 def _pose_residual(
@@ -348,8 +353,12 @@ def _admit_key_capture_common(
     minimum_iou = (minimum_held_refinement_iou if held_phase else
                    minimum_tabletop_refinement_iou)
     if (type(best_iou) not in (int, float) or
-            not math.isfinite(best_iou) or not 0 <= best_iou <= 1 or
-            best_iou < minimum_iou):
+            not math.isfinite(best_iou) or not 0 <= best_iou <= 1):
+        raise ValueError("AutoDex key IoU selector returned an invalid score")
+    # Stock AutoDex uses IoU to rank tabletop FoundPose candidates and the
+    # silhouette loss to accept the refined pose. Keep the IoU score as
+    # evidence, without an extra absolute cutoff on any tabletop key.
+    if held_phase and best_iou < minimum_iou:
         raise ValueError("key mask/silhouette IoU is below commissioned limit")
     refined = validate_se3(pose, name="refined key pose_world")
     for camera in admitted_ids:
@@ -380,6 +389,7 @@ def _admit_key_capture_common(
         "best_serial": selected,
         "best_iou": diagnostics.get("best_iou"),
         "minimum_refinement_iou": float(minimum_iou),
+        "minimum_refinement_iou_gate_applied": held_phase,
         "sil_loss": diagnostics.get("sil_loss"),
         "sil_skipped": diagnostics.get("sil_skipped", False),
     }
@@ -708,17 +718,24 @@ def write_key_pose_artifacts(
         "mask_metadata": {}, "pose_payloads": {},
         "perception_derivation": None,
     }
-    for serial in sorted(capture.masks):
+    def save_mask(serial: str) -> None:
         safe = _safe_id(serial, "key camera ID")
         entry = capture.masks[serial]
         mask = np.asarray(entry["mask"], dtype=np.uint8) * 255
         if mask.ndim != 2 or not mask.size:
             raise ValueError(f"invalid key mask: {serial}")
+        encoded, data = cv2.imencode(".png", mask)
+        if not encoded:
+            raise OSError(f"could not save key mask: {serial}")
         with (mask_dir / f"{safe}.png").open("xb") as stream:
-            encoded, data = cv2.imencode(".png", mask)
-            if not encoded:
-                raise OSError(f"could not save key mask: {serial}")
             stream.write(data.tobytes())
+
+    serials = sorted(capture.masks)
+    with ThreadPoolExecutor(max_workers=configured_capture_io_workers(),
+                            thread_name_prefix="key-mask-save") as pool:
+        list(pool.map(save_mask, serials))
+    for serial in serials:
+        entry = capture.masks[serial]
         payloads["mask_metadata"][serial] = {
             key: value for key, value in entry.items() if key != "mask"}
         pose = dict(capture.poses[serial])

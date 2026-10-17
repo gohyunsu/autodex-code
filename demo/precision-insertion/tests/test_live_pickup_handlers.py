@@ -17,9 +17,6 @@ from precision_insertion.session_policy import SessionDecision  # noqa: E402
 
 
 LIMITS = {
-    "max_state_age_s": 1.,
-    "max_post_squeeze_arm_drift_rad": .02,
-    "max_post_squeeze_hand_drift_raw": 20.,
     "max_arm_hand_skew_s": .02,
     "max_hand_command_error_raw": 20.,
     "max_arm_velocity_rad_s": .05,
@@ -61,7 +58,7 @@ class Runner:
 
 def _handler(tmp_path, *, enabled=True):
     runner = Runner(tmp_path)
-    states = iter([_state(10.1), _state(10.2)])
+    states = iter([_state(10.1), _state(10.2), _state(10.4)])
     executor = object()
     planner = object()
     bounds = object()
@@ -99,7 +96,7 @@ def test_selected_v8_pickup_then_measured_squeeze_lift_preflight(
     assert runner.events[0][1] == {
         "attempt_id": "attempt_001", "started_at_s": 10.}
     chain = runner.events[2][1]
-    assert chain["joint_sample"].sample_timestamp_s == 10.2
+    assert chain["joint_sample"].sample_timestamp_s == 10.4
     assert chain["pickup_execution_log"] == (
         tmp_path / "attempts/attempt_001/pickup_execution.json")
     assert chain["bounds"] is bounds and chain["limits"] is path_limits

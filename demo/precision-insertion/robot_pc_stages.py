@@ -161,9 +161,6 @@ def configure(core, live, options) -> dict:
                 "lift_bounds": None,
                 "path_limits": path,
                 "measured_lift_parameters": {
-                    "max_state_age_s": 1.,
-                    "max_post_squeeze_arm_drift_rad": .02,
-                    "max_post_squeeze_hand_drift_raw": 50.,
                     "axial_waypoint_step_m": .005,
                     **stationary,
                 },
@@ -181,9 +178,6 @@ def configure(core, live, options) -> dict:
             "held_relation": {
                 "limits": path,
                 "parameters": {
-                    "max_state_age_s": 1.,
-                    "max_postlift_arm_drift_rad": .02,
-                    "max_postlift_hand_drift_raw": 50.,
                     "axial_waypoint_step_m": .005,
                     **stationary,
                 },
@@ -201,11 +195,10 @@ def configure(core, live, options) -> dict:
                     **stationary,
                 },
                 "handoff_parameters": {
-                    "max_state_age_s": 1.,
                     "max_start_joint_error_rad": .02,
                     **stationary,
                 },
-                "insertion_parameters": {"max_handoff_age_s": 90.},
+                "insertion_parameters": {},
                 "final_parameters": {
                     "max_phase_skew_s": 10.,
                     "max_preinsert_age_s": 180.,

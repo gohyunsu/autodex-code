@@ -1,4 +1,4 @@
-"""Replan the complete held-key chain from the measured post-squeeze state.
+"""Replan the held lift from the measured post-squeeze state.
 
 This does not command a robot. It uses the unchanged v8 lift planner and the
 demo's transfer/axial planner with a sampled whole-key/hand audit. The
@@ -14,7 +14,6 @@ import hashlib
 import json
 import math
 from pathlib import Path
-import time
 
 import numpy as np
 
@@ -35,21 +34,17 @@ from .uncertainty_margin import (
 )
 
 
-NOMINAL_UNBOUNDED_LIFT_STATUS = "sampled_nominal_measured_chain_pass"
+NOMINAL_UNBOUNDED_LIFT_STATUS = "measured_nominal_lift_pass"
 _NOMINAL_UNASSESSED_MARGIN = {
     "schema": "precision_insertion_nominal_surface_margin_unassessed_v1",
     "sampled_margin_pass": None,
     "reason": "no_future_trial_surface_error_bound",
-    "scope": "stock_nominal_geometry_only_not_robust_physical_clearance",
+    "scope": "lift_only_transfer_and_axial_planned_after_lift",
 }
 
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _wall_time() -> float:
-    return time.time()
 
 
 @dataclass(frozen=True)
@@ -88,7 +83,7 @@ class MeasuredLiftChain:
             "planning": None if self.planning is None else self.planning.to_record(),
             "uncertainty_margin": self.uncertainty_margin,
             "cartesian_planner_mode": self.cartesian_planner_mode,
-            "scope": "measured_start_sampled_chain_not_motion_or_grasp_success",
+            "scope": "measured_start_plan_not_motion_or_grasp_success",
             "robot_ready": False,
         }
 
@@ -98,15 +93,12 @@ def plan_measured_lift_chain(
     joint_sample: LiveRobotState,
     bounds: SurfaceDeviationBounds | None,
     limits: PathAuditLimits,
-    max_state_age_s: float,
-    max_post_squeeze_arm_drift_rad: float,
-    max_post_squeeze_hand_drift_raw: float,
     max_arm_hand_skew_s: float,
     max_hand_command_error_raw: float,
     max_arm_velocity_rad_s: float,
     axial_waypoint_step_m: float,
 ) -> MeasuredLiftChain:
-    """Replan lift/transfer/20 mm path without treating squeeze as success.
+    """Replan from the measured squeeze without treating it as grasp success.
 
     Only a measured 13-DOF state after this attempt's completed squeeze is
     accepted. The complete path is audited using the same frozen socket and
@@ -116,8 +108,7 @@ def plan_measured_lift_chain(
     margin and never claims robust physical clearance.
     """
     thresholds = (
-        max_state_age_s, max_post_squeeze_arm_drift_rad,
-        max_post_squeeze_hand_drift_raw, max_arm_hand_skew_s,
+        max_arm_hand_skew_s,
         max_hand_command_error_raw, max_arm_velocity_rad_s,
         axial_waypoint_step_m)
     if (not all(type(v) in (int, float) and math.isfinite(v) and v > 0
@@ -185,32 +176,15 @@ def plan_measured_lift_chain(
         max_arm_velocity_rad_s=max_arm_velocity_rad_s)
     completed = float(log.get("completed_at_s", float("nan")))
     saved_post = log.get("post_state")
-    post_q = np.asarray(
-        saved_post.get("full_q") if isinstance(saved_post, dict) else None,
-        dtype=float)
-    post_hand = np.asarray(
-        saved_post.get("hand_raw_measured")
-        if isinstance(saved_post, dict) else None, dtype=float)
     squeeze_raw = np.asarray(log.get("squeeze_action_raw"), dtype=float)
-    clock_now = _wall_time()
     if (not isinstance(saved_post, dict) or
             saved_post.get("source") != "robot_joint_feedback" or
-            post_q.shape != (13,) or post_hand.shape != (6,) or
             squeeze_raw.shape != (6,) or
-            not all(np.all(np.isfinite(row)) for row in
-                    (post_q, post_hand, squeeze_raw)) or
+            not np.all(np.isfinite(squeeze_raw)) or
             saved_post.get("sample_timestamp_s") != completed or
             not math.isfinite(completed) or
             completed <= attempt.started_at_s or
             joint_sample.sample_timestamp_s < completed or
-            joint_sample.sample_timestamp_s > clock_now or
-            clock_now - joint_sample.sample_timestamp_s > max_state_age_s or
-            float(np.max(np.abs(
-                joint_sample.full_q[:7] - post_q[:7]))) >
-            max_post_squeeze_arm_drift_rad or
-            float(np.max(np.abs(
-                joint_sample.hand_raw_measured - post_hand))) >
-            max_post_squeeze_hand_drift_raw or
             not np.allclose(joint_sample.hand_raw_commanded,
                             squeeze_raw,
                             atol=max_hand_command_error_raw, rtol=0)):
@@ -259,15 +233,12 @@ def plan_measured_lift_chain(
     # This can run in a new process after pickup, not just in the process
     # where the initial candidate loop installed its cuRobo compatibility.
     install_curobo_planner_compat()
-    targets = build_rigid_insertion_targets(
-        mode=runner.mode, shared_root=runner.shared_root,
-        calibration=runner.calibration, T_key_hand=relation)
     lift_pf = planner.plan_lift_preflight(
         np.asarray(joint_sample.full_q, dtype=np.float32),
         trial.trial_scene, lift_h=.10,
         timing_phase="precision_insertion_measured_lift")
     if lift_pf is None:
-        return result("measured_lift_unreachable", targets=targets)
+        return result("measured_lift_unreachable")
     lift = _path(lift_pf.traj, "measured held lift",
                  joint_sample.full_q, joint_sample.full_q[7:])
     start_wrist = validate_se3(planner.fk_wrist(lift[0]),
@@ -280,6 +251,20 @@ def plan_measured_lift_chain(
             not np.allclose(lift_pf.start_full_qpos,
                             joint_sample.full_q, atol=1e-4, rtol=0)):
         raise ValueError("v8 measured lift start or 10 cm goal is inconsistent")
+    if bounds is None:
+        # The nominal live route replans transfer and axial motion from the
+        # observed post-lift state. Planning them here adds latency and lets
+        # the measured squeeze pose go stale before the lift can start.
+        planning = InsertionPreflight(
+            "lift_only_pass", lift, None, None, None, 0,
+            joint_sample.full_q[7:].copy(), "measured",
+            ({"stage": "measured_lift", "success": True,
+              "planner_api": "plan_lift_preflight"},))
+        return result(NOMINAL_UNBOUNDED_LIFT_STATUS, planning=planning,
+                      margin=dict(_NOMINAL_UNASSESSED_MARGIN))
+    targets = build_rigid_insertion_targets(
+        mode=runner.mode, shared_root=runner.shared_root,
+        calibration=runner.calibration, T_key_hand=relation)
     planning = plan_held_transfer_and_axial(
         planner=planner, trial_scene=trial.trial_scene,
         shared_root=runner.shared_root, calibration=runner.calibration,
@@ -292,9 +277,6 @@ def plan_measured_lift_chain(
                               "planner_api": "plan_lift_preflight"},))
     if not planning.sampled_planning_pass:
         return result(planning.status, targets=targets, planning=planning)
-    if bounds is None:
-        return result(NOMINAL_UNBOUNDED_LIFT_STATUS, targets=targets,
-                      planning=planning, margin=dict(_NOMINAL_UNASSESSED_MARGIN))
     margin = audit_sampled_uncertainty_margins(
         mode=runner.mode, endpoint=endpoint, targets=targets,
         planning=planning, bounds=bounds)
@@ -356,7 +338,10 @@ def verify_measured_lift_chain(
         planning = report.get("planning")
         margin = report.get("uncertainty_margin")
         if (not isinstance(planning, dict) or
-                planning.get("sampled_planning_pass") is not True or
+                planning.get("status") != (
+                    "lift_only_pass" if report["status"] ==
+                    NOMINAL_UNBOUNDED_LIFT_STATUS else
+                    "sampled_planning_pass") or
                 (report["status"] == "sampled_measured_chain_pass" and
                  (not isinstance(margin, dict) or
                   margin.get("sampled_margin_pass") is not True)) or
@@ -379,10 +364,13 @@ def verify_measured_lift_chain(
         with np.load(artifact, allow_pickle=False) as archive:
             if "lift" not in archive.files:
                 raise ValueError("saved measured lift has no lift trajectory")
-            if (report.get("status") in passing and
+            if (report.get("status") == "sampled_measured_chain_pass" and
                     not {"lift", "transfer", "axial"} <=
                     set(archive.files)):
                 raise ValueError("passing measured lift lacks full-chain paths")
+            if (report.get("status") == NOMINAL_UNBOUNDED_LIFT_STATUS and
+                    set(archive.files) != {"lift"}):
+                raise ValueError("nominal measured lift must save only its lift")
             start = np.asarray(report["measured_start"]["full_q"], dtype=float)
             held = start[7:]
             lift = _path(archive["lift"], "saved measured lift", start, held)

@@ -43,7 +43,8 @@ def _object(tmp_path, *, name="key", kind="Dinf", tabletop=None):
     info = tmp_path / name / "processed_data" / "info"
     poses = info / "tabletop"
     poses.mkdir(parents=True)
-    data = {"type": kind, "axes": [{"axis": [0, 0, 1], "fold": "inf"}]}
+    data = {"type": kind, "center": [0, 0, .04],
+            "axes": [{"axis": [0, 0, 1], "fold": "inf"}]}
     if kind == "Dinf":
         data["axes"].append({"axis": [1, 0, 0], "fold": 2})
     (info / "symmetry.json").write_text(json.dumps(data), encoding="utf-8")
@@ -103,11 +104,44 @@ def test_round_socket_ignores_yaw_but_rejects_axis_tilt():
 def test_dinf_key_can_exchange_identical_ends(tmp_path):
     end_down = np.eye(4)
     end_down[:3, :3] = np.diag([1.0, -1.0, -1.0])
+    end_down[2, 3] = .08
     name = _object(tmp_path, tabletop=end_down)
     result = snap_axisymmetric_tabletop_pose(
         np.eye(4), object_root=tmp_path, object_name=name)
-    np.testing.assert_allclose(result[:3, 2], [0, 0, 1])
+    np.testing.assert_allclose(result[:3, 2], [0, 0, -1])
+    np.testing.assert_allclose(result[:3, 3], [0, 0, .08])
+    np.testing.assert_allclose(result @ [0, 0, .04, 1],
+                               [0, 0, .04, 1])
     assert load_axial_symmetry(tmp_path, name).end_exchange is True
+
+
+@pytest.mark.parametrize("stem,tabletop", [
+    ("000", np.array([[1., 0., 0., 0.], [0., -1., 0., 0.],
+                      [0., 0., -1., .08], [0., 0., 0., 1.]])),
+    ("001", np.array([[0., 0., 1., 0.], [0., 1., 0., 0.],
+                      [-1., 0., 0., .015], [0., 0., 0., 1.]])),
+])
+def test_dinf_v8_pose_is_invariant_to_yaw_and_end_exchange(
+        tmp_path, stem, tabletop):
+    name = _object(tmp_path, tabletop=tabletop)
+    center = np.array([0., 0., .04])
+    physical_center = tabletop[:3, :3] @ center + tabletop[:3, 3]
+    for degrees in (0., 57., 173.):
+        yaw = np.radians(degrees)
+        c, s = np.cos(yaw), np.sin(yaw)
+        axial = np.array([[c, -s, 0.], [s, c, 0.], [0., 0., 1.]])
+        for flip in (np.eye(3), np.diag([1., -1., -1.])):
+            equivalent = tabletop.copy()
+            equivalent[:3, :3] = tabletop[:3, :3] @ axial @ flip
+            equivalent[:3, 3] = physical_center - equivalent[:3, :3] @ center
+            result = snap_axisymmetric_tabletop_pose(
+                equivalent, object_root=tmp_path, object_name=name)
+            np.testing.assert_allclose(
+                result[:3, :3] @ center + result[:3, 3], physical_center,
+                atol=1e-9)
+            np.testing.assert_allclose(
+                result[:3, :3] @ [0., 0., 1.],
+                tabletop[:3, :3] @ [0., 0., 1.], atol=1e-9)
 
 
 def test_cinf_socket_cannot_flip_open_and_closed_ends(tmp_path):
@@ -245,7 +279,7 @@ def test_trial_scene_snaps_cylinder_with_local_z_v8_symmetry(tmp_path, monkeypat
     tabletop = info / "tabletop"
     tabletop.mkdir(parents=True)
     (info / "symmetry.json").write_text(json.dumps({
-        "type": "Dinf", "axes": [
+        "type": "Dinf", "center": [0, 0, .04], "axes": [
             {"axis": [0, 0, 1], "fold": "inf"},
             {"axis": [1, 0, 0], "fold": 2}],
     }), encoding="utf-8")

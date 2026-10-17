@@ -37,13 +37,14 @@ class _Adapter:
         self.calls = 0
         self.stops = 0
         self.fail = False
+        self.expected_hand_raw = 600.
 
     def follow_lift(self, path, *, max_duration_s, expected_hand_raw,
                     trajectory_sha256):
         self.calls += 1
         assert path.shape == (2, 13)
         assert np.allclose(path[:, 7:], path[0, 7:])
-        assert np.all(expected_hand_raw == 600.)
+        assert np.all(expected_hand_raw == self.expected_hand_raw)
         assert max_duration_s == .5
         if self.fail:
             raise RuntimeError("simulated controller abort")
@@ -96,7 +97,7 @@ def _setup(tmp_path, monkeypatch, *, nominal_unbounded=False):
         max_hand_command_error_raw=10., max_arm_velocity_rad_s=.01,
         max_execution_duration_s=.5, max_watchdog_command_age_s=.1,
         max_commissioning_record_age_s=1.)
-    clock = iter([102.2, 102.21, 102.22, 102.7])
+    clock = iter([102.2, 102.22, 102.7])
     monkeypatch.setattr(lift_execution, "_wall_time", lambda: next(clock))
     kwargs = dict(
         runner=runner, adapter=adapter, pre_state=args["joint_sample"],
@@ -134,7 +135,19 @@ def test_explicit_cylinder_nominal_chain_can_reach_lift_adapter(
         tmp_path, monkeypatch):
     kwargs = _setup(tmp_path, monkeypatch, nominal_unbounded=True)
     assert kwargs["runner"]._measured_lift_preflight.status == (
-        "sampled_nominal_measured_chain_pass")
+        "measured_nominal_lift_pass")
+    result = execute_bound_measured_lift(
+        **kwargs, enable_robot_motion=True)
+    assert result["trajectory_complete"] is True
+    assert kwargs["adapter"].calls == 1
+
+
+def test_hand_can_settle_after_squeeze_before_lift(tmp_path, monkeypatch):
+    kwargs = _setup(tmp_path, monkeypatch, nominal_unbounded=True)
+    start = kwargs["pre_state"]
+    kwargs["pre_state"] = _state(
+        start.sample_timestamp_s, start.full_q[:7], raw=680.)
+    kwargs["adapter"].expected_hand_raw = 680.
     result = execute_bound_measured_lift(
         **kwargs, enable_robot_motion=True)
     assert result["trajectory_complete"] is True

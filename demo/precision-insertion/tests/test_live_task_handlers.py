@@ -91,7 +91,7 @@ def _handler(tmp_path, enabled=True):
         insertion_watchdog_path=tmp_path / "watchdog.json",
         insertion_contact_path=tmp_path / "contact.json",
         preinsert_parameters={}, handoff_parameters={},
-        insertion_parameters={"max_handoff_age_s": 1.},
+        insertion_parameters={},
         final_parameters={},
         release_and_clear=lambda *_args: tmp_path / "release.json",
         enable_robot_motion=enabled,

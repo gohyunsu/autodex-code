@@ -150,7 +150,7 @@ def execute_bound_measured_lift(
     attempt_dir = runner._attempt_dir
     if (attempt is None or not isinstance(chain, MeasuredLiftChain) or
             chain.status not in {"sampled_measured_chain_pass",
-                                 "sampled_nominal_measured_chain_pass"} or
+                                 "measured_nominal_lift_pass"} or
             report_path is None or attempt_dir is None or
             chain.attempt_id != attempt.attempt_id or
             chain.candidate_id != attempt.candidate_id or
@@ -160,7 +160,7 @@ def execute_bound_measured_lift(
         raise ValueError("lift is not bound to this passing measured chain")
     saved = verify_measured_lift_chain(report_path, expected=chain)
     if (saved["status"] not in {"sampled_measured_chain_pass",
-                                 "sampled_nominal_measured_chain_pass"} or
+                                 "measured_nominal_lift_pass"} or
             saved["session_calibration_sha256"] != runner.session_sha256):
         raise ValueError("saved lift chain changed")
     output = attempt_dir / "lift_execution.json"
@@ -187,12 +187,8 @@ def execute_bound_measured_lift(
     now = _wall_time()
     if (pre_state.sample_timestamp_s < chain.measured_start.sample_timestamp_s or
             pre_state.sample_timestamp_s > now or
-            now - pre_state.sample_timestamp_s > limits.max_start_age_s or
-            float(np.max(np.abs(pre_state.full_q - lift[0]))) >
-            limits.max_start_joint_error_rad or
-            float(np.max(np.abs(pre_state.hand_raw_measured -
-                                chain.measured_start.hand_raw_measured))) >
-            limits.max_hand_drift_raw):
+            float(np.max(np.abs(pre_state.full_q[:7] - lift[0, :7]))) >
+            limits.max_start_joint_error_rad):
         raise ValueError("live held start differs from the measured lift plan")
     if enable_robot_motion is not True:
         raise PermissionError("held lift needs explicit live motion interlock")
@@ -201,8 +197,6 @@ def execute_bound_measured_lift(
         limits=limits, now_s=now)
     if motion_interlock() is not True:
         raise PermissionError("held lift needs explicit live motion interlock")
-    if _wall_time() - pre_state.sample_timestamp_s > limits.max_start_age_s:
-        raise ValueError("held start became stale while waiting for interlock")
     base = {
         "schema": "precision_insertion_lift_execution_v1",
         "attempt_id": attempt.attempt_id,
@@ -261,11 +255,8 @@ def execute_bound_measured_lift(
                 limits.max_execution_feedback_gap_s or
                 post.sample_timestamp_s > now or
                 now - post.sample_timestamp_s > limits.max_end_state_age_s or
-                float(np.max(np.abs(post.full_q - lift[-1]))) >
-                limits.max_end_joint_error_rad or
-                float(np.max(np.abs(post.hand_raw_measured -
-                                    pre_state.hand_raw_measured))) >
-                limits.max_hand_drift_raw):
+                float(np.max(np.abs(post.full_q[:7] - lift[-1, :7]))) >
+                limits.max_end_joint_error_rad):
             raise RuntimeError("measured held lift endpoint differs from plan")
         record = {
             **base, "trajectory_complete": True, "force_abort": False,

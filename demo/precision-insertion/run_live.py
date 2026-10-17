@@ -24,32 +24,13 @@ for module_root in (str(REPO_ROOT), str(SRC_DIR), str(DEMO_DIR)):
         sys.path.insert(0, module_root)
 
 
-class _CuroboInfoFilter(logging.Filter):
-    """Keep actionable cuRobo warnings without per-iteration INFO noise."""
-
-    _REPEATED_WARNINGS = {
-        "Deprecated: external_asset_path is deprecated, use ContentPath",
-        "Deprecated: external_robot_configs_path is deprecated, use ContentPath",
-        "Object already in warp cache, using existing instance for: fixture_socket",
-    }
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._seen_warnings: set[str] = set()
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        if record.levelno < logging.WARNING:
-            return False
-        message = record.getMessage()
-        if record.levelno == logging.WARNING and message in self._REPEATED_WARNINGS:
-            if message in self._seen_warnings:
-                return False
-            self._seen_warnings.add(message)
-        return True
-
-
-# Install before importing the live runtime, whose cuRobo imports can log.
-logging.getLogger("curobo").addFilter(_CuroboInfoFilter())
+# Match AutoDex run_auto.py's quiet_curobo() before importing live modules.
+# Child cuRobo loggers propagate through this parent, so a parent filter alone
+# cannot silence their per-solve messages.
+_curobo_logger = logging.getLogger("curobo")
+_curobo_logger.setLevel(logging.WARNING)
+_curobo_logger.propagate = False
+_curobo_logger.addHandler(logging.NullHandler())
 
 from precision_insertion.live_runtime import (  # noqa: E402
     RunLiveOptions, inspect_live_inputs, run_integrated_live_session,

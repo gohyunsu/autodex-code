@@ -96,7 +96,7 @@ def _fixture(tmp_path, *, bad_target=False, bad_waypoint=False,
         session_calibration_sha256=(
             args["attempt"].session_calibration_sha256),
         measured_start=state, decision_timestamp_s=11.03,
-        max_state_age_s=.02, max_start_joint_error_rad=.01,
+        max_start_joint_error_rad=.01,
         max_arm_hand_skew_s=.02, max_hand_command_error_raw=30.,
         max_arm_velocity_rad_s=.05,
         output_dir=tmp_path / "axial_handoff",
@@ -133,14 +133,14 @@ def test_axial_handoff_rejects_wrong_attempt_or_stale_start(tmp_path):
         prepare_guarded_axial_handoff(
             **{**args, "candidate_id": "table/0/other"})
     stale = replace(
-        args["measured_start"], sample_timestamp_s=11.001,
-        arm_timestamp_s=11.001, hand_timestamp_s=11.001)
-    with pytest.raises(ValueError, match="stale or differs"):
+        args["measured_start"], sample_timestamp_s=10.9,
+        arm_timestamp_s=10.9, hand_timestamp_s=10.9)
+    with pytest.raises(ValueError, match="predates observation"):
         prepare_guarded_axial_handoff(
             **{**args, "measured_start": stale})
     shifted = args["measured_start"].full_q.copy()
     shifted[0] += .02
-    with pytest.raises(ValueError, match="stale or differs"):
+    with pytest.raises(ValueError, match="differs from axial start"):
         prepare_guarded_axial_handoff(**{
             **args, "measured_start": replace(
                 args["measured_start"], full_q=shifted)})
@@ -180,7 +180,7 @@ def test_session_handoff_requires_recorded_positive_arrival(tmp_path, monkeypatc
                         SimpleNamespace(action=(
                             "await_guarded_insertion_and_observation")))
     params = {key: value for key, value in args.items() if key in {
-        "measured_start", "decision_timestamp_s", "max_state_age_s",
+        "measured_start", "decision_timestamp_s",
         "max_start_joint_error_rad", "max_arm_hand_skew_s",
         "max_hand_command_error_raw", "max_arm_velocity_rad_s",
     }}

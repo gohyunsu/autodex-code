@@ -63,6 +63,7 @@ class _ObservedArm:
         self.stage = stage
         self.owner_ident = threading.get_ident()
         self.samples: list[dict] = []
+        self._initial_commanded: np.ndarray | None = None
         self._last_uptime: float | None = None
         self._last_advance_monotonic = time.monotonic()
 
@@ -109,6 +110,8 @@ class _ObservedArm:
         torque = float(np.linalg.norm(wrench[3:]))
         hand_error = float(np.max(np.abs(
             measured - self.expected_hand_raw)))
+        if self._initial_commanded is None:
+            self._initial_commanded = commanded.copy()
         self.samples.append({
             "receipt_time_s": time.time(), "robot_uptime_s": uptime,
             "hand_receipt_time_s": hand_time,
@@ -123,8 +126,7 @@ class _ObservedArm:
                 torque > self.limits.max_torque_norm_nm):
             raise RuntimeError(
                 f"measured FR3 {self.stage} force limit exceeded")
-        if (hand_error > self.limits.max_hand_tracking_error_raw or
-                np.max(np.abs(commanded - self.expected_hand_raw)) >
+        if (np.max(np.abs(commanded - self._initial_commanded)) >
                 self.limits.max_hand_tracking_error_raw):
             raise RuntimeError(f"measured Inspire {self.stage} hold changed")
         if bool(self.arm.is_error()):

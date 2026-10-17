@@ -81,10 +81,9 @@ def _case(tmp_path, monkeypatch):
         attempt=original["attempt"], calibration=original["calibration"],
         catalog=original["catalog"], mode=mode, shared_root=tmp_path,
         raw_lift=lift, raw_lift_report_path=lift_path,
-        joint_sample=state, max_state_age_s=1.0,
+        joint_sample=state,
         max_arm_hand_skew_s=.05, max_hand_command_error_raw=30,
-        max_arm_velocity_rad_s=.05, max_postlift_arm_drift_rad=.01,
-        max_postlift_hand_drift_raw=1.0,
+        max_arm_velocity_rad_s=.05,
         limits=original["limits"], axial_waypoint_step_m=.005,
         screen=original["screen"])
     candidate_dir = (AssetPaths(tmp_path, mode).candidate_dir /
@@ -171,12 +170,9 @@ def test_session_runner_dispatches_nominal_plan_without_physical_file(
             **kwargs, screen=args["screen"]))
     result = runner.prepare_nominal_postlift_transfer(
         planner=args["planner"], joint_sample=args["joint_sample"],
-        max_state_age_s=args["max_state_age_s"],
         max_arm_hand_skew_s=args["max_arm_hand_skew_s"],
         max_hand_command_error_raw=args["max_hand_command_error_raw"],
         max_arm_velocity_rad_s=args["max_arm_velocity_rad_s"],
-        max_postlift_arm_drift_rad=args["max_postlift_arm_drift_rad"],
-        max_postlift_hand_drift_raw=args["max_postlift_hand_drift_raw"],
         limits=args["limits"],
         axial_waypoint_step_m=args["axial_waypoint_step_m"])
     assert result.status == "sampled_postlift_preflight_pass"

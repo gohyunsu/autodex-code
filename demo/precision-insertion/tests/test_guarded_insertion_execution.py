@@ -162,13 +162,12 @@ def _setup(tmp_path: Path, monkeypatch):
         "sample_gap_abort_test_passed": True,
         "terminal_hold_test_passed": True,
     }), encoding="utf-8")
-    clock = iter([102.3, 102.31, 102.32, 102.7, 102.8])
+    clock = iter([102.3, 102.32, 102.7, 102.8])
     monkeypatch.setattr(execution, "_wall_time", lambda: next(clock))
     return dict(
         runner=runner, adapter=adapter, handoff_report_path=handoff_report,
         pre_state=pre, read_post_state=lambda: post,
         limits=limits, contact_limits=contact_limits,
-        max_handoff_age_s=.5,
         watchdog_commissioning_path=watchdog,
         contact_commissioning_path=contact_review,
         motion_interlock=lambda: True)

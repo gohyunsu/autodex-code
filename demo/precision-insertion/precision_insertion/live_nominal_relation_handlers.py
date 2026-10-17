@@ -11,9 +11,8 @@ from .session_policy import SessionDecision
 
 
 _PARAMETERS = frozenset({
-    "max_state_age_s", "max_arm_hand_skew_s",
-    "max_hand_command_error_raw", "max_arm_velocity_rad_s",
-    "max_postlift_arm_drift_rad", "max_postlift_hand_drift_raw",
+    "max_arm_hand_skew_s", "max_hand_command_error_raw",
+    "max_arm_velocity_rad_s",
     "axial_waypoint_step_m",
 })
 

@@ -120,7 +120,7 @@ def _setup(tmp_path, monkeypatch):
         max_hand_command_error_raw=10., max_arm_velocity_rad_s=.01,
         max_execution_duration_s=.5, max_watchdog_command_age_s=.1,
         max_commissioning_record_age_s=1.)
-    clock = iter([102.3, 102.31, 102.32, 102.7])
+    clock = iter([102.3, 102.32, 102.7])
     monkeypatch.setattr(transfer_execution, "_wall_time", lambda: next(clock))
     return dict(
         runner=runner, adapter=adapter, pre_state=pre,

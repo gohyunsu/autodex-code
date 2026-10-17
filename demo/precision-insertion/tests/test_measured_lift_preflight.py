@@ -116,7 +116,6 @@ def _fixture(tmp_path, monkeypatch):
                         lambda self: SimpleNamespace(action="await_lift_observation"))
     monkeypatch.setattr(SessionRunner, "verify_current_preflight_evidence",
                         lambda self: {"report_sha256": "r" * 64})
-    monkeypatch.setattr(lift, "_wall_time", lambda: 102.2)
     monkeypatch.setattr(lift, "select_pose_candidates", lambda *args, **kwargs: {
         "status": "candidates_available", "candidates": [{
             "key": ["table", "0", "1"], "candidate_dir": str(candidate)}]})
@@ -153,9 +152,7 @@ def _fixture(tmp_path, monkeypatch):
     planner = _Planner()
     args = dict(runner=runner, planner=planner,
                 pickup_execution_log=log_file, joint_sample=state,
-                bounds=bounds, limits=limits, max_state_age_s=.5,
-                max_post_squeeze_arm_drift_rad=.01,
-                max_post_squeeze_hand_drift_raw=10.,
+                bounds=bounds, limits=limits,
                 max_arm_hand_skew_s=.01,
                 max_hand_command_error_raw=10.,
                 max_arm_velocity_rad_s=.01,
@@ -192,7 +189,10 @@ def test_cylinder_can_use_explicit_stock_nominal_chain_without_fake_bound(
     assert result.relation_source == (
         "nominal_BODex_relation_without_future_surface_bound")
     assert result.uncertainty_margin["sampled_margin_pass"] is None
-    assert len(planned_calls) == 1
+    assert len(planned_calls) == 0
+    assert result.planning.status == "lift_only_pass"
+    assert result.planning.transfer_trajectory is None
+    assert result.planning.axial_trajectory is None
     output = lift.write_measured_lift_chain(result, tmp_path / "nominal_chain")
     report = output / "report.json"
     assert lift.verify_measured_lift_chain(report, expected=result)["status"] == (
@@ -212,8 +212,7 @@ def test_unbounded_nominal_chain_is_not_available_for_square(tmp_path, monkeypat
     assert not planned_calls
 
 
-@pytest.mark.parametrize("defect", ["missing_marker", "changed_log_plan",
-                                     "stale_state", "hand_drift"])
+@pytest.mark.parametrize("defect", ["missing_marker", "changed_log_plan"])
 def test_bad_squeeze_evidence_blocks_planner(tmp_path, monkeypatch, defect):
     args, planned_calls, log_file, marker = _fixture(tmp_path, monkeypatch)
     if defect == "missing_marker":
@@ -222,14 +221,18 @@ def test_bad_squeeze_evidence_blocks_planner(tmp_path, monkeypatch, defect):
         data = json.loads(log_file.read_text())
         data["planned_trajectories_sha256"] = "x" * 64
         log_file.write_text(json.dumps(data))
-    elif defect == "stale_state":
-        monkeypatch.setattr(lift, "_wall_time", lambda: 104.)
-    else:
-        args["joint_sample"] = _state(102.1, np.full(7, .09))
     with pytest.raises(ValueError):
         lift.plan_measured_lift_chain(**args)
     assert not args["planner"].starts
     assert not planned_calls
+
+
+def test_measured_start_can_settle_after_squeeze(tmp_path, monkeypatch):
+    args, _, _, _ = _fixture(tmp_path, monkeypatch)
+    args["joint_sample"] = _state(102.1, np.full(7, .09))
+    result = lift.plan_measured_lift_chain(**args)
+    assert result.status == "sampled_measured_chain_pass"
+    np.testing.assert_allclose(args["planner"].starts[0][:7], .09)
 
 
 def test_post_squeeze_replan_requires_the_bound_cartesian_mode(

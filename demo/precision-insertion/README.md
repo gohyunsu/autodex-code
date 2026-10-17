@@ -47,9 +47,10 @@ the selected held Inspire pose constant in the returned lift, transfer and
 socket-axis paths before auditing the exact path it would execute. It no
 longer aborts a successful repose plan solely because the raw planner path
 has finger jitter (the observed case was 0.014084 rad). Invalid paths, missed
-goals and audited collisions remain planning failures. The live CLI also
-filters cuRobo INFO messages and repeats of three known cache/deprecation
-warnings; it retains other warnings and errors.
+goals and audited collisions remain planning failures. The live CLI applies
+the same `quiet_curobo` logging policy as stock AutoDex `run_auto.py`, so
+per-solve cuRobo messages do not flood the console; planner failures still
+surface through their returned status or exception.
 For a board-9, 20 mm key-plus-socket **camera-only** check, use
 [`probe_live_key_socket.py`](probe_live_key_socket.py) as documented in
 [ROBOT_PC_STAGED_BRINGUP.md](ROBOT_PC_STAGED_BRINGUP.md). It saves every raw

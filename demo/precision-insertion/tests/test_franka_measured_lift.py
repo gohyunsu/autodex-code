@@ -94,6 +94,18 @@ def test_lift_adapter_records_actual_arm_and_hand_samples(tmp_path, monkeypatch)
     assert trace["samples"][0]["hand_raw_measured"] == [500.] * 6
 
 
+def test_object_blocks_hand_closure_without_aborting_lift(tmp_path, monkeypatch):
+    executor = _Executor()
+    executor.hand.action[:] = 600.
+    executor.hand.measured[:] = 500.
+    adapter = _adapter(tmp_path, monkeypatch, executor)
+    result = _follow(adapter)
+    trace = json.loads(Path(result["controller_trace_path"]).read_text())
+    assert trace["status"] == "completed"
+    assert trace["samples"][0]["hand_tracking_error_raw"] == 0.
+    assert trace["samples"][0]["hand_raw_commanded"] == [600.] * 6
+
+
 def test_lift_force_abort_is_not_mislabeled_complete(tmp_path, monkeypatch):
     executor = _Executor(force=10.)
     adapter = _adapter(tmp_path, monkeypatch, executor)

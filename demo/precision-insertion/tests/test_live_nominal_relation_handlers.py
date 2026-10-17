@@ -17,10 +17,9 @@ from precision_insertion.session_policy import SessionDecision  # noqa: E402
 
 
 PARAMETERS = {
-    "max_state_age_s": 1., "max_arm_hand_skew_s": .02,
+    "max_arm_hand_skew_s": .02,
     "max_hand_command_error_raw": 20., "max_arm_velocity_rad_s": .05,
-    "max_postlift_arm_drift_rad": .05,
-    "max_postlift_hand_drift_raw": 20., "axial_waypoint_step_m": .005,
+    "axial_waypoint_step_m": .005,
 }
 
 

@@ -15,6 +15,7 @@ from .geometry import validate_se3
 class AxialSymmetry:
     axis_local: np.ndarray
     end_exchange_axis_local: np.ndarray | None
+    center_local: np.ndarray
 
     @property
     def end_exchange(self) -> bool:
@@ -54,7 +55,13 @@ def load_axial_symmetry(object_root: Path, object_name: str) -> AxialSymmetry:
         raise ValueError(f"{object_name}: Dinf end-exchange axis missing")
     if data["type"] == "Cinf" and flips:
         raise ValueError(f"{object_name}: Cinf must not exchange open and closed ends")
-    return AxialSymmetry(axis, perpendicular[0] if perpendicular else None)
+    if data["type"] == "Dinf" and "center" not in data:
+        raise ValueError(f"{object_name}: Dinf symmetry center is missing")
+    center = np.asarray(data.get("center", [0., 0., 0.]), dtype=np.float64)
+    if center.shape != (3,) or not np.all(np.isfinite(center)):
+        raise ValueError(f"{object_name}: symmetry center must be finite")
+    return AxialSymmetry(axis, perpendicular[0] if perpendicular else None,
+                         center)
 
 
 def snap_axisymmetric_tabletop_pose(
@@ -64,15 +71,27 @@ def snap_axisymmetric_tabletop_pose(
     object_name: str,
     max_axis_error_deg: float = 20.0,
 ) -> np.ndarray:
-    """Snap cylinder rotation to a v8 tabletop class, preserving translation.
+    """Express a cylinder pose in its v8 tabletop frame.
 
-    Axial yaw is canonical when upright. A D∞ key can exchange identical ends;
-    a C∞ socket cannot. Large axis disagreement is rejected rather than
-    silently converted into a different tabletop pose.
+    D∞ end exchange rotates about the object's symmetry center. Its local
+    origin moves when the two ends exchange, while the physical mesh stays
+    fixed. The v8 grasp candidates use the tabletop pose's end convention.
     """
-    snapped, _, _ = match_axisymmetric_tabletop_pose(
+    snapped, stem, _ = match_axisymmetric_tabletop_pose(
         pose_robot, object_root=object_root, object_name=object_name,
         max_axis_error_deg=max_axis_error_deg)
+    symmetry = load_axial_symmetry(object_root, object_name)
+    tabletop = validate_se3(np.load(
+        Path(object_root) / object_name / "processed_data" / "info" /
+        "tabletop" / f"{stem}.npy"), name=f"tabletop {stem}")
+    if (symmetry.end_exchange and
+            np.dot(snapped[:3, :3] @ symmetry.axis_local,
+                   tabletop[:3, :3] @ symmetry.axis_local) < 0):
+        axis = symmetry.end_exchange_axis_local
+        flip = 2.0 * np.outer(axis, axis) - np.eye(3)
+        center = symmetry.center_local
+        snapped[:3, 3] += snapped[:3, :3] @ (center - flip @ center)
+        snapped[:3, :3] = snapped[:3, :3] @ flip
     return snapped
 
 

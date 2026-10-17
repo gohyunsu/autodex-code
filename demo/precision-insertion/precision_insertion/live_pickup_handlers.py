@@ -22,9 +22,7 @@ from .timing_profile import timed
 
 
 _MEASURED_LIFT_KEYS = frozenset({
-    "max_state_age_s", "max_post_squeeze_arm_drift_rad",
-    "max_post_squeeze_hand_drift_raw", "max_arm_hand_skew_s",
-    "max_hand_command_error_raw", "max_arm_velocity_rad_s",
+    "max_arm_hand_skew_s", "max_hand_command_error_raw", "max_arm_velocity_rad_s",
     "axial_waypoint_step_m",
 })
 
@@ -112,16 +110,19 @@ class LivePickupHandlers:
             return
         if not isinstance(after, LiveRobotState):
             raise RuntimeError("pickup completed without measured squeeze feedback")
+        # The pickup log is written after its feedback sample. Read again for
+        # lift planning so file I/O cannot age that sample past the live limit.
+        measured_start = self.read_state()
         with timed("trial.measured_lift_preflight", phase="planning",
                    kind="planning", attempt_id=attempt.attempt_id):
             chain = runner.prepare_measured_lift_chain(
                 planner=self.planner, pickup_execution_log=pickup_log,
-                joint_sample=after, bounds=self.lift_bounds,
+                joint_sample=measured_start, bounds=self.lift_bounds,
                 limits=self.path_limits,
                 **dict(self.measured_lift_parameters))
         if chain.status not in {
                 "sampled_measured_chain_pass",
-                "sampled_nominal_measured_chain_pass"}:
+                "measured_nominal_lift_pass"}:
             report = runner._measured_lift_report_path
             if report is None or not Path(report).is_file():
                 raise ValueError("rejected measured lift has no saved report")

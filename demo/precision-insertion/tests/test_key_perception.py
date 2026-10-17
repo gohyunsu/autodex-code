@@ -169,6 +169,16 @@ def test_square_key_uses_agreeing_iou_selected_pose_and_full_capture_interval(
     with pytest.raises(ValueError, match="every key view"):
         result.require_state_alignment(state_timestamp_s=100.02,
                                        maximum_skew_s=0.01)
+    bounded = replace(
+        result, acquisition_interval_s=(100., 112.),
+        frame_evidence={camera: {**row,
+                                 "timestamp_method": "bounded_request_interval"}
+                        for camera, row in result.frame_evidence.items()})
+    bounded.require_state_alignment(state_timestamp_s=106.,
+                                    maximum_skew_s=0.01)
+    with pytest.raises(ValueError, match="every key view"):
+        bounded.require_state_alignment(state_timestamp_s=113.,
+                                        maximum_skew_s=0.01)
     (bundle / "images" / "cam_a.png").write_bytes(b"changed")
     with pytest.raises(ValueError, match="key evidence changed"):
         verify_key_capture_artifacts(bundle)
@@ -235,7 +245,7 @@ def test_roi_pose_inputs_reuse_stock_selector_without_mixing_views(tmp_path):
     assert selector.calls == 0
 
 
-def test_tabletop_key_rejects_low_or_missing_refinement_iou(tmp_path):
+def test_tabletop_key_uses_stock_iou_ranking_and_rejects_invalid_score(tmp_path):
     mode = select_mode("square", 1.5)
     poses = {serial: np.eye(4) for serial in CAMERAS}
     capture = _capture(poses, tmp_path)
@@ -243,12 +253,34 @@ def test_tabletop_key_rejects_low_or_missing_refinement_iou(tmp_path):
     selector.refine_from_payloads = lambda *_args, **_kwargs: (
         np.eye(4), {"best_serial": "cam_a", "best_iou": 0.2,
                     "sil_loss": 0.0001})
-    with pytest.raises(ValueError, match="IoU is below commissioned limit"):
-        _admit(capture, mode, tmp_path, selector)
+    admitted = _admit(capture, mode, tmp_path, selector)
+    assert admitted.selection["best_iou"] == 0.2
+    assert admitted.selection["minimum_refinement_iou_gate_applied"] is False
     selector.refine_from_payloads = lambda *_args, **_kwargs: (
         np.eye(4), {"best_serial": "cam_a", "best_iou": None,
                     "sil_loss": 0.0001})
-    with pytest.raises(ValueError, match="IoU is below commissioned limit"):
+    with pytest.raises(ValueError, match="invalid score"):
+        _admit(capture, mode, tmp_path, selector)
+
+
+def test_tabletop_cylinder_uses_stock_iou_ranking_without_extra_floor(
+    tmp_path, monkeypatch,
+):
+    mode = select_mode("cylinder", 20)
+    monkeypatch.setattr("precision_insertion.key_perception._cylinder_symmetry",
+                        lambda *_: (np.zeros(3), np.array([0., 0., 1.])))
+    capture = _capture({serial: np.eye(4) for serial in CAMERAS}, tmp_path)
+    selector = SelectorStub(mode.key_object)
+    selector.refine_from_payloads = lambda *_args, **_kwargs: (
+        np.eye(4), {"best_serial": "cam_a", "best_iou": 0.2,
+                    "sil_loss": 0.0001})
+    admitted = _admit(capture, mode, tmp_path, selector)
+    assert admitted.selection["best_iou"] == 0.2
+    assert admitted.selection["minimum_refinement_iou_gate_applied"] is False
+    selector.refine_from_payloads = lambda *_args, **_kwargs: (
+        np.eye(4), {"best_serial": "cam_a", "best_iou": None,
+                    "sil_loss": 0.0001})
+    with pytest.raises(ValueError, match="invalid score"):
         _admit(capture, mode, tmp_path, selector)
 
 

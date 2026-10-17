@@ -1,4 +1,4 @@
-# Measured post-squeeze lift and full-chain replan
+# Measured post-squeeze lift
 
 The initial v8 trial estimates the key–hand relation and the held Inspire
 pose before the robot moves. The actual squeeze can change the finger joints
@@ -11,14 +11,15 @@ sample fresh stationary FR3/Inspire feedback and call
 
 1. Rechecks the pickup command-start marker, execution log and original
    hash-bound v8 trial; rejects changed or unrelated inputs.
-2. Requires a fresh measured 13-DOF state whose arm and raw Inspire joints
-   remain within commissioned drift limits of the post-squeeze measurement.
+2. Reads the current measured 13-DOF state. The robot-state reader checks
+   packet age; this planning stage does not impose another deadline after
+   pickup files are written.
 3. Re-screens the exact 20 mm key/socket endpoint with the **measured** finger
    joints, the full key/hand mesh and the nominal BODex key–hand transform.
 4. Calls the unchanged `GraspPlanner.plan_lift_preflight` from those measured
-   joints, then the demo's existing `plan_held_transfer_and_axial` for lift →
-   pre-insertion hold → centered 20 mm insertion. Its sampled full-key/hand
-   audit includes the frozen board, table and socket world. The actual
+   joints. The nominal cylinder route saves only that lift; transfer and the
+   20 mm axial path are planned from the observed post-lift state. The bounded
+   route also runs `plan_held_transfer_and_axial` with the frozen scene. The actual
    Cartesian planner mode must match the bound initial preflight and is
    recorded again; an implicit switch between default and experimental
    locked-hand modes is rejected before the replan.
@@ -29,7 +30,7 @@ sample fresh stationary FR3/Inspire feedback and call
    bound requirement.
 
 The bounded passing status is `sampled_measured_chain_pass`; the cylinder
-nominal status is `sampled_nominal_measured_chain_pass`. Both are geometric
+nominal status is `measured_nominal_lift_pass`. Both are geometric
 path results, not grasp success, contact results or motor commands. The latter
 saves `sampled_margin_pass: null` and the explicit provenance
 `nominal_BODex_relation_without_future_surface_bound`. It cannot be reported
@@ -58,9 +59,6 @@ result = runner.prepare_measured_lift_chain(
         source="commissioned_future_trial_surface_bound",
     ),
     limits=commissioned_path_audit_limits,
-    max_state_age_s=commissioned_state_age_s,
-    max_post_squeeze_arm_drift_rad=commissioned_arm_drift_rad,
-    max_post_squeeze_hand_drift_raw=commissioned_hand_drift_raw,
     max_arm_hand_skew_s=commissioned_feedback_skew_s,
     max_hand_command_error_raw=commissioned_hand_tracking_error_raw,
     max_arm_velocity_rad_s=commissioned_hold_velocity_rad_s,
@@ -70,8 +68,9 @@ result = runner.prepare_measured_lift_chain(
 
 For the current cylinder stock-style nominal trial, pass `bounds=None` in
 that call. This changes only the uncertainty-margin claim; the measured
-post-squeeze start, exact endpoint, sampled full-mesh collision and complete
-axial path checks still run. A failed nominal audit still stops the attempt.
+post-squeeze start and exact endpoint screen still run. The transfer and
+axial path checks run after the lift observation. A failed audit still stops
+the attempt.
 
 Rejected and passing plans are saved exclusively under
 `attempts/<id>/measured_lift_preflights/<index>/`. The report and dense NPZ

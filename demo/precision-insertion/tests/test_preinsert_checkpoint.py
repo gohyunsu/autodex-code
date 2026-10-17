@@ -253,7 +253,7 @@ def test_preinsert_replays_local_fenced_answer_and_rejects_changed_label(
         verify_preinsert_checkpoint(saved)
 
 
-def test_preinsert_vlm_or_measured_pose_can_veto_arrival(tmp_path):
+def test_preinsert_vlm_vetoes_arrival_and_wrist_error_is_diagnostic(tmp_path):
     args = _setup(tmp_path)
     assert assess_preinsert_checkpoint(
         **{**args, "backend": _VLM("slip_or_miss")}).preinsert_reached is False
@@ -264,8 +264,8 @@ def test_preinsert_vlm_or_measured_pose_can_veto_arrival(tmp_path):
     saved["targets"]["T_robot_hand_preinsert"] = target.tolist()
     args["postlift_report_path"].write_text(json.dumps(saved), encoding="utf-8")
     report = assess_preinsert_checkpoint(**args)
-    assert report.preinsert_reached is False
-    assert report.reason == "measured_hold_pose_outside_limits"
+    assert report.preinsert_reached is True
+    assert report.hand_translation_error_m > args["max_hand_translation_error_m"]
 
 
 def test_preinsert_rejects_stale_or_tampered_external_evidence(tmp_path):

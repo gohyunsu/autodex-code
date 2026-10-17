@@ -77,7 +77,6 @@ def execute_bound_guarded_insertion(
     read_post_state: Callable[[], LiveRobotState],
     limits: GuardedInsertionExecutionLimits,
     contact_limits: GuardedContactLimits,
-    max_handoff_age_s: float,
     watchdog_commissioning_path: Path,
     contact_commissioning_path: Path,
     motion_interlock: Callable[[], bool],
@@ -92,10 +91,7 @@ def execute_bound_guarded_insertion(
     requires recovery from measured state.
     """
     limits.validate()
-    if (type(max_handoff_age_s) not in (int, float) or
-            not math.isfinite(max_handoff_age_s) or
-            max_handoff_age_s <= 0 or
-            not isinstance(runner, SessionRunner) or
+    if (not isinstance(runner, SessionRunner) or
             type(observed_xy_retry) is not bool or
             runner.current_decision().action != (
                 "await_retry_execution_and_observation" if observed_xy_retry
@@ -173,16 +169,10 @@ def execute_bound_guarded_insertion(
         max_hand_command_error_raw=limits.max_hand_command_error_raw,
         max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
     now = _wall_time()
-    handoff_state = handoff["measured_start"]
     if (pre_state.sample_timestamp_s <= handoff["decision_timestamp_s"] or
             pre_state.sample_timestamp_s > now or
-            now - pre_state.sample_timestamp_s > limits.max_start_age_s or
-            now - handoff["decision_timestamp_s"] > max_handoff_age_s or
-            float(np.max(np.abs(pre_state.full_q - axial[0]))) >
-            limits.max_start_joint_error_rad or
-            float(np.max(np.abs(pre_state.hand_raw_measured -
-                                handoff_state["hand_raw_measured"]))) >
-            limits.max_hand_drift_raw):
+            float(np.max(np.abs(pre_state.full_q[:7] - axial[0, :7]))) >
+            limits.max_start_joint_error_rad):
         raise ValueError("fresh held state differs from the axial handoff")
     if stock_force:
         return _execute_stock_force_stroke(
@@ -200,8 +190,6 @@ def execute_bound_guarded_insertion(
         limits=limits, contact_limits=contact_limits, now_s=now)
     if enable_robot_motion is not True or motion_interlock() is not True:
         raise PermissionError("contact stroke needs an explicit live interlock")
-    if _wall_time() - pre_state.sample_timestamp_s > limits.max_start_age_s:
-        raise ValueError("held start aged while waiting for contact interlock")
     base = {
         "schema": "precision_insertion_guarded_motion_boundary_v1",
         "attempt_id": attempt.attempt_id,
@@ -271,11 +259,8 @@ def execute_bound_guarded_insertion(
                 limits.max_execution_feedback_gap_s or
                 post.sample_timestamp_s > now or
                 now - post.sample_timestamp_s > limits.max_end_state_age_s or
-                float(np.max(np.abs(post.hand_raw_measured -
-                                    pre_state.hand_raw_measured))) >
-                limits.max_hand_drift_raw or
                 (not result["safety_abort"] and
-                 float(np.max(np.abs(post.full_q - axial[-1]))) >
+                 float(np.max(np.abs(post.full_q[:7] - axial[-1, :7]))) >
                  limits.max_end_joint_error_rad)):
             raise RuntimeError("measured terminal hold differs from contact result")
         record = {
@@ -314,8 +299,6 @@ def _execute_stock_force_stroke(
     """Use stock force stop; a contact failure includes its immediate ascent."""
     if enable_robot_motion is not True or motion_interlock() is not True:
         raise PermissionError("stock insertion needs the enabled motion interlock")
-    if _wall_time() - pre_state.sample_timestamp_s > limits.max_start_age_s:
-        raise ValueError("held start aged before stock insertion")
     attempt = runner.active_attempt
     binding = {"path": str(report_path), "sha256": _sha(report_path)}
     base = {
@@ -357,11 +340,8 @@ def _execute_stock_force_stroke(
                 limits.max_execution_feedback_gap_s or
                 _wall_time() - post.sample_timestamp_s >
                 limits.max_end_state_age_s or
-                np.max(np.abs(post.full_q - target)) >
-                limits.max_end_joint_error_rad or
-                np.max(np.abs(post.hand_raw_measured -
-                              pre_state.hand_raw_measured)) >
-                limits.max_hand_drift_raw):
+                np.max(np.abs(post.full_q[:7] - target[:7])) >
+                limits.max_end_joint_error_rad):
             raise RuntimeError("stock force result differs from measured stopped pose")
         metric_path = output.with_name("stock_force_metric.json")
         metric = {

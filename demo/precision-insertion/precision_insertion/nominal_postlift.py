@@ -15,7 +15,6 @@ import json
 import math
 from pathlib import Path
 import re
-import time
 from typing import Callable
 
 import numpy as np
@@ -113,10 +112,9 @@ def plan_nominal_postlift_transfer(
     *, planner, trial: TrialPreflight, attempt: AttemptRecord,
     calibration, catalog: dict, mode: TaskMode, shared_root: Path,
     raw_lift: LiftCheckpoint, raw_lift_report_path: Path,
-    joint_sample: LiveRobotState, max_state_age_s: float,
+    joint_sample: LiveRobotState,
     max_arm_hand_skew_s: float, max_hand_command_error_raw: float,
-    max_arm_velocity_rad_s: float, max_postlift_arm_drift_rad: float,
-    max_postlift_hand_drift_raw: float, limits: PathAuditLimits,
+    max_arm_velocity_rad_s: float, limits: PathAuditLimits,
     axial_waypoint_step_m: float,
     screen: Callable = screen_grasp_endpoint,
 ) -> NominalPostLiftPreflight:
@@ -125,10 +123,8 @@ def plan_nominal_postlift_transfer(
     No physical grasp calibration or post-lift key-pose observation is inferred.
     Exact endpoint and sampled held-path checks use this named hypothesis.
     """
-    thresholds = (max_state_age_s, max_arm_hand_skew_s,
-                  max_hand_command_error_raw, max_arm_velocity_rad_s,
-                  max_postlift_arm_drift_rad, max_postlift_hand_drift_raw,
-                  axial_waypoint_step_m)
+    thresholds = (max_arm_hand_skew_s, max_hand_command_error_raw,
+                  max_arm_velocity_rad_s, axial_waypoint_step_m)
     if (not all(type(v) in (int, float) and math.isfinite(v) and v > 0
                 for v in thresholds) or axial_waypoint_step_m > .005):
         raise ValueError("nominal transfer needs positive supplied limits")
@@ -204,20 +200,8 @@ def plan_nominal_postlift_transfer(
         max_arm_hand_skew_s=max_arm_hand_skew_s,
         max_hand_command_error_raw=max_hand_command_error_raw,
         max_arm_velocity_rad_s=max_arm_velocity_rad_s)
-    now = time.time()
-    if (joint_sample.sample_timestamp_s <=
-            raw_lift.decision_timestamp_s or
-            joint_sample.sample_timestamp_s > now or
-            now - joint_sample.sample_timestamp_s > max_state_age_s or
-            float(np.max(np.abs(
-                joint_sample.full_q[:7] -
-                raw_lift.joint_sample.full_q[:7]))) >
-            max_postlift_arm_drift_rad or
-            float(np.max(np.abs(
-                joint_sample.hand_raw_measured -
-                raw_lift.joint_sample.hand_raw_measured))) >
-            max_postlift_hand_drift_raw):
-        raise ValueError("post-lift measured hold moved or became stale")
+    if joint_sample.sample_timestamp_s <= raw_lift.decision_timestamp_s:
+        raise ValueError("post-lift measured hold predates the lift observation")
     endpoint = screen(
         shared_root=root, mode=mode, candidate_dir=candidate_dir,
         minimum_hand_clearance_m=catalog["minimum_hand_clearance_m"],
