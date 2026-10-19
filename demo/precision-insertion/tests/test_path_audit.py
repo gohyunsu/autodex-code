@@ -22,6 +22,7 @@ from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.path_audit import (  # noqa: E402
     PathAuditLimits, audit_held_joint_paths, audit_held_lateral_path,
 )
+from precision_insertion import path_audit as path_audit_module  # noqa: E402
 from precision_insertion.solid_occupancy import (  # noqa: E402
     CylinderSocketOccupancy,
 )
@@ -224,6 +225,44 @@ def test_sampled_path_checks_full_held_key_and_hand_without_authorizing_robot(
     assert len(result["input_sha256"]["transfer_trajectory"]) == 64
     assert len(result["input_sha256"]["session_calibration_record"]) == 64
     assert "continuous swept geometry between FK samples" in result["not_validated"]
+
+
+def test_aabb_skip_preserves_exact_minimum_distances_and_collision_result(
+        tmp_path, monkeypatch):
+    calibration, targets, _ = _fixture(tmp_path, monkeypatch)
+    near = np.eye(4)
+    near[:3, 3] = [0., 0., .135]
+    far = near.copy()
+    far[0, 3] = -.2
+    wrist = {"transfer": [near, far] * 8}
+    original = path_audit_module._held_pair_report
+    calls = []
+
+    def counted(*args):
+        calls.append(None)
+        return original(*args)
+
+    monkeypatch.setattr(path_audit_module, "_held_pair_report", counted)
+    with monkeypatch.context() as without_skip:
+        without_skip.setattr(
+            path_audit_module, "_aabb_distance_lower_bound",
+            lambda *_: 0.0)
+        baseline = path_audit_module._audit_held_geometry_samples(
+            shared_root=tmp_path, mode=targets.mode,
+            calibration=calibration, wrist=wrist,
+            T_key_hand=targets.T_key_hand, held_hand_q=np.zeros(6),
+            minimum_hand_clearance_m=0.)
+    baseline_calls = len(calls)
+    calls.clear()
+    optimized = path_audit_module._audit_held_geometry_samples(
+        shared_root=tmp_path, mode=targets.mode,
+        calibration=calibration, wrist=wrist,
+        T_key_hand=targets.T_key_hand, held_hand_q=np.zeros(6),
+        minimum_hand_clearance_m=0.)
+    assert optimized[0] == baseline[0]
+    assert optimized[1] == pytest.approx(baseline[1], abs=1e-12)
+    assert optimized[2] == baseline[2]
+    assert len(calls) < baseline_calls
 
 
 def test_optional_lift_checks_key_socket_and_monotone_world_z(

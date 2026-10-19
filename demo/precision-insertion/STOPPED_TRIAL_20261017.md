@@ -52,6 +52,11 @@ No pickup approach, grasp, lift, transfer, or insertion was recorded in its
 timing events. The absence of later events is a limit of the record, not a
 measurement of those stages.
 
+A later code-level comparison found that this wait was inside the shared
+capture-PC `init` command acknowledgement, before key-frame collection.
+See `LAST_RUN_AUDIT_20261020.md` for the saved-log evidence, stock AutoDex
+comparison, and the bounded command wait added in the separate checkout.
+
 After process exit, `manage_robot_pc_services.sh stop` stopped the five
 capture hosts' camera, snapshot, and precision daemons. The separately
 started Franka Docker container was also stopped. All corresponding capture

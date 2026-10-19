@@ -228,7 +228,9 @@ def test_capture_closes_all_camera_connections_even_on_failure(
             events.append("snapshot_close")
 
     class Init:
-        def __init__(self, *_args):
+        def __init__(self, *_args, **kwargs):
+            assert kwargs == {"command_timeout_ms": 5000,
+                              "command_retries": 2}
             events.append("init_open")
 
         def close(self):
@@ -278,7 +280,9 @@ def test_open_camera_context_survives_socket_start_until_trial_is_done(
     class Init:
         def __init__(self, *_args, **kwargs):
             assert kwargs == {"port_mask": 15006, "port_pose": 15007,
-                              "port_cmd": 16893}
+                              "port_cmd": 16893,
+                              "command_timeout_ms": 5000,
+                              "command_retries": 2}
             events.append("init_open")
 
         def close(self):

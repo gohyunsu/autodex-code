@@ -212,6 +212,29 @@ def _held_pair_report(moving_model, moving_mesh, fixed_model,
     return report
 
 
+def _box_corners(bounds: np.ndarray) -> np.ndarray:
+    """Corners of a mesh-local AABB, which encloses the complete mesh."""
+    lower, upper = np.asarray(bounds, dtype=np.float64)
+    return np.array([[x, y, z]
+                     for x in (lower[0], upper[0])
+                     for y in (lower[1], upper[1])
+                     for z in (lower[2], upper[2])], dtype=np.float64)
+
+
+def _aabb_distance_lower_bound(
+    corners: np.ndarray, fixed_bounds: np.ndarray,
+    T_fixed_moving: np.ndarray,
+) -> float:
+    """Lower bound on mesh distance after enclosing the rotated moving mesh."""
+    transformed = (corners @ T_fixed_moving[:3, :3].T +
+                   T_fixed_moving[:3, 3])
+    lower, upper = transformed.min(axis=0), transformed.max(axis=0)
+    fixed_lower, fixed_upper = fixed_bounds
+    gap = np.maximum(np.maximum(fixed_lower - upper,
+                                lower - fixed_upper), 0.0)
+    return float(np.linalg.norm(gap))
+
+
 def _audit_held_geometry_samples(
     *, shared_root: Path, mode, calibration, wrist: dict[str, list[np.ndarray]],
     T_key_hand: np.ndarray, held_hand_q: np.ndarray,
@@ -237,6 +260,11 @@ def _audit_held_geometry_samples(
         moving.update({f"hand/{name}": (_coal_mesh(mesh), mesh)
                        for name, mesh in _hand_link_meshes(
                            robot_path, held_hand_q).items()})
+    moving_corners = {name: _box_corners(mesh.bounds)
+                      for name, (_model, mesh) in moving.items()}
+    fixed_frames = {
+        name: (np.linalg.inv(pose), np.asarray(mesh.bounds, dtype=np.float64))
+        for name, (_model, pose, mesh, _occupancy) in fixed.items()}
     key_in_hand = np.linalg.inv(validate_se3(
         T_key_hand, name="sampled held T_key_hand"))
     failures: list[dict] = []
@@ -252,16 +280,28 @@ def _audit_held_geometry_samples(
                             i == 0 and moving_name == "key" and
                             fixed_name == "cuboid/table"):
                         continue
-                    relative = np.linalg.inv(fixed_pose) @ moving_pose
+                    fixed_inverse, fixed_bounds = fixed_frames[fixed_name]
+                    relative = fixed_inverse @ moving_pose
+                    pair = f"{moving_name}->{fixed_name}"
+                    required = (minimum_hand_clearance_m
+                                if moving_name != "key" else 0.0)
+                    # Coal's mesh distance dominates this loop. A disjoint
+                    # AABB cannot collide, and its gap is a lower bound on
+                    # the exact mesh distance. Once that bound exceeds both
+                    # the required clearance and the best exact distance for
+                    # this pair, this sample cannot change either result.
+                    lower_bound = _aabb_distance_lower_bound(
+                        moving_corners[moving_name], fixed_bounds, relative)
+                    if (lower_bound > required + 1e-9 and
+                            lower_bound - 1e-9 >=
+                            minimum_distances.get(pair, float("inf"))):
+                        continue
                     result = _held_pair_report(
                         model, moving_mesh, fixed_model, fixed_mesh,
                         occupancy, relative)
-                    pair = f"{moving_name}->{fixed_name}"
                     distance = result["minimum_surface_distance_m"]
                     minimum_distances[pair] = min(
                         distance, minimum_distances.get(pair, float("inf")))
-                    required = (minimum_hand_clearance_m
-                                if moving_name != "key" else 0.0)
                     if result["colliding"] or distance < required:
                         failures.append({"stage": stage, "sample": i,
                                          "reason": "held_geometry_collision_or_clearance",

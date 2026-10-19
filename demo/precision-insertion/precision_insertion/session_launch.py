@@ -379,8 +379,13 @@ def open_session_cameras(
             stock_snapshot, tap.buffer, registry, request_windows=windows)
         init_kwargs = ({} if init_ports is None else dict(
             zip(("port_mask", "port_pose", "port_cmd"), init_ports)))
+        # The stock command sender waits for a REQ/REP acknowledgement even
+        # with wait=False. Its default 60 s x 3 retries can hold the live
+        # session for three minutes when a listening daemon stops replying.
+        # A healthy receiver acknowledges before doing FoundPose work.
         stock_init = InitOrchestrator(
-            list(launch.pc_list), list(launch.capture_ips), **init_kwargs)
+            list(launch.pc_list), list(launch.capture_ips),
+            command_timeout_ms=5000, command_retries=2, **init_kwargs)
         stack.callback(stock_init.close)
         init = PrecisionInitOrchestrator(
             stock_init, registry, request_windows=windows)

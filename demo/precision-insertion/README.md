@@ -15,6 +15,9 @@ timings are in [VLM_RESIZE_PROBE_20261017.md](VLM_RESIZE_PROBE_20261017.md).
 The operator-stopped approach and its measured timing are recorded in
 [STOPPED_TRIAL_20261017.md](STOPPED_TRIAL_20261017.md). No subsequent live run
 has tested the resized three-view path.
+The last run's command-channel wait, downstream stock comparison, and saved
+804-sample geometry replay are in
+[LAST_RUN_AUDIT_20261020.md](LAST_RUN_AUDIT_20261020.md).
 
 ## Active cylinder force-stop route (2026-10-13)
 

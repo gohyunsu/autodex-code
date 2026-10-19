@@ -316,8 +316,16 @@ class InitOrchestrator:
             }
             logger.info(f"[orch] sending init (live) for {obj_name} to {len(self.pc_list)} PCs...")
             t0 = time.perf_counter()
-            with contextlib.redirect_stdout(io.StringIO()):
+            # Keep normal per-PC acknowledgements quiet, but surface the
+            # stock sender's only failure signal. It prints timeout/error
+            # messages instead of raising, so suppressing every line leaves
+            # an unresponsive capture PC invisible until payload collection.
+            command_output = io.StringIO()
+            with contextlib.redirect_stdout(command_output):
                 self.cmd.send_command("init", wait=False, cmd_info=info)
+            for line in command_output.getvalue().splitlines():
+                if "failed after" in line or "Error:" in line:
+                    logger.warning("[orch] init command: %s", line)
             logger.info(f"[orch] init dispatched in {time.perf_counter()-t0:.1f}s")
 
         # The quality path used by the continuous demo never renders a mesh or
