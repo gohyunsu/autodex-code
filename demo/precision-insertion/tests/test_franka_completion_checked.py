@@ -21,8 +21,6 @@ from precision_insertion import franka_completion_checked  # noqa: E402
 from precision_insertion.pickup_execution import (  # noqa: E402
     _reject_known_stock_follower,
 )
-
-
 class _Arm:
     def __init__(self, q, velocity=None, *, response=None):
         self.q = np.asarray(q, dtype=float)

@@ -19,7 +19,6 @@ from precision_insertion.session_policy import SessionDecision  # noqa: E402
 
 ASSESS = {
     "max_phase_skew_s": .02,
-    "max_lift_observation_gap_s": 2.,
     "max_arm_hand_skew_s": .02,
     "max_hand_command_error_raw": 20.,
     "max_arm_velocity_rad_s": .05,

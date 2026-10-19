@@ -41,7 +41,7 @@ def test_automatic_return_eligibility_requires_visible_rigid_hold(tmp_path):
         live=object(), recover_to_tabletop=lambda *_: None,
         state_for_observation=lambda *_: None, key_prompt="key",
         capture_parameters={}, landing_parameters={})
-    assert handler._completed_held_transfer(runner)
+    assert not handler._completed_held_transfer(runner)
     checkpoint.visual.status = "slip_or_miss"
     assert not handler._completed_held_transfer(runner)
     checkpoint.visual.status = "gross_misalignment"

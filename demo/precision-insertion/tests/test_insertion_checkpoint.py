@@ -214,8 +214,9 @@ def test_multiview_appearance_cannot_certify_unverified_depth(tmp_path):
 
 
 @pytest.mark.parametrize("separate_visual", [False, True])
+@pytest.mark.parametrize("final_delay_s", [0.0, 200.0])
 def test_released_label_pairs_initial_and_clear_view_raw_per_camera(
-        tmp_path, separate_visual):
+        tmp_path, separate_visual, final_delay_s):
     args, _ = _setup(tmp_path)
     mode = select_mode("square", 1.5)
     pose = np.eye(4)
@@ -274,7 +275,8 @@ def test_released_label_pairs_initial_and_clear_view_raw_per_camera(
             capture, tmp_path / name, phase=phase)
 
     preinsert = raw_bundle("preinsert_raw", "preinsert", 70, 102.0)
-    final = raw_bundle("final_clear", "final_clear_view", 80, 103.0)
+    final = raw_bundle("final_clear", "final_clear_view", 80,
+                       103.0 + final_delay_s)
     metric = args["metric_record_path"]
     release = tmp_path / "poststroke_release.json"
     release.write_text(json.dumps({
@@ -307,9 +309,8 @@ def test_released_label_pairs_initial_and_clear_view_raw_per_camera(
         initial_key_bundle=initial, preinsert_bundle=preinsert,
         final_bundle=final, metric_record_path=metric,
         release_record_path=release, preinsert_reached_at_s=102.1,
-        decision_timestamp_s=103.1, backend=backend,
-        max_phase_skew_s=.02, max_preinsert_age_s=1.,
-        max_final_observation_gap_s=.5, label_mode="vlm_only")
+        decision_timestamp_s=103.1 + final_delay_s, backend=backend,
+        max_phase_skew_s=.02, label_mode="vlm_only")
     assert report["outcome"]["insertion_success"] is True
     assert report["effective_vlm_class"] == "inside_socket"
     assert len(backend.calls) == 2

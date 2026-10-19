@@ -135,8 +135,6 @@ def test_franka_integration_injects_stock_callbacks_and_assembles_board9(
         },
         "held_motion_monitor": {
             "daemon_binary_path": str(tmp_path / "franka_daemon"),
-            "max_force_norm_n": 20., "max_torque_norm_nm": 3.,
-            "max_hand_tracking_error_raw": 50.,
             "max_state_gap_s": .5, "minimum_samples": 3,
         },
         "stages_factory": "robot_pc_stages:configure",

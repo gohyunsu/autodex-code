@@ -103,7 +103,7 @@ def _setup(tmp_path, *, rise_m=0.1):
         after_observation=held_observation, after_bundle=after_dir,
         joint_sample=joint, expected_candidate_prior_world=after_pose,
         backend=backend, max_state_skew_s=0.02,
-        max_phase_skew_s=0.02, max_lift_observation_gap_s=2.0,
+        max_phase_skew_s=0.02,
         min_center_rise_m=0.03, max_arm_hand_skew_s=0.02,
         max_hand_command_error_raw=30.0,
         max_arm_velocity_rad_s=0.05), backend

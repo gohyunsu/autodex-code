@@ -153,6 +153,28 @@ def test_saved_frame_reader_waits_for_complete_async_png(tmp_path):
     np.testing.assert_array_equal(recovered["cam_a"], IMAGE)
 
 
+def test_saved_frame_reader_checks_queued_files_after_wait_deadline(
+        tmp_path, monkeypatch):
+    from precision_insertion import raw_camera_capture
+
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    for camera in CAMERAS:
+        cv2.imwrite(str(image_dir / f"{camera}.png"), IMAGE)
+    monkeypatch.setattr(raw_camera_capture, "configured_capture_io_workers",
+                        lambda: 1)
+    original_imread = cv2.imread
+
+    def slow_first_read(path, mode):
+        if path.endswith("cam_a.png"):
+            time.sleep(0.04)
+        return original_imread(path, mode)
+
+    monkeypatch.setattr(cv2, "imread", slow_first_read)
+    recovered = _load_saved_frames(tmp_path, CAMERAS, timeout_s=0.01)
+    assert set(recovered) == CAMERAS
+
+
 def test_incorrect_object_color_is_rejected_before_camera_request(tmp_path):
     for color, collector, object_name, prompt_name in (
             ("red", collect_socket_capture, "socket_model", "socket_prompt"),

@@ -32,7 +32,7 @@ from test_key_perception import (  # noqa: E402
 )
 
 
-def _raw_case(tmp_path, *, answer=None):
+def _raw_case(tmp_path, *, answer=None, planning_delay_s=0.0):
     old, backend = _setup(tmp_path)
     if answer is not None:
         backend.answer = answer
@@ -44,7 +44,7 @@ def _raw_case(tmp_path, *, answer=None):
     rows = {
         camera: {"frame_id": ids[camera],
                  "image_sha256": image_sha256(images[camera]),
-                 "timestamp_s": 101.0 + 0.005 * i,
+                 "timestamp_s": 101.0 + planning_delay_s + 0.005 * i,
                  "max_error_s": 0.001,
                  "timestamp_method": "hardware_exposure",
                  "clock_domain": "unix_utc"}
@@ -59,15 +59,27 @@ def _raw_case(tmp_path, *, answer=None):
         mode=old["mode"], attempt_id=old["attempt_id"],
         candidate_id=old["candidate_id"],
         attempt_started_at_s=old["attempt_started_at_s"],
-        lift_completed_at_s=old["lift_completed_at_s"],
-        decision_timestamp_s=old["decision_timestamp_s"],
+        lift_completed_at_s=old["lift_completed_at_s"] + planning_delay_s,
+        decision_timestamp_s=old["decision_timestamp_s"] + planning_delay_s,
         before_capture_id=old["before_capture_id"],
         before_bundle=old["before_bundle"], after_bundle=after,
-        joint_sample=old["joint_sample"], backend=backend,
-        max_phase_skew_s=0.02, max_lift_observation_gap_s=2.0,
+        joint_sample=replace(
+            old["joint_sample"],
+            sample_timestamp_s=old["joint_sample"].sample_timestamp_s + planning_delay_s,
+            arm_timestamp_s=old["joint_sample"].arm_timestamp_s + planning_delay_s,
+            hand_timestamp_s=old["joint_sample"].hand_timestamp_s + planning_delay_s,
+        ), backend=backend,
+        max_phase_skew_s=0.02,
         max_arm_hand_skew_s=0.02, max_hand_command_error_raw=30.0,
         max_arm_velocity_rad_s=0.05)
     return args, backend
+
+
+def test_raw_lift_accepts_long_planning_before_physical_lift(tmp_path):
+    args, _backend = _raw_case(tmp_path, planning_delay_s=200.0)
+    result = assess_raw_lift_checkpoint(**args)
+    report = write_lift_checkpoint(result, tmp_path / "delayed_lift") / "report.json"
+    assert verify_lift_checkpoint(report)["grasp_success"] is True
 
 
 def test_raw_visible_held_report_is_not_a_key_pose(tmp_path):
@@ -180,7 +192,6 @@ def test_session_can_label_visible_lift_without_held_foundpose(
         lift_execution_log_path=execution,
         decision_timestamp_s=args["decision_timestamp_s"],
         max_phase_skew_s=args["max_phase_skew_s"],
-        max_lift_observation_gap_s=args["max_lift_observation_gap_s"],
         max_arm_hand_skew_s=args["max_arm_hand_skew_s"],
         max_hand_command_error_raw=args["max_hand_command_error_raw"],
         max_arm_velocity_rad_s=args["max_arm_velocity_rad_s"])

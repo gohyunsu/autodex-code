@@ -130,9 +130,9 @@ def execute_bound_measured_lift(
 ) -> dict:
     """Command only a saved measured-start lift after explicit live gates.
 
-    ``adapter.follow_lift`` must itself enforce a robot-side watchdog and
-    force/velocity/stall stops throughout the call. This Python code can
-    check returned evidence but cannot stop motion if its process dies.
+    ``adapter.follow_lift`` uses the stock daemon watchdog, FR3 reflex and
+    stock follower stop/arrival behavior. This Python code checks returned
+    evidence but cannot stop motion if its process dies.
     """
     limits.validate()
     if (not isinstance(runner, SessionRunner) or
@@ -218,7 +218,7 @@ def execute_bound_measured_lift(
     try:
         result = adapter.follow_lift(
             lift.copy(), max_duration_s=limits.max_execution_duration_s,
-            expected_hand_raw=pre_state.hand_raw_measured.copy(),
+            expected_hand_raw=pre_state.hand_raw_commanded.copy(),
             trajectory_sha256=base["trajectory_sha256"])
         if (not isinstance(result, dict) or
                 result.get("schema") !=

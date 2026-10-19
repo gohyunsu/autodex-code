@@ -43,7 +43,7 @@ dataclasses and JSON fields.
 | `LiftExecutionLimits` | `max_start_joint_error_rad`, `max_end_joint_error_rad` | `0.02 rad` each | Match the completion-checked stock follower's terminal joint bound. |
 | `LiftExecutionLimits` | `max_hand_drift_raw`, `max_arm_hand_skew_s`, `max_hand_command_error_raw`, `max_arm_velocity_rad_s` | `50 raw`, `0.10 s`, `30 raw`, `0.05 rad/s` | Consistent with the feedback and measured-hold proposal. |
 | `LiftExecutionLimits` | `max_execution_duration_s` | `90 s` | A generous command deadline; no reduction to stock trajectory speed. |
-| `held_motion_monitor` | `max_force_norm_n`, `max_torque_norm_nm`, `max_hand_tracking_error_raw`, `max_state_gap_s`, `minimum_samples` | `20 N`, `3 Nm`, `50 raw`, `0.5 s`, `3` | Noncontact lift/transfer stop thresholds. Probe's stationary wrench was about 1.5 N and 1.0 Nm; these are starting values, not measured dynamic limits. |
+| `held_motion_monitor` | `max_state_gap_s`, `minimum_samples` | `0.5 s`, `3` | Observe a progressing controller stream and retain a measured trace. The extra 20 N / 3 Nm / 50 raw aborts were removed after the 3 Nm cutoff stopped a valid held lift. Wrench and hand errors remain in the trace. |
 
 The installed ParaDex daemon source and matching installed binary have a
 default `200 ms` streaming command-expiry watchdog. The live command line did

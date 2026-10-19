@@ -26,15 +26,11 @@ from .franka_completion_checked import is_demo_completion_checked_executor
 
 @dataclass(frozen=True)
 class MeasuredLiftMonitorLimits:
-    max_force_norm_n: float
-    max_torque_norm_nm: float
-    max_hand_tracking_error_raw: float
     max_state_gap_s: float
     minimum_samples: int = 2
 
     def validate(self) -> None:
-        values = (self.max_force_norm_n, self.max_torque_norm_nm,
-                  self.max_hand_tracking_error_raw, self.max_state_gap_s)
+        values = (self.max_state_gap_s,)
         if (any(type(value) not in (int, float) or
                 not math.isfinite(value) or value <= 0 for value in values) or
                 type(self.minimum_samples) is not int or
@@ -63,7 +59,6 @@ class _ObservedArm:
         self.stage = stage
         self.owner_ident = threading.get_ident()
         self.samples: list[dict] = []
-        self._initial_commanded: np.ndarray | None = None
         self._last_uptime: float | None = None
         self._last_advance_monotonic = time.monotonic()
 
@@ -110,8 +105,9 @@ class _ObservedArm:
         torque = float(np.linalg.norm(wrench[3:]))
         hand_error = float(np.max(np.abs(
             measured - self.expected_hand_raw)))
-        if self._initial_commanded is None:
-            self._initial_commanded = commanded.copy()
+        # The first command may still be the preceding squeeze. Stock follow
+        # then commands the measured hold, so a command transition alone is
+        # not evidence of a lost grasp; keep both values in the trace.
         self.samples.append({
             "receipt_time_s": time.time(), "robot_uptime_s": uptime,
             "hand_receipt_time_s": hand_time,
@@ -122,13 +118,6 @@ class _ObservedArm:
             "force_norm_n": force, "torque_norm_nm": torque,
             "hand_tracking_error_raw": hand_error,
         })
-        if (force > self.limits.max_force_norm_n or
-                torque > self.limits.max_torque_norm_nm):
-            raise RuntimeError(
-                f"measured FR3 {self.stage} force limit exceeded")
-        if (np.max(np.abs(commanded - self._initial_commanded)) >
-                self.limits.max_hand_tracking_error_raw):
-            raise RuntimeError(f"measured Inspire {self.stage} hold changed")
         if bool(self.arm.is_error()):
             raise RuntimeError(f"FR3 reflex/error during held {self.stage}")
         return state

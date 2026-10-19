@@ -2,6 +2,19 @@
 
 The current cylinder frame conventions and live gate audit are in
 [SYMMETRY_AND_LIVE_GATES.md](SYMMETRY_AND_LIVE_GATES.md).
+The current active-route comparison with stock AutoDex and removed
+failure thresholds is in
+[FAILURE_GATE_AUDIT_20261017.md](FAILURE_GATE_AUDIT_20261017.md).
+
+The board-9 robot launcher uses camera IDs `24122734`, `25305463` and
+`25322651` for lift, preinsert and final visual classification. Set
+`PRECISION_VLM_CAMERA_IDS=id1,id2,id3` to choose another triplet. All 20
+original camera frames remain in the raw capture and FoundPose path. The
+commissioned runtime uses 768×576 classification inputs; measured saved-image
+timings are in [VLM_RESIZE_PROBE_20261017.md](VLM_RESIZE_PROBE_20261017.md).
+The operator-stopped approach and its measured timing are recorded in
+[STOPPED_TRIAL_20261017.md](STOPPED_TRIAL_20261017.md). No subsequent live run
+has tested the resized three-view path.
 
 ## Active cylinder force-stop route (2026-10-13)
 

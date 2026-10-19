@@ -851,7 +851,8 @@ class FrankaExecutor:
                     held_text = ("" if held_cap is None else
                                  f" held_cap={held_cap:.2f}")
                     print(f"  [follow] {now - t_start:5.1f}s  ref {int(idx)}/{n}  "
-                          f"arm {k_arm}/{n}  err={np.linalg.norm(traj[int(idx)] - cur):.3f}  "
+                          f"hand_idx {k_arm}/{n}  "
+                          f"ref_err={np.linalg.norm(traj[int(idx)] - cur):.3f}  "
                           f"ref_rate={(idx - idx_at_print) / (now - t_prev_print):.0f}/s "
                           f"(nominal {d_idx / self.ctrl_dt:.0f}/s){slowdown_text}"
                           f"{held_text}",

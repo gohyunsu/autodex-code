@@ -68,7 +68,7 @@ def _adapter(tmp_path, monkeypatch, executor):
     return measured.FrankaMeasuredLiftAdapter(
         executor=executor, daemon_binary_path=binary,
         trace_root=tmp_path / "traces",
-        limits=measured.MeasuredLiftMonitorLimits(5., 2., 20., .1))
+        limits=measured.MeasuredLiftMonitorLimits(.1))
 
 
 def _follow(adapter):
@@ -106,15 +106,34 @@ def test_object_blocks_hand_closure_without_aborting_lift(tmp_path, monkeypatch)
     assert trace["samples"][0]["hand_raw_commanded"] == [600.] * 6
 
 
-def test_lift_force_abort_is_not_mislabeled_complete(tmp_path, monkeypatch):
+def test_previous_squeeze_command_can_settle_into_measured_hold(
+        tmp_path, monkeypatch):
+    class SettlingExecutor(_Executor):
+        def follow_joint_trajectory(self, path, raw_hold):
+            for _ in range(self.sample_count):
+                self.arm.get_data()
+                self.hand.action[:] = raw_hold[0]
+
+    executor = SettlingExecutor()
+    executor.hand.action[-1] = 600.
+    adapter = _adapter(tmp_path, monkeypatch, executor)
+    result = _follow(adapter)
+    trace = json.loads(Path(result["controller_trace_path"]).read_text())
+    assert trace["status"] == "completed"
+    assert trace["samples"][0]["hand_raw_commanded"][-1] == 600.
+    assert trace["samples"][1]["hand_raw_commanded"][-1] == 500.
+    assert all(sample["hand_raw_measured"] == [500.] * 6
+               for sample in trace["samples"])
+
+
+def test_lift_wrench_is_recorded_without_an_extra_abort_threshold(
+        tmp_path, monkeypatch):
     executor = _Executor(force=10.)
     adapter = _adapter(tmp_path, monkeypatch, executor)
-    with pytest.raises(RuntimeError, match="measured FR3 lift aborted"):
-        _follow(adapter)
+    result = _follow(adapter)
     assert executor.stop_calls == 1
-    trace_path = next((tmp_path / "traces").glob("lift_*/controller_trace.json"))
-    trace = json.loads(trace_path.read_text())
-    assert trace["status"] == "aborted"
+    trace = json.loads(Path(result["controller_trace_path"]).read_text())
+    assert trace["status"] == "completed"
     assert trace["samples"][0]["force_norm_n"] == 10.
 
 
@@ -184,20 +203,20 @@ def test_held_motion_writes_three_measured_source_records(
     assert grasp["grasp_held_scope"].endswith("not_key_presence")
 
 
-def test_held_transfer_force_abort_writes_no_positive_result(
+def test_held_transfer_records_wrench_without_extra_abort(
     tmp_path, monkeypatch,
 ):
     executor = _Executor(force=10.)
     adapter = _adapter(tmp_path, monkeypatch, executor)
-    with pytest.raises(RuntimeError, match="measured FR3 transfer aborted"):
-        adapter.follow_transfer(
-            np.zeros((3, 13)), max_duration_s=1.,
-            expected_hand_raw=np.full(6, 500.),
-            trajectory_sha256="a" * 64)
+    result = adapter.follow_transfer(
+        np.zeros((3, 13)), max_duration_s=1.,
+        expected_hand_raw=np.full(6, 500.),
+        trajectory_sha256="a" * 64)
     assert executor.stop_calls == 1
     trace = next((tmp_path / "traces").glob("transfer_*/controller_trace.json"))
-    assert json.loads(trace.read_text())["status"] == "aborted"
-    assert not list((tmp_path / "traces").glob("transfer_*/safety.json"))
+    assert json.loads(trace.read_text())["status"] == "completed"
+    safety = json.loads(Path(result["source_records"]["safety"]["path"]).read_text())
+    assert safety["samples"][0]["force_norm_n"] == 10.
 
 
 def test_held_motion_rejects_changing_hand_path(tmp_path, monkeypatch):

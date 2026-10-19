@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 import sys
 
@@ -152,6 +153,21 @@ def test_hand_can_settle_after_squeeze_before_lift(tmp_path, monkeypatch):
         **kwargs, enable_robot_motion=True)
     assert result["trajectory_complete"] is True
     assert kwargs["adapter"].calls == 1
+
+
+def test_lift_keeps_stock_squeeze_command_when_object_blocks_finger(
+        tmp_path, monkeypatch):
+    kwargs = _setup(tmp_path, monkeypatch, nominal_unbounded=True)
+    start = kwargs["pre_state"]
+    commanded = start.hand_raw_commanded.copy()
+    commanded[-1] += 80.
+    kwargs["pre_state"] = replace(
+        start, hand_raw_commanded=commanded,
+        max_hand_command_error_raw=80.)
+    kwargs["adapter"].expected_hand_raw = commanded
+    result = execute_bound_measured_lift(
+        **kwargs, enable_robot_motion=True)
+    assert result["trajectory_complete"] is True
 
 
 def test_first_party_stock_identity_is_saved_without_review_record(

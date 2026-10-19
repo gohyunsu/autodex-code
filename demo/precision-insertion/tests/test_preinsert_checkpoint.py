@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -19,6 +20,7 @@ from autodex.utils.sync import convert_inspire_raw  # noqa: E402
 from precision_insertion.frame_provenance import image_sha256  # noqa: E402
 from precision_insertion.held_relation import HeldRelation  # noqa: E402
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
+from precision_insertion.observer import resize_classification_images  # noqa: E402
 from precision_insertion.postlift_preflight import PostLiftPreflight  # noqa: E402
 from precision_insertion.preinsert_checkpoint import (  # noqa: E402
     assess_preinsert_checkpoint, verify_preinsert_checkpoint,
@@ -188,9 +190,6 @@ def _setup(tmp_path):
         transfer_execution_path=transfer, joint_sample=measured,
         backend=_VLM(), max_capture_skew_s=0.02,
         max_joint_frame_skew_s=0.02,
-        max_transfer_observation_gap_s=0.5,
-        max_hand_translation_error_m=0.005,
-        max_hand_rotation_error_deg=5.0,
         max_arm_hand_skew_s=0.02,
         max_hand_command_error_raw=30.0,
         max_arm_velocity_rad_s=0.05,
@@ -220,6 +219,8 @@ def test_measured_preinsert_arrival_needs_multiview_visible_key(tmp_path):
     with pytest.raises(ValueError, match="label contradicts"):
         verify_preinsert_checkpoint(saved)
     saved.write_bytes(original_report)
+
+
     overlay = tmp_path / "arrival" / "overlays" / "cam_a.png"
     overlay.write_bytes(overlay.read_bytes() + b"tampered")
     with pytest.raises(ValueError, match="pixel evidence changed"):
@@ -233,6 +234,50 @@ def test_measured_preinsert_arrival_needs_multiview_visible_key(tmp_path):
     lifted_png.write_bytes(original_lifted_png)
     assert assess_preinsert_checkpoint(
         **{**args, "backend": _VLM("unobservable")}).preinsert_reached is None
+
+
+def test_resized_preinsert_vlm_inputs_replay_from_saved_raw_frames(tmp_path):
+    class ResizedVLM(_VLM):
+        def prepare_classification_images(self, images):
+            return resize_classification_images(images, (16, 12))
+
+    args = _setup(tmp_path)
+    result = assess_preinsert_checkpoint(**{**args, "backend": ResizedVLM()})
+    saved = write_preinsert_checkpoint(result, tmp_path / "resized_arrival")
+    assert verify_preinsert_checkpoint(saved)["preinsert_reached"] is True
+    changed = json.loads(saved.read_text(encoding="utf-8"))
+    changed["visual"]["per_view"][0]["input_transform"]["images"][0][
+        "input_rgb_sha256"] = "0" * 64
+    saved.write_text(json.dumps(changed), encoding="utf-8")
+    with pytest.raises(ValueError, match="replay"):
+        verify_preinsert_checkpoint(saved)
+
+
+def test_preinsert_accepts_late_new_capture_with_aligned_feedback(tmp_path):
+    args = _setup(tmp_path)
+    image = np.zeros((24, 32, 3), dtype=np.uint8)
+    ids = {"cam_a": 41, "cam_b": 42}
+    rows = {
+        camera: {
+            "frame_id": ids[camera], "image_sha256": image_sha256(image),
+            "timestamp_s": 211.0 + index * .005, "max_error_s": .001,
+            "timestamp_method": "hardware_exposure", "clock_domain": "unix_utc",
+        }
+        for index, camera in enumerate(CAMERAS)
+    }
+    args["raw_bundle"] = write_raw_camera_capture(
+        RawCameraCapture("late_hold", 51,
+                         {camera: image.copy() for camera in CAMERAS}, ids,
+                         {"request_id": 51, "source": "camera_acquisition",
+                          "frames": rows}),
+        tmp_path / "late_preinsert", phase="preinsert")
+    args["joint_sample"] = replace(
+        args["joint_sample"], sample_timestamp_s=211.0025,
+        arm_timestamp_s=211.0025, hand_timestamp_s=211.0025)
+    report = assess_preinsert_checkpoint(**args)
+    assert report.preinsert_reached is True
+    saved = write_preinsert_checkpoint(report, tmp_path / "late_arrival")
+    assert verify_preinsert_checkpoint(saved)["preinsert_reached"] is True
 
 
 def test_preinsert_replays_local_fenced_answer_and_rejects_changed_label(
@@ -265,7 +310,7 @@ def test_preinsert_vlm_vetoes_arrival_and_wrist_error_is_diagnostic(tmp_path):
     args["postlift_report_path"].write_text(json.dumps(saved), encoding="utf-8")
     report = assess_preinsert_checkpoint(**args)
     assert report.preinsert_reached is True
-    assert report.hand_translation_error_m > args["max_hand_translation_error_m"]
+    assert report.hand_translation_error_m > .005
 
 
 def test_preinsert_rejects_stale_or_tampered_external_evidence(tmp_path):

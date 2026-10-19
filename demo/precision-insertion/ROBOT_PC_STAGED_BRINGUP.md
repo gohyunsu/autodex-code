@@ -9,6 +9,13 @@ rejects square mode. The checked-out code, NAS payload, robot-PC calibration,
 and robot-PC controller are four different prerequisites; success at one
 level must not be reported as success at the next.
 
+The Oct 17 active-route failure-gate review is in
+[FAILURE_GATE_AUDIT_20261017.md](FAILURE_GATE_AUDIT_20261017.md).
+`run_robot_pc.sh` now defaults to the staged
+`franka_runtime_board9_gap20_stock_held.json`, which records the FR3 wrist
+wrench and Inspire readings without the former 3 Nm held-lift abort.
+`--check` only validates files; it does not connect a camera or robot.
+
 ## Current behavior and decisions to preserve
 
 1. The default live label mode is `vlm_only`. Lift receives each camera's

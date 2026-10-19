@@ -216,8 +216,7 @@ def test_franka_integration_builds_measured_lift_adapter_when_configured(
     config = _config()
     binary = tmp_path / "franka_daemon"
     config["lift_monitor"] = {
-        "daemon_binary_path": str(binary), "max_force_norm_n": 20.,
-        "max_torque_norm_nm": 3., "max_hand_tracking_error_raw": 25.,
+        "daemon_binary_path": str(binary),
         "max_state_gap_s": .05, "minimum_samples": 3}
     options = _options(tmp_path, config)
     franka_integration.factory(options).build_components(object())
@@ -268,8 +267,7 @@ def test_franka_integration_reuses_held_motion_adapter_across_stages(
     config = _config()
     config["held_motion_monitor"] = {
         "daemon_binary_path": str(tmp_path / "franka_daemon"),
-        "max_force_norm_n": 20., "max_torque_norm_nm": 3.,
-        "max_hand_tracking_error_raw": 25., "max_state_gap_s": .05,
+        "max_state_gap_s": .05,
         "minimum_samples": 3}
     live = SimpleNamespace(opened=SimpleNamespace(
         runner=SimpleNamespace(mode=SimpleNamespace(family=family))))
@@ -284,8 +282,7 @@ def test_duplicate_motion_monitor_config_fails_before_robot_connection(
                         lambda _: connected.append(True))
     monitor = {
         "daemon_binary_path": str(tmp_path / "franka_daemon"),
-        "max_force_norm_n": 20., "max_torque_norm_nm": 3.,
-        "max_hand_tracking_error_raw": 25., "max_state_gap_s": .05,
+        "max_state_gap_s": .05,
         "minimum_samples": 3}
     config = _config()
     config["lift_monitor"] = monitor
@@ -302,8 +299,7 @@ def test_invalid_lift_monitor_fails_before_robot_connection(monkeypatch, tmp_pat
     config = _config()
     config["lift_monitor"] = {
         "daemon_binary_path": "relative/franka_daemon",
-        "max_force_norm_n": 20., "max_torque_norm_nm": 3.,
-        "max_hand_tracking_error_raw": 25., "max_state_gap_s": .05,
+        "max_state_gap_s": .05,
         "minimum_samples": 3}
     with pytest.raises(ValueError, match="absolute daemon path"):
         franka_integration.factory(_options(tmp_path, config))
@@ -446,8 +442,9 @@ def test_first_party_qwen_and_fresh_checkpoint_callbacks(monkeypatch, tmp_path):
         "mode": "local", "model_id": str(
             tmp_path / "AutoDex/models/Qwen3-VL-2B-Instruct"),
         "max_input_size": (1920, 1088),
-        "max_new_tokens": 512, "require_native_pixels": True,
-        "parallel_views": 1}]
+        "max_new_tokens": 128, "require_native_pixels": True,
+        "parallel_views": 1,
+        "classification_image_size": (768, 576)}]
     assert len(captures) == 3
     assert all(timeout == 6.0 for _phase, timeout in captures)
 

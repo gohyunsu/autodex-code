@@ -27,7 +27,7 @@ from .timing_profile import timed
 
 
 _ASSESS_KEYS = frozenset({
-    "max_phase_skew_s", "max_lift_observation_gap_s",
+    "max_phase_skew_s",
     "max_arm_hand_skew_s", "max_hand_command_error_raw",
     "max_arm_velocity_rad_s",
 })

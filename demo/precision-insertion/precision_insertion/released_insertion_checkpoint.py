@@ -30,6 +30,7 @@ from .outcome import InsertionEvidence, resolve_insertion_outcome
 from .post_insertion_release import verify_post_insertion_release
 from .raw_camera_capture import verify_raw_camera_capture
 from .session_bootstrap import _safe_id
+from .visual_views import assessment_cameras
 
 
 SCHEMA = "precision_insertion_released_checkpoint_v1"
@@ -67,16 +68,14 @@ def assess_released_insertion_checkpoint(
     preinsert_bundle: Path, final_bundle: Path, metric_record_path: Path,
     release_record_path: Path, preinsert_reached_at_s: float,
     decision_timestamp_s: float, backend: ImageVLM,
-    max_phase_skew_s: float, max_preinsert_age_s: float,
-    max_final_observation_gap_s: float, minimum_visual_views: int = 2,
+    max_phase_skew_s: float, minimum_visual_views: int = 2,
     label_mode: str = "vlm_only", manual_annotation: dict | None = None,
 ) -> dict:
     """Create the released-key task label while retaining controller metrics."""
     _safe_id(attempt_id, "attempt ID")
     if not math.isclose(target_depth_m, .020, rel_tol=0, abs_tol=1e-9):
         raise ValueError("released insertion target must be 20 mm")
-    limits = (max_phase_skew_s, max_preinsert_age_s,
-              max_final_observation_gap_s)
+    limits = (max_phase_skew_s,)
     if (not all(math.isfinite(float(value)) and float(value) > 0
                 for value in limits) or
             type(minimum_visual_views) is not int or minimum_visual_views < 2):
@@ -100,7 +99,7 @@ def assess_released_insertion_checkpoint(
         guarded_execution_path=metric_path)
     initial_cameras = set(initial.get("consistency", {}).get(
         "accepted_views", initial["frame_evidence"]))
-    cameras = sorted(initial_cameras & set(final["frame_evidence"]))
+    cameras = assessment_cameras(initial_cameras & set(final["frame_evidence"]))
     if len(cameras) < minimum_visual_views:
         raise ValueError("released insertion lacks paired initial/final cameras")
     initial_rows = {camera: initial["frame_evidence"][camera]
@@ -114,8 +113,6 @@ def assess_released_insertion_checkpoint(
         raise ValueError("released checkpoint camera skew exceeds limit")
     initial_end = max(row["timestamp_s"] + row["max_error_s"]
                       for row in initial_rows.values())
-    preinsert_begin = min(row["timestamp_s"] - row["max_error_s"]
-                          for row in preinsert_rows.values())
     preinsert_end = max(row["timestamp_s"] + row["max_error_s"]
                         for row in preinsert_rows.values())
     final_begin = min(row["timestamp_s"] - row["max_error_s"]
@@ -124,11 +121,8 @@ def assess_released_insertion_checkpoint(
                     for row in final_rows.values())
     if (not initial_end < preinsert_reached_at_s < started < completed or
             preinsert_end >= started or
-            preinsert_begin < preinsert_reached_at_s - max_preinsert_age_s or
-            started - preinsert_end > max_preinsert_age_s or
             release["clear_view_completed_at_s"] >= final_begin or
-            final_begin - release["clear_view_completed_at_s"] >
-            max_final_observation_gap_s or decision_timestamp_s < final_end):
+            decision_timestamp_s < final_end):
         raise ValueError(
             "initial, preinsert, stroke, release and final images are not ordered")
     frames, inputs = _image_frames(
@@ -179,8 +173,6 @@ def assess_released_insertion_checkpoint(
         "frames": inputs, "visual": visual.to_record(),
         "minimum_visual_views": minimum_visual_views,
         "max_phase_skew_s": max_phase_skew_s,
-        "max_preinsert_age_s": max_preinsert_age_s,
-        "max_final_observation_gap_s": max_final_observation_gap_s,
         "effective_vlm_class": visual_class,
         "vlm_label": outcome["vlm_label"], "label_mode": label_mode,
         "manual_annotation": manual_annotation,

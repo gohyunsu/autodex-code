@@ -98,6 +98,7 @@ def open_live_precision_session(
     init_ports: tuple[int, int, int] | None = None,
     launch_snapshot=None,
     reuse_session_evidence_dir: Path | None = None,
+    initial_preferred_candidate: tuple[str, str, str] | None = None,
 ) -> Iterator[LivePrecisionSession]:
     """Capture once, open the bound ledger, and retain camera connections.
 
@@ -208,7 +209,8 @@ def open_live_precision_session(
                 xy_update_weight=xy_update_weight,
                 catalog_snapshot=catalog_snapshot,
                 producer_manifest=getattr(started, "producer_manifest", None),
-                calibration_snapshot=getattr(started, "calibration", None))
+                calibration_snapshot=getattr(started, "calibration", None),
+                initial_preferred_candidate=initial_preferred_candidate)
         yield LivePrecisionSession(started, opened, cameras, clear_view)
     finally:
         with timed("cleanup.camera_resources", phase="cleanup", kind="io"):
@@ -226,6 +228,7 @@ def run_live_precision_session(
     confirm_initial_key_placement: Callable[[], bool] | None = None,
     init_ports: tuple[int, int, int] | None = None,
     launch_snapshot=None,
+    initial_preferred_candidate: tuple[str, str, str] | None = None,
 ) -> ActionLoopResult:
     """Keep the one ChArUco/socket camera session open across trial actions.
 
@@ -248,7 +251,8 @@ def run_live_precision_session(
             xy_update_weight=xy_update_weight,
             clear_view=clear_view, init_ports=init_ports,
             launch_snapshot=launch_snapshot,
-            reuse_session_evidence_dir=reuse_session_evidence_dir) as live:
+            reuse_session_evidence_dir=reuse_session_evidence_dir,
+            initial_preferred_candidate=initial_preferred_candidate) as live:
         # The fixed socket is measured with the key absent. Match stock
         # run_auto's one initial object-placement gate before key perception.
         # Retry captures never pause here or remeasure the socket.

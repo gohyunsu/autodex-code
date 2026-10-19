@@ -151,7 +151,7 @@ def execute_bound_lateral_shift(
     try:
         result = adapter.follow_lateral(
             trajectory.copy(), max_duration_s=limits.max_execution_duration_s,
-            expected_hand_raw=pre_state.hand_raw_measured.copy(),
+            expected_hand_raw=pre_state.hand_raw_commanded.copy(),
             trajectory_sha256=base["trajectory_sha256"])
         if (not isinstance(result, dict) or
                 result.get("schema") !=

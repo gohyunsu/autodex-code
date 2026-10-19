@@ -207,7 +207,7 @@ def execute_bound_held_transfer(
     try:
         result = adapter.follow_transfer(
             transfer.copy(), max_duration_s=limits.max_execution_duration_s,
-            expected_hand_raw=pre_state.hand_raw_measured.copy(),
+            expected_hand_raw=pre_state.hand_raw_commanded.copy(),
             trajectory_sha256=base["trajectory_sha256"])
         requested = json.loads(started_path.read_text(encoding="utf-8"))["requested_at_s"]
         begun, completed, sources = verify_transfer_controller_result(

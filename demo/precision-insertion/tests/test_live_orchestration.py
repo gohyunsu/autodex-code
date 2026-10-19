@@ -107,6 +107,7 @@ def test_live_session_keeps_same_camera_transport_for_next_key(
             "output_dir": tmp_path / "new_run", "max_xy_retries": 2,
             "xy_update_weight": 1.0, "catalog_snapshot": None,
             "producer_manifest": None, "calibration_snapshot": None,
+            "initial_preferred_candidate": None,
         }
         return opened
 

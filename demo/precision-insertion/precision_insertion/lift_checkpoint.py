@@ -33,6 +33,7 @@ from .observer import (
 )
 from .raw_camera_capture import verify_raw_camera_capture
 from .session_bootstrap import _safe_id
+from .visual_views import assessment_cameras
 
 
 @dataclass(frozen=True)
@@ -136,7 +137,7 @@ def assess_lift_checkpoint(
     after_bundle: Path, joint_sample: LiveRobotState,
     expected_candidate_prior_world: np.ndarray, backend: ImageVLM,
     max_state_skew_s: float, max_phase_skew_s: float,
-    max_lift_observation_gap_s: float, min_center_rise_m: float,
+    min_center_rise_m: float,
     max_arm_hand_skew_s: float, max_hand_command_error_raw: float,
     max_arm_velocity_rad_s: float,
     minimum_visual_views: int = 2,
@@ -148,8 +149,7 @@ def assess_lift_checkpoint(
     result abstains. The caller must have validated measured Franka/Inspire
     feedback and derived the candidate prior from the selected v8 grasp.
     """
-    limits = (max_state_skew_s, max_phase_skew_s,
-              max_lift_observation_gap_s, min_center_rise_m)
+    limits = (max_state_skew_s, max_phase_skew_s, min_center_rise_m)
     if (not all(math.isfinite(float(value)) and float(value) > 0
                 for value in limits) or
             type(minimum_visual_views) is not int or
@@ -219,7 +219,6 @@ def assess_lift_checkpoint(
     if (before_upper >= attempt_started_at_s or
             after_lower <= lift_completed_at_s or
             after_lower <= before_upper or
-            after_lower - before_upper > max_lift_observation_gap_s or
             decision_timestamp_s < max(
                 after_observation.acquisition_interval_s[1],
                 joint_sample.sample_timestamp_s)):
@@ -294,7 +293,7 @@ def assess_raw_lift_checkpoint(
     decision_timestamp_s: float, before_capture_id: str,
     before_bundle: Path, after_bundle: Path, joint_sample: LiveRobotState,
     backend: ImageVLM, max_phase_skew_s: float,
-    max_lift_observation_gap_s: float, max_arm_hand_skew_s: float,
+    max_arm_hand_skew_s: float,
     max_hand_command_error_raw: float, max_arm_velocity_rad_s: float,
     minimum_visual_views: int = 2,
     label_mode: str = "evidence_fused",
@@ -309,8 +308,8 @@ def assess_raw_lift_checkpoint(
             joint_sample.source != "robot_joint_feedback" or
             type(minimum_visual_views) is not int or
             minimum_visual_views < 2 or
-            not all(math.isfinite(float(x)) and float(x) > 0 for x in (
-                max_phase_skew_s, max_lift_observation_gap_s)) or
+            not (math.isfinite(float(max_phase_skew_s)) and
+                 max_phase_skew_s > 0) or
             not all(math.isfinite(float(x)) for x in (
                 attempt_started_at_s, lift_completed_at_s,
                 decision_timestamp_s)) or
@@ -333,8 +332,9 @@ def assess_raw_lift_checkpoint(
             before.get("family") != mode.family or
             after["capture_id"] == before_capture_id):
         raise ValueError("raw lift before/after images are not this key trial")
-    cameras = sorted(set(before["consistency"]["accepted_views"]) &
-                     set(after["frame_evidence"]))
+    cameras = assessment_cameras(
+        set(before["consistency"]["accepted_views"]) &
+        set(after["frame_evidence"]))
     if len(cameras) < minimum_visual_views:
         raise ValueError("raw lift needs paired calibrated camera views")
     subsets = {
@@ -352,7 +352,6 @@ def assess_raw_lift_checkpoint(
                       for row in subsets["after_lift"].values())
     if (before_upper >= attempt_started_at_s or
             after_lower <= lift_completed_at_s or
-            after_lower - before_upper > max_lift_observation_gap_s or
             decision_timestamp_s < max(after_upper,
                                        joint_sample.sample_timestamp_s)):
         raise ValueError("raw lift images do not bracket the physical lift")
@@ -398,7 +397,6 @@ def assess_raw_lift_checkpoint(
         minimum_visual_views, joint_sample, visual, "raw_visual", {
             "attempt_started_at_s": attempt_started_at_s,
             "max_phase_skew_s": max_phase_skew_s,
-        "max_lift_observation_gap_s": max_lift_observation_gap_s,
         }, label_mode, manual_annotation)
 
 
@@ -502,16 +500,13 @@ def verify_lift_checkpoint(report_path: Path) -> dict:
         raise ValueError("lift VLM used an unadmitted tabletop view")
     if raw_visual:
         timing = report.get("raw_timing")
-        if not isinstance(timing, dict) or set(timing) != {
-                "attempt_started_at_s", "max_phase_skew_s",
-                "max_lift_observation_gap_s"}:
+        if not isinstance(timing, dict) or not {
+                "attempt_started_at_s", "max_phase_skew_s"} <= set(timing):
             raise ValueError("raw lift lacks its acquisition timing limits")
         started = float(timing["attempt_started_at_s"])
         phase_skew = float(timing["max_phase_skew_s"])
-        max_gap = float(timing["max_lift_observation_gap_s"])
-        if (not all(math.isfinite(x) for x in (started, phase_skew,
-                                               max_gap)) or
-                min(phase_skew, max_gap) <= 0):
+        if (not all(math.isfinite(x) for x in (started, phase_skew)) or
+                phase_skew <= 0):
             raise ValueError("invalid raw lift timing limits")
         subsets = {
             phase: {camera: saved[phase]["frame_evidence"][camera]
@@ -529,7 +524,6 @@ def verify_lift_checkpoint(report_path: Path) -> dict:
         completed = float(report["lift_completed_at_s"])
         if (not started < completed < after_lower or
                 before_upper >= started or
-                after_lower - before_upper > max_gap or
                 report["decision_timestamp_s"] < after_upper):
             raise ValueError("raw lift frame times no longer bracket execution")
     visual = report["visual"]

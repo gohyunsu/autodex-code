@@ -1055,7 +1055,7 @@ def test_lift_checkpoint_abstains_then_records_hash_bound_positive_label(
         lift_execution_log_path=lift_log,
         decision_timestamp_s=10.7,
         max_state_skew_s=0.05, max_phase_skew_s=0.05,
-        max_lift_observation_gap_s=2.0, min_center_rise_m=0.03,
+        min_center_rise_m=0.03,
         max_arm_hand_skew_s=0.05,
         max_hand_command_error_raw=30.0,
         max_arm_velocity_rad_s=0.05)
@@ -1118,6 +1118,22 @@ def test_budgeted_preflight_continues_same_capture_but_new_capture_resets_reject
         _plan(runner, first)
     _plan(runner, _observation("key_2", 11.0))
     assert seen[2] == ()
+
+
+def test_initial_preferred_v8_candidate_only_applies_to_first_capture(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    runner._initial_preferred_candidate = KEY_B
+    seen = []
+
+    def fake_plan(**kwargs):
+        seen.append(kwargs["preferred_candidate"])
+        return _report(runner, kwargs["key_observation"], key=KEY_A)
+
+    monkeypatch.setattr(session_runner, "plan_admitted_key_trial", fake_plan)
+    _plan(runner, _observation("key_1", 10.0))
+    _plan(runner, _observation("key_2", 11.0))
+    assert seen == [KEY_B, None]
 
 
 def test_verified_insertion_ends_session_without_reset_or_next_trial(
@@ -1871,9 +1887,6 @@ def test_preinsert_assessment_is_saved_before_positive_arrival_label(
         raw_bundle=tmp_path / "saved_raw", transfer_execution_path=transfer,
         joint_sample=object(), backend=object(),
         max_capture_skew_s=0.02, max_joint_frame_skew_s=0.02,
-        max_transfer_observation_gap_s=0.5,
-        max_hand_translation_error_m=0.005,
-        max_hand_rotation_error_deg=5.0,
         max_arm_hand_skew_s=0.02,
         max_hand_command_error_raw=30.0,
         max_arm_velocity_rad_s=0.05)

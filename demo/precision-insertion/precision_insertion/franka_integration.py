@@ -38,10 +38,9 @@ _OBSOLETE_FEEDBACK_KEYS = frozenset({"max_arm_update_wait_s"})
 _SAMPLING_KEYS = frozenset(FrankaSamplingSettings.__dataclass_fields__)
 _VLM_KEYS = frozenset({"mode", "model_id", "max_new_tokens",
                        "require_native_pixels", "capture_timeout_s",
-                       "parallel_views"})
+                       "parallel_views", "classification_image_size"})
 _LIFT_MONITOR_KEYS = frozenset({
-    "daemon_binary_path", "max_force_norm_n", "max_torque_norm_nm",
-    "max_hand_tracking_error_raw", "max_state_gap_s", "minimum_samples",
+    "daemon_binary_path", "max_state_gap_s", "minimum_samples",
 })
 _CHECKPOINT_CAPTURES = {
     "lift": {"capture_after_lift": "after_lift"},
@@ -54,8 +53,9 @@ _CHECKPOINT_CAPTURES = {
 def _vlm_settings(value: object) -> dict:
     if value is None:
         return {"mode": "local", "model_id": None,
-                "max_new_tokens": 512, "require_native_pixels": True,
-                "capture_timeout_s": 10.0, "parallel_views": 1}
+                "max_new_tokens": 128, "require_native_pixels": True,
+                "capture_timeout_s": 10.0, "parallel_views": 1,
+                "classification_image_size": [768, 576]}
     if not isinstance(value, dict) or set(value) - _VLM_KEYS:
         raise ValueError("VLM settings contain unknown fields")
     settings = {**_vlm_settings(None), **value}
@@ -72,6 +72,11 @@ def _vlm_settings(value: object) -> dict:
             type(settings["parallel_views"]) is not int or
             not 1 <= settings["parallel_views"] <= 8 or
             settings["mode"] == "local" and settings["parallel_views"] != 1 or
+            settings["classification_image_size"] is not None and (
+                not isinstance(settings["classification_image_size"], (list, tuple)) or
+                len(settings["classification_image_size"]) != 2 or
+                any(type(side) is not int or side <= 0
+                    for side in settings["classification_image_size"])) or
             settings["mode"] == "gemini" and settings["model_id"] is None):
         raise ValueError("invalid VLM mode, model or checkpoint timeout")
     return settings
@@ -249,7 +254,10 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                     max_input_size=native_ceiling,
                     max_new_tokens=vlm["max_new_tokens"],
                     require_native_pixels=vlm["require_native_pixels"],
-                    parallel_views=vlm["parallel_views"])
+                    parallel_views=vlm["parallel_views"],
+                    **({"classification_image_size": tuple(
+                        vlm["classification_image_size"])}
+                       if vlm["classification_image_size"] is not None else {}))
         shared.update(planner=core.planner, read_state=core.read_state)
         if core.sampler is not None:
             shared.update(

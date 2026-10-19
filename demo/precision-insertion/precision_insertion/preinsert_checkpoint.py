@@ -41,11 +41,13 @@ from .lift_checkpoint import verify_lift_checkpoint
 from .observer import (
     HeldSceneView, ImageVLM, LabeledFrame, PreinsertVisualAssessment,
     observe_preinsert_raw_views, observe_preinsert_temporal_views,
+    resize_classification_images,
 )
 from .postlift_preflight import PostLiftPreflight
 from .raw_camera_capture import verify_raw_camera_capture
 from .records import AttemptRecord
 from .world import validated_frozen_socket_pose
+from .visual_views import assessment_cameras
 
 
 def _sha(path: Path) -> str:
@@ -98,8 +100,7 @@ def _transfer_log(
 
 
 def _arrival_label(
-    *, measurement: dict, position_error: float, rotation_error: float,
-    max_position_error: float, max_rotation_error: float, visual_status: str,
+    *, measurement: dict, visual_status: str,
 ) -> tuple[bool | None, str]:
     if (measurement["trajectory_complete"] is False or
             measurement["safety_abort"] is True or
@@ -120,10 +121,8 @@ def visible_held_transfer_return(reason: str, visual_status: str) -> bool:
     The transfer controller's independent ``grasp_held`` record and measured
     endpoint are checked by the caller; a visual slip/miss never qualifies.
     """
-    return (reason, visual_status) in {
-        ("measured_hold_pose_outside_limits", "coarse_match"),
-        ("multiview_visible_preinsert_failure", "gross_misalignment"),
-    }
+    return (reason, visual_status) == (
+        "multiview_visible_preinsert_failure", "gross_misalignment")
 
 
 def observe_held_preinsert_scene(
@@ -269,7 +268,20 @@ class _RecordedPreinsertAnswers:
 
     def __init__(self, rows: list[dict]):
         self.model = rows[0].get("backend_model")
+        self._rows = rows
+        self._prepared = 0
         self._answers = [row.get("raw_answer") for row in rows]
+
+    def prepare_classification_images(self, images):
+        row = self._rows[self._prepared]
+        self._prepared += 1
+        transform = row.get("input_transform")
+        if transform is None:
+            return images, None
+        if not isinstance(transform, dict):
+            raise ValueError("preinsert VLM input transform is invalid")
+        return resize_classification_images(
+            images, tuple(transform.get("max_size", ())))
 
     def infer(self, _images, _prompt):
         return self._answers.pop(0)
@@ -357,8 +369,7 @@ def assess_preinsert_checkpoint(
     after_lift_raw_bundle: Path,
     transfer_execution_path: Path, joint_sample: LiveRobotState,
     backend: ImageVLM, max_capture_skew_s: float,
-    max_joint_frame_skew_s: float, max_transfer_observation_gap_s: float,
-    max_hand_translation_error_m: float, max_hand_rotation_error_deg: float,
+    max_joint_frame_skew_s: float,
     max_arm_hand_skew_s: float, max_hand_command_error_raw: float,
     max_arm_velocity_rad_s: float,
     renderer_factory: Callable | None = None,
@@ -375,8 +386,7 @@ def assess_preinsert_checkpoint(
     must separately establish sensor authenticity and physical error bounds.
     """
     limits = (max_capture_skew_s, max_joint_frame_skew_s,
-              max_transfer_observation_gap_s, max_hand_translation_error_m,
-              max_hand_rotation_error_deg, max_arm_hand_skew_s,
+              max_arm_hand_skew_s,
               max_hand_command_error_raw, max_arm_velocity_rad_s)
     if not all(math.isfinite(float(value)) and float(value) > 0 for value in limits):
         raise ValueError("preinsert arrival needs positive commissioned limits")
@@ -474,8 +484,7 @@ def assess_preinsert_checkpoint(
                          for row in frame_rows.values())
     last_exposure = max(row["timestamp_s"] + row["max_error_s"]
                         for row in frame_rows.values())
-    if (completed >= first_exposure or
-            first_exposure - completed > max_transfer_observation_gap_s):
+    if completed >= first_exposure:
         raise ValueError("preinsert images do not follow this transfer")
     if not isinstance(joint_sample, LiveRobotState):
         raise TypeError("preinsert arrival needs measured joint feedback")
@@ -487,11 +496,16 @@ def assess_preinsert_checkpoint(
             abs(joint_sample.sample_timestamp_s -
                 (first_exposure + last_exposure) / 2) > max_joint_frame_skew_s):
         raise ValueError("preinsert joint feedback and exposure are not aligned")
+    selected_cameras = assessment_cameras(frame_rows)
+    selected_rows = {camera: frame_rows[camera] for camera in selected_cameras}
+    selected_after_rows = {
+        camera: after_lift_rows[camera] for camera in selected_cameras}
     position_error, rotation_error, comparison, visual = (
         observe_held_preinsert_scene(
             calibration=calibration, shared_root=shared_root, mode=mode,
             raw_bundle=bundle, after_lift_raw_bundle=after_lift_bundle,
-            frame_rows=frame_rows, after_lift_frame_rows=after_lift_rows,
+            frame_rows=selected_rows,
+            after_lift_frame_rows=selected_after_rows,
             joint_sample=joint_sample,
             T_key_hand=held_relation,
             T_robot_hand_target=postlift.targets.T_robot_hand_preinsert,
@@ -503,11 +517,7 @@ def assess_preinsert_checkpoint(
             renderer_factory=renderer_factory, robot_loader=robot_loader))
     measurement = transfer["measurement"]
     label, reason = _arrival_label(
-        measurement=measurement, position_error=position_error,
-        rotation_error=rotation_error,
-        max_position_error=max_hand_translation_error_m,
-        max_rotation_error=max_hand_rotation_error_deg,
-        visual_status=visual.status)
+        measurement=measurement, visual_status=visual.status)
     label, reason = resolve_label(
         stage="preinsert_reached", mode=label_mode,
         visual_class=visual.status, fused_value=label,
@@ -528,7 +538,6 @@ def assess_preinsert_checkpoint(
                 "lift_checkpoint_report_sha256": _sha(lift_checkpoint_path)}
                if lift_checkpoint_path is not None else {}),
             "max_capture_skew_s": max_capture_skew_s,
-            "max_transfer_observation_gap_s": max_transfer_observation_gap_s,
             "vlm_frame_evidence": {
                 camera: {
                     phase: {
@@ -539,7 +548,7 @@ def assess_preinsert_checkpoint(
                     }
                     for phase, source in (("after_lift", after_lift_capture),
                                           ("preinsert", capture))}
-                for camera in sorted(frame_rows)},
+                for camera in selected_cameras},
             "transfer_measurement": measurement,
             "label_mode": label_mode,
             "manual_annotation": manual_annotation,
@@ -547,8 +556,6 @@ def assess_preinsert_checkpoint(
             "transfer_completed_at_s": completed,
             "observation_completed_at_s": last_exposure,
             "joint_feedback": joint_sample.to_record(),
-            "max_hand_translation_error_m": max_hand_translation_error_m,
-            "max_hand_rotation_error_deg": max_hand_rotation_error_deg,
             **({"bounded_source_context" if bounded else
                 "nominal_source_context": {
                 "shared_root": str(Path(shared_root).expanduser().resolve()),
@@ -667,17 +674,14 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
                 for row in after_rows.values()) >= report["transfer_started_at_s"] or
             min(row["timestamp_s"] - row["max_error_s"]
                 for row in pre_rows.values()) <= report["transfer_completed_at_s"] or
-            min(row["timestamp_s"] - row["max_error_s"]
-                for row in pre_rows.values()) - report["transfer_completed_at_s"] >
-            report["max_transfer_observation_gap_s"] or
             any(after_rows[camera]["frame_id"] >= pre_rows[camera]["frame_id"]
                 or after_rows[camera]["timestamp_s"] >=
                 pre_rows[camera]["timestamp_s"] for camera in pre_rows)):
         raise ValueError("preinsert raw camera pair chronology changed")
     views = report.get("comparison", {}).get("views", {})
     png_hashes = report.get("overlay_png_sha256", {})
-    if (set(views) != set(capture["frame_evidence"]) or
-            set(views) != set(after_capture["frame_evidence"]) or
+    if (not set(views) <= set(capture["frame_evidence"]) or
+            not set(views) <= set(after_capture["frame_evidence"]) or
             set(png_hashes) != set(views) or len(views) < 2):
         raise ValueError("preinsert overlay camera set changed")
     paired_pixels = []
@@ -718,10 +722,6 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
     _verify_visual_replay(report["visual"], paired_pixels)
     expected_label, expected_reason = _arrival_label(
         measurement=report["transfer_measurement"],
-        position_error=report["hand_translation_error_m"],
-        rotation_error=report["hand_rotation_error_deg"],
-        max_position_error=report["max_hand_translation_error_m"],
-        max_rotation_error=report["max_hand_rotation_error_deg"],
         visual_status=report["visual"]["status"])
     expected_label, expected_reason = resolve_label(
         stage="preinsert_reached",

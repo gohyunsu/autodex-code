@@ -96,7 +96,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="use previously verified fixed-socket images and calibration")
     parser.add_argument("--key-already-placed", action="store_true",
                         help="skip the initial key-placement prompt")
+    parser.add_argument("--initial-candidate",
+                        help="eligible v8 key for the first pickup plan, e.g. table/0/20237")
     args = parser.parse_args(argv)
+    initial_candidate = None
+    if args.initial_candidate is not None:
+        parts = args.initial_candidate.split("/")
+        if len(parts) != 3 or any(not part for part in parts):
+            parser.error("--initial-candidate needs scene/pose/grasp")
+        initial_candidate = tuple(parts)
     if not _EXP_NAME.fullmatch(args.exp_name):
         parser.error("exp name must be a single path-safe directory name")
     ports = (args.init_port_mask, args.init_port_pose, args.init_port_cmd)
@@ -138,7 +146,8 @@ def main(argv: list[str] | None = None) -> int:
         label_mode=args.label_mode, annotator=args.annotator,
         init_ports=init_ports, stop_after_planning=args.stop_after_planning,
         reuse_session_evidence_dir=args.reuse_session_evidence,
-        key_already_placed=args.key_already_placed)
+        key_already_placed=args.key_already_placed,
+        initial_preferred_candidate=initial_candidate)
     with profile_run(output_dir) as profile:
         with timed("live.session", phase="session"):
             result = run_integrated_live_session(

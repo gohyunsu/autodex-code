@@ -52,8 +52,7 @@ def assess_observed_retry_arrival(
     shared_root: Path, mode: TaskMode, raw_bundle: Path,
     transfer_execution_path: Path, joint_sample: LiveRobotState,
     backend: ImageVLM, max_capture_skew_s: float,
-    max_joint_frame_skew_s: float, max_transfer_observation_gap_s: float,
-    max_hand_translation_error_m: float, max_hand_rotation_error_deg: float,
+    max_joint_frame_skew_s: float,
     max_arm_hand_skew_s: float, max_hand_command_error_raw: float,
     max_arm_velocity_rad_s: float,
     renderer_factory: Callable | None = None,
@@ -61,8 +60,7 @@ def assess_observed_retry_arrival(
 ) -> ObservedRetryArrivalCheckpoint:
     """Label a fresh corrected hold; never reuse the failed stroke's image."""
     limits = (max_capture_skew_s, max_joint_frame_skew_s,
-              max_transfer_observation_gap_s, max_hand_translation_error_m,
-              max_hand_rotation_error_deg, max_arm_hand_skew_s,
+              max_arm_hand_skew_s,
               max_hand_command_error_raw, max_arm_velocity_rad_s)
     if any(not math.isfinite(float(value)) or float(value) <= 0
            for value in limits):
@@ -113,7 +111,7 @@ def assess_observed_retry_arrival(
         raise ValueError("retry arrival cameras are not synchronized")
     first = min(row["timestamp_s"] - row["max_error_s"] for row in rows.values())
     last = max(row["timestamp_s"] + row["max_error_s"] for row in rows.values())
-    if completed >= first or first - completed > max_transfer_observation_gap_s:
+    if completed >= first:
         raise ValueError("retry arrival images do not follow the XY transfer")
     if not isinstance(joint_sample, LiveRobotState):
         raise TypeError("retry arrival needs measured robot feedback")
@@ -134,11 +132,7 @@ def assess_observed_retry_arrival(
         backend=backend, max_capture_skew_s=max_capture_skew_s,
         renderer_factory=renderer_factory, robot_loader=robot_loader)
     label, reason = _arrival_label(
-        measurement=transfer["measurement"], position_error=position,
-        rotation_error=rotation,
-        max_position_error=max_hand_translation_error_m,
-        max_rotation_error=max_hand_rotation_error_deg,
-        visual_status=visual.status)
+        measurement=transfer["measurement"], visual_status=visual.status)
     return ObservedRetryArrivalCheckpoint(
         attempt.attempt_id, attempt.candidate_id, label, reason,
         position, rotation, visual, comparison, {
@@ -154,8 +148,6 @@ def assess_observed_retry_arrival(
             "transfer_completed_at_s": completed,
             "observation_completed_at_s": last,
             "joint_feedback": joint_sample.to_record(),
-            "max_hand_translation_error_m": max_hand_translation_error_m,
-            "max_hand_rotation_error_deg": max_hand_rotation_error_deg,
         })
 
 
@@ -233,10 +225,6 @@ def verify_observed_retry_arrival(report_path: Path) -> dict:
     _verify_visual_replay(report["visual"], paired)
     label, reason = _arrival_label(
         measurement=report["transfer_measurement"],
-        position_error=report["hand_translation_error_m"],
-        rotation_error=report["hand_rotation_error_deg"],
-        max_position_error=report["max_hand_translation_error_m"],
-        max_rotation_error=report["max_hand_rotation_error_deg"],
         visual_status=report["visual"]["status"])
     if report["retry_arrived"] is not label or report["reason"] != reason:
         raise ValueError("observed XY retry arrival label changed")

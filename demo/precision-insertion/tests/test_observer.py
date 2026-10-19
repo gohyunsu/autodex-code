@@ -50,6 +50,38 @@ def _frames(before="before_grasp", after="after_lift"):
     ]
 
 
+def test_local_classification_resizes_only_model_inputs_and_records_mapping():
+    class StubQwen:
+        model_id = "local-test"
+
+        def __init__(self):
+            self.sizes = []
+
+        def infer_images_prompt(self, images, prompt, *, max_new_tokens):
+            self.sizes.append([image.size for image in images])
+            return SimpleNamespace(answer=json.dumps({
+                "class": "held", "evidence_views": ["front"],
+                "evidence": "white key visible in hand"}))
+
+    model = StubQwen()
+    backend = LocalQwenBackend(
+        model, max_new_tokens=128, require_native_pixels=False,
+        classification_image_size=(768, 576))
+    frames = [
+        LabeledFrame("front", phase, stamp,
+                     Image.new("RGB", (2048, 1536), color))
+        for phase, stamp, color in (("before_grasp", 1.0, (40, 50, 60)),
+                                    ("after_lift", 2.0, (60, 50, 40)))
+    ]
+    observed = observe_lift(backend, frames)
+    row = observed.aggregation["per_view"][0]
+    assert model.sizes == [[(768, 576), (768, 576)]]
+    assert [frame.image.size for frame in frames] == [(2048, 1536)] * 2
+    assert [item["input_size"] for item in row["input_transform"]["images"]] == [
+        [768, 576], [768, 576]]
+    assert row["parsed"]["class"] == "held"
+
+
 def test_preinsert_temporal_uses_raw_same_camera_pairs_only():
     answer = lambda camera: json.dumps({
         "class": "coarse_match", "evidence_views": [camera],

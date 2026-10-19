@@ -170,7 +170,6 @@ def configure(core, live, options) -> dict:
                 "commissioning_record_path": None,
                 "assessment_parameters": {
                     "max_phase_skew_s": 10.,
-                    "max_lift_observation_gap_s": 120.,
                     "minimum_visual_views": 2,
                     **stationary,
                 },
@@ -189,9 +188,6 @@ def configure(core, live, options) -> dict:
                 "preinsert_parameters": {
                     "max_capture_skew_s": 10.,
                     "max_joint_frame_skew_s": 5.,
-                    "max_transfer_observation_gap_s": 120.,
-                    "max_hand_translation_error_m": .01,
-                    "max_hand_rotation_error_deg": 10.,
                     **stationary,
                 },
                 "handoff_parameters": {
@@ -201,8 +197,6 @@ def configure(core, live, options) -> dict:
                 "insertion_parameters": {},
                 "final_parameters": {
                     "max_phase_skew_s": 10.,
-                    "max_preinsert_age_s": 180.,
-                    "max_final_observation_gap_s": 120.,
                     "minimum_visual_views": 2,
                 },
             },

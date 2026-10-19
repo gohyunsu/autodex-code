@@ -150,6 +150,7 @@ class SessionRunner:
         self, *, mode: TaskMode, calibration: SessionCalibration,
         catalog: dict, shared_root: Path, output_dir: Path,
         max_xy_retries: int | None, xy_update_weight: float = 1.0,
+        initial_preferred_candidate: tuple[str, str, str] | None = None,
     ) -> None:
         if max_xy_retries is not None and (
                 type(max_xy_retries) is not int or max_xy_retries < 0):
@@ -167,6 +168,15 @@ class SessionRunner:
             raise ValueError("catalogue and session shared roots differ")
         if not catalog.get("complete_scan"):
             raise ValueError("session needs a complete offline endpoint catalogue")
+        if initial_preferred_candidate is not None:
+            if (not isinstance(initial_preferred_candidate, tuple) or
+                    len(initial_preferred_candidate) != 3 or
+                    any(not isinstance(part, str) or not part
+                        for part in initial_preferred_candidate) or
+                    not any(tuple(row.get("key", ())) == initial_preferred_candidate
+                            and row.get("eligible") is True
+                            for row in catalog["candidates"])):
+                raise ValueError("initial preferred candidate must be an eligible v8 catalog key")
         target = Path(output_dir).expanduser().resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
         target.mkdir(exist_ok=False)
@@ -203,6 +213,7 @@ class SessionRunner:
         self._key_evidence_manifest_sha256: str | None = None
         self._attempt: AttemptRecord | None = None
         self._attempted: set[tuple[str, str, str]] = set()
+        self._initial_preferred_candidate = initial_preferred_candidate
         self._pending_next_trial_xy: dict | None = None
         self._future_xy_corrections_used = 0
         self._same_capture_planning_rejects: set[tuple[str, str, str]] = set()
@@ -272,6 +283,8 @@ class SessionRunner:
             "catalog_sha256": self.catalog_sha256,
             "max_xy_retries": self.max_xy_retries,
             "xy_update_weight": self.xy_update_weight,
+            "initial_preferred_candidate": (None if initial_preferred_candidate is None
+                                            else list(initial_preferred_candidate)),
             "scope": "evidence_and_preflight_only_not_robot_motion_authorization",
             "robot_ready": False,
         })
@@ -541,7 +554,8 @@ class SessionRunner:
         new_capture = key_observation.capture_id != self._capture_id
         exclusions = set(self._attempted)
         pending_xy = self._pending_next_trial_xy
-        preferred = None
+        preferred = (self._initial_preferred_candidate
+                     if self._capture_id is None else None)
         if pending_xy is not None:
             preferred = tuple(pending_xy["candidate_id"].split("/"))
             # One new physical pickup of the same grasp is permitted even
@@ -1236,7 +1250,7 @@ class SessionRunner:
         after_key_evidence_dir: Path, joint_sample: LiveRobotState,
         backend: ImageVLM, lift_execution_log_path: Path,
         decision_timestamp_s: float, max_state_skew_s: float,
-        max_phase_skew_s: float, max_lift_observation_gap_s: float,
+        max_phase_skew_s: float,
         min_center_rise_m: float, max_arm_hand_skew_s: float,
         max_hand_command_error_raw: float, max_arm_velocity_rad_s: float,
         minimum_visual_views: int = 2,
@@ -1276,7 +1290,6 @@ class SessionRunner:
             expected_candidate_prior_world=prior,
             backend=backend, max_state_skew_s=max_state_skew_s,
             max_phase_skew_s=max_phase_skew_s,
-            max_lift_observation_gap_s=max_lift_observation_gap_s,
             min_center_rise_m=min_center_rise_m,
             max_arm_hand_skew_s=max_arm_hand_skew_s,
             max_hand_command_error_raw=max_hand_command_error_raw,
@@ -1290,7 +1303,7 @@ class SessionRunner:
         self, *, after_raw_evidence_dir: Path,
         joint_sample: LiveRobotState, backend: ImageVLM,
         lift_execution_log_path: Path, decision_timestamp_s: float,
-        max_phase_skew_s: float, max_lift_observation_gap_s: float,
+        max_phase_skew_s: float,
         max_arm_hand_skew_s: float, max_hand_command_error_raw: float,
         max_arm_velocity_rad_s: float,
         minimum_visual_views: int = 2,
@@ -1324,7 +1337,6 @@ class SessionRunner:
             before_bundle=self._key_evidence_dir, after_bundle=after_root,
             joint_sample=joint_sample, backend=backend,
             max_phase_skew_s=max_phase_skew_s,
-            max_lift_observation_gap_s=max_lift_observation_gap_s,
             max_arm_hand_skew_s=max_arm_hand_skew_s,
             max_hand_command_error_raw=max_hand_command_error_raw,
             max_arm_velocity_rad_s=max_arm_velocity_rad_s,
@@ -1635,9 +1647,6 @@ class SessionRunner:
         self, *, raw_bundle: Path, transfer_execution_path: Path,
         joint_sample: LiveRobotState, backend: ImageVLM,
         max_capture_skew_s: float, max_joint_frame_skew_s: float,
-        max_transfer_observation_gap_s: float,
-        max_hand_translation_error_m: float,
-        max_hand_rotation_error_deg: float,
         max_arm_hand_skew_s: float,
         max_hand_command_error_raw: float,
         max_arm_velocity_rad_s: float,
@@ -1700,9 +1709,6 @@ class SessionRunner:
             joint_sample=joint_sample, backend=backend,
             max_capture_skew_s=max_capture_skew_s,
             max_joint_frame_skew_s=max_joint_frame_skew_s,
-            max_transfer_observation_gap_s=max_transfer_observation_gap_s,
-            max_hand_translation_error_m=max_hand_translation_error_m,
-            max_hand_rotation_error_deg=max_hand_rotation_error_deg,
             max_arm_hand_skew_s=max_arm_hand_skew_s,
             max_hand_command_error_raw=max_hand_command_error_raw,
             max_arm_velocity_rad_s=max_arm_velocity_rad_s,
@@ -2697,7 +2703,6 @@ class SessionRunner:
         final_bundle: Path, metric_record_path: Path,
         release_record_path: Path, backend: ImageVLM,
         decision_timestamp_s: float, max_phase_skew_s: float,
-        max_preinsert_age_s: float, max_final_observation_gap_s: float,
         minimum_visual_views: int = 2, label_mode: str = "vlm_only",
         manual_annotation: dict | None = None,
     ) -> dict:
@@ -2735,8 +2740,6 @@ class SessionRunner:
             preinsert_reached_at_s=preinsert_events[0]["timestamp_s"],
             decision_timestamp_s=decision_timestamp_s, backend=backend,
             max_phase_skew_s=max_phase_skew_s,
-            max_preinsert_age_s=max_preinsert_age_s,
-            max_final_observation_gap_s=max_final_observation_gap_s,
             minimum_visual_views=minimum_visual_views,
             label_mode=label_mode, manual_annotation=manual_annotation)
         output = (self._attempt_dir / "released_insertion_assessments" /
@@ -2978,9 +2981,6 @@ class SessionRunner:
         raw_bundle: Path, joint_sample: LiveRobotState,
         backend: ImageVLM, max_capture_skew_s: float,
         max_joint_frame_skew_s: float,
-        max_transfer_observation_gap_s: float,
-        max_hand_translation_error_m: float,
-        max_hand_rotation_error_deg: float,
         max_arm_hand_skew_s: float,
         max_hand_command_error_raw: float,
         max_arm_velocity_rad_s: float,
@@ -2999,9 +2999,6 @@ class SessionRunner:
             joint_sample=joint_sample, backend=backend,
             max_capture_skew_s=max_capture_skew_s,
             max_joint_frame_skew_s=max_joint_frame_skew_s,
-            max_transfer_observation_gap_s=max_transfer_observation_gap_s,
-            max_hand_translation_error_m=max_hand_translation_error_m,
-            max_hand_rotation_error_deg=max_hand_rotation_error_deg,
             max_arm_hand_skew_s=max_arm_hand_skew_s,
             max_hand_command_error_raw=max_hand_command_error_raw,
             max_arm_velocity_rad_s=max_arm_velocity_rad_s)

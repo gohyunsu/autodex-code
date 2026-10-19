@@ -8,6 +8,7 @@ does not measure millimetres or authorize a retry or insertion contact.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import io
 import json
 import math
@@ -76,6 +77,7 @@ class VLMObservation:
     latency_s: float
     pixel_mapping: dict | None = None
     aggregation: dict | None = None
+    input_transform: dict | None = None
 
     def to_record(self) -> dict:
         record = {
@@ -93,7 +95,38 @@ class VLMObservation:
             record["pixel_mapping"] = self.pixel_mapping
         if self.aggregation is not None:
             record["aggregation"] = self.aggregation
+        if self.input_transform is not None:
+            record["input_transform"] = self.input_transform
         return record
+
+
+def resize_classification_images(
+    images: list[Image.Image], max_size: tuple[int, int],
+) -> tuple[list[Image.Image], dict]:
+    """Derive small VLM classification inputs and bind them to raw pixels."""
+    if (len(max_size) != 2 or
+            any(type(side) is not int or side <= 0 for side in max_size)):
+        raise ValueError("classification image size must be positive width and height")
+    prepared, rows = [], []
+    for image in images:
+        if image.mode != "RGB":
+            raise ValueError("classification resize needs RGB source images")
+        width, height = image.size
+        scale = min(1.0, max_size[0] / width, max_size[1] / height)
+        target = (max(1, round(width * scale)), max(1, round(height * scale)))
+        result = (image if target == image.size else
+                  image.resize(target, Image.Resampling.LANCZOS))
+        prepared.append(result)
+        rows.append({
+            "source_size": list(image.size), "input_size": list(result.size),
+            "source_rgb_sha256": hashlib.sha256(image.tobytes()).hexdigest(),
+            "input_rgb_sha256": hashlib.sha256(result.tobytes()).hexdigest(),
+        })
+    return prepared, {
+        "schema": "precision_insertion_vlm_resize_fit_v1",
+        "max_size": list(max_size), "resampling": "PIL_LANCZOS",
+        "images": rows,
+    }
 
 
 @dataclass(frozen=True)
@@ -195,13 +228,15 @@ class LocalQwenBackend:
     """Use local Transformers Qwen3-VL, guarding original pixel geometry."""
 
     def __init__(self, vlm, *, max_new_tokens: int = 512,
-                 require_native_pixels: bool = True):
+                 require_native_pixels: bool = True,
+                 classification_image_size: tuple[int, int] | None = None):
         if (not hasattr(vlm, "infer_images_prompt") or
                 type(max_new_tokens) is not int or max_new_tokens <= 0):
             raise ValueError("local Qwen needs an image adapter and token limit")
         self.vlm = vlm
         self.max_new_tokens = max_new_tokens
         self.native_pixel_coordinates = bool(require_native_pixels)
+        self.classification_image_size = classification_image_size
         # A physical 20-camera checkpoint must not become one 40-image Qwen
         # request. The observer asks for one same-camera before/after pair at
         # a time and conservatively combines independent labels.
@@ -213,6 +248,7 @@ class LocalQwenBackend:
         max_input_size: tuple[int, int],
         max_new_tokens: int = 512, require_cuda: bool = True,
         require_native_pixels: bool = True,
+        classification_image_size: tuple[int, int] | None = None,
     ) -> "LocalQwenBackend":
         """Load an offline Qwen model; fail before any model load if no GPU.
 
@@ -234,7 +270,15 @@ class LocalQwenBackend:
             model_id=model_id, max_input_size=max_input_size,
             require_cuda=require_cuda)
         return cls(vlm, max_new_tokens=max_new_tokens,
-                   require_native_pixels=require_native_pixels)
+                   require_native_pixels=require_native_pixels,
+                   classification_image_size=classification_image_size)
+
+    def prepare_classification_images(
+        self, images: list[Image.Image],
+    ) -> tuple[list[Image.Image], dict | None]:
+        if self.classification_image_size is None:
+            return images, None
+        return resize_classification_images(images, self.classification_image_size)
 
     def _native_processor_geometry(self) -> tuple[int, int, int]:
         """Return Qwen's exact patch factor and accepted pixel-area range.
@@ -310,6 +354,7 @@ def load_vlm_backend(
     max_input_size: tuple[int, int] | None = None,
     max_new_tokens: int = 512, require_cuda: bool = True,
     require_native_pixels: bool = True, parallel_views: int = 1,
+    classification_image_size: tuple[int, int] | None = None,
 ) -> ImageVLM:
     """Choose one VLM for existing read-only checkpoint/grounding calls.
 
@@ -331,7 +376,8 @@ def load_vlm_backend(
         return LocalQwenBackend.from_transformers(
             model_id=selected_model, max_input_size=max_input_size,
             max_new_tokens=max_new_tokens, require_cuda=require_cuda,
-            require_native_pixels=require_native_pixels)
+            require_native_pixels=require_native_pixels,
+            classification_image_size=classification_image_size)
     raise ValueError("VLM mode must be gemini or local")
 
 
@@ -425,13 +471,17 @@ def _infer_closed_set(
         "evidence_views must be an array of cited camera ID strings; "
         "evidence must be one short string."
     )
+    images = [frame.image for frame in frames]
+    prepare = getattr(backend, "prepare_classification_images", None)
+    images, input_transform = prepare(images) if callable(prepare) else (images, None)
     started = time.perf_counter()
     camera_ids = sorted({frame.camera_id for frame in frames})
     with timed("vlm.infer", phase="vlm", kind="inference",
                stage=stage, camera_id=(camera_ids[0] if len(camera_ids) == 1
                                       else "multiple"), camera_ids=camera_ids,
-               image_count=len(frames), model=_backend_model(backend)):
-        answer = backend.infer([frame.image for frame in frames], prompt)
+               image_count=len(frames), image_sizes=[list(image.size) for image in images],
+               model=_backend_model(backend)):
+        answer = backend.infer(images, prompt)
     latency = time.perf_counter() - started
     if not isinstance(answer, str):
         raise TypeError("VLM backend must return text")
@@ -455,7 +505,7 @@ def _infer_closed_set(
         error = str(exc)
     return VLMObservation(
         stage, parsed, answer, prompt, order, error,
-        _backend_model(backend), latency)
+        _backend_model(backend), latency, input_transform=input_transform)
 
 
 def _per_view_consensus(

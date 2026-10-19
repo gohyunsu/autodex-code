@@ -84,6 +84,7 @@ def open_verified_session(
     catalog_snapshot: dict | None = None,
     producer_manifest: dict | None = None,
     calibration_snapshot=None,
+    initial_preferred_candidate: tuple[str, str, str] | None = None,
 ) -> OpenedPrecisionSession:
     """Fail before creating a run if camera/fixture/candidate evidence is stale.
 
@@ -159,7 +160,8 @@ def open_verified_session(
         mode=mode, calibration=calibration, catalog=catalog,
         shared_root=root, output_dir=target,
         max_xy_retries=max_xy_retries,
-        xy_update_weight=xy_update_weight)
+        xy_update_weight=xy_update_weight,
+        initial_preferred_candidate=initial_preferred_candidate)
     binding_path = target / "source_evidence_binding.json"
     with binding_path.open("x", encoding="utf-8") as stream:
         json.dump({

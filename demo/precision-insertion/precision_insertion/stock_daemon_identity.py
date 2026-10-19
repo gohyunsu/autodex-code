@@ -64,8 +64,10 @@ def verify_stock_daemon_identity(
     """Bind a stock follower to this host's exact running watchdog binary.
 
     This route is limited to the first-party measured lift/transfer adapter,
-    an exact audited binary and a local ParaDex process configured for the
-    controller's FR3 ports.
+    the audited installed binary and a local ParaDex process configured for
+    the controller's FR3 ports. Docker's PID namespace can deny access to
+    /proc/<pid>/exe even while the daemon's local ports are usable, so the
+    installed binary is hashed once and the process is matched by its command.
     It never reports physical watchdog commissioning as passed.
     """
     if (type(adapter) is not FrankaMeasuredLiftAdapter or
@@ -97,8 +99,7 @@ def verify_stock_daemon_identity(
             argv = tuple(part.decode("utf-8") for part in raw.split(b"\0"))
             port, state, expiry = _ports_and_timeout(argv)
             if (port != command_port or state != state_port or
-                    expiry > max_command_age_s or
-                    _sha(process / "exe") != AUDITED_STOCK_DAEMON_SHA256):
+                    expiry > max_command_age_s):
                 continue
             matches.append((int(process.name), argv, expiry))
         except (OSError, UnicodeError, ValueError):

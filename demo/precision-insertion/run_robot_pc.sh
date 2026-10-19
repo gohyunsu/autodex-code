@@ -18,10 +18,11 @@ cd "$ROOT"
 export PYTHONPATH="$ROOT:$ROOT/demo/precision-insertion:$ROOT/src"
 export PRECISION_TIMING_LOCAL_ROOT=${PRECISION_TIMING_LOCAL_ROOT:-/tmp/precision-insertion-timing}
 export PRECISION_FR3_INSPIRE_URDF=${PRECISION_FR3_INSPIRE_URDF:-$ROOT/autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire_oct12_mount.urdf}
+export PRECISION_VLM_CAMERA_IDS=${PRECISION_VLM_CAMERA_IDS:-24122734,25305463,25322651}
 
 LAUNCH_TEMPLATE="$STAGE/live_board9_gap20_20261013/launch.json"
 CATALOG="$STAGE/recipient_gap20_endpoint_catalog_20261013.json"
-ROBOT="$STAGE/franka_runtime_board9_gap20.json"
+ROBOT=${PRECISION_ROBOT_CONFIG:-$STAGE/franka_runtime_board9_gap20_stock_held.json}
 
 if [[ "$MODE" == --check ]]; then
   exec "$CHECK_PY" demo/precision-insertion/run_live.py --preflight \
@@ -59,6 +60,7 @@ else:
 PY
 
 echo "[pipeline] using existing camera, perception and Franka services"
+echo "[pipeline] VLM camera IDs: $PRECISION_VLM_CAMERA_IDS"
 EXTRA_ARGS=()
 if [[ "$MODE" == --plan-only ]]; then
   EXTRA_ARGS+=(--stop-after-planning)
@@ -68,6 +70,9 @@ if [[ -n ${PRECISION_REUSE_SESSION_EVIDENCE:-} ]]; then
 fi
 if [[ ${PRECISION_KEY_ALREADY_PLACED:-0} == 1 ]]; then
   EXTRA_ARGS+=(--key-already-placed)
+fi
+if [[ -n ${PRECISION_INITIAL_CANDIDATE:-} ]]; then
+  EXTRA_ARGS+=(--initial-candidate "$PRECISION_INITIAL_CANDIDATE")
 fi
 exec "$PY" demo/precision-insertion/run_live.py \
   --launch-config "$LAUNCH" --endpoint-catalog "$CATALOG" \

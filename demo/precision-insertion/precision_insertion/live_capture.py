@@ -137,7 +137,9 @@ def _load_saved_frames(
         with timed("camera.saved_frame_read", phase="camera", kind="io",
                    camera_id=serial):
             image_file = capture_dir / "images" / f"{serial}.png"
-            while time.monotonic() < deadline:
+            # A worker can start after the shared deadline if earlier NAS
+            # reads stalled. Inspect its file once before declaring it absent.
+            while True:
                 try:
                     with image_file.open("rb") as stream:
                         stream.seek(-12, 2)
@@ -149,6 +151,8 @@ def _load_saved_frames(
                     image = cv2.imread(str(image_file), cv2.IMREAD_COLOR)
                     if image is not None and image.size:
                         return image
+                if time.monotonic() >= deadline:
+                    break
                 time.sleep(0.02)
         raise TimeoutError(
             "the original init daemon did not save all same-request socket frames: "

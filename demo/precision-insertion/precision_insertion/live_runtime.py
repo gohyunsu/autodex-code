@@ -37,6 +37,7 @@ class RunLiveOptions:
     stop_after_planning: bool = False
     reuse_session_evidence_dir: Path | None = None
     key_already_placed: bool = False
+    initial_preferred_candidate: tuple[str, str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -210,7 +211,8 @@ def run_integrated_live_session(
                 confirm_initial_key_placement=(
                     None if options.key_already_placed else
                     _confirm_initial_key_placement),
-                init_ports=options.init_ports, launch_snapshot=launch)
+                init_ports=options.init_ports, launch_snapshot=launch,
+                initial_preferred_candidate=options.initial_preferred_candidate)
     finally:
         with timed("cleanup.integration_close", phase="cleanup", kind="io"):
             integration.close()

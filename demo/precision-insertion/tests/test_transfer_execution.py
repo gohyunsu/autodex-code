@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -43,13 +44,14 @@ class _Adapter:
         self.calls = 0
         self.stops = 0
         self.fail = False
+        self.expected_hand_raw = 600.
 
     def follow_transfer(self, path, *, max_duration_s, expected_hand_raw,
                         trajectory_sha256):
         self.calls += 1
         assert path.shape == (2, 13)
         assert np.array_equal(path[:, 7:], np.repeat(path[:1, 7:], 2, axis=0))
-        assert np.all(expected_hand_raw == 600.)
+        assert np.all(expected_hand_raw == self.expected_hand_raw)
         assert max_duration_s == .5
         if self.fail:
             raise RuntimeError("simulated transfer abort")
@@ -150,6 +152,21 @@ def test_transfer_writes_bound_log_for_later_preinsert_observation(
     assert kwargs["adapter"].calls == 1
     with pytest.raises(FileExistsError, match="already started"):
         execute_bound_held_transfer(**kwargs, enable_robot_motion=True)
+
+
+def test_transfer_keeps_current_squeeze_command_with_blocked_finger(
+        tmp_path, monkeypatch):
+    kwargs = _setup(tmp_path, monkeypatch)
+    start = kwargs["pre_state"]
+    commanded = start.hand_raw_commanded.copy()
+    commanded[-1] += 80.
+    kwargs["pre_state"] = replace(
+        start, hand_raw_commanded=commanded,
+        max_hand_command_error_raw=80.)
+    kwargs["adapter"].expected_hand_raw = commanded
+    record = execute_bound_held_transfer(
+        **kwargs, enable_robot_motion=True)
+    assert record["measurement"]["trajectory_complete"] is True
 
 
 def test_transfer_refuses_changed_saved_trajectory(tmp_path, monkeypatch):
