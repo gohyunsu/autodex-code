@@ -9,7 +9,6 @@ vertical exit and socket-aware retract before this gate admits a new image.
 
 from __future__ import annotations
 
-import copy
 from dataclasses import dataclass
 import math
 import time
@@ -115,12 +114,10 @@ class ClearViewForPerception:
         """Reuse AutoDex release/reset after an observed *missed* grasp.
 
         AutoDex's reset plans a vertical clearance then a retract to
-        ``FR3_CLEAR_VIEW``. Its stock scene moves ``target`` to the predicted
-        release site; on a miss the real key may instead remain at its original
-        tabletop pose. Preserve that original target as a second obstacle in
-        the copied world, while retaining the frozen socket. Never execute a
-        free-space home here. A slip/unknown held-key state is not a miss and
-        must not call this path.
+        ``FR3_CLEAR_VIEW``. On a miss, its ordinary carried-object pose update
+        would put a phantom key at the empty hand and obstruct the lift plan.
+        Keep the scene's tabletop key and frozen socket in place. A slip or
+        unknown held-key state must not call this path.
         """
         state = self.read_state()
         self._validate_feedback(state, phase="failed_grasp_recovery")
@@ -137,15 +134,11 @@ class ClearViewForPerception:
                 not isinstance(trial_scene["mesh"].get("target"), dict) or
                 "fixture_socket" not in trial_scene["mesh"]):
             raise ValueError("failed-grasp clear view needs the selected AutoDex plan and frozen world")
-        scene = copy.deepcopy(trial_scene)
-        if "failed_grasp_original_key" in scene["mesh"]:
-            raise ValueError("failed-grasp scene already has a reserved key obstacle")
-        scene["mesh"]["failed_grasp_original_key"] = copy.deepcopy(
-            scene["mesh"]["target"])
         # Stock AutoDex release uses the selected grasp/pregrasp ramp. Full
         # opening here is appropriate only after a judged miss, not a slip.
         self.executor.release(pickup_plan, open_to_init=True)
-        self.executor.reset(pickup_plan, planner, scene)
+        self.executor.reset(pickup_plan, planner, trial_scene,
+                            missed_grasp=True)
         return self.before_key_capture()
 
     def finish_planned_release_exit(

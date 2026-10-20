@@ -222,6 +222,9 @@ reduction in physical motion duration. The follower still stops its stream
 at trajectory segment boundaries, so visible pauses can remain. No live trial
 had been completed when this paragraph was written. The subsequent live trace
 and follower update are documented in [TRIAL_20261020.md](TRIAL_20261020.md).
+After the later 09:37 trial, the active configuration returned to stock
+AutoDex's 0.4 scale and fixed-tick playback; see
+[TRIAL_20261020_093746.md](TRIAL_20261020_093746.md).
 
 Final local validation: `bash demo/precision-insertion/run_robot_pc.sh --check`
 passed as a static file check, and

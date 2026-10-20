@@ -126,7 +126,7 @@ def test_release_exit_rejects_wrong_start_and_unchecked_plan_without_motion():
     assert events == []
 
 
-def test_missed_grasp_uses_stock_release_reset_with_original_key_obstacle():
+def test_missed_grasp_reset_keeps_tabletop_key_without_phantom_release_pose():
     guard, actual, events = _fixture()
     plan = SimpleNamespace(success=True)
     planner = object()
@@ -140,11 +140,12 @@ def test_missed_grasp_uses_stock_release_reset_with_original_key_obstacle():
         events.append("AutoDex.release")
         actual["raw"][:] = 1000.
 
-    def reset(received, received_planner, world):
+    def reset(received, received_planner, world, *, missed_grasp):
         assert received is plan and received_planner is planner
+        assert missed_grasp is True
         assert world["mesh"]["fixture_socket"] == scene["mesh"]["fixture_socket"]
-        assert world["mesh"]["failed_grasp_original_key"] == scene["mesh"]["target"]
-        world["mesh"]["target"]["pose"][0] = 9
+        assert world["mesh"]["target"] == scene["mesh"]["target"]
+        assert "failed_grasp_original_key" not in world["mesh"]
         events.append("AutoDex.reset")
         actual["arm"] = np.asarray(FR3_CLEAR_VIEW).copy()
 
@@ -161,7 +162,7 @@ def test_missed_grasp_reset_failure_cannot_start_key_capture():
     guard, _, events = _fixture()
     guard.executor.release = lambda *_args, **_kwargs: events.append("release")
 
-    def reset(*_args):
+    def reset(*_args, **_kwargs):
         raise RuntimeError("AutoDex reset preflight rejected")
 
     guard.executor.reset = reset

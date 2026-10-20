@@ -22,9 +22,8 @@ from .live_robot_state import LiveRobotState, read_live_franka_inspire_state
 from .mount_geometry import link7_to_hand
 
 
-# The operator requested a faster trial while retaining AutoDex's 50 Hz
-# follower, EMA and 4 rad/s² command slew limit. Stock FR3 uses 0.4.
-PRECISION_OBJECT_SAFETY_SPEED_SCALE = 0.5
+# Match stock AutoDex FR3's near-object and held-object speed scale.
+PRECISION_OBJECT_SAFETY_SPEED_SCALE = 0.4
 
 
 @dataclass(frozen=True)
