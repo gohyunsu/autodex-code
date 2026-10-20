@@ -72,6 +72,7 @@ def test_franka_core_passes_one_selected_mount_to_planner_and_executor(monkeypat
     assert seen["planner"] == {
         "hand": "fr3_inspire", "robot_urdf_path": str(urdf)}
     assert seen["executor"]["hand_name"] == "inspire"
+    assert seen["executor"]["object_safety_speed_scale"] == .5
     from precision_insertion.mount_geometry import link7_to_hand
     import numpy as np
 

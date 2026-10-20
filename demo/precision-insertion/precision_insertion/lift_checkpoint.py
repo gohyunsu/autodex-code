@@ -32,7 +32,9 @@ from .observer import (
     verify_per_view_consensus,
 )
 from .raw_camera_capture import verify_raw_camera_capture
+from .runtime_evidence_cache import recalled, remember
 from .session_bootstrap import _safe_id
+from .timing_profile import timed
 from .visual_views import assessment_cameras
 
 
@@ -414,7 +416,14 @@ def write_lift_checkpoint(result: LiftCheckpoint, output_dir: Path) -> Path:
 def verify_lift_checkpoint(report_path: Path) -> dict:
     """Recheck report-to-capture/image bytes before using a lift verdict."""
     path = Path(report_path).expanduser().resolve()
-    report = json.loads(path.read_text(encoding="utf-8"))
+    report_bytes = path.read_bytes()
+    report_sha256 = hashlib.sha256(report_bytes).hexdigest()
+    cached = recalled("lift_checkpoint", path, "lift")
+    if cached is not None and cached["sha256"] == report_sha256:
+        with timed("evidence.live_lift_report_reuse", phase="evidence",
+                   kind="io"):
+            return cached["record"]
+    report = json.loads(report_bytes)
     raw_visual = report.get("schema") == "precision_insertion_raw_lift_checkpoint_v1"
     if (not isinstance(report, dict) or report.get("schema") not in {
             "precision_insertion_lift_checkpoint_v1",
@@ -582,4 +591,6 @@ def verify_lift_checkpoint(report_path: Path) -> dict:
         annotation=report.get("manual_annotation"))
     if report.get("grasp_success") is not label or report.get("reason") != reason:
         raise ValueError("saved lift label conflicts with its VLM/key evidence")
+    remember("lift_checkpoint", path, "lift", {
+        "sha256": report_sha256, "record": report})
     return report

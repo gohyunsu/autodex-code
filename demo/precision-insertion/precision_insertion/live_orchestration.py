@@ -253,6 +253,9 @@ def run_live_precision_session(
             launch_snapshot=launch_snapshot,
             reuse_session_evidence_dir=reuse_session_evidence_dir,
             initial_preferred_candidate=initial_preferred_candidate) as live:
+        # Stage adapters and load the VLM while the key is still absent.
+        # The operator placement gate remains the last step before perception.
+        handlers = build_handlers(live)
         # The fixed socket is measured with the key absent. Match stock
         # run_auto's one initial object-placement gate before key perception.
         # Retry captures never pause here or remeasure the socket.
@@ -264,7 +267,7 @@ def run_live_precision_session(
         with timed("live.action_loop", phase="trial"):
             try:
                 return run_session_actions(
-                    live.opened.runner, handlers=build_handlers(live),
+                    live.opened.runner, handlers=handlers,
                     max_steps=max_steps,
                     stop_before_actions=({
                         "execution_gate_required": "planning_ready",

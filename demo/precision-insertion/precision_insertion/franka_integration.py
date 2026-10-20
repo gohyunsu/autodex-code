@@ -27,9 +27,11 @@ from .stock_repose_execution import StockReposeExecutor
 from .stock_socket_release import StockSocketRelease
 from .live_runtime import LiveRuntimeIntegration, RunLiveOptions
 from .labeling import terminal_label_provider
+from .distributed_qwen import DistributedQwenBackend
 from .observer import load_vlm_backend
 from .runtime_assembly import assemble_live_components
 from .timing_profile import timed
+from .visual_views import assessment_cameras
 
 
 _SCHEMA = "precision_insertion_franka_integration_v1"
@@ -38,7 +40,8 @@ _OBSOLETE_FEEDBACK_KEYS = frozenset({"max_arm_update_wait_s"})
 _SAMPLING_KEYS = frozenset(FrankaSamplingSettings.__dataclass_fields__)
 _VLM_KEYS = frozenset({"mode", "model_id", "max_new_tokens",
                        "require_native_pixels", "capture_timeout_s",
-                       "parallel_views", "classification_image_size"})
+                       "parallel_views", "classification_image_size",
+                       "worker_root", "workers"})
 _LIFT_MONITOR_KEYS = frozenset({
     "daemon_binary_path", "max_state_gap_s", "minimum_samples",
 })
@@ -59,7 +62,7 @@ def _vlm_settings(value: object) -> dict:
     if not isinstance(value, dict) or set(value) - _VLM_KEYS:
         raise ValueError("VLM settings contain unknown fields")
     settings = {**_vlm_settings(None), **value}
-    if (settings["mode"] not in {"local", "gemini"} or
+    if (settings["mode"] not in {"local", "gemini", "distributed"} or
             settings["model_id"] is not None and
             (not isinstance(settings["model_id"], str) or
              not settings["model_id"].strip()) or
@@ -72,6 +75,19 @@ def _vlm_settings(value: object) -> dict:
             type(settings["parallel_views"]) is not int or
             not 1 <= settings["parallel_views"] <= 8 or
             settings["mode"] == "local" and settings["parallel_views"] != 1 or
+            settings["mode"] == "distributed" and (
+                not isinstance(settings.get("worker_root"), str) or
+                not Path(settings["worker_root"]).is_absolute() or
+                not isinstance(settings.get("workers"), dict) or
+                len(settings["workers"]) != 5 or
+                any(not isinstance(camera, str) or
+                    not isinstance(spec, dict) or
+                    set(spec) != {"host", "python", "model_dir"} or
+                    not isinstance(spec["host"], str) or
+                    not isinstance(spec["python"], str) or
+                    not isinstance(spec["model_dir"], str) or
+                    not Path(spec["model_dir"]).is_absolute()
+                    for camera, spec in settings["workers"].items())) or
             settings["classification_image_size"] is not None and (
                 not isinstance(settings["classification_image_size"], (list, tuple)) or
                 len(settings["classification_image_size"]) != 2 or
@@ -211,6 +227,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     lift_monitor = parsed["lift_monitor"]
     held_motion_monitor = parsed["held_motion_monitor"]
     build_stages = parsed["build_stages"]
+    backend = None
     with timed("startup.franka_planner_core", phase="startup"):
         core = open_franka_core(feedback)
     if sampling is not None:
@@ -249,15 +266,32 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 live.cameras.launch.shared_root /
                 "AutoDex/models/Qwen3-VL-2B-Instruct"))
             with timed("startup.vlm_model_load", phase="startup"):
-                shared["backend"] = load_vlm_backend(
-                    mode=vlm["mode"], model_id=model_id,
-                    max_input_size=native_ceiling,
-                    max_new_tokens=vlm["max_new_tokens"],
-                    require_native_pixels=vlm["require_native_pixels"],
-                    parallel_views=vlm["parallel_views"],
-                    **({"classification_image_size": tuple(
-                        vlm["classification_image_size"])}
-                       if vlm["classification_image_size"] is not None else {}))
+                image_size = (tuple(vlm["classification_image_size"])
+                              if vlm["classification_image_size"] is not None
+                              else None)
+                if vlm["mode"] == "distributed":
+                    if set(assessment_cameras(live.cameras.launch.camera_ids)) != set(vlm["workers"]):
+                        raise ValueError(
+                            "selected VLM cameras differ from distributed workers")
+                    shared["backend"] = DistributedQwenBackend(
+                        model_id=model_id,
+                        worker_root=Path(vlm["worker_root"]),
+                        workers=vlm["workers"],
+                        max_input_size=native_ceiling,
+                        max_new_tokens=vlm["max_new_tokens"],
+                        classification_image_size=image_size,
+                        log_path=options.run_output_dir / "distributed_qwen.jsonl")
+                else:
+                    shared["backend"] = load_vlm_backend(
+                        mode=vlm["mode"], model_id=model_id,
+                        max_input_size=native_ceiling,
+                        max_new_tokens=vlm["max_new_tokens"],
+                        require_native_pixels=vlm["require_native_pixels"],
+                        parallel_views=vlm["parallel_views"],
+                        **({"classification_image_size": image_size}
+                           if image_size is not None else {}))
+        nonlocal backend
+        backend = shared["backend"]
         shared.update(planner=core.planner, read_state=core.read_state)
         if core.sampler is not None:
             shared.update(
@@ -281,8 +315,8 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             # robot-PC factory still supplies the motion interlock and limits.
             stages["pickup"]["executor"] = core.executor
         if family == "cylinder" and "task" in stages:
-            # The cylinder stroke uses the same FR3 connection and stock
-            # follower as AutoDex place, including its normal speed.
+            # The cylinder stroke uses the same FR3 connection and follower
+            # as AutoDex place, with the demo's configured object speed cap.
             stages["task"]["insertion_adapter"] = (
                 FrankaForceStopInsertionAdapter(core.executor))
             if "release_and_clear" not in stages["task"]:
@@ -365,4 +399,11 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                     terminal_label_provider(options.annotator)
                     if options.label_mode == "manual" else None))
 
-    return LiveRuntimeIntegration(core.clear_view, components, core.close)
+    def close() -> None:
+        try:
+            if callable(getattr(backend, "close", None)):
+                backend.close()
+        finally:
+            core.close()
+
+    return LiveRuntimeIntegration(core.clear_view, components, close)

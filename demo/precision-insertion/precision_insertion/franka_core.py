@@ -22,6 +22,11 @@ from .live_robot_state import LiveRobotState, read_live_franka_inspire_state
 from .mount_geometry import link7_to_hand
 
 
+# The operator requested a faster trial while retaining AutoDex's 50 Hz
+# follower, EMA and 4 rad/s² command slew limit. Stock FR3 uses 0.4.
+PRECISION_OBJECT_SAFETY_SPEED_SCALE = 0.5
+
+
 @dataclass(frozen=True)
 class FrankaFeedbackSettings:
     max_arm_hand_skew_s: float
@@ -148,7 +153,8 @@ def open_franka_core(
 
         executor_factory = lambda: completion_checked_franka_class()(
             hand_name="inspire", link7_to_hand=(
-                None if mount_urdf is None else link7_to_hand(mount_urdf)))
+                None if mount_urdf is None else link7_to_hand(mount_urdf)),
+            object_safety_speed_scale=PRECISION_OBJECT_SAFETY_SPEED_SCALE)
     executor = executor_factory()
     try:
         if (getattr(executor, "arm_dof", None) != 7 or

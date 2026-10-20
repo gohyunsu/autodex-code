@@ -25,6 +25,7 @@ from precision_insertion.raw_camera_capture import (  # noqa: E402
     RawCameraCapture, write_raw_camera_capture,
 )
 from precision_insertion.records import begin_attempt  # noqa: E402
+from precision_insertion.runtime_evidence_cache import live_evidence_cache  # noqa: E402
 from precision_insertion import session_runner  # noqa: E402
 from test_lift_checkpoint import _setup  # noqa: E402
 from test_key_perception import (  # noqa: E402
@@ -150,6 +151,25 @@ def test_raw_lift_changed_pixels_or_verdict_are_rejected(tmp_path):
     with pytest.raises(ValueError, match="label conflicts"):
         verify_lift_checkpoint(path)
     path.write_bytes(original)
+    (args["after_bundle"] / "images" / "cam_a.png").write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="raw camera PNG changed"):
+        verify_lift_checkpoint(path)
+
+
+def test_live_lift_verification_reuses_unchanged_report_only_in_session(tmp_path):
+    args, _backend = _raw_case(tmp_path)
+    result = assess_raw_lift_checkpoint(**args)
+    path = write_lift_checkpoint(result, tmp_path / "raw_report") / "report.json"
+    with live_evidence_cache():
+        first = verify_lift_checkpoint(path)
+        assert verify_lift_checkpoint(path) is first
+        original = path.read_bytes()
+        changed = json.loads(original)
+        changed["grasp_success"] = False
+        path.write_text(json.dumps(changed), encoding="utf-8")
+        with pytest.raises(ValueError, match="label conflicts"):
+            verify_lift_checkpoint(path)
+        path.write_bytes(original)
     (args["after_bundle"] / "images" / "cam_a.png").write_bytes(b"corrupt")
     with pytest.raises(ValueError, match="raw camera PNG changed"):
         verify_lift_checkpoint(path)

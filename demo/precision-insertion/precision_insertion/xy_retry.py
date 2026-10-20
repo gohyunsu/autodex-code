@@ -25,6 +25,7 @@ from .endpoint import screen_grasp_endpoint
 from .frame_provenance import bounded_capture_skew_s, verify_frame_provenance
 from .geometry import pose_angle_deg, validate_se3
 from .observer import ImageVLM, LabeledFrame, VLMObservation, observe_xy_views
+from .visual_views import assessment_cameras
 from .xy_endpoint import screen_axis_1mm_endpoint_choices
 from .xy_overlay import (
     CalibratedXYFrame, XYOverlayBatch, build_xy_candidate_overlays,
@@ -241,8 +242,12 @@ def assess_xy_retry(
     preinsert = validate_se3(
         geometry["T_socket_key_preinsert"], name="CAD preinsert key pose")
     z = float(preinsert[2, 3])
+    selected_cameras = set(assessment_cameras(
+        frame.camera_id for frame in frames))
     projected_frames = []
     for frame in frames:
+        if frame.camera_id not in selected_cameras:
+            continue
         params = intrinsics_full[frame.camera_id]
         K = np.asarray(params["K_undist"], dtype=float)
         projected_frames.append(CalibratedXYFrame(

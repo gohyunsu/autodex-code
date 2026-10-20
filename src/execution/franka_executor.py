@@ -84,7 +84,8 @@ class FrankaExecutor:
                  traj_speed: float = 1, max_lead: float = 0.12,
                  land_tol: float = 0.02, follow_timeout_s: float = 90.0,
                  follow_log_every_s: float = 2.0, accel_max: float = 4.0,
-                 link7_to_hand: Optional[np.ndarray] = None):
+                 link7_to_hand: Optional[np.ndarray] = None,
+                 object_safety_speed_scale: float = OBJECT_SAFETY_SPEED_SCALE):
         assert hand_name in ("inspire", "inspire_left"), \
             f"franka executor supports inspire hands only, got {hand_name}"
         self.dt = dt
@@ -103,6 +104,9 @@ class FrankaExecutor:
         self.follow_timeout_s = follow_timeout_s # hard wall-clock cap on one _follow
         self.follow_log_every_s = follow_log_every_s   # progress print period
         self.accel_max = accel_max               # slew limit on the command (rad/s^2)
+        if not np.isfinite(object_safety_speed_scale) or not 0 < object_safety_speed_scale <= 1:
+            raise ValueError("object safety speed scale must be in (0, 1]")
+        self.object_safety_speed_scale = float(object_safety_speed_scale)
         # Absolute cap for every arm motion from squeeze through release.  It
         # is deliberately enforced in _follow rather than relying on each
         # caller to remember a speed keyword.
@@ -652,12 +656,12 @@ class FrankaExecutor:
             f"{what}: arm not at target (err={err:.3f}); "
             f"qpos={self.arm.get_data()['qpos'].round(3)}")
 
-    @staticmethod
-    def _approach_speed_scale(hand_mesh_distance_m: float) -> float:
+    def _approach_speed_scale(self, hand_mesh_distance_m: float) -> float:
         """Return the free-hand scale from nearest hand-link/mesh distance.
 
-        The profile is 1.0 at/above 30 cm, decreases linearly to 0.4 over
-        15--30 cm, and remains 0.4 inside 15 cm.  It scales trajectory time
+        The profile is 1.0 at/above 30 cm, decreases linearly to the configured
+        object speed over 15--30 cm, then holds that speed inside 15 cm.
+        It scales trajectory time
         playback and feedforward velocity together; joint and acceleration
         caps still apply afterwards.
         """
@@ -665,11 +669,11 @@ class FrankaExecutor:
         if not np.isfinite(distance) or distance >= APPROACH_SLOWDOWN_FAR_M:
             return 1.0
         if distance <= APPROACH_SLOWDOWN_NEAR_M:
-            return OBJECT_SAFETY_SPEED_SCALE
+            return self.object_safety_speed_scale
         progress = ((distance - APPROACH_SLOWDOWN_NEAR_M)
                     / (APPROACH_SLOWDOWN_FAR_M - APPROACH_SLOWDOWN_NEAR_M))
-        return (OBJECT_SAFETY_SPEED_SCALE
-                + (1.0 - OBJECT_SAFETY_SPEED_SCALE) * progress)
+        return (self.object_safety_speed_scale
+                + (1.0 - self.object_safety_speed_scale) * progress)
 
     def _follow(self, arm_traj: np.ndarray, hand_traj: Optional[np.ndarray] = None,
                 speed: Optional[float] = None, abort_on_contact: bool = False,
@@ -689,10 +693,11 @@ class FrankaExecutor:
         a mesh query is unavailable.  Normally, every control tick computes
         the minimum distance from the transformed target mesh to the palm and
         every configured finger-link origin using live arm FK.  The profile is
-        1.0x at 30 cm, 0.4x at 15 cm, and linear between them.  This covers
+        1.0x at 30 cm, the configured object speed at 15 cm, and linear
+        between them. This covers
         grasp approach and retreat from the object just released.  While an
         object is held, the independent held-object safety cap takes
-        precedence: no arm motion may exceed the shared object-safety cap.
+        precedence: no arm motion may exceed the configured object-safety cap.
 
         Reference tracking, NOT waypoint chasing. The old loop gated the target
         on arrival (advance only once the arm is within ``follow_tol``), which
@@ -758,10 +763,10 @@ class FrankaExecutor:
         # For a free hand, the 30--15 cm profile may reduce the final motion to
         # the shared object-safety scale. Size the progress guard for
         # the slowest valid rate in either case.
-        held_cap = OBJECT_SAFETY_SPEED_SCALE if self._holding_object else None
+        held_cap = self.object_safety_speed_scale if self._holding_object else None
         min_effective_speed = (
             min(speed, held_cap) if held_cap is not None else
-            speed * (OBJECT_SAFETY_SPEED_SCALE if slow_targets else 1.0)
+            speed * (self.object_safety_speed_scale if slow_targets else 1.0)
         )
         base_d_idx = speed * self.ctrl_dt / self.traj_dt
         max_ticks = int(20 * n / max(
@@ -1050,7 +1055,8 @@ class FrankaExecutor:
         #    if the reflex trips.
         self._log("approach")
         print("[franka] approach speed profile: 1.00x at >=30cm, linear to "
-              "0.40x at 15cm, then 0.40x", flush=True)
+              f"{self.object_safety_speed_scale:.2f}x at 15cm, then "
+              f"{self.object_safety_speed_scale:.2f}x", flush=True)
         hand_traj = np.array([self._convert(traj[i, 7:]) for i in range(len(traj))])
         t_approach = time.perf_counter()
         self._follow(traj[:, :7], hand_traj, abort_on_contact=True,
@@ -1174,7 +1180,7 @@ class FrankaExecutor:
             traj_lift = live_preflight.traj
 
         hold = np.tile(s_hand, (len(traj_lift), 1))
-        print(f"[franka] held-object speed scale: {OBJECT_SAFETY_SPEED_SCALE:.2f} "
+        print(f"[franka] held-object speed scale: {self.object_safety_speed_scale:.2f} "
               "(lift)", flush=True)
         t_lift_motion = time.perf_counter()
         self.follow_joint_trajectory(traj_lift, hold)
@@ -1452,7 +1458,7 @@ class FrankaExecutor:
                 "post-release retract preflight failed; object remains held")
 
         if not preplace_reused:
-            print(f"[franka] pre-place held-object cap: {OBJECT_SAFETY_SPEED_SCALE:.2f}x",
+            print(f"[franka] pre-place held-object cap: {self.object_safety_speed_scale:.2f}x",
                   flush=True)
             t_preplace_motion = time.perf_counter()
             self._follow(preplace_traj[:, :7], speed=1.0)
@@ -1461,7 +1467,7 @@ class FrankaExecutor:
         z_start = float((self.arm.get_data()["position"]
                          @ self._link6_to_wrist)[2, 3])
         print(f"[franka] perpendicular place descent: -{PLACE_VERTICAL_TRAVEL_M * 100:.0f}cm "
-              f"(held cap {OBJECT_SAFETY_SPEED_SCALE:.2f}x)", flush=True)
+              f"(held cap {self.object_safety_speed_scale:.2f}x)", flush=True)
         t_descend_motion = time.perf_counter()
         self._follow(descend_traj[:, :7], speed=1.0,
                      stop_wrench_z=z_force_thresh,

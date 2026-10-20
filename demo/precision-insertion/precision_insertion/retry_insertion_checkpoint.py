@@ -233,6 +233,9 @@ class _RecordedAnswer:
         self._index = 0
         if self._per_view is not None:
             self.preferred_image_batch_size = 2
+            if "completed_camera_ids" in aggregation:
+                self.early_quorum_views = 3
+                self.replay_completed_camera_ids = aggregation["completed_camera_ids"]
 
     def infer(self, _images, _prompt):
         if self._per_view is not None:

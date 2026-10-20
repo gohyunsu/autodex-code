@@ -1,5 +1,17 @@
 # AutoDex PC: staged precision-insertion bring-up
 
+Current board-9 / 20 mm launcher: `demo/precision-insertion/run_robot_pc.sh`.
+It defaults to the distributed config
+`franka_runtime_board9_gap20_distributed.json` and five fixed VLM workers:
+capture1/24122734, capture2/25305463, capture3/25322638,
+capture5/25322649, capture6/25305461. Run
+`python3 demo/precision-insertion/setup_capture_qwen.py` to refresh the
+small worker files and staged runtime config after changing this checkout;
+the five local model copies and isolated Qwen environments are already
+installed on those hosts. The worker is started when the live pipeline loads
+the VLM after socket capture, before the key-placement prompt. The sections
+below retain the earlier commissioning record and may describe former paths.
+
 This is the recipient-side handoff for the **current cylinder live path**.
 It is intentionally separate from stock `src/execution/run_pipeline.py` and
 `run_auto.py`: use `demo/precision-insertion/run_pipeline.py` for offline and

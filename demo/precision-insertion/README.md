@@ -6,15 +6,17 @@ The current active-route comparison with stock AutoDex and removed
 failure thresholds is in
 [FAILURE_GATE_AUDIT_20261017.md](FAILURE_GATE_AUDIT_20261017.md).
 
-The board-9 robot launcher uses camera IDs `24122734`, `25305463` and
-`25322651` for lift, preinsert and final visual classification. Set
-`PRECISION_VLM_CAMERA_IDS=id1,id2,id3` to choose another triplet. All 20
-original camera frames remain in the raw capture and FoundPose path. The
-commissioned runtime uses 768×576 classification inputs; measured saved-image
-timings are in [VLM_RESIZE_PROBE_20261017.md](VLM_RESIZE_PROBE_20261017.md).
+The board-9 robot launcher routes five fixed VLM cameras, one to each
+capture PC: capture1/`24122734`, capture2/`25305463`,
+capture3/`25322638`, capture5/`25322649`, and capture6/`25305461`.
+Classification can finish on the first three consistent replies. All 20
+original camera frames remain in the raw capture and FoundPose path.
+Classification inputs are 768×576; native-pixel XY grounding uses the
+original undistorted frame. The saved-image probe and active route are in
+[LAST_RUN_AUDIT_20261020.md](LAST_RUN_AUDIT_20261020.md).
 The operator-stopped approach and its measured timing are recorded in
 [STOPPED_TRIAL_20261017.md](STOPPED_TRIAL_20261017.md). No subsequent live run
-has tested the resized three-view path.
+has tested this distributed route on the moving robot.
 The last run's command-channel wait, downstream stock comparison, and saved
 804-sample geometry replay are in
 [LAST_RUN_AUDIT_20261020.md](LAST_RUN_AUDIT_20261020.md).

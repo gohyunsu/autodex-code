@@ -214,7 +214,7 @@ def _verify_visual_record(
     visual: dict, views: dict, after_rows: dict | None = None,
 ) -> None:
     rows = visual.get("per_view")
-    if (not isinstance(rows, list) or len(rows) != len(views) or
+    if (not isinstance(rows, list) or len(rows) > len(views) or
             len(rows) < 2):
         raise ValueError("preinsert visual report lacks its camera responses")
     decisive: dict[str, list[str]] = {}
@@ -293,6 +293,15 @@ def _verify_visual_replay(
     """Bind parsed labels, prompts and consensus to exact saved VLM text."""
     recorded = visual.get("per_view")
     temporal = bool(paired_pixels and isinstance(paired_pixels[0], LabeledFrame))
+    selected = {
+        row["image_order"][0].split("/", 1)[1].split("@", 1)[0]
+        for row in recorded
+        if isinstance(row, dict) and isinstance(row.get("image_order"), list)
+        and row["image_order"] and isinstance(row["image_order"][0], str)
+        and "/" in row["image_order"][0]
+    } if isinstance(recorded, list) else set()
+    paired_pixels = [view for view in paired_pixels
+                     if view.camera_id in selected]
     if (not isinstance(recorded, list) or
             len(recorded) * (2 if temporal else 1) != len(paired_pixels) or
             any(not isinstance(row, dict) or

@@ -30,6 +30,7 @@ from .geometry import validate_se3
 from .grounding_crop import make_native_grounding_crop
 from .observer import ImageVLM, VLMObservation, _backend_model, _parse_object
 from .timing_profile import timed
+from .view_parallel import map_view_calls
 from .xy_overlay import CalibratedXYFrame
 
 NEXT_TRIAL_XY_MAX_STEP_M = 0.010
@@ -779,13 +780,12 @@ def _observe_grounded_axis_line(
     crop_context_by_camera: Mapping[str, str] | None = None,
 ) -> tuple[list[GroundedLineView], list[VLMObservation]]:
     """Shared original-pixel parser for a visible key point and axis line."""
-    views, records = [], []
     if getattr(backend, "native_pixel_coordinates", False) is not True:
         raise ValueError(
             "metric grounding requires verified native-pixel backend geometry")
     if len({frame.camera_id for frame in frames}) != len(frames):
         raise ValueError("line grounding needs unique camera IDs")
-    for frame in frames:
+    def observe_frame(frame: CalibratedXYFrame):
         if not isinstance(frame.raw, Image.Image) or frame.raw.mode != "RGB":
             raise ValueError("line grounding needs original undistorted RGB")
         width, height = frame.raw.size
@@ -849,16 +849,19 @@ def _observe_grounded_axis_line(
             parsed = {point_field: None, "axis_line_px": None, "evidence": ""}
             error = str(exc)
         segment = parsed["axis_line_px"]
-        views.append(GroundedLineView(
+        view = GroundedLineView(
             frame, None if parsed[point_field] is None else
             tuple(parsed[point_field]),
             None if segment is None else (tuple(segment[0]), tuple(segment[1])),
-            parsed["evidence"]))
-        records.append(VLMObservation(
+            parsed["evidence"])
+        record = VLMObservation(
             stage, parsed, answer, prompt,
             (f"{phase}/{frame.camera_id}@{frame.timestamp_s:.6f}",),
-            error, _backend_model(backend), latency))
-    return views, records
+            error, _backend_model(backend), latency)
+        return view, record
+
+    results = map_view_calls(backend, frames, observe_frame)
+    return [view for view, _ in results], [record for _, record in results]
 
 
 def observe_grounded_cylinder_axis(

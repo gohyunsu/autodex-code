@@ -50,6 +50,7 @@ from .retry_preflight import (
 )
 from .session_bootstrap import _safe_id
 from .xy_retry import XYRetryAssessment, assess_xy_retry
+from .visual_views import assessment_cameras
 from .xy_overlay import CalibratedXYFrame, camera_socket_transform
 from .world import validated_frozen_socket_pose
 
@@ -759,13 +760,15 @@ def _compute_grounded_alignment(
     socket = validated_frozen_socket_pose(
         mode=mode, shared_root=root, calibration=calibration)
     c2r = validate_se3(calibration.record["c2r"], name="session C2R")
+    selected_cameras = set(assessment_cameras(
+        frame.camera_id for frame in frames))
     calibrated = [CalibratedXYFrame(
         frame.camera_id, frame.timestamp_s, frame.image,
         camera_socket_transform(
             T_camera_world=extrinsics_full[frame.camera_id],
             T_world_robot=c2r, T_robot_socket=socket),
         np.asarray(intrinsics_full[frame.camera_id]["K_undist"], dtype=float),
-    ) for frame in frames]
+    ) for frame in frames if frame.camera_id in selected_cameras]
     if mode.yaw_relevant:
         if square_translation_only:
             grounded, observations = observe_grounded_key_axis(
@@ -794,7 +797,9 @@ def _compute_grounded_alignment(
                 backend, calibrated)
         else:
             grounded, observations = observe_grounded_cylinder_axis_cropped(
-                backend, calibrated, roi_xyxy_by_camera=roi_xyxy_by_camera)
+                backend, calibrated,
+                roi_xyxy_by_camera={camera: roi_xyxy_by_camera[camera]
+                                    for camera in selected_cameras})
             for frame, observation in zip(calibrated, observations):
                 verify_native_crop_observation(
                     observation.to_record(), full_image_size_px=frame.raw.size)
@@ -974,13 +979,15 @@ def assess_grounded_xy_diagnostic(
     socket = validated_frozen_socket_pose(
         mode=mode, shared_root=root, calibration=calibration)
     c2r = validate_se3(calibration.record["c2r"], name="session C2R")
+    selected_cameras = set(assessment_cameras(
+        frame.camera_id for frame in frames))
     calibrated = [CalibratedXYFrame(
         frame.camera_id, frame.timestamp_s, frame.image,
         camera_socket_transform(
             T_camera_world=extrinsics_full[frame.camera_id],
             T_world_robot=c2r, T_robot_socket=socket),
         np.asarray(intrinsics_full[frame.camera_id]["K_undist"], dtype=float),
-    ) for frame in frames]
+    ) for frame in frames if frame.camera_id in selected_cameras]
     if mode.yaw_relevant:
         if square_translation_only:
             grounded, observations = observe_grounded_key_axis(
@@ -1011,7 +1018,9 @@ def assess_grounded_xy_diagnostic(
                 backend, calibrated)
         else:
             grounded, observations = observe_grounded_cylinder_axis_cropped(
-                backend, calibrated, roi_xyxy_by_camera=roi_xyxy_by_camera)
+                backend, calibrated,
+                roi_xyxy_by_camera={camera: roi_xyxy_by_camera[camera]
+                                    for camera in selected_cameras})
             for frame, observation in zip(calibrated, observations):
                 verify_native_crop_observation(
                     observation.to_record(),

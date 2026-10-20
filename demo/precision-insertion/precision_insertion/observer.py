@@ -21,7 +21,7 @@ from PIL import Image
 
 from .xy_voting import ViewVote, XYChoice, validate_choices
 from .timing_profile import timed
-from .view_parallel import map_view_calls
+from .view_parallel import map_view_calls, map_view_calls_until
 
 
 class ImageVLM(Protocol):
@@ -530,10 +530,35 @@ def _per_view_consensus(
         return _infer_closed_set(
             backend, stage=stage, frames=pair, prompt_body=prompt_body,
             field=field, allowed=allowed, fallback=fallback)
-    observations = map_view_calls(backend, cameras, observe_camera)
+    early = getattr(backend, "early_quorum_views", None)
+    replay_cameras = getattr(backend, "replay_completed_camera_ids", None)
+    if replay_cameras is not None:
+        # Saved checkpoints replay the exact workers that answered before
+        # quorum; their completion order need not match sorted camera order.
+        voted_cameras = sorted(replay_cameras)
+        if (early is None or not voted_cameras or
+                not set(voted_cameras) <= set(cameras)):
+            raise ValueError("retry replay camera set differs from saved views")
+        observations = [observe_camera(camera) for camera in voted_cameras]
+    elif early is not None:
+        def sufficient(done: dict[str, VLMObservation]) -> bool:
+            if len(done) < early:
+                return False
+            selected = sorted(done)
+            result = _consensus_parsed(
+                [done[camera].to_record() for camera in selected],
+                field=field, fallback=fallback, cameras=selected)
+            return result[field] != fallback
+        completed = map_view_calls_until(
+            backend, cameras, observe_camera, sufficient)
+        voted_cameras = sorted(completed)
+        observations = [completed[camera] for camera in voted_cameras]
+    else:
+        voted_cameras = cameras
+        observations = map_view_calls(backend, cameras, observe_camera)
     parsed = _consensus_parsed(
         [row.to_record() for row in observations], field=field,
-        fallback=fallback, cameras=cameras)
+        fallback=fallback, cameras=voted_cameras)
     prompt = (
         "Images are supplied in this exact order:\n" +
         "\n".join(f"{index + 1}: {label}" for index, label in
@@ -547,6 +572,8 @@ def _per_view_consensus(
         sum(row.latency_s for row in observations), aggregation={
             "schema": "precision_insertion_per_camera_vlm_consensus_v1",
             "per_view": [row.to_record() for row in observations],
+            **({"completed_camera_ids": voted_cameras,
+                "requested_camera_ids": cameras} if early is not None else {}),
         })
 
 
@@ -580,10 +607,16 @@ def verify_per_view_consensus(
         return
     if (not isinstance(aggregation, dict) or aggregation.get("schema") !=
             "precision_insertion_per_camera_vlm_consensus_v1" or
-            not isinstance(aggregation.get("per_view"), list) or
-            len(aggregation["per_view"]) != len(cameras)):
+            not isinstance(aggregation.get("per_view"), list)):
         raise ValueError("invalid per-camera VLM aggregation")
-    ordered = sorted(cameras)
+    ordered = aggregation.get("completed_camera_ids", sorted(cameras))
+    if (not isinstance(ordered, list) or
+            len(ordered) != len(aggregation["per_view"]) or
+            ordered != sorted(set(ordered)) or
+            not set(ordered) <= cameras or
+            aggregation.get("requested_camera_ids", sorted(cameras)) !=
+            sorted(cameras)):
+        raise ValueError("invalid completed per-camera VLM views")
     global_order = visual.get("image_order")
     if (not isinstance(global_order, list) or
             len(global_order) != 2 * len(cameras)):
@@ -921,9 +954,30 @@ def observe_preinsert_temporal_views(
                 "unobservable",
             }), fallback="unobservable",
         )
-    observations = map_view_calls(backend, cameras, observe_camera)
+    early = getattr(backend, "early_quorum_views", None)
+    if early is not None:
+        def sufficient(done: dict[str, VLMObservation]) -> bool:
+            if len(done) < early:
+                return False
+            votes = {row.parsed["class"] for row in done.values()
+                     if row.parse_error is None and
+                     row.parsed["class"] != "unobservable" and
+                     row.parsed["evidence"].strip()}
+            if len(votes) != 1:
+                return False
+            label = next(iter(votes))
+            return sum(row.parsed["class"] == label and
+                       row.parsed["evidence_views"] == [camera]
+                       for camera, row in done.items()) >= minimum_agreeing_views
+        completed = map_view_calls_until(
+            backend, cameras, observe_camera, sufficient)
+        observed_cameras = sorted(completed)
+        observations = [completed[camera] for camera in observed_cameras]
+    else:
+        observed_cameras = cameras
+        observations = map_view_calls(backend, cameras, observe_camera)
     decisive: dict[str, list[str]] = {}
-    for camera, observed in zip(cameras, observations):
+    for camera, observed in zip(observed_cameras, observations):
         category = observed.parsed["class"]
         if (observed.parse_error is None and category != "unobservable" and
                 observed.parsed["evidence"].strip() and
@@ -951,9 +1005,7 @@ def observe_xy_views(
     catalog = validate_choices(choices)
     if not views or len({view.camera_id for view in views}) != len(views):
         raise ValueError("XY voting needs unique nonempty camera views")
-    votes = []
-    records = []
-    for view in views:
+    def observe_view(view: XYView) -> tuple[ViewVote, VLMObservation]:
         frames = [
             LabeledFrame(view.camera_id, "raw_hold", view.timestamp_s, view.raw),
             LabeledFrame(view.camera_id, "candidate_overlay", view.timestamp_s,
@@ -1007,11 +1059,14 @@ def observe_xy_views(
                 "failure_class": "unknown", "evidence": "",
             }
             error = str(exc)
-        votes.append(ViewVote(
+        vote = ViewVote(
             view.camera_id, float(view.timestamp_s),
             parsed["visible"], parsed["choice_id"], parsed["failure_class"],
-        ))
-        records.append(VLMObservation(
+        )
+        record = VLMObservation(
             "preinsert_xy", parsed, answer, prompt, order, error,
-            _backend_model(backend), latency))
-    return votes, records
+            _backend_model(backend), latency)
+        return vote, record
+
+    results = map_view_calls(backend, views, observe_view)
+    return [vote for vote, _ in results], [record for _, record in results]

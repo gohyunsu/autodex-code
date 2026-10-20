@@ -58,7 +58,7 @@ def _write_png_hash(path: Path, image: np.ndarray) -> str:
 def configured_capture_io_workers() -> int:
     """Bound local camera-file reads and writes by the same operator setting."""
     try:
-        configured_workers = int(os.environ.get("PRECISION_CAPTURE_IO_WORKERS", "4"))
+        configured_workers = int(os.environ.get("PRECISION_CAPTURE_IO_WORKERS", "8"))
     except ValueError as exc:
         raise ValueError("PRECISION_CAPTURE_IO_WORKERS must be an integer") from exc
     if not 1 <= configured_workers <= 8:

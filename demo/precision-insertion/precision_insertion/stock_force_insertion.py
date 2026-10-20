@@ -1,7 +1,7 @@
 """AutoDex FR3 force-stop stroke and immediate reverse-path withdrawal.
 
 The 20 mm axial path is planned elsewhere. This adapter uses the stock
-Franka follower's 12 N wrist-Z contact stop and its normal trajectory speed.
+Franka follower's 12 N wrist-Z contact stop and configured held speed cap.
 It never labels physical key depth or visual task success.
 """
 
@@ -45,7 +45,7 @@ def reverse_executed_path(axial_arm: np.ndarray, measured_arm: np.ndarray,
 
 
 class FrankaForceStopInsertionAdapter:
-    """Reuse the session's completion-checked stock follower at stock speed."""
+    """Reuse the session's completion-checked stock follower and speed profile."""
 
     def __init__(self, executor):
         if not is_demo_completion_checked_executor(executor):
@@ -65,8 +65,8 @@ class FrankaForceStopInsertionAdapter:
                 not math.isfinite(max_duration_s) or max_duration_s <= 0):
             raise ValueError("stock insertion needs a finite full-joint axial path")
         started = time.time()
-        # Deliberately omit speed: stock traj_speed and the existing held-object
-        # cap apply. The follower stops streaming on contact or exception.
+        # Deliberately omit speed: stock traj_speed and the executor's
+        # configured held-object cap apply. The follower stops on contact.
         self.executor._follow(path[:, :7], stop_wrench_z=force_threshold_n,
                               abort_on_contact=True)
         contact = bool(self.executor._last_stop_on_contact)

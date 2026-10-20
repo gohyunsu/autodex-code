@@ -25,6 +25,9 @@ The live configuration now limits classification VLM input to 768×576 and
 128 generated tokens. Source PNGs remain full resolution. Per-view records
 include source and resized RGB pixel hashes, dimensions and the resize method.
 The coordinate-grounding VLM path keeps its original native-pixel behavior.
-The selected three VLM cameras are 24122734, 25305463 and 25322651; the
-20-camera capture and FoundPose path are unchanged. Timing spans include
-the actual VLM input dimensions and each camera's inference duration.
+These measurements describe the former robot-PC three-view route. The active
+distributed route selects 24122734, 25305463, 25322638, 25322649 and
+25305461, one per capture PC; the 20-camera capture and FoundPose path are
+unchanged. Classification still uses 768×576 inputs and records each view's
+actual input dimensions and inference duration. See
+`LAST_RUN_AUDIT_20261020.md` for its saved-image replay.

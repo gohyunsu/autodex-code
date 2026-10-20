@@ -132,6 +132,19 @@ time. The Python trace itself writes files and has a small overhead, even on
 local storage. The service TSV is a different clock/process and is not
 nested in the trace.
 
+The current distributed Qwen setting starts five capture-PC workers after
+the socket capture, before prompting the operator to place the key. It uses
+one fixed camera per PC: capture1/24122734, capture2/25305463,
+capture3/25322638, capture5/25322649 and capture6/25305461. The
+`startup.vlm_model_load` span includes parallel worker startup; per-call
+`vlm.infer` spans and `distributed_qwen.jsonl` separate wall time, remote
+inference time, actual image sizes and peak CUDA allocation. Lift,
+preinsert, insertion and final classification can finish on the first three
+consistent responses. The two remaining requests finish in background and
+are joined during backend cleanup. XY voting and native-pixel grounding use
+all five selected cameras concurrently. Therefore a five-view inference sum
+is GPU work time, not the elapsed checkpoint duration.
+
 ## Where the extra time enters versus stock AutoDex v8
 
 | Executed stage | Stock `run_pipeline.py` / `run_auto.py` | Precision-insertion live demo | Timing span |
@@ -187,16 +200,18 @@ PNG SHA-256 is calculated from encoded bytes in memory when written,
 instead of rereading every new PNG from NAS. Offline readback remains.
 
 Independent camera PNG reads and PNG encoding, writes and in-memory SHA-256
-for board, socket, key and raw checkpoints now use at most four workers by
+for board, socket, key and raw checkpoints now use at most eight workers by
 default. Set
-`PRECISION_CAPTURE_IO_WORKERS=1` for the previous serial path or `4` for the
-new path; accepted range is 1–8. `camera.saved_frame_read` records each
+`PRECISION_CAPTURE_IO_WORKERS=1` for the previous serial path or `4` to
+replay the older parallel setting; accepted range is 1–8. `camera.saved_frame_read` records each
 camera's source-file wait and decode, `evidence.png_batch_write` is the
 elapsed batch time, and `evidence.png_write_hash` records every written
 camera/source pair. The manifest is written only after every file completes.
 Capture-PC SAM/FoundPose processing remains distributed; this worker setting
-affects robot-PC file I/O only. Measure on the real NAS before assuming a
-speedup.
+affects robot-PC file I/O only. The saved after-lift 40-PNG NAS replay in
+`LAST_RUN_AUDIT_20261020.md` measured median 20.032 s at four workers and
+16.893 s at eight workers across three runs each; live storage contention can
+change this result.
 
 The local single-GPU Qwen backend still handles same-camera pairs serially.
 Lift, pre-insertion transfer and final released-key labels are **gates**: the
@@ -223,9 +238,9 @@ commissioned rig. Use separate fresh run directories for each run.
 cd /home/robot/autodex-precision-insertion
 git pull --ff-only origin feat/precision-insertion
 PRECISION_CAPTURE_IO_WORKERS=1 bash demo/precision-insertion/run_robot_pc.sh --check
-PRECISION_CAPTURE_IO_WORKERS=4 bash demo/precision-insertion/run_robot_pc.sh --check
+PRECISION_CAPTURE_IO_WORKERS=8 bash demo/precision-insertion/run_robot_pc.sh --check
 # Only after physical authorization, readiness and operator approval:
-PRECISION_CAPTURE_IO_WORKERS=4 bash demo/precision-insertion/run_robot_pc.sh --run
+PRECISION_CAPTURE_IO_WORKERS=8 bash demo/precision-insertion/run_robot_pc.sh --run
 python3 demo/precision-insertion/report_timing.py \
   /home/robot/shared_data/AutoDex/experiment/precision-insertion/inspire/precision_key_cylinder_r15_h80/_pipeline_runs/RUN_ID.timing
 ```
