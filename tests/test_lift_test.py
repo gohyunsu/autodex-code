@@ -49,7 +49,7 @@ def _patch_synthetic_batch_validation(monkeypatch):
 
 def test_vertical_payload_speed_policy_is_arm_specific():
     assert js._default_options_for_arm(6).held_object_speed_scale == 1.0
-    assert js._default_options_for_arm(7).held_object_speed_scale == 0.40
+    assert js._default_options_for_arm(7).held_object_speed_scale == 1.0
     assert profile_for_arm("xarm").held_object_speed_scale == 1.0
     assert profile_for_arm("franka").held_object_speed_scale == 0.40
 

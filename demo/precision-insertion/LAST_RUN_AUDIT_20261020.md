@@ -225,6 +225,10 @@ and follower update are documented in [TRIAL_20261020.md](TRIAL_20261020.md).
 After the later 09:37 trial, the active configuration returned to stock
 AutoDex's 0.4 scale and fixed-tick playback; see
 [TRIAL_20261020_093746.md](TRIAL_20261020_093746.md).
+The 09:49 run exposed an additional planner-plus-executor 0.4 reduction and
+approach reference pauses. The current checkout fixes those while keeping a
+single 0.4 near-object/held playback policy; see
+[TRIAL_20261020_094911.md](TRIAL_20261020_094911.md).
 
 Final local validation: `bash demo/precision-insertion/run_robot_pc.sh --check`
 passed as a static file check, and

@@ -23,6 +23,9 @@ downstream stock comparison, and saved 804-sample geometry replay are in
 [LAST_RUN_AUDIT_20261020.md](LAST_RUN_AUDIT_20261020.md).
 The later missed-grasp trial, stock-speed restoration, and reset-path repair
 are in [TRIAL_20261020_093746.md](TRIAL_20261020_093746.md).
+The following trial exposed duplicate FR3 lift slowdown and a stop-go
+approach reference; the measured trace, offline replay and controller fix are
+in [TRIAL_20261020_094911.md](TRIAL_20261020_094911.md).
 
 ## Active cylinder force-stop route (2026-10-13)
 

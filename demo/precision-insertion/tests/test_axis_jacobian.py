@@ -79,6 +79,28 @@ def test_tilted_axis_keeps_continuous_branch_and_fixed_hand(solver_stubs):
     assert np.ptp(result.trajectory[:, 0]) > .025  # tilted, not world-Z
 
 
+def test_held_axis_reference_is_not_retimed_below_executor_speed(
+        solver_stubs, monkeypatch):
+    limits = {}
+    monkeypatch.setattr(axis_jacobian, "_arm_execution_limits",
+                        lambda _n: (1.2, 4.0))
+
+    def retime(nodes, *, velocity_limit, acceleration_limit, options):
+        limits["velocity"] = velocity_limit
+        limits["acceleration"] = acceleration_limit
+        return (np.asarray(nodes, dtype=np.float32),
+                np.arange(len(nodes), dtype=float) * .01, {})
+
+    monkeypatch.setattr(axis_jacobian, "_retime_c2", retime)
+    planner, start, reference, target, axis = _request()
+    result = axis_jacobian.plan_jacobian_axis_stroke(
+        planner, start, reference, target, axis_robot=axis,
+        scene_cfg={"mesh": {"fixture_socket": {}, "target": {}}},
+        expected_travel_m=.05, step_m=.005)
+    assert result.success
+    assert limits == {"velocity": 1.2, "acceleration": 4.0}
+
+
 def test_tilted_axis_rejects_bad_request_and_dense_collision(
         solver_stubs, monkeypatch):
     planner, start, reference, target, axis = _request()

@@ -121,6 +121,10 @@ As in stock `run_auto.py`, core construction binds the shared planner to
 `FrankaExecutor.set_speed_profile_planner` before the initial clear-view move,
 so generic return and recovery paths use the stock object-proximity speed
 profile. The demo does not lower the executor's `traj_speed` default.
+The planner leaves FR3 held vertical and socket-axis references at base
+retiming limits; the executor applies the single shared `0.4` near-object
+and held-object playback scale. The follower schedules commands at a 20 ms
+period, including its state/FK/daemon work within that period.
 Do not use `autodex.executor.real.RealExecutor`: it controls xArm, and the
 clear-view gate rejects it. This core does not supply camera timestamps or
 the remaining hardware callbacks.

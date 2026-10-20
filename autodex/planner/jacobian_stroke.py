@@ -20,11 +20,11 @@ from scipy.interpolate import CubicSpline
 from scipy.spatial.transform import Rotation
 
 
-# Arm-specific payload retiming.  xArm already applies its held-object speed
-# policy in the executor, so do not silently reduce the vertical trajectory to
-# 40% a second time.  FR3 retains the established conservative payload scale.
+# The executors apply held-object speed to trajectory playback.  Retiming the
+# same path again here would apply that reduction twice.  Keep the planned
+# reference at its normal joint limits for both arms.
 XARM_VERTICAL_PAYLOAD_SPEED_SCALE = 1.0
-FRANKA_VERTICAL_PAYLOAD_SPEED_SCALE = 0.40
+FRANKA_VERTICAL_PAYLOAD_SPEED_SCALE = 1.0
 
 
 @dataclass(frozen=True)
@@ -47,7 +47,7 @@ class JacobianStrokeOptions:
     monotonic_tolerance_m: float = 2.0e-4
     sample_dt_s: float = 0.01
     # No hidden robot-specific reduction in the generic options object.
-    # ``_default_options_for_arm`` supplies Franka's explicit 0.4 policy.
+    # The executor owns the arm-specific payload playback policy.
     held_object_speed_scale: float = 1.0
     max_retime_iterations: int = 12
 
