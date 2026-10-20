@@ -47,6 +47,7 @@ class DistributedQwenBackend:
     """Route independent per-camera Qwen calls to five persistent SSH workers."""
 
     preferred_image_batch_size = 2
+    supports_visible_grip_lift = True
     native_pixel_coordinates = True
 
     def __init__(self, *, model_id: str, worker_root: Path,
@@ -148,12 +149,18 @@ class DistributedQwenBackend:
         raise ValueError("distributed Qwen request needs one selected camera ID")
 
     def infer(self, images: list[Image.Image], prompt: str) -> str:
+        return self.infer_for_camera(self._camera_from_prompt(prompt), images, prompt)
+
+    def infer_for_camera(
+        self, camera: str, images: list[Image.Image], prompt: str,
+    ) -> str:
         if (not isinstance(prompt, str) or not prompt.strip() or
                 not 1 <= len(images) <= 2 or
                 any(not isinstance(image, Image.Image) or image.mode != "RGB"
                     for image in images)):
             raise ValueError("distributed Qwen needs one or two ordered RGB images")
-        camera = self._camera_from_prompt(prompt)
+        if camera not in self._channels:
+            raise ValueError("distributed Qwen camera is not selected")
         process, lock, log_file = self._channels[camera]
         encoded = []
         for image in images:

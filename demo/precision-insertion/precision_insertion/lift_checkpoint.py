@@ -31,6 +31,8 @@ from .observer import (
     ImageVLM, LabeledFrame, VLMObservation, _parse_object, observe_lift,
     verify_per_view_consensus,
 )
+from .lift_visible_grip import (SCHEMA as VISIBLE_GRIP_SCHEMA,
+                                observe_visible_grip, verify_visible_grip)
 from .raw_camera_capture import verify_raw_camera_capture
 from .runtime_evidence_cache import recalled, remember
 from .session_bootstrap import _safe_id
@@ -378,7 +380,9 @@ def assess_raw_lift_checkpoint(
                 "timestamp_s": row["timestamp_s"],
                 "max_error_s": row["max_error_s"],
             })
-    visual = observe_lift(backend, frames)
+    visual = (observe_visible_grip(backend, frames, before_root)
+              if getattr(backend, "supports_visible_grip_lift", False)
+              else observe_lift(backend, frames))
     label, reason = _raw_lift_verdict(
         visual_class=visual.parsed["class"],
         evidence_views=set(visual.parsed["evidence_views"]),
@@ -536,10 +540,14 @@ def verify_lift_checkpoint(report_path: Path) -> dict:
                 report["decision_timestamp_s"] < after_upper):
             raise ValueError("raw lift frame times no longer bracket execution")
     visual = report["visual"]
-    verify_per_view_consensus(
-        visual, field="class", fallback="unobservable",
-        cameras=phase_cameras["before_grasp"],
-        before="before_grasp", after="after_lift")
+    if visual.get("aggregation", {}).get("schema") == VISIBLE_GRIP_SCHEMA:
+        verify_visible_grip(visual, phase_cameras["before_grasp"],
+                            bundles["before_grasp"])
+    else:
+        verify_per_view_consensus(
+            visual, field="class", fallback="unobservable",
+            cameras=phase_cameras["before_grasp"],
+            before="before_grasp", after="after_lift")
     parsed = visual.get("parsed")
     if (not isinstance(parsed, dict) or
             parsed.get("class") not in {

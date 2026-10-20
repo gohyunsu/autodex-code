@@ -200,8 +200,17 @@ The live session owns the stock AutoDex camera acquisition stream at its
 default 10 FPS while its snapshot/InitOrchestrator requests run. It starts
 that stream after the initial clear-view move and stops it on every exit.
 `SnapshotOrchestrator` alone does not arm idle camera daemons.
-For temporal lift, preinsert and released insertion labels, local Qwen receives
-one same-camera raw before/after pair per call, not all 20 camera pairs in one
+For the distributed lift label, the saved `before_grasp` key mask anchors a
+900 px crop in each `after_lift` image. Capture PCs 1 and 3 independently
+judge the white key in cameras `24122734` (384×384) and `25322638` (512×512).
+Their short English questions ask whether the key is visibly in the fingers
+and clear of the checkerboard; neither asks whether the key is upright. Both
+answers must agree for `held` or `miss`. The original before/after frame IDs,
+timestamps and PNG hashes, exact prompts, crop coordinates and raw answers
+remain in the lift checkpoint. This visual label does not prove a rigid grasp.
+The replay and known limits are in [LIFT_VISIBLE_GRIP_REPLAY_20261020.md](LIFT_VISIBLE_GRIP_REPLAY_20261020.md).
+For preinsert and released insertion labels, local Qwen still receives one
+same-camera raw before/after pair per call, not all 20 camera pairs in one
 request. A positive visual class needs at least two independently agreeing
 camera replies and no conflicting decisive reply. Each raw per-camera answer,
 prompt and image order is retained inside the aggregate checkpoint record.

@@ -527,9 +527,12 @@ that session and catalogue. For each new key observation:
    A decisive visual/observed-key-rise result records `grasp_success`;
    conflict or abstention leaves the label unknown. If the hand occludes
    FoundPose, save a raw `after_lift` bundle with `write_raw_camera_capture`
-   and call `prepare_raw_lift_label` instead. It compares the same cameras'
-   before/after pixels and records held/miss/slip only when at least two
-   views show the key; occlusion is unknown. This raw route supplies **no**
+   and call `prepare_raw_lift_label` instead. The distributed live route
+   retains the saved before/after frames and uses the initial key mask to
+   crop the after-lift image in two close cameras. Two agreeing, orientation
+   independent visible-grip answers label held or miss; disagreement is
+   unknown. The local/API comparison route still uses before/after pairs.
+   This raw route supplies **no**
    key–hand transform and cannot authorize transfer by itself. A raw positive
    leads to `held_relation_evidence_required`, not a transfer command. If a
    separately measured *physical* calibration for the exact v8 grasp and a
