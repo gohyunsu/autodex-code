@@ -11,14 +11,15 @@ capture PC: capture1/`24122734`, capture2/`25305463`,
 capture3/`25322638`, capture5/`25322649`, and capture6/`25305461`.
 Classification can finish on the first three consistent replies. All 20
 original camera frames remain in the raw capture and FoundPose path.
-Classification inputs are 768×576; native-pixel XY grounding uses the
-original undistorted frame. The saved-image probe and active route are in
-[LAST_RUN_AUDIT_20261020.md](LAST_RUN_AUDIT_20261020.md).
+Classification inputs are 384×288; native-pixel XY grounding uses the
+original undistorted frame. The current saved-image probe and active route
+are in [TRIAL_20261020.md](TRIAL_20261020.md).
 The operator-stopped approach and its measured timing are recorded in
-[STOPPED_TRIAL_20261017.md](STOPPED_TRIAL_20261017.md). No subsequent live run
-has tested this distributed route on the moving robot.
-The last run's command-channel wait, downstream stock comparison, and saved
-804-sample geometry replay are in
+[STOPPED_TRIAL_20261017.md](STOPPED_TRIAL_20261017.md). The 2026-10-20 live
+trial reached transfer; its false positive lift label, transfer stall, and
+384×288 saved-image replay are in
+[TRIAL_20261020.md](TRIAL_20261020.md). The earlier command-channel wait,
+downstream stock comparison, and saved 804-sample geometry replay are in
 [LAST_RUN_AUDIT_20261020.md](LAST_RUN_AUDIT_20261020.md).
 
 ## Active cylinder force-stop route (2026-10-13)

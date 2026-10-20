@@ -664,14 +664,13 @@ def observe_lift(backend: ImageVLM, frames: Sequence[LabeledFrame]) -> VLMObserv
     return infer(
         backend, stage="post_lift", frames=frames,
         prompt_body=(
-            "The key and socket are both white. Track the loose key by shape "
-            "and location relative to its tabletop position and the "
-            "robot hand. Classify held only when distinct key pixels visibly "
-            "move with the hand in the cited camera views; closed fingers, "
-            "a hidden key, or a commanded lift are not held evidence. "
-            "Classify only visible evidence. Hidden is not held; classify it "
-            "as unobservable. "
-            "Do not infer a grasp from the commanded hand closure."
+            "The key is the small white cylinder; the socket is the large "
+            "white cup. Inspect image 2 first. Is the key on the checkerboard "
+            "or tabletop? If yes, class MUST be miss, even if it moved or the "
+            "fingers closed. Say held only if the key itself is visibly "
+            "between the fingers and absent from the board. Falling from "
+            "the hand is slip. Hidden is not held: use unobservable. State "
+            "the key's location in image 2 as evidence."
         ),
         field="class", allowed=frozenset({"held", "miss", "slip", "unobservable"}),
         fallback="unobservable",

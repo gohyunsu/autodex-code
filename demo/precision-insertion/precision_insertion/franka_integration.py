@@ -58,7 +58,7 @@ def _vlm_settings(value: object) -> dict:
         return {"mode": "local", "model_id": None,
                 "max_new_tokens": 128, "require_native_pixels": True,
                 "capture_timeout_s": 10.0, "parallel_views": 1,
-                "classification_image_size": [768, 576]}
+                "classification_image_size": [384, 288]}
     if not isinstance(value, dict) or set(value) - _VLM_KEYS:
         raise ValueError("VLM settings contain unknown fields")
     settings = {**_vlm_settings(None), **value}

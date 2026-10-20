@@ -1,5 +1,10 @@
 # Last run and downstream code audit (2026-10-20)
 
+This document audits the earlier 2026-10-17 stopped session and the code as
+it stood before the later 2026-10-20 trial. For the latest live trial, the
+384×288 setting, and its pending positive-scene validation, see
+[TRIAL_20261020.md](TRIAL_20261020.md).
+
 This saved-evidence review compares the active board-9, white cylinder,
 20 mm route in this checkout with the local `/home/robot/AutoDex` main at
 `448732d` (2026-09-30) and its shared ParaDex command sender.
@@ -97,7 +102,7 @@ trial.
 
 ## Follow-up: active path after a positive lift
 
-The last run stopped in `key.model_init`, so no new physical transfer or
+The 2026-10-17 run stopped in `key.model_init`, so no physical transfer or
 insertion timing exists. The previous completed lift reached the label but
 was stopped during its serial Qwen calls. The following is a code-path audit,
 not a claim that transfer or insertion has completed on hardware.
@@ -136,9 +141,10 @@ The same three real before/after camera pairs from run
 `20261017_142332_429150` were replayed with the production Qwen3-VL-2B
 backend, three independent per-camera prompts, and a 128-token cap. Model
 load is excluded from the inference sums. All six responses parsed as `held`
-with the matching camera ID. The single positive scene does not establish
-miss/slip or final inside-socket accuracy at the smaller size, so the active
-768×576 runtime setting remains unchanged.
+with the matching camera ID. That single positive-labeled scene did not establish
+miss/slip or final inside-socket accuracy at the smaller size. This paragraph
+describes the earlier 768×576 runtime; the current 384×288 setting and
+negative-scene replay are in [TRIAL_20261020.md](TRIAL_20261020.md).
 
 | VLM input per image | 24122734 | 25305463 | 25322651 | Three-call sum |
 | --- | ---: | ---: | ---: | ---: |
@@ -181,8 +187,9 @@ requests; a decisive agreement from the first three completed replies lets
 the checkpoint proceed while the other requests drain. Conflicting or
 unobservable replies wait for additional completed views. XY and original
 pixel-coordinate axis observations use all five in parallel because their
-metric resolver needs the individual evidence. Classification inputs are
-768×576; native coordinate grounding keeps original undistorted pixels.
+metric resolver needs the individual evidence. Classification inputs were
+768×576 at the time of this replay. They are now 384×288; native coordinate
+grounding keeps original undistorted pixels.
 Saved per-camera replies retain the prompt, source frame IDs/times and
 original evidence, and checkpoint replay uses the exact early-completion
 camera set.
@@ -212,8 +219,9 @@ This demo now configures 0.5 for the near-object and held-object cap. The
 velocity smoothing and 4 rad/s² commanded acceleration limit remain as in
 the stock executor. This raises the cap by 25%; it does not prove a 25%
 reduction in physical motion duration. The follower still stops its stream
-at trajectory segment boundaries, so visible pauses can remain. No live
-trial with the new cap or measured smoothness trace has been completed.
+at trajectory segment boundaries, so visible pauses can remain. No live trial
+had been completed when this paragraph was written. The subsequent live trace
+and follower update are documented in [TRIAL_20261020.md](TRIAL_20261020.md).
 
 Final local validation: `bash demo/precision-insertion/run_robot_pc.sh --check`
 passed as a static file check, and

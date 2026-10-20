@@ -43,6 +43,7 @@ from autodex.utils.robot_config import (
 )
 from autodex.utils.conversion import cart2se3, se32cart
 from autodex.executor.real import _convert_inspire   # rad -> 0-1000 controller units
+from .follow_progress import advance_reference_index
 
 # The final part of every free-hand move is deliberately slowed.  The metric is
 # the closest distance from the object *mesh surface* to one of the hand-link
@@ -779,10 +780,10 @@ class FrankaExecutor:
         deadline = t_start + self.follow_timeout_s
         t_last_print = t_start
         idx_at_print, t_prev_print = 0.0, t_start
+        last_tick_monotonic = time.monotonic() - self.ctrl_dt
         ticks = 0
         dq_prev = np.zeros(7)                           # EMA state (starts from rest)
-        last_idx, last_prog_tick = 0.0, 0
-        STALL_TICKS = int(2.5 / self.ctrl_dt)           # break if no progress ~2.5s
+        last_idx, last_progress_monotonic = 0.0, time.monotonic()
         wrist_distance_m = None
         wrist_distance_frame = None
         wrist_distance_reference = None
@@ -794,6 +795,14 @@ class FrankaExecutor:
             while ticks < max_ticks:
                 ticks += 1
                 now = time.time()
+                tick_monotonic = time.monotonic()
+                # The previous full 20 ms sleep after state/FK/RPC work made
+                # the 2026-10-20 lift control period 29 ms (34 Hz).
+                # Advance trajectory time by measured wall time, capped at
+                # two nominal ticks after an exceptional scheduling pause.
+                tick_dt = min(tick_monotonic - last_tick_monotonic,
+                              2.0 * self.ctrl_dt)
+                last_tick_monotonic = tick_monotonic
                 if now > deadline:
                     print(f"[franka] follow TIMEOUT after {self.follow_timeout_s:.0f}s "
                           f"at waypoint {int(idx)}/{n} — stopping")
@@ -842,10 +851,10 @@ class FrankaExecutor:
                 effective_speed = (min(speed, held_cap)
                                    if held_cap is not None
                                    else speed * profile_scale)
-                d_idx = effective_speed * self.ctrl_dt / self.traj_dt
+                d_idx = effective_speed * tick_dt / self.traj_dt
                 if now - t_last_print >= self.follow_log_every_s:
                     t_last_print = now
-                    # ref_rate vs the nominal d_idx/ctrl_dt tells you whether the
+                    # ref_rate vs effective_speed/traj_dt tells you whether the
                     # max_lead clamp is throttling (ref_rate well below nominal =
                     # the arm cannot keep up = stop-go). Tune traj_speed to match.
                     slowdown_text = ("" if wrist_distance_m is None else
@@ -859,16 +868,16 @@ class FrankaExecutor:
                           f"hand_idx {k_arm}/{n}  "
                           f"ref_err={np.linalg.norm(traj[int(idx)] - cur):.3f}  "
                           f"ref_rate={(idx - idx_at_print) / (now - t_prev_print):.0f}/s "
-                          f"(nominal {d_idx / self.ctrl_dt:.0f}/s){slowdown_text}"
+                          f"(nominal {effective_speed / self.traj_dt:.0f}/s){slowdown_text}"
                           f"{held_text}",
                           flush=True)
                     idx_at_print, t_prev_print = idx, now
-                # Advance the reference in TIME, but only while it stays within
-                # max_lead of the arm (else the arm has fallen behind — e.g. the
-                # plan is faster than joint_vmax — and we wait for it).
-                nxt = min(idx + d_idx, float(n - 1))
-                if np.linalg.norm(traj[int(nxt)] - cur) <= self.max_lead:
-                    idx = nxt
+                # Advance the reference in time if the next point is near the
+                # arm. If the arm is already near a later point, catch up at
+                # the normal rate. An off-path arm still holds the reference.
+                previous_idx = idx
+                idx = advance_reference_index(
+                    traj, cur, idx, d_idx, self.max_lead)
                 k = int(idx)
                 frac = idx - k
                 # The arm TRACKS the reference, so it sits behind it. Index the
@@ -886,15 +895,18 @@ class FrankaExecutor:
                 # STALL: the reference hasn't advanced in a while -> the arm is
                 # stuck (reflex, unreachable target). Stop instead of spinning.
                 if idx > last_idx + 1e-9:
-                    last_idx, last_prog_tick = idx, ticks
-                elif ticks - last_prog_tick > STALL_TICKS:
+                    last_idx, last_progress_monotonic = idx, tick_monotonic
+                elif tick_monotonic - last_progress_monotonic > 2.5:
                     print(f"[franka] follow stalled at waypoint {k}/{n} "
                           f"(err={np.linalg.norm(err):.3f}) — stopping")
                     break
                 # Feedforward = the planned trajectory's own joint velocity at
                 # the reference; P term only corrects the tracking error.
+                # Once the reference is clamped, feedforward must stop too.
+                # Otherwise it drives past the frozen reference until the
+                # position term cancels it, as in the 2026-10-20 transfer.
                 v_ff = ((traj[k + 1] - traj[k]) / self.traj_dt * effective_speed
-                        if k < n - 1 else np.zeros(7))
+                        if k < n - 1 and idx > previous_idx else np.zeros(7))
                 dq = v_ff + self.pos_kp * err
                 m = float(np.max(np.abs(dq)))
                 if m > self.joint_vmax:
@@ -915,7 +927,11 @@ class FrankaExecutor:
                         hand_traj[min(k_arm, len(hand_traj) - 1)])
                     self.hand.move(hand_cmd)
                     self._last_hand_action = hand_cmd
-                time.sleep(self.ctrl_dt)
+                # Keep the complete state/FK/command/sleep cycle near 50 Hz.
+                # Sleeping a full ctrl_dt *after* that work produced 34 Hz in
+                # the measured lift and slowed playback by the same ratio.
+                time.sleep(max(0.0, tick_monotonic + self.ctrl_dt -
+                               time.monotonic()))
                 if stop_wrench_z is not None:
                     wz = float(self.arm.get_data()["wrench"][2])
                     if abs(wz) > stop_wrench_z:

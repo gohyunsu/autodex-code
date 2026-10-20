@@ -39,6 +39,7 @@ def main() -> None:
     config = json.loads(original.read_text(encoding="utf-8"))
     config["vlm"].update({
         "mode": "distributed",
+        "classification_image_size": [384, 288],
         "worker_root": str(WORKER_ROOT),
         "workers": {
             camera: {

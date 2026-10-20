@@ -444,7 +444,7 @@ def test_first_party_qwen_and_fresh_checkpoint_callbacks(monkeypatch, tmp_path):
         "max_input_size": (1920, 1088),
         "max_new_tokens": 128, "require_native_pixels": True,
         "parallel_views": 1,
-        "classification_image_size": (768, 576)}]
+        "classification_image_size": (384, 288)}]
     assert len(captures) == 3
     assert all(timeout == 6.0 for _phase, timeout in captures)
 
