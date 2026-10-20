@@ -1,4 +1,4 @@
-"""Demo-local completion check around AutoDex's unchanged FR3 follower.
+"""Demo-local completion check around the AutoDex-derived FR3 follower.
 
 The stock follower may exit on a stall/timeout, ramp the hand to its final
 configuration, and make a blocking endpoint ``arm.move``. For precision

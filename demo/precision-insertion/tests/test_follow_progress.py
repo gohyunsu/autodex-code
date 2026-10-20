@@ -5,6 +5,9 @@ import numpy as np
 from src.execution.follow_progress import (
     advance_reference_index, measured_path_index,
 )
+from src.execution.stream_timing import (
+    stream_command_validity_ms, velocity_retention,
+)
 
 
 def test_measured_arm_ahead_of_frozen_reference_catches_up_without_path_jump():
@@ -47,3 +50,18 @@ def test_hand_progress_uses_measured_arm_even_after_early_waypoint_is_passed():
     assert np.linalg.norm(path[20] - measured) > 0.04
     assert measured_path_index(path, measured, 20, 82.0) == 75
     assert measured_path_index(path, path[130], 75, 82.0) == 82
+
+
+def test_100hz_filter_matches_50hz_response_in_wall_time():
+    old = new = 0.0
+    for _ in range(50):
+        old = velocity_retention(.6, .02) * old + (1 - velocity_retention(.6, .02))
+        for _ in range(2):
+            new = velocity_retention(.6, .01) * new + (1 - velocity_retention(.6, .01))
+        np.testing.assert_allclose(new, old, rtol=0, atol=1e-12)
+
+
+def test_faster_command_rate_keeps_stock_watchdog_margin():
+    assert stream_command_validity_ms(.02) == 40
+    assert stream_command_validity_ms(.01) == 40
+    assert stream_command_validity_ms(.025) == 50

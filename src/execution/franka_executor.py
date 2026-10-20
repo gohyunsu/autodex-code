@@ -45,6 +45,7 @@ from autodex.utils.conversion import cart2se3, se32cart
 from autodex.executor.real import _convert_inspire   # rad -> 0-1000 controller units
 from .follow_progress import advance_reference_index, measured_path_index
 from .reset_scene import scene_for_reset, vertical_clearance_poses
+from .stream_timing import stream_command_validity_ms, velocity_retention
 
 # The final part of every free-hand move is deliberately slowed.  The metric is
 # the closest distance from the object *mesh surface* to one of the hand-link
@@ -718,16 +719,16 @@ class FrankaExecutor:
           * command = the trajectory's own velocity (feedforward) + ``pos_kp`` *
             tracking error, so steady-state motion is set by the plan, not by
             the error;
-          * EMA low-pass (``vel_smooth``), and ``ctrl_dt`` 50 Hz feeding the
-            daemon's 1 kHz stream (10 rad/s² rate limit).
+          * EMA low-pass (``vel_smooth``), and ``ctrl_dt`` (50 Hz by default)
+            feeding the daemon's 1 kHz stream (10 rad/s² rate limit).
 
         Safety: velocities clipped to ``joint_vmax``; on a reflex (is_error) we
         zero-velocity + recover (+ abort if requested); a target that stops
-        advancing for ``STALL_TICKS`` breaks the loop. NOTE: ``duration_ms`` is
-        parsed but NEVER used by franka_daemon (no watchdog) — the last commanded
-        velocity is held until the next command, so this loop is the only thing
-        stopping the arm. At the end we decelerate to zero and land on the final
-        config with a blocking ``move()`` ONLY when the residual exceeds
+        advancing for ``STALL_TICKS`` breaks the loop. The daemon's stream
+        watchdog expires each setpoint after ``duration_ms`` (up to its configured
+        maximum) and ramps velocity to zero if no new command arrives. At the end
+        we decelerate to zero and land on the final config with a blocking
+        ``move()`` ONLY when the residual exceeds
         ``land_tol`` (skipping it avoids a stream→position mode switch, which is
         what makes the clunk between segments)."""
         traj = np.atleast_2d(np.asarray(arm_traj, dtype=np.float64))[:, :7]
@@ -911,7 +912,8 @@ class FrankaExecutor:
                     dq = dq * (self.joint_vmax / m)     # proportional cap (keep direction)
                 # EMA low-pass — the cap is applied first so the blend of two
                 # capped commands stays within the cap.
-                dq = self.vel_smooth * dq_prev + (1.0 - self.vel_smooth) * dq
+                retention = velocity_retention(self.vel_smooth, tick_dt)
+                dq = retention * dq_prev + (1.0 - retention) * dq
                 # HARD acceleration limit. The EMA only softens a step, it does
                 # not bound it, and the daemon's own limiter is 10 rad/s^2 — so
                 # any jump in the command reaches the joints as a jolt. Bound the
@@ -919,7 +921,8 @@ class FrankaExecutor:
                 d_max = self.accel_max * tick_dt
                 dq = dq_prev + np.clip(dq - dq_prev, -d_max, d_max)
                 dq_prev = dq
-                self.arm.set_joint_velocity(dq, duration_ms=int(self.ctrl_dt * 1000 * 2.0))
+                self.arm.set_joint_velocity(
+                    dq, duration_ms=stream_command_validity_ms(self.ctrl_dt))
                 if hand_traj is not None:
                     hand_cmd = self._clip_hand(
                         hand_traj[min(k_arm, len(hand_traj) - 1)])

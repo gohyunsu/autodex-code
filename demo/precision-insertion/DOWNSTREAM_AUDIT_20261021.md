@@ -51,3 +51,6 @@ and replay result. There is **no saved live preinsert bundle** in the inspected
 runs, so no physical-stage latency reduction is claimed. Per-stage timing
 spans will measure the benefit on a later run. Robot motion, camera network
 round trip, contact control, and downstream success remain unmeasured here.
+
+The subsequent FR3 timing and duplicate snapshot-undistortion review is in
+[CONTROL_AND_GATE_AUDIT_20261021.md](CONTROL_AND_GATE_AUDIT_20261021.md).
