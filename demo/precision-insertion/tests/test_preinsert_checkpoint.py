@@ -6,6 +6,7 @@ import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 import sys
 
@@ -194,6 +195,29 @@ def _setup(tmp_path):
         max_hand_command_error_raw=30.0,
         max_arm_velocity_rad_s=0.05,
         renderer_factory=_Renderer, robot_loader=lambda _path: _Robot())
+
+
+def test_raw_preinsert_vlm_starts_before_diagnostic_overlay(tmp_path):
+    vlm_started = Event()
+    overlay_started = Event()
+
+    class VLM(_VLM):
+        independent_remote_inference = True
+
+        def infer(self, images, prompt):
+            vlm_started.set()
+            assert overlay_started.wait(5), "overlay should run with raw VLM"
+            return super().infer(images, prompt)
+
+    class Renderer(_Renderer):
+        def __init__(self, *args):
+            assert vlm_started.wait(5), "raw VLM should run during overlay work"
+            overlay_started.set()
+            super().__init__(*args)
+
+    args = _setup(tmp_path)
+    args.update(backend=VLM(), renderer_factory=Renderer)
+    assert assess_preinsert_checkpoint(**args).preinsert_reached is True
 
 
 def test_measured_preinsert_arrival_needs_multiview_visible_key(tmp_path):

@@ -48,6 +48,7 @@ class DistributedQwenBackend:
 
     preferred_image_batch_size = 2
     supports_visible_grip_lift = True
+    independent_remote_inference = True
     native_pixel_coordinates = True
 
     def __init__(self, *, model_id: str, worker_root: Path,

@@ -5,6 +5,8 @@ The current cylinder frame conventions and live gate audit are in
 The current active-route comparison with stock AutoDex and removed
 failure thresholds is in
 [FAILURE_GATE_AUDIT_20261017.md](FAILURE_GATE_AUDIT_20261017.md).
+The post-lift code review and preinsert VLM/overlay overlap are in
+[DOWNSTREAM_AUDIT_20261021.md](DOWNSTREAM_AUDIT_20261021.md).
 
 The board-9 robot launcher routes five fixed VLM cameras, one to each
 capture PC: capture1/`24122734`, capture2/`25305463`,

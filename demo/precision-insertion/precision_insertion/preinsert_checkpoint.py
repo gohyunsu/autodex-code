@@ -9,6 +9,8 @@ does not execute motion, prove contact, or certify the external producer.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass
 import hashlib
 import json
@@ -155,58 +157,78 @@ def observe_held_preinsert_scene(
         calibration, intrinsics_undist=K_all,
         extrinsics_full=camera_world_all, calibrated_camera_ids=all_camera_ids)
     c2r = validate_se3(calibration.record.get("c2r"), name="session C2R")
-    prediction_kwargs = {}
-    if robot_loader is not None:
-        prediction_kwargs["robot_loader"] = robot_loader
-    prediction = build_held_scene_prediction(
-        shared_root=shared_root, mode=mode,
-        full_q_measured=joint_sample.full_q,
-        T_robot_socket_frozen=validated_frozen_socket_pose(
-            mode=mode, shared_root=shared_root, calibration=calibration),
-        T_key_hand_hypothesis=T_key_hand,
-        relation_source=relation_source, **prediction_kwargs)
-    target = validate_se3(T_robot_hand_target,
-                          name="planned preinsert T_robot_hand")
-    position_error = float(np.linalg.norm(
-        prediction.T_robot_hand[:3, 3] - target[:3, 3]))
-    rotation_error = pose_angle_deg(prediction.T_robot_hand, target)
-    frames = {serial: cv2.imread(
+    frames_bgr = {serial: cv2.imread(
         str(raw_bundle / "images" / f"{serial}.png"), cv2.IMREAD_COLOR)
         for serial in camera_ids}
-    if any(frame is None for frame in frames.values()):
+    if any(frame is None for frame in frames_bgr.values()):
         raise ValueError("saved preinsert image cannot be decoded")
-    comparison = build_held_scene_comparison(
-        prediction=prediction, frames_bgr=frames,
-        frame_timestamps_s={serial: frame_rows[serial]["timestamp_s"]
+
+    def render_comparison():
+        prediction_kwargs = {}
+        if robot_loader is not None:
+            prediction_kwargs["robot_loader"] = robot_loader
+        prediction = build_held_scene_prediction(
+            shared_root=shared_root, mode=mode,
+            full_q_measured=joint_sample.full_q,
+            T_robot_socket_frozen=validated_frozen_socket_pose(
+                mode=mode, shared_root=shared_root, calibration=calibration),
+            T_key_hand_hypothesis=T_key_hand,
+            relation_source=relation_source, **prediction_kwargs)
+        target = validate_se3(T_robot_hand_target,
+                              name="planned preinsert T_robot_hand")
+        position_error = float(np.linalg.norm(
+            prediction.T_robot_hand[:3, 3] - target[:3, 3]))
+        rotation_error = pose_angle_deg(prediction.T_robot_hand, target)
+        comparison = build_held_scene_comparison(
+            prediction=prediction, frames_bgr=frames_bgr,
+            frame_timestamps_s={serial: frame_rows[serial]["timestamp_s"]
+                                for serial in camera_ids},
+            intrinsics_undistorted={serial: K_all[serial]
+                                    for serial in camera_ids},
+            T_camera_robot={serial: camera_world_all[serial] @ c2r
                             for serial in camera_ids},
-        intrinsics_undistorted={serial: K_all[serial] for serial in camera_ids},
-        T_camera_robot={serial: camera_world_all[serial] @ c2r
-                        for serial in camera_ids},
-        renderer_factory=renderer_factory)
+            renderer_factory=renderer_factory)
+        return position_error, rotation_error, comparison
+
     if after_lift_raw_bundle is None and after_lift_frame_rows is None:
         # Historical same-held-attempt XY retry utility; never assembled in
         # the cylinder live pipeline. Its single-frame evidence stays explicit.
+        position_error, rotation_error, comparison = render_comparison()
         visual = observe_preinsert_raw_views(
             backend, comparison.views, max_capture_skew_s=max_capture_skew_s)
         return position_error, rotation_error, comparison, visual
     if after_lift_raw_bundle is None or after_lift_frame_rows is None:
         raise ValueError("preinsert temporal views need an after-lift bundle")
-    frames = []
-    for view in sorted(comparison.views, key=lambda item: item.camera_id):
-        camera = view.camera_id
+    paired = []
+    for camera in sorted(camera_ids):
         after_lift = cv2.imread(
             str(after_lift_raw_bundle / "images" / f"{camera}.png"),
             cv2.IMREAD_COLOR)
         if after_lift is None:
             raise ValueError("saved after-lift image cannot be decoded")
-        frames.extend((
+        paired.extend((
             LabeledFrame(camera, "after_lift",
                          after_lift_frame_rows[camera]["timestamp_s"],
                          Image.fromarray(cv2.cvtColor(after_lift, cv2.COLOR_BGR2RGB))),
-            LabeledFrame(camera, "preinsert", view.timestamp_s, view.raw),
+            LabeledFrame(camera, "preinsert", frame_rows[camera]["timestamp_s"],
+                         Image.fromarray(cv2.cvtColor(
+                             frames_bgr[camera], cv2.COLOR_BGR2RGB))),
         ))
-    visual = observe_preinsert_temporal_views(
-        backend, frames, max_capture_skew_s=max_capture_skew_s)
+    # Only a remote backend can overlap inference with this PC's GPU renderer
+    # without competing for the same GPU memory. Both use the same saved raw
+    # camera pixels; the overlay is never a VLM input.
+    if getattr(backend, "independent_remote_inference", False):
+        with ThreadPoolExecutor(max_workers=1,
+                                thread_name_prefix="precision-preinsert") as pool:
+            visual_future = pool.submit(
+                copy_context().run, observe_preinsert_temporal_views,
+                backend, paired, max_capture_skew_s=max_capture_skew_s)
+            position_error, rotation_error, comparison = render_comparison()
+            visual = visual_future.result()
+    else:
+        position_error, rotation_error, comparison = render_comparison()
+        visual = observe_preinsert_temporal_views(
+            backend, paired, max_capture_skew_s=max_capture_skew_s)
     return position_error, rotation_error, comparison, visual
 
 
