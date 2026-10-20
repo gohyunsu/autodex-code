@@ -58,8 +58,13 @@ def capture_snapshot_checkpoint_frames(
         with timed("camera.undistort_generation", phase="camera",
                    kind="image", camera_id=camera,
                    capture_phase=phase):
-            image = cv2.undistort(
-                original, K_orig, distortion, None, K_undist)
+            # OpenCV's fixed-point map is pixel-identical to undistort() and
+            # avoids rebuilding the map in each of its internal image stripes.
+            height, width = original.shape[:2]
+            maps = cv2.initUndistortRectifyMap(
+                K_orig, distortion, None, K_undist, (width, height),
+                cv2.CV_16SC2)
+            image = cv2.remap(original, maps[0], maps[1], cv2.INTER_LINEAR)
         undistorted[camera] = image
         calibration[camera] = {
             "K_orig": K_orig, "K_undist": K_undist,

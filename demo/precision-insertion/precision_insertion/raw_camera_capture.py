@@ -142,13 +142,9 @@ def write_raw_camera_capture(
                     not np.all(np.isfinite(target)) or
                     not np.all(np.isfinite(distortion))):
                 raise ValueError("invalid undistortion calibration")
-            with timed("evidence.undistort_validate", phase="evidence",
-                       kind="image", camera_id=camera, capture_phase=phase):
-                pixels_match = np.array_equal(cv2.undistort(
-                    capture.source_images_bgr[camera], original,
-                    distortion, None, target), image)
-            if not pixels_match:
-                raise ValueError("undistorted frame differs from original snapshot")
+            # The snapshot producer has already performed this transform.
+            # Offline verify_raw_camera_capture replays it from the saved
+            # original PNG, so the live writer need not repeat it here.
             calibrations[camera] = {
                 "K_orig": original.tolist(), "K_undist": target.tolist(),
                 "dist_params": distortion.tolist()}

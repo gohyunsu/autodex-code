@@ -1,9 +1,11 @@
 """Same-session raw VLM frames reuse AutoDex's open key transport."""
 
+from dataclasses import replace
 from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import cv2
 import numpy as np
 import pytest
 
@@ -121,3 +123,49 @@ def test_raw_snapshot_checkpoint_does_not_depend_on_key_pose(tmp_path):
     with pytest.raises(ValueError, match="key-specific prompt"):
         make_checkpoint_capture(
             phase="preinsert", timeout_s=2.0, transport="init_key")
+
+
+def test_snapshot_undistortion_matches_opencv_and_offline_derivation(tmp_path):
+    cameras = ("cam_a", "cam_b")
+    original = {camera: np.random.default_rng(index).integers(
+        0, 256, size=(48, 64, 3), dtype=np.uint8)
+        for index, camera in enumerate(cameras)}
+    evidence = {camera: {
+        "frame_id": index + 1, "image_sha256": image_sha256(image),
+        "timestamp_s": 100.0, "max_error_s": 0.002,
+        "timestamp_method": "hardware_exposure", "clock_domain": "unix_utc"}
+        for index, (camera, image) in enumerate(original.items())}
+    K = np.array([[55., 0., 32.], [0., 56., 24.], [0., 0., 1.]])
+    intrinsics = {camera: {"K_orig": K, "K_undist": K,
+                           "dist_params": np.array([.11, -.03, .002, -.001, 0.])}
+                  for camera in cameras}
+    live = SimpleNamespace(cameras=SimpleNamespace(
+        snapshot_orchestrator=object(),
+        acquisition_metadata_for_request=lambda _request: None,
+        launch=SimpleNamespace(camera_ids=cameras,
+                               intrinsics_full=intrinsics)))
+    source = SimpleNamespace(request_id=31, images_bgr=original,
+                             frame_evidence=evidence)
+    raw = capture_snapshot_checkpoint_frames(
+        live, phase="preinsert", timeout_s=2., capture_id="raw_31",
+        snapshot_collector=lambda **_kwargs: source)
+    for camera in cameras:
+        expected = cv2.undistort(
+            original[camera], K, intrinsics[camera]["dist_params"], None, K)
+        np.testing.assert_array_equal(raw.images_bgr[camera], expected)
+
+    # The live writer uses the producer's pixels. Full derivation replay
+    # remains available offline and rejects a producer with altered pixels.
+    changed = dict(raw.images_bgr)
+    changed["cam_a"] = changed["cam_a"].copy()
+    changed["cam_a"][0, 0, 0] ^= 1
+    metadata = dict(raw.acquisition_metadata)
+    metadata["frames"] = {camera: dict(row) for camera, row in
+                          metadata["frames"].items()}
+    metadata["frames"]["cam_a"]["image_sha256"] = image_sha256(
+        changed["cam_a"])
+    bundle = write_raw_camera_capture(
+        replace(raw, images_bgr=changed, acquisition_metadata=metadata),
+        tmp_path / "altered", phase="preinsert")
+    with pytest.raises(ValueError, match="original undistortion"):
+        verify_raw_camera_capture(bundle, phase="preinsert")
