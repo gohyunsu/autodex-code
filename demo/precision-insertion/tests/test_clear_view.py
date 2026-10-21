@@ -10,12 +10,32 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from autodex.utils.robot_config import FR3_CLEAR_VIEW, INSPIRE_INIT  # noqa: E402
+from autodex.utils.robot_config import (  # noqa: E402
+    CLEAR_VIEW_J0_OFFSET_RAD, FR3_CLEAR_VIEW, FR3_INIT, INSPIRE_INIT)
 from autodex.utils.sync import convert_inspire_raw  # noqa: E402
 from precision_insertion.clear_view import ClearViewForPerception  # noqa: E402
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.repose_preflight import ReposeHeldPreflight  # noqa: E402
 from precision_insertion.repose_release import ReposeReleasePreflight  # noqa: E402
+
+
+def test_oct12_mount_clear_view_points_palm_down():
+    from yourdfpy import URDF
+
+    mount = (Path(__file__).resolve().parents[3] / "autodex" / "planner" /
+             "src" / "curobo" / "content" / "assets" / "robot" /
+             "fr3_inspire_description" / "fr3_inspire_oct12_mount.urdf")
+    robot = URDF.load(str(mount), build_scene_graph=True, load_meshes=False)
+    joints = np.r_[FR3_CLEAR_VIEW, INSPIRE_INIT]
+    robot.update_cfg(dict(zip((joint.name for joint in robot.actuated_joints),
+                              joints)))
+    hand = robot.get_transform("base_link", robot.base_link)
+
+    np.testing.assert_allclose(
+        FR3_CLEAR_VIEW[:3], FR3_INIT[:3] +
+        np.array([CLEAR_VIEW_J0_OFFSET_RAD, 0., 0.]))
+    assert hand[2, 1] < -0.95  # Inspire palm normal in the robot base frame
+    assert hand[1, 3] < -0.3   # hand stays to the side of the board
 
 
 def _fixture():

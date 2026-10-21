@@ -82,12 +82,12 @@ except Exception:
                          -0.00027, 3.95842, 0.78357])
 FR3_CLEAR_VIEW = FR3_INIT.copy()
 FR3_CLEAR_VIEW[0] += CLEAR_VIEW_J0_OFFSET_RAD
-# NOTE: inspire hand is mounted 180° reversed on the flange; that is modeled by
-# the URDF flange_to_hand yaw (rotated +pi). The home qpos itself is left as the
-# calibrated home — at this config the (remounted) hand is already 180°-rotated
-# per the new URDF. Rotating joint7 here would make the arm compensate (undoing
-# the visual) and pushes joint7 outside cuRobo's limit (usd_flip_joint_limits),
-# breaking plan_single_js with INVALID_START_STATE_JOINT_LIMITS.
+# Keep the base and shoulder pointed away from the board, while folding the
+# elbow/wrist so the Inspire palm faces the tabletop with the Oct-12 right-angle
+# mount. The prior wrist pose pointed the palm upward with that mount. This
+# pose was checked against the measured board-9/20-mm socket world on Oct-21.
+# The live runner passes the matching mount URDF to cuRobo and the executor.
+FR3_CLEAR_VIEW[3:] = np.array([-1.966, -1.222, 2.147, -2.900])
 
 # fr3_link7 -> wrist (hand base_link), from the fr3_inspire URDF's fixed chain
 # (fr3_joint8 -> flange_to_hand). FR3 analog of INSPIRE_LINK6_TO_WRIST; the same

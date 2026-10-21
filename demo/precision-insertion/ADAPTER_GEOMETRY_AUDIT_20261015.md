@@ -100,6 +100,27 @@ metrology or a successful precision insertion. The endpoint catalog was
 screened before this mount correction; live cuRobo planning uses the corrected
 model, but catalog eligibility remains historical until it is regenerated.
 
+## October 21 clear-view correction
+
+The earlier `FR3_CLEAR_VIEW` rotated only the base joint from calibrated home.
+With the October 12 right-angle mount, URDF FK placed the Inspire palm normal
+at approximately `(0.739, 0.137, 0.660)` in robot coordinates, pointing up.
+The precision checkout now keeps the base and shoulder orientation and uses
+`q4..q7 = (-1.966, -1.222, 2.147, -2.900)` rad. FK places the hand base at
+`(0.427, -0.446, 0.481)` m with palm normal
+`(0.034, -0.029, -0.999)`, nearly straight down. The hand remains on the
+side of the board. This changes the clear-view target shared by initial
+`home(clear_view=True)`, release retracts, and their measured endpoint checks.
+
+Before commanding this new pose, the measured previous clear-view joints and
+the saved board-9/20-mm scene from run `20261021_092625_546425` were checked
+with the same Oct-12 URDF and cuRobo collision model. A planner path existed
+(121 waypoints); all 201 samples of the direct joint interpolation passed
+cuRobo's joint, self-collision, and world-collision constraints. This is an
+offline check of the saved scene; it does not establish physical clearance
+if the board, socket, or other objects move. The actual startup executor uses
+AutoDex's blocking free-space `home` command.
+
 Read-only verification:
 
 ```bash
