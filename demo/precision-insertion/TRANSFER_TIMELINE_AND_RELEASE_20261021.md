@@ -26,6 +26,10 @@ The stock Inspire release ramp returns before the motors finish opening. The
 release/exit paths now wait for measured open-hand feedback before following
 the already-planned arm trajectory. This addresses an independently observed
 empty-hand return where immediate feedback still showed a partly closed hand.
+The empty-hand final retract uses the existing 0.05 rad clear-view gate as
+its follower endpoint tolerance. Two audited returns ended stationary at
+0.030 and 0.033 rad maximum arm error, yet the generic 0.02 rad completion
+check rejected them. Other motion endpoints retain the 0.02 rad check.
 
 The saved timing trace reports 160.06 s for the failed session. It records
 58.39 s in sampled geometry audit, 29.33 s key pose admission, 16.23 s v8
