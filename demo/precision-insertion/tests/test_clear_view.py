@@ -95,6 +95,25 @@ def test_initial_home_and_each_key_capture_require_measured_open_clear_view():
     assert events == ["initial_home"]  # no unsafe free-space home on retry
 
 
+def test_release_waits_for_measured_hand_motors_to_finish_opening():
+    guard, actual, _ = _fixture()
+    expected = np.r_[actual["arm"], INSPIRE_INIT]
+    actual["raw"][:] = 500.
+    original = guard.read_state
+    reads = 0
+
+    def delayed_state():
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            actual["raw"][:] = 1000.
+        return original()
+
+    guard.read_state = delayed_state
+    guard.wait_for_open_hand(expected, phase="test_release")
+    assert reads == 2
+
+
 def test_failed_trial_release_opens_ascends_then_retracts_before_recapture():
     guard, actual, events = _fixture()
     low = np.r_[actual["arm"], INSPIRE_INIT]

@@ -198,3 +198,16 @@ def test_transfer_rejects_late_measured_endpoint(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="hold differs"):
         execute_bound_held_transfer(**kwargs, enable_robot_motion=True)
     assert kwargs["adapter"].stops == 1
+    failure = json.loads((kwargs["runner"]._attempt_dir /
+                          "transfer_failure.json").read_text())
+    assert failure["post_state"]["sample_timestamp_s"] == 102.65
+
+
+def test_transfer_accepts_stationary_endpoint_sampled_just_before_completion(
+        tmp_path, monkeypatch):
+    kwargs = _setup(tmp_path, monkeypatch)
+    kwargs["read_post_state"] = lambda: _state(
+        102.49, np.array([.13, .03, .03, .03, .03, .03, .03]))
+    record = execute_bound_held_transfer(**kwargs, enable_robot_motion=True)
+    assert record["measurement"]["trajectory_complete"] is True
+    assert record["post_state"]["sample_timestamp_s"] == 102.49

@@ -204,6 +204,7 @@ def execute_bound_held_transfer(
     _write_new(started_path, {**base, "status": "command_requested",
                               "requested_at_s": _wall_time()})
     base["transfer_started_sha256"] = _sha(started_path)
+    post = None
     try:
         result = adapter.follow_transfer(
             transfer.copy(), max_duration_s=limits.max_execution_duration_s,
@@ -222,8 +223,11 @@ def execute_bound_held_transfer(
             max_hand_command_error_raw=limits.max_hand_command_error_raw,
             max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
         now = _wall_time()
-        if (post.sample_timestamp_s < completed or
-                post.sample_timestamp_s - completed >
+        # The producer's completion time is recorded just after its last
+        # stationary FR3 sample. A fresh arm/hand midpoint can legitimately
+        # precede that time by a few milliseconds.
+        if (post.sample_timestamp_s < begun or
+                abs(post.sample_timestamp_s - completed) >
                 limits.max_execution_feedback_gap_s or
                 post.sample_timestamp_s > now or
                 now - post.sample_timestamp_s > limits.max_end_state_age_s or
@@ -246,6 +250,8 @@ def execute_bound_held_transfer(
         _write_new(failure_path, {
             **base, "status": "execution_or_feedback_failed",
             "error_type": type(exc).__name__, "error": str(exc),
+            "post_state": (post.to_record() if isinstance(post, LiveRobotState)
+                           else None),
             "stop_acknowledgement": stop_ack,
             "robot_state_after_failure": "unknown_requires_supervised_recovery",
         })

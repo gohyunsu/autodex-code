@@ -95,6 +95,21 @@ class ClearViewForPerception:
             raise ValueError(f"{phase}: Inspire is not fully open")
         return state
 
+    def wait_for_open_hand(self, expected: np.ndarray, *, phase: str,
+                           timeout_s: float = 5.0) -> LiveRobotState:
+        """Wait for the measured Inspire motors after the stock release ramp."""
+        deadline = time.monotonic() + timeout_s
+        while True:
+            state = self.read_state()
+            self._validate_feedback(state, phase=phase)
+            if np.max(np.abs(state.full_q[:7] - expected[:7])) > self.max_arm_error_rad:
+                raise ValueError(f"{phase}: arm missed the release-exit waypoint")
+            if np.max(np.abs(state.full_q[7:] - INSPIRE_INIT)) <= self.max_hand_error_rad:
+                return state
+            if time.monotonic() >= deadline:
+                raise ValueError(f"{phase}: Inspire did not open")
+            time.sleep(0.05)
+
     def prepare_initial(self) -> LiveRobotState:
         """Open hand and park arm *before* the first board/socket capture.
 
@@ -187,8 +202,7 @@ class ClearViewForPerception:
         self._verify_release_waypoint(up[0], phase="before_release_open",
                                       require_open=False)
         open_hand(np.asarray(INSPIRE_INIT, dtype=float).copy())
-        opened = self._verify_release_waypoint(
-            up[0], phase="after_release_open", require_open=True)
+        opened = self.wait_for_open_hand(up[0], phase="after_release_open")
         if evidence_sink is not None:
             evidence_sink.append({"name": "release_open",
                                   "state": opened.to_record()})

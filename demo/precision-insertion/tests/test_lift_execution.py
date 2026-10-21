@@ -227,3 +227,12 @@ def test_lift_needs_prompt_measured_endpoint_after_controller_completion(
     with pytest.raises(RuntimeError, match="endpoint differs"):
         execute_bound_measured_lift(**kwargs, enable_robot_motion=True)
     assert kwargs["adapter"].stops == 1
+
+
+def test_lift_accepts_endpoint_sampled_just_before_completion(
+        tmp_path, monkeypatch):
+    kwargs = _setup(tmp_path, monkeypatch)
+    kwargs["read_post_state"] = lambda: _state(
+        102.49, np.array([.13, .03, .03, .03, .03, .03, .03]))
+    result = execute_bound_measured_lift(**kwargs, enable_robot_motion=True)
+    assert result["post_state"]["sample_timestamp_s"] == 102.49

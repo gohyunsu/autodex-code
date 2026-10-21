@@ -198,13 +198,14 @@ def test_guarded_insertion_records_external_stroke_without_task_label(
 
 
 @pytest.mark.parametrize("contact", [False, True])
+@pytest.mark.parametrize("sample_time", [102.64, 102.70])
 def test_stock_force_stroke_needs_no_contact_review_and_saves_ascent(
-        tmp_path, monkeypatch, contact):
+        tmp_path, monkeypatch, contact, sample_time):
     args = _setup(tmp_path, monkeypatch)
     with np.load(tmp_path / "axial.npz", allow_pickle=False) as archive:
         axial = archive["axial"]
     post_q = axial[0, :7] if contact else axial[-1, :7]
-    args["read_post_state"] = lambda: _state(102.70, post_q)
+    args["read_post_state"] = lambda: _state(sample_time, post_q)
     ticks = itertools.count(102.5, .01)
     monkeypatch.setattr(execution, "_wall_time", lambda: next(ticks))
 

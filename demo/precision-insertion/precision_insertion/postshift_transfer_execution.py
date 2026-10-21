@@ -211,8 +211,8 @@ def execute_bound_postshift_transfer(
             max_hand_command_error_raw=limits.max_hand_command_error_raw,
             max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
         now = _wall_time()
-        if (post.sample_timestamp_s < completed or
-                post.sample_timestamp_s - completed >
+        if (post.sample_timestamp_s < begun or
+                abs(post.sample_timestamp_s - completed) >
                     limits.max_execution_feedback_gap_s or
                 post.sample_timestamp_s > now or
                 now - post.sample_timestamp_s > limits.max_end_state_age_s or
@@ -325,11 +325,12 @@ def verify_postshift_transfer_execution(
             not all(math.isfinite(value) for value in
                     (request_time, begun, completed)) or
             not handoff["decision_timestamp_s"] < pre.sample_timestamp_s <=
-                request_time <= begun < completed <= post.sample_timestamp_s or
+                request_time <= begun < completed or
+            post.sample_timestamp_s < begun or
             request_time - handoff["decision_timestamp_s"] > handoff_age or
             request_time - pre.sample_timestamp_s > limits.max_start_age_s or
             completed - begun > limits.max_execution_duration_s or
-            post.sample_timestamp_s - completed >
+            abs(post.sample_timestamp_s - completed) >
                 limits.max_execution_feedback_gap_s or
             np.max(np.abs(pre.full_q - handoff["transfer_start_q"])) >
                 limits.max_start_joint_error_rad or

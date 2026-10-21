@@ -190,6 +190,7 @@ def test_stock_release_executes_preplanned_axis_exit_then_clear_view(
     clear = SimpleNamespace(
         _validate_feedback=lambda *_a, **_k: None,
         _verify_release_waypoint=lambda *_a, **_k: actions.append("verify"),
+        wait_for_open_hand=lambda *_a, **_k: actions.append("verify"),
         _follow_autodex=follow,
         verify_state=lambda measured, **_: measured,
         max_arm_error_rad=.05, max_hand_error_rad=.05)

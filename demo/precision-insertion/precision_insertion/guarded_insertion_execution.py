@@ -254,8 +254,8 @@ def execute_bound_guarded_insertion(
             max_hand_command_error_raw=limits.max_hand_command_error_raw,
             max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
         now = _wall_time()
-        if (post.sample_timestamp_s < completed or
-                post.sample_timestamp_s - completed >
+        if (post.sample_timestamp_s < begun or
+                abs(post.sample_timestamp_s - completed) >
                 limits.max_execution_feedback_gap_s or
                 post.sample_timestamp_s > now or
                 now - post.sample_timestamp_s > limits.max_end_state_age_s or
@@ -335,8 +335,8 @@ def _execute_stock_force_stroke(
             max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
         completed = float(result["completed_at_s"])
         target = axial[0] if result["safety_abort"] else axial[-1]
-        if (post.sample_timestamp_s <= completed or
-                post.sample_timestamp_s - completed >
+        if (post.sample_timestamp_s < float(result["started_at_s"]) or
+                abs(post.sample_timestamp_s - completed) >
                 limits.max_execution_feedback_gap_s or
                 _wall_time() - post.sample_timestamp_s >
                 limits.max_end_state_age_s or

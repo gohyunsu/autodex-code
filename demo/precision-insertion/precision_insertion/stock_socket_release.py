@@ -125,9 +125,8 @@ class StockSocketRelease:
         try:
             # Stock release performs its usual controlled Inspire ramp.
             self.executor.release(None, open_to_init=True)
-            live.clear_view._verify_release_waypoint(
-                paths["axial_exit"][0], phase="socket_after_open",
-                require_open=True)
+            live.clear_view.wait_for_open_hand(
+                paths["axial_exit"][0], phase="socket_after_open")
             release_completed = time.time()
             live.clear_view._follow_autodex(paths["axial_exit"].copy())
             live.clear_view._verify_release_waypoint(

@@ -247,8 +247,8 @@ def execute_bound_retry_guarded_insertion(
             max_hand_command_error_raw=limits.max_hand_command_error_raw,
             max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
         now = _wall_time()
-        if (post.sample_timestamp_s < completed or
-                post.sample_timestamp_s - completed >
+        if (post.sample_timestamp_s < begun or
+                abs(post.sample_timestamp_s - completed) >
                     limits.max_execution_feedback_gap_s or
                 post.sample_timestamp_s > now or
                 now - post.sample_timestamp_s >
@@ -355,12 +355,12 @@ def verify_retry_guarded_execution(
             not all(math.isfinite(value) for value in
                     (requested, begun, completed)) or
             not handoff["decision_timestamp_s"] <
-                pre.sample_timestamp_s <= requested <= begun < completed <=
-                post.sample_timestamp_s or
+                pre.sample_timestamp_s <= requested <= begun < completed or
+            post.sample_timestamp_s < begun or
             requested - handoff["decision_timestamp_s"] > max_age or
             requested - pre.sample_timestamp_s > limits.max_start_age_s or
             completed - begun > limits.max_execution_duration_s or
-            post.sample_timestamp_s - completed >
+            abs(post.sample_timestamp_s - completed) >
                 limits.max_execution_feedback_gap_s):
         raise ValueError("retry contact timeline differs from started marker")
     archive = Path(handoff["trajectory_archive_path"])
