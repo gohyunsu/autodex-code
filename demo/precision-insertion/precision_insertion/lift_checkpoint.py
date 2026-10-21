@@ -340,9 +340,10 @@ def assess_raw_lift_checkpoint(
             before.get("family") != mode.family or
             after["capture_id"] == before_capture_id):
         raise ValueError("raw lift before/after images are not this key trial")
+    # The tabletop FoundPose admission selects views for geometry only.  The
+    # independent raw tabletop snapshot is the source for this visual label.
     cameras = assessment_cameras(
-        set(before["consistency"]["accepted_views"]) &
-        set(after["frame_evidence"]))
+        set(before["frame_evidence"]) & set(after["frame_evidence"]))
     if len(cameras) < minimum_visual_views:
         raise ValueError("raw lift needs paired calibrated camera views")
     subsets = {
@@ -514,7 +515,7 @@ def verify_lift_checkpoint(report_path: Path) -> dict:
             phase_cameras["before_grasp"] != phase_cameras["after_lift"] or
             len(phase_cameras["before_grasp"]) < minimum_views):
         raise ValueError("lift VLM report lacks paired camera views")
-    if not phase_cameras["before_grasp"] <= set(
+    if not raw_visual and not phase_cameras["before_grasp"] <= set(
             saved["before_grasp"]["consistency"]["accepted_views"]):
         raise ValueError("lift VLM used an unadmitted tabletop view")
     if raw_visual:

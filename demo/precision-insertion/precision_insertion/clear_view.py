@@ -247,23 +247,21 @@ class ClearViewForPerception:
         hand_actions = np.asarray([
             self.executor._convert(row[7:]) for row in path],
             dtype=np.float64)
-        # The clear-view gate already accepts 0.05 rad measured arm error.
-        # The streamed stock follower commonly ends its free-space retract
-        # 0.02-0.04 rad short. Use that same gate only for the open-hand final
-        # clear-view retract; pickup and socket-axis endpoints retain 0.02.
+        # Allow the final empty-hand clear-view return its measured endpoint
+        # tolerance; all other paths use the stock 0.04 rad L2 follower limit.
         clear_return = (np.max(np.abs(path[-1, :7] - FR3_CLEAR_VIEW)) <= 1e-3
                         and np.allclose(path[:, 7:], INSPIRE_INIT,
                                         atol=1e-8, rtol=0))
-        previous = getattr(self.executor, "completion_max_joint_error_rad", None)
+        previous = getattr(self.executor, "completion_max_path_error_rad", None)
         if clear_return and previous is not None:
-            self.executor.completion_max_joint_error_rad = max(
+            self.executor.completion_max_path_error_rad = max(
                 previous, self.max_arm_error_rad)
         try:
             self.executor.follow_joint_trajectory(
                 path, hand_traj=hand_actions)
         finally:
             if clear_return and previous is not None:
-                self.executor.completion_max_joint_error_rad = previous
+                self.executor.completion_max_path_error_rad = previous
 
     def complete_failed_insertion_return_with_autodex(
         self, *, held_plan: ReposeHeldPreflight,

@@ -130,6 +130,27 @@ def test_raw_lift_reads_independent_initial_visual_snapshot(tmp_path):
     assert verify_lift_checkpoint(path / "report.json")["grasp_success"] is True
 
 
+def test_raw_lift_uses_saved_visual_frames_not_pose_admission(
+        monkeypatch, tmp_path):
+    """A FoundPose-rejected view can still provide an intact VLM image pair."""
+    args, _backend = _raw_case(tmp_path)
+    from precision_insertion import lift_checkpoint
+    saved_capture = lift_checkpoint._saved_capture
+
+    def pose_rejected_view(root):
+        record, digest = saved_capture(root)
+        record["consistency"] = {
+            **record["consistency"], "accepted_views": ["cam_a"]}
+        return record, digest
+
+    monkeypatch.setattr(lift_checkpoint, "_saved_capture", pose_rejected_view)
+    result = assess_raw_lift_checkpoint(**args)
+    assert {row["camera_id"] for row in result.frames} == set(CAMERAS)
+    monkeypatch.setattr(lift_checkpoint, "_saved_capture", saved_capture)
+    path = write_lift_checkpoint(result, tmp_path / "visual_not_pose")
+    assert verify_lift_checkpoint(path / "report.json")["grasp_success"] is True
+
+
 def test_one_view_raw_held_abstains(tmp_path):
     args, _backend = _raw_case(tmp_path, answer={
         "class": "held", "evidence_views": ["cam_a"],

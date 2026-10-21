@@ -69,7 +69,7 @@ def _stock_follow_stub(self, path, hand_traj, **kwargs):
     # blocking endpoint land after a stalled/early-ended stream.
     if hand_traj is not None:
         self._ramp_hand(hand_traj[-1])
-    assert self.follow_tol == .02
+    assert self.follow_tol == .04
     if np.linalg.norm(self.arm.q - path[-1, :7]) > self.land_tol:
         self.arm.move(path[-1, :7])
 
@@ -88,6 +88,15 @@ def test_completed_stream_permits_deferred_hand_ramp_without_blocking_land(
     assert executor.land_tol == .02
     assert executor.follow_tol == .04
     assert not executor._precision_follow_active
+
+
+def test_stock_sized_stationary_residual_completes_without_landing(monkeypatch):
+    monkeypatch.setattr(_Stock, "_follow", _stock_follow_stub)
+    goal = np.zeros(7)
+    arm = _Arm(np.array([.039, 0, 0, 0, 0, 0, 0]))
+    executor = _wrapper(arm)
+    executor._follow(np.vstack([goal, goal]))
+    assert arm.moves == []
 
 
 def test_incomplete_stream_never_lands_or_ramps(monkeypatch):

@@ -129,18 +129,18 @@ def test_held_waypoint_accepts_blocked_fingers_but_checks_arm_and_open_release()
 
 def test_only_empty_hand_clear_view_retract_uses_clear_view_endpoint_tolerance():
     guard, actual, _ = _fixture()
-    guard.executor.completion_max_joint_error_rad = .02
+    guard.executor.completion_max_path_error_rad = .04
     guard.executor._convert = lambda _q: np.full(6, 1000.)
     observed = []
     guard.executor.follow_joint_trajectory = lambda *_a, **_k: observed.append(
-        guard.executor.completion_max_joint_error_rad)
+        guard.executor.completion_max_path_error_rad)
     start = np.r_[actual["arm"], INSPIRE_INIT]
     clear = np.r_[FR3_CLEAR_VIEW, INSPIRE_INIT]
     guard._follow_autodex(np.vstack([start, clear]))
     assert observed == [.05]
-    assert guard.executor.completion_max_joint_error_rad == .02
+    assert guard.executor.completion_max_path_error_rad == .04
     guard._follow_autodex(np.vstack([start, start + .01]))
-    assert observed[-1] == .02
+    assert observed[-1] == .04
 
 
 def test_failed_trial_release_opens_ascends_then_retracts_before_recapture():

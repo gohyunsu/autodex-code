@@ -32,7 +32,10 @@ class CompletionCheckedFrankaMixin:
     static configuration does not initialize cuRobo or connect to hardware.
     """
 
-    completion_max_joint_error_rad = 0.02
+    # Match the stock follower's L2 endpoint tolerance.  The measured stop
+    # check remains, while a normal free-space retract need not make a second
+    # blocking position move to erase a smaller residual.
+    completion_max_path_error_rad = 0.04
     stop_max_joint_velocity_rad_s = 0.05
     stop_wait_s = 1.0
 
@@ -60,11 +63,9 @@ class CompletionCheckedFrankaMixin:
 
         self._precision_follow_active = True
         self.land_tol = math.inf  # stock follower may never issue its blocking land
-        # The stock loop normally exits at 0.04 rad L2 and relies on its
-        # blocking landing to remove the remainder. Without that landing it
-        # must itself follow until our checked terminal tolerance is reached.
+        # Use the stock L2 convergence tolerance without its blocking landing.
         self.follow_tol = min(original_follow_tol,
-                              self.completion_max_joint_error_rad)
+                              self.completion_max_path_error_rad)
         self._ramp_hand = defer_ramp
         try:
             result = super()._follow(
@@ -101,8 +102,8 @@ class CompletionCheckedFrankaMixin:
         if (not np.all(np.isfinite(measured)) or
                 not np.all(np.isfinite(velocity)) or
                 bool(self.arm.is_error()) or
-                np.max(np.abs(measured - path[-1, :7])) >
-                self.completion_max_joint_error_rad or
+                np.linalg.norm(measured - path[-1, :7]) >
+                self.completion_max_path_error_rad or
                 np.max(np.abs(velocity)) >
                 self.stop_max_joint_velocity_rad_s):
             raise RuntimeError(

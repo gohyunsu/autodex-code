@@ -145,9 +145,10 @@ def assess_released_insertion_checkpoint(
         release_path, attempt_id=attempt_id, candidate_id=candidate_id,
         session_calibration_sha256=session_calibration_sha256,
         guarded_execution_path=metric_path)
-    initial_cameras = set(initial.get("consistency", {}).get(
-        "accepted_views", initial["frame_evidence"]))
-    cameras = assessment_cameras(initial_cameras & set(final["frame_evidence"]))
+    # FoundPose pose-admission views do not limit the independent raw visual
+    # comparison.  Both captures retain their own frame provenance below.
+    cameras = assessment_cameras(
+        set(initial["frame_evidence"]) & set(final["frame_evidence"]))
     if len(cameras) < minimum_visual_views:
         raise ValueError("released insertion lacks paired initial/final cameras")
     initial_rows = {camera: initial["frame_evidence"][camera]
