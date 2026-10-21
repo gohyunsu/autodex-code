@@ -19,7 +19,7 @@ from precision_insertion.repose_preflight import ReposeHeldPreflight  # noqa: E4
 from precision_insertion.repose_release import ReposeReleasePreflight  # noqa: E402
 
 
-def test_oct12_mount_clear_view_points_palm_down():
+def test_oct12_mount_clear_view_is_compact_and_points_palm_down():
     from yourdfpy import URDF
 
     mount = (Path(__file__).resolve().parents[3] / "autodex" / "planner" /
@@ -34,13 +34,9 @@ def test_oct12_mount_clear_view_points_palm_down():
     link7 = robot.get_transform("fr3_link7", robot.base_link)
     original_clear = FR3_INIT.copy()
     original_clear[0] += CLEAR_VIEW_J0_OFFSET_RAD
-    robot.update_cfg(dict(zip(
-        (joint.name for joint in robot.actuated_joints),
-        np.r_[original_clear, INSPIRE_INIT])))
-    original_hand = robot.get_transform("base_link", robot.base_link)
-
     assert np.isclose(FR3_CLEAR_VIEW[0], original_clear[0])
-    assert np.linalg.norm(hand[:3, 3] - original_hand[:3, 3]) < 0.03
+    assert abs(FR3_CLEAR_VIEW[3] - FR3_INIT[3]) < 0.10  # retain near-stock elbow bend
+    assert hand[1, 3] < -0.18 and hand[2, 3] > 0.45
     assert hand[2, 1] < -0.95  # Inspire palm normal in the robot base frame
     assert -hand[0, 2] > 0.8  # fingers still extend away from the robot
     extension = tip[:3, 3] - link7[:3, 3]

@@ -116,7 +116,7 @@ robot `+X`. Its `q2..q7` are `(0.157, -0.233, -1.574, 0.837, 1.351,
 palm normal `(0.010, -0.192, -0.981)`, finger direction
 `(0.904, -0.417, 0.091)`, and link7-to-fingertip direction
 `(0.842, 0.289, -0.456)`. The hand remains approximately where it was for
-camera clearance. This changes the target shared by initial
+camera clearance. At that time this changed the target shared by initial
 `home(clear_view=True)`, release retracts, and endpoint checks.
 
 The measured stationary joints at the first correction and the saved
@@ -162,10 +162,99 @@ precision target is `[-0.702, 0.157, -0.233, -1.574, 0.837, 1.351,
 reached the new target and the operator confirmed the palm direction, but
 reported that the arm was too extended. Joint 4 is 0.755 rad (43.3 degrees)
 less flexed than the stock target; this agrees with that observation. No
-approach or grasp was commanded after this feedback. A replacement posture
-must be reviewed separately before another move; simply reverting to stock
+approach or grasp was commanded after this feedback. Simply reverting to stock
 would also restore its upward palm direction with the recovered October 12
 mount.
+
+### First compact palm-down clear view, October 21
+
+An offline search held joint 1 at the AutoDex clear-view heading, kept joint 4
+near the stock calibrated elbow bend, and matched the operator-approved
+palm-down/outward-finger orientation with the recovered mount. The first
+compact candidate was `[-0.701714, -0.4070, -0.1478, -2.3300, 0.7928,
+1.6279, -0.5650]` rad. The Oct-12 URDF FK places the hand base near
+`(0.325, -0.228, 0.477)` m, palm normal near `(0.020, -0.201, -0.979)`,
+and finger axis near `(0.875, -0.471, 0.115)` in robot coordinates. The hand
+base is about 10 cm farther inboard and 6 cm lower than the previous target;
+its wrist is therefore not held at the same Cartesian position merely to
+rotate the palm. Joint 4 differs from the calibrated stock clear view by
+approximately 0.001 rad.
+
+On the saved board-9/20-mm key/socket world from run
+`20261021_092625_546425`, cuRobo planned 79 waypoints from the measured
+extended posture to the compact target and 121 waypoints from the compact
+target to `FR3_INIT`. All 201 sampled states of the direct joint
+interpolation used by the stock blocking `home()` command passed cuRobo's
+joint/self/world collision rollout in that saved scene. These are discrete
+checks on saved geometry, not a swept-volume or live-obstacle guarantee.
+Synthetic CAD projections on preserved real frames are at
+`/tmp/precision-compact-clear-view-review-20261021/`; their manifest names
+the source images, calibration and URDF. The operator selected the candidate
+and confirmed the board/socket/key arrangement and on-site monitoring before
+the pose-only move. The measured arm reached
+`[-0.70172, -0.40018, -0.14875, -2.32028, 0.79325, 1.62481, -0.56459]`
+rad, at most 0.0098 rad from target, and later feedback showed at most
+0.0025 rad/s joint velocity. The executor was closed after that move. The
+operator confirmed the palm direction but found the overall arm shape still
+too extended, then prioritized a clear view that feeds later planning smoothly
+and stays away from singularity. No approach, grasp or insertion was commanded.
+The full precision-insertion test suite passed: 1066 passed, 4 skipped;
+`run_robot_pc.sh --check` passed its static file check.
+
+### Planning-conditioned clear view, October 21
+
+The live precision pipeline passes the measured clear-view joint state to
+`plan_admitted_key_trial`, and the stock Franka executor receives the resulting
+pickup with `start_from_current=True`. Unlike stock `run_auto.py`, it does not
+return to `FR3_INIT` before the pickup. Therefore the relevant comparison is
+from clear view to each saved v8 pregrasp, not only from clear view to home.
+
+Using the Oct-12 mount URDF and the saved real scenes from runs
+`20261020_100938_490865`, `20261021_090945_053190`, and
+`20261021_092625_546425`, a read-only cuRobo replay tested the stock clear
+view, the physically reached compact candidate, and two nearby palm-down
+targets. Each saved scene and selected pregrasp endpoint was held fixed while
+the clear-view start changed. All candidate starts and all three selected
+pregrasp paths planned successfully. The chosen target is
+`[-0.701714, -0.3248, -0.1545, -2.2500, 0.7929, 1.6115, -0.5782]` rad.
+It keeps the palm normal about `(0.018, -0.201, -0.980)`, the finger axis
+about `(0.880, -0.462, 0.111)`, and the hand base about
+`(0.340, -0.247, 0.478)` m in the robot base frame. Its hand is only about
+26 mm from the physically reached candidate. Synthetic CAD overlays on two
+saved camera frames show the key and socket unobstructed:
+`/tmp/precision-planning-clear-view-review-20261021/` (synthetic projections,
+not live verification).
+
+| Saved scene | Stock clear to pregrasp (arm joint path L2) | First compact | Chosen mid |
+| --- | ---: | ---: | ---: |
+| Oct 20 10:09 | 4.33 rad | 4.35 rad | 4.26 rad |
+| Oct 21 09:09 | 4.96 rad | 3.94 rad | 3.84 rad |
+| Oct 21 09:26 | 3.73 rad | 1.19 rad | 1.13 rad |
+
+cuRobo can select different paths on repeat solves, so those single-run path
+lengths are not deterministic guarantees. Five extra replays of the Oct 20
+scene gave the first compact target one long 5.40 rad solution with a sampled
+minimum wrist Jacobian singular value of 0.017, followed by four 3.56–3.57
+rad solutions near 0.052. The chosen target gave five 3.49–3.51 rad solutions,
+all near 0.052. The Jacobian metric scales rotational rows by 0.10 m/rad,
+matching the repository's `JacobianStrokeOptions`; it is a conditioning
+comparison, not a probability of singularity or proof of motor smoothness.
+In the latest Oct 21 scene, the chosen target's sampled minimum was 0.0723,
+with a minimum cuRobo joint-limit margin of 0.80 rad; every saved approach
+waypoint passed the cuRobo world and self-collision check. A sampled direct
+joint interpolation from the measured parked pose to the chosen target also
+passed. With the operator confirming the empty hand, fixed board/socket/key,
+clear surroundings, and monitoring, a pose-only `home(clear_view=True)` moved
+to the chosen target. Measured FR3 joints after the move were
+`[-0.701719, -0.334555, -0.153736, -2.259167, 0.792979, 1.613225,
+-0.576440]` rad (maximum target error 0.00976 rad, maximum joint velocity
+0.00284 rad/s). The executor was closed. No pickup, insertion, or other task
+motion was commanded in this pose-only check. Operator visual review of the
+new physical posture is still pending.
+
+After the target change, `python -m pytest demo/precision-insertion/tests -q`
+in the planner environment passed (1066 passed, 4 skipped, 31.16 s), the
+static `run_robot_pc.sh --check` passed, and `git diff --check` was clean.
 
 Read-only verification:
 

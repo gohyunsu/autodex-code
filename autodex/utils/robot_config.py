@@ -82,14 +82,12 @@ except Exception:
                          -0.00027, 3.95842, 0.78357])
 FR3_CLEAR_VIEW = FR3_INIT.copy()
 FR3_CLEAR_VIEW[0] += CLEAR_VIEW_J0_OFFSET_RAD
-# Keep the base heading and hand position of the calibrated clear view while
-# turning the Inspire palm toward the tabletop. With the Oct-12 right-angle
-# mount, the hand's -Z axis and link7-to-fingertip direction both still point
-# outward in robot +X. A palm-down wrist-only pose had pointed the fingers
-# back toward the robot, so the shoulder and elbow also contribute here.
-# The live runner passes the matching mount URDF to cuRobo and the executor.
-FR3_CLEAR_VIEW[1:] = np.array([0.157, -0.233, -1.574,
-                               0.837, 1.351, -0.521])
+# Oct-12 right-angle mount: palm down, fingers outward, and a compact
+# clear-to-grasp branch. The measured clear view is the live planner's start
+# state, so this target was compared against saved board-9 pickup scenes with
+# the same mount URDF rather than chosen by the parked wrist position alone.
+FR3_CLEAR_VIEW[1:] = np.array([-0.3248, -0.1545, -2.2500,
+                               0.7929, 1.6115, -0.5782])
 
 # fr3_link7 -> wrist (hand base_link), from the fr3_inspire URDF's fixed chain
 # (fr3_joint8 -> flange_to_hand). FR3 analog of INSPIRE_LINK6_TO_WRIST; the same
