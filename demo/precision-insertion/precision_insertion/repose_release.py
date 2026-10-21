@@ -31,6 +31,7 @@ from .path_audit import (
 )
 from .preflight import _goal_met, _path
 from .repose_preflight import ReposeHeldPreflight
+from .socket_release import _check_path
 from .world import build_held_scene_from_trial, validated_frozen_socket_pose
 
 
@@ -356,11 +357,23 @@ def plan_repose_release_exit(
                     "success": retract_raw is not None})
     if retract_raw is None:
         return result("post_release_retract_unreachable", up=up, audit=audit)
-    retract = np.asarray(retract_raw, dtype=np.float64)
+    # The full-DOF cuRobo solve can move fingers between identical open
+    # endpoints. The executor keeps them open for this empty-hand retract.
+    # Replay the exact commanded path against both key pose hypotheses.
+    retract = np.asarray(retract_raw, dtype=np.float64).copy()
     if (retract.ndim != 2 or retract.shape[1] != 13 or len(retract) < 2 or
-            not np.all(np.isfinite(retract)) or
-            not np.allclose(retract[0], up[-1], atol=1e-4, rtol=0) or
+            not np.all(np.isfinite(retract))):
+        raise ValueError("stock retract path is malformed")
+    retract[:, 7:] = release_q
+    if (not np.allclose(retract[0], up[-1], atol=1e-4, rtol=0) or
             not np.allclose(retract[-1, :7], retreat, atol=1e-3, rtol=0)):
         raise ValueError("stock retract path is malformed or misses requested goal")
+    retract_check = _check_path(planner, scene, retract)
+    queries.append({"stage": "post_release_retract_commanded",
+                    "planner_api": "sampled_curobo_collision_replay",
+                    "success": retract_check["all_feasible"],
+                    "first_invalid_index": retract_check["first_invalid_index"]})
+    if not retract_check["all_feasible"]:
+        return result("post_release_retract_unreachable", up=up, audit=audit)
     return result("nominal_release_exit_path_pass_drop_unobserved",
                   up=up, retract=retract, audit=audit)

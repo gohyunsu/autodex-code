@@ -129,6 +129,10 @@ class _Planner:
 
 
 def _fixture(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "precision_insertion.repose_release._check_path",
+        lambda _planner, _scene, _path: {
+            "all_feasible": True, "first_invalid_index": None})
     assets = AssetPaths(tmp_path, MODE)
     key_path = assets.raw_mesh(MODE.key_object)
     socket_path = assets.socket_collision_mesh
@@ -539,6 +543,38 @@ def test_release_world_and_exit_preflight_keep_socket_and_two_key_poses(
         ("post_release_lift", ["fixture_socket", "released_rest_key", "target"]),
         ("retract", ["fixture_socket", "released_rest_key", "target"]),
     ]
+
+
+def test_repose_retract_keeps_hand_open_when_curobo_wiggles_fingers(
+    tmp_path, monkeypatch,
+):
+    calibration, scene, pickup, rest, limits = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    held = _plan(tmp_path, calibration, scene, pickup, rest, limits, planner)
+    original = planner.plan_js_to_init
+    checked = []
+
+    def wiggling_retract(*args, **kwargs):
+        path = original(*args, **kwargs)
+        path[:, 7:] += 0.12 * np.sin(np.linspace(0., np.pi, len(path)))[:, None]
+        return path
+
+    def check(_planner, _scene, path):
+        checked.append(path.copy())
+        return {"all_feasible": True, "first_invalid_index": None}
+
+    planner.plan_js_to_init = wiggling_retract
+    monkeypatch.setattr("precision_insertion.repose_release._check_path", check)
+    goal = held.descent_trajectory[-1, :7].copy()
+    goal[0] -= 0.05
+    result = plan_repose_release_exit(
+        planner=planner, trial_scene=scene, shared_root=tmp_path,
+        calibration=calibration, mode=MODE, held_plan=held,
+        release_hand_q=np.zeros(6), retreat_goal_arm_q=goal,
+        minimum_release_key_clearance_m=0.001, limits=limits)
+    assert result.status == "nominal_release_exit_path_pass_drop_unobserved"
+    np.testing.assert_allclose(result.retract_trajectory[:, 7:], 0)
+    np.testing.assert_allclose(checked[-1][:, 7:], 0)
 
 
 def test_release_exit_rejects_open_hand_inside_floating_key(
