@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run only the board-9 / 20 mm pipeline. Manage daemons separately with
+# Run the board-9 cylinder pipeline for an explicit radial-gap size. Manage daemons separately with
 # manage_robot_pc_services.sh; this script never starts or stops a service.
 set -Eeuo pipefail
 
@@ -8,6 +8,12 @@ STAGE=${PRECISION_STAGE_ROOT:-/home/robot/shared_data/hyunsu/tmp/precision_inser
 PY=${PRECISION_PLANNER_PY:-/home/robot/anaconda3/envs/planner/bin/python}
 CHECK_PY=${PRECISION_CHECK_PY:-/home/robot/anaconda3/envs/flir_env/bin/python}
 MODE=${1:---run}
+GAP_MM=${PRECISION_GAP_MM:-20}
+
+case "$GAP_MM" in
+  1|3|5|10|15|20) ;;
+  *) echo "PRECISION_GAP_MM must be one of 1, 3, 5, 10, 15, 20" >&2; exit 2 ;;
+esac
 
 if [[ "$MODE" != --run && "$MODE" != --check && "$MODE" != --plan-only ]]; then
   echo "usage: $0 [--run|--check|--plan-only]" >&2
@@ -21,18 +27,19 @@ export PRECISION_FR3_INSPIRE_URDF=${PRECISION_FR3_INSPIRE_URDF:-$ROOT/autodex/pl
 export PRECISION_VLM_CAMERA_IDS=${PRECISION_VLM_CAMERA_IDS:-24122734,25305463,25322638,25322649,25305461}
 
 LAUNCH_TEMPLATE="$STAGE/live_board9_gap20_20261013/launch.json"
-CATALOG="$STAGE/recipient_gap20_endpoint_catalog_20261013.json"
+CATALOG=${PRECISION_ENDPOINT_CATALOG:-$STAGE/recipient_gap${GAP_MM}_endpoint_catalog_20261022.json}
 ROBOT=${PRECISION_ROBOT_CONFIG:-$STAGE/franka_runtime_board9_gap20_distributed.json}
 
 if [[ "$MODE" == --check ]]; then
   CHECK_LAUNCH=$(mktemp /tmp/precision-launch-check.XXXXXX.json)
   trap 'rm -f "$CHECK_LAUNCH"' EXIT
-  "$CHECK_PY" - "$LAUNCH_TEMPLATE" "$CHECK_LAUNCH" <<'PY'
+  "$CHECK_PY" - "$LAUNCH_TEMPLATE" "$CHECK_LAUNCH" "$GAP_MM" <<'PY'
 import json
 from pathlib import Path
 import sys
 
 record = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+record["mode"] = {"family": "cylinder", "gap_mm": int(sys.argv[3])}
 record["socket_perception_mode"] = "board_constrained_body"
 Path(sys.argv[2]).write_text(json.dumps(record), encoding="utf-8")
 PY
@@ -43,19 +50,21 @@ PY
 fi
 
 RUN_TAG="$(date +%Y%m%d_%H%M%S_%N)_$$"
-LAUNCH="$STAGE/live_board9_gap20_20261013/launch_$RUN_TAG.json"
-"$CHECK_PY" - "$LAUNCH_TEMPLATE" "$LAUNCH" "$RUN_TAG" \
-  "${PRECISION_REUSE_SESSION_EVIDENCE:-}" <<'PY'
+LAUNCH_DIR="$STAGE/live_board9_gap${GAP_MM}_20261022"
+mkdir -p "$LAUNCH_DIR"
+LAUNCH="$LAUNCH_DIR/launch_$RUN_TAG.json"
+"$CHECK_PY" - "$LAUNCH_TEMPLATE" "$LAUNCH" "$RUN_TAG" "$GAP_MM" \
+  "${PRECISION_REUSE_SESSION_EVIDENCE:-}" "$LAUNCH_DIR" <<'PY'
 import json
 from pathlib import Path
 import sys
 
 template, output, run_tag = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
-reused_evidence = sys.argv[4]
+gap_mm, reused_evidence, launch_dir = int(sys.argv[4]), sys.argv[5], Path(sys.argv[6])
 record = json.loads(template.read_text(encoding="utf-8"))
+record["mode"] = {"family": "cylinder", "gap_mm": gap_mm}
 record["socket_perception_mode"] = "board_constrained_body"
-original_evidence = Path(record["evidence_dir"])
-fresh_evidence = original_evidence.with_name(f"session_evidence_{run_tag}")
+fresh_evidence = launch_dir / f"session_evidence_{run_tag}"
 if fresh_evidence.exists():
     raise FileExistsError(f"session evidence already exists: {fresh_evidence}")
 if not fresh_evidence.parent.is_dir():

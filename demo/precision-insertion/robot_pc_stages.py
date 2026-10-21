@@ -1,4 +1,4 @@
-"""Board-9, 20 mm cylinder wiring for the current AutoDex FR3 pipeline.
+"""Board-9 cylinder wiring for the current AutoDex FR3 pipeline.
 
 This factory only supplies limits and the live feedback gate. The existing
 AutoDex v8 planner, camera session, completion-checked stock executor, local
@@ -13,6 +13,7 @@ trial settings, not calibration or physical performance measurements.
 from __future__ import annotations
 
 from precision_insertion.grounded_alignment import AlignmentLimits
+from precision_insertion.config import CYLINDER_RADIAL_GAPS_MM
 from precision_insertion.lift_execution import LiftExecutionLimits
 from precision_insertion.path_audit import PathAuditLimits
 from precision_insertion.pickup_execution import PickupExecutionLimits
@@ -79,9 +80,10 @@ def _unknown_transfer_recovery(_runner, _decision):
 def configure(core, live, options) -> dict:
     """Return all ten handlers, reusing the session's stock v8 resources."""
     launch = live.cameras.launch
-    if (launch.mode.family != "cylinder" or launch.mode.gap_mm != 20 or
+    if (launch.mode.family != "cylinder" or
+            launch.mode.gap_mm not in CYLINDER_RADIAL_GAPS_MM or
             launch.board_id != "9"):
-        raise ValueError("this FR3 binding is for board 9 / cylinder gap 20 only")
+        raise ValueError("this FR3 binding needs board 9 and a configured cylinder gap")
     if core.sampler is None:
         raise ValueError("live camera stages require exposure-aligned FR3 feedback")
     if options.enable_robot_motion is not True:

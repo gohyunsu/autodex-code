@@ -1,6 +1,12 @@
 # AutoDex PC: staged precision-insertion bring-up
 
-Current board-9 / 20 mm launcher: `demo/precision-insertion/run_robot_pc.sh`.
+Current board-9 cylinder launcher: `demo/precision-insertion/run_robot_pc.sh`.
+Its default is the 20 mm **radial-gap** socket. Set `PRECISION_GAP_MM` to
+`1`, `3`, `5`, `10`, `15`, or `20` to select another exact socket asset and
+its recipient-screened endpoint catalog. The same board/camera/FR3 runtime
+configuration is used; every physical socket change needs a fresh socket
+capture. See [CYLINDER_MULTI_GAP_READINESS_20261022.md](CYLINDER_MULTI_GAP_READINESS_20261022.md)
+for the asset inventory and limits of the static checks.
 It defaults to the distributed config
 `franka_runtime_board9_gap20_distributed.json` and five fixed VLM workers:
 capture1/24122734, capture2/25305463, capture3/25322638,
@@ -23,9 +29,10 @@ level must not be reported as success at the next.
 
 The Oct 17 active-route failure-gate review is in
 [FAILURE_GATE_AUDIT_20261017.md](FAILURE_GATE_AUDIT_20261017.md).
-`run_robot_pc.sh` now defaults to the staged
-`franka_runtime_board9_gap20_stock_held.json`, which records the FR3 wrist
-wrench and Inspire readings without the former 3 Nm held-lift abort.
+`run_robot_pc.sh` defaults to the staged
+`franka_runtime_board9_gap20_distributed.json`, which uses the five capture-PC
+Qwen workers and the stock-style held-motion record without the former 3 Nm
+held-lift abort.
 `--check` only validates files; it does not connect a camera or robot.
 
 ## Current behavior and decisions to preserve
@@ -105,13 +112,13 @@ The precise callback signatures and record fields are in
 [`guarded_insertion_execution.py`](precision_insertion/guarded_insertion_execution.py),
 [`post_insertion_release.py`](precision_insertion/post_insertion_release.py),
 and [REPOSE_EXECUTION_EVIDENCE.md](REPOSE_EXECUTION_EVIDENCE.md).
-[`robot_pc_stages.py`](robot_pc_stages.py) now supplies the ten board-9/20 mm
+[`robot_pc_stages.py`](robot_pc_stages.py) now supplies the ten board-9 cylinder
 cylinder stage mappings for `precision_insertion.franka_integration:factory`.
 `franka_core` injects the stock planner/reader, local Qwen and checkpoint
 camera callbacks; the integration injects its checked stock FR3 executor,
 noncontact lift/transfer adapter, 12 N insertion, release and v8 reset. The
-binding assembles offline, but its provisional perception/landing thresholds
-and physical motion/recovery have not been measured on the robot.
+binding assembles offline. Its earlier 20 mm sessions do not validate the
+other radial-gap sockets or their physical motion/recovery.
 
 ## Stage 0 — separate checkout and immutable baseline
 
@@ -844,6 +851,15 @@ bash /home/robot/autodex-precision-insertion/demo/precision-insertion/manage_rob
 bash /home/robot/autodex-precision-insertion/demo/precision-insertion/manage_robot_pc_services.sh check
 bash /home/robot/autodex-precision-insertion/demo/precision-insertion/run_robot_pc.sh --run
 ```
+
+For another installed cylinder socket, first select its radial gap for a
+file-only check. For example, `PRECISION_GAP_MM=15 bash
+demo/precision-insertion/run_robot_pc.sh --check` selects the 15 mm socket
+CAD/FoundPose files and its recipient-bound catalog. The corresponding
+`--run` makes a fresh socket measurement for that selected mode and commands
+the robot, so use it only with the matching physical fixture and the normal
+on-site procedure. Never set `PRECISION_REUSE_SESSION_EVIDENCE` across gap
+sizes or after moving the board/socket.
 
 The following saved-session reuse command documents the 2026-10-15 setup.
 The board and socket have since moved; do not use that evidence for a new

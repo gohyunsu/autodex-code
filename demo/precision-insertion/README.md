@@ -67,6 +67,10 @@ On the board-9 robot PC, manage long-lived daemons separately with
 `bash demo/precision-insertion/manage_robot_pc_services.sh start` (or
 `check`/`stop`), then run `bash demo/precision-insertion/run_robot_pc.sh
 --run`. A pipeline exit no longer restarts or stops capture/Franka services.
+The default cylinder radial gap is 20 mm; set `PRECISION_GAP_MM` to 1, 3, 5,
+10, or 15 for the matching recipient-screened socket catalog after its
+file-only `--check`. Each physical socket change needs a new board/socket
+capture; the 20 mm session evidence must not be reused for another gap.
 Each `--run` copies the board-9 launch template to a uniquely named launch
 JSON and points it at a new session-evidence directory, so a prior run's
 evidence is never reused or overwritten. `--check` reads the template only.
@@ -466,8 +470,8 @@ existing AutoDex execution files (`run_auto.py`, `run_pipeline.py`, or
 through explicit adapters, while insertion-specific orchestration lives here.
 
 `run_live.py` now assembles the opt-in cylinder execution loop. The first-party
-[`robot_pc_stages.py`](robot_pc_stages.py) supplies all ten board-9/20 mm
-cylinder stages and reuses the stock v8 planner, FR3 speed, force-stop,
+[`robot_pc_stages.py`](robot_pc_stages.py) supplies all ten board-9 cylinder
+stages and reuses the stock v8 planner, FR3 speed, force-stop,
 release and reset callbacks. After socket-only capture it waits for the
 operator to place the white key and press Enter. The perception/landing
 thresholds beyond the accepted feedback and path proposal are provisional;

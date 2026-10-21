@@ -80,7 +80,14 @@ def test_board9_binding_assembles_all_current_actions_without_hardware():
         "repose_execution"))
 
 
-@pytest.mark.parametrize("change", [{"board": "11"}, {"gap": 10},
+@pytest.mark.parametrize("gap", [1, 3, 5, 10, 15, 20])
+def test_board9_binding_accepts_configured_cylinder_gaps_without_hardware(gap):
+    core, live, options, calls = _fixture(gap=gap)
+    assert configure(core, live, options)["held_relation_route"] == "nominal"
+    assert calls == []
+
+
+@pytest.mark.parametrize("change", [{"board": "11"}, {"gap": 2},
                                      {"sampler": False}])
 def test_board9_binding_rejects_another_fixture_or_missing_sampler(change):
     core, live, options, _calls = _fixture(**change)

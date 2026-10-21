@@ -8,9 +8,9 @@ return/restoration action. No separate contact-controller review file or
 contact site validation is required by this route. The failure remains in
 the episode evidence and does not create an XY correction. A completed stroke
 uses the existing release/clear-view callback and visual task label. The
-board-9/20 mm `robot_pc_stages:configure` factory now supplies stage
-limits and the fresh-feedback interlock; hardware execution and camera/robot
-timing remain unverified. For the first-party measured lift and
+board-9 cylinder `robot_pc_stages:configure` factory now supplies stage
+limits and the fresh-feedback interlock. The other radial-gap fixtures have
+not been exercised on this robot. For the first-party measured lift and
 transfer adapter, the execution boundaries verify the exact local stock
 daemon process and at most 200 ms command expiry; this is not evidence of a
 physical timeout or E-stop test. External adapters retain the reviewed
@@ -607,7 +607,7 @@ Required recipient inputs remain distinct from code completeness:
   normal insertion is not marked successful by that mode.
 
 The current workstation now has a first-party
-[`robot_pc_stages.py`](robot_pc_stages.py) for board 9 and the 20 mm cylinder
+[`robot_pc_stages.py`](robot_pc_stages.py) for board 9 and a configured cylinder radial gap
 socket. It assembles all ten actions with stock FR3/v8 resources, but its
 provisional perception and landing thresholds, contact behavior and actual
 insertion remain unverified on hardware. The first-party stock-force route
