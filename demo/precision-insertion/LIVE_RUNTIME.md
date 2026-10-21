@@ -38,19 +38,19 @@ its visible corners must span the board and pass the same reprojection,
 plane, and rigid-fit limits. The stock board-11 default still requires all
 54 corners. Neither mode sends a robot motion command.
 
-Socket initialization uses current AutoDex cross-view IoU selection and
-silhouette refinement. Per-view IoU scores and threshold supporters remain
-evidence; a low-scoring view alone no longer vetoes a passing stock result.
-The session still needs acquisition-bound frames and agreement between
-separate socket captures before its fixture pose can be frozen.
-The launch option `socket_perception_mode` defaults to stock `iou`. Set it to
-stock `ignore_sil_loss` only when the absolute 0.003 silhouette-loss cutoff
-blocks a scene that otherwise has reviewable masks: AutoDex still runs the
-same cross-view IoU selection and silhouette optimization. The session saves
-the measured loss and explicitly records that its loss gate was disabled;
-all accepted-view IoU scores, independent socket-capture repeatability,
-frame identity and acquisition-time checks remain in force. The mode does
-not turn a camera-only diagnostic into a robot-ready session.
+The board-9/20 mm launcher sets `socket_perception_mode` to
+`board_constrained_body`. It retains AutoDex camera, SAM and FoundPose frame
+capture, measures the board once, and estimates socket XY from the admitted
+undistorted masks. The fixed cylinder's open axis follows the measured board
+normal. A body-only projection gives each view an IoU; the configured minimum
+applies to their mean because overhead masks can contain the flange instead
+of the body. This route skips renderer warmup and stock silhouette fitting.
+The full socket CAD remains the collision model. Acquisition-bound frame
+identity remains required, and repeated socket captures, when configured,
+must still agree. The current one-capture launcher cannot claim repeatability.
+The older `iou` and `ignore_sil_loss` modes remain available for stock
+comparison; square mode keeps its existing path. Saved-mask replay and its
+accuracy limits are in [RECOVERY_REVIEW_20261021.md](RECOVERY_REVIEW_20261021.md).
 
 **Current cylinder contract (2026-10-11):** the assembled held-relation
 handler defaults to the selected v8 nominal hypothesis; cylinder live mode

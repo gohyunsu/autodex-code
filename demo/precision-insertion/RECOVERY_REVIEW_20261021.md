@@ -60,14 +60,58 @@ is not repeated at each episode.
 Both sessions used the stock `ignore_sil_loss` socket refinement and one
 capture. The axis tilt and weak cross-view fit are evidence that the frozen
 socket pose may be inaccurate. An XY wrist retry does not correct a wrong
-socket axis or entry plane. The next calibration improvement should constrain
-the fixed upright socket axis to the measured board normal, fit translation
-and axial yaw against the original synchronized masks, and replay the
-projection on all selected preinsert cameras before freezing a new session.
-This review does not overwrite the existing calibration without that replay.
+socket axis or entry plane. The follow-up below constrains the fixed upright
+socket axis to the measured board normal and fits board-plane translation
+against the original masks. Axial yaw is unobservable for this cylinder.
+Existing frozen calibrations remain unchanged; a new session capture is
+required to use the corrected method.
+
+### Follow-up: board-supported socket fit
+
+The later 13:55 capture showed a 35.05° frozen-axis deviation from the
+measured board normal and only 2/19 views
+above the old 0.8 whole-mesh IoU. Inspection of the saved undistorted socket
+frames showed that SAM usually masks the 40 mm-radius cylindrical body but
+omits the 60 mm-radius flange; several overhead views mask the flange instead.
+The stock whole-mesh silhouette objective therefore compares different parts
+of the same object. `ignore_sil_loss` permits the resulting bad pose to freeze.
+
+The active cylinder launch now uses `board_constrained_body`, recorded as
+`per_capture_board_constrained_body` in session evidence. It retains the
+existing AutoDex camera, SAM, FoundPose, acquisition-time and evidence path,
+then measures the board once, intersects mask-centroid rays at the CAD body's
+mid-height, takes the median board XY, and fixes the open socket axis to the
+measured board normal. A CPU projection of the CAD cylindrical wall supplies
+the mean IoU using the same undistorted camera calibration. The configured
+0.8 threshold applies to that mean, allowing individual overhead flange
+masks to disagree. Axial yaw remains unobservable. The full raw and collision
+meshes remain unchanged for planning; only the localization objective uses
+the visible wall. The renderer warmup and 100-iteration stock silhouette fit
+are skipped for this fixed-socket route; stock modes remain available for
+comparison and are unchanged.
+
+A local diagnostic image at `/tmp/precision_socket_body_fit_20261021.png`
+projects the old and proposed fits onto three saved undistorted 13:55 frames.
+It is a read-only overlay, not a new camera observation or frozen calibration.
+
+Read-only replay of three *different* saved socket captures, with no newly
+acquired frames or robot motion, gave mean wall IoUs of 0.943 (09:09), 0.925
+(10:47), and 0.921 (13:55), versus approximately 0.697 with the old frozen
+whole-mesh poses. For the 13:55 masks already loaded in memory, five CPU runs
+of the new fit averaged 0.135 s. The saved stock selection and silhouette
+timings total 2.836 s for that capture. These are localization compute times,
+not full session times. The new result has not been used in a physical trial;
+new board/socket movement still requires a fresh session capture. The stock
+FoundPose pose admission still runs because the capture/evidence interface
+stores its same-frame per-camera pose. This review did not measure that
+inference cost separately or prove that it can be skipped without changing
+the interface.
 
 ## Tests
 
-`run_robot_pc.sh --check` passed without camera or robot connection. The
-`flir_env` demo suite passed 1,080 tests with 4 skipped after the recovery,
-same-grasp and decode changes. The saved-pose GPU preflight above passed.
+`run_robot_pc.sh --check` passed without camera or robot connection and
+reported the new `board_constrained_body` launch mode. The `flir_env` demo
+suite passed 1,085 tests with 4 skipped, excluding the separate
+`test_franka_completion_checked.py` module whose cuRobo dependency is not
+installed in that environment. The saved-pose GPU preflight above passed
+before this socket-fit change; no new live motion test was run.

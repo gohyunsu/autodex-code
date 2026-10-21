@@ -845,10 +845,10 @@ bash /home/robot/autodex-precision-insertion/demo/precision-insertion/manage_rob
 bash /home/robot/autodex-precision-insertion/demo/precision-insertion/run_robot_pc.sh --run
 ```
 
-When the fixed board-9/20 mm socket has not moved and the white key is already
-on the board, reuse the verified 2026-10-15 board/socket evidence. This avoids
-another socket-only capture and the key-placement prompt. To inspect real
-perception and v8 planning while stopping before pickup motion, run:
+The following saved-session reuse command documents the 2026-10-15 setup.
+The board and socket have since moved; do not use that evidence for a new
+physical trial. A current trial must capture a fresh board/socket session.
+The historical command was:
 
 ```bash
 cd /home/robot/autodex-precision-insertion

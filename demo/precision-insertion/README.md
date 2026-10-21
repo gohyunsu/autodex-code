@@ -7,6 +7,8 @@ failure thresholds is in
 [FAILURE_GATE_AUDIT_20261017.md](FAILURE_GATE_AUDIT_20261017.md).
 The post-lift code review and preinsert VLM/overlay overlap are in
 [DOWNSTREAM_AUDIT_20261021.md](DOWNSTREAM_AUDIT_20261021.md).
+The current fixed-cylinder socket localization and its saved-camera replay
+are in [RECOVERY_REVIEW_20261021.md](RECOVERY_REVIEW_20261021.md).
 
 The board-9 robot launcher routes five fixed VLM cameras, one to each
 capture PC: capture1/`24122734`, capture2/`25305463`,
@@ -2418,11 +2420,12 @@ camera rig and an independently commissioned `AcquisitionTimeProvider`, it
 collects the ChArUco board snapshot **before** initializing socket FoundPose,
 takes the configured number of unique-request socket captures while the key is absent
 (one for the current board-9 / 20 mm launch),
-takes only admitted SAM/FoundPose views from each capture into stock
-`InitOrchestrator.refine_from_payloads(selection_mode="iou")` and its
-silhouette optimizer. It saves every post-refinement per-view IoU and labels
-which views meet the supplied threshold. If some do not, it uses the stock
-silhouette result instead of vetoing the capture solely for those views.
+takes only admitted SAM/FoundPose views from each capture. The current
+board-9/20 mm launcher uses the measured board and undistorted SAM masks to
+fit the fixed cylindrical wall on CPU; its mean projected-body IoU must meet
+the configured limit. The stock IoU/silhouette route remains available for
+comparison and for square mode. This fit does not independently measure a
+physically tilted socket.
 Each capture contributes exactly one refined pose. With one capture, its
 pose is frozen directly and the record says `repeatability_checked: false`;
 the raw per-camera poses remain saved evidence. It runs

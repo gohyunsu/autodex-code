@@ -40,7 +40,7 @@ def _capture(capture_id: str, timestamp: float) -> sb.SocketCaptureInput:
 
 def _bootstrap(monkeypatch, captures=None, board_source="camera_acquisition",
                extra_camera_ids=(), board_frame_evidence=None,
-               socket_refiner=None):
+               socket_refiner=None, body_source=False):
     received = {}
 
     def fake_calibrate_session(**kwargs):
@@ -53,7 +53,8 @@ def _bootstrap(monkeypatch, captures=None, board_source="camera_acquisition",
             record={"schema": "precision_insertion_session_calibration_v1",
                     "board": {"test": True}, "socket_observations": [],
                     "socket_pose_source": (
-                        "per_capture_stock_multiview_refinement" if refinements
+                        ("per_capture_board_constrained_body" if body_source else
+                         "per_capture_stock_multiview_refinement") if refinements
                         else "per_view_foundpose_legacy"),
                     "socket_capture_refinements": [
                         row.to_record() for row in refinements]},
@@ -131,6 +132,12 @@ def test_refinement_callback_receives_admitted_views_and_is_saved(
         "per_capture_stock_multiview_refinement")
     payload = json.loads((target / "socket/socket_1/payloads.json").read_text())
     assert payload["refinement"]["request_id"] == 100
+    board_result, _ = _bootstrap(
+        monkeypatch, socket_refiner=refine, body_source=True)
+    board_target = sb.write_session_bootstrap_artifacts(
+        board_result, tmp_path / "board_refined")
+    assert sb.verify_session_evidence_bundle(board_target)["socket_pose_source"] == (
+        "per_capture_board_constrained_body")
 
 
 def test_rejects_unverified_time_and_mismatched_raw_frames(monkeypatch):

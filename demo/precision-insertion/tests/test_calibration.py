@@ -107,7 +107,8 @@ def board_measurement(monkeypatch):
                 minimum_board_corners=54):
         calls.append((tuple(sorted(images)), c2r.copy(), board_id,
                       minimum_board_corners))
-        return {"board": board_id, "table_surface_z_m": 0.0}
+        return {"board": board_id, "table_surface_z_m": 0.0,
+                "T_robot_board": np.eye(4).tolist()}
 
     monkeypatch.setattr(
         "src.execution.charuco_tabletop.measure_tabletop_from_images", measure)
@@ -210,6 +211,58 @@ def test_single_refined_capture_replays_without_repeatability_claim(
     saved = write_session_calibration(session, tmp_path / "single.json")
     replay = load_session_calibration(saved, mode=args["mode"], shared_root=tmp_path)
     np.testing.assert_allclose(replay.socket_pose_robot, session.socket_pose_robot)
+
+
+def test_board_constrained_socket_replays_and_rejects_off_board_pose(tmp_path):
+    args = _arguments(tmp_path, family="cylinder")
+    paths = AssetPaths(tmp_path, args["mode"])
+    paths.socket_collision_mesh.parent.mkdir(parents=True)
+    paths.socket_collision_mesh.write_bytes(args["socket_collision_mesh"].read_bytes())
+    args["socket_collision_mesh"] = paths.socket_collision_mesh
+    args["object_root"] = paths.object_root
+    board = np.diag([1.0, -1.0, -1.0, 1.0])
+    args["measured_board"] = {"board": "11", "table_surface_z_m": 0.0,
+                              "T_robot_board": board.tolist()}
+    args["socket_observations"] = args["socket_observations"][:2]
+    raw = paths.raw_mesh(args["mode"].socket_object)
+    raw.parent.mkdir(parents=True, exist_ok=True)
+    raw.write_text("v 0 0 0\n", encoding="utf-8")
+    symmetry = (paths.object_root / args["mode"].socket_object /
+                "processed_data/info/symmetry.json")
+    symmetry.parent.mkdir(parents=True, exist_ok=True)
+    symmetry.write_text(json.dumps({
+        "type": "Cinf", "axes": [{"axis": [0, 0, 1], "fold": "inf"}]
+    }), encoding="utf-8")
+    scores = {"cam_a": .94, "cam_b": .86}
+    fit = {"mean_body_iou": .9, "per_view_iou": scores}
+    refined = SocketCaptureRefinement(
+        capture_id="first", request_id=2, pose_world=_pose(1.1),
+        accepted_camera_ids=("cam_a", "cam_b"),
+        selected_camera_id="cam_a", per_view_iou=scores,
+        minimum_refined_iou=.8,
+        stock_selection={"selection_mode": "board_constrained_body",
+                         "best_serial": "cam_a", "n_candidates": 2,
+                         "n_masks": 2, "sil_skipped": True,
+                         "silhouette_iterations": 0, "body_fit": fit},
+        raw_mesh_sha256=hashlib.sha256(raw.read_bytes()).hexdigest(),
+        refinement_gate="board_constrained_body")
+    args["socket_capture_refinements"] = (refined,)
+    session = calibrate_session(**args)
+    assert session.record["socket_pose_source"] == "per_capture_board_constrained_body"
+    saved = write_session_calibration(session, tmp_path / "board.json")
+    load_session_calibration(saved, mode=args["mode"], shared_root=tmp_path)
+    off_board = _pose(1.1)
+    off_board[2, 3] = .01
+    args["socket_capture_refinements"] = (replace(
+        refined, pose_world=off_board),)
+    with pytest.raises(ValueError, match="not supported upright"):
+        calibrate_session(**args)
+    args["socket_capture_refinements"] = (replace(
+        refined, stock_selection={
+            **refined.stock_selection,
+            "body_fit": {"per_view_iou": scores, "mean_body_iou": "invalid"}}),)
+    with pytest.raises(ValueError, match="body fit score is invalid"):
+        calibrate_session(**args)
 
 
 def test_refined_session_rejects_one_bad_view_or_duplicate_request(

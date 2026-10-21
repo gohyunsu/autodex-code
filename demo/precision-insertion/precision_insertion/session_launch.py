@@ -322,8 +322,12 @@ def load_session_launch(
         raise ValueError("socket needs a capture and a specific SAM prompt")
     reject_incorrect_object_color(prompt)
     socket_perception_mode = record.get("socket_perception_mode", "iou")
-    if socket_perception_mode not in ("iou", "ignore_sil_loss"):
-        raise ValueError("unknown stock socket perception mode")
+    if socket_perception_mode not in ("iou", "ignore_sil_loss",
+                                      "board_constrained_body"):
+        raise ValueError("unknown socket perception mode")
+    if socket_perception_mode == "board_constrained_body" and mode.family != "cylinder":
+        raise ValueError(
+            "board-constrained body fit is only for the fixed cylinder socket")
     values = {name: _positive(record.get(name), name=name) for name in (
         "board_timeout_s", "socket_timeout_s", "image_write_timeout_s",
         "max_socket_translation_mm", "max_socket_angle_deg",

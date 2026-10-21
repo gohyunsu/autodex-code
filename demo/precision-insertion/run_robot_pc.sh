@@ -25,9 +25,21 @@ CATALOG="$STAGE/recipient_gap20_endpoint_catalog_20261013.json"
 ROBOT=${PRECISION_ROBOT_CONFIG:-$STAGE/franka_runtime_board9_gap20_distributed.json}
 
 if [[ "$MODE" == --check ]]; then
-  exec "$CHECK_PY" demo/precision-insertion/run_live.py --preflight \
-    --launch-config "$LAUNCH_TEMPLATE" --endpoint-catalog "$CATALOG" \
+  CHECK_LAUNCH=$(mktemp /tmp/precision-launch-check.XXXXXX.json)
+  trap 'rm -f "$CHECK_LAUNCH"' EXIT
+  "$CHECK_PY" - "$LAUNCH_TEMPLATE" "$CHECK_LAUNCH" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+record = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+record["socket_perception_mode"] = "board_constrained_body"
+Path(sys.argv[2]).write_text(json.dumps(record), encoding="utf-8")
+PY
+  "$CHECK_PY" demo/precision-insertion/run_live.py --preflight \
+    --launch-config "$CHECK_LAUNCH" --endpoint-catalog "$CATALOG" \
     --robot-config "$ROBOT"
+  exit
 fi
 
 RUN_TAG="$(date +%Y%m%d_%H%M%S_%N)_$$"
@@ -41,6 +53,7 @@ import sys
 template, output, run_tag = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 reused_evidence = sys.argv[4]
 record = json.loads(template.read_text(encoding="utf-8"))
+record["socket_perception_mode"] = "board_constrained_body"
 original_evidence = Path(record["evidence_dir"])
 fresh_evidence = original_evidence.with_name(f"session_evidence_{run_tag}")
 if fresh_evidence.exists():

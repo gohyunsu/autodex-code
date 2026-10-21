@@ -185,6 +185,10 @@ def test_stock_socket_perception_mode_is_explicit_in_launch(tmp_path):
     config.write_text(json.dumps(record), encoding="utf-8")
     with pytest.raises(ValueError, match="socket perception mode"):
         launch.load_session_launch(config)
+    record["socket_perception_mode"] = "board_constrained_body"
+    config.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match="only for the fixed cylinder"):
+        launch.load_session_launch(config)
 
 
 def test_board_9_partial_corner_contract_is_explicit(tmp_path):

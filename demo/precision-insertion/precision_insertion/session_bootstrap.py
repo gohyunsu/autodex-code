@@ -96,6 +96,7 @@ def bootstrap_session(
     board_id: str = "11",
     minimum_board_corners: int = 54,
     board_capture_phase: str = "empty_before_socket",
+    measured_board: dict | None = None,
 ) -> SessionBootstrap:
     """Admit socket observations, then freeze one AutoDex world.
 
@@ -224,6 +225,7 @@ def bootstrap_session(
         board_id=board_id,
         minimum_board_corners=minimum_board_corners,
         board_capture_phase=board_capture_phase,
+        measured_board=measured_board,
     )
     return SessionBootstrap(
         calibration, board_request_id, board_images_bgr, board_timestamps_s,
@@ -384,7 +386,8 @@ def verify_session_evidence_bundle(output_dir: Path) -> dict:
     if manifest.get("socket_pose_source") != source:
         raise ValueError("manifest socket pose source differs from calibration")
     refinements = calibration.get("socket_capture_refinements", [])
-    if source == "per_capture_stock_multiview_refinement":
+    if source in ("per_capture_stock_multiview_refinement",
+                  "per_capture_board_constrained_body"):
         capture_ids = manifest.get("socket_capture_ids")
         if (not isinstance(refinements, list) or
                 not isinstance(capture_ids, list) or
@@ -415,7 +418,8 @@ def verify_session_evidence_bundle(output_dir: Path) -> dict:
         folder = root / "socket" / _safe_id(capture_id, "capture ID")
         payload = json.loads((folder / "payloads.json").read_text(
             encoding="utf-8"))
-        if source == "per_capture_stock_multiview_refinement":
+        if source in ("per_capture_stock_multiview_refinement",
+                      "per_capture_board_constrained_body"):
             refinement = refined_by_capture[capture_id]
             if (payload.get("refinement") != refinement or
                     payload.get("capture_id") != capture_id or

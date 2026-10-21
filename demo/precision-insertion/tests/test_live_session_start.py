@@ -107,7 +107,8 @@ def _setup(tmp_path, monkeypatch, request_ids=(11, 12, 13), socket_count=2):
                         lambda **_kwargs: events.append("socket_renderer"))
     monkeypatch.setattr(
         "src.execution.charuco_tabletop.measure_tabletop_from_images",
-        lambda *_args, **_kwargs: events.append("board_preflight"))
+        lambda *_args, **_kwargs: (events.append("board_preflight") or
+                                   {"board": "9", "T_robot_board": np.eye(4).tolist()}))
     identifiers = iter(request_ids)
     arguments = {
         "mode": mode, "shared_root": shared,
@@ -136,7 +137,7 @@ def test_session_start_orders_board_before_socket_and_reloads_frozen_world(
         tmp_path, monkeypatch):
     arguments, events, _repre = _setup(tmp_path, monkeypatch)
     result = start.start_precision_session(**arguments)
-    assert events == ["board", "socket_renderer", "socket_init",
+    assert events == ["board", "board_preflight", "socket_renderer", "socket_init",
                       "socket_000", "socket_001",
                       "freeze_world", "save", "reload_frozen_world"]
     assert result.board_request_id == 11
@@ -149,10 +150,20 @@ def test_single_socket_capture_starts_and_saves_one_request(tmp_path, monkeypatc
     arguments, events, _repre = _setup(
         tmp_path, monkeypatch, request_ids=(11, 12), socket_count=1)
     result = start.start_precision_session(**arguments)
-    assert events == ["board", "socket_renderer", "socket_init",
+    assert events == ["board", "board_preflight", "socket_renderer", "socket_init",
                       "socket_000", "freeze_world", "save",
                       "reload_frozen_world"]
     assert result.socket_request_ids == (12,)
+
+
+def test_board_constrained_socket_skips_stock_renderer(tmp_path, monkeypatch):
+    arguments, events, _repre = _setup(
+        tmp_path, monkeypatch, request_ids=(11, 12), socket_count=1)
+    arguments["socket_perception_mode"] = "board_constrained_body"
+    start.start_precision_session(**arguments)
+    assert events == ["board", "board_preflight", "socket_init",
+                      "socket_000", "freeze_world", "save",
+                      "reload_frozen_world"]
 
 
 def test_validated_launch_does_not_repeat_fixture_hash_check(
@@ -244,7 +255,7 @@ def test_duplicate_request_or_existing_output_never_reuses_a_session(
         tmp_path, monkeypatch, request_ids=(11, 12, 12))
     with pytest.raises(ValueError, match="unique positive int31"):
         start.start_precision_session(**arguments)
-    assert events == ["board", "socket_renderer", "socket_init",
+    assert events == ["board", "board_preflight", "socket_renderer", "socket_init",
                       "socket_000", "socket_001"]
     events.clear()
     arguments["evidence_dir"].mkdir()
@@ -281,7 +292,7 @@ def test_session_rejects_unbound_saved_frame_evidence(tmp_path, monkeypatch):
     monkeypatch.setattr(start, "write_session_bootstrap_artifacts", unbound)
     with pytest.raises(ValueError, match="acquisition-bound camera frames"):
         start.start_precision_session(**arguments)
-    assert events == ["board", "socket_renderer", "socket_init",
+    assert events == ["board", "board_preflight", "socket_renderer", "socket_init",
                       "socket_000", "socket_001",
                       "freeze_world", "save"]
     assert arguments["evidence_dir"].is_dir()

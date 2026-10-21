@@ -102,8 +102,12 @@ def start_precision_session(
             not math.isfinite(minimum_socket_refined_iou) or
             not 0 < minimum_socket_refined_iou <= 1):
         raise ValueError("commissioned minimum_socket_refined_iou must be in (0,1]")
-    if socket_perception_mode not in ("iou", "ignore_sil_loss"):
-        raise ValueError("unknown stock socket perception mode")
+    if socket_perception_mode not in ("iou", "ignore_sil_loss",
+                                      "board_constrained_body"):
+        raise ValueError("unknown socket perception mode")
+    if socket_perception_mode == "board_constrained_body" and mode.family != "cylinder":
+        raise ValueError(
+            "board-constrained body fit is only for the fixed cylinder socket")
     view_limits.validate()
     if (not isinstance(calibrated_camera_ids, set) or
             len(calibrated_camera_ids) < view_limits.minimum_accepted_views or
@@ -168,22 +172,19 @@ def start_precision_session(
             calibrated_camera_ids=calibrated_camera_ids,
             acquisition_metadata_for_request=acquisition_metadata_for_request,
             timeout_s=float(board_timeout_s), request_id_factory=next_request_id)
-    # Only the empty-board workflow needs a fit before the operator places
-    # the socket. With the socket already present, calibration performs the
-    # same board fit during the final freeze, so an early fit is redundant.
-    if board_capture_phase == "empty_before_socket":
-        from src.execution.charuco_tabletop import measure_tabletop_from_images
-        with timed("board.charuco_fit", phase="board"):
-            measure_tabletop_from_images(
-                board.images_bgr, intrinsics_full, extrinsics_full, c2r,
-                board_id=board_id, minimum_board_corners=minimum_board_corners)
+    from src.execution.charuco_tabletop import measure_tabletop_from_images
+    with timed("board.charuco_fit", phase="board"):
+        measured_board = measure_tabletop_from_images(
+            board.images_bgr, intrinsics_full, extrinsics_full, c2r,
+            board_id=board_id, minimum_board_corners=minimum_board_corners)
     if (board_capture_phase == "empty_before_socket" and
             not _confirmed_socket_placement(confirm_socket_placement)):
         raise RuntimeError("operator did not confirm socket placement")
     with timed("socket.model_init", phase="socket"):
-        prepare_precision_silhouette(
-            init_orchestrator=init_orchestrator,
-            object_name=mode.socket_object, raw_mesh=socket_mesh)
+        if socket_perception_mode != "board_constrained_body":
+            prepare_precision_silhouette(
+                init_orchestrator=init_orchestrator,
+                object_name=mode.socket_object, raw_mesh=socket_mesh)
         init_orchestrator.init_object(
             obj_name=mode.socket_object, mesh_path=str(socket_mesh),
             assets_root=str(paths.foundpose_assets_root(mode.socket_object)),
@@ -221,6 +222,7 @@ def start_precision_session(
             board_id=board_id,
             minimum_board_corners=minimum_board_corners,
             board_capture_phase=board_capture_phase,
+            measured_board=measured_board,
             max_socket_translation_mm=float(max_socket_translation_mm),
             max_socket_angle_deg=float(max_socket_angle_deg),
             socket_refiner=lambda capture, admission: refine_socket_capture(
@@ -228,7 +230,9 @@ def start_precision_session(
                 init_orchestrator=init_orchestrator,
                 socket_object=mode.socket_object, raw_mesh=socket_mesh,
                 minimum_refined_iou=float(minimum_socket_refined_iou),
-                perception_mode=socket_perception_mode))
+                perception_mode=socket_perception_mode,
+                board_pose_robot=np.asarray(measured_board["T_robot_board"]),
+                c2r=c2r))
     with timed("socket.evidence_write", phase="socket", kind="io"):
         saved = write_session_bootstrap_artifacts(bootstrap, output)
     # Every source frame was bound before writing and each PNG digest was

@@ -1,8 +1,8 @@
-"""One-capture stock AutoDex socket refinement before fixture calibration.
+"""One-capture socket localization before fixture calibration.
 
-The original per-view SAM/FoundPose evidence is admitted first. This module
-selects/refines its poses and records the score against every admitted mask;
-it does not capture images or command the robot.
+The stock path remains available for comparison.  The fixed-cylinder path
+uses the acquired masks and board pose to avoid fitting the full flange mesh
+to masks that contain only the body.  Neither path captures or moves a robot.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .board_socket_fit import fit_board_socket_body
 from .calibration import (
     SocketCaptureRefinement, _file_sha256, _json_native,
 )
@@ -26,12 +27,17 @@ def refine_socket_capture(
     minimum_refined_iou: float, silhouette_iterations: int = 100,
     silhouette_loss_threshold: float = 0.003,
     perception_mode: str = "iou",
+    board_pose_robot: np.ndarray | None = None,
+    c2r: np.ndarray | None = None,
 ) -> SocketCaptureRefinement:
-    """Run stock IoU selection and silhouette, retaining all view scores.
+    """Localize one socket from admitted AutoDex camera evidence.
 
-    The supplied IoU threshold labels strong supporting views. When a view
-    misses it, use the stock silhouette result rather than imposing an extra
-    all-view veto. ``ignore_sil_loss`` matches stock run_auto's named mode:
+    Board-constrained body mode fits the fixed upright cylinder on CPU and
+    applies the configured threshold to its mean body IoU.  The legacy stock
+    modes retain their existing record format for saved-session replay.
+    In those modes, the IoU threshold labels supporting views. A low-scoring
+    view uses the stock silhouette result without an extra all-view veto.
+    ``ignore_sil_loss`` matches stock run_auto's named mode:
     it still selects by IoU and optimizes the silhouette, but records that
     its absolute loss cutoff was not applied. Neither mode proves absolute
     metric accuracy or identity.
@@ -41,15 +47,18 @@ def refine_socket_capture(
             admission.capture_id != capture.capture_id):
         raise ValueError("refinement needs matching captured/admitted evidence")
     threshold = float(minimum_refined_iou)
-    loss_limit = float(silhouette_loss_threshold)
-    if (not math.isfinite(threshold) or not 0 < threshold <= 1 or
-            not math.isfinite(loss_limit) or loss_limit <= 0 or
-            type(silhouette_iterations) is not int or
-            silhouette_iterations <= 0):
-        raise ValueError("socket refinement needs commissioned positive limits")
+    if not math.isfinite(threshold) or not 0 < threshold <= 1:
+        raise ValueError("socket refinement needs a valid body/mesh IoU limit")
     if (not isinstance(perception_mode, str) or
-            perception_mode not in ("iou", "ignore_sil_loss")):
-        raise ValueError("unknown stock socket perception mode")
+            perception_mode not in ("iou", "ignore_sil_loss",
+                                    "board_constrained_body")):
+        raise ValueError("unknown socket perception mode")
+    if perception_mode != "board_constrained_body":
+        loss_limit = float(silhouette_loss_threshold)
+        if (not math.isfinite(loss_limit) or loss_limit <= 0 or
+                type(silhouette_iterations) is not int or
+                silhouette_iterations <= 0):
+            raise ValueError("stock silhouette refinement needs positive limits")
     accepted = tuple(item.camera_id for item in admission.observations)
     if len(accepted) < 2 or len(set(accepted)) != len(accepted):
         raise ValueError("socket refinement needs at least two admitted views")
@@ -57,18 +66,53 @@ def refine_socket_capture(
     renderer = getattr(stock, "_sil", None)
     mesh = Path(raw_mesh).expanduser().resolve()
     mesh_sha = _file_sha256(mesh)
-    if (getattr(stock, "obj_name", None) != socket_object or
+    if getattr(stock, "obj_name", None) != socket_object:
+        raise ValueError("socket perception is bound to another object")
+    if perception_mode != "board_constrained_body" and (
             renderer is None or
             getattr(renderer, "_obj_name", None) != socket_object or
             getattr(renderer, "_precision_mesh_sha256", None) != mesh_sha):
         raise ValueError("socket stock renderer is not bound to the exact raw mesh")
-    if (not all(camera in stock.intrinsics_undist and
-                camera in stock.extrinsics and
-                camera in capture.masks and camera in capture.poses
-                for camera in accepted) or
-            not isinstance(stock.H, int) or not isinstance(stock.W, int)):
+    if not all(camera in stock.intrinsics_undist and
+               camera in stock.extrinsics and
+               camera in capture.masks and camera in capture.poses
+               for camera in accepted):
         raise ValueError("socket refinement camera/calibration payload is incomplete")
 
+    if perception_mode == "board_constrained_body":
+        if board_pose_robot is None or c2r is None:
+            raise ValueError("board-constrained socket fit needs board pose and C2R")
+        pose, body_fit = fit_board_socket_body(
+            masks={camera: capture.masks[camera]["mask"] for camera in accepted},
+            intrinsics_undist={camera: stock.intrinsics_undist[camera]
+                               for camera in accepted},
+            extrinsics_camera_world={camera: stock.extrinsics[camera]
+                                     for camera in accepted},
+            c2r=c2r, board_pose_robot=board_pose_robot, raw_mesh=mesh)
+        if body_fit["mean_body_iou"] < threshold:
+            raise ValueError(
+                "socket body projection does not match acquired masks: "
+                f"mean IoU {body_fit['mean_body_iou']:.3f} < {threshold:.3f}")
+        per_view = body_fit["per_view_iou"]
+        selected = max(per_view, key=per_view.__getitem__)
+        return SocketCaptureRefinement(
+            capture_id=capture.capture_id, request_id=capture.request_id,
+            pose_world=pose, accepted_camera_ids=accepted,
+            selected_camera_id=selected, per_view_iou=per_view,
+            minimum_refined_iou=threshold,
+            stock_selection={
+                "selection_mode": "board_constrained_body",
+                "best_serial": selected,
+                "n_candidates": len(accepted), "n_masks": len(accepted),
+                "sil_skipped": True, "silhouette_iterations": 0,
+                "perception_mode": perception_mode,
+                "body_fit": _json_native(body_fit),
+            },
+            raw_mesh_sha256=mesh_sha,
+            refinement_gate="board_constrained_body")
+
+    if not isinstance(stock.H, int) or not isinstance(stock.W, int):
+        raise ValueError("stock socket refinement needs image dimensions")
     refined, selection = stock.refine_from_payloads(
         capture.masks, capture.poses, subset_serials=list(accepted),
         sil_iters=silhouette_iterations, sil_lr=0.002,
