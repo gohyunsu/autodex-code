@@ -617,7 +617,9 @@ class FrankaExecutor:
             if slowdown_wrist_target is not None:
                 object_refs.append(slowdown_wrist_target)
             if not object_refs:
-                self.arm.move(target, is_servo=False, speed_scale=ss)
+                response = self.arm.move(target, is_servo=False, speed_scale=ss)
+                if isinstance(response, dict) and response.get("type") == "error":
+                    raise RuntimeError(response.get("message", "FR3 command failed"))
             else:
                 state = self.arm.get_data()
                 current = None if state is None else state.get("qpos")
@@ -634,10 +636,7 @@ class FrankaExecutor:
                     np.linspace(current, target, n_waypoints), speed=ss,
                     slowdown_wrist_references=object_refs)
         except Exception as e:
-            raise RuntimeError(
-                f"{what}: FR3 move command failed ({e}). The daemon lost or "
-                "cannot use its libfranka connection; verify robot power/network, "
-                "Desk Execution mode, unlocked joints, and active FCI.") from e
+            raise RuntimeError(f"{what}: FR3 move command failed ({e})") from e
         if self.arm.is_error():
             self.arm.error_recovery()
         # The FR3 state PUB lags the blocking move() return by a moment, so a qpos

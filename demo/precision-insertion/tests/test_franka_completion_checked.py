@@ -21,6 +21,7 @@ from precision_insertion import franka_completion_checked  # noqa: E402
 from precision_insertion.pickup_execution import (  # noqa: E402
     _reject_known_stock_follower,
 )
+from src.execution.franka_executor import FrankaExecutor  # noqa: E402
 class _Arm:
     def __init__(self, q, velocity=None, *, response=None):
         self.q = np.asarray(q, dtype=float)
@@ -180,3 +181,19 @@ def test_held_motion_requests_reflex_abort_in_stock_follower(monkeypatch):
     executor._holding_object = True
     executor._follow(np.zeros((2, 7)))
     assert seen == [True]
+
+
+def test_blocking_move_reports_daemon_reflex_instead_of_target_error():
+    class ReflexArm:
+        def move(self, _target, **_kwargs):
+            return {"type": "error", "message": "cartesian_reflex"}
+
+        def is_error(self):
+            raise AssertionError("do not recover and continue after reflex")
+
+    executor = object.__new__(FrankaExecutor)
+    executor.arm = ReflexArm()
+    executor.arm_speed_scale = 1.0
+    executor._last_release_wrist_reference = None
+    with pytest.raises(RuntimeError, match=r"home: FR3 move command failed \(cartesian_reflex\)"):
+        executor._move_to(np.zeros(7), what="home")

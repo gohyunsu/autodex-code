@@ -12,6 +12,7 @@ from __future__ import annotations
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 import math
+import os
 from pathlib import Path
 from typing import Callable, Iterator, Mapping
 
@@ -22,7 +23,9 @@ from .calibration import (
 )
 from .clear_view import ClearViewForPerception
 from .initial_visual import drain_pending_initial_visuals
-from .camera_stream import open_autodex_camera_stream
+from .camera_stream import (
+    attach_running_autodex_camera_stream, open_autodex_camera_stream,
+)
 from .silhouette_compat import prepare_precision_silhouette
 
 from .live_session_runner import (
@@ -194,8 +197,12 @@ def open_live_precision_session(
                     launch.mode.socket_object if saved_session is None
                     else launch.mode.key_object))
         with timed("startup.camera_stream_open", phase="startup", kind="io"):
-            resources.enter_context(open_autodex_camera_stream(
-                launch.pc_list, name="precision_insertion_live"))
+            if os.environ.get("PRECISION_ATTACH_CAMERAS") == "1":
+                resources.enter_context(attach_running_autodex_camera_stream(
+                    launch.pc_list, launch.capture_ips))
+            else:
+                resources.enter_context(open_autodex_camera_stream(
+                    launch.pc_list, name="precision_insertion_live"))
         if saved_session is None:
             with timed("startup.board_socket_session", phase="startup"):
                 started = cameras.start()

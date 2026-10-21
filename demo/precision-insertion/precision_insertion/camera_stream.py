@@ -54,3 +54,57 @@ def open_autodex_camera_stream(
                 controller.stop()
         finally:
             controller.end()
+
+
+@contextmanager
+def attach_running_autodex_camera_stream(
+    pc_list: tuple[str, ...], capture_ips: tuple[str, ...], *,
+    timeout_s: float = 3.0,
+) -> Iterator[dict]:
+    """Read an existing rig stream without registering or stopping its owner.
+
+    Snapshot and init daemons consume the capture PCs' shared-memory frames.
+    This mode only reads the camera health PUB; their current controller keeps
+    acquisition and its heartbeat for the entire precision session.
+    """
+    if (not pc_list or len(pc_list) != len(capture_ips) or
+            len(set(pc_list)) != len(pc_list) or
+            not 0 < timeout_s <= 30):
+        raise ValueError("attached camera stream needs aligned PCs and IPs")
+    import zmq
+
+    context = zmq.Context()
+    poller = zmq.Poller()
+    sockets = {}
+    try:
+        for pc, ip in zip(pc_list, capture_ips):
+            sock = context.socket(zmq.SUB)
+            sock.setsockopt(zmq.SUBSCRIBE, b"")
+            sock.setsockopt(zmq.LINGER, 0)
+            sock.connect(f"tcp://{ip}:5481")
+            poller.register(sock, zmq.POLLIN)
+            sockets[sock] = pc
+        statuses = {}
+        deadline = time.monotonic() + timeout_s
+        while len(statuses) < len(pc_list) and time.monotonic() < deadline:
+            for sock, _ in poller.poll(100):
+                statuses[sockets[sock]] = sock.recv_json()
+        missing = set(pc_list) - set(statuses)
+        if missing:
+            raise RuntimeError(f"camera health unavailable on {sorted(missing)}")
+        for pc, status in statuses.items():
+            summary = status.get("summary", {})
+            states = summary.get("states", {})
+            if (status.get("running") is not True or
+                    status.get("controller") in (None, "", "None") or
+                    summary.get("errors") or
+                    summary.get("detected_camera_count") !=
+                    summary.get("expected_camera_count") or
+                    not states or
+                    any(state != "CAPTURING" for state in states.values())):
+                raise RuntimeError(f"existing camera stream is not ready on {pc}")
+    finally:
+        for sock in sockets:
+            sock.close()
+        context.term()
+    yield statuses

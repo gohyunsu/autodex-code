@@ -9,9 +9,11 @@ FRANKA_NAME=precision-insertion-franka-managed
 PCS=(capture1 capture2 capture3 capture5 capture6)
 ACTION=${1:-}
 TIMING_FILE=${PRECISION_SERVICE_TIMING_FILE:-/tmp/precision-insertion-services-$(date +%Y%m%d_%H%M%S)-$$.tsv}
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+PROBE_PY=${PRECISION_SERVICE_PROBE_PY:-/home/robot/anaconda3/envs/planner/bin/python}
 
-if [[ "$ACTION" != start && "$ACTION" != check && "$ACTION" != stop && "$ACTION" != restart ]]; then
-  echo "usage: $0 {start|check|stop|restart}" >&2
+if [[ "$ACTION" != start && "$ACTION" != check && "$ACTION" != stop && "$ACTION" != restart && "$ACTION" != restart-franka ]]; then
+  echo "usage: $0 {start|check|stop|restart|restart-franka}" >&2
   exit 2
 fi
 
@@ -123,7 +125,8 @@ start_franka() {
     echo "[services] Franka daemon: started $FRANKA_NAME"
   fi
   for attempt in {1..30}; do
-    if ss -lnt | grep -q ':5555 ' && ss -lnt | grep -q ':5556 '; then
+    if ss -lnt | grep -q ':5555 ' && ss -lnt | grep -q ':5556 ' &&
+       check_franka_state; then
       record_duration franka_daemon "$started_ns"
       return 0
     fi
@@ -133,12 +136,30 @@ start_franka() {
   return 1
 }
 
-stop_managed() {
-  parallel_hosts stop
+check_franka_state() {
+  "$PROBE_PY" - "$SCRIPT_DIR" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from probe_robot_feedback_only import read_arm_feedback
+
+try:
+    read_arm_feedback(host="127.0.0.1", timeout_s=3.0)
+except Exception as exc:
+    raise SystemExit(f"[services] Franka state stream unavailable: {exc}")
+print("[services] Franka state stream: advancing")
+PY
+}
+
+stop_franka_managed() {
   if docker ps -q --filter "name=^/${FRANKA_NAME}$" | grep -q .; then
     docker stop --timeout 3 "$FRANKA_NAME" >/dev/null
     echo "[services] managed Franka daemon stopped"
   fi
+}
+
+stop_managed() {
+  parallel_hosts stop
+  stop_franka_managed
 }
 
 printf 'stage\tduration_ms\n' > "$TIMING_FILE"
@@ -151,6 +172,7 @@ case "$ACTION" in
   check)
     parallel_hosts check
     ss -lnt | grep -q ':5555 ' && ss -lnt | grep -q ':5556 '
+    check_franka_state
     echo '[services] all endpoints ready'
     ;;
   stop)
@@ -159,6 +181,10 @@ case "$ACTION" in
   restart)
     stop_managed
     parallel_hosts start
+    start_franka
+    ;;
+  restart-franka)
+    stop_franka_managed
     start_franka
     ;;
 esac

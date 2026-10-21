@@ -155,6 +155,30 @@ def test_transfer_hold_then_guarded_20mm_and_vlm_label(tmp_path, monkeypatch):
     assert runner.current_decision().action == "session_success"
 
 
+def test_preinsert_refs_use_canonical_episode_paths(tmp_path, monkeypatch):
+    episode = tmp_path / "attempt_001"
+    episode.mkdir()
+    run = tmp_path / "run"
+    (run / "attempts").mkdir(parents=True)
+    (run / "attempts" / "attempt_001").symlink_to(episode,
+                                                   target_is_directory=True)
+    bound, runner, *_ = _handler(run)
+    monkeypatch.setattr(live_task_handlers, "execute_bound_held_transfer",
+                        lambda **_kwargs: None)
+    monkeypatch.setattr(live_task_handlers, "write_raw_camera_capture",
+                        lambda *_args, **_kwargs: None)
+    bound.transfer_and_observe(runner, runner.current_decision())
+    assessment = runner.events[0][1]
+    label_refs = runner.events[1][3]["evidence_refs"]
+    canonical_transfer = episode / "transfer_execution.json"
+    canonical_raw = (episode / "raw_captures" / "preinsert" /
+                     "preinsert_001")
+    assert assessment["transfer_execution_path"] == canonical_transfer
+    assert assessment["raw_bundle"] == canonical_raw
+    assert label_refs["trajectory"] == str(canonical_transfer)
+    assert label_refs["preinsert_image"] == str(canonical_raw / "manifest.json")
+
+
 @pytest.mark.parametrize("result", [
     {"safety_abort": True, "grasp_held": True},
     {"safety_abort": False, "grasp_held": False},

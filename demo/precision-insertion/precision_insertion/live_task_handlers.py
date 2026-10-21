@@ -99,7 +99,7 @@ class LiveTaskHandlers:
         attempt = runner.active_attempt
         output = (Path(runner.output_dir) / "attempts" /
                   attempt.attempt_id / "raw_captures" / phase /
-                  capture.capture_id)
+                  capture.capture_id).resolve()
         write_raw_camera_capture(capture, output, phase=phase)
         # Downstream checkpoint readers perform the one required disk read.
         return output, capture
@@ -134,8 +134,10 @@ class LiveTaskHandlers:
                 timestamp_s=self.decision_time(),
                 evidence_refs={"transfer_failure": str(failure_path)})
             return
+        # Episode links under _pipeline_runs point to the same file as the
+        # canonical attempt directory. Use the path saved by the checkpoint.
         transfer_log = (Path(runner.output_dir) / "attempts" /
-                        attempt.attempt_id / "transfer_execution.json")
+                        attempt.attempt_id / "transfer_execution.json").resolve()
         raw, capture = self._capture(
             runner=runner, decision=decision,
             callback=self.capture_preinsert, phase="preinsert")

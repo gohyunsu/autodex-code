@@ -2,12 +2,15 @@
 
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from precision_insertion.camera_stream import open_autodex_camera_stream  # noqa: E402
+from precision_insertion.camera_stream import (  # noqa: E402
+    attach_running_autodex_camera_stream, open_autodex_camera_stream,
+)
 
 
 class Controller:
@@ -56,3 +59,63 @@ def test_camera_stream_rejects_foreign_owner_and_still_closes():
                 controller_factory=lambda *_args, **_kwargs: controller):
             pytest.fail("foreign camera owner must not yield")
     assert controller.events[-2:] == [("stop",), ("end",)]
+
+
+def test_attached_camera_stream_reads_health_without_control(monkeypatch):
+    events = []
+    class Socket:
+        def setsockopt(self, *args):
+            events.append("setsockopt")
+        def connect(self, addr):
+            events.append(("connect", addr))
+        def recv_json(self):
+            return {"running": True, "controller": "rig_manager",
+                    "summary": {"expected_camera_count": 1,
+                                "detected_camera_count": 1,
+                                "errors": {}, "states": {"camera": "CAPTURING"}}}
+        def close(self):
+            events.append("close")
+    class Context:
+        def socket(self, kind):
+            assert kind == 1
+            return Socket()
+        def term(self):
+            events.append("term")
+    class Poller:
+        def register(self, sock, kind):
+            self.sock = sock
+            assert kind == 2
+        def poll(self, timeout):
+            return [(self.sock, 2)]
+    monkeypatch.setitem(sys.modules, "zmq", SimpleNamespace(
+        Context=Context, Poller=Poller, SUB=1, POLLIN=2, SUBSCRIBE=3, LINGER=4))
+    with attach_running_autodex_camera_stream(
+            ("capture1",), ("192.168.0.101",)) as statuses:
+        assert statuses["capture1"]["controller"] == "rig_manager"
+    assert events == ["setsockopt", "setsockopt",
+                      ("connect", "tcp://192.168.0.101:5481"),
+                      "close", "term"]
+
+
+def test_attached_camera_stream_rejects_nonrunning_health(monkeypatch):
+    class Socket:
+        def setsockopt(self, *args): pass
+        def connect(self, addr): pass
+        def recv_json(self):
+            return {"running": False, "controller": "rig_manager",
+                    "summary": {"expected_camera_count": 1,
+                                "detected_camera_count": 1,
+                                "errors": {}, "states": {"camera": "CAPTURING"}}}
+        def close(self): pass
+    class Context:
+        def socket(self, kind): return Socket()
+        def term(self): pass
+    class Poller:
+        def register(self, sock, kind): self.sock = sock
+        def poll(self, timeout): return [(self.sock, 2)]
+    monkeypatch.setitem(sys.modules, "zmq", SimpleNamespace(
+        Context=Context, Poller=Poller, SUB=1, POLLIN=2, SUBSCRIBE=3, LINGER=4))
+    with pytest.raises(RuntimeError, match="not ready"):
+        with attach_running_autodex_camera_stream(
+                ("capture1",), ("192.168.0.101",)):
+            pytest.fail("nonrunning camera stream must not yield")
