@@ -5,7 +5,7 @@ flange (fr3_link8) is then at the exact pose the planner/executor assume, so
 the mount orientation can be checked against the URDF convention.
 
     python src/execution/franka_home.py                 # -> FR3_INIT
-    python src/execution/franka_home.py --clear_view    # -> FR3_INIT with j0 -40deg
+    python src/execution/franka_home.py --clear_view    # -> FR3_CLEAR_VIEW
     python src/execution/franka_home.py --print_only    # read qpos, do not move
     python src/execution/franka_home.py --with_hand     # also open the hand
 
@@ -23,15 +23,13 @@ if _REPO_ROOT not in sys.path:
 
 import numpy as np
 
-from autodex.utils.robot_config import FR3_INIT, FR3_INSPIRE_LINK_TO_WRIST
-
-CLEAR_VIEW_J0_DEG = -40.0   # same convention as FrankaExecutor
+from autodex.utils.robot_config import FR3_CLEAR_VIEW, FR3_INIT
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--clear_view", action="store_true",
-                    help="go to the clear-view pose (FR3_INIT with j0 -40deg)")
+                    help="go to the configured FR3_CLEAR_VIEW pose")
     ap.add_argument("--print_only", action="store_true", help="read state, do not move")
     ap.add_argument("--with_hand", action="store_true",
                     help="also connect the inspire hand and open it (hand must be mounted)")
@@ -39,15 +37,13 @@ def main():
     ap.add_argument("--speed", type=float, default=0.2, help="blocking-move speed scale")
     args = ap.parse_args()
 
-    target = np.asarray(FR3_INIT, dtype=np.float64).copy()
-    if args.clear_view:
-        target[0] += np.deg2rad(CLEAR_VIEW_J0_DEG)
+    target = np.asarray(
+        FR3_CLEAR_VIEW if args.clear_view else FR3_INIT,
+        dtype=np.float64).copy()
 
     print(f"FR3_INIT  = {np.round(FR3_INIT, 5).tolist()}")
     print(f"target    = {np.round(target, 5).tolist()}"
           f"{'  (clear_view)' if args.clear_view else ''}")
-    print("link7->wrist (URDF fixed chain, hand base_link):")
-    print(np.round(FR3_INSPIRE_LINK_TO_WRIST, 4))
 
     from paradex.io.robot_controller import get_arm, get_hand
     arm = get_arm("franka")

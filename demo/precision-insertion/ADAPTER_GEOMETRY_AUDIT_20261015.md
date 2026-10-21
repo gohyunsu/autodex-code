@@ -129,6 +129,16 @@ not a physical trial of the replacement. Startup still uses AutoDex's blocking
 free-space `home` command. No further robot motion was commanded after the
 operator's pause request.
 
+Saved real camera frames `25322649` and `25305461` from run
+`20261021_100220_060896` were used to render a read-only comparison. The
+measured-current CAD aligns with the visible robot; the right-hand comparison
+panels show only the proposed joints, not a second physical capture. The
+source paths and SHA-256 hashes are recorded in
+`/tmp/precision-clear-view-review-20261021/manifest.json` alongside the two
+`*_hand_closeup.jpg` comparisons. `src/execution/franka_home.py --clear_view`
+also reads this configured target, so the standalone parking command no
+longer silently uses the previous base-only rotation.
+
 Read-only verification:
 
 ```bash
