@@ -249,8 +249,9 @@ to the chosen target. Measured FR3 joints after the move were
 `[-0.701719, -0.334555, -0.153736, -2.259167, 0.792979, 1.613225,
 -0.576440]` rad (maximum target error 0.00976 rad, maximum joint velocity
 0.00284 rad/s). The executor was closed. No pickup, insertion, or other task
-motion was commanded in this pose-only check. Operator visual review of the
-new physical posture is still pending.
+motion was commanded in this pose-only check. The operator then confirmed
+that the arm and hand direction and key/socket camera view were satisfactory,
+with no contact or change in the board/socket/key arrangement.
 
 After the target change, `python -m pytest demo/precision-insertion/tests -q`
 in the planner environment passed (1066 passed, 4 skipped, 31.16 s), the
