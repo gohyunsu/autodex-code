@@ -476,8 +476,9 @@ def test_square_grounding_rejects_roi_without_spending_vlm_call(
     assert kwargs["backend"].calls == 0
 
 
-def test_cylinder_retry_diagnostic_accepts_explicit_lossless_rois(
-        tmp_path, monkeypatch):
+@pytest.mark.parametrize("explicit_roi", [False, True])
+def test_cylinder_retry_diagnostic_uses_lossless_rois(
+        tmp_path, monkeypatch, explicit_roi):
     kwargs = _inputs(tmp_path, monkeypatch)
     for name in ("planner", "held_key_observation", "held_key_evidence_dir"):
         kwargs.pop(name)
@@ -507,7 +508,8 @@ def test_cylinder_retry_diagnostic_accepts_explicit_lossless_rois(
         native_pixel_coordinates = True
 
         def infer(self, images, prompt):
-            assert images[0].size == (256, 256)
+            assert images[0].size == (
+                (256, 256) if explicit_roi else (640, 640))
             assert "CROP-CANVAS" in prompt
             return json.dumps({"tip_px": None, "axis_line_px": None,
                                "evidence": "key occluded"})
@@ -520,10 +522,11 @@ def test_cylinder_retry_diagnostic_accepts_explicit_lossless_rois(
         max_lateral_uncertainty_95_m=.0005,
         systematic_lateral_sigma_m=.0001,
         cad_spacing_sigma_m=.0005, minimum_views=2)
+    options = ({"roi_xyxy_by_camera": {
+        frame.camera_id: (0, 0, 100, 100)
+        for frame in kwargs["frames"]}} if explicit_roi else {})
     result = assess_grounded_xy_diagnostic(
-        **kwargs, alignment_limits=limits,
-        roi_xyxy_by_camera={frame.camera_id: (0, 0, 100, 100)
-                            for frame in kwargs["frames"]})
+        **kwargs, alignment_limits=limits, **options)
     assert result.status == "diagnostic_exploratory_xy_step"
     assert result.alignment["xy_source"] == (
         "no_metric_measurement_exploratory_search")

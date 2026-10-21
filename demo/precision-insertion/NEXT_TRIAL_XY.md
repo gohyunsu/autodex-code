@@ -13,6 +13,11 @@ same saved raw views—not a newly lifted key and not a CAD overlay—are sent t
 local Qwen (Gemini is optional) to mark the visible insertion-tip center and
 cylinder-axis line. Camera intrinsics/extrinsics and the frozen session socket
 pose—not VLM text—produce a socket-frame metric XY estimate.
+The local Qwen path frames each native-pixel input with a lossless 640 px crop
+centred between the projected commanded tip and frozen socket rim. The crop
+only locates the image region; its projected points are never promoted to
+observed landmarks. The saved original frame, crop translation and Qwen marks
+remain linked so returned pixels map exactly into the undistorted full frame.
 
 - Two or more visible tips: triangulate in 3D. If the axis-line fit is usable,
   minimize mean XY error at the rim and 20 mm depth; otherwise use tip XY with

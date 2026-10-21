@@ -34,7 +34,9 @@ from .grounded_alignment import (
     observe_grounded_cylinder_axis, observe_grounded_cylinder_axis_cropped,
     resolve_xy_only_cylinder_alignment,
 )
-from .grounding_crop import verify_native_crop_observation
+from .grounding_crop import (
+    nominal_preinsert_rois, verify_native_crop_observation,
+)
 from .held_relation import HeldRelation, resolve_postlift_held_relation
 from .key_perception import KeyPoseObservation, verify_key_capture_artifacts
 from .live_robot_state import LiveRobotState
@@ -59,6 +61,26 @@ def _digest(value: dict) -> str:
     return hashlib.sha256(json.dumps(
         value, sort_keys=True, separators=(",", ":"), allow_nan=False,
     ).encode("utf-8")).hexdigest()
+
+
+def _cylinder_tip_and_rois(
+    *, postlift_file: Path, socket: np.ndarray, tip_z_m: float,
+    socket_rim_z_m: float, frames: Sequence[CalibratedXYFrame],
+    backend: ImageVLM,
+    roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]] | None,
+) -> tuple[np.ndarray, Mapping[str, tuple[int, int, int, int]] | None]:
+    nominal = json.loads(postlift_file.read_text(encoding="utf-8"))
+    T_robot_key = validate_se3(
+        nominal["targets"]["T_robot_key_preinsert"],
+        name="commanded preinsert key target")
+    tip_robot = T_robot_key @ np.array([0., 0., tip_z_m, 1.])
+    tip_socket = np.linalg.inv(socket) @ tip_robot
+    if (roi_xyxy_by_camera is None and
+            getattr(backend, "native_pixel_coordinates", False)):
+        roi_xyxy_by_camera = nominal_preinsert_rois(
+            frames, tip_socket_m=tip_socket[:3],
+            socket_rim_z_m=socket_rim_z_m)
+    return tip_socket, roi_xyxy_by_camera
 
 
 @dataclass(frozen=True)
@@ -792,6 +814,11 @@ def _compute_grounded_alignment(
                 verification_depth_m=mode.target_depth_m,
                 limits=alignment_limits, yaw_relevant=True)
     else:
+        tip_socket, roi_xyxy_by_camera = _cylinder_tip_and_rois(
+            postlift_file=postlift_file, socket=socket, tip_z_m=tip_z,
+            socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
+            frames=calibrated, backend=backend,
+            roi_xyxy_by_camera=roi_xyxy_by_camera)
         if roi_xyxy_by_camera is None:
             grounded, observations = observe_grounded_cylinder_axis(
                 backend, calibrated)
@@ -808,12 +835,6 @@ def _compute_grounded_alignment(
             socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
             verification_depth_m=mode.target_depth_m,
             limits=alignment_limits)
-        nominal = json.loads(postlift_file.read_text(encoding="utf-8"))
-        T_robot_key = validate_se3(
-            nominal["targets"]["T_robot_key_preinsert"],
-            name="commanded preinsert key target")
-        tip_robot = T_robot_key @ np.array([0., 0., tip_z, 1.])
-        tip_socket = np.linalg.inv(socket) @ tip_robot
         alignment = resolve_xy_only_cylinder_alignment(
             grounded, alignment,
             nominal_tip_z_socket_m=float(tip_socket[2]),
@@ -1013,6 +1034,11 @@ def assess_grounded_xy_diagnostic(
                 verification_depth_m=mode.target_depth_m,
                 limits=alignment_limits, yaw_relevant=True)
     else:
+        tip_socket, roi_xyxy_by_camera = _cylinder_tip_and_rois(
+            postlift_file=postlift_file, socket=socket, tip_z_m=tip_z,
+            socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
+            frames=calibrated, backend=backend,
+            roi_xyxy_by_camera=roi_xyxy_by_camera)
         if roi_xyxy_by_camera is None:
             grounded, observations = observe_grounded_cylinder_axis(
                 backend, calibrated)
@@ -1030,12 +1056,6 @@ def assess_grounded_xy_diagnostic(
             socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
             verification_depth_m=mode.target_depth_m,
             limits=alignment_limits)
-        nominal = json.loads(postlift_file.read_text(encoding="utf-8"))
-        T_robot_key = validate_se3(
-            nominal["targets"]["T_robot_key_preinsert"],
-            name="commanded preinsert key target")
-        tip_robot = T_robot_key @ np.array([0., 0., tip_z, 1.])
-        tip_socket = np.linalg.inv(socket) @ tip_robot
         alignment = resolve_xy_only_cylinder_alignment(
             grounded, alignment,
             nominal_tip_z_socket_m=float(tip_socket[2]),

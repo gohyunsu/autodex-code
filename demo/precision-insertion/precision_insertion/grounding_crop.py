@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
+import numpy as np
 from PIL import Image
 
 
@@ -82,6 +83,47 @@ def make_native_grounding_crop(
     return NativeGroundingCrop(
         image, raw.size, (x0, y0, x1, y1), (width, height),
         patch_factor_px, minimum_side_px)
+
+
+def nominal_preinsert_rois(
+    frames, *, tip_socket_m: np.ndarray, socket_rim_z_m: float,
+    crop_side_px: int = 640,
+) -> dict[str, tuple[int, int, int, int]]:
+    """Frame a saved key tip and socket using only frozen command geometry.
+
+    These projections locate a lossless VLM input crop. They are never used as
+    observed landmarks or as evidence that the key followed the command.
+    """
+    tip = np.asarray(tip_socket_m, dtype=float)
+    if (tip.shape != (3,) or not np.all(np.isfinite(tip)) or
+            not np.isfinite(socket_rim_z_m) or
+            type(crop_side_px) is not int or crop_side_px < 256):
+        raise ValueError("nominal preinsert crop needs finite geometry and size")
+    rois = {}
+    for frame in frames:
+        transform = np.asarray(frame.T_camera_socket, dtype=float)
+        intrinsic = np.asarray(frame.intrinsics, dtype=float)
+        if (transform.shape != (4, 4) or intrinsic.shape != (3, 3) or
+                not np.all(np.isfinite(transform)) or
+                not np.all(np.isfinite(intrinsic))):
+            raise ValueError("nominal preinsert crop needs calibrated cameras")
+
+        def pixel(point):
+            camera = transform[:3, :3] @ point + transform[:3, 3]
+            if camera[2] <= 0:
+                raise ValueError("nominal preinsert point lies behind camera")
+            homogeneous = intrinsic @ camera
+            return homogeneous[:2] / homogeneous[2]
+
+        rim = np.array([0., 0., float(socket_rim_z_m)])
+        center = (pixel(tip) + pixel(rim)) / 2
+        side = min(crop_side_px, frame.raw.width, frame.raw.height)
+        x0 = int(np.clip(round(center[0] - side / 2),
+                         0, frame.raw.width - side))
+        y0 = int(np.clip(round(center[1] - side / 2),
+                         0, frame.raw.height - side))
+        rois[frame.camera_id] = (x0, y0, x0 + side, y0 + side)
+    return rois
 
 
 def verify_native_crop_observation(

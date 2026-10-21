@@ -10,7 +10,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.grounding_crop import (  # noqa: E402
-    make_native_grounding_crop, verify_native_crop_observation,
+    make_native_grounding_crop, nominal_preinsert_rois,
+    verify_native_crop_observation,
 )
 from precision_insertion.grounded_alignment import (  # noqa: E402
     observe_grounded_cylinder_axis_cropped,
@@ -30,6 +31,19 @@ def test_right_bottom_padding_does_not_rescale_source_pixels():
     with pytest.raises(ValueError, match="padding"):
         crop.to_full_pixel((80., 60.))
     assert crop.mapping_record()["resampled"] is False
+
+
+def test_nominal_preinsert_roi_uses_calibrated_projection_only():
+    frame = CalibratedXYFrame(
+        "camera1", 1., Image.new("RGB", (2048, 1536)), np.eye(4),
+        np.array([[1000., 0., 1024.], [0., 1000., 768.], [0., 0., 1.]]))
+    rois = nominal_preinsert_rois(
+        [frame], tip_socket_m=np.array([.01, -.02, 1.]),
+        socket_rim_z_m=.5)
+    assert rois == {"camera1": (709, 438, 1349, 1078)}
+    crop = make_native_grounding_crop(frame.raw, rois["camera1"])
+    assert crop.model_size_px == (640, 640)
+    assert crop.to_full_pixel((320., 320.)) == (1029., 758.)
 
 
 @pytest.mark.parametrize("roi", [
