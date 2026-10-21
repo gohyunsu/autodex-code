@@ -62,6 +62,54 @@ def _image_frames(root: Path, record: dict, cameras: list[str], phase: str):
     return frames, rows
 
 
+def _socket_focus_roi(
+    image_size: tuple[int, int], bbox: list[int],
+) -> tuple[int, int, int, int]:
+    """Keep the socket and protruding key visible at classifier resolution."""
+    width, height = image_size
+    if (not isinstance(bbox, list) or len(bbox) != 4 or
+            any(type(value) is not int for value in bbox)):
+        raise ValueError("socket projection needs four integer pixels")
+    x0, y0, x1, y1 = bbox
+    if not (0 <= x0 < x1 <= width and 0 <= y0 < y1 <= height):
+        raise ValueError("socket projection is outside the final camera image")
+    socket_width, socket_height = x1 - x0, y1 - y0
+    left = max(0, int(x0 - .5 * socket_width))
+    top = max(0, int(y0 - 1.2 * socket_height))
+    right = min(width, int(x1 + .5 * socket_width))
+    bottom = min(height, int(y1 + .3 * socket_height))
+    return left, top, right, bottom
+
+
+def _focus_final_frames(
+    frames: list[LabeledFrame], initial: dict,
+) -> tuple[list[LabeledFrame], dict[str, dict]]:
+    projections = (initial.get("consistency", {})
+                   .get("socket_exclusion", {}).get("per_camera", {}))
+    focused, records = [], {}
+    for frame in frames:
+        projection = projections.get(frame.camera_id)
+        if projection is None:
+            focused.append(frame)
+            continue
+        bbox = projection.get("projected_hull_bbox_px")
+        if (not isinstance(bbox, list) or len(bbox) != 4 or
+                not (0 <= bbox[0] < bbox[2] <= frame.image.width and
+                     0 <= bbox[1] < bbox[3] <= frame.image.height)):
+            focused.append(frame)
+            continue
+        roi = _socket_focus_roi(
+            frame.image.size, bbox)
+        crop = frame.image.crop(roi)
+        focused.append(LabeledFrame(
+            frame.camera_id, frame.phase, frame.timestamp_s, crop))
+        records[frame.camera_id] = {
+            "roi_xyxy_full_px": list(roi),
+            "crop_rgb_sha256": hashlib.sha256(crop.tobytes()).hexdigest(),
+        }
+    return focused, records
+
+
 def assess_released_insertion_checkpoint(
     *, attempt_id: str, candidate_id: str, target_depth_m: float,
     session_calibration_sha256: str, initial_key_bundle: Path,
@@ -129,6 +177,7 @@ def assess_released_insertion_checkpoint(
         initial_image_root, initial, cameras, "initial_tabletop")
     later, later_inputs = _image_frames(
         final_root, final, cameras, "final_clear_view")
+    later, final_visual_crops = _focus_final_frames(later, initial)
     frames.extend(later)
     inputs.extend(later_inputs)
     for camera in cameras:
@@ -171,6 +220,7 @@ def assess_released_insertion_checkpoint(
         "release_record_path": str(release_path),
         "release_record_sha256": _sha(release_path),
         "frames": inputs, "visual": visual.to_record(),
+        "final_visual_crops": final_visual_crops,
         "minimum_visual_views": minimum_visual_views,
         "max_phase_skew_s": max_phase_skew_s,
         "effective_vlm_class": visual_class,
@@ -245,6 +295,24 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
             len(grouped["initial_tabletop"]) < report["minimum_visual_views"] or
             report["visual"].get("image_order") != expected_order):
         raise ValueError("released-insertion camera pairs changed")
+    if "final_visual_crops" in report:
+        replay_frames, _ = _image_frames(
+            final_root, final, sorted(grouped["final_clear_view"]),
+            "final_clear_view")
+        _, expected_crops = _focus_final_frames(replay_frames, initial)
+        if report["final_visual_crops"] != expected_crops:
+            raise ValueError("released-insertion socket crops changed")
+        aggregation = report["visual"].get("aggregation") or {}
+        for camera, row in zip(
+                aggregation.get("completed_camera_ids", []),
+                aggregation.get("per_view", [])):
+            if camera in expected_crops:
+                transform = row.get("input_transform") or {}
+                images = transform.get("images") or []
+                if (len(images) != 2 or
+                        images[1].get("source_rgb_sha256") !=
+                        expected_crops[camera]["crop_rgb_sha256"]):
+                    raise ValueError("released-insertion VLM crop input changed")
     verify_per_view_consensus(
         report["visual"], field="visual_class", fallback="unobservable",
         cameras=grouped["initial_tabletop"], before="initial_tabletop",

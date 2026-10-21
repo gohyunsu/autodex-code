@@ -321,6 +321,27 @@ def test_released_label_pairs_initial_and_clear_view_raw_per_camera(
         "insertion_success"] is True
 
 
+def test_final_classifier_crops_around_frozen_socket_projection():
+    from PIL import Image
+    from precision_insertion.observer import LabeledFrame
+    from precision_insertion.released_insertion_checkpoint import (
+        _focus_final_frames,
+    )
+
+    source = Image.new("RGB", (2048, 1536), "black")
+    frame = LabeledFrame("cam_a", "final_clear_view", 123., source)
+    initial = {"consistency": {"socket_exclusion": {"per_camera": {
+        "cam_a": {"projected_hull_bbox_px": [947, 955, 1343, 1244]},
+    }}}}
+    frames, crops = _focus_final_frames([frame], initial)
+    assert len(frames) == 1
+    assert frames[0].image.size[0] < source.width
+    assert frames[0].image.size[1] < source.height
+    assert crops["cam_a"]["roi_xyxy_full_px"] == [749, 608, 1541, 1330]
+    assert crops["cam_a"]["crop_rgb_sha256"] == hashlib.sha256(
+        frames[0].image.tobytes()).hexdigest()
+
+
 def test_reviewed_visual_depth_can_complete_task_label(tmp_path, monkeypatch):
     from precision_insertion import depth_admission
 

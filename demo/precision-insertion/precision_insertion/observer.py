@@ -511,18 +511,20 @@ def _infer_closed_set(
 def _per_view_consensus(
     backend: ImageVLM, *, stage: str, frames: Sequence[LabeledFrame],
     prompt_body: str, field: str, allowed: frozenset[str], fallback: str,
-    before: str, after: str,
+    before: str, after: str, majority: bool = False,
 ) -> VLMObservation:
     """Bound local VLM memory to a temporal pair, then require agreement.
 
-    Abstaining/invalid views do not vote. Any conflict between decisive
-    cameras abstains rather than letting an arbitrary camera ordering win.
+    Abstaining/invalid views do not vote. Most stages abstain on conflicting
+    decisive cameras. The released-key stage uses a majority of configured
+    cameras, so one false negative cannot veto three agreeing views.
     The aggregate is explicitly synthetic; exact model replies remain in
     ``aggregation.per_view`` for replay and inspection.
     """
     _require_temporal_camera_pairs(frames, before=before, after=after)
     order = _frame_order(frames)
     cameras = sorted({frame.camera_id for frame in frames})
+    minimum_support = (len(cameras) // 2 + 1) if majority else 2
     def observe_camera(camera: str) -> VLMObservation:
         pair = [next(frame for frame in frames
                      if frame.camera_id == camera and frame.phase == phase)
@@ -547,7 +549,8 @@ def _per_view_consensus(
             selected = sorted(done)
             result = _consensus_parsed(
                 [done[camera].to_record() for camera in selected],
-                field=field, fallback=fallback, cameras=selected)
+                field=field, fallback=fallback, cameras=selected,
+                majority=majority, minimum_support=minimum_support)
             return result[field] != fallback
         completed = map_view_calls_until(
             backend, cameras, observe_camera, sufficient)
@@ -558,7 +561,8 @@ def _per_view_consensus(
         observations = map_view_calls(backend, cameras, observe_camera)
     parsed = _consensus_parsed(
         [row.to_record() for row in observations], field=field,
-        fallback=fallback, cameras=voted_cameras)
+        fallback=fallback, cameras=voted_cameras, majority=majority,
+        minimum_support=minimum_support)
     prompt = (
         "Images are supplied in this exact order:\n" +
         "\n".join(f"{index + 1}: {label}" for index, label in
@@ -572,6 +576,7 @@ def _per_view_consensus(
         sum(row.latency_s for row in observations), aggregation={
             "schema": "precision_insertion_per_camera_vlm_consensus_v1",
             "per_view": [row.to_record() for row in observations],
+            **({"vote_rule": "configured_camera_majority"} if majority else {}),
             **({"completed_camera_ids": voted_cameras,
                 "requested_camera_ids": cameras} if early is not None else {}),
         })
@@ -579,7 +584,8 @@ def _per_view_consensus(
 
 def _consensus_parsed(
     per_view: Sequence[dict], *, field: str, fallback: str,
-    cameras: Sequence[str],
+    cameras: Sequence[str], majority: bool = False,
+    minimum_support: int = 2,
 ) -> dict:
     votes: dict[str, list[str]] = {}
     for camera, row in zip(cameras, per_view):
@@ -588,9 +594,12 @@ def _consensus_parsed(
                 answer.get(field) != fallback and
                 answer.get("evidence_views") == [camera]):
             votes.setdefault(answer[field], []).append(camera)
-    if len(votes) == 1:
-        label, supporters = next(iter(votes.items()))
-        if len(supporters) >= 2:
+    if votes:
+        label, supporters = max(votes.items(), key=lambda item: len(item[1]))
+        dissent = sum(len(rows) for other, rows in votes.items()
+                      if other != label)
+        if (len(supporters) >= minimum_support and
+                (dissent == 0 or majority and len(supporters) > dissent)):
             return {field: label, "evidence": "Independent same-camera votes",
                     "evidence_views": supporters}
     return {field: fallback, "evidence": "Insufficient or conflicting views",
@@ -607,7 +616,11 @@ def verify_per_view_consensus(
         return
     if (not isinstance(aggregation, dict) or aggregation.get("schema") !=
             "precision_insertion_per_camera_vlm_consensus_v1" or
-            not isinstance(aggregation.get("per_view"), list)):
+            not isinstance(aggregation.get("per_view"), list) or
+            aggregation.get("vote_rule") not in {
+                None, "configured_camera_majority"} or
+            (aggregation.get("vote_rule") is not None and
+             visual.get("stage") != "released_insertion_visual")):
         raise ValueError("invalid per-camera VLM aggregation")
     ordered = aggregation.get("completed_camera_ids", sorted(cameras))
     if (not isinstance(ordered, list) or
@@ -644,7 +657,11 @@ def verify_per_view_consensus(
                 raise ValueError("per-camera VLM raw answer changed")
     expected = _consensus_parsed(
         aggregation["per_view"], field=field, fallback=fallback,
-        cameras=ordered)
+        cameras=ordered,
+        majority=aggregation.get("vote_rule") ==
+        "configured_camera_majority",
+        minimum_support=(len(cameras) // 2 + 1) if aggregation.get(
+            "vote_rule") == "configured_camera_majority" else 2)
     if (visual.get("parsed") != expected or
             visual.get("raw_answer") != json.dumps(expected, sort_keys=True) or
             visual.get("parse_error") is not None):
@@ -749,6 +766,7 @@ def observe_released_insertion_visual(
         }),
         fallback="unobservable",
         before="initial_tabletop", after="final_clear_view",
+        majority=True,
     )
 
 

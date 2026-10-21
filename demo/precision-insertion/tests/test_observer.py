@@ -426,6 +426,51 @@ def test_released_insertion_pairs_each_camera_without_overlay():
     assert all("CAD" not in prompt for _images, prompt in backend.calls)
 
 
+def test_released_insertion_two_views_can_outvote_one_false_negative():
+    class PairBackend(FakeBackend):
+        preferred_image_batch_size = 2
+
+    cameras = ("front", "side", "wide")
+    frames = [
+        LabeledFrame(camera, phase, timestamp, _image())
+        for camera in cameras
+        for phase, timestamp in (("initial_tabletop", 1.0),
+                                 ("final_clear_view", 2.0))
+    ]
+    answers = [json.dumps({
+        "visual_class": label, "evidence_views": [camera],
+        "evidence": "visible socket relation",
+    }) for camera, label in zip(
+        cameras, ("inside_socket", "inside_socket", "outside_socket"))]
+    result = observe_released_insertion_visual(
+        PairBackend(*answers), frames)
+    assert result.parsed["visual_class"] == "inside_socket"
+    assert result.parsed["evidence_views"] == ["front", "side"]
+    verify_per_view_consensus(
+        result.to_record(), field="visual_class", fallback="unobservable",
+        cameras=set(cameras), before="initial_tabletop",
+        after="final_clear_view")
+
+
+def test_five_camera_final_vote_waits_for_third_agreeing_view():
+    from precision_insertion.observer import _consensus_parsed
+
+    cameras = ["1", "2", "3", "4", "5"]
+    labels = ["inside_socket", "outside_socket", "inside_socket",
+              "outside_socket", "inside_socket"]
+    rows = [{"parsed": {"visual_class": label,
+                        "evidence_views": [camera]},
+             "parse_error": None}
+            for camera, label in zip(cameras, labels)]
+    def vote(count):
+        return _consensus_parsed(
+            rows[:count], field="visual_class", fallback="unobservable",
+            cameras=cameras[:count], majority=True, minimum_support=3)
+
+    assert vote(3)["visual_class"] == "unobservable"
+    assert vote(5)["visual_class"] == "inside_socket"
+
+
 def test_preinsert_occlusion_conflict_or_wrong_camera_abstains():
     for answers in (
         (_preinsert_answer("coarse_match", "front"),

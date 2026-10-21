@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import time
 from typing import Callable, Mapping
@@ -54,13 +55,27 @@ class LiveGroundedRetryHandlers:
         if runner._postlift_report_path is None:
             raise ValueError("retry needs this attempt's saved post-lift plan")
         diagnostic_index = runner._retry_assessment_index
-        diagnostic = runner.prepare_saved_preinsert_xy_diagnostic(
-            backend=self.backend,
-            limits=self.retry_limits, alignment_limits=self.alignment_limits,
-            square_translation_only=(runner.mode.family == "square"),
-            **dict(self.diagnostic_parameters))
         diagnostic_path = self._report(
             runner, "xy_retry_assessments", diagnostic_index)
+        try:
+            diagnostic = runner.prepare_saved_preinsert_xy_diagnostic(
+                backend=self.backend,
+                limits=self.retry_limits, alignment_limits=self.alignment_limits,
+                square_translation_only=(runner.mode.family == "square"),
+                **dict(self.diagnostic_parameters))
+        except (RuntimeError, TimeoutError) as exc:
+            if "capture-PC Qwen" not in str(exc):
+                raise
+            diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
+            diagnostic_path.write_text(json.dumps({
+                "schema": "precision_insertion_xy_diagnostic_unavailable_v1",
+                "attempt_id": runner.active_attempt.attempt_id,
+                "candidate_id": decision.candidate_id,
+                "reason": "vlm_backend_unavailable",
+                "error": str(exc),
+            }, indent=2) + "\n", encoding="utf-8")
+            self._unavailable(runner, "vlm_backend_unavailable", diagnostic_path)
+            return
         if diagnostic.status not in {
                 "diagnostic_metric_xy_correction",
                 "diagnostic_planar_xy_hypothesis",

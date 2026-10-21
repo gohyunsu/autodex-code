@@ -66,3 +66,38 @@ def test_live_grounded_advice_never_moves_xy_in_same_attempt(
         ("unavailable", "vlm_abstain") if status == "abstain" else
         ("next_trial", status))]
     assert set(handler.handlers()) == {"assess_saved_preinsert_xy"}
+
+
+def test_optional_xy_diagnostic_records_capture_model_outage(tmp_path):
+    decision = SessionDecision(
+        "assess_saved_preinsert_xy", "failed", "table/0/1")
+    events = []
+
+    class Runner:
+        mode = SimpleNamespace(family="cylinder")
+        active_attempt = SimpleNamespace(
+            attempt_id="attempt_1", candidate_id="table/0/1")
+        _postlift_report_path = tmp_path / "postlift.json"
+        _attempt_dir = tmp_path
+        _retry_assessment_index = 0
+
+        def current_decision(self):
+            return decision
+
+        def prepare_saved_preinsert_xy_diagnostic(self, **_kwargs):
+            raise RuntimeError(
+                "capture-PC Qwen 24122734: OutOfMemoryError('CUDA out of memory')")
+
+        def record_xy_retry_unavailable(self, **kwargs):
+            events.append(kwargs)
+
+    runner = Runner()
+    handler = live_retry_handlers.LiveGroundedRetryHandlers(
+        live=SimpleNamespace(opened=SimpleNamespace(runner=runner)),
+        backend=object(), retry_limits=object(), alignment_limits=object(),
+        diagnostic_parameters={}, decision_time=lambda: 10.0)
+    handler.assess_for_next_trial(runner, decision)
+    assert len(events) == 1
+    assert events[0]["reason"] == "vlm_backend_unavailable"
+    report = events[0]["retry_assessment_path"]
+    assert '"reason": "vlm_backend_unavailable"' in report.read_text()

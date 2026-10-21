@@ -362,7 +362,8 @@ class AttemptRecord:
         """End this held-key retry branch when no usable correction exists."""
         self._require_retryable_failure()
         if reason not in {
-                "vlm_abstain", "lateral_preflight_failed",
+                "vlm_abstain", "vlm_backend_unavailable",
+                "lateral_preflight_failed",
                 "xy_update_budget_exhausted",
                 "held_key_pose_unavailable",
                 "postshift_alignment_failed", "insertion_preflight_failed",

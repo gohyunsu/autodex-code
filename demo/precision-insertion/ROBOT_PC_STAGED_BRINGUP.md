@@ -50,11 +50,19 @@ wrench and Inspire readings without the former 3 Nm held-lift abort.
 3. Following one completed nominal 20 mm stroke, the built-in release callback
    **opens Inspire and moves Franka to clear view before final capture**. It
    plans the reverse-axis exit and stock joint retract before insertion. Each
-   camera then supplies its initial-tabletop/final-clear-view raw pair to
-   the VLM. `inside_socket` is the default experimental task-success label
+   camera then supplies its initial-tabletop image and a socket-focused crop
+   of its final-clear-view raw image to the VLM. `inside_socket` is the
+   default experimental task-success label
    and ends the session; it is **not** an independently measured claim that
    the physical key penetrated 20 mm. Preserve the commanded-stroke/force
    record separately. Do not rename the visual label "verified 20 mm".
+   The final image is cropped around the socket projection saved in the
+   initial key observation before the 384×288 VLM resize. The original
+   full-frame PNG, camera/frame ID and timestamp remain the evidence; the
+   crop coordinates and source-pixel hash are saved and replay checked.
+   Final votes need a majority of the configured cameras (two of three or
+   three of five). When the first three disagree, inference waits for a
+   deciding view; a tie remains `unobservable`.
 4. On an eligible visual `outside_socket` failure, use the *already saved*
    pre-insertion raw multiview images for a cylinder XY diagnostic; do not
    lift the released key for another image or correct within the failed
@@ -68,6 +76,9 @@ wrench and Inspire readings without the former 3 Nm held-lift abort.
    attempt. The next attempt starts with another fresh key observation.
    `unobservable`, a controller/safety abort, or lost grasp is not the same
    failure branch and may stop for review instead of producing XY advice.
+   A capture-PC Qwen outage during this optional diagnostic is recorded as
+   unavailable and routes to released-key recovery; it does not erase the
+   completed insertion/release record or terminate the session by exception.
 
 The active VLM paths receive undistorted raw images, **not CAD overlays**.
 The pre-insertion checkpoint still renders an overlay for a separate geometry
