@@ -678,10 +678,10 @@ def write_key_pose_artifacts(
     capture: KeyCaptureInput, observation: KeyPoseObservation,
     output_dir: Path,
 ) -> Path:
-    """Save FoundPose planning inputs without waiting for daemon image PNGs.
+    """Save tabletop FoundPose inputs without waiting for daemon image PNGs.
 
-    The independent initial-tabletop visual capture is saved separately and
-    carries its own request, frame IDs, timestamps and undistortion evidence.
+    A VLM checkpoint uses its own snapshot and frame evidence when needed.
+    Recovery only needs the observed pose to plan the next action.
     """
     if (capture.images_bgr or observation.phase != "tabletop" or
             capture.capture_id != observation.capture_id or
@@ -750,7 +750,7 @@ def write_key_pose_artifacts(
         "capture_id": capture.capture_id,
         "request_id": capture.request_id,
         "camera_ids": sorted(verified),
-        "image_source": "independent_initial_tabletop_snapshot",
+        "image_source": "not_saved_pose_only",
         "scope": "foundpose_pose_and_masks_no_saved_source_image_gate",
         "robot_ready": False,
     }

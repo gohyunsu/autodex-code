@@ -260,7 +260,8 @@ def capture_returned_key_for_reset(
         capture_timeout_s=capture_timeout_s,
         image_write_timeout_s=image_write_timeout_s,
         request_id_factory=request_id_factory,
-        registered_key_assistance=registered_key_assistance)
+        registered_key_assistance=registered_key_assistance,
+        pose_only=registered_key_assistance is None)
     state = clear_view.verify_state(
         state_for_observation(observation), phase="reset_key_exposure",
         require_fresh=False)

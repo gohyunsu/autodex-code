@@ -223,6 +223,19 @@ def test_initial_visual_capture_overlaps_key_candidate_planning(
 def test_reset_landing_reuses_same_camera_key_capture_without_grasp_preflight(
         tmp_path, monkeypatch):
     arguments, events, _ = _setup(tmp_path, monkeypatch)
+    def pose_collect(**kwargs):
+        events.append("capture")
+        assert kwargs["pose_only"] is True
+        return KeyCaptureInput(
+            "key_001", 25, "white precision key", {}, {}, {}, {},
+            "camera_acquisition", {}, tmp_path / "unused")
+
+    def save_pose(_capture, _observation, output):
+        events.append("save_pose")
+        output.mkdir()
+
+    monkeypatch.setattr(trial, "collect_key_capture", pose_collect)
+    monkeypatch.setattr(trial, "write_key_pose_artifacts", save_pose)
     runner = arguments["runner"]
     runner.current_decision = lambda: SimpleNamespace(
         action="recover_held_key_then_reobserve")
@@ -246,7 +259,7 @@ def test_reset_landing_reuses_same_camera_key_capture_without_grasp_preflight(
     assert result.key_evidence_dir == tmp_path / "key_evidence"
     assert events == [
         "clear_view_before", "compatible_renderer", "init_key",
-        "verify_frozen_camera", "capture", "admit", "save_key_evidence",
+        "verify_frozen_camera", "capture", "admit", "save_pose",
         "measured_state_at_exposure",
         "clear_view_at_exposure",
     ]
