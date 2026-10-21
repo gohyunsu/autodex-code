@@ -114,6 +114,19 @@ def test_release_waits_for_measured_hand_motors_to_finish_opening():
     assert reads == 2
 
 
+def test_held_waypoint_accepts_blocked_fingers_but_checks_arm_and_open_release():
+    guard, actual, _ = _fixture()
+    expected = np.r_[actual["arm"].copy(), INSPIRE_INIT]
+    measured = guard._verify_held_endpoint(expected, phase="held_test")
+    assert np.max(np.abs(measured.full_q[7:] - expected[7:])) > .05
+    with pytest.raises(ValueError, match="not fully open"):
+        guard._verify_release_waypoint(
+            expected, phase="release_test", require_open=True)
+    actual["arm"][0] += .06
+    with pytest.raises(ValueError, match="measured arm missed"):
+        guard._verify_held_endpoint(expected, phase="held_test")
+
+
 def test_only_empty_hand_clear_view_retract_uses_clear_view_endpoint_tolerance():
     guard, actual, _ = _fixture()
     guard.executor.completion_max_joint_error_rad = .02

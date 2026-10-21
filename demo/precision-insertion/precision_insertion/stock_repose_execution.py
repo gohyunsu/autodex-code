@@ -199,7 +199,7 @@ class StockReposeExecutor:
             self.executor.execute(
                 plan.pickup_plan, planner=self.planner, scene_cfg=scene,
                 skip_lift=True, start_from_current=True)
-            squeezed = self.clear_view._verify_return_endpoint(
+            squeezed = self.clear_view._verify_held_endpoint(
                 paths["held_lift"][0], phase="stock_repose_pickup_squeeze")
             checkpoints.append({"name": "pickup_squeeze",
                                 "state": squeezed.to_record()})
@@ -207,7 +207,7 @@ class StockReposeExecutor:
                                 ("held_transfer", "held_transfer"),
                                 ("held_descent", "held_descent")):
                 self.clear_view._follow_autodex(paths[name].copy())
-                measured = self.clear_view._verify_return_endpoint(
+                measured = self.clear_view._verify_held_endpoint(
                     paths[name][-1], phase=f"stock_repose_{phase}")
                 checkpoints.append({"name": phase,
                                     "state": measured.to_record()})

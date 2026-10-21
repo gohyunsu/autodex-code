@@ -39,7 +39,7 @@ dataclasses and JSON fields.
 | `PathAuditLimits` | `goal_position_tolerance_m`, `goal_rotation_tolerance_deg` | `0.005 m`, `5 deg` | Existing exploratory goal settings. |
 | `PathAuditLimits` | `axial_lateral_tolerance_m`, `axial_rotation_tolerance_deg` | `0.005 m`, `5 deg` | 5 mm path lateral error plus 80 mm key length at 5 deg tilt is about 12 mm, below the nominal 20 mm radial clearance; actual perception/grasp error remains unmeasured. |
 | `PathAuditLimits` | `minimum_hand_clearance_m` | `0 m` | Require non-penetration with the modeled mesh; do not add an arbitrary stand-off distance. |
-| `LiftExecutionLimits` for lift/transfer/insertion end checks | `max_start_age_s`, `max_end_state_age_s`, `max_execution_feedback_gap_s` | `1.0 s` each | Permit normal post-command feedback while requiring a new sample. |
+| `LiftExecutionLimits` for lift/transfer/insertion end checks | `max_start_age_s`, `max_end_state_age_s` | `1.0 s` each | Require a fresh measured state at the start and when the saved controller result is verified. The former completion-to-feedback gap was removed on 2026-10-21: saving trace/source records can take longer than one second after an acknowledged stop. |
 | `LiftExecutionLimits` | `max_start_joint_error_rad`, `max_end_joint_error_rad` | `0.02 rad` each | Match the completion-checked stock follower's terminal joint bound. |
 | `LiftExecutionLimits` | `max_hand_drift_raw`, `max_arm_hand_skew_s`, `max_hand_command_error_raw`, `max_arm_velocity_rad_s` | `50 raw`, `0.10 s`, `30 raw`, `0.05 rad/s` | Consistent with the feedback and measured-hold proposal. |
 | `LiftExecutionLimits` | `max_execution_duration_s` | `90 s` | A generous command deadline; no reduction to stock trajectory speed. |

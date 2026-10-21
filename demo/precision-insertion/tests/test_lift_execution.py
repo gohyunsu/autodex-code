@@ -92,7 +92,6 @@ def _setup(tmp_path, monkeypatch, *, nominal_unbounded=False):
     }))
     limits = LiftExecutionLimits(
         max_start_age_s=.5, max_end_state_age_s=.5,
-        max_execution_feedback_gap_s=.1,
         max_start_joint_error_rad=.01, max_end_joint_error_rad=.01,
         max_hand_drift_raw=5., max_arm_hand_skew_s=.01,
         max_hand_command_error_raw=10., max_arm_velocity_rad_s=.01,
@@ -219,14 +218,16 @@ def test_lift_refuses_unreviewed_or_changed_daemon_binary(
     assert kwargs["adapter"].calls == 0
 
 
-def test_lift_needs_prompt_measured_endpoint_after_controller_completion(
+def test_lift_accepts_fresh_endpoint_after_slow_trace_write(
         tmp_path, monkeypatch):
     kwargs = _setup(tmp_path, monkeypatch)
     kwargs["read_post_state"] = lambda: _state(
-        102.65, np.array([.13, .03, .03, .03, .03, .03, .03]))
-    with pytest.raises(RuntimeError, match="endpoint differs"):
-        execute_bound_measured_lift(**kwargs, enable_robot_motion=True)
-    assert kwargs["adapter"].stops == 1
+        115.65, np.array([.13, .03, .03, .03, .03, .03, .03]))
+    clock = iter([102.2, 102.22, 115.7])
+    monkeypatch.setattr(lift_execution, "_wall_time", lambda: next(clock))
+    result = execute_bound_measured_lift(**kwargs, enable_robot_motion=True)
+    assert result["post_state"]["sample_timestamp_s"] == 115.65
+    assert kwargs["adapter"].stops == 0
 
 
 def test_lift_accepts_endpoint_sampled_just_before_completion(

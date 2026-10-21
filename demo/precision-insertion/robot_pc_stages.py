@@ -43,7 +43,6 @@ def _motion_limits() -> LiftExecutionLimits:
     # they do not change the executor's arm_speed_scale or traj_speed.
     result = LiftExecutionLimits(
         max_start_age_s=1., max_end_state_age_s=1.,
-        max_execution_feedback_gap_s=1.,
         max_start_joint_error_rad=.02, max_end_joint_error_rad=.02,
         max_hand_drift_raw=50., max_arm_hand_skew_s=.10,
         max_hand_command_error_raw=30., max_arm_velocity_rad_s=.05,

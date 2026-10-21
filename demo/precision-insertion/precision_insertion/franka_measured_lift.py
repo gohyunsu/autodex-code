@@ -152,7 +152,7 @@ class FrankaMeasuredLiftAdapter:
         self, trajectory, *, max_duration_s: float,
         expected_hand_raw, trajectory_sha256: str,
     ) -> dict:
-        trace_path, started, completed = self._follow_measured(
+        trace_path, started, completed, _, trace_sha256 = self._follow_measured(
             "lift", trajectory, max_duration_s=max_duration_s,
             expected_hand_raw=expected_hand_raw,
             trajectory_sha256=trajectory_sha256)
@@ -163,8 +163,7 @@ class FrankaMeasuredLiftAdapter:
             "trajectory_sha256": trajectory_sha256,
             "started_at_s": started, "completed_at_s": completed,
             "controller_trace_path": str(trace_path),
-            "controller_trace_sha256": hashlib.sha256(
-                trace_path.read_bytes()).hexdigest(),
+            "controller_trace_sha256": trace_sha256,
         }
 
     def follow_transfer(
@@ -189,19 +188,17 @@ class FrankaMeasuredLiftAdapter:
         self, stage: str, trajectory, *, max_duration_s: float,
         expected_hand_raw, trajectory_sha256: str,
     ) -> dict:
-        trace_path, started, completed = self._follow_measured(
+        trace_path, started, completed, trace, trace_sha256 = self._follow_measured(
             stage, trajectory, max_duration_s=max_duration_s,
             expected_hand_raw=expected_hand_raw,
             trajectory_sha256=trajectory_sha256)
-        trace = json.loads(trace_path.read_text(encoding="utf-8"))
         samples = trace["samples"]
         shared = {
             "schema": "precision_insertion_franka_held_motion_source_v1",
             "stage": stage, "trajectory_sha256": trajectory_sha256,
             "started_at_s": started, "completed_at_s": completed,
             "controller_trace_path": str(trace_path),
-            "controller_trace_sha256": hashlib.sha256(
-                trace_path.read_bytes()).hexdigest(),
+            "controller_trace_sha256": trace_sha256,
         }
         fields = {
             "trajectory_feedback": (
@@ -227,12 +224,13 @@ class FrankaMeasuredLiftAdapter:
                     "measured_inspire_motor_hold_only_not_key_presence")
                 record["expected_hand_raw"] = _vector(
                     expected_hand_raw, 6, "expected Inspire hold").tolist()
-            with source_path.open("x", encoding="utf-8") as stream:
-                json.dump(record, stream, indent=2, allow_nan=False)
-                stream.write("\n")
+            source_bytes = (json.dumps(record, indent=2, allow_nan=False)
+                            + "\n").encode("utf-8")
+            with source_path.open("xb") as stream:
+                stream.write(source_bytes)
             sources[name] = {
                 "path": str(source_path),
-                "sha256": hashlib.sha256(source_path.read_bytes()).hexdigest(),
+                "sha256": hashlib.sha256(source_bytes).hexdigest(),
             }
         return {
             "schema": f"precision_insertion_external_{stage}_result_v1",
@@ -249,7 +247,7 @@ class FrankaMeasuredLiftAdapter:
     def _follow_measured(
         self, stage: str, trajectory, *, max_duration_s: float,
         expected_hand_raw, trajectory_sha256: str,
-    ) -> tuple[Path, float, float]:
+    ) -> tuple[Path, float, float, dict, str]:
         if stage not in {"lift", "transfer", "lateral"}:
             raise ValueError("unknown held-motion stage")
         path = np.asarray(trajectory, dtype=np.float64)
@@ -324,10 +322,12 @@ class FrankaMeasuredLiftAdapter:
                 "type": type(failure).__name__, "message": str(failure)},
         }
         trace_path = trace_dir / "controller_trace.json"
-        with trace_path.open("x", encoding="utf-8") as stream:
-            json.dump(trace, stream, indent=2, allow_nan=False)
-            stream.write("\n")
+        trace_bytes = (json.dumps(trace, indent=2, allow_nan=False)
+                       + "\n").encode("utf-8")
+        with trace_path.open("xb") as stream:
+            stream.write(trace_bytes)
         if failure is not None:
             raise RuntimeError(
                 f"measured FR3 {stage} aborted; trace: {trace_path}") from failure
-        return trace_path, started, completed
+        return (trace_path, started, completed, trace,
+                hashlib.sha256(trace_bytes).hexdigest())

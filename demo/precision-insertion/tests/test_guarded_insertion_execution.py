@@ -125,7 +125,6 @@ def _setup(tmp_path: Path, monkeypatch):
     adapter = _Adapter(tmp_path, metric_file)
     limits = GuardedInsertionExecutionLimits(
         max_start_age_s=.5, max_end_state_age_s=.5,
-        max_execution_feedback_gap_s=.1,
         max_start_joint_error_rad=.01, max_end_joint_error_rad=.01,
         max_hand_drift_raw=5., max_arm_hand_skew_s=.01,
         max_hand_command_error_raw=10., max_arm_velocity_rad_s=.01,
@@ -195,6 +194,19 @@ def test_guarded_insertion_records_external_stroke_without_task_label(
     assert args["adapter"].calls == 1
     assert (args["runner"]._attempt_dir /
             "guarded_insertion_execution.json").is_file()
+
+
+def test_guarded_insertion_accepts_fresh_endpoint_after_metric_write(
+        tmp_path, monkeypatch):
+    args = _setup(tmp_path, monkeypatch)
+    args["read_post_state"] = lambda: _state(
+        115.65, np.array([.04, .03, .03, .03, .03, .03, .03]))
+    clock = iter([102.3, 102.32, 115.7, 115.8])
+    monkeypatch.setattr(execution, "_wall_time", lambda: next(clock))
+    record = execute_bound_guarded_insertion(
+        **args, enable_robot_motion=True)
+    assert record["post_state"]["sample_timestamp_s"] == 115.65
+    assert args["adapter"].stops == 0
 
 
 @pytest.mark.parametrize("contact", [False, True])

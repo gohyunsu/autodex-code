@@ -154,8 +154,6 @@ def execute_bound_observed_retry_transfer(
             max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
         now = time.time()
         if (post.sample_timestamp_s < begun or
-                abs(post.sample_timestamp_s - completed) >
-                limits.max_execution_feedback_gap_s or
                 post.sample_timestamp_s > now or
                 now - post.sample_timestamp_s > limits.max_end_state_age_s or
                 np.max(np.abs(post.full_q - transfer[-1])) >

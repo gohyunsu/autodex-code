@@ -142,7 +142,7 @@ def verify_repose_execution_evidence(
                 paths["post_release_lift"][-1],
                 paths["post_release_retract"][-1]))
         previous = _finite(attempt_started_at_s, "attempt start")
-        for item, endpoint in zip(checkpoints, expected):
+        for index, (item, endpoint) in enumerate(zip(checkpoints, expected)):
             state = item.get("state")
             if (not isinstance(state, dict) or state.get("schema") !=
                     "precision_insertion_live_robot_state_v1" or
@@ -150,10 +150,15 @@ def verify_repose_execution_evidence(
                 raise ValueError("stock repose checkpoint is not measured state")
             stamp = _finite(state.get("sample_timestamp_s"), "checkpoint time")
             q = np.asarray(state.get("full_q"), dtype=float)
+            # A held key can stop the Inspire fingers before the nominal
+            # free-hand joints. Stock AutoDex likewise does not require exact
+            # finger closure after squeeze. The open-hand release and exit
+            # checkpoints still require all thirteen measured joints.
+            checked = slice(None, 7) if index < 4 else slice(None)
             if (stamp <= previous or q.shape != (13,) or
                     not np.isfinite(q).all() or
                     endpoint.shape != (13,) or
-                    np.max(np.abs(q - endpoint)) > 0.05):
+                    np.max(np.abs(q[checked] - endpoint[checked])) > 0.05):
                 raise ValueError("stock repose missed its planned checkpoint")
             previous = stamp
         final_q = np.asarray(checkpoints[-1]["state"]["full_q"], dtype=float)
@@ -167,6 +172,7 @@ def verify_repose_execution_evidence(
             "exit_completed_at_s": checkpoints[-1]["state"][
                 "sample_timestamp_s"],
             "stock_feedback": feedback_ref,
+            "source_records": {"stock_feedback": feedback_ref},
             "scope": "stock_measured_waypoints_not_key_landing_pose",
         }
     phases = record.get("phases")

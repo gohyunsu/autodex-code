@@ -11,12 +11,16 @@ executor; an external controller may still supply the older producer format.
 
 The stock producer uses `source: "stock_autodex_franka_executor"`. It runs the
 saved selected-v8 pickup with `start_from_current=True` and `skip_lift=True`,
-checks measured squeeze against the saved held-lift start, then follows the
+checks measured arm arrival after squeeze against the saved held-lift start, then follows the
 preflighted held lift, transfer, descent, hand opening, upward exit and
 clear-view retract. A bound `stock_feedback` JSON records seven measured
 waypoints and a stopped stream acknowledgement. The verifier replays their
-order, source hashes and joint endpoints. A squeeze mismatch stops before
-the held lift; no physical key landing is inferred from those checkpoints.
+order, source hashes and arm endpoints. While a key is held, measured Inspire
+finger joints may differ from the nominal closure; fresh hand feedback is
+still recorded and validated. After release, measured hand opening and all
+thirteen joints are checked. A missed arm waypoint stops before the next
+motion; no physical key landing is inferred from these checkpoints. The
+verified `stock_feedback` reference is carried into the landing report.
 
 For an external producer, the following contract remains available.
 

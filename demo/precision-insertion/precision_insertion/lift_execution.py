@@ -48,7 +48,6 @@ def _write_new(path: Path, record: dict) -> None:
 class LiftExecutionLimits:
     max_start_age_s: float
     max_end_state_age_s: float
-    max_execution_feedback_gap_s: float
     max_start_joint_error_rad: float
     max_end_joint_error_rad: float
     max_hand_drift_raw: float
@@ -251,8 +250,6 @@ def execute_bound_measured_lift(
             max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
         now = _wall_time()
         if (post.sample_timestamp_s < begun or
-                abs(post.sample_timestamp_s - completed) >
-                limits.max_execution_feedback_gap_s or
                 post.sample_timestamp_s > now or
                 now - post.sample_timestamp_s > limits.max_end_state_age_s or
                 float(np.max(np.abs(post.full_q[:7] - lift[-1, :7]))) >

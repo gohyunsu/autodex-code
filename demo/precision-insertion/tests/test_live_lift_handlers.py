@@ -79,7 +79,7 @@ def _handler(tmp_path, *, enabled=True, cameras=("front", "side")):
         capture_after_lift=lambda *_args: (
             runner.events.append(("capture", capture)) or capture),
         backend=backend, motion_interlock=lambda: True,
-        limits=LiftExecutionLimits(*([1.] * 12)),
+        limits=LiftExecutionLimits(*([1.] * 11)),
         commissioning_record_path=tmp_path / "commissioned.json",
         assessment_parameters=ASSESS, enable_robot_motion=enabled,
         decision_time=lambda: 11.3)

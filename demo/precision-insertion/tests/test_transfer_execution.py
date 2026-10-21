@@ -116,7 +116,6 @@ def _setup(tmp_path, monkeypatch):
     }))
     limits = TransferExecutionLimits(
         max_start_age_s=.5, max_end_state_age_s=.5,
-        max_execution_feedback_gap_s=.1,
         max_start_joint_error_rad=.01, max_end_joint_error_rad=.01,
         max_hand_drift_raw=5., max_arm_hand_skew_s=.01,
         max_hand_command_error_raw=10., max_arm_velocity_rad_s=.01,
@@ -191,16 +190,16 @@ def test_transfer_abort_latches_unknown_robot_state(tmp_path, monkeypatch):
         "unknown_requires_supervised_recovery")
 
 
-def test_transfer_rejects_late_measured_endpoint(tmp_path, monkeypatch):
+def test_transfer_accepts_fresh_endpoint_after_slow_evidence_write(
+        tmp_path, monkeypatch):
     kwargs = _setup(tmp_path, monkeypatch)
     kwargs["read_post_state"] = lambda: _state(
-        102.65, np.array([.13, .03, .03, .03, .03, .03, .03]))
-    with pytest.raises(RuntimeError, match="hold differs"):
-        execute_bound_held_transfer(**kwargs, enable_robot_motion=True)
-    assert kwargs["adapter"].stops == 1
-    failure = json.loads((kwargs["runner"]._attempt_dir /
-                          "transfer_failure.json").read_text())
-    assert failure["post_state"]["sample_timestamp_s"] == 102.65
+        115.65, np.array([.13, .03, .03, .03, .03, .03, .03]))
+    clock = iter([102.3, 102.32, 115.7])
+    monkeypatch.setattr(transfer_execution, "_wall_time", lambda: next(clock))
+    record = execute_bound_held_transfer(**kwargs, enable_robot_motion=True)
+    assert record["post_state"]["sample_timestamp_s"] == 115.65
+    assert kwargs["adapter"].stops == 0
 
 
 def test_transfer_accepts_stationary_endpoint_sampled_just_before_completion(

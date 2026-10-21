@@ -15,12 +15,17 @@ sample timestamp can legitimately be slightly earlier. The failed run did not
 persist that post-state sample, so its exact failed subcondition cannot be
 proven retrospectively. Transfer failures now save the post-state when present.
 
-Lift, transfer, lateral and retry transfer, and insertion motion checks now
-accept a stationary measured endpoint sampled within the existing feedback gap
-on either side of controller completion. They still require a sample after
-motion began, the existing age bound, the planned joint endpoint and the
-original controller/force status. The same timeline rule is applied when
-verifying saved retry records.
+The 12:12 run exposed the remaining completion-to-feedback gate: the transfer
+controller stopped in 3.08 s with a 0.0134 rad maximum endpoint error (under
+0.02 rad), but source-record persistence delayed the later feedback read by
+13.5 s. The stop was acknowledged and the operator confirmed the key remained
+held. The gate has now been removed from lift, transfer, lateral/retry transfer,
+and insertion endpoint checks and the saved retry verifiers. Each live check
+still requires an acknowledged controller result, a fresh stationary measured
+state sampled after motion began, and the planned joint endpoint; force abort
+and collision results remain authoritative. Controller trace/source hashes are
+computed from the serialized bytes as they are written, avoiding redundant NAS
+reads before the end-state check.
 
 The stock Inspire release ramp returns before the motors finish opening. The
 release/exit paths now wait for measured open-hand feedback before following

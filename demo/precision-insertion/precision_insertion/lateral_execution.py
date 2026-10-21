@@ -180,8 +180,6 @@ def execute_bound_lateral_shift(
             max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
         now = _wall_time()
         if (post.sample_timestamp_s < begun or
-                abs(post.sample_timestamp_s - completed) >
-                limits.max_execution_feedback_gap_s or
                 post.sample_timestamp_s > now or
                 now - post.sample_timestamp_s > limits.max_end_state_age_s or
                 float(np.max(np.abs(post.full_q - trajectory[-1]))) >

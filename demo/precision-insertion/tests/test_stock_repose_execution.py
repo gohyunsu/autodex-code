@@ -29,7 +29,7 @@ from precision_insertion.repose_transition import (  # noqa: E402
 
 
 def _setup(tmp_path, monkeypatch, *, restoration=False,
-           squeeze_offset=0.):
+           squeeze_offset=0., squeeze_arm_offset=0.):
     attempt_dir = tmp_path / "attempt"
     attempt_dir.mkdir()
     q0 = np.r_[FR3_CLEAR_VIEW, INSPIRE_INIT].astype(float)
@@ -91,6 +91,7 @@ def _setup(tmp_path, monkeypatch, *, restoration=False,
             events.append("pickup")
             actual[:] = q1
             actual[7] += squeeze_offset
+            actual[0] += squeeze_arm_offset
 
         def stop_and_acknowledge(self):
             events.append("stop")
@@ -108,9 +109,9 @@ def _setup(tmp_path, monkeypatch, *, restoration=False,
         def _validate_feedback(self, measured, **_):
             assert isinstance(measured, LiveRobotState)
 
-        def _verify_return_endpoint(self, expected, **_):
-            if np.max(np.abs(actual - expected)) > .05:
-                raise ValueError("measured endpoint differs from v8 plan")
+        def _verify_held_endpoint(self, expected, **_):
+            if np.max(np.abs(actual[:7] - expected[:7])) > .05:
+                raise ValueError("measured arm differs from v8 plan")
             return state()
 
         def _follow_autodex(self, path):
@@ -166,6 +167,8 @@ def test_stock_repose_runs_saved_v8_paths_and_replays_feedback(
         session_calibration_sha256=runner.session_sha256,
         selected_seed=plan.selected_seed)
     assert verified["scope"] == "stock_measured_waypoints_not_key_landing_pose"
+    assert verified["source_records"] == {
+        "stock_feedback": verified["stock_feedback"]}
     assert events == ["pickup", "follow", "follow", "follow",
                       "release_open", "post_release_lift",
                       "post_release_retract", "stop"]
@@ -181,11 +184,19 @@ def test_stock_repose_rejects_changed_source_before_robot_command(
     assert events == []
 
 
-def test_stock_repose_stops_before_lift_when_squeeze_differs(
+def test_stock_repose_accepts_measured_finger_offset_under_grasp(
         tmp_path, monkeypatch):
     callback, runner, decision, plan, _, _, events = _setup(
         tmp_path, monkeypatch, squeeze_offset=.2)
-    with pytest.raises(ValueError, match="measured endpoint differs"):
+    callback.execute_repose(runner, decision, plan)
+    assert events[:2] == ["pickup", "follow"]
+
+
+def test_stock_repose_stops_before_lift_when_arm_misses_squeeze_waypoint(
+        tmp_path, monkeypatch):
+    callback, runner, decision, plan, _, _, events = _setup(
+        tmp_path, monkeypatch, squeeze_arm_offset=.2)
+    with pytest.raises(ValueError, match="measured arm differs"):
         callback.execute_repose(runner, decision, plan)
     assert events == ["pickup", "stop"]
     assert (runner._attempt_dir / "stock_repose_failure.json").is_file()

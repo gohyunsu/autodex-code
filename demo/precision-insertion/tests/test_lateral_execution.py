@@ -119,7 +119,6 @@ def _setup(tmp_path: Path, monkeypatch):
     }), encoding="utf-8")
     limits = LateralExecutionLimits(
         max_start_age_s=.5, max_end_state_age_s=.5,
-        max_execution_feedback_gap_s=.1,
         max_start_joint_error_rad=.01, max_end_joint_error_rad=.01,
         max_hand_drift_raw=5., max_arm_hand_skew_s=.01,
         max_hand_command_error_raw=10., max_arm_velocity_rad_s=.01,

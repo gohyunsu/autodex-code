@@ -310,19 +310,19 @@ class ClearViewForPerception:
                     np.asarray(release_plan.post_release_lift_trajectory)[0, :7],
                     descent[-1, :7], atol=1e-4, rtol=0)):
             raise ValueError("failed insertion return lacks a continuous release/exit plan")
-        started = self._verify_return_endpoint(
+        started = self._verify_held_endpoint(
             transfer[0], phase="withdrawn_held_start")
         if evidence_sink is not None:
             evidence_sink.append({"name": "withdrawn_hold",
                                   "state": started.to_record()})
         self._follow_autodex(transfer.copy())
-        transferred = self._verify_return_endpoint(
+        transferred = self._verify_held_endpoint(
             transfer[-1], phase="held_transfer_end")
         if evidence_sink is not None:
             evidence_sink.append({"name": "held_transfer",
                                   "state": transferred.to_record()})
         self._follow_autodex(descent.copy())
-        descended = self._verify_return_endpoint(
+        descended = self._verify_held_endpoint(
             descent[-1], phase="held_descent_end")
         if evidence_sink is not None:
             evidence_sink.append({"name": "held_descent",
@@ -330,12 +330,16 @@ class ClearViewForPerception:
         return self.finish_planned_release_exit_with_autodex(
             release_plan=release_plan, evidence_sink=evidence_sink)
 
-    def _verify_return_endpoint(self, expected: np.ndarray, *, phase: str):
+    def _verify_held_endpoint(self, expected: np.ndarray, *, phase: str):
+        """Check measured arm arrival while a grasp may block finger closure.
+
+        The stock executor commands a squeeze and follows held trajectories
+        without requiring measured finger joints to match the free-hand plan.
+        Feedback validation still checks hand measurements and timestamps;
+        release and clear-view separately require a measured open hand.
+        """
         state = self.read_state()
         self._validate_feedback(state, phase=phase)
-        if (np.max(np.abs(state.full_q[:7] - expected[:7])) >
-                self.max_arm_error_rad or
-                np.max(np.abs(state.full_q[7:] - expected[7:])) >
-                self.max_hand_error_rad):
-            raise ValueError(f"{phase}: measured robot missed the held-return waypoint")
+        if np.max(np.abs(state.full_q[:7] - expected[:7])) > self.max_arm_error_rad:
+            raise ValueError(f"{phase}: measured arm missed the held waypoint")
         return state

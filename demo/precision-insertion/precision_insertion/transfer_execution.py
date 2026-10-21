@@ -223,12 +223,9 @@ def execute_bound_held_transfer(
             max_hand_command_error_raw=limits.max_hand_command_error_raw,
             max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
         now = _wall_time()
-        # The producer's completion time is recorded just after its last
-        # stationary FR3 sample. A fresh arm/hand midpoint can legitimately
-        # precede that time by a few milliseconds.
+        # Source records are persisted before this feedback read. Their I/O
+        # time does not make a fresh, stationary endpoint invalid.
         if (post.sample_timestamp_s < begun or
-                abs(post.sample_timestamp_s - completed) >
-                limits.max_execution_feedback_gap_s or
                 post.sample_timestamp_s > now or
                 now - post.sample_timestamp_s > limits.max_end_state_age_s or
                 float(np.max(np.abs(post.full_q[:7] - transfer[-1, :7]))) >
