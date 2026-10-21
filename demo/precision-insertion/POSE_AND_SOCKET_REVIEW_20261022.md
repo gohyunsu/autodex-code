@@ -114,3 +114,79 @@ candidate on this PC (single-candidate profile: about 3.1 s of 28 Coal BVH
 builds and 1.2 s of two URDF loads). Changing that collision implementation
 would invalidate all recipient catalogs, so no unmeasured shortcut was
 introduced during the six-gap catalog rebuild.
+
+## Follow-up: board initialization before stock silhouette fitting
+
+The current board-9 launcher **fixes the socket axis to the measured board
+normal** in `board_constrained_body` mode. It does not merely initialize the
+axis there and then free it in the stock optimizer. This is a conditional
+physical model for the present flat-flange cylindrical socket resting on the
+board, not a rule for every fixture. The measured board normal differs from
+robot-base vertical by about 0.69–0.77° in these captures.
+
+The exact live sequence is: stock-compatible board image capture; ChArUco-9
+corner detection and camera-calibrated triangulation (36 visible corners
+minimum in the socket-present mode); board rigid/plane fit; socket-only SAM
+mask and FoundPose capture with the English prompt `white plastic cylindrical
+socket`; accepted acquisition-bound views; board-plane ray intersections of
+the mask centroids at the CAD wall midpoint (30 mm); coordinate-wise median
+board XY; board normal as socket +Z; wall-only reprojection/mean IoU; one pose
+frozen in robot coordinates with the complete collision mesh. The body radius
+is 40 mm, its wall spans local Z=5–55 mm, and the flange radius is 60 mm.
+FoundPose quality participates in view admission, while its pose hypotheses
+do not set the final socket pose in this mode. Axial yaw is unobservable for
+this round socket. With the current one-capture launch, no independent
+repeatability claim is made.
+
+Three saved real socket-only captures were reprojected again onto their
+original undistorted images. The per-view source image and mask SHA-256 values,
+calibration SHA-256, both poses and IoUs are in the local
+`/home/robot/shared_data/hyunsu/precision_socket_pose_review_20261022/`
+directory. [Nine representative views](/home/robot/shared_data/hyunsu/precision_socket_pose_review_20261022/representative_3x3.png)
+show cyan SAM contours, red historical stock poses and green board/body poses.
+The [direct board-seed-versus-stock-optimizer comparison](/home/robot/shared_data/hyunsu/precision_socket_pose_review_20261022/stock_full_mesh_from_board_seed_3x3.png)
+uses red for the stock optimizer's output. Full admitted-view grids for each
+capture are saved beside these figures. All figures are derived from actual
+camera frames; the colored geometry is a projection, not new camera evidence.
+
+| Saved capture | Admitted views | Historical pose: body IoU | Board/body replay: body IoU | Old versus board axis |
+| --- | ---: | ---: | ---: | ---: |
+| `090945` | 18 | 0.739 | 0.942 | 25.75° |
+| `104732` | 19 | 0.727 | 0.924 | 27.25° |
+| `140856` | 19 | 0.719 | 0.921 | 35.05° |
+
+The IoUs in this table use the **same wall-only projection and saved SAM masks**
+for both poses; the historical stock score in the earlier table used a
+different whole-mesh renderer. The board/body result has 17 views above 0.8
+in each capture. Some overhead views include the flange and score around
+0.59–0.63. Their centroid offsets can reach 11–12 mm, but removing any one
+admitted camera moves the median center by at most 0.21 mm. This explains why
+median aggregation is useful here; it does not prove millimeter ground-truth
+accuracy.
+
+To test the proposed sequence directly, the board/body pose was recomputed
+from alternating camera IDs only, then passed as the initial pose to the
+stock full-mesh silhouette optimizer with its production 100 iterations and
+0.002 learning rate. This read-only probe used quarter-resolution masks to
+keep all training views on one GPU. Remaining camera IDs were held out and
+scored at full resolution with the wall model. The exact CAD vertices were
+also checked against the measured board plane after optimization.
+
+| Capture | Held-out wall IoU: board seed → stock full-mesh fit | Fitted axis tilt from board | Lowest CAD point relative to board |
+| --- | ---: | ---: | ---: |
+| `090945` | 0.933 → 0.610 | 25.35° | −6.97 mm |
+| `104732` | 0.918 → 0.711 | 22.71° | −17.17 mm |
+| `140856` | 0.949 → 0.784 | 28.64° | −20.15 mm |
+
+The optimizer can increase its own whole-mesh score while fitting the wrong
+part of the mask: in the last capture its held-out whole-mesh IoU rose from
+0.644 to 0.687, even as the wall IoU fell and the flange crossed the board.
+Thus a correct initial axis does not make an unconstrained whole-mesh
+objective physically correct. A separate body-only XY/tilt probe gave no
+consistent held-out gain; full-resolution XY-only refinement shifted the
+center under 0.2 mm. For the current seated socket, keep the measured board
+normal and median XY. If a future socket is intentionally tilted or shimmed,
+change the fixture/support model and use part-matched silhouettes with a
+support constraint and held-out validation; a free whole-mesh fit is not an
+appropriate substitute. No runtime threshold or motion code was changed by
+this follow-up review.
