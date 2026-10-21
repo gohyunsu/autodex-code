@@ -243,6 +243,9 @@ def plan_fresh_key_trial(
     reset_candidate_root: Path | None = None,
     attempted_reset: tuple[tuple[int, str, str], ...] = (),
     preferred_candidate: tuple[str, str, str] | None = None,
+    upright_cylinder_only: bool = False,
+    retry_candidate: tuple[str, str, str] | None = None,
+    retry_pose_stem: str | None = None,
 ) -> TrialPreflight:
     """Plan one scene from an explicitly fresh pose, trying grasps in order.
 
@@ -256,6 +259,14 @@ def plan_fresh_key_trial(
                              session_record=calibration.record)
     if Path(catalog["shared_root"]).expanduser().resolve() != root:
         raise ValueError("catalog shared root differs from trial shared root")
+    if (retry_candidate is None) != (retry_pose_stem is None):
+        raise ValueError("retry grasp and tabletop pose must be paired")
+    if retry_candidate is not None and (
+            not isinstance(retry_candidate, tuple) or
+            len(retry_candidate) != 3 or
+            not all(isinstance(part, str) and part for part in retry_candidate) or
+            not isinstance(retry_pose_stem, str) or not retry_pose_stem):
+        raise ValueError("retry grasp needs one v8 key and tabletop pose")
     pose_world = validate_se3(key_pose_world, name="fresh key pose_world")
     if not isinstance(key_observation_id, str) or not key_observation_id:
         raise ValueError("fresh key observation ID is required")
@@ -280,6 +291,8 @@ def plan_fresh_key_trial(
         raise ValueError("live FR3/Inspire start state must be 13 finite joints")
     if max_candidate_attempts is not None and max_candidate_attempts < 1:
         raise ValueError("max_candidate_attempts must be positive")
+    if type(upright_cylinder_only) is not bool:
+        raise ValueError("upright_cylinder_only must be a boolean")
     if ((max_reset_center_drift_m is None) !=
             (max_reset_axis_tilt_deg is None)):
         raise ValueError("both reset pose-fidelity limits must be supplied")
@@ -341,6 +354,17 @@ def plan_fresh_key_trial(
     repose_assessment = None
     if selected["status"] in {"catalog_incomplete", "catalog_stale"}:
         status = "catalog_unavailable"
+    elif upright_cylinder_only and mode.family == "cylinder" and stem != "000":
+        upright = select_pose_candidates(
+            catalog, expected_mode=mode, tabletop_pose_stem="000",
+            attempted=attempted_keys, covered_scenes=covered_ids)
+        if upright["status"] in {"catalog_incomplete", "catalog_stale"}:
+            status = "catalog_unavailable"
+        else:
+            repose = (("000",) if upright["status"] == "candidates_available"
+                      else ())
+            status = ("repose_required_unplanned" if repose
+                      else "no_eligible_pose_in_catalog")
     elif selected["status"] == "no_eligible_in_screened_pool":
         repose = alternative_stems()
         status = ("repose_required_unplanned" if repose
@@ -349,6 +373,11 @@ def plan_fresh_key_trial(
         raise ValueError(f"unexpected candidate selection: {selected['status']}")
     else:
         candidates = list(selected["candidates"])
+        if retry_candidate is not None and stem == retry_pose_stem:
+            candidates = [row for row in candidates
+                          if tuple(row["key"]) == retry_candidate]
+            if not candidates:
+                status = "repeat_grasp_unavailable"
         if preferred_candidate is not None:
             if (not isinstance(preferred_candidate, tuple) or
                     len(preferred_candidate) != 3):
@@ -412,6 +441,8 @@ def plan_fresh_key_trial(
         if not status:
             if len(budgeted) < len(candidates):
                 status = "candidate_budget_exhausted"
+            elif retry_candidate is not None and stem == retry_pose_stem:
+                status = "repeat_grasp_unavailable"
             else:
                 repose = alternative_stems()
                 status = ("repose_required_unplanned" if repose

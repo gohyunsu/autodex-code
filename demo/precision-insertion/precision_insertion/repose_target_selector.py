@@ -1,7 +1,7 @@
 """Choose directed v8 reset targets after the current key pose is exhausted.
 
-This keeps the original key XY as the first release site, then tries nearby
-cells. The existing socket-aware reset preflight—not this ranker—decides
+For the cylinder, the first release site preserves the observed CAD center
+when a lying key is stood upright. The socket-aware reset preflight decides
 whether a site, grasp and complete release/exit path are feasible.
 """
 
@@ -14,6 +14,10 @@ from typing import Callable
 import numpy as np
 
 from autodex.utils.conversion import cart2se3
+
+from .assets import AssetPaths
+from .endpoint import _load_mesh
+from .original_pose_restoration import original_center_release_xy
 
 
 class ReposeTargetsExhausted(RuntimeError):
@@ -48,6 +52,7 @@ class DirectedReposeTargetSelector:
     def _start_capture(
         self, runner, latest,
         seed_available: Callable[[str, int], bool] | None = None,
+        site_available: Callable[[str, tuple[float, float]], bool] | None = None,
     ) -> None:
         trial = latest.preflight
         source = trial.pose_class["stem"]
@@ -66,12 +71,30 @@ class DirectedReposeTargetSelector:
             if stem in counts and row.get("eligible") is True:
                 counts[stem] += 1
         ordered = sorted(targets, key=lambda stem: (-counts[stem], stem))
+        target_xy = {stem: xy for stem in ordered}
+        if getattr(getattr(runner, "mode", None), "family", None) == "cylinder":
+            mesh = _load_mesh(AssetPaths(
+                runner.shared_root, runner.mode).raw_mesh(runner.mode.key_object))
+            center_local = np.asarray(mesh.bounds, dtype=float).mean(axis=0)
+            center_xy = (key_pose[:3, :3] @ center_local + key_pose[:3, 3])[:2]
+            target_xy = {
+                stem: original_center_release_xy(
+                    shared_root=runner.shared_root, mode=runner.mode,
+                    target_pose_stem=stem,
+                    original_center_xy_robot_m=tuple(map(float, center_xy)),
+                    key_center_local_m=tuple(map(float, center_local)))
+                for stem in ordered}
         self._choices = [
             {"to_pose_stem": stem, "height_cm": height,
-             "release_xy_robot_m": (float(xy[0] + dx), float(xy[1] + dy))}
+             "release_xy_robot_m": (
+                 float(target_xy[stem][0] + dx),
+                 float(target_xy[stem][1] + dy))}
             for stem in ordered for height in self.heights_cm
             if seed_available is None or seed_available(stem, height)
-            for dx, dy in self.xy_offsets_m]
+            for dx, dy in self.xy_offsets_m
+            if site_available is None or site_available(
+                stem, (float(target_xy[stem][0] + dx),
+                       float(target_xy[stem][1] + dy)))]
         self._capture_id = latest.observation.capture_id
         self._index = -1
         self._attempted = []
@@ -79,10 +102,13 @@ class DirectedReposeTargetSelector:
     def __call__(
         self, runner, decision, latest, *,
         seed_available: Callable[[str, int], bool] | None = None,
+        site_available: Callable[[str, tuple[float, float]], bool] | None = None,
     ) -> dict:
         capture_id = latest.observation.capture_id
         if self._capture_id != capture_id:
-            self._start_capture(runner, latest, seed_available=seed_available)
+            self._start_capture(
+                runner, latest, seed_available=seed_available,
+                site_available=site_available)
         if decision.action in {"continue_repose_seed_preflight",
                                "preflight_repose_release"}:
             if self._index < 0:

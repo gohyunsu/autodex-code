@@ -183,6 +183,18 @@ def test_fresh_trial_tries_next_grasp_after_pickup_or_insertion_preflight_failur
     assert result.to_record()["robot_ready"] is False
 
 
+def test_xy_retry_plans_only_the_previous_grasp(tmp_path, monkeypatch):
+    fixture = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    result = _run(
+        tmp_path, fixture, planner,
+        preferred_candidate=("table", "0", "1"),
+        retry_candidate=("table", "0", "1"), retry_pose_stem="000")
+    assert result.status == "repeat_grasp_unavailable"
+    assert planner.pickups == [("table", "0", "1")]
+    assert result.selected_candidate_key is None
+
+
 def test_rejected_sampled_path_keeps_collision_cause_after_next_grasp(
     tmp_path, monkeypatch,
 ):
@@ -266,6 +278,25 @@ def test_no_current_pose_grasp_requests_repose_only_if_other_stem_has_one(
     result = _run(tmp_path, fixture, planner)
     assert result.status == "no_eligible_pose_in_catalog"
     assert result.repose_target_stems == ()
+
+
+def test_live_cylinder_routes_lying_key_to_upright_reset_before_insertion(
+        tmp_path, monkeypatch):
+    mode, calibration, catalog, limits = _fixture(tmp_path, monkeypatch)
+    mode = select_mode("cylinder", 20)
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.classify_key_tabletop_pose",
+        lambda **_: {"stem": "001", "rotation_error_deg": 0.0})
+    catalog["candidates"].append({**catalog["candidates"][0],
+                                  "tabletop_pose_stem": "001"})
+    planner = _Planner()
+    result = _run(
+        tmp_path, (mode, calibration, catalog, limits), planner,
+        upright_cylinder_only=True)
+    assert result.status == "repose_required_unplanned"
+    assert result.repose_target_stems == ("000",)
+    assert result.selected_candidate_key is None
+    assert planner.pickups == []
 
 
 def test_trial_records_reset_seed_assessment_without_authorizing_repose(

@@ -889,22 +889,23 @@ def assess_saved_preinsert_xy_diagnostic(
         max_hand_command_error_raw=limits.max_hand_command_error_raw,
         max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
     frame_rows = capture["frame_evidence"]
-    images = {}
+    selected_cameras = assessment_cameras(frame_rows)
     frames = []
-    for camera, row in sorted(frame_rows.items()):
+    for camera in selected_cameras:
+        row = frame_rows[camera]
         image = cv2.imread(str(bundle / "images" / f"{camera}.png"),
                            cv2.IMREAD_COLOR)
         if image is None or image_sha256(image) != row["image_sha256"]:
             raise ValueError("saved preinsert raw image changed")
-        images[camera] = image
         frames.append(LabeledFrame(
             camera, "preinsert_hold", row["timestamp_s"],
             Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))))
+    selected_rows = [frame_rows[camera] for camera in selected_cameras]
     if (len(frames) < (1 if mode.family == "cylinder" else 2) or
             max(row["timestamp_s"] + row["max_error_s"]
-                for row in frame_rows.values()) -
+                for row in selected_rows) -
             min(row["timestamp_s"] - row["max_error_s"]
-                for row in frame_rows.values()) > limits.max_capture_skew_s):
+                for row in selected_rows) > limits.max_capture_skew_s):
         raise ValueError("saved preinsert cameras are insufficient or asynchronous")
     validate_session_camera_calibration(
         calibration,

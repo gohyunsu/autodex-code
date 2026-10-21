@@ -2580,10 +2580,22 @@ preflight is not motor authorization for pickup or insertion.
 For a judged grasp miss, the live recovery handler reuses stock AutoDex
 `release(..., open_to_init=True)` and `reset()` with the selected v8 pickup
 plan. The copied collision world retains the fixed socket and original
-tabletop key; after measured clear-view feedback it recaptures the key,
-restores its original pose and location if needed, and only then closes the
-failed attempt. A still-held insertion failure follows the distinct held-key
-return and planned release/exit path.
+tabletop key; after measured clear-view feedback it recaptures the key at
+its actual supported pose and excludes the missed grasp. It does not pick up
+and drop the key simply to restore its former XY. In the live 20 mm cylinder
+mode, a lying `001` key first enters the directed v8 `001→000` reorientation
+route. That route and held-key failure returns now plan release at the board
+support pose (`release_height_m=0`), using the stock force-aware vertical
+descent before opening. The v8 `reset_12` name still identifies the candidate
+seed family; it is not the physical drop height. A freshly observed supported
+reset within 30 mm of the original CAD center is accepted for the next trial.
+For a saved preinsert XY correction, the next `000` trial plans only the same
+v8 grasp. If that grasp cannot be planned, it reports
+`repeat_grasp_unavailable` instead of trying a different grasp under the
+same correction. The saved preinsert diagnostic decodes only the configured
+assessment cameras while retaining all original frame identities in its report.
+A still-held insertion failure follows the distinct held-key return and
+planned release/exit path.
 
 For a repeated session, [`run_live_precision_session()`](precision_insertion/live_orchestration.py)
 now keeps this same camera context open while the demo-local

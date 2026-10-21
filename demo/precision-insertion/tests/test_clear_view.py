@@ -143,6 +143,39 @@ def test_only_empty_hand_clear_view_retract_uses_clear_view_endpoint_tolerance()
     assert observed[-1] == .04
 
 
+def test_supported_descent_uses_stock_force_stop_and_keeps_hand_closed_if_early():
+    guard, actual, events = _fixture()
+    start = np.r_[actual["arm"], INSPIRE_INIT]
+    end = start.copy()
+    end[0] += .02
+    path = np.vstack([start, end])
+
+    def wrist(q):
+        pose = np.eye(4)
+        pose[0, 3] = q[0]
+        return pose
+
+    planner = SimpleNamespace(fk_wrist=wrist)
+    guard.executor.get_wrist_pose = lambda: wrist(actual["arm"])
+
+    def follow(_arm, **kwargs):
+        events.append(("descent", kwargs["stop_wrench_z"]))
+
+    guard.executor._follow = follow
+    with pytest.raises(RuntimeError, match="stopped before"):
+        guard.follow_supported_descent(path, planner=planner)
+    assert events == [("descent", 12.0)]
+    assert np.array_equal(actual["arm"], start[:7])
+
+    def finish(_arm, **kwargs):
+        events.append(("descent", kwargs["stop_wrench_z"]))
+        actual["arm"] = end[:7].copy()
+
+    guard.executor._follow = finish
+    guard.follow_supported_descent(path, planner=planner)
+    assert events[-1] == ("descent", 12.0)
+
+
 def test_failed_trial_release_opens_ascends_then_retracts_before_recapture():
     guard, actual, events = _fixture()
     low = np.r_[actual["arm"], INSPIRE_INIT]

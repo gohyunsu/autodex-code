@@ -230,6 +230,31 @@ def test_repose_held_chain_keeps_socket_and_does_not_authorize_release(
     assert "target" not in calibration.collision_scene["mesh"]
 
 
+def test_supported_descent_ends_with_key_bottom_on_board(tmp_path, monkeypatch):
+    calibration, scene, pickup, rest, limits = _fixture(tmp_path, monkeypatch)
+    planner = _Planner()
+    held = plan_repose_held_chain(
+        planner=planner, pickup_plan=pickup, trial_scene=scene,
+        shared_root=tmp_path, calibration=calibration, mode=MODE,
+        T_key_hand=np.eye(4), T_robot_key_rest=rest,
+        release_height_m=0.0, minimum_rest_socket_clearance_m=0.01,
+        minimum_board_edge_clearance_m=0.01,
+        held_hand_q=np.zeros(6), held_hand_source="commanded_nominal",
+        limits=limits)
+    assert held.status == "sampled_held_path_pass_release_unplanned", (
+        held.sampled_held_path_audit["failures"])
+    assert held.release_height_m == 0.0
+    assert planner.fk_wrist(held.descent_trajectory[-1])[2, 3] == pytest.approx(
+        rest[2, 3])
+    release = plan_repose_release_exit(
+        planner=planner, trial_scene=scene, shared_root=tmp_path,
+        calibration=calibration, mode=MODE, held_plan=held,
+        release_hand_q=np.zeros(6),
+        retreat_goal_arm_q=held.descent_trajectory[-1, :7],
+        minimum_release_key_clearance_m=0.001, limits=limits)
+    assert release.status == "nominal_release_exit_path_pass_drop_unobserved"
+
+
 def test_repose_transfer_finger_jitter_does_not_abort(tmp_path, monkeypatch):
     calibration, scene, pickup, rest, limits = _fixture(tmp_path, monkeypatch)
     planner = _Planner()

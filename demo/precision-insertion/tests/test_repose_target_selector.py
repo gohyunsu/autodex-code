@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 
@@ -11,6 +12,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.repose_target_selector import (  # noqa: E402
     DirectedReposeTargetSelector, ReposeTargetsExhausted,
 )
+from precision_insertion.assets import AssetPaths  # noqa: E402
+from precision_insertion.config import select_mode  # noqa: E402
+from autodex.utils.conversion import se32cart  # noqa: E402
 from precision_insertion.session_policy import SessionDecision  # noqa: E402
 from precision_insertion.session_runner import SessionRunner  # noqa: E402
 
@@ -56,6 +60,35 @@ def test_reset_selector_ranks_coverage_and_preserves_first_release_xy():
         selector(runner, _decision("preflight_alternative_repose_cell"),
                  latest)
     assert len(selector.attempted_choices()) == 4
+
+
+def test_cylinder_repose_preserves_cad_center_when_standing_key(tmp_path,
+                                                                 monkeypatch):
+    mode = select_mode("cylinder", 20)
+    canonical = AssetPaths(tmp_path, mode).key_tabletop_dir
+    canonical.mkdir(parents=True)
+    np.save(canonical / "000.npy", np.eye(4))
+    monkeypatch.setattr(
+        "precision_insertion.repose_target_selector._load_mesh",
+        lambda _path: SimpleNamespace(bounds=np.array([
+            [-.015, -.015, 0.], [.015, .015, .08]])))
+    lying = np.eye(4)
+    lying[:3, :3] = [[0., 0., 1.], [0., 1., 0.], [-1., 0., 0.]]
+    lying[:3, 3] = [.4, .2, .015]
+    trial = SimpleNamespace(
+        pose_class={"stem": "001"}, repose_target_stems=("000",),
+        trial_scene={"mesh": {"target": {
+            "pose": se32cart(lying).tolist()}}})
+    latest = SimpleNamespace(
+        observation=SimpleNamespace(capture_id="lying_1"), preflight=trial)
+    runner = SimpleNamespace(
+        mode=mode, shared_root=tmp_path,
+        catalog={"candidates": [{"tabletop_pose_stem": "000",
+                                 "eligible": True}]})
+    choice = DirectedReposeTargetSelector(
+        xy_offsets_m=((0., 0.),))(
+            runner, _decision("preflight_repose"), latest)
+    assert choice["release_xy_robot_m"] == pytest.approx((.44, .2))
 
 
 def test_reset_selector_rejects_invalid_heights_and_resets_on_new_capture():

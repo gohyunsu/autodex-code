@@ -15,18 +15,20 @@ For a **still-held key after insertion failure**, the intended common tail is:
    site. The trial-start site is a useful target, but its full key footprint
    must fit the measured ChArUco area and clear the frozen socket.
 3. Preflight hand opening, upward exit and retract using the existing reset
-   release planner. `ClearViewForPerception.complete_failed_insertion_return_with_autodex()`
-   follows the planned held transfer/descent through the stock
-   `FrankaExecutor.follow_joint_trajectory()` with converted Inspire actions,
-   then calls its ramped `release()` and follows the vertical exit/retract.
-   It checks measured endpoints and final `FR3_CLEAR_VIEW` / `INSPIRE_INIT`.
+   release planner. The robot-PC return uses `release_height_m=0`: a stock
+   damped-Jacobian vertical stroke lowers the held key to its planned board
+   support pose. The stock 12 N wrist-Z force stop monitors that descent. An
+   early stop more than 5 mm from the planned wrist pose leaves the hand
+   closed. Only after the endpoint is reached does the ramped `release()`
+   run, followed by the vertical exit/retract. It checks measured endpoints
+   and final `FR3_CLEAR_VIEW` / `INSPIRE_INIT`.
    Do not use free-space `home(clear_view=True)` after a trial.
 4. Capture the landed key afresh only after clear-view feedback passes. A
-   commanded drop does not prove its pose.
+   commanded support placement does not prove its physical pose.
    `SessionRunner.observe_reset_landing()` accepts either a supervised manual
    return or an ordered, source-bound automatic-return execution record. A
    built-in stock return recorder binds measured waypoints to the saved plan.
-   Neither the drop nor those robot waypoints prove the key's landing pose;
+   Neither the placement nor those robot waypoints prove the key's landing pose;
    the fresh camera observation supplies that evidence.
 
 For a **judged missed grasp**, there is no held key to withdraw or drop.
@@ -34,10 +36,9 @@ For a **judged missed grasp**, there is no held key to withdraw or drop.
 `FrankaExecutor.release(..., open_to_init=True)` and `reset()` before
 recapture. The reset scene preserves the original tabletop key and frozen
 socket as obstacles, then checks measured open-hand/clear-view feedback.
-The new key capture is compared against that attempt's original tabletop
-pose and CAD-centre XY. If the key moved, the same attempt plans and executes
-an additional v8 pickup/place restoration and recaptures again; it cannot
-advance to another grasp until the landing is verified.
+The new key capture admits the key's current supported tabletop pose. It
+does not pick the key up merely to return it to the previous XY after a
+judged miss. The attempted v8 grasp is excluded from the next physical trial.
 If reset planning or execution fails, key perception does not restart. A
 lost grasp or ambiguous abort cannot use this missed-grasp path or the
 held-key return path automatically.
@@ -66,7 +67,7 @@ held = plan_repose_held_from_state(
     T_key_hand=postlift_relation.T_key_hand,
     measured_start_q=withdrawn_state.full_q,
     T_robot_key_rest=trial_start_key_pose_robot,
-    release_height_m=release_height_m,
+    release_height_m=0.0,
     minimum_rest_socket_clearance_m=socket_clearance_m,
     minimum_board_edge_clearance_m=board_edge_margin_m,
     limits=path_audit_limits,
@@ -87,7 +88,7 @@ if release.status != "nominal_release_exit_path_pass_drop_unobserved":
 # After the stock force-stop ascent and a fresh measured start,
 # this reuses the existing FrankaExecutor for all return/exit motion.
 clear_view.complete_failed_insertion_return_with_autodex(
-    held_plan=held, release_plan=release)
+    held_plan=held, release_plan=release, planner=planner)
 ```
 
 The live call supplies the same physical quantities but also binds sources:
@@ -96,7 +97,7 @@ The live call supplies the same physical quantities but also binds sources:
 held, release, plan_report = runner.prepare_failed_insertion_return(
     planner=planner, withdrawn_state=withdrawn_state,
     withdrawal_evidence_path=withdrawal_log_path,
-    limits=path_audit_limits, release_height_m=release_height_m,
+    limits=path_audit_limits, release_height_m=0.0,
     minimum_rest_socket_clearance_m=socket_clearance_m,
     minimum_board_edge_clearance_m=board_edge_margin_m,
     minimum_release_key_clearance_m=release_key_clearance_m,
@@ -106,7 +107,7 @@ held, release, plan_report = runner.prepare_failed_insertion_return(
     max_arm_velocity_rad_s=commissioned_arm_velocity_rad_s,
 )
 clear_view.complete_failed_insertion_return_with_autodex(
-    held_plan=held, release_plan=release)
+    held_plan=held, release_plan=release, planner=planner)
 ```
 
 The commissioned execution recorder must then save an ordered
@@ -132,7 +133,7 @@ hold, **not** an executable lift. Only `held.transfer_trajectory` and
 `held.descent_trajectory` are new held-motion plans. A caller must still
 verify the withdrawal log, measured-state timestamp and key/hand relation;
 the new primitive does not bind these sources itself. Collision checks are
-sampled, and release/drop dynamics and the actual landing pose are unknown.
+sampled, and the actual supported landing pose still needs a fresh image.
 For an eligible cylinder insertion failure, an XY correction learned after
 withdrawal is stored for the **next** physical attempt. It is weighted and
 added to the previous correction, with a 10 mm limit per update and no

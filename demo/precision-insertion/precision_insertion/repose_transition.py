@@ -24,7 +24,8 @@ from .geometry import validate_se3
 from .path_audit import PathAuditLimits
 from .pose_selection import classify_key_tabletop_pose
 from .repose_preflight import (
-    ReposeHeldPreflight, build_v8_repose_rest_pose, plan_repose_held_chain,
+    ReposeHeldPreflight, UPRIGHT_REPOSE_CLEARANCE_M,
+    build_v8_repose_rest_pose, plan_repose_held_chain,
 )
 from .curobo_compat import install_curobo_planner_compat
 from .repose_release import ReposeReleasePreflight, plan_repose_release_exit
@@ -99,6 +100,7 @@ def preflight_v8_repose_transition(
     max_seed_attempts: int | None = None,
     retreat_goal_arm_q: np.ndarray | None = None,
     minimum_release_key_clearance_m: float | None = None,
+    release_height_m: float | None = None,
 ) -> ReposeTransitionPreflight:
     """Try each stable directed v8 reset seed without driving the robot.
 
@@ -140,6 +142,11 @@ def preflight_v8_repose_transition(
     if (type(height_cm) is not int or height_cm <= 0 or
             height_cm not in (4, 8, 12)):
         raise ValueError("held release preflight supports v8 heights 4, 8, 12 cm")
+    physical_release_height = (height_cm / 100.0 if release_height_m is None
+                               else float(release_height_m))
+    if (not math.isfinite(physical_release_height) or
+            physical_release_height < 0):
+        raise ValueError("physical release height must be nonnegative")
     source = str(from_pose_stem)
     target = str(to_pose_stem)
     if (not source.isdigit() or source != f"{int(source):03d}" or
@@ -224,11 +231,18 @@ def preflight_v8_repose_transition(
         hold = nominal_inspire_hold_poses(
             seeds["pregrasp"][i], seeds["grasp"][i]
         )["autodex_default_controller_hold"]
+        clearance = (UPRIGHT_REPOSE_CLEARANCE_M
+                     if mode.family == "cylinder" and
+                     physical_release_height == 0 and source != target
+                     else 0.10)
         planned = plan_repose_held_chain(
             planner=planner, pickup_plan=pickup, trial_scene=trial_scene,
             shared_root=root, calibration=calibration, mode=mode,
             T_key_hand=np.linalg.inv(initial) @ seeds["wrist_se3"][i],
-            T_robot_key_rest=rest, release_height_m=height_cm / 100.0,
+            T_robot_key_rest=rest,
+            release_height_m=physical_release_height,
+            lift_height_m=clearance,
+            preplace_vertical_travel_m=clearance,
             minimum_rest_socket_clearance_m=minimum_rest_socket_clearance_m,
             minimum_board_edge_clearance_m=minimum_board_edge_clearance_m,
             held_hand_q=hold, held_hand_source="commanded_nominal",

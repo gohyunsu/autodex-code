@@ -63,7 +63,11 @@ landed correctly. The next attempt starts only after observed reset success.
 The command transform is
 `T_robot_hand = T_robot_socket · T_socket_key_centered · T_key_hand_command`.
 The cumulative socket XY correction changes only the *commanded wrist*;
-the modeled key stays on the socket centerline. Each new trial rechecks the
+the modeled key stays on the socket centerline. The next corrected trial
+plans the same v8 grasp and tabletop class. If that combination has no path,
+the correction is not silently tested with another grasp. A changed tabletop
+class at the next insertion attempt invalidates the previous correction;
+an intermediate reorientation retains it. Each new trial rechecks the
 whole hand against the socket at the intended 20 mm endpoint and replans
 from its fresh tabletop key and measured robot joints. A candidate rejected
 by that collision/path check is not executed merely because the VLM asked

@@ -322,9 +322,13 @@ attempt's candidate tried first when it is still eligible. Cylinder live
 assembly rejects a missing callback or interlock before pickup. If neither a directed
 reset seed nor an eligible source-pose grasp has a complete planned path,
 restoration remains unavailable for that observed scene; it is not reported
-as a successful reset. `restoration_height_cm` defaults to 12 and
-`max_restoration_attempts` to 3 in the held-return stage; both can be set by
-the robot-PC factory.
+as a successful reset. `restoration_height_cm` defaults to 12 as the v8 reset
+seed family. Live placement uses a separate 0 m release offset so the planned
+key bottom reaches the board before opening the hand. The descent uses the
+stock 12 N wrist-Z force stop and leaves the hand closed if it stops more than
+5 mm before the support pose. `max_restoration_attempts` defaults to 3. The
+live reset accepts a freshly observed supported key up to 30 mm from its
+original CAD-center XY, avoiding a redundant second pickup.
 
 Run:
 
@@ -446,9 +450,11 @@ still an error requiring review, not a visual abstention.
 default. When a tabletop pose has no remaining usable grasp, it checks each
 directed cell with the same full-key MuJoCo/fidelity reset-seed loader used
 by the later preflight. It skips target poses with no eligible seed, then
-ranks the remaining poses by eligible insertion-grasp count. It first tries the key's
-current robot-frame XY as the release site, then four nearby 30 mm cells at
-the v8 12 cm reset height. Each choice still goes through the existing
+ranks the remaining poses by eligible insertion-grasp count. For the cylinder,
+the first site preserves the observed key CAD center when changing tabletop
+orientation; four nearby 30 mm cells follow. The v8 `reset_12` seed family
+does not set the live physical release height. Each choice goes through the
+existing
 socket-aware full pickup/held/release/clear-view preflight. Exhausting the
 finite choices writes `repose_targets_exhausted.json` and ends in
 `stop_for_review`, rather than planning the same failed reset forever.

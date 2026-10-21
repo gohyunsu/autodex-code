@@ -71,7 +71,7 @@ def decide_after_trial_preflight(report: Mapping) -> SessionDecision:
     if status in {
             "catalog_unavailable", "no_eligible_pose_in_catalog",
             "planning_exhausted_current_pose", "repose_assets_unavailable",
-            "repose_staged_only_unplanned",
+            "repose_staged_only_unplanned", "repeat_grasp_unavailable",
     }:
         return SessionDecision("stop_for_review", str(status), None)
     raise ValueError(f"unrecognized trial preflight status: {status}")
@@ -221,9 +221,9 @@ def decide_after_attempt(
             "supervised_key_recovery", "fresh_key_pose")
     if labels["grasp_success"] is False:
         return result(
-            "recover_key_then_reobserve", "grasp_miss_restore_original_pose",
-            "clear_view_open_hand", "fresh_key_pose",
-            "restore_original_pose_and_position", "exclude_attempted_grasp")
+            "recover_key_then_reobserve", "grasp_miss_reobserve_current_pose",
+            "clear_view_open_hand", "fresh_supported_key_pose",
+            "exclude_attempted_grasp")
     if labels["grasp_success"] is True:
         return result(
             "postlift_observed_preflight_required", "lifted_key_observed",

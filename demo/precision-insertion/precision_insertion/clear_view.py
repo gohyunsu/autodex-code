@@ -263,9 +263,40 @@ class ClearViewForPerception:
             if clear_return and previous is not None:
                 self.executor.completion_max_path_error_rad = previous
 
+    def follow_supported_descent(self, path: np.ndarray, *, planner,
+                                 stop_wrench_z: float = 12.0) -> LiveRobotState:
+        """Use stock place's force-aware vertical descent before opening.
+
+        A force stop well above the planned tabletop support keeps the hand
+        closed. The release/exit caller may proceed only after the measured
+        wrist reaches the support target within stock place's 5 mm allowance.
+        """
+        descent = np.asarray(path, dtype=float)
+        if (descent.ndim != 2 or descent.shape[1] != 13 or
+                len(descent) < 2 or not np.all(np.isfinite(descent)) or
+                not callable(getattr(planner, "fk_wrist", None)) or
+                not callable(getattr(self.executor, "_follow", None)) or
+                not callable(getattr(self.executor, "get_wrist_pose", None)) or
+                not math.isfinite(stop_wrench_z) or stop_wrench_z <= 0):
+            raise ValueError("support descent needs a planned path and stock FR3")
+        target = np.asarray(planner.fk_wrist(descent[-1]), dtype=float)
+        if target.shape != (4, 4) or not np.all(np.isfinite(target)):
+            raise ValueError("support descent has no finite wrist target")
+        self._verify_held_endpoint(descent[0], phase="before_support_descent")
+        self.executor._follow(
+            descent[:, :7], stop_wrench_z=stop_wrench_z,
+            slowdown_wrist_target=target)
+        actual = np.asarray(self.executor.get_wrist_pose(), dtype=float)
+        if (actual.shape != (4, 4) or not np.all(np.isfinite(actual)) or
+                np.linalg.norm(actual[:3, 3] - target[:3, 3]) > 0.005):
+            raise RuntimeError("support descent stopped before the placement pose")
+        return self._verify_held_endpoint(
+            descent[-1], phase="supported_descent_end")
+
     def complete_failed_insertion_return_with_autodex(
         self, *, held_plan: ReposeHeldPreflight,
         release_plan: ReposeReleasePreflight,
+        planner=None,
         evidence_sink: list[dict] | None = None,
     ) -> LiveRobotState:
         """From withdrawn hold, return key to table and park for recapture.
@@ -319,9 +350,13 @@ class ClearViewForPerception:
         if evidence_sink is not None:
             evidence_sink.append({"name": "held_transfer",
                                   "state": transferred.to_record()})
-        self._follow_autodex(descent.copy())
-        descended = self._verify_held_endpoint(
-            descent[-1], phase="held_descent_end")
+        if held_plan.release_height_m == 0:
+            descended = self.follow_supported_descent(
+                descent.copy(), planner=planner)
+        else:
+            self._follow_autodex(descent.copy())
+            descended = self._verify_held_endpoint(
+                descent[-1], phase="held_descent_end")
         if evidence_sink is not None:
             evidence_sink.append({"name": "held_descent",
                                   "state": descended.to_record()})

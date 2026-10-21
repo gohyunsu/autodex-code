@@ -109,7 +109,7 @@ def test_grasp_transfer_and_unknown_observations_branch_separately():
     _grasp(missed, False)
     decision = decide_after_attempt(missed, max_xy_retries=2)
     assert decision.action == "recover_key_then_reobserve"
-    assert "restore_original_pose_and_position" in decision.required_before_motion
+    assert "fresh_supported_key_pose" in decision.required_before_motion
     assert "exclude_attempted_grasp" in decision.required_before_motion
     assert missed.labels["preinsert_reached"] is None
     failed_transfer = _attempt()

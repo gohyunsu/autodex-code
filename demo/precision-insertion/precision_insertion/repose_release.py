@@ -82,8 +82,8 @@ def build_repose_release_world(
         trial_scene=trial_scene, calibration=calibration)
     rest = validate_se3(T_robot_key_rest, name="reset tabletop rest pose")
     height = float(release_height_m)
-    if not math.isfinite(height) or height <= 0:
-        raise ValueError("release height must be positive")
+    if not math.isfinite(height) or height < 0:
+        raise ValueError("release height must be nonnegative")
     floating = rest.copy()
     floating[2, 3] += height
     key_spec = trial_scene["mesh"]["target"]

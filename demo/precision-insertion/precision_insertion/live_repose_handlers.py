@@ -19,6 +19,9 @@ from .repose_target_selector import (
     DirectedReposeTargetSelector, ReposeTargetsExhausted,
 )
 from .reset_candidates import load_v8_reset_seeds
+from .repose_preflight import (
+    build_v8_repose_rest_pose, validate_repose_rest_target,
+)
 from .session_policy import SessionDecision
 from .timing_profile import timed
 
@@ -69,9 +72,33 @@ class LiveReposePlanningHandlers:
                         candidate_root=parameters.get(
                             "reset_candidate_root")) is not None
 
+                def site_available(stem: str, xy: tuple[float, float]) -> bool:
+                    try:
+                        rest = build_v8_repose_rest_pose(
+                            shared_root=runner.shared_root,
+                            mode=runner.mode, calibration=runner.calibration,
+                            target_pose_stem=stem, release_xy_robot_m=xy,
+                            asset_support_tolerance_m=(
+                                self.path_limits.goal_position_tolerance_m))
+                        validate_repose_rest_target(
+                            shared_root=runner.shared_root,
+                            mode=runner.mode, calibration=runner.calibration,
+                            T_robot_key_rest=rest,
+                            support_tolerance_m=(
+                                self.path_limits.goal_position_tolerance_m),
+                            minimum_rest_socket_clearance_m=parameters[
+                                "minimum_rest_socket_clearance_m"],
+                            minimum_board_edge_clearance_m=parameters[
+                                "minimum_board_edge_clearance_m"])
+                    except ValueError:
+                        return False
+                    return True
+
                 target = self.select_target(
                     runner, decision, latest,
-                    seed_available=seed_available)
+                    seed_available=seed_available,
+                    site_available=(site_available if getattr(
+                        runner.mode, "family", None) == "cylinder" else None))
             else:
                 target = self.select_target(runner, decision, latest)
         except ReposeTargetsExhausted:

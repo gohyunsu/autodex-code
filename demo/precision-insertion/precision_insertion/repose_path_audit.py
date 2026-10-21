@@ -40,8 +40,8 @@ def audit_repose_held_paths(
     """
     limits.validate()
     height = float(release_height_m)
-    if not np.isfinite(height) or height <= 0:
-        raise ValueError("release height must be finite and positive")
+    if not np.isfinite(height) or height < 0:
+        raise ValueError("release height must be finite and nonnegative")
     held = np.asarray(held_hand_q, dtype=np.float64)
     if held.shape != (6,) or not np.all(np.isfinite(held)):
         raise ValueError("held_hand_q must be six finite Inspire joints")
@@ -126,6 +126,18 @@ def audit_repose_held_paths(
                     if (stage == "lift" and i == 0 and moving_name == "key"
                             and fixed_name == "cuboid/table"):
                         continue  # Initial tabletop support contact only.
+                    if (height == 0 and stage == "descent" and
+                            moving_name == "key" and
+                            fixed_name == "cuboid/table"):
+                        key_bottom = float(np.min(
+                            (moving_mesh.vertices @ moving_pose[:3, :3].T +
+                             moving_pose[:3, 3])[:, 2]))
+                        table_top = float(np.max(
+                            (fixed_mesh.vertices @ obstacle_pose[:3, :3].T +
+                             obstacle_pose[:3, 3])[:, 2]))
+                        if (abs(key_bottom - table_top) <= 0.001 and
+                                key_bottom >= table_top - 0.001):
+                            continue  # Planned support contact, not penetration.
                     relative = np.linalg.inv(obstacle_pose) @ moving_pose
                     report = _held_pair_report(
                         model, moving_mesh, obstacle, fixed_mesh,

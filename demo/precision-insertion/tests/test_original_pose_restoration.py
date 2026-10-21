@@ -73,9 +73,14 @@ def test_same_pose_restoration_reuses_v8_grasp_and_fully_opens_hand(
     monkeypatch.setattr(module, "planner_candidate_override",
                         lambda **kwargs: tuple(kwargs["selected"][0]["key"]))
     monkeypatch.setattr(module, "install_curobo_planner_compat", lambda: None)
-    monkeypatch.setattr(module, "plan_repose_held_chain",
-                        lambda **_: SimpleNamespace(
-                            status="sampled_held_path_pass_release_unplanned"))
+    held_requests = []
+
+    def plan_held(**kwargs):
+        held_requests.append(kwargs)
+        return SimpleNamespace(
+            status="sampled_held_path_pass_release_unplanned")
+
+    monkeypatch.setattr(module, "plan_repose_held_chain", plan_held)
     release_requests = []
 
     def release(**kwargs):
@@ -118,4 +123,5 @@ def test_same_pose_restoration_reuses_v8_grasp_and_fully_opens_hand(
     assert result.selected_seed["seed_id"] == "table/0/3"
     assert frozen_scene is scene
     assert len(release_requests) == 1
+    assert held_requests[0]["release_height_m"] == 0.0
     assert np.array_equal(release_requests[0]["release_hand_q"], np.zeros(6))

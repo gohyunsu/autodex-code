@@ -565,7 +565,9 @@ class SessionRunner:
             exclusions.update(self._same_capture_planning_rejects)
         if {"attempted", "covered_scenes", "mode", "calibration", "catalog",
             "shared_root", "key_pose_world", "key_observation_id",
-            "key_capture_timestamp_s", "preferred_candidate"} & optional_planning_kwargs.keys():
+            "key_capture_timestamp_s", "preferred_candidate",
+            "upright_cylinder_only", "retry_candidate",
+            "retry_pose_stem"} & optional_planning_kwargs.keys():
             raise ValueError("runner-owned planning inputs cannot be overridden")
         result = plan_admitted_key_trial(
             planner=planner, mode=self.mode, shared_root=self.shared_root,
@@ -578,10 +580,14 @@ class SessionRunner:
             max_candidate_attempts=max_candidate_attempts,
             attempted=tuple(sorted(exclusions)), covered_scenes=(),
             preferred_candidate=preferred,
+            upright_cylinder_only=(self.mode.family == "cylinder"),
+            retry_candidate=(preferred if pending_xy is not None else None),
+            retry_pose_stem=(pending_xy["tabletop_pose_stem"]
+                             if pending_xy is not None else None),
             **optional_planning_kwargs)
-        if (pending_xy is not None and
-                result.pose_class["stem"] != pending_xy["tabletop_pose_stem"]):
-            self._pending_next_trial_xy = None
+        # A failed insertion can leave the key lying down. Reorientation to
+        # the advised tabletop class is an intermediate physical episode;
+        # retain its correction until the next insertion attempt consumes it.
         if (result.session_calibration_sha256 != self.session_sha256 or
                 result.catalog_sha256 != self.catalog_sha256 or
                 result.key_observation_id != key_observation.capture_id):
@@ -863,7 +869,8 @@ class SessionRunner:
             max_seed_attempts=max_seed_attempts,
             retreat_goal_arm_q=retreat_goal_arm_q,
             minimum_release_key_clearance_m=(
-                minimum_release_key_clearance_m))
+                minimum_release_key_clearance_m),
+            release_height_m=(0.0 if self.mode.family == "cylinder" else None))
         if (result.observation_id != key_observation.capture_id or
                 result.from_pose_stem != self._preflight.pose_class["stem"] or
                 result.to_pose_stem != to_pose_stem or
@@ -2290,9 +2297,13 @@ class SessionRunner:
                 minimum_rest_socket_clearance_m),
             minimum_board_edge_clearance_m=minimum_board_edge_clearance_m)
         shift = geometry["center_xy_displacement_m"]
-        success = (classification["stem"] ==
-                   self._preflight.pose_class["stem"] and
-                   shift <= maximum_shift)
+        # A visually confirmed miss has no held key to place.  The fresh
+        # supported tabletop observation is the next trial's start pose; the
+        # previous grasp is excluded independently in preflight_next_key.
+        success = (recovery_mode == "autodex_missed_grasp_clear_view" or
+                   (classification["stem"] ==
+                    self._preflight.pose_class["stem"] and
+                    shift <= maximum_shift))
         report_path = self._attempt_dir / "reset_landing.json"
         self._write_exclusive(report_path, {
             "schema": "precision_insertion_reset_landing_v1",
@@ -2314,6 +2325,9 @@ class SessionRunner:
             "observed_support": support,
             "center_xy_displacement_m": shift,
             "maximum_center_xy_displacement_m": maximum_shift,
+            "reset_basis": ("observed_supported_key_pose" if
+                            recovery_mode == "autodex_missed_grasp_clear_view"
+                            else "original_pose_and_position"),
             "reset_success": success,
             "session_calibration_sha256": self.session_sha256,
             "catalog_sha256": self.catalog_sha256,

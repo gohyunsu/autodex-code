@@ -278,6 +278,7 @@ class LiveHeldReturnHandlers:
             invoked = True
             return self.live.clear_view.complete_failed_insertion_return_with_autodex(
                 held_plan=held, release_plan=release,
+                planner=self.planner,
                 **({"evidence_sink": evidence_sink}
                    if evidence_sink is not None else {}))
 

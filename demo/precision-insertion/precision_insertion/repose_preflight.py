@@ -29,6 +29,8 @@ from .preflight import _goal_met, _path
 from .repose_path_audit import audit_repose_held_paths
 from .world import build_held_scene_from_trial, validated_frozen_socket_pose
 
+UPRIGHT_REPOSE_CLEARANCE_M = 0.15
+
 
 @dataclass(frozen=True)
 class ReposeHeldPreflight:
@@ -291,9 +293,9 @@ def plan_repose_held_from_state(
         raise ValueError("held return needs a measured finite 13-DOF state")
     height = float(release_height_m)
     travel = float(preplace_vertical_travel_m)
-    if (not math.isfinite(height) or height <= 0 or
+    if (not math.isfinite(height) or height < 0 or
             not math.isfinite(travel) or travel <= 0):
-        raise ValueError("held return heights must be positive")
+        raise ValueError("held return height must be nonnegative and travel positive")
     root = Path(shared_root).expanduser().resolve()
     validated_frozen_socket_pose(mode=mode, shared_root=root,
                                  calibration=calibration)
@@ -356,10 +358,10 @@ def plan_repose_held_chain(
     height = float(release_height_m)
     travel = float(preplace_vertical_travel_m)
     lift_h = float(lift_height_m)
-    if (not math.isfinite(height) or height <= 0 or
+    if (not math.isfinite(height) or height < 0 or
             not math.isfinite(travel) or travel <= 0 or
             not math.isfinite(lift_h) or lift_h <= 0):
-        raise ValueError("lift, preplace travel and release height must be positive")
+        raise ValueError("lift/travel must be positive and release height nonnegative")
     key_hand = validate_se3(T_key_hand, name="reset T_key_hand")
     rest = validate_se3(T_robot_key_rest, name="reset tabletop key target")
     root = Path(shared_root).expanduser().resolve()

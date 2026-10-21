@@ -200,6 +200,25 @@ def _plan(runner, observation):
         max_pose_error_deg=5.0, axial_waypoint_step_m=0.002)
 
 
+def test_xy_advice_survives_intermediate_key_reorientation(monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    advice = {"candidate_id": "/".join(KEY_A), "tabletop_pose_stem": "000"}
+    runner._pending_next_trial_xy = advice
+
+    def plan_lying(**kwargs):
+        assert kwargs["retry_candidate"] == KEY_A
+        report = _report(
+            runner, kwargs["key_observation"],
+            status="repose_required_unplanned", repose_targets=("000",))
+        report.pose_class = {"stem": "001"}
+        return report
+
+    monkeypatch.setattr(session_runner, "plan_admitted_key_trial", plan_lying)
+    _plan(runner, _observation("lying_key", 7.0))
+    assert runner.current_decision().action == "preflight_repose"
+    assert runner._pending_next_trial_xy is advice
+
+
 def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)
@@ -277,6 +296,8 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
     monkeypatch.setattr(session_runner, "plan_admitted_key_trial", plan_next)
     _plan(runner, _observation("key_2", 7.0))
     assert captured[0]["preferred_candidate"] == KEY_A
+    assert captured[0]["retry_candidate"] == KEY_A
+    assert captured[0]["retry_pose_stem"] == "000"
     assert KEY_A not in captured[0]["attempted"]
     runner.begin_selected_attempt(attempt_id="attempt_2", started_at_s=7.2)
     assert runner.active_attempt.wrist_correction_socket_m == pytest.approx(
@@ -1230,7 +1251,7 @@ def test_supervised_reset_rejects_wrong_class_or_displaced_key(
     assert runner.current_decision().action == "stop_for_review"
 
 
-def test_missed_grasp_clear_view_still_requires_original_landing(
+def test_missed_grasp_retries_from_fresh_supported_pose_without_restoration(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)
     monkeypatch.setattr(
@@ -1244,7 +1265,7 @@ def test_missed_grasp_clear_view_still_requires_original_landing(
     assert runner.current_decision().action == "recover_key_then_reobserve"
     monkeypatch.setattr(
         session_runner, "classify_key_tabletop_pose",
-        lambda **_kwargs: {"stem": "000", "rotation_error_deg": 0.0})
+        lambda **_kwargs: {"stem": "001", "rotation_error_deg": 0.0})
     monkeypatch.setattr(
         session_runner, "validate_repose_rest_target",
         lambda **_kwargs: {"key_socket_clearance_m": 0.1})
@@ -1263,7 +1284,9 @@ def test_missed_grasp_clear_view_still_requires_original_landing(
             "schema": "precision_insertion_live_robot_state_v1",
             "sample_timestamp_s": 10.7},
     }), encoding="utf-8")
-    landed = _observation("reset_key", 11.0)
+    pose = np.eye(4)
+    pose[0, 3] = 0.03
+    landed = replace(_observation("reset_key", 11.0), pose_world=pose)
     evidence_dir = _save_evidence(runner, landed)
     result = runner.observe_reset_landing(
         key_observation=landed, key_evidence_dir=evidence_dir,
@@ -1276,6 +1299,8 @@ def test_missed_grasp_clear_view_still_requires_original_landing(
     assert runner.current_decision().action == "reobserve_key_and_preflight"
     saved = json.loads((runner._attempt_dir / "reset_landing.json").read_text())
     assert saved["recovery_mode"] == "autodex_missed_grasp_clear_view"
+    assert saved["reset_basis"] == "observed_supported_key_pose"
+    assert saved["center_xy_displacement_m"] > 0.01
 
 
 def test_failed_insertion_auto_return_observation_restarts_with_fresh_key(

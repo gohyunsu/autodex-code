@@ -44,8 +44,8 @@ class LiveTransferRecoveryHandlers:
         """Use AutoDex's selected-grasp release/reset, then observe the key.
 
         A visual miss does not establish that the key stayed at its start
-        position. The subsequent fresh capture and original-pose restoration
-        are part of this same failed attempt.
+        position. A fresh capture admits its current tabletop pose for the
+        next grasp, without a return pickup or drop.
         """
         selected = getattr(self.key_planning, "latest", None)
         preflight = getattr(selected, "preflight", None)
@@ -112,7 +112,7 @@ class LiveTransferRecoveryHandlers:
                 raise RuntimeError("held transfer return can run only once")
             invoked = True
             return self.live.clear_view.complete_failed_insertion_return_with_autodex(
-                held_plan=held, release_plan=release)
+                held_plan=held, release_plan=release, planner=self.planner)
 
         execution = Path(self.record_execution(
             run_planned_return, report_path, runner, decision)).expanduser().resolve()
@@ -178,7 +178,11 @@ class LiveTransferRecoveryHandlers:
                 expected_action="recover_key_then_reobserve",
                 **dict(self.capture_parameters))
         restoration_logs = ()
-        if callable(self.restore_original):
+        # A missed grasp leaves the key on the table.  Reobserve its actual
+        # pose and try a different v8 grasp; do not pick it up solely to drop
+        # it back at the prior XY position.
+        if (runner.active_attempt.labels["grasp_success"] is not False and
+                callable(self.restore_original)):
             with timed("recovery.restore_until_original", phase="recovery"):
                 landed, restoration_logs = self.restore_original(
                     runner, decision, landed, launch)

@@ -204,13 +204,21 @@ class StockReposeExecutor:
             checkpoints.append({"name": "pickup_squeeze",
                                 "state": squeezed.to_record()})
             for phase, name in (("held_lift", "held_lift"),
-                                ("held_transfer", "held_transfer"),
-                                ("held_descent", "held_descent")):
+                                ("held_transfer", "held_transfer")):
                 self.clear_view._follow_autodex(paths[name].copy())
                 measured = self.clear_view._verify_held_endpoint(
                     paths[name][-1], phase=f"stock_repose_{phase}")
                 checkpoints.append({"name": phase,
                                     "state": measured.to_record()})
+            if plan.held_plan.release_height_m == 0:
+                measured = self.clear_view.follow_supported_descent(
+                    paths["held_descent"].copy(), planner=self.planner)
+            else:
+                self.clear_view._follow_autodex(paths["held_descent"].copy())
+                measured = self.clear_view._verify_held_endpoint(
+                    paths["held_descent"][-1], phase="stock_repose_held_descent")
+            checkpoints.append({"name": "held_descent",
+                                "state": measured.to_record()})
             final = self.clear_view.finish_planned_release_exit_with_autodex(
                 release_plan=plan.release_plan, evidence_sink=checkpoints)
             if (not isinstance(final, LiveRobotState) or

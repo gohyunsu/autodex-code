@@ -22,7 +22,10 @@ from .curobo_compat import install_curobo_planner_compat
 from .endpoint import nominal_inspire_hold_poses
 from .geometry import validate_se3
 from .pose_selection import classify_key_tabletop_pose
-from .repose_preflight import build_v8_repose_rest_pose, plan_repose_held_chain
+from .repose_preflight import (
+    UPRIGHT_REPOSE_CLEARANCE_M, build_v8_repose_rest_pose,
+    plan_repose_held_chain,
+)
 from .repose_release import plan_repose_release_exit
 from .repose_transition import (
     ReposeTransitionPreflight, preflight_v8_repose_transition,
@@ -98,6 +101,7 @@ def plan_original_pose_restoration(
         limits=limits,
         retreat_goal_arm_q=retreat_goal_arm_q,
         minimum_release_key_clearance_m=minimum_release_key_clearance_m,
+        release_height_m=0.0,
     )
     if source != target:
         directed = preflight_v8_repose_transition(**common)
@@ -117,6 +121,8 @@ def plan_original_pose_restoration(
             raise ValueError("preferred restoration grasp needs a v8 candidate key")
         rows.sort(key=lambda row: tuple(row["key"]) != preferred)
     attempts = []
+    clearance = (UPRIGHT_REPOSE_CLEARANCE_M
+                 if mode.family == "cylinder" and source != target else 0.10)
 
     def result(status, candidate=None, pickup=None, held=None, release=None):
         return ReposeTransitionPreflight(
@@ -154,7 +160,9 @@ def plan_original_pose_restoration(
             planner=planner, pickup_plan=pickup, trial_scene=scene,
             shared_root=shared_root, calibration=calibration, mode=mode,
             T_key_hand=T_key_hand, T_robot_key_rest=rest,
-            release_height_m=release_height_cm / 100.0,
+            release_height_m=0.0,
+            lift_height_m=clearance,
+            preplace_vertical_travel_m=clearance,
             minimum_rest_socket_clearance_m=minimum_rest_socket_clearance_m,
             minimum_board_edge_clearance_m=minimum_board_edge_clearance_m,
             held_hand_q=hold_q, held_hand_source="commanded_nominal",

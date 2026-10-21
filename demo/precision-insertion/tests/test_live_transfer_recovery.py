@@ -54,11 +54,11 @@ def test_automatic_return_eligibility_requires_visible_rigid_hold(tmp_path):
     assert not handler._completed_held_transfer(runner)
 
 
-def test_grasp_miss_recaptures_and_restores_before_closing_attempt(
+def test_grasp_miss_recaptures_without_drop_before_next_grasp(
         tmp_path, monkeypatch):
     events = []
     decision = SessionDecision(
-        "recover_key_then_reobserve", "grasp_miss_restore_original_pose",
+        "recover_key_then_reobserve", "grasp_miss_reobserve_current_pose",
         "table/0/3")
     attempt = SimpleNamespace(
         attempt_id="trial", candidate_id="table/0/3",
@@ -111,7 +111,7 @@ def test_grasp_miss_recaptures_and_restores_before_closing_attempt(
     handler.recover(runner, decision)
     assert events == [
         "autodex_clear_view", "before_capture", "fresh_key_capture",
-        "restore_original", ("record_reset", (restoration,))]
+        ("record_reset", ())]
     log = json.loads((tmp_path / "missed_grasp_recovery.json").read_text())
     assert log["schema"] == "precision_insertion_missed_grasp_clear_view_v1"
     assert log["completed_at_s"] == 2.0

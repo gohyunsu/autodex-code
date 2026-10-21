@@ -106,12 +106,12 @@ def configure(core, live, options) -> dict:
     }
     landing = {
         "max_pose_error_deg": 10.,
-        "max_return_center_shift_m": .01,
+        "max_return_center_shift_m": .03,
         "support_tolerance_m": .005,
         **reset_geometry,
     }
     return_parameters = {
-        "release_height_m": .10,
+        "release_height_m": 0.,
         "minimum_release_key_clearance_m": .005,
         "max_withdrawal_state_gap_s": 1.,
         **reset_geometry, **stationary,
