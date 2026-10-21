@@ -131,7 +131,14 @@ def plan_socket_release_exit(
         goal_arm_qpos=np.asarray(FR3_CLEAR_VIEW, dtype=np.float64))
     if retract_raw is None:
         raise ValueError("stock clear-view retract has no collision-free path")
-    retract = _path(retract_raw, "clear-view retract", hand=release_hand,
+    # cuRobo's full-DOF joint solve may bend fingers between identical open
+    # endpoints. The hand stays open during this arm-only retract; replay that
+    # exact commanded path against the inserted-key world below.
+    retract = np.asarray(retract_raw, dtype=np.float64).copy()
+    if retract.ndim != 2 or retract.shape[1] != 13:
+        raise ValueError("clear-view retract has no FR3/Inspire joint path")
+    retract[:, 7:] = release_hand
+    retract = _path(retract, "clear-view retract", hand=release_hand,
                     limits=limits)
     if (not np.allclose(retract[0], axial_exit[-1], atol=1e-4, rtol=0) or
             not np.allclose(retract[-1, :7], FR3_CLEAR_VIEW,

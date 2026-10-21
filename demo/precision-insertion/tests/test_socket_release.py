@@ -96,6 +96,35 @@ def test_release_plan_opens_then_retraces_axis_and_stock_retract(
     np.testing.assert_allclose(paths["retract"][-1, :7], FR3_CLEAR_VIEW)
 
 
+def test_release_retract_holds_hand_open_despite_curobo_finger_wiggle(
+        tmp_path, monkeypatch):
+    runner, handoff, limits, planner, _ = _setup(tmp_path, monkeypatch)
+    original_plan = planner.plan_js_to_init
+
+    def plan_with_finger_wiggle(*args, **kwargs):
+        path = original_plan(*args, **kwargs)
+        path[:, 7:] += .13 * np.sin(np.linspace(0., np.pi, len(path)))[:, None]
+        return path
+
+    planner.plan_js_to_init = plan_with_finger_wiggle
+    checked = []
+
+    def check(_, world, path):
+        checked.append(path.copy())
+        return {"all_feasible": True, "first_invalid_index": None,
+                "status": None, "backend": "fake_stock_rollout"}
+
+    monkeypatch.setattr(socket_release, "_check_path", check)
+    report_path = socket_release.plan_socket_release_exit(
+        runner=runner, planner=planner, handoff_report_path=handoff,
+        limits=limits, output_dir=runner._attempt_dir / "socket_release_plan")
+    _, paths = socket_release.verify_socket_release_plan(report_path)
+    np.testing.assert_allclose(
+        paths["retract"][:, 7:], np.tile(INSPIRE_INIT, (len(paths["retract"]), 1)))
+    np.testing.assert_allclose(
+        checked[-1][:, 7:], np.tile(INSPIRE_INIT, (len(checked[-1]), 1)))
+
+
 def test_release_plan_rejects_axis_exit_collision_before_saving(
         tmp_path, monkeypatch):
     runner, handoff, limits, planner, _ = _setup(tmp_path, monkeypatch)
