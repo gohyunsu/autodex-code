@@ -126,8 +126,8 @@ same Oct-12 URDF and cuRobo model. A planner path to the replacement exists
 joint, self-collision, and world-collision constraints. A replacement-to-home
 path also exists (146 waypoints). These are offline checks of the saved scene,
 not a physical trial of the replacement. Startup still uses AutoDex's blocking
-free-space `home` command. No further robot motion was commanded after the
-operator's pause request.
+free-space `home` command. This paragraph describes the offline review before
+the later pose-only move.
 
 Saved real camera frames `25322649` and `25305461` from run
 `20261021_100220_060896` were used to render a read-only comparison. The
@@ -138,6 +138,34 @@ source paths and SHA-256 hashes are recorded in
 `*_hand_closeup.jpg` comparisons. `src/execution/franka_home.py --clear_view`
 also reads this configured target, so the standalone parking command no
 longer silently uses the previous base-only rotation.
+
+### Comparison with the stock AutoDex parking pose
+
+The checked-out stock AutoDex source (`/home/robot/AutoDex`, September 30,
+commit `448732d`) loads `FR3_INIT` from the Franka hand-eye calibration's
+`home_qpos.npy` and constructs `FR3_CLEAR_VIEW` by changing **only joint 1**
+by -40 degrees. `run_auto.py` calls `FrankaExecutor.home(clear_view=True)`
+before perception; `FrankaExecutor.execute()` returns to `FR3_INIT` before a
+grasp trajectory. The right-angle hand mount affects the planner's hand URDF
+and wrist transforms, but this stock clear-view joint target does not solve
+an adapter-aware hand orientation. The October 12 run's source commit and
+clear-view joint telemetry were not saved. Its real `init_capture` images
+show a compact parked arm with the sideways adapter; they do not establish
+exact clear-view joint values. The episode's raw arm recording starts later,
+at execution capture setup, so its first sample is not clear-view evidence.
+
+With the calibration file currently installed on the robot PC, stock
+`FR3_CLEAR_VIEW` would be approximately
+`[-0.702, 0.023, 0.003, -2.329, -0.000, 3.958, -2.304]` rad. The new
+precision target is `[-0.702, 0.157, -0.233, -1.574, 0.837, 1.351,
+-0.521]` rad. In the October 21 pose-only physical move, the measured arm
+reached the new target and the operator confirmed the palm direction, but
+reported that the arm was too extended. Joint 4 is 0.755 rad (43.3 degrees)
+less flexed than the stock target; this agrees with that observation. No
+approach or grasp was commanded after this feedback. A replacement posture
+must be reviewed separately before another move; simply reverting to stock
+would also restore its upward palm direction with the recovered October 12
+mount.
 
 Read-only verification:
 
