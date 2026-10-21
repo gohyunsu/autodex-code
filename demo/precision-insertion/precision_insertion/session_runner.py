@@ -1342,7 +1342,9 @@ class SessionRunner:
             max_arm_velocity_rad_s=max_arm_velocity_rad_s,
             minimum_visual_views=minimum_visual_views,
             label_mode=label_mode,
-            manual_annotation=manual_annotation)
+            manual_annotation=manual_annotation,
+            calibration=self.calibration.record,
+            robot_urdf=AssetPaths(self.shared_root, self.mode).robot_urdf)
         return self._save_lift_assessment(
             result=result, lift_file=lift_file,
             lift_bytes=lift_bytes, completed=completed)

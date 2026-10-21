@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+from typing import Mapping
 
 import cv2
 import numpy as np
@@ -32,6 +33,7 @@ from .observer import (
     verify_per_view_consensus,
 )
 from .lift_visible_grip import (SCHEMA as VISIBLE_GRIP_SCHEMA,
+                                LEGACY_SCHEMA as LEGACY_VISIBLE_GRIP_SCHEMA,
                                 observe_visible_grip, verify_visible_grip)
 from .raw_camera_capture import verify_raw_camera_capture
 from .runtime_evidence_cache import recalled, remember
@@ -302,6 +304,8 @@ def assess_raw_lift_checkpoint(
     minimum_visual_views: int = 2,
     label_mode: str = "evidence_fused",
     manual_annotation: dict | None = None,
+    calibration: Mapping | None = None,
+    robot_urdf: Path | None = None,
 ) -> LiftCheckpoint:
     """Assess visible held/miss/slip without pretending to recover key 6D pose.
 
@@ -380,7 +384,9 @@ def assess_raw_lift_checkpoint(
                 "timestamp_s": row["timestamp_s"],
                 "max_error_s": row["max_error_s"],
             })
-    visual = (observe_visible_grip(backend, frames, before_root)
+    visual = (observe_visible_grip(
+        backend, frames, before_root, calibration=calibration,
+        joint_q=joint_sample.full_q, robot_urdf=robot_urdf)
               if getattr(backend, "supports_visible_grip_lift", False)
               else observe_lift(backend, frames))
     label, reason = _raw_lift_verdict(
@@ -540,9 +546,11 @@ def verify_lift_checkpoint(report_path: Path) -> dict:
                 report["decision_timestamp_s"] < after_upper):
             raise ValueError("raw lift frame times no longer bracket execution")
     visual = report["visual"]
-    if visual.get("aggregation", {}).get("schema") == VISIBLE_GRIP_SCHEMA:
+    if visual.get("aggregation", {}).get("schema") in {
+            VISIBLE_GRIP_SCHEMA, LEGACY_VISIBLE_GRIP_SCHEMA}:
         verify_visible_grip(visual, phase_cameras["before_grasp"],
-                            bundles["before_grasp"])
+                            bundles["before_grasp"],
+                            joint_q=report["joint_feedback"]["full_q"])
     else:
         verify_per_view_consensus(
             visual, field="class", fallback="unobservable",
