@@ -105,21 +105,29 @@ model, but catalog eligibility remains historical until it is regenerated.
 The earlier `FR3_CLEAR_VIEW` rotated only the base joint from calibrated home.
 With the October 12 right-angle mount, URDF FK placed the Inspire palm normal
 at approximately `(0.739, 0.137, 0.660)` in robot coordinates, pointing up.
-The precision checkout now keeps the base and shoulder orientation and uses
-`q4..q7 = (-1.966, -1.222, 2.147, -2.900)` rad. FK places the hand base at
-`(0.427, -0.446, 0.481)` m with palm normal
-`(0.034, -0.029, -0.999)`, nearly straight down. The hand remains on the
-side of the board. This changes the clear-view target shared by initial
-`home(clear_view=True)`, release retracts, and their measured endpoint checks.
+The first correction put the palm down but pointed the finger axis back toward
+the robot (`-X`). The operator rejected that physical orientation. The live
+run was interrupted during planning, before approach or grasp; the arm is
+stationary at that first correction. The replacement keeps the same base
+heading and almost the same hand-base position as the original clear view,
+while aiming both the fingers and the link7-to-fingertip vector outward in
+robot `+X`. Its `q2..q7` are `(0.157, -0.233, -1.574, 0.837, 1.351,
+-0.521)` rad. Oct-12 URDF FK gives hand base `(0.427, -0.367, 0.533)` m,
+palm normal `(0.010, -0.192, -0.981)`, finger direction
+`(0.904, -0.417, 0.091)`, and link7-to-fingertip direction
+`(0.842, 0.289, -0.456)`. The hand remains approximately where it was for
+camera clearance. This changes the target shared by initial
+`home(clear_view=True)`, release retracts, and endpoint checks.
 
-Before commanding this new pose, the measured previous clear-view joints and
-the saved board-9/20-mm scene from run `20261021_092625_546425` were checked
-with the same Oct-12 URDF and cuRobo collision model. A planner path existed
-(121 waypoints); all 201 samples of the direct joint interpolation passed
-cuRobo's joint, self-collision, and world-collision constraints. This is an
-offline check of the saved scene; it does not establish physical clearance
-if the board, socket, or other objects move. The actual startup executor uses
-AutoDex's blocking free-space `home` command.
+The measured stationary joints at the first correction and the saved
+board-9/20-mm scene from run `20261021_092625_546425` were checked with the
+same Oct-12 URDF and cuRobo model. A planner path to the replacement exists
+(133 waypoints); all 201 samples of the direct joint interpolation pass
+joint, self-collision, and world-collision constraints. A replacement-to-home
+path also exists (146 waypoints). These are offline checks of the saved scene,
+not a physical trial of the replacement. Startup still uses AutoDex's blocking
+free-space `home` command. No further robot motion was commanded after the
+operator's pause request.
 
 Read-only verification:
 

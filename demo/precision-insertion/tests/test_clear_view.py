@@ -30,12 +30,21 @@ def test_oct12_mount_clear_view_points_palm_down():
     robot.update_cfg(dict(zip((joint.name for joint in robot.actuated_joints),
                               joints)))
     hand = robot.get_transform("base_link", robot.base_link)
+    tip = robot.get_transform("hand_tcp", robot.base_link)
+    link7 = robot.get_transform("fr3_link7", robot.base_link)
+    original_clear = FR3_INIT.copy()
+    original_clear[0] += CLEAR_VIEW_J0_OFFSET_RAD
+    robot.update_cfg(dict(zip(
+        (joint.name for joint in robot.actuated_joints),
+        np.r_[original_clear, INSPIRE_INIT])))
+    original_hand = robot.get_transform("base_link", robot.base_link)
 
-    np.testing.assert_allclose(
-        FR3_CLEAR_VIEW[:3], FR3_INIT[:3] +
-        np.array([CLEAR_VIEW_J0_OFFSET_RAD, 0., 0.]))
+    assert np.isclose(FR3_CLEAR_VIEW[0], original_clear[0])
+    assert np.linalg.norm(hand[:3, 3] - original_hand[:3, 3]) < 0.03
     assert hand[2, 1] < -0.95  # Inspire palm normal in the robot base frame
-    assert hand[1, 3] < -0.3   # hand stays to the side of the board
+    assert -hand[0, 2] > 0.8  # fingers still extend away from the robot
+    extension = tip[:3, 3] - link7[:3, 3]
+    assert extension[0] / np.linalg.norm(extension) > 0.75
 
 
 def _fixture():
