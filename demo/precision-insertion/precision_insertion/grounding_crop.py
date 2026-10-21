@@ -86,19 +86,22 @@ def make_native_grounding_crop(
 
 
 def nominal_preinsert_rois(
-    frames, *, tip_socket_m: np.ndarray, socket_rim_z_m: float,
-    crop_side_px: int = 640,
+    frames, *, tip_socket_m: np.ndarray, rear_socket_m: np.ndarray,
+    socket_rim_z_m: float, margin_px: int = 96,
 ) -> dict[str, tuple[int, int, int, int]]:
-    """Frame a saved key tip and socket using only frozen command geometry.
+    """Frame the commanded key shaft and socket in a lossless rectangular ROI.
 
     These projections locate a lossless VLM input crop. They are never used as
     observed landmarks or as evidence that the key followed the command.
     """
     tip = np.asarray(tip_socket_m, dtype=float)
-    if (tip.shape != (3,) or not np.all(np.isfinite(tip)) or
+    rear = np.asarray(rear_socket_m, dtype=float)
+    if (tip.shape != (3,) or rear.shape != (3,) or
+            not np.all(np.isfinite(tip)) or
+            not np.all(np.isfinite(rear)) or
             not np.isfinite(socket_rim_z_m) or
-            type(crop_side_px) is not int or crop_side_px < 256):
-        raise ValueError("nominal preinsert crop needs finite geometry and size")
+            type(margin_px) is not int or margin_px < 0):
+        raise ValueError("nominal preinsert crop needs finite shaft and rim")
     rois = {}
     for frame in frames:
         transform = np.asarray(frame.T_camera_socket, dtype=float)
@@ -115,14 +118,21 @@ def nominal_preinsert_rois(
             homogeneous = intrinsic @ camera
             return homogeneous[:2] / homogeneous[2]
 
-        rim = np.array([0., 0., float(socket_rim_z_m)])
-        center = (pixel(tip) + pixel(rim)) / 2
-        side = min(crop_side_px, frame.raw.width, frame.raw.height)
-        x0 = int(np.clip(round(center[0] - side / 2),
-                         0, frame.raw.width - side))
-        y0 = int(np.clip(round(center[1] - side / 2),
-                         0, frame.raw.height - side))
-        rois[frame.camera_id] = (x0, y0, x0 + side, y0 + side)
+        projected = np.stack((pixel(tip), pixel(rear), pixel(
+            np.array([0., 0., float(socket_rim_z_m)]))))
+        if not np.all(np.isfinite(projected)):
+            raise ValueError("nominal preinsert projection is not finite")
+        lower, upper = projected.min(axis=0), projected.max(axis=0)
+        size = np.minimum(
+            [frame.raw.width, frame.raw.height],
+            np.maximum(256, np.ceil((upper - lower + 2 * margin_px) / 32)
+                       .astype(int) * 32))
+        center = (lower + upper) / 2
+        x0 = int(np.clip(round(center[0] - size[0] / 2),
+                         0, frame.raw.width - size[0]))
+        y0 = int(np.clip(round(center[1] - size[1] / 2),
+                         0, frame.raw.height - size[1]))
+        rois[frame.camera_id] = (x0, y0, x0 + int(size[0]), y0 + int(size[1]))
     return rois
 
 

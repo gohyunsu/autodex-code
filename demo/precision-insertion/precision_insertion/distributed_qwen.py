@@ -28,6 +28,8 @@ from .observer import resize_classification_images
 
 
 _ID = re.compile(r"[A-Za-z0-9_-]+\Z")
+_WORKER_LOCK = "/tmp/precision-insertion-qwen-worker.lock"
+_LOCK_BUSY_EXIT = 73
 _CAMERA_IN_PROMPT = (
     re.compile(r"Valid camera IDs: ([A-Za-z0-9_-]+)\."),
     re.compile(r"\bCamera ([A-Za-z0-9_-]+)[;.]"),
@@ -89,6 +91,7 @@ class DistributedQwenBackend:
                 remote_model = (Path(model_dir) if model_dir is not None else
                                 _remote_home_path(Path(model_id), host))
                 command = shlex.join([
+                    "flock", "-n", "-E", str(_LOCK_BUSY_EXIT), _WORKER_LOCK,
                     "env", f"PYTHONPATH={remote_root}", python, "-u", "-m",
                     "precision_insertion.distributed_qwen_worker",
                     "--camera-id", camera, "--model-id", str(remote_model),
@@ -127,6 +130,15 @@ class DistributedQwenBackend:
                 line = stream.readline()
                 if not line:
                     path = self._channels[camera][2]
+                    process = self._channels[camera][0]
+                    try:
+                        exit_code = process.wait(timeout=1.)
+                    except subprocess.TimeoutExpired:
+                        exit_code = None
+                    if exit_code == _LOCK_BUSY_EXIT:
+                        raise RuntimeError(
+                            f"capture-PC Qwen {camera} already has an active "
+                            "worker on this GPU")
                     raise RuntimeError(
                         f"capture-PC Qwen {camera} exited; see {path}")
                 message = json.loads(line)
@@ -207,19 +219,31 @@ class DistributedQwenBackend:
     def close(self) -> None:
         for pool in self._background_pools:
             pool.shutdown(wait=True)
-        for process, _, _ in self._channels.values():
+        for camera, (process, lock, _) in self._channels.items():
             if process.stdin is not None and not process.stdin.closed:
-                process.stdin.close()
+                with lock:
+                    if process.poll() is None:
+                        try:
+                            process.stdin.write(json.dumps({
+                                "type": "shutdown", "camera_id": camera,
+                            }) + "\n")
+                            process.stdin.flush()
+                        except (BrokenPipeError, OSError):
+                            pass
+                    try:
+                        process.stdin.close()
+                    except (BrokenPipeError, OSError):
+                        pass
         for process, _, _ in self._channels.values():
             try:
-                process.wait(timeout=3.)
+                process.wait(timeout=15.)
             except subprocess.TimeoutExpired:
                 process.terminate()
                 try:
-                    process.wait(timeout=2.)
+                    process.wait(timeout=3.)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    process.wait(timeout=2.)
+                    process.wait(timeout=3.)
 
     def register_view_pool(self, pool: ThreadPoolExecutor) -> None:
         self._background_pools.append(pool)

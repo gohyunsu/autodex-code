@@ -13,15 +13,21 @@ same saved raw views—not a newly lifted key and not a CAD overlay—are sent t
 local Qwen (Gemini is optional) to mark the visible insertion-tip center and
 cylinder-axis line. Camera intrinsics/extrinsics and the frozen session socket
 pose—not VLM text—produce a socket-frame metric XY estimate.
-The local Qwen path frames each native-pixel input with a lossless 640 px crop
-centred between the projected commanded tip and frozen socket rim. The crop
-only locates the image region; its projected points are never promoted to
-observed landmarks. The saved original frame, crop translation and Qwen marks
-remain linked so returned pixels map exactly into the undistorted full frame.
+The local Qwen path frames each native-pixel input with a lossless rectangular
+crop containing the projected commanded tip, key rear and frozen socket rim,
+plus 96 px of margin. It pads to the model's 32 px patch size without resizing
+source pixels. The crop only locates the image region; its projected points
+are never promoted to observed landmarks. The saved original frame, crop
+translation and Qwen marks remain linked so returned pixels map exactly into
+the undistorted full frame. Each capture PC owns at most one persistent Qwen
+worker; clean session shutdown releases that model before the next session.
 
 - Two or more visible tips: triangulate in 3D. If the axis-line fit is usable,
   minimize mean XY error at the rim and 20 mm depth; otherwise use tip XY with
-  the explicit vertical-axis assumption.
+  the explicit vertical-axis assumption. A metric tip estimate must have
+  adequate camera parallax and reprojection agreement, and its depth must be
+  within the existing 10 mm held-key translation budget of the commanded
+  preinsert tip height. Inconsistent VLM marks cannot become a metric XY step.
 - One visible tip: intersect its calibrated camera ray with the **commanded
   nominal pre-insertion tip-height plane**. This supplies XY but does not
   measure tip depth.

@@ -71,6 +71,11 @@ def serve(*, camera_id: str, model_id: str,
         request = None
         try:
             request = json.loads(line)
+            if (request.get("type") == "shutdown" and
+                    request.get("camera_id") == camera_id):
+                print(json.dumps({"type": "stopped", "camera_id": camera_id}),
+                      flush=True)
+                break
             if request.get("type") != "infer" or request.get("camera_id") != camera_id:
                 raise ValueError("request is for another camera")
             images = _images(request)

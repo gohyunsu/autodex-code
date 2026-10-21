@@ -74,11 +74,14 @@ def _cylinder_tip_and_rois(
         nominal["targets"]["T_robot_key_preinsert"],
         name="commanded preinsert key target")
     tip_robot = T_robot_key @ np.array([0., 0., tip_z_m, 1.])
-    tip_socket = np.linalg.inv(socket) @ tip_robot
+    socket_from_robot = np.linalg.inv(socket)
+    tip_socket = socket_from_robot @ tip_robot
     if (roi_xyxy_by_camera is None and
             getattr(backend, "native_pixel_coordinates", False)):
+        rear_socket = socket_from_robot @ T_robot_key @ np.array([0., 0., 0., 1.])
         roi_xyxy_by_camera = nominal_preinsert_rois(
             frames, tip_socket_m=tip_socket[:3],
+            rear_socket_m=rear_socket[:3],
             socket_rim_z_m=socket_rim_z_m)
     return tip_socket, roi_xyxy_by_camera
 
@@ -757,6 +760,7 @@ def _compute_grounded_alignment(
     axis_reference_key_z_m: float | None,
     roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]] | None,
     square_translation_only: bool, search_index: int,
+    max_nominal_tip_height_error_m: float,
 ) -> tuple[str, dict, tuple]:
     """Shared raw-pixel geometry for live-withdrawal and saved-snapshot use."""
     geometry_path = AssetPaths(root, mode).task_geometry
@@ -838,7 +842,10 @@ def _compute_grounded_alignment(
         alignment = resolve_xy_only_cylinder_alignment(
             grounded, alignment,
             nominal_tip_z_socket_m=float(tip_socket[2]),
-            search_index=search_index)
+            search_index=search_index,
+            max_reprojection_px=alignment_limits.max_reprojection_px,
+            min_parallax_deg=alignment_limits.min_parallax_deg,
+            max_nominal_tip_height_error_m=max_nominal_tip_height_error_m)
     alignment = dict(
         alignment, estimator_limits=asdict(alignment_limits),
         grounding_input=("lossless_raw_roi" if roi_xyxy_by_camera is not None
@@ -926,7 +933,8 @@ def assess_saved_preinsert_xy_diagnostic(
         axis_reference_key_z_m=axis_reference_key_z_m,
         roi_xyxy_by_camera=roi_xyxy_by_camera,
         square_translation_only=square_translation_only,
-        search_index=search_index)
+        search_index=search_index,
+        max_nominal_tip_height_error_m=limits.max_grasp_translation_drift_m)
     return PreinsertXYDiagnostic(
         alignment["status"], attempt.attempt_id, attempt.candidate_id,
         attempt.session_calibration_sha256,
@@ -1060,7 +1068,10 @@ def assess_grounded_xy_diagnostic(
         alignment = resolve_xy_only_cylinder_alignment(
             grounded, alignment,
             nominal_tip_z_socket_m=float(tip_socket[2]),
-            search_index=search_index)
+            search_index=search_index,
+            max_reprojection_px=alignment_limits.max_reprojection_px,
+            min_parallax_deg=alignment_limits.min_parallax_deg,
+            max_nominal_tip_height_error_m=limits.max_grasp_translation_drift_m)
     # The session runner applies the configured weight to the next attempt.
     alignment = dict(
         alignment, estimator_limits=asdict(alignment_limits),

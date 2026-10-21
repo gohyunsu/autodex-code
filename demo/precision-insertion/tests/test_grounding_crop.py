@@ -39,11 +39,31 @@ def test_nominal_preinsert_roi_uses_calibrated_projection_only():
         np.array([[1000., 0., 1024.], [0., 1000., 768.], [0., 0., 1.]]))
     rois = nominal_preinsert_rois(
         [frame], tip_socket_m=np.array([.01, -.02, 1.]),
+        rear_socket_m=np.array([.01, -.02, .7]),
         socket_rim_z_m=.5)
-    assert rois == {"camera1": (709, 438, 1349, 1078)}
+    assert rois == {"camera1": (903, 626, 1159, 882)}
     crop = make_native_grounding_crop(frame.raw, rois["camera1"])
-    assert crop.model_size_px == (640, 640)
-    assert crop.to_full_pixel((320., 320.)) == (1029., 758.)
+    assert crop.model_size_px == (256, 256)
+    assert crop.to_full_pixel((126., 132.)) == (1029., 758.)
+
+
+def test_nominal_preinsert_roi_keeps_long_shaft_without_square_padding():
+    frame = CalibratedXYFrame(
+        "camera1", 1., Image.new("RGB", (2048, 1536)), np.eye(4),
+        np.array([[1000., 0., 1024.], [0., 1000., 768.], [0., 0., 1.]]))
+    tip = np.array([.01, -.02, 1.])
+    rear = np.array([.01, -.02, .2])
+    roi = nominal_preinsert_rois(
+        [frame], tip_socket_m=tip, rear_socket_m=rear,
+        socket_rim_z_m=.5)["camera1"]
+    x0, y0, x1, y1 = roi
+    assert x1 - x0 < y1 - y0
+    assert (x1 - x0) * (y1 - y0) < 640 * 640
+    for point in (tip, rear, np.array([0., 0., .5])):
+        camera = point
+        projected = frame.intrinsics @ camera
+        u, v = projected[:2] / projected[2]
+        assert x0 <= u < x1 and y0 <= v < y1
 
 
 @pytest.mark.parametrize("roi", [

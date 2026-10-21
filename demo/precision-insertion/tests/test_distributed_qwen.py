@@ -5,8 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import shlex
 import sys
+import threading
 import time
+from io import StringIO
+from contextlib import redirect_stdout
 
 import numpy as np
 from PIL import Image
@@ -26,8 +30,86 @@ from precision_insertion.preinsert_checkpoint import (  # noqa: E402
 from precision_insertion.retry_insertion_checkpoint import _RecordedAnswer  # noqa: E402
 from precision_insertion.view_parallel import map_view_calls_until  # noqa: E402
 from precision_insertion.distributed_qwen import DistributedQwenBackend  # noqa: E402
+from precision_insertion import distributed_qwen, distributed_qwen_worker  # noqa: E402
 from precision_insertion.xy_overlay import CalibratedXYFrame  # noqa: E402
 from precision_insertion.xy_voting import XYChoice  # noqa: E402
+
+
+def test_capture_worker_startup_owns_one_gpu_slot(monkeypatch):
+    commands = []
+    monkeypatch.setattr(distributed_qwen.subprocess, "Popen",
+                        lambda args, **_kwargs: commands.append(args) or object())
+    monkeypatch.setattr(DistributedQwenBackend, "_wait_ready",
+                        lambda self, **_kwargs: None)
+    workers = {str(index): {
+        "host": f"capture{index}", "python": f"/home/capture{index}/python",
+    } for index in range(1, 6)}
+    DistributedQwenBackend(
+        model_id="/home/robot/model",
+        worker_root=Path("/home/robot/precision_worker_test"),
+        workers=workers, max_input_size=(640, 480), max_new_tokens=32,
+        classification_image_size=(384, 288))
+    assert len(commands) == 5
+    for args in commands:
+        command = shlex.split(args[-1])
+        assert command[:5] == [
+            "flock", "-n", "-E", "73",
+            "/tmp/precision-insertion-qwen-worker.lock"]
+
+
+def test_capture_worker_shutdown_releases_model_process(monkeypatch):
+    class MemoryStream(StringIO):
+        def close(self):
+            self.saved = self.getvalue()
+            super().close()
+
+    class Process:
+        stdin = MemoryStream()
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout):
+            assert timeout == 15.
+            return 0
+
+    process = Process()
+    backend = object.__new__(DistributedQwenBackend)
+    backend._channels = {"24122734": (process, threading.Lock(), Path("/tmp/log"))}
+    backend._background_pools = []
+    backend.close()
+    assert json.loads(process.stdin.saved.strip()) == {
+        "type": "shutdown", "camera_id": "24122734"}
+
+
+def test_remote_worker_exits_cleanly_on_shutdown(monkeypatch):
+    class FakeCuda:
+        @staticmethod
+        def get_device_name(_index):
+            return "test GPU"
+
+        @staticmethod
+        def memory_allocated():
+            return 0
+
+    class FakeModel:
+        def __init__(self, **_kwargs):
+            pass
+
+        def infer_images_prompt(self, *_args, **_kwargs):
+            raise AssertionError("shutdown must not infer")
+
+    monkeypatch.setitem(sys.modules, "torch", type("FakeTorch", (), {
+        "cuda": FakeCuda})())
+    monkeypatch.setattr(distributed_qwen_worker, "LocalQwenModel", FakeModel)
+    monkeypatch.setattr(sys, "stdin", StringIO(
+        '{"type":"shutdown","camera_id":"24122734"}\n'))
+    output = StringIO()
+    with redirect_stdout(output):
+        distributed_qwen_worker.serve(
+            camera_id="24122734", model_id="unused", max_input_size=(640, 480))
+    assert [json.loads(line)["type"] for line in output.getvalue().splitlines()] == [
+        "ready", "stopped"]
 
 
 def test_first_three_consistent_responses_finish_checkpoint_while_others_drain():

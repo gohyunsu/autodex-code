@@ -205,33 +205,66 @@ def _continuous_xy_advice(mean: np.ndarray, cov_xy: np.ndarray) -> dict:
 def resolve_xy_only_cylinder_alignment(
     views: Sequence[GroundedLineView], alignment: Mapping, *,
     nominal_tip_z_socket_m: float, search_index: int,
+    max_reprojection_px: float, min_parallax_deg: float,
+    max_nominal_tip_height_error_m: float,
 ) -> dict:
     """Always provide a *next-trial* XY update, without claiming unseen pose.
 
-    The calibrated two-view tip estimate is preferred. With one visible tip,
+    A consistent two-view tip estimate near the commanded height is preferred.
+    With one visible tip,
     intersect that camera ray with the commanded nominal tip-height plane;
     this is a planar hypothesis, not an independent depth observation. With
     no usable tip, take a deterministic exploratory step and record its source.
     Axis tilt is deliberately outside this XY-only policy.
     """
-    if alignment.get("status") == "diagnostic_metric_xy_correction":
-        return dict(alignment, xy_source="multiview_tip_and_axis")
     if not math.isfinite(nominal_tip_z_socket_m):
         raise ValueError("nominal tip height must be finite")
-    if type(search_index) is not int or search_index < 0:
-        raise ValueError("search index must be nonnegative")
+    if (type(search_index) is not int or search_index < 0 or
+            any(not math.isfinite(value) or value <= 0 for value in (
+                max_reprojection_px, min_parallax_deg,
+                max_nominal_tip_height_error_m))):
+        raise ValueError("XY fallback needs finite search and existing view limits")
+    if alignment.get("status") == "diagnostic_metric_xy_correction":
+        measured_tip = alignment.get("tip_socket_m")
+        if (isinstance(measured_tip, list) and len(measured_tip) == 3 and
+                all(math.isfinite(float(value)) for value in measured_tip) and
+                abs(float(measured_tip[2]) - nominal_tip_z_socket_m) <=
+                max_nominal_tip_height_error_m):
+            return dict(alignment, xy_source="multiview_tip_and_axis")
     tips = [view for view in views if view.tip_uv_px is not None]
     point = None
     source = "no_visible_tip_exploratory_search"
     supporting = []
     if len(tips) >= 2:
+        best = None
         for pair in combinations(tips, 2):
-            point = _dlt(pair, "tip_uv_px")
-            if point is not None:
-                source = "multiview_tip_xy_vertical_axis_assumption"
-                supporting = [view.frame.camera_id for view in tips]
-                break
-    if point is None and tips:
+            if _parallax(pair) < min_parallax_deg:
+                continue
+            candidate = _dlt(pair, "tip_uv_px")
+            if (candidate is None or
+                    abs(candidate[2] - nominal_tip_z_socket_m) >
+                    max_nominal_tip_height_error_m):
+                continue
+            inliers = []
+            error = 0.
+            for view in tips:
+                projected = _project(view, candidate)
+                if projected is None:
+                    continue
+                residual = float(np.linalg.norm(
+                    projected - view.tip_uv_px))
+                if residual <= max_reprojection_px:
+                    inliers.append(view.frame.camera_id)
+                    error += residual * residual
+            if len(inliers) >= 2:
+                score = (len(inliers), -error)
+                if best is None or score > best[0]:
+                    best = (score, candidate, inliers)
+        if best is not None:
+            point = best[1]
+            source = "multiview_tip_xy_vertical_axis_assumption"
+            supporting = best[2]
+    if point is None and len(tips) == 1:
         view = tips[0]
         direction = _ray(view, view.tip_uv_px)
         transform = view.frame.T_camera_socket

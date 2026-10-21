@@ -508,8 +508,7 @@ def test_cylinder_retry_diagnostic_uses_lossless_rois(
         native_pixel_coordinates = True
 
         def infer(self, images, prompt):
-            assert images[0].size == (
-                (256, 256) if explicit_roi else (640, 640))
+            assert images[0].size == (256, 256)
             assert "CROP-CANVAS" in prompt
             return json.dumps({"tip_px": None, "axis_line_px": None,
                                "evidence": "key occluded"})

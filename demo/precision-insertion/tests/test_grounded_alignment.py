@@ -322,7 +322,9 @@ def test_xy_only_retry_uses_multiview_tip_when_axis_is_hidden():
     missing = [GroundedLineView(v.frame, v.tip_uv_px, None) for v in rows]
     result = resolve_xy_only_cylinder_alignment(
         missing, {"status": "abstain", "reason": "hidden_axis"},
-        nominal_tip_z_socket_m=.09, search_index=0)
+        nominal_tip_z_socket_m=.09, search_index=0,
+        max_reprojection_px=3., min_parallax_deg=5.,
+        max_nominal_tip_height_error_m=.01)
     assert result["xy_source"] == "multiview_tip_xy_vertical_axis_assumption"
     assert result["xy_correction_socket_m"] == pytest.approx(
         [-.013, .004], abs=1e-6)
@@ -334,13 +336,43 @@ def test_xy_only_retry_one_view_uses_nominal_height_and_zero_view_explores():
                      np.array([0., 0., -1.]))
     one = resolve_xy_only_cylinder_alignment(
         rows[:1], {"status": "abstain"}, nominal_tip_z_socket_m=.09,
-        search_index=0)
+        search_index=0, max_reprojection_px=3., min_parallax_deg=5.,
+        max_nominal_tip_height_error_m=.01)
     assert one["status"] == "diagnostic_planar_xy_hypothesis"
     assert one["xy_source"] == "single_view_nominal_tip_height_plane"
     assert one["xy_correction_socket_m"] == pytest.approx([-.003, .002], abs=1e-6)
     none = resolve_xy_only_cylinder_alignment(
         [], {"status": "abstain"}, nominal_tip_z_socket_m=.09,
-        search_index=1)
+        search_index=1, max_reprojection_px=3., min_parallax_deg=5.,
+        max_nominal_tip_height_error_m=.01)
     assert none["status"] == "diagnostic_exploratory_xy_step"
     assert none["xy_source"] == "no_metric_measurement_exploratory_search"
     assert np.linalg.norm(none["bounded_xy_increment_socket_m"]) == pytest.approx(.002)
+
+
+def test_xy_only_retry_does_not_call_wrong_height_tip_a_metric_measurement():
+    rows = _line_rig(np.array([.013, -.004, .13]),
+                     np.array([0., 0., -1.]))
+    missing = [GroundedLineView(v.frame, v.tip_uv_px, None) for v in rows]
+    result = resolve_xy_only_cylinder_alignment(
+        missing, {"status": "abstain", "reason": "hidden_axis"},
+        nominal_tip_z_socket_m=.09, search_index=0,
+        max_reprojection_px=3., min_parallax_deg=5.,
+        max_nominal_tip_height_error_m=.01)
+    assert result["status"] == "diagnostic_exploratory_xy_step"
+    assert result["xy_source"] == "no_metric_measurement_exploratory_search"
+    assert result["inlier_cameras"] == []
+
+
+def test_xy_only_retry_rechecks_axis_fit_height_before_metric_advice():
+    rows = _line_rig(np.array([.013, -.004, .13]),
+                     np.array([0., 0., -1.]))
+    result = resolve_xy_only_cylinder_alignment(
+        rows, {"status": "diagnostic_metric_xy_correction",
+               "tip_socket_m": [.013, -.004, .13],
+               "xy_correction_socket_m": [-.013, .004]},
+        nominal_tip_z_socket_m=.09, search_index=0,
+        max_reprojection_px=3., min_parallax_deg=5.,
+        max_nominal_tip_height_error_m=.01)
+    assert result["status"] == "diagnostic_exploratory_xy_step"
+    assert result["inlier_cameras"] == []
