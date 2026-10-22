@@ -1,4 +1,4 @@
-"""The demo FR3 wrapper never lands or ramps after an incomplete stream."""
+"""The demo FR3 wrapper lands only on an empty-hand clear-view return."""
 
 from __future__ import annotations
 
@@ -22,12 +22,16 @@ from precision_insertion.pickup_execution import (  # noqa: E402
     _reject_known_stock_follower,
 )
 from src.execution.franka_executor import FrankaExecutor  # noqa: E402
+from autodex.utils.robot_config import FR3_CLEAR_VIEW  # noqa: E402
+
+
 class _Arm:
     def __init__(self, q, velocity=None, *, response=None):
         self.q = np.asarray(q, dtype=float)
         self.velocity = np.zeros(7) if velocity is None else np.asarray(
             velocity, dtype=float)
         self.moves = []
+        self.events = []
         self.stops = 0
         self.response = {"type": "success"} if response is None else response
 
@@ -39,6 +43,8 @@ class _Arm:
 
     def move(self, target, **kwargs):
         self.moves.append(np.asarray(target).copy())
+        self.events.append("land")
+        self.q = np.asarray(target, dtype=float).copy()
 
     def stop_streaming(self):
         self.stops += 1
@@ -60,7 +66,10 @@ def _wrapper(arm):
     executor.follow_tol = .04
     executor._last_stop_on_contact = False
     executor.ramps = []
-    executor._ramp_hand = lambda q: executor.ramps.append(np.asarray(q).copy())
+    def ramp(q):
+        executor.ramps.append(np.asarray(q).copy())
+        arm.events.append("hand_ramp")
+    executor._ramp_hand = ramp
     return executor
 
 
@@ -96,6 +105,34 @@ def test_stock_sized_stationary_residual_completes_without_landing(monkeypatch):
     arm = _Arm(np.array([.039, 0, 0, 0, 0, 0, 0]))
     executor = _wrapper(arm)
     executor._follow(np.vstack([goal, goal]))
+    assert arm.moves == []
+
+
+def test_empty_hand_clear_view_uses_stock_landing_then_measured_completion(
+        monkeypatch):
+    monkeypatch.setattr(_Stock, "_follow", _stock_follow_stub)
+    goal = np.asarray(FR3_CLEAR_VIEW, dtype=float)
+    arm = _Arm(goal + np.array([.073, 0, 0, 0, 0, 0, 0]))
+    executor = _wrapper(arm)
+    executor._holding_object = False
+    hand = np.full((2, 6), 500.)
+    executor._follow(np.vstack([goal + .1, goal]), hand)
+    assert len(arm.moves) == 1
+    np.testing.assert_allclose(arm.moves[0], goal)
+    np.testing.assert_allclose(arm.q, goal)
+    np.testing.assert_array_equal(executor.ramps[0], hand[-1])
+    assert arm.events == ["land", "hand_ramp"]
+    assert executor.land_tol == .02
+
+
+def test_held_clear_view_path_does_not_make_stock_landing(monkeypatch):
+    monkeypatch.setattr(_Stock, "_follow", _stock_follow_stub)
+    goal = np.asarray(FR3_CLEAR_VIEW, dtype=float)
+    arm = _Arm(goal + np.array([.073, 0, 0, 0, 0, 0, 0]))
+    executor = _wrapper(arm)
+    executor._holding_object = True
+    with pytest.raises(RuntimeError, match="stationary endpoint"):
+        executor._follow(np.vstack([goal + .1, goal]))
     assert arm.moves == []
 
 

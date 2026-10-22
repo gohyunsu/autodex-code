@@ -4,8 +4,9 @@ The stock follower may exit on a stall/timeout, ramp the hand to its final
 configuration, and make a blocking endpoint ``arm.move``. For precision
 pickup that combination can close the fingers or cross an obstacle after the
 planned stream was not followed. This subclass reuses the stock streaming
-algorithm but defers its final hand ramp, disables its blocking landing, and
-checks measured joint completion before allowing the ramp.
+algorithm but defers its final hand ramp and checks measured joint completion
+before allowing the ramp. The stock blocking landing is retained for an
+empty-hand clear-view return, where exact arrival matters after release.
 
 This is *not* a robot-side watchdog or a force servo. The installed ParaDex
 daemon has its own command-expiry watchdog; this mixin checks completion and
@@ -21,6 +22,8 @@ from functools import lru_cache
 
 import numpy as np
 
+from autodex.utils.robot_config import FR3_CLEAR_VIEW
+
 _COMPOSED_TYPE = None
 STOCK_COMPLETION_TOLERANCE_RAD = 0.04
 
@@ -33,9 +36,7 @@ class CompletionCheckedFrankaMixin:
     static configuration does not initialize cuRobo or connect to hardware.
     """
 
-    # Match the stock follower's L2 endpoint tolerance.  The measured stop
-    # check remains, while a normal free-space retract need not make a second
-    # blocking position move to erase a smaller residual.
+    # Match the stock follower's L2 endpoint tolerance for streamed paths.
     completion_max_path_error_rad = STOCK_COMPLETION_TOLERANCE_RAD
     stop_max_joint_velocity_rad_s = 0.05
     stop_wait_s = 1.0
@@ -63,8 +64,13 @@ class CompletionCheckedFrankaMixin:
             deferred.append(np.asarray(target, dtype=np.float64).copy())
 
         self._precision_follow_active = True
-        self.land_tol = math.inf  # stock follower may never issue its blocking land
-        # Use the stock L2 convergence tolerance without its blocking landing.
+        clear_return = (not bool(getattr(self, "_holding_object", False)) and
+                        np.max(np.abs(path[-1, :7] - FR3_CLEAR_VIEW)) <= 1e-3)
+        # Stock landing is useful after the object has been released: the
+        # last clear-view residual must not strand an otherwise completed
+        # insertion. Keep it disabled while carrying a key or near contact.
+        self.land_tol = original_land_tol if clear_return else math.inf
+        # Use the stock L2 convergence tolerance for the streaming segment.
         self.follow_tol = min(original_follow_tol,
                               self.completion_max_path_error_rad)
         self._ramp_hand = defer_ramp
