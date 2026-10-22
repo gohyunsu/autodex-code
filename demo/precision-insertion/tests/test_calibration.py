@@ -247,10 +247,24 @@ def test_board_constrained_socket_replays_and_rejects_off_board_pose(tmp_path):
         raw_mesh_sha256=hashlib.sha256(raw.read_bytes()).hexdigest(),
         refinement_gate="board_constrained_body")
     args["socket_capture_refinements"] = (refined,)
+    args["socket_observations"] = [
+        replace(observation, pose_world=None)
+        for observation in args["socket_observations"]]
     session = calibrate_session(**args)
     assert session.record["socket_pose_source"] == "per_capture_board_constrained_body"
+    assert all(row["pose_world"] is None and row["pose_robot"] is None
+               for row in session.record["socket_observations"])
     saved = write_session_calibration(session, tmp_path / "board.json")
     load_session_calibration(saved, mode=args["mode"], shared_root=tmp_path)
+    args["socket_capture_refinements"] = (replace(
+        refined, refinement_gate="all_view_iou",
+        stock_selection={"selection_mode": "iou", "best_serial": "cam_a",
+                         "n_candidates": 2, "n_masks": 2,
+                         "sil_skipped": False, "silhouette_iterations": 100,
+                         "sil_loss": .0005,
+                         "silhouette_loss_threshold": .003}),)
+    with pytest.raises(ValueError, match="needs per-view FoundPose"):
+        calibrate_session(**args)
     off_board = _pose(1.1)
     off_board[2, 3] = .01
     args["socket_capture_refinements"] = (replace(

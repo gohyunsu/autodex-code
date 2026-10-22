@@ -31,6 +31,13 @@ from precision_insertion.camera_transport import (  # noqa: E402
 )
 
 
+class _MaskOnlyEstimator:
+    """Let the stock loop publish a frame-bound `ok=False` pose promptly."""
+
+    def estimate_one_view(self, **_kwargs):
+        return None
+
+
 class PrecisionInitDaemon(InitDaemon):
     """Stock inference with a request-bound SHM frame provenance wrapper."""
 
@@ -53,9 +60,13 @@ class PrecisionInitDaemon(InitDaemon):
         if self._precision_active_request_id is not None:
             raise RuntimeError("overlapping precision FoundPose runs")
         self._precision_active_request_id = request_id
+        original_estimator = self.fp
         try:
+            if info.get("skip_foundpose") is True:
+                self.fp = _MaskOnlyEstimator()
             super()._do_run()
         finally:
+            self.fp = original_estimator
             self._precision_active_request_id = None
 
 

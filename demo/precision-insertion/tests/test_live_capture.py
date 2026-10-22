@@ -130,6 +130,29 @@ def test_socket_uses_same_request_saved_frames_and_foundpose(tmp_path):
             request_id_factory=lambda: 43)
 
 
+def test_board_socket_requests_mask_only_inference_with_bound_frames(tmp_path):
+    class MaskOnlyStub(FoundPoseStub):
+        def collect_payloads(self, **kwargs):
+            assert kwargs["run_info_extra"] == {"skip_foundpose": True}
+            masks, poses, timing = super().collect_payloads(**kwargs)
+            for serial, pose in poses.items():
+                pose.clear()
+                pose.update({"ok": False, "frame_id": FRAME_IDS[serial],
+                    "image_sha256": image_sha256(IMAGE),
+                    "image_space": "autodex_undistorted_full_frame"})
+            return masks, poses, timing
+
+    capture = collect_socket_capture(
+        init_orchestrator=MaskOnlyStub(), socket_object="socket_model",
+        capture_id="socket_masks", socket_prompt="white socket",
+        capture_root=tmp_path, calibrated_camera_ids=CAMERAS,
+        acquisition_metadata_for_request=_provider, timeout_s=2.0,
+        request_id_factory=lambda: 49, mask_only=True)
+    assert set(capture.images_bgr) == CAMERAS
+    assert all(row["ok"] is False for row in capture.poses.values())
+    assert capture.frame_evidence["cam_b"]["frame_id"] == FRAME_IDS["cam_b"]
+
+
 def test_saved_frame_reader_waits_for_complete_async_png(tmp_path):
     image_dir = tmp_path / "images"
     image_dir.mkdir()

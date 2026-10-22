@@ -203,6 +203,7 @@ def start_precision_session(
                 acquisition_metadata_for_request=acquisition_metadata_for_request,
                 timeout_s=float(socket_timeout_s),
                 image_write_timeout_s=float(image_write_timeout_s),
+                mask_only=socket_perception_mode == "board_constrained_body",
                 request_id_factory=next_request_id))
     with timed("socket.bootstrap_refinement", phase="socket"):
         bootstrap = bootstrap_session(
@@ -223,6 +224,7 @@ def start_precision_session(
             minimum_board_corners=minimum_board_corners,
             board_capture_phase=board_capture_phase,
             measured_board=measured_board,
+            socket_perception_mode=socket_perception_mode,
             max_socket_translation_mm=float(max_socket_translation_mm),
             max_socket_angle_deg=float(max_socket_angle_deg),
             socket_refiner=lambda capture, admission: refine_socket_capture(

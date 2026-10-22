@@ -1,4 +1,4 @@
-"""Qualify AutoDex per-view FoundPose socket evidence before calibration.
+"""Qualify AutoDex socket masks and, where needed, FoundPose evidence.
 
 ``InitOrchestrator.collect_payloads`` already returns per-camera SAM masks and
 FoundPose poses. Its payload ``ts`` is *publication* time after inference,
@@ -48,12 +48,14 @@ class SocketCaptureEvidence:
     observations: tuple[SocketObservation, ...]
     per_view: dict[str, dict]
     frame_timestamp_source: str
+    admission_mode: str = "foundpose"
 
     def to_record(self) -> dict:
         return {
             "schema": "precision_insertion_socket_capture_admission_v1",
             "capture_id": self.capture_id,
             "frame_timestamp_source": self.frame_timestamp_source,
+            "admission_mode": self.admission_mode,
             "accepted_camera_ids": [view.camera_id for view in self.observations],
             "per_view": self.per_view,
             "scope": "per_view_quality_gate_not_absolute_pose_accuracy",
@@ -75,9 +77,9 @@ def admit_socket_capture(
     *, capture_id: str, masks: Mapping[str, dict],
     poses: Mapping[str, dict], frame_timestamps_s: Mapping[str, float],
     frame_timestamp_source: str, calibrated_camera_ids: set[str],
-    limits: SocketViewLimits,
+    limits: SocketViewLimits, admission_mode: str = "foundpose",
 ) -> SocketCaptureEvidence:
-    """Accept only well-observed per-camera socket poses for one capture.
+    """Admit masks for board fitting or masks and poses for stock fitting.
 
     The timestamp mapping must come from actual acquisition metadata on the
     same clock across cameras. Existing AutoDex ``ts`` values are rejected as
@@ -85,6 +87,8 @@ def admit_socket_capture(
     result still needs multi-capture fixture consistency in ``calibrate_session``.
     """
     limits.validate()
+    if admission_mode not in ("foundpose", "mask_only"):
+        raise ValueError("unknown socket admission mode")
     if not isinstance(capture_id, str) or not capture_id.strip():
         raise ValueError("nonempty capture_id is required")
     if frame_timestamp_source != "camera_acquisition":
@@ -133,33 +137,36 @@ def admit_socket_capture(
                     if border_clearance < limits.minimum_border_clearance_px:
                         reasons.append("mask_touches_image_border")
         pose = None
-        if not isinstance(pose_entry, Mapping) or pose_entry.get("ok") is not True:
-            reasons.append("missing_foundpose_pose")
-        else:
-            try:
-                pose = validate_se3(pose_entry.get("pose_world"),
-                                    name=f"FoundPose {serial} pose_world")
-            except (TypeError, ValueError):
-                reasons.append("invalid_foundpose_pose")
-            try:
-                quality = float(pose_entry["quality"])
-                inliers = int(pose_entry["inliers"])
-            except (KeyError, TypeError, ValueError, OverflowError):
-                reasons.append("missing_foundpose_quality")
+        if admission_mode == "foundpose":
+            if not isinstance(pose_entry, Mapping) or pose_entry.get("ok") is not True:
+                reasons.append("missing_foundpose_pose")
             else:
-                if (not math.isfinite(quality) or
-                        quality < limits.minimum_foundpose_quality):
-                    reasons.append("low_foundpose_quality")
-                if inliers < limits.minimum_foundpose_inliers:
-                    reasons.append("too_few_foundpose_inliers")
-            if mask_pixels is not None and pose_entry.get("mask_pixels") is not None:
                 try:
-                    declared_pixels = int(pose_entry["mask_pixels"])
-                except (TypeError, ValueError, OverflowError):
-                    reasons.append("invalid_pose_mask_pixel_count")
+                    pose = validate_se3(pose_entry.get("pose_world"),
+                                        name=f"FoundPose {serial} pose_world")
+                except (TypeError, ValueError):
+                    reasons.append("invalid_foundpose_pose")
+                try:
+                    quality = float(pose_entry["quality"])
+                    inliers = int(pose_entry["inliers"])
+                except (KeyError, TypeError, ValueError, OverflowError):
+                    reasons.append("missing_foundpose_quality")
                 else:
-                    if declared_pixels != mask_pixels:
-                        reasons.append("mask_pose_pixel_count_mismatch")
+                    if (not math.isfinite(quality) or
+                            quality < limits.minimum_foundpose_quality):
+                        reasons.append("low_foundpose_quality")
+                    if inliers < limits.minimum_foundpose_inliers:
+                        reasons.append("too_few_foundpose_inliers")
+                if mask_pixels is not None and pose_entry.get("mask_pixels") is not None:
+                    try:
+                        declared_pixels = int(pose_entry["mask_pixels"])
+                    except (TypeError, ValueError, OverflowError):
+                        reasons.append("invalid_pose_mask_pixel_count")
+                    else:
+                        if declared_pixels != mask_pixels:
+                            reasons.append("mask_pose_pixel_count_mismatch")
+        # Board/body fitting uses the mask alone. The original FoundPose
+        # payload remains in the capture bundle for offline diagnosis.
         accepted = not reasons
         per_view[serial] = {
             "accepted": accepted, "reasons": reasons,
@@ -173,7 +180,8 @@ def admit_socket_capture(
         }
         if accepted:
             admitted.append(SocketObservation(
-                capture_id, serial, frame_times[serial], pose.copy(),
+                capture_id, serial, frame_times[serial],
+                pose.copy() if pose is not None else None,
                 "camera_acquisition"))
     if len(admitted) < limits.minimum_accepted_views:
         raise ValueError(
@@ -184,7 +192,8 @@ def admit_socket_capture(
     if max(accepted_times) - min(accepted_times) > limits.maximum_capture_skew_s:
         raise ValueError("accepted socket camera frames exceed acquisition skew limit")
     return SocketCaptureEvidence(
-        capture_id, tuple(admitted), per_view, frame_timestamp_source)
+        capture_id, tuple(admitted), per_view, frame_timestamp_source,
+        admission_mode)
 
 
 def collect_and_admit_socket_capture(

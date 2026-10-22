@@ -97,6 +97,7 @@ def bootstrap_session(
     minimum_board_corners: int = 54,
     board_capture_phase: str = "empty_before_socket",
     measured_board: dict | None = None,
+    socket_perception_mode: str = "iou",
 ) -> SessionBootstrap:
     """Admit socket observations, then freeze one AutoDex world.
 
@@ -107,6 +108,9 @@ def bootstrap_session(
     """
     if not isinstance(board_images_bgr, Mapping) or not board_images_bgr:
         raise ValueError("board camera images are required")
+    if socket_perception_mode not in ("iou", "ignore_sil_loss",
+                                      "board_constrained_body"):
+        raise ValueError("unknown socket perception mode")
     _request_id(board_request_id, "board")
     if board_timestamp_source != "camera_acquisition":
         raise ValueError("board images require camera acquisition timestamps")
@@ -173,7 +177,10 @@ def bootstrap_session(
             for camera_id in capture.images_bgr:
                 mask_fid = capture.masks.get(camera_id, {}).get("frame_id")
                 pose_fid = capture.poses.get(camera_id, {}).get("frame_id")
-                if mask_fid != pose_fid:
+                if (pose_fid is not None and mask_fid != pose_fid):
+                    raise ValueError("socket SAM/FoundPose frame IDs differ")
+                if socket_perception_mode != "board_constrained_body" and (
+                        mask_fid != pose_fid):
                     raise ValueError("socket SAM/FoundPose frame IDs differ")
                 frame_ids[camera_id] = mask_fid
             verified = verify_frame_provenance(
@@ -191,7 +198,9 @@ def bootstrap_session(
             capture_id=capture_id, masks=capture.masks, poses=capture.poses,
             frame_timestamps_s=capture.frame_timestamps_s,
             frame_timestamp_source=capture.frame_timestamp_source,
-            calibrated_camera_ids=calibrated_camera_ids, limits=view_limits)
+            calibrated_camera_ids=calibrated_camera_ids, limits=view_limits,
+            admission_mode=("mask_only" if socket_perception_mode ==
+                            "board_constrained_body" else "foundpose"))
         admissions.append(admission)
         if socket_refiner is not None:
             with timed("socket.refine_capture", phase="socket",
@@ -442,7 +451,10 @@ def verify_session_evidence_bundle(output_dir: Path) -> dict:
             mask_fid = payload["mask_payload_metadata"].get(serial, {}).get(
                 "frame_id")
             pose_fid = payload["pose_payloads"].get(serial, {}).get("frame_id")
-            if mask_fid != pose_fid:
+            if pose_fid is not None and mask_fid != pose_fid:
+                raise ValueError("saved SAM/FoundPose frame IDs differ")
+            if (source != "per_capture_board_constrained_body" and
+                    mask_fid != pose_fid):
                 raise ValueError("saved SAM/FoundPose frame IDs differ")
             frame_ids[serial] = mask_fid
         verified = verify_frame_provenance(

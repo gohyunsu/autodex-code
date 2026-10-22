@@ -2347,14 +2347,16 @@ contract; its fake planner does not demonstrate real Franka reachability.
 
 ### Socket perception evidence and current camera-timestamp blocker
 
-AutoDex's unchanged `InitOrchestrator.collect_payloads()` supplies one SAM
-mask and FoundPose pose **per camera**, so the new
-`precision_insertion.perception_evidence.admit_socket_capture()` checks mask
-size/border clipping, FoundPose quality/inliers, pose validity, calibrated
-camera identity, and cross-camera *acquisition* skew before handing its
-`SocketObservation`s to `calibrate_session()`. Use a socket-specific SAM
+AutoDex's `InitOrchestrator.collect_payloads()` returns one SAM mask and
+one pose envelope per camera. The board-9 cylinder route uses the mask, not
+the FoundPose estimate: `admit_socket_capture()` checks mask size/border,
+calibrated camera identity and acquisition skew, then `calibrate_session()`
+freezes the board/body result. An updated demo capture-PC adapter skips the
+unused FoundPose inference for that request and publishes a frame-bound
+`ok=false` pose envelope. Stock socket modes and key perception still check
+FoundPose quality, inliers and pose validity. Use a socket-specific SAM
 prompt while the key is absent. The current 20 mm launch takes one socket
-capture and freezes its stock-refined pose in the collision world. This
+capture and freezes its board/body pose in the collision world. This
 single observation does not establish pose repeatability. All
 thresholds are explicit commissioning inputs, not silently inferred from a
 VLM score. `collect_and_admit_socket_capture()` now reuses the stricter
@@ -2424,7 +2426,7 @@ camera rig and an independently commissioned `AcquisitionTimeProvider`, it
 collects the ChArUco board snapshot **before** initializing socket FoundPose,
 takes the configured number of unique-request socket captures while the key is absent
 (one for the current board-9 / 20 mm launch),
-takes only admitted SAM/FoundPose views from each capture. The current
+takes only admitted SAM-mask views from each board/body capture. The current
 board-9/20 mm launcher uses the measured board and undistorted SAM masks to
 fit the fixed cylindrical wall on CPU; its mean projected-body IoU must meet
 the configured limit. The stock IoU/silhouette route remains available for
@@ -2432,7 +2434,8 @@ comparison and for square mode. This fit does not independently measure a
 physically tilted socket.
 Each capture contributes exactly one refined pose. With one capture, its
 pose is frozen directly and the record says `repeatability_checked: false`;
-the raw per-camera poses remain saved evidence. It runs
+the raw per-camera pose envelopes remain saved evidence; in mask-only mode
+they explicitly have no FoundPose pose. It runs
 `bootstrap_session()`, freezes the socket in the collision world, writes
 the evidence bundle and reloads the saved calibration to check it. Duplicate
 request IDs or an existing output directory fail closed; partial capture

@@ -75,7 +75,9 @@ def refine_socket_capture(
         raise ValueError("socket stock renderer is not bound to the exact raw mesh")
     if not all(camera in stock.intrinsics_undist and
                camera in stock.extrinsics and
-               camera in capture.masks and camera in capture.poses
+               camera in capture.masks and
+               (perception_mode == "board_constrained_body" or
+                camera in capture.poses)
                for camera in accepted):
         raise ValueError("socket refinement camera/calibration payload is incomplete")
 

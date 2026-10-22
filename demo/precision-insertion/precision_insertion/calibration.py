@@ -30,7 +30,7 @@ class SocketObservation:
     capture_id: str
     camera_id: str
     timestamp_s: float
-    pose_world: np.ndarray
+    pose_world: np.ndarray | None
     timestamp_source: str
 
 
@@ -343,12 +343,17 @@ def _verify_saved_socket_refinements(
         if camera_id in cameras:
             raise ValueError("saved socket observation repeats a camera")
         cameras.add(camera_id)
-        raw_world = validate_se3(observation.get("pose_world"),
-                                 name="saved per-view socket pose")
-        raw_robot = validate_se3(observation.get("pose_robot"),
-                                 name="saved per-view robot socket pose")
-        if not np.allclose(robot_from_world @ raw_world, raw_robot, atol=1e-8):
-            raise ValueError("saved per-view socket pose differs from C2R")
+        if expected_board_body:
+            if (observation.get("pose_world") is None) != (
+                    observation.get("pose_robot") is None):
+                raise ValueError("saved per-view socket pose is incomplete")
+        if not expected_board_body or observation.get("pose_world") is not None:
+            raw_world = validate_se3(observation.get("pose_world"),
+                                     name="saved per-view socket pose")
+            raw_robot = validate_se3(observation.get("pose_robot"),
+                                     name="saved per-view robot socket pose")
+            if not np.allclose(robot_from_world @ raw_world, raw_robot, atol=1e-8):
+                raise ValueError("saved per-view socket pose differs from C2R")
     diagnostics = record["socket_diagnostics"]
     if (len(refinements) != len(raw_by_capture) or
             diagnostics.get("sample_count") != len(refinements)):
@@ -521,7 +526,10 @@ def calibrate_session(
         if observation.timestamp_source != "camera_acquisition":
             raise ValueError("socket observation requires camera acquisition timestamp")
         _finite_time(observation.timestamp_s, "socket timestamp")
-        validate_se3(observation.pose_world, name="socket pose_world")
+        if observation.pose_world is not None:
+            validate_se3(observation.pose_world, name="socket pose_world")
+        elif socket_capture_refinements is None:
+            raise ValueError("unrefined socket observation needs FoundPose")
         groups.setdefault(observation.capture_id, []).append(observation)
     if len(groups) < min_socket_captures:
         raise ValueError("too few separate socket captures")
@@ -594,6 +602,10 @@ def calibrate_session(
             for row in refined_by_capture.values())
         if body_fit_count not in (0, len(refined_by_capture)):
             raise ValueError("socket captures use different localization methods")
+    if not body_fit_count and any(
+            observation.pose_world is None for observations in groups.values()
+            for observation in observations):
+        raise ValueError("stock socket refinement needs per-view FoundPose")
 
     ordered_groups = sorted(
         groups.items(), key=lambda item: min(float(o.timestamp_s) for o in item[1]))
@@ -663,11 +675,12 @@ def calibrate_session(
     source_rows: list[dict] = []
     for capture_id, observations in ordered_groups:
         for observation in sorted(observations, key=lambda o: o.camera_id):
-            pose_world = validate_se3(
-                observation.pose_world, name="socket pose_world")
-            pose_robot = validate_se3(
-                world_to_robot @ pose_world,
-                name="socket pose_robot")
+            pose_world = (validate_se3(observation.pose_world,
+                                       name="socket pose_world")
+                          if observation.pose_world is not None else None)
+            pose_robot = (validate_se3(world_to_robot @ pose_world,
+                                       name="socket pose_robot")
+                          if pose_world is not None else None)
             if socket_capture_refinements is None:
                 observations_robot.append(pose_robot)
             source_rows.append({
@@ -675,8 +688,8 @@ def calibrate_session(
                 "camera_id": observation.camera_id,
                 "timestamp_s": float(observation.timestamp_s),
                 "timestamp_source": observation.timestamp_source,
-                "pose_world": pose_world.tolist(),
-                "pose_robot": pose_robot.tolist(),
+                "pose_world": pose_world.tolist() if pose_world is not None else None,
+                "pose_robot": pose_robot.tolist() if pose_robot is not None else None,
             })
         if socket_capture_refinements is not None:
             # One independently captured/refined pose per capture. Repeating

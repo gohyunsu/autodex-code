@@ -19,7 +19,7 @@ relation: `T_HK = inv(T_RH_grasp) @ T_RK_grasp` and later
 
 | Situation | Input and calculation in this demo | Result and stock relationship |
 | --- | --- | --- |
-| Board/socket measurement | `live_session_start.py` calls stock `measure_tabletop_from_images`, then captures SAM masks and FoundPose hypotheses with acquisition metadata. `board_socket_fit.py` projects mask-centroid rays to the measured board plane at the CAD wall midpoint, takes median board XY, and uses the board normal for the open socket axis. `calibration.py` transforms W→R and freezes one pose. | `T_RS` plus a fixed socket collision mesh in every later scene. Stock uses ChArUco and the same capture stack but has no fixed insertion socket; its unconstrained whole-mesh silhouette objective is not the active socket pose. |
+| Board/socket measurement | `live_session_start.py` calls stock `measure_tabletop_from_images`, then captures SAM masks with acquisition metadata. On updated capture-PC adapters, this mode skips FoundPose inference. `board_socket_fit.py` projects mask-centroid rays to the measured board plane at the CAD wall midpoint, takes median board XY, and uses the board normal for the open socket axis. `calibration.py` transforms W→R and freezes one pose. | `T_RS` plus a fixed socket collision mesh in every later scene. Stock uses ChArUco and the same capture stack but has no fixed insertion socket; its unconstrained whole-mesh silhouette objective is not the active socket pose. |
 | Fresh tabletop key | `key_perception.py` admits the frame-bound FoundPose result; `world.py` computes `T_RK = inv(C2R) @ T_WK`, builds the key target plus frozen socket and measured table. `pose_selection.py` matches a v8 tabletop class under cylinder symmetry. | A new observed key pose, not the last episode's old position. Stock `run_auto.py` likewise observes and classifies before choosing a v8 grasp. |
 | Pickup and first lift | `candidates.py` loads the selected v8 `T_KH` and supplies `T_RH_grasp = T_RK @ T_KH` to the unchanged stock v8 pickup planner. `pickup_execution.py` and `franka_measured_lift.py` use the planned approach/squeeze and measured FR3 state. | The physical grasp relation after squeeze is not directly measured by this step. The active cylinder route uses the selected v8 relation as a named hypothesis, as stock place does. |
 | Post-lift transfer | `nominal_postlift.py` reads measured joints, optionally changes only the commanded hand translation by `next_trial_xy.py`, and replans from those joints. `targets.py` forms `T_RK_goal = T_RS @ T_SK_CAD`, then `T_RH_goal = T_RK_goal @ T_KH_command`. | The current attempt's commanded wrist goal. Stock also composes object and hand transforms, but has no measured socket/20 mm insertion target. The original CAD key goal stays centered when a retry shifts the wrist command; this avoids applying the XY correction twice. |
@@ -49,9 +49,10 @@ sets the socket base on the measured board, and fixes its axis to `-board z`.
 Axial yaw is unobservable for this round part. It then renders the wall-only
 convex hull in every view and records per-view/mean mask IoU. The configured
 0.8 bound applies to the mean, not to every overhead mask. The full exact
-socket collision mesh is still used for planning. FoundPose hypotheses are
-still captured for stock evidence compatibility, but do not determine the
-active final socket pose.
+socket collision mesh is still used for planning. Older captures retained
+FoundPose hypotheses, but those never determined the active final socket pose.
+The updated adapter publishes a frame-bound `ok=false` pose payload without
+running FoundPose for this board/body socket capture.
 
 The board is **not** a universal axis prior. It is a physical support
 constraint for this flat, fixed flange. If the flange is visibly tilted,
@@ -133,8 +134,10 @@ the mask centroids at the CAD wall midpoint (30 mm); coordinate-wise median
 board XY; board normal as socket +Z; wall-only reprojection/mean IoU; one pose
 frozen in robot coordinates with the complete collision mesh. The body radius
 is 40 mm, its wall spans local Z=5–55 mm, and the flange radius is 60 mm.
-FoundPose quality participates in view admission, while its pose hypotheses
-do not set the final socket pose in this mode. Axial yaw is unobservable for
+FoundPose quality no longer participates in board/body view admission; SAM
+mask size, border clearance, acquisition identity and body reprojection are
+the relevant checks. FoundPose remains required for key perception and stock
+socket modes. Axial yaw is unobservable for
 this round socket. With the current one-capture launch, no independent
 repeatability claim is made.
 

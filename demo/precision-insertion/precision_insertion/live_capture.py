@@ -177,6 +177,7 @@ def collect_socket_capture(
     timeout_s: float, image_write_timeout_s: float = 5.0,
     request_id_factory: RequestIdFactory | None = None,
     pose_only: bool = False,
+    mask_only: bool = False,
 ) -> SocketCaptureInput:
     """Collect same-request undistorted frames, SAM masks and FoundPose poses.
 
@@ -187,6 +188,8 @@ def collect_socket_capture(
     same sensor frame ID. Stock init_daemon discards that ID, so a demo-local
     capture producer is needed; its hardware timing must be commissioned.
     """
+    if pose_only and mask_only:
+        raise ValueError("mask-only socket capture still needs its saved images")
     if getattr(init_orchestrator, "obj_name", None) != socket_object:
         raise ValueError("FoundPose is not initialized for the selected socket")
     if (not isinstance(socket_prompt, str) or not socket_prompt.strip() or
@@ -225,7 +228,8 @@ def collect_socket_capture(
         masks, poses, timing = init_orchestrator.collect_payloads(
             prompt=socket_prompt, request_id=request_id,
             n_expected_serials=len(calibrated_camera_ids), timeout_s=timeout_s,
-            save_capture_dir=(None if pose_only else str(capture_dir)))
+            save_capture_dir=(None if pose_only else str(capture_dir)),
+            **({"run_info_extra": {"skip_foundpose": True}} if mask_only else {}))
     if (not isinstance(timing, Mapping) or
             timing.get("request_id") != request_id):
         raise ValueError("FoundPose request ID mismatch")

@@ -40,7 +40,8 @@ def _capture(capture_id: str, timestamp: float) -> sb.SocketCaptureInput:
 
 def _bootstrap(monkeypatch, captures=None, board_source="camera_acquisition",
                extra_camera_ids=(), board_frame_evidence=None,
-               socket_refiner=None, body_source=False):
+               socket_refiner=None, body_source=False,
+               socket_perception_mode="iou"):
     received = {}
 
     def fake_calibrate_session(**kwargs):
@@ -83,7 +84,8 @@ def _bootstrap(monkeypatch, captures=None, board_source="camera_acquisition",
         socket_collision_mesh=Path("/unused/socket.obj"),
         max_socket_translation_mm=1.0, max_socket_angle_deg=1.0,
         board_frame_evidence=board_frame_evidence,
-        socket_refiner=socket_refiner)
+        socket_refiner=socket_refiner,
+        socket_perception_mode=socket_perception_mode)
     return result, received
 
 
@@ -138,6 +140,28 @@ def test_refinement_callback_receives_admitted_views_and_is_saved(
         board_result, tmp_path / "board_refined")
     assert sb.verify_session_evidence_bundle(board_target)["socket_pose_source"] == (
         "per_capture_board_constrained_body")
+
+
+def test_board_mode_keeps_valid_masks_when_foundpose_fails(monkeypatch):
+    captures = [_capture("socket_1", 100.0)]
+    captures[0].poses["cam_a"] = {"ok": False}
+    captures[0].poses["cam_b"]["quality"] = 0.1
+    def refine(capture, admission):
+        assert [row.camera_id for row in admission.observations] == [
+            "cam_a", "cam_b"]
+        assert admission.observations[0].pose_world is None
+        return SocketCaptureRefinement(
+            capture.capture_id, capture.request_id, np.eye(4),
+            ("cam_a", "cam_b"), "cam_a", {"cam_a": .9, "cam_b": .91},
+            .8, {"best_serial": "cam_a"}, "a" * 64,
+            refinement_gate="board_constrained_body")
+    result, received = _bootstrap(monkeypatch, captures, socket_refiner=refine,
+                                  body_source=True,
+                                  socket_perception_mode="board_constrained_body")
+    # The helper patches calibration; the admitted observations still carry
+    # the absent pose through the interface used by the real calibrator.
+    assert len(received["socket_observations"]) == 2
+    assert result.socket_admissions[0].admission_mode == "mask_only"
 
 
 def test_rejects_unverified_time_and_mismatched_raw_frames(monkeypatch):

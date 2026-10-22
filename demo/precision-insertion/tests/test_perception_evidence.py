@@ -95,6 +95,30 @@ def test_rejects_uncalibrated_camera_and_invalid_pose():
         _admit(masks, poses, times, limits)
 
 
+def test_board_socket_admits_valid_masks_without_foundpose():
+    masks, poses, times, limits = _inputs()
+    poses["camera_a"] = {"ok": False, "ts": 110.0}
+    poses["camera_b"]["quality"] = 0.0
+    poses["camera_b"]["pose_world"][0, 0] = 2.0
+    admitted = admit_socket_capture(
+        capture_id="socket_001", masks=masks, poses=poses,
+        frame_timestamps_s=times,
+        frame_timestamp_source="camera_acquisition",
+        calibrated_camera_ids={"camera_a", "camera_b"}, limits=limits,
+        admission_mode="mask_only")
+    assert admitted.to_record()["admission_mode"] == "mask_only"
+    assert [row.camera_id for row in admitted.observations] == [
+        "camera_a", "camera_b"]
+    assert all(row.pose_world is None for row in admitted.observations)
+    assert all(view["accepted"] for view in admitted.per_view.values())
+    with pytest.raises(ValueError, match="accepted views"):
+        admit_socket_capture(
+            capture_id="socket_001", masks=masks, poses=poses,
+            frame_timestamps_s=times,
+            frame_timestamp_source="camera_acquisition",
+            calibrated_camera_ids={"camera_a", "camera_b"}, limits=limits)
+
+
 def test_combined_collector_requires_exact_saved_frame_evidence(tmp_path):
     masks, poses, times, limits = _inputs()
     frame_ids = {"camera_a": 11, "camera_b": 12}

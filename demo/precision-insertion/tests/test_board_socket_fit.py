@@ -61,12 +61,12 @@ def test_board_socket_fit_keeps_axis_upright_with_one_flange_mask(tmp_path):
     capture = SocketCaptureInput(
         "socket_000", 42, "white socket", {},
         {camera: {"mask": mask} for camera, mask in masks.items()},
-        {camera: {"ok": True, "pose_world": np.eye(4)}
+        {camera: {"ok": False}
          for camera in masks},
         {camera: 10.0 for camera in masks}, "camera_acquisition")
     admission = SocketCaptureEvidence(
         "socket_000", tuple(SocketObservation(
-            "socket_000", camera, 10.0, np.eye(4), "camera_acquisition")
+            "socket_000", camera, 10.0, None, "camera_acquisition")
             for camera in masks), {}, "camera_acquisition")
     stock = SimpleNamespace(
         obj_name="socket", H=600, W=800,

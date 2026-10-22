@@ -39,8 +39,8 @@ plane, and rigid-fit limits. The stock board-11 default still requires all
 54 corners. Neither mode sends a robot motion command.
 
 The board-9/20 mm launcher sets `socket_perception_mode` to
-`board_constrained_body`. It retains AutoDex camera, SAM and FoundPose frame
-capture, measures the board once, and estimates socket XY from the admitted
+`board_constrained_body`. It retains AutoDex camera and SAM frame capture,
+measures the board once, and estimates socket XY from the admitted
 undistorted masks. The fixed cylinder's open axis follows the measured board
 normal. A body-only projection gives each view an IoU; the configured minimum
 applies to their mean because overhead masks can contain the flange instead
@@ -51,6 +51,11 @@ must still agree. The current one-capture launcher cannot claim repeatability.
 The older `iou` and `ignore_sil_loss` modes remain available for stock
 comparison; square mode keeps its existing path. Saved-mask replay and its
 accuracy limits are in [RECOVERY_REVIEW_20261021.md](RECOVERY_REVIEW_20261021.md).
+Updated capture-PC adapters skip FoundPose inference for this socket request
+and publish a frame-bound unavailable-pose envelope for the unchanged
+transport. The key and stock socket modes still run FoundPose. An older
+staged adapter continues to run FoundPose without changing the mask-based
+socket result; see [ACTIVE_GATE_AND_LATENCY_AUDIT_20261022.md](ACTIVE_GATE_AND_LATENCY_AUDIT_20261022.md).
 
 **Current cylinder contract (2026-10-11):** the assembled held-relation
 handler defaults to the selected v8 nominal hypothesis; cylinder live mode
