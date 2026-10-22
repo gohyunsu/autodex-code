@@ -47,3 +47,30 @@ def test_mask_only_estimator_is_request_scoped(monkeypatch):
         daemon._do_run()
     assert daemon.fp is original
     assert daemon._precision_active_request_id is None
+
+
+def test_mask_only_init_skips_socket_foundpose_and_key_init_can_load(monkeypatch):
+    daemon = adapter.PrecisionInitDaemon.__new__(adapter.PrecisionInitDaemon)
+    daemon.cmd_receiver = SimpleNamespace(event_info={
+        "init": {"obj_name": "socket", "skip_foundpose": True}})
+    daemon.fp = None
+    daemon.mode = "live"
+    daemon.reader = object()
+    loaded = []
+
+    def stock_init(self):
+        obj_name = self.cmd_receiver.event_info["init"]["obj_name"]
+        if self.fp is None or self.fp.obj_name != obj_name:
+            loaded.append(obj_name)
+            self.fp = SimpleNamespace(obj_name=obj_name)
+
+    monkeypatch.setattr(adapter.InitDaemon, "_do_init", stock_init)
+    daemon._do_init()
+    assert loaded == []
+    assert daemon.fp.obj_name == "socket"
+    assert isinstance(daemon.reader, adapter.RecordingReader)
+
+    daemon.cmd_receiver.event_info["init"] = {"obj_name": "key"}
+    daemon._do_init()
+    assert loaded == ["key"]
+    assert daemon.fp.obj_name == "key"

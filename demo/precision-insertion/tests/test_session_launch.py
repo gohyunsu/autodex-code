@@ -113,6 +113,29 @@ def test_single_socket_capture_launch_is_valid_in_static_check(tmp_path, monkeyp
     assert loaded.socket_capture_count == 1
 
 
+def test_board_body_launch_does_not_require_unused_socket_foundpose(
+        tmp_path, monkeypatch):
+    config, record = _config(tmp_path)
+    mode = select_mode("cylinder", 20)
+    paths = AssetPaths(Path(record["shared_root"]), mode)
+    for path in (paths.raw_mesh(mode.socket_object),
+                 paths.socket_collision_mesh):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("test asset", encoding="utf-8")
+    monkeypatch.setattr(launch, "validate_cylinder_socket_fixture",
+                        lambda **_kwargs: {"paths_bound_to_shared_root": True})
+    record.update(mode={"family": "cylinder", "gap_mm": 20},
+                  socket_perception_mode="board_constrained_body",
+                  camera_time_mode="bounded_request_interval",
+                  board_id="9", minimum_board_corners=36,
+                  board_capture_phase="socket_present_partial")
+    record.pop("camera_time_calibrations")
+    config.write_text(json.dumps(record), encoding="utf-8")
+    assert not paths.foundpose_repre(mode.socket_object).exists()
+    loaded = launch.load_session_launch(config)
+    assert loaded.socket_perception_mode == "board_constrained_body"
+
+
 def test_static_preflight_launch_cannot_open_camera_capture(tmp_path, monkeypatch):
     config, record = _config(tmp_path)
     _stub_time(monkeypatch)

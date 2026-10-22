@@ -14,7 +14,8 @@ sibling `.../_pipeline_runs/RUN_ID.timing/` containing:
 - `events.jsonl`: append-only stock trace; individual start/end records,
   monotonic duration and UTC timestamps for synchronization.
 - `timing_summary.json`: spans in execution order and per-operation `count`,
-  `inclusive_s`, `self_s` and failure count.
+  `inclusive_s`, `self_s` and failure count. Each span also records direct
+  `child_cumulative_s`, `child_occupied_s` and `child_overlap_s`.
 - Stock trace `manifest.json` and `timeline.json`.
 
 The sibling location means startup failures can be timed even if no session
@@ -24,6 +25,9 @@ ledger was opened. On the robot PC, after a live attempt:
 cd /home/robot/autodex-precision-insertion
 python3 demo/precision-insertion/report_timing.py \
   /home/robot/shared_data/AutoDex/experiment/precision-insertion/inspire/precision_key_cylinder_r15_h80/_pipeline_runs/RUN_ID.timing
+python3 demo/precision-insertion/report_timing.py \
+  /home/robot/shared_data/AutoDex/experiment/precision-insertion/inspire/precision_key_cylinder_r15_h80/_pipeline_runs/RUN_ID.timing \
+  --tree --max-depth 8 --min-duration-s 0.01
 ```
 
 `run_robot_pc.sh --run` now runs only the Python pipeline. Start/check/stop
@@ -117,10 +121,12 @@ child intervals when computing a parent's `self_s`. It also reports
 `vlm_inference_overlap_s`; compare the occupied value and enclosing
 `trial.*_label`/`vlm.view_batch` duration when judging latency. `socket.capture` is the
 entire camera request plus saved-frame/provenance work, while
-`camera.foundpose_request`, `camera.saved_frame_wait` and
-`camera.frame_binding_verify` separate its children. `socket.refine_capture`
-is the subsequent silhouette refinement; it is **not** included in
-`socket.capture`. `vlm.infer` carries stage, camera ID, model and image count,
+`camera.socket_mask_request` (board/body mode), `camera.saved_frame_wait` and
+`camera.frame_binding_verify` separate its children. Subsequent
+`socket.body_fit` is outside `socket.capture` and contains CAD dimension
+extraction, per-camera centroid ray unprojection, the multiview median and
+per-camera wall IoU spans. The stock path retains `camera.foundpose_request`
+and `socket.refine_capture`. `vlm.infer` carries stage, camera ID, model and image count,
 so the report shows both total per-checkpoint cost and slow views. Parent
 `trial.*_label` spans additionally include parsing/evidence/manual wait.
 
@@ -152,7 +158,7 @@ is GPU work time, not the elapsed checkpoint duration.
 | Process timeline | Already uses `PipelineTrace` and detailed planning/execution spans. | Reuses the same trace format but a separate demo run and sidecar. | `live.session` |
 | Service startup | Existing AutoDex camera/robot services may already be running. | Independent manager starts missing daemons; pipeline runs reuse them. | Service TSV, outside run trace |
 | ChArUco | Board/camera measurement used for tabletop geometry. | One board capture and fit at session start; the saved frames are also used in the frozen calibration. | `board.*` |
-| Socket | No fixture-pose estimation or socket refinement. | Current board-9 / 20 mm launch uses one 20-camera SAM/FoundPose acquisition and one board-normal/body-mask CPU fit, then freezes that pose. Renderer warmup and stock silhouette fitting are skipped; repeatability is unmeasured. | `socket.capture`, `socket.refine_capture` |
+| Socket | No fixture-pose estimation or socket refinement. | Current board-9 / 20 mm launch uses one 20-camera SAM mask acquisition and one board-normal/body-mask CPU fit, then freezes that pose. Socket FoundPose and stock silhouette fitting are skipped; repeatability is unmeasured. | `socket.capture`, `socket.body_fit` |
 | Source/evidence checks | Stock live entry points do **not** hash the complete grasp pool and session image bundle on each run. Stock trace hashes an artifact only when explicitly written through its helper. | Live catalog parses once and assumes immutable NAS sources; explicit offline audit still rehashes candidate files. Socket evidence keeps its existing source checks. A live tabletop key pose uses frame IDs and timestamps without waiting for or hashing its FoundPose PNGs; its independent VLM snapshot is saved concurrently with planning and keeps its own raw visual provenance. | `startup.catalog_load`, `socket.evidence_write`, `key.capture`, `key.initial_visual_capture`, `key.candidate_preflight` |
 | Per-trial perception | Object SAM/FoundPose for a fresh tabletop pose. | Fresh key SAM/FoundPose with frozen-socket, camera-time and mask admission; repeated after failure/repose. | `key.model_init`, `key.capture`, `key.pose_admission` |
 | Grasp planning | v8 grasp candidates, cuRobo plan, pickup and lift. | Reuses v8 candidate files but adds a 20 mm whole-hand/socket endpoint catalog and per-current-pose full-chain preflight; measured post-squeeze lift chain. | `key.candidate_preflight`, `trial.measured_lift_preflight` |
@@ -178,9 +184,10 @@ Important nested stages include:
   `planning.held_path_audit` and its child `audit.geometry_samples`;
 - `audit.fixed_world_build` versus `audit.fixed_world_lookup`,
   `audit.key_model_lookup`, `audit.hand_urdf_fk`, `audit.wrist_fk_rollout`;
-- `camera.foundpose_request`, `camera.saved_frame_wait`,
+- `camera.socket_mask_request` (or stock `camera.foundpose_request`),
+  `camera.saved_frame_wait`,
   `camera.frame_binding_verify`, `camera.undistort_generation` and
-  `socket.refine_capture`;
+  `socket.body_fit` (or stock `socket.refine_capture`);
 - Live tabletop key `key.initial_visual_acquire` and
   `key.initial_visual_save` overlap `key.candidate_preflight`;
   `key.initial_visual_acquisition_wait` is only the remaining capture wait

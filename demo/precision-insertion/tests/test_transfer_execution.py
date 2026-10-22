@@ -210,3 +210,15 @@ def test_transfer_accepts_stationary_endpoint_sampled_just_before_completion(
     record = execute_bound_held_transfer(**kwargs, enable_robot_motion=True)
     assert record["measurement"]["trajectory_complete"] is True
     assert record["post_state"]["sample_timestamp_s"] == 102.49
+
+
+def test_transfer_accepts_stock_follower_completion_residual(
+        tmp_path, monkeypatch):
+    """A 0.028 rad L2 residual passed the real follower on 2026-10-22."""
+    kwargs = _setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(transfer_execution, "FrankaMeasuredLiftAdapter", _Adapter)
+    observed = np.array([.13016129, .02591476, .0343653, .02701381,
+                         .00673225, .03888491, .04065922])
+    kwargs["read_post_state"] = lambda: _state(102.55, observed)
+    result = execute_bound_held_transfer(**kwargs, enable_robot_motion=True)
+    assert result["measurement"]["trajectory_complete"] is True

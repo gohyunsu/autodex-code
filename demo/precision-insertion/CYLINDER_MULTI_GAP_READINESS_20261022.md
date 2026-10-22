@@ -48,10 +48,12 @@ after checking the manifest-listed `repre.pth` SHA-256. A leftover
 validated representation and templates were installed. No model from a
 different socket was copied or renamed as a substitute. Generation and
 successful reload on the source PC are **not** independent metric pose
-validation on this robot PC. The active board-supported body fit still runs
-the stock FoundPose capture for compatible evidence; each exact socket
-representation must therefore be present. The fit reads the wall radius
-from that mode's raw mesh and can use the same measured-board procedure.
+validation on this robot PC. The current board-supported body fit requests
+stock SAM masks and keeps the frame-bound pose channel for compatibility, but
+skips socket FoundPose model construction and inference. Its exact socket
+representation remains installed for other pose modes and archival
+reproducibility; this active mode does not require it. The fit reads the wall
+radius from that mode's raw mesh and uses the measured-board procedure.
 The installed representation hashes, in gap order 1/3/5/10/15/20, are
 `baa4433e7b5a874dea467cfcfef4126e0d5c1d68ba8ba18f25ab0e18da2be07c`,
 `f244d88e50f8bc9881844f03dd3d716e2d18ec929f7c4522bf3e6407d7455e74`,
@@ -78,7 +80,7 @@ A physical change of socket invalidates the previous frozen socket pose and
 20 mm image evidence. The matching physical fixture must be identified,
 placed flat on the board and captured afresh without the key; then the key
 is placed and Enter continues the session. No 1/3/5/10/15 mm physical
-socket capture, FoundPose metric-pose comparison, grasp, contact or insertion
+socket capture, metric-pose comparison, grasp, contact or insertion
 result is claimed by this preparation. In particular, the narrow gaps need
 their own real pose/axis and insertion evidence before reporting task
 success; a static `--check` is not that evidence.

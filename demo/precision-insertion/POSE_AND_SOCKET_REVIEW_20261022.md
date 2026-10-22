@@ -7,6 +7,9 @@ checkout was not edited. The branch's `src/execution/run_auto.py` is byte
 identical to stock; its FR3 executor and planner are not, so control/path
 equivalence is limited to the functions identified below.
 
+For the independent-camera wall-fit replay and the updated mask-only socket
+initialization, see `SOCKET_BODY_METHOD_REVIEW_20261022.md`.
+
 ## Frames and pose-changing stages
 
 `T_AB` maps coordinates in B into A. `R` is the FR3 robot base, `W` the
@@ -52,7 +55,9 @@ convex hull in every view and records per-view/mean mask IoU. The configured
 socket collision mesh is still used for planning. Older captures retained
 FoundPose hypotheses, but those never determined the active final socket pose.
 The updated adapter publishes a frame-bound `ok=false` pose payload without
-running FoundPose for this board/body socket capture.
+constructing or running socket FoundPose for this board/body capture. The
+robot-side `InitOrchestrator` still supplies stock camera calibration and
+command dispatch.
 
 The board is **not** a universal axis prior. It is a physical support
 constraint for this flat, fixed flange. If the flange is visibly tilted,

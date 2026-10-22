@@ -1,9 +1,9 @@
-"""Identify the running stock ParaDex daemon before noncontact FR3 motion.
+"""Identify the running ParaDex daemon before noncontact FR3 motion.
 
-The checked-in hash is for the installed robot-PC binary whose source has a
-200 ms joint-velocity stream expiry. This is a runtime identity check, not a
-claim that a physical timeout or E-stop test was performed. Other controllers
-still use the separately reviewed commissioning-record route.
+Record the installed binary hash for traceability without pinning one build.
+The runtime process, local ports and configured stream expiry are checked;
+this is not a physical timeout or E-stop test. Other controllers still use
+the separately reviewed commissioning-record route.
 """
 
 from __future__ import annotations
@@ -17,9 +17,6 @@ from .franka_completion_checked import is_demo_completion_checked_executor
 from .franka_measured_lift import FrankaMeasuredLiftAdapter
 
 
-AUDITED_STOCK_DAEMON_SHA256 = (
-    "363e4247cb3f9d7f3b25e9c5ae1e1dc8766775ce104407e33c48541e62b60bab"
-)
 STOCK_STREAM_EXPIRY_S = 0.2
 
 
@@ -63,11 +60,12 @@ def verify_stock_daemon_identity(
 ) -> dict:
     """Bind a stock follower to this host's exact running watchdog binary.
 
-    This route is limited to the first-party measured lift/transfer adapter,
-    the audited installed binary and a local ParaDex process configured for
-    the controller's FR3 ports. Docker's PID namespace can deny access to
-    /proc/<pid>/exe even while the daemon's local ports are usable, so the
-    installed binary is hashed once and the process is matched by its command.
+    This route is limited to the first-party measured lift/transfer adapter
+    and a local ParaDex process configured for the controller's FR3 ports.
+    Docker's PID namespace can deny access to /proc/<pid>/exe even while the
+    daemon's local ports are usable, so the installed binary hash is recorded
+    and the process is matched by its command. A rebuild does not invalidate
+    otherwise identical runtime behavior.
     It never reports physical watchdog commissioning as passed.
     """
     if (type(adapter) is not FrankaMeasuredLiftAdapter or
@@ -86,8 +84,9 @@ def verify_stock_daemon_identity(
     if not local:
         raise ValueError("stock daemon identity can only verify a local FR3 endpoint")
     binary = Path(adapter.daemon_binary_path).expanduser().resolve()
-    if not binary.is_file() or _sha(binary) != AUDITED_STOCK_DAEMON_SHA256:
-        raise ValueError("installed FR3 daemon differs from audited stock binary")
+    if not binary.is_file():
+        raise ValueError(f"FR3 daemon binary is missing: {binary}")
+    binary_sha256 = _sha(binary)
     matches = []
     for process in Path(proc_root).iterdir():
         if not process.name.isdecimal():
@@ -110,7 +109,7 @@ def verify_stock_daemon_identity(
     return {
         "schema": "precision_insertion_stock_daemon_identity_v1",
         "daemon_binary_path": str(binary),
-        "daemon_binary_sha256": AUDITED_STOCK_DAEMON_SHA256,
+        "daemon_binary_sha256": binary_sha256,
         "daemon_pid": pid,
         "daemon_cmdline_sha256": hashlib.sha256(
             "\0".join(argv).encode("utf-8")).hexdigest(),

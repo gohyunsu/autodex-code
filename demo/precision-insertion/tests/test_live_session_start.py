@@ -40,6 +40,7 @@ def _setup(tmp_path, monkeypatch, request_ids=(11, 12, 13), socket_count=2):
             assert kwargs["mesh_path"] == str(mesh)
             assert kwargs["assets_root"] == str(repre.parents[4])
             assert kwargs["load_silhouette"] is False
+            self.mask_only = kwargs.get("mask_only", False)
             self.obj_name = kwargs["obj_name"]
 
     init = Init()
@@ -157,10 +158,12 @@ def test_single_socket_capture_starts_and_saves_one_request(tmp_path, monkeypatc
 
 
 def test_board_constrained_socket_skips_stock_renderer(tmp_path, monkeypatch):
-    arguments, events, _repre = _setup(
+    arguments, events, repre = _setup(
         tmp_path, monkeypatch, request_ids=(11, 12), socket_count=1)
     arguments["socket_perception_mode"] = "board_constrained_body"
+    repre.unlink()
     start.start_precision_session(**arguments)
+    assert arguments["init_orchestrator"].mask_only is True
     assert events == ["board", "board_preflight", "socket_init",
                       "socket_000", "freeze_world", "save",
                       "reload_frozen_world"]

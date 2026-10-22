@@ -29,6 +29,7 @@ from .lift_execution import (
 from .live_robot_state import LiveRobotState
 from .pickup_execution import _reject_known_stock_follower
 from .session_runner import SessionRunner
+from .stock_force_insertion import FrankaForceStopInsertionAdapter
 
 
 def _sha(path: Path) -> str:
@@ -164,17 +165,10 @@ def execute_bound_guarded_insertion(
     failure_path = attempt_dir / f"{prefix}_failure.json"
     if any(path.exists() for path in (output, started_path, failure_path)):
         raise FileExistsError("this attempt already started guarded insertion")
-    pre_state.validate(
-        max_arm_hand_skew_s=limits.max_arm_hand_skew_s,
-        max_hand_command_error_raw=limits.max_hand_command_error_raw,
-        max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
-    now = _wall_time()
-    if (pre_state.sample_timestamp_s <= handoff["decision_timestamp_s"] or
-            pre_state.sample_timestamp_s > now or
-            float(np.max(np.abs(pre_state.full_q[:7] - axial[0, :7]))) >
-            limits.max_start_joint_error_rad):
-        raise ValueError("fresh held state differs from the axial handoff")
     if stock_force:
+        # read_state() already returned measured feedback. The stock FR3
+        # follower owns path tracking; another start-pose/timestamp threshold
+        # here can reject its own accepted transfer endpoint.
         return _execute_stock_force_stroke(
             runner=runner, adapter=adapter, handoff=handoff,
             report_path=report_path, axial=axial, pre_state=pre_state,
@@ -182,6 +176,16 @@ def execute_bound_guarded_insertion(
             output=output, started_path=started_path, failure_path=failure_path,
             motion_interlock=motion_interlock,
             enable_robot_motion=enable_robot_motion)
+    pre_state.validate(
+        max_arm_hand_skew_s=limits.max_arm_hand_skew_s,
+        max_hand_command_error_raw=limits.max_hand_command_error_raw,
+        max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
+    now = _wall_time()
+    if (pre_state.sample_timestamp_s <= handoff["decision_timestamp_s"] or
+            pre_state.sample_timestamp_s > now or
+            np.max(np.abs(pre_state.full_q[:7] - axial[0, :7])) >
+            limits.max_start_joint_error_rad):
+        raise ValueError("fresh held state differs from the axial handoff")
     watchdog = _verify_controller_commissioning(
         path=watchdog_commissioning_path, adapter=adapter,
         limits=limits, now_s=now)
@@ -313,8 +317,7 @@ def _execute_stock_force_stroke(
         **base, "schema": "precision_insertion_stock_force_started_v1",
         "requested_at_s": _wall_time()})
     try:
-        result = adapter.follow_stock_force_insertion(
-            axial.copy(), max_duration_s=limits.max_execution_duration_s)
+        result = adapter.follow_stock_force_insertion(axial.copy())
         if (not isinstance(result, dict) or
                 result.get("schema") !=
                 "precision_insertion_stock_force_result_v1" or
@@ -327,18 +330,21 @@ def _execute_stock_force_stroke(
         post = read_post_state()
         if not isinstance(post, LiveRobotState):
             raise RuntimeError("stock force follower lacks measured end state")
-        post.validate(
-            max_arm_hand_skew_s=limits.max_arm_hand_skew_s,
-            max_hand_command_error_raw=limits.max_hand_command_error_raw,
-            max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
         completed = float(result["completed_at_s"])
-        target = axial[0] if result["safety_abort"] else axial[-1]
-        if (post.sample_timestamp_s < float(result["started_at_s"]) or
-                _wall_time() - post.sample_timestamp_s >
-                limits.max_end_state_age_s or
-                np.max(np.abs(post.full_q[:7] - target[:7])) >
-                limits.max_end_joint_error_rad):
-            raise RuntimeError("stock force result differs from measured stopped pose")
+        if type(adapter) is not FrankaForceStopInsertionAdapter:
+            post.validate(
+                max_arm_hand_skew_s=limits.max_arm_hand_skew_s,
+                max_hand_command_error_raw=limits.max_hand_command_error_raw,
+                max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
+            if (post.sample_timestamp_s < float(result["started_at_s"]) or
+                    _wall_time() - post.sample_timestamp_s >
+                    limits.max_end_state_age_s or
+                    np.max(np.abs(post.full_q[:7] -
+                                  (axial[0, :7] if result["safety_abort"] else
+                                   axial[-1, :7]))) >
+                    limits.max_end_joint_error_rad):
+                raise RuntimeError(
+                    "stock force result differs from measured stopped pose")
         metric_path = output.with_name("stock_force_metric.json")
         metric = {
             **base, "schema": "precision_insertion_stock_force_execution_v1",

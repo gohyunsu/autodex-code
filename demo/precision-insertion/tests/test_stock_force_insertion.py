@@ -48,7 +48,7 @@ def test_stock_force_stop_ascends_without_speed_override(monkeypatch):
     adapter = stock.FrankaForceStopInsertionAdapter(executor)
     axial = np.zeros((5, 13))
     axial[:, 0] = np.linspace(0., .08, 5)
-    result = adapter.follow_stock_force_insertion(axial, max_duration_s=5.)
+    result = adapter.follow_stock_force_insertion(axial)
     assert result["safety_abort"] is True
     assert result["retreat_completed"] is True
     assert len(calls) == 2
@@ -68,7 +68,7 @@ def test_stock_normal_completion_does_not_withdraw(monkeypatch):
     axial = np.zeros((3, 13))
     axial[:, 0] = [0., .01, .02]
     result = stock.FrankaForceStopInsertionAdapter(
-        executor).follow_stock_force_insertion(axial, max_duration_s=5.)
+        executor).follow_stock_force_insertion(axial)
     assert result["safety_abort"] is False
     assert result["retreat_completed"] is False
     assert len(calls) == 1

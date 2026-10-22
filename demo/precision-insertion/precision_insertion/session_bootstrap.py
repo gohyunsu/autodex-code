@@ -183,27 +183,33 @@ def bootstrap_session(
                         mask_fid != pose_fid):
                     raise ValueError("socket SAM/FoundPose frame IDs differ")
                 frame_ids[camera_id] = mask_fid
-            verified = verify_frame_provenance(
-                {"request_id": capture.request_id,
-                 "source": "camera_acquisition",
-                 "frames": capture.frame_evidence},
-                request_id=capture.request_id, images_bgr=capture.images_bgr,
-                frame_ids=frame_ids)
+            with timed("socket.capture_provenance_verify", phase="socket",
+                       kind="io", capture_id=capture_id):
+                verified = verify_frame_provenance(
+                    {"request_id": capture.request_id,
+                     "source": "camera_acquisition",
+                     "frames": capture.frame_evidence},
+                    request_id=capture.request_id, images_bgr=capture.images_bgr,
+                    frame_ids=frame_ids)
             if (any(capture.frame_timestamps_s[s] != row["timestamp_s"]
                     for s, row in verified.items()) or
                     exceeds_static_capture_skew_limit(
                         verified, view_limits.maximum_capture_skew_s)):
                 raise ValueError("socket frame timing conflicts with verified evidence")
-        admission = admit_socket_capture(
-            capture_id=capture_id, masks=capture.masks, poses=capture.poses,
-            frame_timestamps_s=capture.frame_timestamps_s,
-            frame_timestamp_source=capture.frame_timestamp_source,
-            calibrated_camera_ids=calibrated_camera_ids, limits=view_limits,
-            admission_mode=("mask_only" if socket_perception_mode ==
-                            "board_constrained_body" else "foundpose"))
+        with timed("socket.view_admission", phase="socket",
+                   capture_id=capture_id):
+            admission = admit_socket_capture(
+                capture_id=capture_id, masks=capture.masks, poses=capture.poses,
+                frame_timestamps_s=capture.frame_timestamps_s,
+                frame_timestamp_source=capture.frame_timestamp_source,
+                calibrated_camera_ids=calibrated_camera_ids, limits=view_limits,
+                admission_mode=("mask_only" if socket_perception_mode ==
+                                "board_constrained_body" else "foundpose"))
         admissions.append(admission)
         if socket_refiner is not None:
-            with timed("socket.refine_capture", phase="socket",
+            with timed(("socket.body_fit" if socket_perception_mode ==
+                        "board_constrained_body" else "socket.refine_capture"),
+                       phase="socket",
                        capture_id=capture_id):
                 refined = socket_refiner(capture, admission)
             if (not isinstance(refined, SocketCaptureRefinement) or
@@ -213,29 +219,30 @@ def bootstrap_session(
                         item.camera_id for item in admission.observations}):
                 raise ValueError("socket refinement does not match admitted capture")
             refinements.append(refined)
-    calibration = calibrate_session(
-        mode=mode, object_root=object_root,
-        board_images_bgr=board_images_bgr,
-        board_timestamps_s=board_timestamps_s,
-        board_timestamp_source=board_timestamp_source,
-        socket_observations=tuple(
-            observation for admission in admissions
-            for observation in admission.observations),
-        intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
-        c2r=c2r, base_scene=base_scene,
-        socket_collision_mesh=socket_collision_mesh,
-        max_capture_skew_s=view_limits.maximum_capture_skew_s,
-        max_socket_translation_mm=max_socket_translation_mm,
-        max_socket_angle_deg=max_socket_angle_deg,
-        min_socket_captures=1,
-        min_views_per_capture=view_limits.minimum_accepted_views,
-        socket_capture_refinements=(
-            tuple(refinements) if socket_refiner is not None else None),
-        board_id=board_id,
-        minimum_board_corners=minimum_board_corners,
-        board_capture_phase=board_capture_phase,
-        measured_board=measured_board,
-    )
+    with timed("socket.calibration_freeze", phase="socket"):
+        calibration = calibrate_session(
+            mode=mode, object_root=object_root,
+            board_images_bgr=board_images_bgr,
+            board_timestamps_s=board_timestamps_s,
+            board_timestamp_source=board_timestamp_source,
+            socket_observations=tuple(
+                observation for admission in admissions
+                for observation in admission.observations),
+            intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
+            c2r=c2r, base_scene=base_scene,
+            socket_collision_mesh=socket_collision_mesh,
+            max_capture_skew_s=view_limits.maximum_capture_skew_s,
+            max_socket_translation_mm=max_socket_translation_mm,
+            max_socket_angle_deg=max_socket_angle_deg,
+            min_socket_captures=1,
+            min_views_per_capture=view_limits.minimum_accepted_views,
+            socket_capture_refinements=(
+                tuple(refinements) if socket_refiner is not None else None),
+            board_id=board_id,
+            minimum_board_corners=minimum_board_corners,
+            board_capture_phase=board_capture_phase,
+            measured_board=measured_board,
+        )
     return SessionBootstrap(
         calibration, board_request_id, board_images_bgr, board_timestamps_s,
         board_timestamp_source, tuple(socket_captures), tuple(admissions),

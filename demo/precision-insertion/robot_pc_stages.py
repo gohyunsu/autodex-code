@@ -191,10 +191,7 @@ def configure(core, live, options) -> dict:
                     "max_joint_frame_skew_s": 5.,
                     **stationary,
                 },
-                "handoff_parameters": {
-                    "max_start_joint_error_rad": .02,
-                    **stationary,
-                },
+                "handoff_parameters": {},
                 "insertion_parameters": {},
                 "final_parameters": {
                     "max_phase_skew_s": 10.,

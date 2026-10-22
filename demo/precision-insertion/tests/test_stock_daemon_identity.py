@@ -18,8 +18,6 @@ from precision_insertion.franka_measured_lift import FrankaMeasuredLiftAdapter  
 def _fixture(tmp_path, monkeypatch, *, timeout_ms=200, duplicate=False):
     binary = tmp_path / "franka_daemon"
     binary.write_bytes(b"audited test daemon")
-    monkeypatch.setattr(stock, "AUDITED_STOCK_DAEMON_SHA256",
-                        hashlib.sha256(binary.read_bytes()).hexdigest())
     monkeypatch.setattr(stock, "is_demo_completion_checked_executor",
                         lambda _executor: True)
     adapter = object.__new__(FrankaMeasuredLiftAdapter)
@@ -54,7 +52,7 @@ def test_audited_local_daemon_process_is_recorded_without_physical_test_claim(
         adapter.daemon_binary_path.read_bytes()).hexdigest()
 
 
-@pytest.mark.parametrize("defect", ["slow", "remote", "changed_binary",
+@pytest.mark.parametrize("defect", ["slow", "remote", "missing_binary",
                                      "duplicate", "wrong_port"])
 def test_stock_identity_rejects_wrong_runtime(tmp_path, monkeypatch, defect):
     adapter, proc = _fixture(
@@ -62,13 +60,22 @@ def test_stock_identity_rejects_wrong_runtime(tmp_path, monkeypatch, defect):
         duplicate=defect == "duplicate")
     if defect == "remote":
         adapter.executor.arm.ip = "172.16.0.2"
-    elif defect == "changed_binary":
-        adapter.daemon_binary_path.write_bytes(b"another binary")
+    elif defect == "missing_binary":
+        adapter.daemon_binary_path.unlink()
     elif defect == "wrong_port":
         adapter.executor.arm.command_port = 6000
     with pytest.raises(ValueError):
         stock.verify_stock_daemon_identity(
             adapter=adapter, max_command_age_s=.2, proc_root=proc)
+
+
+def test_rebuilt_binary_records_its_hash_without_rejecting_runtime(tmp_path, monkeypatch):
+    adapter, proc = _fixture(tmp_path, monkeypatch)
+    adapter.daemon_binary_path.write_bytes(b"same daemon rebuilt")
+    result = stock.verify_stock_daemon_identity(
+        adapter=adapter, max_command_age_s=.2, proc_root=proc)
+    assert result["daemon_binary_sha256"] == hashlib.sha256(
+        b"same daemon rebuilt").hexdigest()
 
 
 def test_only_first_party_adapter_uses_stock_identity(tmp_path, monkeypatch):

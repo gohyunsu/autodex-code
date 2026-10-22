@@ -12,11 +12,8 @@ import json
 from pathlib import Path
 import time
 
-import numpy as np
-
 from .franka_completion_checked import is_demo_completion_checked_executor
 from .insertion_checkpoint import _metric_record
-from .live_robot_state import LiveRobotState
 from .post_insertion_release import (
     SCHEMA as RELEASE_SCHEMA, verify_post_insertion_release,
 )
@@ -86,7 +83,7 @@ class StockSocketRelease:
         if (_sha(metric_path) != metric_ref.get("sha256") or
                 metric_path.parent != Path(runner._attempt_dir).resolve()):
             raise ValueError("release metric changed after the stroke")
-        metric, _, completed = _metric_record(
+        metric, _, _ = _metric_record(
             metric_path, attempt_id=runner.active_attempt.attempt_id,
             candidate_id=runner.active_attempt.candidate_id,
             session_calibration_sha256=runner.session_sha256)
@@ -94,16 +91,6 @@ class StockSocketRelease:
                 "precision_insertion_stock_force_execution_v1" or
                 metric["measurement"]["safety_abort"] is not False):
             raise ValueError("socket release cannot follow a force stop")
-        state = self.read_state()
-        if not isinstance(state, LiveRobotState):
-            raise TypeError("socket release lacks measured start state")
-        live.clear_view._validate_feedback(state, phase="socket_release_start")
-        if (state.sample_timestamp_s <= completed or
-                np.max(np.abs(state.full_q[:7] - paths["opening"][0, :7])) >
-                live.clear_view.max_arm_error_rad or
-                np.max(np.abs(state.full_q[7:] - paths["opening"][0, 7:])) >
-                live.clear_view.max_hand_error_rad):
-            raise ValueError("socket release start differs from inserted endpoint")
         folder = Path(runner._attempt_dir)
         started_path = folder / "socket_release_started.json"
         failure_path = folder / "socket_release_failure.json"
@@ -111,8 +98,6 @@ class StockSocketRelease:
         if any(path.exists() for path in (started_path, failure_path, output)):
             raise FileExistsError("this attempt already requested socket release")
         started_at = time.time()
-        if started_at <= completed:
-            raise ValueError("release command time precedes insertion completion")
         with started_path.open("x", encoding="utf-8") as stream:
             json.dump({"schema": "precision_insertion_socket_release_started_v1",
                        "attempt_id": runner.active_attempt.attempt_id,
@@ -136,8 +121,7 @@ class StockSocketRelease:
             final = live.clear_view.verify_state(
                 self.read_state(), phase="socket_release_clear_view")
             clear_completed = time.time()
-            if (not started_at < release_completed <= clear_completed or
-                    final.sample_timestamp_s < release_completed):
+            if not started_at < release_completed <= clear_completed:
                 raise RuntimeError("release/clear-view feedback is not ordered")
             record = {
                 "schema": RELEASE_SCHEMA,

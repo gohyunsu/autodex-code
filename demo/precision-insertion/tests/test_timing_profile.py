@@ -16,6 +16,7 @@ from precision_insertion.timing_profile import (  # noqa: E402
     profile_run, summarize_events, timed, timing_directory,
 )
 from precision_insertion.view_parallel import map_view_calls  # noqa: E402
+import report_timing  # noqa: E402
 
 
 def test_profile_groups_nested_spans_without_double_counting(tmp_path):
@@ -68,7 +69,23 @@ def test_parallel_view_spans_retain_parent_and_union_overlap(tmp_path):
     assert batch["parent_id"] == parent["span_id"]
     assert all(row["parent_id"] == batch["span_id"] for row in infer)
     assert summary["vlm_inference_overlap_s"] > 0
+    assert batch["child_overlap_s"] > 0
+    assert batch["child_cumulative_s"] > batch["child_occupied_s"]
     assert parent["self_s"] < parent["duration_s"]
+
+
+def test_report_can_show_nested_elapsed_and_parallel_work(tmp_path, capsys):
+    output = tmp_path / "hierarchy"
+    with profile_run(output):
+        with timed("live.session", phase="session"):
+            with timed("socket.body_fit", phase="socket"):
+                with timed("socket.body_multiview_median", phase="socket"):
+                    pass
+    assert report_timing.main([str(timing_directory(output)), "--tree"]) == 0
+    printed = capsys.readouterr().out
+    assert "Hierarchy (inclusive" in printed
+    assert "    socket.body_multiview_median" in printed
+    assert "child work" in printed
 
 
 def test_profile_keeps_failure_trace(tmp_path):

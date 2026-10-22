@@ -105,9 +105,7 @@ def test_observed_retry_arrival_uses_fresh_camera_and_saved_xy_plan(tmp_path):
         arrival_report_path=saved, measured_start=held,
         mode=args["mode"],
         session_calibration_sha256=args["attempt"].session_calibration_sha256,
-        decision_timestamp_s=11.03, max_state_age_s=0.2,
-        max_start_joint_error_rad=0.05, max_arm_hand_skew_s=0.02,
-        max_hand_command_error_raw=30.0, max_arm_velocity_rad_s=0.05,
+        decision_timestamp_s=11.03,
         output_dir=tmp_path / "axial_handoff")
     packet = json.loads(handoff.read_text(encoding="utf-8"))
     assert packet["axial_sample_count"] == 2

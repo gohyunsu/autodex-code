@@ -2,8 +2,8 @@
 
 The socket's wide flange is not consistently included in SAM masks.  Fit the
 visible cylindrical wall instead of applying a whole-mesh silhouette loss to
-different object parts.  This is a socket-specific geometric estimate; the
-stock SAM/FoundPose capture and its frame provenance remain unchanged.
+different object parts. This is a socket-specific geometric estimate built
+from stock SAM masks and frame provenance; this mode needs no socket FoundPose.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 
 from .geometry import validate_se3
+from .timing_profile import timed
 
 
 def _barrel_dimensions(raw_mesh: Path) -> tuple[float, float, float]:
@@ -63,42 +64,47 @@ def fit_board_socket_body(
     x_axis = board[:3, 0]
     y_axis = np.cross(up, x_axis)
     rotation = np.column_stack((x_axis, y_axis, up))
-    radius, bottom, top = _barrel_dimensions(raw_mesh)
+    with timed("socket.body_mesh_dimensions", phase="socket", kind="geometry"):
+        radius, bottom, top = _barrel_dimensions(raw_mesh)
     mid_height = (bottom + top) / 2.0
     board_points: list[np.ndarray] = []
     views = []
     for camera in sorted(masks):
-        mask = np.asarray(masks[camera], dtype=bool)
-        K = np.asarray(intrinsics_undist[camera], dtype=np.float64)
-        E = validate_se3(extrinsics_camera_world[camera],
-                         name=f"{camera} camera/world") @ world_robot
-        if (mask.ndim != 2 or not mask.any() or K.shape != (3, 3) or
-                not np.all(np.isfinite(K)) or K[0, 0] <= 0 or K[1, 1] <= 0 or
-                not np.allclose(K[2], [0, 0, 1], atol=1e-8)):
-            raise ValueError(f"invalid socket wall image or intrinsics: {camera}")
-        yy, xx = np.nonzero(mask)
-        pixel = np.array([float(xx.mean()), float(yy.mean()), 1.0])
-        robot_camera = np.linalg.inv(E)
-        origin = robot_camera[:3, 3]
-        ray = robot_camera[:3, :3] @ np.linalg.solve(K, pixel)
-        denominator = float(np.dot(ray, up))
-        if abs(denominator) < 1e-8:
-            raise ValueError(f"socket ray is parallel to the board: {camera}")
-        distance = float(np.dot(board[:3, 3] + mid_height * up - origin, up)
-                         / denominator)
-        if distance <= 0:
-            raise ValueError(f"socket mask ray points behind camera: {camera}")
-        board_points.append(origin + distance * ray - mid_height * up)
-        views.append((camera, mask, K, E))
+        with timed("socket.body_centroid_ray", phase="socket",
+                   kind="geometry", camera_id=camera):
+            mask = np.asarray(masks[camera], dtype=bool)
+            K = np.asarray(intrinsics_undist[camera], dtype=np.float64)
+            E = validate_se3(extrinsics_camera_world[camera],
+                             name=f"{camera} camera/world") @ world_robot
+            if (mask.ndim != 2 or not mask.any() or K.shape != (3, 3) or
+                    not np.all(np.isfinite(K)) or K[0, 0] <= 0 or K[1, 1] <= 0 or
+                    not np.allclose(K[2], [0, 0, 1], atol=1e-8)):
+                raise ValueError(f"invalid socket wall image or intrinsics: {camera}")
+            yy, xx = np.nonzero(mask)
+            pixel = np.array([float(xx.mean()), float(yy.mean()), 1.0])
+            robot_camera = np.linalg.inv(E)
+            origin = robot_camera[:3, 3]
+            ray = robot_camera[:3, :3] @ np.linalg.solve(K, pixel)
+            denominator = float(np.dot(ray, up))
+            if abs(denominator) < 1e-8:
+                raise ValueError(f"socket ray is parallel to the board: {camera}")
+            distance = float(np.dot(board[:3, 3] + mid_height * up - origin, up)
+                             / denominator)
+            if distance <= 0:
+                raise ValueError(f"socket mask ray points behind camera: {camera}")
+            board_points.append(origin + distance * ray - mid_height * up)
+            views.append((camera, mask, K, E))
 
-    points = np.asarray(board_points)
-    xy = np.column_stack(((points - board[:3, 3]) @ x_axis,
-                          (points - board[:3, 3]) @ y_axis))
-    median_xy = np.median(xy, axis=0)
-    pose_robot = np.eye(4)
-    pose_robot[:3, :3] = rotation
-    pose_robot[:3, 3] = (board[:3, 3] + median_xy[0] * x_axis
-                         + median_xy[1] * y_axis)
+    with timed("socket.body_multiview_median", phase="socket",
+               kind="geometry", camera_count=len(views)):
+        points = np.asarray(board_points)
+        xy = np.column_stack(((points - board[:3, 3]) @ x_axis,
+                              (points - board[:3, 3]) @ y_axis))
+        median_xy = np.median(xy, axis=0)
+        pose_robot = np.eye(4)
+        pose_robot[:3, :3] = rotation
+        pose_robot[:3, 3] = (board[:3, 3] + median_xy[0] * x_axis
+                             + median_xy[1] * y_axis)
 
     angles = np.linspace(0, 2 * np.pi, 72, endpoint=False)
     rings = np.asarray([
@@ -107,17 +113,19 @@ def fit_board_socket_body(
     vertices_robot = pose_robot @ rings.T
     per_view = {}
     for camera, mask, K, E in views:
-        vertices_camera = (E @ vertices_robot)[:3].T
-        if np.any(vertices_camera[:, 2] <= 0):
-            raise ValueError(f"socket wall is behind camera: {camera}")
-        projected = (K @ vertices_camera.T).T
-        pixels = np.rint(projected[:, :2] /
-                         projected[:, 2, None]).astype(np.int32)
-        silhouette = np.zeros(mask.shape, dtype=np.uint8)
-        cv2.fillConvexPoly(silhouette, cv2.convexHull(pixels), 1)
-        intersection = np.count_nonzero(silhouette & mask)
-        union = np.count_nonzero(silhouette | mask)
-        per_view[camera] = float(intersection / union) if union else 0.0
+        with timed("socket.body_wall_iou", phase="socket", kind="geometry",
+                   camera_id=camera):
+            vertices_camera = (E @ vertices_robot)[:3].T
+            if np.any(vertices_camera[:, 2] <= 0):
+                raise ValueError(f"socket wall is behind camera: {camera}")
+            projected = (K @ vertices_camera.T).T
+            pixels = np.rint(projected[:, :2] /
+                             projected[:, 2, None]).astype(np.int32)
+            silhouette = np.zeros(mask.shape, dtype=np.uint8)
+            cv2.fillConvexPoly(silhouette, cv2.convexHull(pixels), 1)
+            intersection = np.count_nonzero(silhouette & mask)
+            union = np.count_nonzero(silhouette | mask)
+            per_view[camera] = float(intersection / union) if union else 0.0
     diagnostics = {
         "method": "board_normal_wall_mask_centroid_median",
         "body_radius_m": radius, "body_bottom_z_m": bottom,

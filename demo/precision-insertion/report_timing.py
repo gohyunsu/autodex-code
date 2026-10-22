@@ -21,6 +21,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("timing_dir", type=Path,
                         help="the run's <output-dir>.timing directory")
+    parser.add_argument("--tree", action="store_true",
+                        help="print parent/child spans in execution order")
+    parser.add_argument("--max-depth", type=int, default=8,
+                        help="maximum nesting depth in --tree (default: 8)")
+    parser.add_argument("--min-duration-s", type=float, default=0.0,
+                        help="omit shorter spans from --tree (default: 0)")
     args = parser.parse_args(argv)
     events = args.timing_dir.expanduser() / "events.jsonl"
     if not events.is_file():
@@ -48,6 +54,27 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{phase[:33]:33} {seconds:11.3f}")
 
     indexed = {row["span_id"]: row for row in spans}
+    if args.tree:
+        print("\nHierarchy (inclusive, self/unattributed, child work, overlap; seconds)")
+        print("  self can include waits and uninstrumented work; child work "
+              "can exceed elapsed time when parallel")
+        for row in spans:
+            depth = 0
+            parent = indexed.get(row["parent_id"])
+            while parent is not None:
+                depth += 1
+                parent = indexed.get(parent["parent_id"])
+            if depth > args.max_depth or row["duration_s"] < args.min_duration_s:
+                continue
+            attrs = row["attributes"]
+            detail = ", ".join(f"{key}={attrs[key]}" for key in
+                               ("camera_id", "capture_id", "candidate_id")
+                               if key in attrs)
+            print(f"{'  ' * depth}{row['name']}"
+                  f" [{row['duration_s']:.3f}, {row['self_s']:.3f}, "
+                  f"{row['child_cumulative_s']:.3f}, "
+                  f"{row['child_overlap_s']:.3f}]"
+                  f"{'  ' + detail if detail else ''}")
     by_candidate = defaultdict(lambda: defaultdict(float))
     for row in spans:
         parent = row

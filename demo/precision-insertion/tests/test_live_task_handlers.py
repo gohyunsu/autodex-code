@@ -113,8 +113,6 @@ def test_transfer_hold_then_guarded_20mm_and_vlm_label(tmp_path, monkeypatch):
             return tmp_path / "release.json"
 
     bound.release_and_clear = Release()
-    bound.live.clear_view.before_key_capture = lambda: actions.append(
-        ("clear_view_gate",))
     monkeypatch.setattr(
         live_task_handlers, "execute_bound_held_transfer",
         lambda **kwargs: actions.append(("transfer", kwargs)))
@@ -143,8 +141,8 @@ def test_transfer_hold_then_guarded_20mm_and_vlm_label(tmp_path, monkeypatch):
         "assess_hold", "label_hold", "handoff", "assess_insertion"]
     assert [row[0] for row in actions] == [
         "transfer", "write", "prepare_release", "insertion",
-        "release_and_clear", "clear_view_gate", "write"]
-    assert actions[6][1] is final and actions[6][3] == "final_clear_view"
+        "release_and_clear", "write"]
+    assert actions[5][1] is final and actions[5][3] == "final_clear_view"
     assert runner.events[-1][1]["metric_record_path"] == tmp_path / "metric.json"
     assert runner.events[-1][1]["initial_key_bundle"] == tmp_path / "initial_key"
     capture_root = tmp_path / "attempts" / "attempt_001" / "raw_captures"

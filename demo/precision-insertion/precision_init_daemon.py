@@ -34,6 +34,9 @@ from precision_insertion.camera_transport import (  # noqa: E402
 class _MaskOnlyEstimator:
     """Let the stock loop publish a frame-bound `ok=False` pose promptly."""
 
+    def __init__(self, obj_name: str):
+        self.obj_name = obj_name
+
     def estimate_one_view(self, **_kwargs):
         return None
 
@@ -46,6 +49,12 @@ class PrecisionInitDaemon(InitDaemon):
         install_init_provenance(self)
 
     def _do_init(self) -> None:
+        info = self.cmd_receiver.event_info.get("init", {}) or {}
+        if info.get("skip_foundpose") is True:
+            # Stock initialization already skips a loaded object-specific
+            # estimator. A named no-op keeps its camera/undistortion setup
+            # unchanged without constructing unused socket FoundPose weights.
+            self.fp = _MaskOnlyEstimator(info["obj_name"])
         super()._do_init()
         if self.mode != "live" or self.reader is None:
             raise ValueError("precision FoundPose requires live camera mode")
@@ -63,7 +72,7 @@ class PrecisionInitDaemon(InitDaemon):
         original_estimator = self.fp
         try:
             if info.get("skip_foundpose") is True:
-                self.fp = _MaskOnlyEstimator()
+                self.fp = _MaskOnlyEstimator(getattr(self.fp, "obj_name", ""))
             super()._do_run()
         finally:
             self.fp = original_estimator

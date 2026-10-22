@@ -96,9 +96,6 @@ def _fixture(tmp_path, *, bad_target=False, bad_waypoint=False,
         session_calibration_sha256=(
             args["attempt"].session_calibration_sha256),
         measured_start=state, decision_timestamp_s=11.03,
-        max_start_joint_error_rad=.01,
-        max_arm_hand_skew_s=.02, max_hand_command_error_raw=30.,
-        max_arm_velocity_rad_s=.05,
         output_dir=tmp_path / "axial_handoff",
     )
     return handoff, archive, args["attempt"]
@@ -127,23 +124,27 @@ def test_axial_handoff_binds_observed_hold_and_exact_saved_path(tmp_path):
         verify_guarded_axial_handoff(report)
 
 
-def test_axial_handoff_rejects_wrong_attempt_or_stale_start(tmp_path):
+def test_axial_handoff_rejects_wrong_attempt(tmp_path):
     args, _archive, _attempt = _fixture(tmp_path)
     with pytest.raises(ValueError, match="not bound"):
         prepare_guarded_axial_handoff(
             **{**args, "candidate_id": "table/0/other"})
+
+
+def test_axial_handoff_records_feedback_without_extra_pose_or_age_gate(tmp_path):
+    args, _archive, _attempt = _fixture(tmp_path)
     stale = replace(
         args["measured_start"], sample_timestamp_s=10.9,
         arm_timestamp_s=10.9, hand_timestamp_s=10.9)
-    with pytest.raises(ValueError, match="predates observation"):
-        prepare_guarded_axial_handoff(
-            **{**args, "measured_start": stale})
     shifted = args["measured_start"].full_q.copy()
     shifted[0] += .02
-    with pytest.raises(ValueError, match="differs from axial start"):
-        prepare_guarded_axial_handoff(**{
-            **args, "measured_start": replace(
-                args["measured_start"], full_q=shifted)})
+    report = prepare_guarded_axial_handoff(**{
+        **args,
+        "measured_start": replace(stale, full_q=shifted),
+    })
+    saved = verify_guarded_axial_handoff(report)
+    assert saved["measured_start"]["full_q"][0] == shifted[0]
+    assert saved["measured_start"]["sample_timestamp_s"] == 10.9
 
 
 def test_axial_handoff_rejects_wrong_20mm_target(tmp_path):
@@ -181,8 +182,6 @@ def test_session_handoff_requires_recorded_positive_arrival(tmp_path, monkeypatc
                             "await_guarded_insertion_and_observation")))
     params = {key: value for key, value in args.items() if key in {
         "measured_start", "decision_timestamp_s",
-        "max_start_joint_error_rad", "max_arm_hand_skew_s",
-        "max_hand_command_error_raw", "max_arm_velocity_rad_s",
     }}
     with pytest.raises(ValueError, match="observed hold"):
         runner.prepare_guarded_axial_handoff(**params)

@@ -241,11 +241,8 @@ class LiveTaskHandlers:
             candidate_id=attempt.candidate_id,
             session_calibration_sha256=runner.session_sha256,
             guarded_execution_path=metric)
-        # The release callback performs the physical open/exit; this measured
-        # gate prevents a final image from being taken with the hand in view.
-        with timed("trial.final_clear_view", phase="trial", kind="motion",
-                   attempt_id=attempt.attempt_id):
-            self.live.clear_view.before_key_capture()
+        # The release callback already measured the open-hand clear-view
+        # endpoint. Capture the final image without a second pose gate.
         final, _capture = self._capture(
             runner=runner, decision=decision,
             callback=self.capture_final, phase="final_clear_view")

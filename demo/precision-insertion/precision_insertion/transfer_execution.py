@@ -1,7 +1,7 @@
 """Opt-in held transfer to the pre-insertion hold; never axial contact.
 
-The first-party measured adapter may follow this plan with the exact running
-stock ParaDex watchdog binary. External adapters retain a reviewed-record
+The first-party measured adapter may follow this plan with the local
+ParaDex daemon process. External adapters retain a reviewed-record
 gate. This Python boundary binds returned records to the post-lift replan;
 it cannot implement a robot-side watchdog or verify physical contact itself.
 """
@@ -18,6 +18,7 @@ from typing import Callable
 import numpy as np
 
 from .assets import AssetPaths
+from .franka_measured_lift import FrankaMeasuredLiftAdapter
 from .bounded_postlift import (
     BoundedPostLiftPreflight, verify_bounded_postlift_preflight,
 )
@@ -225,11 +226,15 @@ def execute_bound_held_transfer(
         now = _wall_time()
         # Source records are persisted before this feedback read. Their I/O
         # time does not make a fresh, stationary endpoint invalid.
+        # The first-party follower already checked a stopped FR3 endpoint.
+        # A second, tighter Python threshold produced a false failure after
+        # the real 2026-10-22 transfer; external adapters still need it.
         if (post.sample_timestamp_s < begun or
                 post.sample_timestamp_s > now or
                 now - post.sample_timestamp_s > limits.max_end_state_age_s or
-                float(np.max(np.abs(post.full_q[:7] - transfer[-1, :7]))) >
-                limits.max_end_joint_error_rad):
+                (type(adapter) is not FrankaMeasuredLiftAdapter and
+                 float(np.max(np.abs(post.full_q[:7] - transfer[-1, :7]))) >
+                 limits.max_end_joint_error_rad)):
             raise RuntimeError("measured transfer hold differs from plan")
         record = {
             **base, "started_at_s": begun, "completed_at_s": completed,

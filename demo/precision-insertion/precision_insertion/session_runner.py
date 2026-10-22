@@ -1741,9 +1741,6 @@ class SessionRunner:
     def prepare_guarded_axial_handoff(
         self, *, measured_start: LiveRobotState,
         decision_timestamp_s: float,
-        max_start_joint_error_rad: float, max_arm_hand_skew_s: float,
-        max_hand_command_error_raw: float,
-        max_arm_velocity_rad_s: float,
     ) -> Path:
         """Bind the observed hold to its saved 20 mm plan; do not move motors."""
         if (self.current_decision().action !=
@@ -1776,10 +1773,6 @@ class SessionRunner:
             session_calibration_sha256=self.session_sha256,
             measured_start=measured_start,
             decision_timestamp_s=decision_timestamp_s,
-            max_start_joint_error_rad=max_start_joint_error_rad,
-            max_arm_hand_skew_s=max_arm_hand_skew_s,
-            max_hand_command_error_raw=max_hand_command_error_raw,
-            max_arm_velocity_rad_s=max_arm_velocity_rad_s,
             output_dir=output)
         verify_guarded_axial_handoff(report)
         self._guarded_axial_index += 1
@@ -3027,9 +3020,6 @@ class SessionRunner:
         self, *, preflight: XYRetryPreflight,
         preflight_report_path: Path, arrival_report_path: Path,
         measured_start: LiveRobotState, decision_timestamp_s: float,
-        max_state_age_s: float, max_start_joint_error_rad: float,
-        max_arm_hand_skew_s: float, max_hand_command_error_raw: float,
-        max_arm_velocity_rad_s: float,
     ) -> Path:
         """Bind the corrected, observed square hold to its 20 mm stroke."""
         if (self.current_decision().action !=
@@ -3045,11 +3035,6 @@ class SessionRunner:
             measured_start=measured_start, mode=self.mode,
             session_calibration_sha256=self.session_sha256,
             decision_timestamp_s=decision_timestamp_s,
-            max_state_age_s=max_state_age_s,
-            max_start_joint_error_rad=max_start_joint_error_rad,
-            max_arm_hand_skew_s=max_arm_hand_skew_s,
-            max_hand_command_error_raw=max_hand_command_error_raw,
-            max_arm_velocity_rad_s=max_arm_velocity_rad_s,
             output_dir=output)
 
     def prepare_unobserved_xy_diagnostic(

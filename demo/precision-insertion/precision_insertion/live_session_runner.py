@@ -89,9 +89,9 @@ def open_verified_session(
     """Fail before creating a run if camera/fixture/candidate evidence is stale.
 
     This is an *opening*, not a fresh calibration.  A producer must first run
-    the ChArUco-then-socket sequence and retain its image evidence.  The key
-    and socket FoundPose files are checked only for canonical availability;
-    their independent pose-accuracy QA is still a physical commissioning gate.
+    the ChArUco-then-socket sequence and retain its image evidence. The key
+    FoundPose file is needed for later tabletop observations; the socket pose
+    is already frozen in the saved calibration.
     """
     root_input = Path(shared_root).expanduser()
     session_input = Path(evidence_dir).expanduser()
@@ -116,7 +116,6 @@ def open_verified_session(
         "key raw mesh": paths.raw_mesh(mode.key_object),
         "socket raw mesh": paths.raw_mesh(mode.socket_object),
         "key FoundPose representation": paths.foundpose_repre(mode.key_object),
-        "socket FoundPose representation": paths.foundpose_repre(mode.socket_object),
         "exact socket collision mesh": paths.socket_collision_mesh,
         "Franka/Inspire URDF": paths.robot_urdf,
     }

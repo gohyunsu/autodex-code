@@ -305,11 +305,13 @@ def load_session_launch(
     if len(camera_ids) < limits.minimum_accepted_views:
         raise ValueError("too few active cameras for the view gate")
     paths = AssetPaths(root, mode)
-    for name, asset in (
-            ("socket raw mesh", paths.raw_mesh(mode.socket_object)),
-            ("socket FoundPose representation",
-             paths.foundpose_repre(mode.socket_object)),
-            ("socket collision mesh", paths.socket_collision_mesh)):
+    socket_perception_mode = record.get("socket_perception_mode", "iou")
+    required = [("socket raw mesh", paths.raw_mesh(mode.socket_object)),
+                ("socket collision mesh", paths.socket_collision_mesh)]
+    if socket_perception_mode != "board_constrained_body":
+        required.append(("socket FoundPose representation",
+                         paths.foundpose_repre(mode.socket_object)))
+    for name, asset in required:
         if not asset.is_file():
             raise FileNotFoundError(f"{name} is missing: {asset}")
     if mode.family == "cylinder":
@@ -321,7 +323,6 @@ def load_session_launch(
             prompt.strip() == "object"):
         raise ValueError("socket needs a capture and a specific SAM prompt")
     reject_incorrect_object_color(prompt)
-    socket_perception_mode = record.get("socket_perception_mode", "iou")
     if socket_perception_mode not in ("iou", "ignore_sil_loss",
                                       "board_constrained_body"):
         raise ValueError("unknown socket perception mode")

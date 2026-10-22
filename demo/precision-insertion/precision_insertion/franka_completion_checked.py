@@ -22,6 +22,7 @@ from functools import lru_cache
 import numpy as np
 
 _COMPOSED_TYPE = None
+STOCK_COMPLETION_TOLERANCE_RAD = 0.04
 
 
 class CompletionCheckedFrankaMixin:
@@ -35,7 +36,7 @@ class CompletionCheckedFrankaMixin:
     # Match the stock follower's L2 endpoint tolerance.  The measured stop
     # check remains, while a normal free-space retract need not make a second
     # blocking position move to erase a smaller residual.
-    completion_max_path_error_rad = 0.04
+    completion_max_path_error_rad = STOCK_COMPLETION_TOLERANCE_RAD
     stop_max_joint_velocity_rad_s = 0.05
     stop_wait_s = 1.0
 

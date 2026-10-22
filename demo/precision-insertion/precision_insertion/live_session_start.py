@@ -145,11 +145,13 @@ def start_precision_session(
         with timed("socket.fixture_asset_check", phase="socket", kind="io"):
             validate_cylinder_socket_fixture(shared_root=root, mode=mode)
     socket_mesh = paths.raw_mesh(mode.socket_object)
-    socket_repre = paths.foundpose_repre(mode.socket_object)
     socket_collision = paths.socket_collision_mesh
-    for name, path in (("v8 socket mesh", socket_mesh),
-                       ("socket FoundPose representation", socket_repre),
-                       ("exact socket collision mesh", socket_collision)):
+    required = [("v8 socket mesh", socket_mesh),
+                ("exact socket collision mesh", socket_collision)]
+    if socket_perception_mode != "board_constrained_body":
+        required.append(("socket FoundPose representation",
+                         paths.foundpose_repre(mode.socket_object)))
+    for name, path in required:
         if not path.is_file():
             raise FileNotFoundError(f"{name} is missing: {path}")
     if not callable(acquisition_metadata_for_request):
@@ -180,7 +182,9 @@ def start_precision_session(
     if (board_capture_phase == "empty_before_socket" and
             not _confirmed_socket_placement(confirm_socket_placement)):
         raise RuntimeError("operator did not confirm socket placement")
-    with timed("socket.model_init", phase="socket"):
+    with timed(("socket.mask_init" if socket_perception_mode ==
+                "board_constrained_body" else "socket.model_init"),
+               phase="socket"):
         if socket_perception_mode != "board_constrained_body":
             prepare_precision_silhouette(
                 init_orchestrator=init_orchestrator,
@@ -189,7 +193,9 @@ def start_precision_session(
             obj_name=mode.socket_object, mesh_path=str(socket_mesh),
             assets_root=str(paths.foundpose_assets_root(mode.socket_object)),
             intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
-            image_hw=image_hw, mode="live", load_silhouette=False)
+            image_hw=image_hw, mode="live", load_silhouette=False,
+            **({"mask_only": True} if socket_perception_mode ==
+               "board_constrained_body" else {}))
     captures = []
     for index in range(socket_capture_count):
         with timed("socket.capture", phase="socket", kind="camera",

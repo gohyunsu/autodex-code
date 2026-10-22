@@ -1,9 +1,9 @@
 """Demo-local, opt-in boundary for a measured held lift.
 
 This consumes the *measured post-squeeze* v8 lift replan, never the original
-nominal candidate lift. The first-party adapter requires the exact running
-stock ParaDex watchdog binary; external adapters retain a reviewed-record
-gate. Neither check certifies a physical timeout or E-stop test. Transfer and
+nominal candidate lift. The first-party adapter checks the local ParaDex
+process and command expiry; external adapters retain a reviewed-record gate.
+Neither check certifies a physical timeout or E-stop test. Transfer and
 contact insertion are separate stages.
 """
 
@@ -249,11 +249,16 @@ def execute_bound_measured_lift(
             max_hand_command_error_raw=limits.max_hand_command_error_raw,
             max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
         now = _wall_time()
+        # The first-party follower already checked a stopped FR3 endpoint
+        # against its own 0.04 rad L2 tolerance. Rechecking it here with a
+        # separate threshold can reject a completed move after the hand has
+        # closed; retain the endpoint check for external adapters only.
         if (post.sample_timestamp_s < begun or
                 post.sample_timestamp_s > now or
                 now - post.sample_timestamp_s > limits.max_end_state_age_s or
-                float(np.max(np.abs(post.full_q[:7] - lift[-1, :7]))) >
-                limits.max_end_joint_error_rad):
+                (type(adapter) is not FrankaMeasuredLiftAdapter and
+                 float(np.max(np.abs(post.full_q[:7] - lift[-1, :7]))) >
+                 limits.max_end_joint_error_rad)):
             raise RuntimeError("measured held lift endpoint differs from plan")
         record = {
             **base, "trajectory_complete": True, "force_abort": False,

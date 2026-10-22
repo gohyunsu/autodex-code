@@ -136,12 +136,17 @@ def summarize_events(events_path: Path) -> dict:
                 row["start_pipeline_s"], row["end_pipeline_s"]))
     groups: dict[str, dict] = {}
     for row in completed:
-        covered = occupied([
+        clipped = [
             (max(row["start_pipeline_s"], start),
              min(row["end_pipeline_s"], stop))
             for start, stop in children[row["span_id"]]
             if min(row["end_pipeline_s"], stop) >
-            max(row["start_pipeline_s"], start)])
+            max(row["start_pipeline_s"], start)]
+        covered = occupied(clipped)
+        cumulative = sum(stop - start for start, stop in clipped)
+        row["child_occupied_s"] = round(covered, 9)
+        row["child_cumulative_s"] = round(cumulative, 9)
+        row["child_overlap_s"] = round(max(0.0, cumulative - covered), 9)
         row["self_s"] = round(max(0.0, row["duration_s"] - covered), 9)
         group = groups.setdefault(row["name"], {
             "count": 0, "inclusive_s": 0.0, "self_s": 0.0,

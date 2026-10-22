@@ -222,7 +222,8 @@ def collect_socket_capture(
         f"{capture_id}_request_{request_id}")
     if capture_dir.exists():
         raise FileExistsError(f"socket capture path already exists: {capture_dir}")
-    with timed("camera.foundpose_request", phase="camera", kind="network",
+    with timed(("camera.socket_mask_request" if mask_only else
+                "camera.foundpose_request"), phase="camera", kind="network",
                capture_id=capture_id, object_name=socket_object,
                camera_count=len(calibrated_camera_ids)):
         masks, poses, timing = init_orchestrator.collect_payloads(

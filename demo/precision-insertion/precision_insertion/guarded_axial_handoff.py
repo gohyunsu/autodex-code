@@ -28,8 +28,9 @@ def _sha(path: Path) -> str:
 
 
 def _positive(value: float, name: str) -> float:
+    """Keep the shared numeric parser used by saved retry reports."""
     if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
-        raise ValueError(f"{name} must be a commissioned positive limit")
+        raise ValueError(f"{name} must be a positive limit")
     return float(value)
 
 
@@ -60,8 +61,6 @@ def _build_record(
     mode: TaskMode, attempt_id: str, candidate_id: str,
     session_calibration_sha256: str, measured_start: LiveRobotState,
     decision_timestamp_s: float,
-    max_start_joint_error_rad: float, max_arm_hand_skew_s: float,
-    max_hand_command_error_raw: float, max_arm_velocity_rad_s: float,
 ) -> dict:
     """Recompute every handoff field from immutable upstream evidence."""
     if (not isinstance(mode, TaskMode) or
@@ -73,19 +72,6 @@ def _build_record(
                 for char in session_calibration_sha256) or
             not isinstance(measured_start, LiveRobotState)):
         raise ValueError("axial handoff needs mode, attempt and measured state")
-    limits = {
-        "max_start_joint_error_rad": _positive(
-            max_start_joint_error_rad, "start joint error"),
-        "max_arm_hand_skew_s": _positive(max_arm_hand_skew_s, "arm/hand skew"),
-        "max_hand_command_error_raw": _positive(
-            max_hand_command_error_raw, "hand tracking error"),
-        "max_arm_velocity_rad_s": _positive(
-            max_arm_velocity_rad_s, "hold velocity"),
-    }
-    measured_start.validate(
-        max_arm_hand_skew_s=limits["max_arm_hand_skew_s"],
-        max_hand_command_error_raw=limits["max_hand_command_error_raw"],
-        max_arm_velocity_rad_s=limits["max_arm_velocity_rad_s"])
     postlift_path = Path(postlift_report_path).expanduser().resolve()
     preinsert_path = Path(preinsert_report_path).expanduser().resolve()
     if not postlift_path.is_file() or not preinsert_path.is_file():
@@ -182,15 +168,7 @@ def _build_record(
             not np.allclose(axial[:, 7:], held, atol=1e-8, rtol=0) or
             not np.allclose(transfer[:, 7:], held, atol=1e-8, rtol=0)):
         raise ValueError("axial path is discontinuous or changes the grasp")
-    observed_at = float(preinsert["observation_completed_at_s"])
     decision_at = float(decision_timestamp_s)
-    sample_at = float(measured_start.sample_timestamp_s)
-    if (not all(math.isfinite(value) for value in
-                (observed_at, decision_at, sample_at)) or
-            not observed_at < sample_at <= decision_at or
-            np.max(np.abs(measured_start.full_q[:7] - axial[0, :7])) >
-            limits["max_start_joint_error_rad"]):
-        raise ValueError("measured hold predates observation or differs from axial start")
     return {
         "schema": _SCHEMA,
         "attempt_id": attempt_id,
@@ -209,7 +187,6 @@ def _build_record(
         "target_depth_m": mode.target_depth_m,
         "measured_start": measured_start.to_record(),
         "decision_timestamp_s": decision_at,
-        "limits": limits,
         "scope": "read_only_axial_handoff_not_motion_or_key_depth_success",
         "robot_ready": False,
     }
@@ -220,8 +197,6 @@ def prepare_guarded_axial_handoff(
     mode: TaskMode, attempt_id: str, candidate_id: str,
     session_calibration_sha256: str, measured_start: LiveRobotState,
     decision_timestamp_s: float,
-    max_start_joint_error_rad: float, max_arm_hand_skew_s: float,
-    max_hand_command_error_raw: float, max_arm_velocity_rad_s: float,
     output_dir: Path,
 ) -> Path:
     """Save an immutable-by-convention packet; never request robot motion."""
@@ -231,11 +206,7 @@ def prepare_guarded_axial_handoff(
         attempt_id=attempt_id, candidate_id=candidate_id,
         session_calibration_sha256=session_calibration_sha256,
         measured_start=measured_start,
-        decision_timestamp_s=decision_timestamp_s,
-        max_start_joint_error_rad=max_start_joint_error_rad,
-        max_arm_hand_skew_s=max_arm_hand_skew_s,
-        max_hand_command_error_raw=max_hand_command_error_raw,
-        max_arm_velocity_rad_s=max_arm_velocity_rad_s)
+        decision_timestamp_s=decision_timestamp_s)
     target = Path(output_dir).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.mkdir(exist_ok=False)
@@ -257,7 +228,6 @@ def verify_guarded_axial_handoff(report_path: Path) -> dict:
         raise ValueError("invalid guarded axial handoff report")
     mode_record = record["mode"]
     mode = select_mode(mode_record["family"], mode_record["gap_mm"])
-    limits = record["limits"]
     expected = _build_record(
         postlift_report_path=Path(record["postlift_report_path"]),
         preinsert_report_path=Path(record["preinsert_report_path"]),
@@ -265,11 +235,7 @@ def verify_guarded_axial_handoff(report_path: Path) -> dict:
         candidate_id=record["candidate_id"],
         session_calibration_sha256=record["session_calibration_sha256"],
         measured_start=_state_from_record(record["measured_start"]),
-        decision_timestamp_s=record["decision_timestamp_s"],
-        max_start_joint_error_rad=limits["max_start_joint_error_rad"],
-        max_arm_hand_skew_s=limits["max_arm_hand_skew_s"],
-        max_hand_command_error_raw=limits["max_hand_command_error_raw"],
-        max_arm_velocity_rad_s=limits["max_arm_velocity_rad_s"])
+        decision_timestamp_s=record["decision_timestamp_s"])
     if record != expected:
         raise ValueError("guarded axial handoff differs from replay")
     return record

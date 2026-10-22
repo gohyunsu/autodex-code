@@ -254,6 +254,7 @@ class InitOrchestrator:
         mode: str = "live",
         pc_serials: Optional[Dict[str, List[str]]] = None,
         load_silhouette: bool = True,
+        mask_only: bool = False,
     ) -> None:
         """Send init to all capture daemons and optionally load silhouette state.
 
@@ -314,6 +315,8 @@ class InitOrchestrator:
                 "extrinsics": extr_jsonable,
                 "mode": "live",
             }
+            if mask_only:
+                info["skip_foundpose"] = True
             logger.info(f"[orch] sending init (live) for {obj_name} to {len(self.pc_list)} PCs...")
             t0 = time.perf_counter()
             # Keep normal per-PC acknowledgements quiet, but surface the

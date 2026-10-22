@@ -56,13 +56,11 @@ class FrankaForceStopInsertionAdapter:
         return self.executor.stop_and_acknowledge()
 
     def follow_stock_force_insertion(self, axial: np.ndarray, *,
-                                     force_threshold_n: float = STOCK_PLACE_FORCE_N,
-                                     max_duration_s: float) -> dict:
+                                     force_threshold_n: float = STOCK_PLACE_FORCE_N) -> dict:
         path = np.asarray(axial, dtype=np.float64)
         if (path.ndim != 2 or path.shape[1] != 13 or len(path) < 2 or
                 not np.isfinite(path).all() or
-                not math.isfinite(force_threshold_n) or force_threshold_n <= 0 or
-                not math.isfinite(max_duration_s) or max_duration_s <= 0):
+                not math.isfinite(force_threshold_n) or force_threshold_n <= 0):
             raise ValueError("stock insertion needs a finite full-joint axial path")
         started = time.time()
         # Deliberately omit speed: stock traj_speed and the executor's
@@ -84,8 +82,6 @@ class FrankaForceStopInsertionAdapter:
             # Reverse the already checked axis stroke immediately, while the
             # key remains gripped. A reflex/error or failed ascent propagates.
             self.executor._follow(retreat, abort_on_contact=True)
-        if time.time() - started > max_duration_s:
-            raise TimeoutError("stock insertion and withdrawal exceeded duration")
         return {
             "schema": "precision_insertion_stock_force_result_v1",
             "started_at_s": started, "completed_at_s": time.time(),

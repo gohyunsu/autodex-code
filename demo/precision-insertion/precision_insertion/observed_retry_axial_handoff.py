@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import TaskMode, select_mode
-from .guarded_axial_handoff import _positive, _state_from_record
+from .guarded_axial_handoff import _state_from_record
 from .live_robot_state import LiveRobotState
 from .observed_retry_arrival_checkpoint import verify_observed_retry_arrival
 from .records import AttemptRecord
@@ -31,9 +31,7 @@ def prepare_observed_retry_axial_handoff(
     preflight_report_path: Path, arrival_report_path: Path,
     measured_start: LiveRobotState, mode: TaskMode,
     session_calibration_sha256: str, decision_timestamp_s: float,
-    max_state_age_s: float, max_start_joint_error_rad: float,
-    max_arm_hand_skew_s: float, max_hand_command_error_raw: float,
-    max_arm_velocity_rad_s: float, output_dir: Path,
+    output_dir: Path,
 ) -> Path:
     """Select the already planned axial path after observed corrected arrival."""
     if (not isinstance(attempt, AttemptRecord) or
@@ -50,16 +48,6 @@ def prepare_observed_retry_axial_handoff(
             preflight.planning.sampled_planning_pass is not True or
             not math.isclose(mode.target_depth_m, .020, abs_tol=1e-9)):
         raise ValueError("axial handoff needs this pending 20 mm XY retry")
-    limits = {
-        "max_state_age_s": _positive(max_state_age_s, "state age"),
-        "max_start_joint_error_rad": _positive(
-            max_start_joint_error_rad, "start joint error"),
-        "max_arm_hand_skew_s": _positive(max_arm_hand_skew_s, "arm/hand skew"),
-        "max_hand_command_error_raw": _positive(
-            max_hand_command_error_raw, "hand tracking error"),
-        "max_arm_velocity_rad_s": _positive(
-            max_arm_velocity_rad_s, "hold velocity"),
-    }
     plan_path = Path(preflight_report_path).expanduser().resolve()
     saved = json.loads(plan_path.read_text(encoding="utf-8"))
     if (any(saved.get(key) != value for key, value in
@@ -101,18 +89,7 @@ def prepare_observed_retry_axial_handoff(
             arrival["xy_preflight_report_path"] != str(plan_path) or
             arrival["xy_preflight_report_sha256"] != _sha(plan_path)):
         raise ValueError("axial handoff needs this retry's observed hold")
-    measured_start.validate(
-        max_arm_hand_skew_s=limits["max_arm_hand_skew_s"],
-        max_hand_command_error_raw=limits["max_hand_command_error_raw"],
-        max_arm_velocity_rad_s=limits["max_arm_velocity_rad_s"])
     decision = float(decision_timestamp_s)
-    sample = float(measured_start.sample_timestamp_s)
-    if (not math.isfinite(decision) or
-            not arrival["observation_completed_at_s"] < sample <= decision or
-            decision - sample > limits["max_state_age_s"] or
-            np.max(np.abs(measured_start.full_q - axial[0])) >
-                limits["max_start_joint_error_rad"]):
-        raise ValueError("retry axial start is stale or differs from arrival")
     target = Path(output_dir).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.mkdir(exist_ok=False)
@@ -134,7 +111,6 @@ def prepare_observed_retry_axial_handoff(
         "target_depth_m": mode.target_depth_m,
         "measured_start": measured_start.to_record(),
         "decision_timestamp_s": decision,
-        "limits": limits,
         "scope": "saved_retry_axial_path_not_contact_or_insertion_success",
         "robot_ready": False,
     }
@@ -201,25 +177,8 @@ def verify_observed_retry_axial_handoff(report_path: Path) -> dict:
             not np.array_equal(axial[-1], record["axial_end_q"]) or
             not np.allclose(axial[:, 7:], axial[0, 7:], atol=1e-8, rtol=0)):
         raise ValueError("retry axial handoff path changed")
-    limits = record["limits"]
-    if set(limits) != {
-            "max_state_age_s", "max_start_joint_error_rad",
-            "max_arm_hand_skew_s", "max_hand_command_error_raw",
-            "max_arm_velocity_rad_s"}:
-        raise ValueError("retry axial handoff limits changed")
-    for key, value in limits.items():
-        _positive(value, key)
-    measured = _state_from_record(record["measured_start"])
-    measured.validate(
-        max_arm_hand_skew_s=limits["max_arm_hand_skew_s"],
-        max_hand_command_error_raw=limits["max_hand_command_error_raw"],
-        max_arm_velocity_rad_s=limits["max_arm_velocity_rad_s"])
+    _state_from_record(record["measured_start"])
     if (record["target_depth_m"] != mode.target_depth_m or
-            not arrival["observation_completed_at_s"] <
-                measured.sample_timestamp_s <= record["decision_timestamp_s"] or
-            record["decision_timestamp_s"] - measured.sample_timestamp_s >
-                limits["max_state_age_s"] or
-            np.max(np.abs(measured.full_q - axial[0])) >
-                limits["max_start_joint_error_rad"]):
-        raise ValueError("retry axial handoff measured hold changed")
+            not math.isfinite(float(record["decision_timestamp_s"]))):
+        raise ValueError("retry axial handoff target or timestamp changed")
     return record

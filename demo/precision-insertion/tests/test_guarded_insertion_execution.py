@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import hashlib
 import itertools
 import json
@@ -211,12 +211,16 @@ def test_guarded_insertion_accepts_fresh_endpoint_after_metric_write(
 
 @pytest.mark.parametrize("contact", [False, True])
 @pytest.mark.parametrize("sample_time", [102.64, 102.70])
+@pytest.mark.parametrize("first_party_residual", [False, True])
 def test_stock_force_stroke_needs_no_contact_review_and_saves_ascent(
-        tmp_path, monkeypatch, contact, sample_time):
+        tmp_path, monkeypatch, contact, sample_time, first_party_residual):
     args = _setup(tmp_path, monkeypatch)
     with np.load(tmp_path / "axial.npz", allow_pickle=False) as archive:
         axial = archive["axial"]
     post_q = axial[0, :7] if contact else axial[-1, :7]
+    if first_party_residual:
+        post_q = post_q.copy()
+        post_q[0] += .023
     args["read_post_state"] = lambda: _state(sample_time, post_q)
     ticks = itertools.count(102.5, .01)
     monkeypatch.setattr(execution, "_wall_time", lambda: next(ticks))
@@ -225,10 +229,9 @@ def test_stock_force_stroke_needs_no_contact_review_and_saves_ascent(
         def __init__(self):
             self.calls = 0
 
-        def follow_stock_force_insertion(self, path, *, max_duration_s):
+        def follow_stock_force_insertion(self, path):
             self.calls += 1
             np.testing.assert_array_equal(path, axial)
-            assert max_duration_s == .5
             return {
                 "schema": "precision_insertion_stock_force_result_v1",
                 "started_at_s": 102.55, "completed_at_s": 102.65,
@@ -242,6 +245,13 @@ def test_stock_force_stroke_needs_no_contact_review_and_saves_ascent(
             return {"acknowledged": True}
 
     stock = Stock()
+    if first_party_residual:
+        # The first-party follower has already accepted a stationary endpoint
+        # within its stock 0.04 rad L2 tolerance.
+        monkeypatch.setattr(execution, "FrankaForceStopInsertionAdapter", Stock)
+        pre_q = args["pre_state"].full_q.copy()
+        pre_q[4] += .023
+        args["pre_state"] = replace(args["pre_state"], full_q=pre_q)
     args["adapter"] = stock
     args["contact_limits"] = None
     args["contact_commissioning_path"] = tmp_path / "absent_contact_review.json"
