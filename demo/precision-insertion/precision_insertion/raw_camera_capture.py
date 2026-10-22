@@ -22,6 +22,7 @@ from .frame_provenance import verify_frame_provenance
 from .runtime_evidence_cache import recalled, remember
 from .session_bootstrap import _safe_id
 from .timing_profile import timed
+from .tip_frame_window import TipFrameWindow, save_tip_frame_window
 
 
 PHASES = frozenset({"initial_tabletop", "after_lift", "preinsert", "post_lateral_hold",
@@ -38,6 +39,7 @@ class RawCameraCapture:
     source_images_bgr: Mapping[str, np.ndarray] | None = None
     source_acquisition_metadata: Mapping | None = None
     undistort_calibration: Mapping[str, Mapping] | None = None
+    temporal_window: TipFrameWindow | None = None
 
 
 def _sha(path: Path) -> str:
@@ -182,6 +184,21 @@ def write_raw_camera_capture(
             "source_frame_evidence": source_evidence,
             "source_image_file_sha256": source_hashes,
             "calibration": calibrations,
+        }
+    if capture.temporal_window is not None:
+        window = capture.temporal_window
+        if (window.camera_id not in capture.frame_ids or
+                window.target_frame_id != capture.frame_ids[window.camera_id]):
+            raise ValueError("temporal window differs from checkpoint frame")
+        with timed("evidence.temporal_window_write", phase="evidence",
+                   kind="io", camera_id=window.camera_id,
+                   capture_phase=phase, frame_count=len(window.frames)):
+            save_tip_frame_window(window, target)
+        manifest["temporal_window"] = {
+            "camera_id": window.camera_id,
+            "target_frame_id": window.target_frame_id,
+            "status": window.status,
+            "manifest": "temporal_window/manifest.json",
         }
     with (target / "manifest.json").open("x", encoding="utf-8") as stream:
         json.dump(manifest, stream, indent=2, allow_nan=False)

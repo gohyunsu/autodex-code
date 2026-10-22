@@ -503,15 +503,20 @@ The failed-trial XY pixel estimator has two explicit modes.
 `--xy-estimator vlm` is the current default and retains native-pixel Qwen
 grounding.
 `--xy-estimator tracked_tip` uses the initial key masks as per-camera colour
-references, locates the visible end on the saved undistorted pre-insertion
-frames, and fits the point across calibrated cameras. It reuses the same
-frozen socket pose and at-most-10-mm next-trial increment. It does not alter
-the lift, pre-insertion, or final task labels, which still use Qwen. This
-mode consumes saved snapshots after a failed attempt; it does not stream
-continuous video from a capture PC into robot control. A separately recorded
-video can be replayed with exact source frame IDs for offline temporal review.
-The mode is experimental: saved-image estimates are not contact-time ground
-truth, and no new physical trial with it has been run.
+references. At the preinsert snapshot, capture2 returns a seven-frame JPEG
+window around camera `25322651`'s exact source frame ID, with each source ID
+and capture-PC read timestamp. The raw bundle saves this window and its
+manifest beside the 20 undistorted snapshot images. The failed-trial handler
+undistorts the window with the session calibration, tracks the visible key
+end over time, and combines its median with eligible tips from other saved
+camera views. If the window is unavailable or the tip is hidden, the saved
+snapshot detector remains available and the window status is recorded. The
+result is a next-trial XY proposal using the same frozen socket pose and
+at-most-10-mm increment; it never commands a correction within the same
+trial. Lift, pre-insertion and final task labels still use Qwen. The tracker
+does not stream continuous video into robot control. The mode remains
+experimental: image estimates are not contact-time ground truth, and no
+physical trial with the temporal path has been run.
 
 For VLM checkpoints, `make_checkpoint_capture` in
 `precision_insertion.checkpoint_camera` supplies the existing handlers'
@@ -582,10 +587,19 @@ The live CLI requires explicit frame-bound init daemon ports. On the
 board-9 robot PC, start or check the long-lived capture-PC and FR3 services
 with `bash demo/precision-insertion/manage_robot_pc_services.sh start` or
 `check`; then run `bash demo/precision-insertion/run_robot_pc.sh --run`.
-To select saved-image key-tip tracking for next-trial XY only, set
-`PRECISION_XY_ESTIMATOR=tracked_tip` for that run. Omit it for the existing
-VLM XY route. The mode affects only failed-trial diagnosis; robot motion
-still requires the normal `--run` procedure.
+To select temporal key-tip tracking for next-trial XY only, start the separate
+service on capture2, then select the mode for the robot run:
+
+```bash
+bash demo/precision-insertion/manage_robot_pc_services.sh start-tracker
+PRECISION_XY_ESTIMATOR=tracked_tip bash demo/precision-insertion/run_robot_pc.sh --run
+```
+
+`run_robot_pc.sh` checks that service before a tracked-tip run. Omit the
+environment variable for the existing VLM XY route. The mode affects only
+failed-trial diagnosis; robot motion still requires the normal `--run`
+procedure. `manage_robot_pc_services.sh stop-tracker` stops its managed
+capture2 process; `stop` also stops it along with the other managed daemons.
 The run script never starts or stops services, so consecutive trials can
 reuse warm daemons. `manage_robot_pc_services.sh stop` stops only services
 started by that manager, and must be invoked separately.

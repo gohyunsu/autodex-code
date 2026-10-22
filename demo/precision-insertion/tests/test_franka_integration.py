@@ -1,6 +1,7 @@
 """The built-in robot-PC factory owns FR3 resources and reuses stage wiring."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
@@ -11,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion import franka_integration  # noqa: E402
 from precision_insertion.live_runtime import RunLiveOptions  # noqa: E402
+from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
+from precision_insertion.tip_frame_window import TipFrameWindow  # noqa: E402
 
 
 def _options(tmp_path, config):
@@ -455,3 +458,45 @@ def test_parallel_vlm_views_require_independent_api_backend():
     })["parallel_views"] == 3
     with pytest.raises(ValueError, match="invalid VLM"):
         franka_integration._vlm_settings({"parallel_views": 2})
+
+
+def test_tracked_mode_attaches_exact_preinsert_camera_window(monkeypatch, tmp_path):
+    capture = RawCameraCapture("pre_1", 1, {}, {"25322651": 42}, {})
+    window = TipFrameWindow("service_unavailable", "25322651", 42, ())
+    calls = []
+    core = SimpleNamespace(
+        clear_view=object(), planner=object(), executor=object(),
+        read_state=lambda: None, sampler=None, close=lambda: None)
+    monkeypatch.setattr(franka_integration, "open_franka_core", lambda _: core)
+    monkeypatch.setattr(franka_integration,
+                        "FrankaForceStopInsertionAdapter", lambda _: object())
+    module = ModuleType("robot_pc_stages")
+    module.configure = lambda *_: {
+        "shared": {"backend": object()},
+        "stages": {"task": {"capture_preinsert": lambda *_: capture}}}
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+
+    def fetch(**kwargs):
+        calls.append(kwargs)
+        return window
+
+    monkeypatch.setattr(franka_integration, "fetch_tip_frame_window", fetch)
+
+    def assemble(_live, **kwargs):
+        result = kwargs["stages"]["task"]["capture_preinsert"](
+            object(), object(), object())
+        assert result.temporal_window is window
+        return ()
+
+    monkeypatch.setattr(franka_integration, "assemble_live_components", assemble)
+    options = replace(_options(tmp_path, _config()), xy_estimator="tracked_tip")
+    live = SimpleNamespace(
+        cameras=SimpleNamespace(launch=SimpleNamespace(
+            camera_ids=("25322651",), image_hw=(1080, 1920),
+            shared_root=tmp_path)),
+        opened=SimpleNamespace(runner=SimpleNamespace(
+            mode=SimpleNamespace(family="cylinder"))))
+    integration = franka_integration.factory(options)
+    integration.build_components(live)
+    assert calls == [{"host": "capture2", "port": 16951,
+                      "camera_id": "25322651", "target_frame_id": 42}]

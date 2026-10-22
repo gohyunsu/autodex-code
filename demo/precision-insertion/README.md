@@ -19,8 +19,12 @@ Classification inputs are 384×288; native-pixel XY grounding uses the
 original undistorted frame. The current saved-image probe and active route
 are in [TRIAL_20261020.md](TRIAL_20261020.md).
 `PRECISION_XY_ESTIMATOR=tracked_tip` selects the separate experimental
-saved-image key-tip tracker for **failed-trial XY advice only**. The normal
-lift/preinsert/final VLM labels remain in use. See
+key-tip tracker for **failed-trial XY advice only**. It records a short
+frame-ID-bound preinsert window from capture2/`25322651` and combines its
+temporal tip with the saved multiview snapshot. The normal
+lift/preinsert/final VLM labels remain in use. Start its capture-PC service
+separately with `bash demo/precision-insertion/manage_robot_pc_services.sh
+start-tracker`. See
 [LIVE_RUNTIME.md](LIVE_RUNTIME.md) for the exact boundary and limitations.
 The operator-stopped approach and its measured timing are recorded in
 [STOPPED_TRIAL_20261017.md](STOPPED_TRIAL_20261017.md). The 2026-10-20 live

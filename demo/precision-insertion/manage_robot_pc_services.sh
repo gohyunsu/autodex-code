@@ -12,8 +12,8 @@ TIMING_FILE=${PRECISION_SERVICE_TIMING_FILE:-/tmp/precision-insertion-services-$
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 PROBE_PY=${PRECISION_SERVICE_PROBE_PY:-/home/robot/anaconda3/envs/planner/bin/python}
 
-if [[ "$ACTION" != start && "$ACTION" != check && "$ACTION" != stop && "$ACTION" != restart && "$ACTION" != restart-franka ]]; then
-  echo "usage: $0 {start|check|stop|restart|restart-franka}" >&2
+if [[ "$ACTION" != start && "$ACTION" != check && "$ACTION" != stop && "$ACTION" != restart && "$ACTION" != restart-franka && "$ACTION" != start-tracker && "$ACTION" != check-tracker && "$ACTION" != stop-tracker ]]; then
+  echo "usage: $0 {start|check|stop|restart|restart-franka|start-tracker|check-tracker|stop-tracker}" >&2
   exit 2
 fi
 
@@ -158,8 +158,40 @@ stop_franka_managed() {
 }
 
 stop_managed() {
+  stop_remote_owned capture2 tracker capture_tip_frame_server.py
   parallel_hosts stop
   stop_franka_managed
+}
+
+start_tracker() {
+  local target=/home/capture2/capture_tip_frame_server.py
+  scp -q -o BatchMode=yes -o ConnectTimeout=3 \
+    "$SCRIPT_DIR/capture_tip_frame_server.py" "capture2:$target"
+  start_remote_if_missing capture2 tracker \
+    '[c]apture_tip_frame_server.py --camera-id 25322651 --port 16951' \
+    "exec env PYTHONPATH=/home/capture2/paradex /home/capture2/anaconda3/envs/flir_env/bin/python $target --camera-id 25322651 --port 16951" 16951
+}
+
+check_tracker() {
+  "$PROBE_PY" <<'PY'
+import zmq
+context = zmq.Context()
+socket = context.socket(zmq.REQ)
+socket.setsockopt(zmq.LINGER, 0)
+socket.setsockopt(zmq.RCVTIMEO, 2000)
+socket.connect("tcp://capture2:16951")
+try:
+    socket.send_json({"op": "ping", "camera_id": "25322651"})
+    response = socket.recv_json()
+    if (response.get("status") != "ready" or
+            response.get("camera_id") != "25322651" or
+            not isinstance(response.get("latest_source_frame_id"), int)):
+        raise SystemExit("[services] selected-camera tracker is not ready")
+    print("[services] selected-camera tracker: ready")
+finally:
+    socket.close()
+    context.term()
+PY
 }
 
 printf 'stage\tduration_ms\n' > "$TIMING_FILE"
@@ -186,5 +218,15 @@ case "$ACTION" in
   restart-franka)
     stop_franka_managed
     start_franka
+    ;;
+  start-tracker)
+    start_tracker
+    check_tracker
+    ;;
+  check-tracker)
+    check_tracker
+    ;;
+  stop-tracker)
+    stop_remote_owned capture2 tracker capture_tip_frame_server.py
     ;;
 esac

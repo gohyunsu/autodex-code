@@ -273,12 +273,7 @@ def tracked_view(
         projected_tip_px=projected_tip_px)
     shaft_px = float(np.linalg.norm(
         np.asarray(projected_tip_px) - np.asarray(projected_rear_px)))
-    # Weak, tiny components were repeatedly the white socket or Inspire hand
-    # in saved physical frames; treat them as unobserved pixels.
-    visible = (observation is not None and shaft_px >= 100 and
-               observation.component_area_px >= max(
-                   3000, .25 * appearance.reference_area_px) and
-               observation.key_color_fraction >= .90)
+    visible = usable_tip_observation(observation, appearance, shaft_px)
     record = {
         "camera_id": camera_id, "frame_id": int(frame_id),
         "timestamp_s": float(timestamp_s),
@@ -296,3 +291,14 @@ def tracked_view(
         np.asarray(T_camera_socket, dtype=float),
         np.asarray(intrinsics, dtype=float))
     return GroundedLineView(frame, observation.tip_px, None), record
+
+
+def usable_tip_observation(
+    observation: TipObservation | None, appearance: KeyAppearance,
+    shaft_span_px: float,
+) -> bool:
+    """Reject weak components that match the white socket or Inspire hand."""
+    return (observation is not None and shaft_span_px >= 100 and
+            observation.component_area_px >= max(
+                3000, .25 * appearance.reference_area_px) and
+            observation.key_color_fraction >= .90)

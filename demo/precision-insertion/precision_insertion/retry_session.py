@@ -28,7 +28,7 @@ from .endpoint import screen_grasp_endpoint
 from .frame_provenance import image_sha256, verify_frame_provenance
 from .geometry import validate_se3
 from .grounded_alignment import (
-    AlignmentLimits, estimate_grounded_alignment,
+    AlignmentLimits, GroundedLineView, estimate_grounded_alignment,
     estimate_grounded_line_alignment,
     observe_grounded_key_axis,
     observe_grounded_cylinder_axis, observe_grounded_cylinder_axis_cropped,
@@ -51,7 +51,11 @@ from .retry_preflight import (
     write_xy_retry_preflight,
 )
 from .session_bootstrap import _safe_id
-from .tip_tracking import tracked_tip_xy_alignment, tracked_view
+from .tip_tracking import (
+    KeyAppearance, TipObservation, track_tip_frames,
+    tracked_tip_xy_alignment, tracked_view, usable_tip_observation,
+)
+from .tip_frame_window import load_tip_frame_window
 from .timing_profile import timed
 from .xy_retry import XYRetryAssessment, assess_xy_retry
 from .visual_views import assessment_cameras
@@ -864,6 +868,7 @@ def _compute_grounded_alignment(
 def _compute_tracked_alignment(
     *, mode: TaskMode, root: Path, calibration, postlift_file: Path,
     frames: Sequence[LabeledFrame], frame_rows: Mapping,
+    preinsert_bundle: Path,
     reference_dir: Path, intrinsics_full: Mapping,
     extrinsics_full: Mapping, alignment_limits: AlignmentLimits,
     search_index: int, max_nominal_tip_height_error_m: float,
@@ -883,6 +888,12 @@ def _compute_tracked_alignment(
     if not (reference / "initial_tabletop" / "manifest.json").is_file():
         raise ValueError("tracked tip needs this trial's initial key images")
     views, records = [], []
+    window = load_tip_frame_window(preinsert_bundle)
+    temporal_status = "not_recorded" if window is None else window.status
+    if (window is not None and window.status == "complete" and
+            (window.camera_id not in frame_rows or
+             window.target_frame_id != frame_rows[window.camera_id]["frame_id"])):
+        temporal_status = "frame_mismatch"
     for frame in frames:
         camera = frame.camera_id
         image = cv2.imread(str(reference / "initial_tabletop" / "images" /
@@ -913,6 +924,62 @@ def _compute_tracked_alignment(
             intrinsics=K, projected_rear_px=project(0.),
             projected_tip_px=project(tip_z))
         record["image_sha256"] = frame_rows[camera]["image_sha256"]
+        if (window is not None and window.camera_id == camera and
+                window.target_frame_id == frame_rows[camera]["frame_id"] and
+                window.status == "complete"):
+            row = intrinsics_full[camera]
+            K_orig = np.asarray(row["K_orig"], dtype=float)
+            distortion = np.asarray(row["dist_params"], dtype=float)
+            appearance = KeyAppearance(**record["reference_appearance"])
+            sequence = []
+            maps = None
+            mapped_shape = None
+            for source in window.frames:
+                original = cv2.imdecode(
+                    np.frombuffer(source.jpeg, dtype=np.uint8),
+                    cv2.IMREAD_COLOR)
+                if original is None:
+                    continue
+                if maps is None or original.shape[:2] != mapped_shape:
+                    height, width = original.shape[:2]
+                    maps = cv2.initUndistortRectifyMap(
+                        K_orig, distortion, None, K, (width, height),
+                        cv2.CV_16SC2)
+                    mapped_shape = original.shape[:2]
+                undistorted = cv2.remap(
+                    original, maps[0], maps[1], cv2.INTER_LINEAR)
+                sequence.append((source.source_frame_id,
+                                 source.read_unix_ns, undistorted))
+            if sequence:
+                trace = track_tip_frames(
+                    sequence, appearance,
+                    target_frame_id=window.target_frame_id,
+                    projected_rear_px=project(0.),
+                    projected_tip_px=project(tip_z))
+                record["temporal_trace"] = trace
+                span = float(np.linalg.norm(project(tip_z) - project(0.)))
+                samples = []
+                for item in trace["observations"]:
+                    data = item["observation"]
+                    if data is None:
+                        continue
+                    observed = TipObservation(
+                        tuple(data["tip_px"]), data["component_area_px"],
+                        tuple(data["component_bbox_xywh"]),
+                        data["key_color_fraction"])
+                    if usable_tip_observation(observed, appearance, span):
+                        samples.append(observed.tip_px)
+                if trace["status"] == "observed" and len(samples) >= 3:
+                    temporal_tip = tuple(np.median(samples, axis=0).tolist())
+                    record["temporal_tip_px"] = list(temporal_tip)
+                    temporal_status = "observed"
+                    calibrated = CalibratedXYFrame(
+                        camera, frame.timestamp_s, frame.image,
+                        T_camera_socket, K)
+                    measured = GroundedLineView(
+                        calibrated, temporal_tip, None)
+                else:
+                    temporal_status = "tip_unobservable"
         records.append(record)
         if measured is not None:
             views.append(measured)
@@ -924,6 +991,9 @@ def _compute_tracked_alignment(
         max_nominal_tip_height_error_m=max_nominal_tip_height_error_m)
     alignment.update(
         tracker_views=records,
+        temporal_tracking_status=temporal_status,
+        temporal_tracking_camera=(None if window is None else
+                                  window.camera_id),
         key_reference_dir=str(reference),
         grounding_input="saved_undistorted_frames_and_initial_key_masks",
         socket_entry_plane_z_m=float(geometry["socket_entry_plane_z_m"]),
@@ -1009,7 +1079,8 @@ def assess_saved_preinsert_xy_diagnostic(
             geometry_hash, alignment = _compute_tracked_alignment(
                 mode=mode, root=root, calibration=calibration,
                 postlift_file=postlift_file, frames=frames,
-                frame_rows=frame_rows, reference_dir=key_reference_dir,
+                frame_rows=frame_rows, preinsert_bundle=bundle,
+                reference_dir=key_reference_dir,
                 intrinsics_full=snapshot["intrinsics_full"],
                 extrinsics_full=snapshot["extrinsics_full"],
                 alignment_limits=alignment_limits,

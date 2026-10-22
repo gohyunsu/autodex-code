@@ -19,6 +19,9 @@ from precision_insertion.frame_provenance import image_sha256  # noqa: E402
 from precision_insertion.raw_camera_capture import (  # noqa: E402
     RawCameraCapture, verify_raw_camera_capture, write_raw_camera_capture,
 )
+from precision_insertion.tip_frame_window import (  # noqa: E402
+    TipFrame, TipFrameWindow, load_tip_frame_window,
+)
 
 
 def test_checkpoint_capture_reuses_session_and_exact_frame_metadata():
@@ -101,10 +104,19 @@ def test_raw_snapshot_checkpoint_does_not_depend_on_key_pose(tmp_path):
         capture_id="raw_31", snapshot_collector=collect)
     assert requests[0]["snapshot_orchestrator"] is snap
     assert raw.source_images_bgr is original
-    path = write_raw_camera_capture(raw, tmp_path / "raw", phase="preinsert")
+    _ok, jpeg = cv2.imencode(".jpg", original["cam_a"])
+    window = TipFrameWindow(
+        "complete", "cam_a", raw.frame_ids["cam_a"],
+        (TipFrame(raw.frame_ids["cam_a"], 100_000_000_000,
+                  jpeg.tobytes()),))
+    path = write_raw_camera_capture(
+        replace(raw, temporal_window=window), tmp_path / "raw",
+        phase="preinsert")
     manifest = verify_raw_camera_capture(path, phase="preinsert")
     assert set(manifest["undistort_derivation"]["source_frame_evidence"]) == {
         "cam_a", "cam_b"}
+    assert manifest["temporal_window"]["target_frame_id"] == 1
+    assert load_tip_frame_window(path) == window
     initial = capture_snapshot_checkpoint_frames(
         live, phase="initial_tabletop", timeout_s=2.0,
         capture_id="initial_31", snapshot_collector=collect,

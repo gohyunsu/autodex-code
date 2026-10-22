@@ -84,6 +84,10 @@ PY
 
 echo "[pipeline] using existing camera, perception and Franka services"
 echo "[pipeline] VLM camera IDs: $PRECISION_VLM_CAMERA_IDS"
+echo "[pipeline] failed-trial XY estimator: $PRECISION_XY_ESTIMATOR"
+if [[ "$MODE" == --run && "$PRECISION_XY_ESTIMATOR" == tracked_tip ]]; then
+  bash demo/precision-insertion/manage_robot_pc_services.sh check-tracker
+fi
 EXTRA_ARGS=()
 if [[ "$MODE" == --plan-only ]]; then
   EXTRA_ARGS+=(--stop-after-planning)

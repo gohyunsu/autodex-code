@@ -8,6 +8,7 @@ continue to own all task decisions and execution checkpoints.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from importlib import import_module
 import json
 import math
@@ -31,6 +32,8 @@ from .distributed_qwen import DistributedQwenBackend
 from .observer import load_vlm_backend
 from .runtime_assembly import assemble_live_components
 from .timing_profile import timed
+from .raw_camera_capture import RawCameraCapture
+from .tip_frame_window import fetch_tip_frame_window
 from .visual_views import assessment_cameras
 
 
@@ -51,6 +54,9 @@ _CHECKPOINT_CAPTURES = {
              "capture_final": "final_clear_view"},
     "retry": {"capture_withdrawn": "preinsert"},
 }
+_TIP_CAMERA_ID = "25322651"
+_TIP_CAMERA_HOST = "capture2"
+_TIP_CAMERA_PORT = 16951
 
 
 def _vlm_settings(value: object) -> dict:
@@ -305,6 +311,25 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             family=family)
         if family == "cylinder" and "retry" in stages:
             stages["retry"]["xy_estimator"] = options.xy_estimator
+        if (family == "cylinder" and options.xy_estimator == "tracked_tip"
+                and "task" in stages):
+            if _TIP_CAMERA_ID not in live.cameras.launch.camera_ids:
+                raise ValueError("tracked-tip camera is absent from this rig")
+            ordinary_capture = stages["task"]["capture_preinsert"]
+
+            def capture_with_tip_window(live_session, runner, decision):
+                capture = ordinary_capture(live_session, runner, decision)
+                if not isinstance(capture, RawCameraCapture):
+                    return capture
+                with timed("camera.tip_frame_window", phase="camera",
+                           kind="network", camera_id=_TIP_CAMERA_ID):
+                    window = fetch_tip_frame_window(
+                        host=_TIP_CAMERA_HOST, port=_TIP_CAMERA_PORT,
+                        camera_id=_TIP_CAMERA_ID,
+                        target_frame_id=capture.frame_ids[_TIP_CAMERA_ID])
+                return replace(capture, temporal_window=window)
+
+            stages["task"]["capture_preinsert"] = capture_with_tip_window
         if family == "cylinder":
             for stage_name in ("key_planning", "held_return",
                                "transfer_recovery", "repose_execution"):
