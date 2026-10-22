@@ -18,6 +18,10 @@ original camera frames remain in the raw capture and FoundPose path.
 Classification inputs are 384×288; native-pixel XY grounding uses the
 original undistorted frame. The current saved-image probe and active route
 are in [TRIAL_20261020.md](TRIAL_20261020.md).
+`PRECISION_XY_ESTIMATOR=tracked_tip` selects the separate experimental
+saved-image key-tip tracker for **failed-trial XY advice only**. The normal
+lift/preinsert/final VLM labels remain in use. See
+[LIVE_RUNTIME.md](LIVE_RUNTIME.md) for the exact boundary and limitations.
 The operator-stopped approach and its measured timing are recorded in
 [STOPPED_TRIAL_20261017.md](STOPPED_TRIAL_20261017.md). The 2026-10-20 live
 trial reached transfer; its false positive lift label, transfer stall, and

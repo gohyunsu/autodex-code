@@ -303,6 +303,8 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
         stages = _with_checkpoint_captures(
             parameters["stages"], vlm["capture_timeout_s"],
             family=family)
+        if family == "cylinder" and "retry" in stages:
+            stages["retry"]["xy_estimator"] = options.xy_estimator
         if family == "cylinder":
             for stage_name in ("key_planning", "held_return",
                                "transfer_recovery", "repose_execution"):

@@ -16,8 +16,9 @@ from precision_insertion.session_policy import SessionDecision  # noqa: E402
     "abstain", "diagnostic_metric_xy_correction",
     "diagnostic_planar_xy_hypothesis", "diagnostic_exploratory_xy_step",
 ])
+@pytest.mark.parametrize("estimator", ["vlm", "tracked_tip"])
 def test_live_grounded_advice_never_moves_xy_in_same_attempt(
-        tmp_path, status):
+        tmp_path, status, estimator):
     decision = SessionDecision(
         "assess_saved_preinsert_xy", "failed", "table/0/1")
     events = []
@@ -36,7 +37,8 @@ def test_live_grounded_advice_never_moves_xy_in_same_attempt(
             return decision
 
         def prepare_saved_preinsert_xy_diagnostic(self, **kwargs):
-            events.append(("diagnostic", kwargs["backend"]))
+            events.append(("diagnostic", kwargs["backend"],
+                           kwargs["xy_estimator"]))
             report = tmp_path / "xy_retry_assessments/000/report.json"
             report.parent.mkdir(parents=True)
             report.write_text('{"status":"saved"}', encoding="utf-8")
@@ -60,10 +62,12 @@ def test_live_grounded_advice_never_moves_xy_in_same_attempt(
         alignment_limits=object(),
         diagnostic_parameters={},
         enable_robot_motion=True, decision_time=lambda: 10.0)
-    handler = live_retry_handlers.LiveGroundedRetryHandlers(**params)
+    handler = live_retry_handlers.LiveGroundedRetryHandlers(
+        **params, xy_estimator=estimator)
     handler.assess_for_next_trial(runner, decision)
-    assert events == [("diagnostic", backend), (
-        ("unavailable", "vlm_abstain") if status == "abstain" else
+    assert events == [("diagnostic", backend, estimator), (
+        ("unavailable", ("vlm_abstain" if estimator == "vlm" else
+                         "tracked_tip_unavailable")) if status == "abstain" else
         ("next_trial", status))]
     assert set(handler.handlers()) == {"assess_saved_preinsert_xy"}
 

@@ -25,6 +25,7 @@ export PYTHONPATH="$ROOT:$ROOT/demo/precision-insertion:$ROOT/src"
 export PRECISION_TIMING_LOCAL_ROOT=${PRECISION_TIMING_LOCAL_ROOT:-/tmp/precision-insertion-timing}
 export PRECISION_FR3_INSPIRE_URDF=${PRECISION_FR3_INSPIRE_URDF:-$ROOT/autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire_oct12_mount.urdf}
 export PRECISION_VLM_CAMERA_IDS=${PRECISION_VLM_CAMERA_IDS:-24122734,25305463,25322638,25322649,25305461}
+PRECISION_XY_ESTIMATOR=${PRECISION_XY_ESTIMATOR:-vlm}
 
 LAUNCH_TEMPLATE="$STAGE/live_board9_gap20_20261013/launch.json"
 CATALOG=${PRECISION_ENDPOINT_CATALOG:-$STAGE/recipient_gap${GAP_MM}_endpoint_catalog_20261022.json}
@@ -101,4 +102,5 @@ exec "$PY" demo/precision-insertion/run_live.py \
   --integration precision_insertion.franka_integration:factory \
   --robot-config "$ROBOT" \
   --init-port-mask 15006 --init-port-pose 15007 --init-port-cmd 16893 \
-  --xy-update-weight 1.0 --enable-robot-motion "${EXTRA_ARGS[@]}"
+  --xy-update-weight 1.0 --xy-estimator "$PRECISION_XY_ESTIMATOR" \
+  --enable-robot-motion "${EXTRA_ARGS[@]}"

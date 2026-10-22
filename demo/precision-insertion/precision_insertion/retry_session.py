@@ -51,6 +51,8 @@ from .retry_preflight import (
     write_xy_retry_preflight,
 )
 from .session_bootstrap import _safe_id
+from .tip_tracking import tracked_tip_xy_alignment, tracked_view
+from .timing_profile import timed
 from .xy_retry import XYRetryAssessment, assess_xy_retry
 from .visual_views import assessment_cameras
 from .xy_overlay import CalibratedXYFrame, camera_socket_transform
@@ -859,6 +861,77 @@ def _compute_grounded_alignment(
     return hashlib.sha256(geometry_bytes).hexdigest(), alignment, tuple(observations)
 
 
+def _compute_tracked_alignment(
+    *, mode: TaskMode, root: Path, calibration, postlift_file: Path,
+    frames: Sequence[LabeledFrame], frame_rows: Mapping,
+    reference_dir: Path, intrinsics_full: Mapping,
+    extrinsics_full: Mapping, alignment_limits: AlignmentLimits,
+    search_index: int, max_nominal_tip_height_error_m: float,
+) -> tuple[str, dict]:
+    """Use saved key appearance and raw preinsert frames; never call Qwen."""
+    geometry_bytes = AssetPaths(root, mode).task_geometry.read_bytes()
+    geometry = json.loads(geometry_bytes)
+    socket = validated_frozen_socket_pose(
+        mode=mode, shared_root=root, calibration=calibration)
+    c2r = validate_se3(calibration.record["c2r"], name="session C2R")
+    postlift = json.loads(postlift_file.read_text(encoding="utf-8"))
+    key = validate_se3(postlift["targets"]["T_robot_key_preinsert"],
+                       name="commanded preinsert key target")
+    tip_z = float(geometry["key_frame"]["tip_z_m"])
+    nominal_tip = np.linalg.inv(socket) @ key @ np.array([0., 0., tip_z, 1.])
+    reference = Path(reference_dir).expanduser().resolve()
+    if not (reference / "initial_tabletop" / "manifest.json").is_file():
+        raise ValueError("tracked tip needs this trial's initial key images")
+    views, records = [], []
+    for frame in frames:
+        camera = frame.camera_id
+        image = cv2.imread(str(reference / "initial_tabletop" / "images" /
+                               f"{camera}.png"), cv2.IMREAD_COLOR)
+        mask = cv2.imread(str(reference / "masks" / f"{camera}.png"),
+                          cv2.IMREAD_GRAYSCALE)
+        if image is None or mask is None:
+            records.append({"camera_id": camera, "frame_id":
+                            frame_rows[camera]["frame_id"],
+                            "admitted": False, "reason": "key_reference_unavailable"})
+            continue
+        T_camera_socket = camera_socket_transform(
+            T_camera_world=extrinsics_full[camera],
+            T_world_robot=c2r, T_robot_socket=socket)
+        K = np.asarray(intrinsics_full[camera]["K_undist"], dtype=float)
+
+        def project(z: float) -> np.ndarray:
+            h = K @ (np.asarray(extrinsics_full[camera]) @ c2r @ key @
+                     np.array([0., 0., z, 1.]))[:3]
+            return h[:2] / h[2]
+
+        bgr = cv2.cvtColor(np.asarray(frame.image), cv2.COLOR_RGB2BGR)
+        measured, record = tracked_view(
+            camera_id=camera, timestamp_s=frame.timestamp_s,
+            frame_id=frame_rows[camera]["frame_id"],
+            preinsert_bgr=bgr, reference_bgr=image,
+            reference_mask=mask, T_camera_socket=T_camera_socket,
+            intrinsics=K, projected_rear_px=project(0.),
+            projected_tip_px=project(tip_z))
+        record["image_sha256"] = frame_rows[camera]["image_sha256"]
+        records.append(record)
+        if measured is not None:
+            views.append(measured)
+    alignment = tracked_tip_xy_alignment(
+        views, nominal_tip_z_socket_m=float(nominal_tip[2]),
+        search_index=search_index,
+        max_reprojection_px=alignment_limits.max_reprojection_px,
+        min_parallax_deg=alignment_limits.min_parallax_deg,
+        max_nominal_tip_height_error_m=max_nominal_tip_height_error_m)
+    alignment.update(
+        tracker_views=records,
+        key_reference_dir=str(reference),
+        grounding_input="saved_undistorted_frames_and_initial_key_masks",
+        socket_entry_plane_z_m=float(geometry["socket_entry_plane_z_m"]),
+        verification_depth_m=mode.target_depth_m,
+        key_object=mode.key_object, socket_object=mode.socket_object)
+    return hashlib.sha256(geometry_bytes).hexdigest(), alignment
+
+
 def assess_saved_preinsert_xy_diagnostic(
     *, mode: TaskMode, shared_root: Path, calibration, catalog: dict,
     trial, attempt: AttemptRecord, preinsert_checkpoint_path: Path,
@@ -867,12 +940,17 @@ def assess_saved_preinsert_xy_diagnostic(
     axis_reference_key_z_m: float | None = None,
     roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]] | None = None,
     square_translation_only: bool = False, search_index: int = 0,
+    xy_estimator: str = "vlm", key_reference_dir: Path | None = None,
 ) -> PreinsertXYDiagnostic:
     """Compute next-attempt XY from the raw snapshot saved before insertion."""
     limits.validate()
     if type(square_translation_only) is not bool or (
             square_translation_only and mode.family != "square"):
         raise ValueError("square translation-only grounding needs square mode")
+    if xy_estimator not in {"vlm", "tracked_tip"} or (
+            xy_estimator == "tracked_tip" and
+            (mode.family != "cylinder" or key_reference_dir is None)):
+        raise ValueError("tracked tip needs cylinder mode and initial key evidence")
     root = Path(shared_root).expanduser().resolve()
     _insertion, _postlift, postlift_file, validated_root = (
         _validated_retry_trial_context(
@@ -896,7 +974,8 @@ def assess_saved_preinsert_xy_diagnostic(
         max_hand_command_error_raw=limits.max_hand_command_error_raw,
         max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
     frame_rows = capture["frame_evidence"]
-    selected_cameras = assessment_cameras(frame_rows)
+    selected_cameras = (sorted(frame_rows) if xy_estimator == "tracked_tip"
+                        else assessment_cameras(frame_rows))
     frames = []
     for camera in selected_cameras:
         row = frame_rows[camera]
@@ -924,17 +1003,32 @@ def assess_saved_preinsert_xy_diagnostic(
         calibrated_camera_ids=set(calibration.record["camera_calibration"]
                                   ["intrinsics_full"]))
     snapshot = calibration.record["camera_calibration"]
-    geometry_hash, alignment, observations = _compute_grounded_alignment(
-        mode=mode, root=root, calibration=calibration,
-        postlift_file=postlift_file, frames=frames,
-        intrinsics_full=snapshot["intrinsics_full"],
-        extrinsics_full=snapshot["extrinsics_full"], backend=backend,
-        alignment_limits=alignment_limits,
-        axis_reference_key_z_m=axis_reference_key_z_m,
-        roi_xyxy_by_camera=roi_xyxy_by_camera,
-        square_translation_only=square_translation_only,
-        search_index=search_index,
-        max_nominal_tip_height_error_m=limits.max_grasp_translation_drift_m)
+    if xy_estimator == "tracked_tip":
+        with timed("xy_retry.tracked_tip_alignment", phase="xy_retry",
+                   cameras=len(frames)):
+            geometry_hash, alignment = _compute_tracked_alignment(
+                mode=mode, root=root, calibration=calibration,
+                postlift_file=postlift_file, frames=frames,
+                frame_rows=frame_rows, reference_dir=key_reference_dir,
+                intrinsics_full=snapshot["intrinsics_full"],
+                extrinsics_full=snapshot["extrinsics_full"],
+                alignment_limits=alignment_limits,
+                search_index=search_index,
+                max_nominal_tip_height_error_m=(
+                    limits.max_grasp_translation_drift_m))
+        observations = ()
+    else:
+        geometry_hash, alignment, observations = _compute_grounded_alignment(
+            mode=mode, root=root, calibration=calibration,
+            postlift_file=postlift_file, frames=frames,
+            intrinsics_full=snapshot["intrinsics_full"],
+            extrinsics_full=snapshot["extrinsics_full"], backend=backend,
+            alignment_limits=alignment_limits,
+            axis_reference_key_z_m=axis_reference_key_z_m,
+            roi_xyxy_by_camera=roi_xyxy_by_camera,
+            square_translation_only=square_translation_only,
+            search_index=search_index,
+            max_nominal_tip_height_error_m=limits.max_grasp_translation_drift_m)
     return PreinsertXYDiagnostic(
         alignment["status"], attempt.attempt_id, attempt.candidate_id,
         attempt.session_calibration_sha256,

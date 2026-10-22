@@ -26,6 +26,7 @@ class LiveGroundedRetryHandlers:
     retry_limits: object
     alignment_limits: object
     diagnostic_parameters: Mapping[str, object]
+    xy_estimator: str = "vlm"
     state_for_capture: Callable | None = None
     withdraw_guarded: Callable | None = None
     capture_withdrawn: Callable | None = None
@@ -62,6 +63,7 @@ class LiveGroundedRetryHandlers:
                 backend=self.backend,
                 limits=self.retry_limits, alignment_limits=self.alignment_limits,
                 square_translation_only=(runner.mode.family == "square"),
+                xy_estimator=self.xy_estimator,
                 **dict(self.diagnostic_parameters))
         except (RuntimeError, TimeoutError) as exc:
             if "capture-PC Qwen" not in str(exc):
@@ -80,7 +82,9 @@ class LiveGroundedRetryHandlers:
                 "diagnostic_metric_xy_correction",
                 "diagnostic_planar_xy_hypothesis",
                 "diagnostic_exploratory_xy_step"}:
-            self._unavailable(runner, "vlm_abstain", diagnostic_path)
+            self._unavailable(runner, (
+                "vlm_abstain" if self.xy_estimator == "vlm" else
+                "tracked_tip_unavailable"), diagnostic_path)
             return
         runner.record_next_trial_xy_advice(
             diagnostic=diagnostic, diagnostic_report_path=diagnostic_path,

@@ -499,6 +499,20 @@ its original tabletop pose/position before a new attempt. The older guarded
 withdrawal and held-key return utilities remain available to other opt-in
 paths, but they are **not** the active cylinder insertion-failure route.
 
+The failed-trial XY pixel estimator has two explicit modes.
+`--xy-estimator vlm` is the current default and retains native-pixel Qwen
+grounding.
+`--xy-estimator tracked_tip` uses the initial key masks as per-camera colour
+references, locates the visible end on the saved undistorted pre-insertion
+frames, and fits the point across calibrated cameras. It reuses the same
+frozen socket pose and at-most-10-mm next-trial increment. It does not alter
+the lift, pre-insertion, or final task labels, which still use Qwen. This
+mode consumes saved snapshots after a failed attempt; it does not stream
+continuous video from a capture PC into robot control. A separately recorded
+video can be replayed with exact source frame IDs for offline temporal review.
+The mode is experimental: saved-image estimates are not contact-time ground
+truth, and no new physical trial with it has been run.
+
 For VLM checkpoints, `make_checkpoint_capture` in
 `precision_insertion.checkpoint_camera` supplies the existing handlers'
 `(live, runner, decision)` callback. Its default `snapshot` transport uses
@@ -568,6 +582,10 @@ The live CLI requires explicit frame-bound init daemon ports. On the
 board-9 robot PC, start or check the long-lived capture-PC and FR3 services
 with `bash demo/precision-insertion/manage_robot_pc_services.sh start` or
 `check`; then run `bash demo/precision-insertion/run_robot_pc.sh --run`.
+To select saved-image key-tip tracking for next-trial XY only, set
+`PRECISION_XY_ESTIMATOR=tracked_tip` for that run. Omit it for the existing
+VLM XY route. The mode affects only failed-trial diagnosis; robot motion
+still requires the normal `--run` procedure.
 The run script never starts or stops services, so consecutive trials can
 reuse warm daemons. `manage_robot_pc_services.sh stop` stops only services
 started by that manager, and must be invoked separately.

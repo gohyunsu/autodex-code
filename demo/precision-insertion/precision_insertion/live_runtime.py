@@ -31,6 +31,7 @@ class RunLiveOptions:
     enable_robot_motion: bool = False
     robot_config_path: Path | None = None
     label_mode: str = "vlm_only"
+    xy_estimator: str = "vlm"
     annotator: str | None = None
     xy_update_weight: float = 1.0
     init_ports: tuple[int, int, int] | None = None
@@ -183,6 +184,8 @@ def run_integrated_live_session(
         raise ValueError("manual labeling needs a named annotator")
     if options.label_mode == "evidence_fused":
         raise ValueError("current cylinder live loop needs vlm_only or manual labels")
+    if options.xy_estimator not in {"vlm", "tracked_tip"}:
+        raise ValueError("unknown next-trial XY estimator")
     with timed("startup.launch_config", phase="startup", kind="io"):
         launch = load_session_launch(options.launch_config_path)
     if launch.mode.family != "cylinder":

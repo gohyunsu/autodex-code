@@ -87,6 +87,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--label-mode", choices=(
         "vlm_only", "manual"), default="vlm_only",
         help="task labels: VLM only or interactive human with independent VLM evidence")
+    parser.add_argument("--xy-estimator", choices=("vlm", "tracked_tip"),
+                        default="vlm", help="failed-trial XY point estimator; "
+                        "tracked_tip uses saved preinsert images and initial key masks")
     parser.add_argument("--annotator", help="required with --label-mode manual")
     parser.add_argument("--enable-robot-motion", action="store_true",
                         help="required: initial clear-view and trial motions")
@@ -144,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         enable_robot_motion=args.enable_robot_motion,
         robot_config_path=args.robot_config,
         label_mode=args.label_mode, annotator=args.annotator,
+        xy_estimator=args.xy_estimator,
         init_ports=init_ports, stop_after_planning=args.stop_after_planning,
         reuse_session_evidence_dir=args.reuse_session_evidence,
         key_already_placed=args.key_already_placed,
