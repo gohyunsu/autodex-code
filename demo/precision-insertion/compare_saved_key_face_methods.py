@@ -20,13 +20,13 @@ from PIL import Image, ImageDraw, ImageFont
 from precision_insertion.assets import AssetPaths
 from precision_insertion.config import select_mode
 from precision_insertion.held_key_tip import padded_key_box_roi, triangulate_tip_proxy
+from saved_key_face_palette import (
+    ALTERNATIVE_PROXY, KEY_PROXY, OBSERVED_KEY, OBSERVED_KEY_MASK_RGBA,
+    PALETTE, PLANNED_KEY, QWEN_BOX, SOCKET_POSE,
+)
 
 
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-GREEN = "#42f58d"  # observed SAM ellipse/center
-CYAN = "#00daf3"   # planned geometry or measured socket pose
-PINK = "#f85dc7"   # Qwen box or multiview reprojection
-YELLOW = "#ffe15b"  # SAM mask
 METHOD_BY_PANEL = {
     "observed_ellipse": "sam_half_ellipse",
     "spatial_proxy": "sam_half_ellipse",
@@ -180,7 +180,7 @@ def render_view(row: dict, bbox: dict, boundary: dict | None,
 
     qwen = original.copy()
     ImageDraw.Draw(qwen).rectangle(tuple(bbox["bbox_crop_px"]),
-                                   outline=PINK, width=4)
+                                   outline=QWEN_BOX, width=4)
     panels["qwen_box"] = qwen
 
     mask = np.asarray(Image.open(mask_file).convert("L")) > 0
@@ -190,7 +190,7 @@ def render_view(row: dict, bbox: dict, boundary: dict | None,
     if mask.shape != (y1-y0, x1-x0):
         raise ValueError("saved SAM mask and Qwen ROI differ")
     rgba = np.zeros((512, 512, 4), dtype=np.uint8)
-    rgba[y0:y1, x0:x1][mask] = (255, 225, 91, 105)
+    rgba[y0:y1, x0:x1][mask] = OBSERVED_KEY_MASK_RGBA
     mask_panel = Image.alpha_composite(original.convert("RGBA"),
                                        Image.fromarray(rgba)).convert("RGB")
     contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL,
@@ -199,7 +199,7 @@ def render_view(row: dict, bbox: dict, boundary: dict | None,
     for contour in contours:
         xy = [(float(p[0][0]+x0), float(p[0][1]+y0)) for p in contour]
         if len(xy) > 1:
-            draw.line(xy + xy[:1], fill=YELLOW, width=2)
+            draw.line(xy + xy[:1], fill=OBSERVED_KEY, width=2)
     panels["sam_mask"] = mask_panel
 
     ellipse = row["sam_half_ellipse"]
@@ -208,16 +208,16 @@ def render_view(row: dict, bbox: dict, boundary: dict | None,
     if ellipse is not None:
         draw.line(_local(ellipse["ellipse_full_px"], crop) +
                   [_local(ellipse["ellipse_full_px"][0], crop)],
-                  fill=GREEN, width=4)
+                  fill=OBSERVED_KEY, width=4)
         for sample in ellipse["distal_boundary_samples_full_px"]:
             _dot(draw, _local(sample, crop), "#ffffff", radius=2)
-        _dot(draw, _local(ellipse["center_full_px"], crop), GREEN, radius=8)
+        _dot(draw, _local(ellipse["center_full_px"], crop), OBSERVED_KEY, radius=8)
     panels["observed_ellipse"] = face
 
     rectangle = original.copy()
     if row["sam_rectangle_tip_full_px"] is not None:
         _dot(ImageDraw.Draw(rectangle),
-             _local(row["sam_rectangle_tip_full_px"], crop), YELLOW, radius=8)
+             _local(row["sam_rectangle_tip_full_px"], crop), ALTERNATIVE_PROXY, radius=8)
     panels["sam_rectangle_end"] = rectangle
 
     boundary_panel = original.copy()
@@ -226,8 +226,8 @@ def render_view(row: dict, bbox: dict, boundary: dict | None,
         fit = boundary.get("boundary_fit")
         if fit is not None:
             draw.line(_local(fit["fitted_boundary_full_px"], crop),
-                      fill=YELLOW, width=4)
-        _dot(draw, _local(boundary["tip_full_px"], crop), YELLOW, radius=8)
+                      fill=ALTERNATIVE_PROXY, width=4)
+        _dot(draw, _local(boundary["tip_full_px"], crop), ALTERNATIVE_PROXY, radius=8)
     panels["sam_boundary_end"] = boundary_panel
 
     direct_panel = original.copy()
@@ -243,32 +243,32 @@ def render_view(row: dict, bbox: dict, boundary: dict | None,
             curve.append((center[0] + ca*u - sa*v,
                           center[1] + sa*u + ca*v))
         draw = ImageDraw.Draw(direct_panel)
-        draw.line(curve + curve[:1], fill=PINK, width=4)
-        _dot(draw, center, PINK, radius=8)
+        draw.line(curve + curve[:1], fill=ALTERNATIVE_PROXY, width=4)
+        _dot(draw, center, ALTERNATIVE_PROXY, radius=8)
     panels["unconstrained_cv_ellipse"] = direct_panel
 
     prior = original.copy()
     draw = ImageDraw.Draw(prior)
     predicted = row["planned_physical_circle"]
     draw.line(_local(predicted["ellipse_full_px"], crop) +
-              [_local(predicted["ellipse_full_px"][0], crop)], fill=CYAN, width=4)
-    _dot(draw, _local(predicted["center_full_px"], crop), CYAN, radius=8)
+              [_local(predicted["ellipse_full_px"][0], crop)], fill=PLANNED_KEY, width=4)
+    _dot(draw, _local(predicted["center_full_px"], crop), PLANNED_KEY, radius=8)
     panels["planned_projection"] = prior
 
     run = runs_root / row["run_id"]
     ring = socket_ring(run, row["camera_id"], fixture_root)
     final = original.copy()
     draw = ImageDraw.Draw(final)
-    draw.line(_local(ring, crop) + [_local(ring[0], crop)], fill=CYAN, width=3)
+    draw.line(_local(ring, crop) + [_local(ring[0], crop)], fill=SOCKET_POSE, width=3)
     if ellipse is not None:
         draw.line(_local(ellipse["ellipse_full_px"], crop) +
                   [_local(ellipse["ellipse_full_px"][0], crop)],
-                  fill=GREEN, width=3)
-        _dot(draw, _local(ellipse["center_full_px"], crop), GREEN, radius=7)
+                  fill=OBSERVED_KEY, width=3)
+        _dot(draw, _local(ellipse["center_full_px"], crop), OBSERVED_KEY, radius=7)
     method = comparison["runs"][row["run_id"]]["methods"]["sam_half_ellipse_center"]
     reproj = method.get("per_camera_proxy_reprojection_px", {}).get(row["camera_id"])
     if reproj is not None:
-        _dot(draw, _local(reproj, crop), PINK, radius=5)
+        _dot(draw, _local(reproj, crop), KEY_PROXY, radius=5)
     panels["spatial_proxy"] = final
     provenance = {key: row[key] for key in ("run_id", "camera_id", "frame_id",
                                               "timestamp_s", "source", "source_sha256",
@@ -478,7 +478,8 @@ def main() -> None:
     (output / "evidence_manifest.json").write_text(
         json.dumps({"schema": "saved_key_face_separate_roles_v1",
                     "scope": "read_only_real_undistorted_frames; derived overlays",
-                    "accepted_runs": sorted(episode_panels), "views": evidence},
+                    "accepted_runs": sorted(episode_panels),
+                    "visual_palette": PALETTE, "views": evidence},
                    indent=2)+"\n", encoding="utf-8")
     print(output)
     for run_id, record in comparison["runs"].items():

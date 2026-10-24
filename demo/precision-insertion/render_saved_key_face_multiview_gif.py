@@ -19,6 +19,9 @@ from PIL import Image, ImageDraw, ImageFont
 from precision_insertion.assets import AssetPaths
 from precision_insertion.config import select_mode
 from compare_saved_key_face_methods import camera_projection, point
+from saved_key_face_palette import (
+    AXIS_TARGET, KEY_PROXY, PALETTE, SOCKET_POSE, XY_SHIFT,
+)
 
 
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
@@ -69,11 +72,11 @@ def arrow(draw: ImageDraw.ImageDraw, start: tuple[float, float],
     head_length = min(14., max(5., length*.35))
     head_half_width = max(4., head_length*.55)
     draw.line((tuple(a), tuple(b)), fill="#09131e", width=9)
-    draw.line((tuple(a), tuple(b)), fill="#ff9f35", width=5)
+    draw.line((tuple(a), tuple(b)), fill=XY_SHIFT, width=5)
     head = [tuple(b),
             tuple(b-direction*head_length+side*head_half_width),
             tuple(b-direction*head_length-side*head_half_width)]
-    draw.polygon(head, fill="#ff9f35", outline="#09131e")
+    draw.polygon(head, fill=XY_SHIFT, outline="#09131e")
 
 
 def axis_line(draw: ImageDraw.ImageDraw, start: tuple[float, float],
@@ -81,7 +84,7 @@ def axis_line(draw: ImageDraw.ImageDraw, start: tuple[float, float],
     a, b = np.asarray(start, dtype=float), np.asarray(end, dtype=float)
     if float(np.linalg.norm(b-a)) < 1e-3:
         return
-    draw.line((tuple(a), tuple(b)), fill="#00daf3", width=3)
+    draw.line((tuple(a), tuple(b)), fill=SOCKET_POSE, width=3)
 
 
 def axis_heights(run: Path, proxy_z_m: float,
@@ -142,6 +145,7 @@ def main() -> None:
     gif_dir.mkdir(parents=True, exist_ok=True)
     summary = {"schema": "saved_key_face_multiview_xy_animation_v1",
                "scope": "read_only_projected_proxy_not_robot_motion_command",
+               "visual_palette": PALETTE,
                "runs": {}}
     for run_id, views in grouped.items():
         cameras = [v["camera_id"] for v in views]
@@ -189,12 +193,12 @@ def main() -> None:
             axis_line(ImageDraw.Draw(proxy_panel), axis_start, axis_end)
             xy_panel = proxy_panel.copy()
             draw = ImageDraw.Draw(xy_panel)
-            dot(draw, current_local, "#f85dc7", radius=7)
-            dot(draw, target_local, "#ffe15b", radius=8)
+            dot(draw, current_local, KEY_PROXY, radius=7)
+            dot(draw, target_local, AXIS_TARGET, radius=8)
             arrow(draw, current_local, target_local)
             x, y = target_local
             draw.ellipse((x-11, y-11, x+11, y+11),
-                         outline="#ffe15b", width=3)
+                         outline=AXIS_TARGET, width=3)
             panels_by_stage["spatial_proxy"][-1] = proxy_panel
             panels_by_stage["xy_alignment"].append(xy_panel)
             view_evidence.append({
