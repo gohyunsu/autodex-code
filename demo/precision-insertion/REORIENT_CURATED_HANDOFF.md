@@ -18,8 +18,8 @@ Local staging roots:
 
 Readback-identical copies are at:
 
-- `/mnt/paradex2/hyunsu/autodex_precision_insertion_reorient_curated_20261011/square`
-- `/mnt/paradex2/hyunsu/autodex_precision_insertion_reorient_curated_20261011/cylinder`
+- `/mnt/paradex2/hyunsu/handoff/20261011_reorient_curated/square`
+- `/mnt/paradex2/hyunsu/handoff/20261011_reorient_curated/cylinder`
 
 The local and NAS seed copies passed `diff -qr` after copying. Each NAS mode
 folder now also has `source_shared_data/`, a hash-audited snapshot of its
@@ -106,8 +106,8 @@ cd /path/to/autodex-code
 ~/miniconda3/envs/autodex_bodex/bin/python \
   demo/precision-insertion/rehydrate_curated_reorient.py \
   --mode square --gap-mm 1.5 \
-  --source-shared-root /mnt/paradex2/hyunsu/autodex_precision_insertion_reorient_curated_20261011/square/source_shared_data \
-  --source-handoff-root /mnt/paradex2/hyunsu/autodex_precision_insertion_reorient_curated_20261011/square \
+  --source-shared-root /mnt/paradex2/hyunsu/handoff/20261011_reorient_curated/square/source_shared_data \
+  --source-handoff-root /mnt/paradex2/hyunsu/handoff/20261011_reorient_curated/square \
   --target-shared-root /path/to/active_shared_data \
   --target-handoff-root /path/to/active_shared_data/AutoDex/precision_insertion/square/reorient_curated_rehydrated
 ```

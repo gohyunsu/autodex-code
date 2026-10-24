@@ -10,9 +10,9 @@ snapshot. Run it again whenever the evaluation changes:
 ```bash
 ~/miniconda3/envs/autodex_bodex/bin/python \
   demo/precision-insertion/audit_perception_handoff.py \
-  --capture-index /mnt/paradex2/hyunsu/autodex_precision_insertion_runtime_addendum_20261010_652ac909/latest_capture_index.json \
-  --candidate-index /mnt/paradex2/hyunsu/autodex_precision_insertion_runtime_addendum_20261010_652ac909/existing_foundpose_candidates.json \
-  --evaluation-root /mnt/paradex2/hyunsu/autodex_precision_insertion_perception_eval_20261010_652ac909 \
+  --capture-index /mnt/paradex2/hyunsu/handoff/20261010_runtime_addendum_652ac909/latest_capture_index.json \
+  --candidate-index /mnt/paradex2/hyunsu/handoff/20261010_runtime_addendum_652ac909/existing_foundpose_candidates.json \
+  --evaluation-root /mnt/paradex2/hyunsu/handoff/20261010_perception_eval_652ac909 \
   --output /path/to/new_audit_snapshot.json
 ```
 
@@ -66,7 +66,7 @@ not a synchronized live mask test or proof of the exact projected-socket
 overlap used by `admit_key_capture()`. It does show why a numeric full-image
 silhouette pass and even a high mean across other cameras cannot license that
 view. Review its [raw frame](/mnt/paradex2/hyunsu/tmp/precision_insertion_multiview_20261010_652ac909/square/precision_key_1p5mm/pose_02/views/shot_20261010T131640Z_585435e4/24122734.jpg)
-and [CAD overlay](/mnt/paradex2/hyunsu/autodex_precision_insertion_perception_eval_20261010_652ac909/results/key_roi_sam3_square/square/precision_key_1p5mm/pose_02/24122734_cad_overlay.jpg).
+and [CAD overlay](/mnt/paradex2/hyunsu/handoff/20261010_perception_eval_652ac909/results/key_roi_sam3_square/square/precision_key_1p5mm/pose_02/24122734_cad_overlay.jpg).
 
 The evaluation statistics above describe the **older NAS candidate PTHs**,
 not the four canonical representations generated on 2026-10-11. A separate

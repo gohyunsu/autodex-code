@@ -450,7 +450,7 @@ diagnostic only: they do not depict achieved MuJoCo grasp geometry. Do not
 promote the 13 socket-clear candidates to robot trials from those images.
 
 The NAS handoff at
-`/mnt/paradex2/hyunsu/autodex_precision_insertion_handoff_20261010_652ac909`
+`/mnt/paradex2/hyunsu/handoff/20261010_handoff_652ac909`
 contains large per-object `pending_foundpose/.../repre.pth` onboarding
 artifacts, but its own README labels them **validation pending**. A later NAS
 addendum and [real-image audit](NAS_PERCEPTION_QA.md) now contain 35 selected
@@ -2079,7 +2079,7 @@ contains both candidates, audit reports, v8 key scenes, key and six cylinder
 socket object-processing assets, fixture geometries, and a handoff README.
 Its SHA-256 is
 `6b83a94026074f925c57567dd754771e01cbfda16491d2e8a10ba647894acc98`.
-The byte-identical archive is now in the [ParaDex2 NAS handoff](/mnt/paradex2/hyunsu/autodex_precision_insertion_handoffs/cylinder_reset_v8_20261011_6b83a940.tar.gz).
+The byte-identical archive is now in the [ParaDex2 NAS handoff](/mnt/paradex2/hyunsu/handoff/20261011_cylinder_reset_v8_6b83a940/cylinder_reset_v8_20261011_6b83a940.tar.gz).
 The archive itself is a staging handoff, not an automatic canonical-tree
 installation; `0_1/191` was installed separately after fidelity screening.
 Scene JSONs embed this host's

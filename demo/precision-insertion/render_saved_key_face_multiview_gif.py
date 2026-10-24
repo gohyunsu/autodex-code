@@ -76,18 +76,12 @@ def arrow(draw: ImageDraw.ImageDraw, start: tuple[float, float],
     draw.polygon(head, fill="#ff9f35", outline="#09131e")
 
 
-def dashed_line(draw: ImageDraw.ImageDraw, start: tuple[float, float],
-                end: tuple[float, float]) -> None:
+def axis_line(draw: ImageDraw.ImageDraw, start: tuple[float, float],
+              end: tuple[float, float]) -> None:
     a, b = np.asarray(start, dtype=float), np.asarray(end, dtype=float)
-    span = float(np.linalg.norm(b-a))
-    if span < 1e-3:
+    if float(np.linalg.norm(b-a)) < 1e-3:
         return
-    direction = (b-a)/span
-    for distance in np.arange(0., span, 15.):
-        first = a+direction*distance
-        second = a+direction*min(distance+9., span)
-        draw.line((tuple(first), tuple(second)), fill="#09131e", width=7)
-        draw.line((tuple(first), tuple(second)), fill="#00daf3", width=4)
+    draw.line((tuple(a), tuple(b)), fill="#00daf3", width=3)
 
 
 def axis_heights(run: Path, proxy_z_m: float,
@@ -98,7 +92,7 @@ def axis_heights(run: Path, proxy_z_m: float,
               Path(read(run / "endpoint_catalog.json")["shared_root"]))
     geometry = read(AssetPaths(shared, mode).task_geometry)
     rim_z = float(geometry["socket_entry_plane_z_m"])
-    return rim_z - .02, max(rim_z + .09, proxy_z_m + .02)
+    return rim_z, max(rim_z + .09, proxy_z_m + .02)
 
 
 def compose(stage: str, cameras: list[str], panels: list[Image.Image],
@@ -192,7 +186,7 @@ def main() -> None:
             axis_start = tuple(np.asarray(point(P, (0., 0., axis_start_z))) - origin)
             axis_end = tuple(np.asarray(point(P, (0., 0., axis_end_z))) - origin)
             proxy_panel = panels_by_stage["spatial_proxy"][-1].copy()
-            dashed_line(ImageDraw.Draw(proxy_panel), axis_start, axis_end)
+            axis_line(ImageDraw.Draw(proxy_panel), axis_start, axis_end)
             xy_panel = proxy_panel.copy()
             draw = ImageDraw.Draw(xy_panel)
             dot(draw, current_local, "#f85dc7", radius=7)
@@ -201,13 +195,8 @@ def main() -> None:
             x, y = target_local
             draw.ellipse((x-11, y-11, x+11, y+11),
                          outline="#ffe15b", width=3)
-            side = 256
-            middle = (np.asarray(current_local)+np.asarray(target_local))*.5
-            left = int(np.clip(round(middle[0]-side*.5), 0, 512-side))
-            top = int(np.clip(round(middle[1]-side*.5), 0, 512-side))
-            focus = (left, top, left+side, top+side)
-            panels_by_stage["spatial_proxy"][-1] = proxy_panel.crop(focus)
-            panels_by_stage["xy_alignment"].append(xy_panel.crop(focus))
+            panels_by_stage["spatial_proxy"][-1] = proxy_panel
+            panels_by_stage["xy_alignment"].append(xy_panel)
             view_evidence.append({
                 "camera_id": camera, "frame_id": view["frame_id"],
                 "timestamp_s": view["timestamp_s"],
@@ -218,7 +207,7 @@ def main() -> None:
                 "socket_axis_same_z_full_px": target.tolist(),
                 "proxy_to_axis_crop_px": [list(current_local), list(target_local)],
                 "socket_axis_segment_crop_px": [list(axis_start), list(axis_end)],
-                "final_two_stages_focus_crop_xyxy": list(focus),
+                "all_stages_source_crop_full_xyxy": row["crop_xyxy"],
             })
         frames = []
         run_frames = frame_root / run_id

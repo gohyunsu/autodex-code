@@ -265,14 +265,14 @@ threshold has been commissioned. The v8 arrays are therefore proposals for
 pose-conditioned live preflight and physical-grasp calibration, not replay-
 ready insertion grasps. Canonical FoundPose representations for key and
 socket are missing from this `~/shared_data` runtime tree. The mounted
-`/mnt/paradex2/hyunsu/autodex_precision_insertion_handoff_20261010_652ac909/pending_foundpose/`
+`/mnt/paradex2/hyunsu/handoff/20261010_handoff_652ac909/pending_foundpose/`
 contains synthetic-onboarded **candidates**, explicitly withheld from
 canonical installation pending real AutoDex-image pose/mask QA. Physical
 transfer paths, guarded contact and insertion labels are also unverified.
 The unchanged stock AutoDex execution files remain untouched.
 
 The non-overwriting NAS addendum is
-`/mnt/paradex2/hyunsu/autodex_precision_insertion_tabletop_v8_handoff_20261011_955e133/`.
+`/mnt/paradex2/hyunsu/handoff/20261011_tabletop_v8_handoff_955e133/`.
 It contains the 12 candidate directories under `payload/shared_data/`, an
 installation/limitations README, and a `MANIFEST.json` whose 104 file hashes
 were rechecked after export. Its six copied catalogues are under

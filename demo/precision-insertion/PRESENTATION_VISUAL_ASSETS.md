@@ -10,7 +10,7 @@ The newest set is under:
 ```
 
 The identical media plus its five-file source-preflight record is mirrored at
-`/mnt/paradex2/hyunsu/autodex_precision_insertion_passed_visuals_20261012_870f7aa/`.
+`/mnt/paradex2/hyunsu/handoff/20261012_passed_visuals_870f7aa/`.
 
 It uses all 41 original FR3/Inspire URDF visual geometries (479,710 robot
 mesh faces), the exact cylinder key/socket meshes, and saved joint paths from
@@ -118,7 +118,7 @@ pickup/lift/transfer/20 mm axial audit:
 
 The identical 124-file presentation tree plus the four five-file source
 preflights is mirrored at
-`/mnt/paradex2/hyunsu/autodex_precision_insertion_passed_grasp_visuals_20261012_41df7cc/`.
+`/mnt/paradex2/hyunsu/handoff/20261012_passed_grasp_visuals_41df7cc/`.
 
 The passed keys are `table/0/194`, `table/0/20071`, `table/0/20140`, and
 `table/0/20141`.  `four_grasp_full_pipeline_grid.{mp4,gif}` synchronizes the

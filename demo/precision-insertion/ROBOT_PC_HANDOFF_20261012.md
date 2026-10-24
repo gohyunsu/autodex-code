@@ -55,25 +55,25 @@ Use the following distinct bundles, preserving their manifests. Never merge
 an `.incomplete` or `partial_directory_copy_interrupted` directory into an
 installed tree.
 
-| Bundle under `/mnt/paradex2/hyunsu/` | Contents | Recipient note |
+| Bundle under `/mnt/paradex2/hyunsu/handoff/` | Contents | Recipient note |
 | --- | --- | --- |
-| `autodex_precision_insertion_handoff_20261010_652ac909` | Base object/fixture assets and older pending FoundPose candidates | Pending representations are **not** canonical. |
-| `autodex_precision_insertion_runtime_addendum_20261010_652ac909` | SAM3/DINOv2 and optional perception code/weights | Install the relevant runtime dependencies on the recipient. |
-| `autodex_precision_insertion_perception_eval_20261010_652ac909` | Captured-image evaluation/evidence | Not a live-calibration pass. |
-| `autodex_precision_insertion_tabletop_v8_handoff_20261011_955e133` | Historical cylinder v8 candidates | Install before the append-only cylinder addendum. |
-| `autodex_precision_insertion_cylinder_full_length_addendum_20261011_eb38993` | 112 new cylinder v8 IDs | Verify, rehydrate, then rebuild all six endpoint catalogs on the recipient. |
-| `autodex_precision_insertion_square_fullkey1000_handoff_20261011_10c455d` | Four square candidate pools | Offline only; rebind source paths and rebuild catalogs. |
-| `autodex_precision_insertion_foundpose_generated_20261011` | Seven generated FoundPose objects in a tar and manifest | Extract to staging and install only exact-mesh-matched files. |
-| `autodex_precision_insertion_foundpose_20261011` | Earlier generated FoundPose files, including cylinder 20 mm | Verify the intended archive before staged installation. |
-| `autodex_precision_insertion_reorient_curated_20261011` | Curated reset seeds | Staging; do not infer physical repose success. |
-| `autodex_precision_insertion_cylinder_reset1687_addendum_20261012` | Current selected cylinder `001→000/1687` seed, source scenes and audit | Rehydrate into its **own** staging root, then install; older reorient bundle has only `001→000/631`. |
-| `autodex_precision_insertion_qwen3_vl_2b_20261012_89644892` | Dereferenced local Qwen3-VL-2B-Instruct snapshot | Set `vlm.model_id` to `payload/model` after verifying the manifest. |
+| `20261010_handoff_652ac909` | Base object/fixture assets and older pending FoundPose candidates | Pending representations are **not** canonical. |
+| `20261010_runtime_addendum_652ac909` | SAM3/DINOv2 and optional perception code/weights | Install the relevant runtime dependencies on the recipient. |
+| `20261010_perception_eval_652ac909` | Captured-image evaluation/evidence | Not a live-calibration pass. |
+| `20261011_tabletop_v8_handoff_955e133` | Historical cylinder v8 candidates | Install before the append-only cylinder addendum. |
+| `20261011_cylinder_full_length_addendum_eb38993` | 112 new cylinder v8 IDs | Verify, rehydrate, then rebuild all six endpoint catalogs on the recipient. |
+| `20261011_square_fullkey1000_handoff_10c455d` | Four square candidate pools | Offline only; rebind source paths and rebuild catalogs. |
+| `20261011_foundpose_generated` | Seven generated FoundPose objects in a tar and manifest | Extract to staging and install only exact-mesh-matched files. |
+| `20261011_foundpose` | Earlier generated FoundPose files, including cylinder 20 mm | Verify the intended archive before staged installation. |
+| `20261011_reorient_curated` | Curated reset seeds | Staging; do not infer physical repose success. |
+| `20261012_cylinder_reset1687_addendum` | Current selected cylinder `001→000/1687` seed, source scenes and audit | Rehydrate into its **own** staging root, then install; older reorient bundle has only `001→000/631`. |
+| `20261012_qwen3_vl_2b_89644892` | Dereferenced local Qwen3-VL-2B-Instruct snapshot | Set `vlm.model_id` to `payload/model` after verifying the manifest. |
 
 The Qwen bundle is produced and checked with:
 
 ```bash
 python3 demo/precision-insertion/export_local_qwen_handoff.py \
-  --verify-root /mnt/paradex2/hyunsu/autodex_precision_insertion_qwen3_vl_2b_20261012_89644892
+  --verify-root /mnt/paradex2/hyunsu/handoff/20261012_qwen3_vl_2b_89644892
 ```
 
 Its `payload/model` directory can be passed directly as `vlm.model_id` in

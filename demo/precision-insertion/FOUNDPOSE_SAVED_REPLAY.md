@@ -163,8 +163,8 @@ snapshot. After verifying the source paths and the selected `shot.json`:
   --family square --gap-mm 1.5 --part socket \
   --shot-dir /mnt/paradex2/hyunsu/tmp/precision_insertion_multiview_20261010_652ac909/square/socket_only/views/shot_20261010T130233Z_ff46a919 \
   --calib-dir /home/hyunsu/shared_data/cam_param/20260921_213318 \
-  --gotrack-root /mnt/paradex2/hyunsu/autodex_precision_insertion_runtime_addendum_20261010_652ac909/source_snapshot/MV-GoTrack \
-  --view 25322651 /mnt/paradex2/hyunsu/autodex_precision_insertion_perception_eval_20261010_652ac909/results/socket_only/precision_socket_unified/25322651_mask.png \
+  --gotrack-root /mnt/paradex2/hyunsu/handoff/20261010_runtime_addendum_652ac909/source_snapshot/MV-GoTrack \
+  --view 25322651 /mnt/paradex2/hyunsu/handoff/20261010_perception_eval_652ac909/results/socket_only/precision_socket_unified/25322651_mask.png \
   --output /tmp/new_socket_probe.json
 ```
 

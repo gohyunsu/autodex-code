@@ -189,31 +189,31 @@ Read back the relevant NAS manifests **before installing**. These commands
 do not connect to a camera or robot:
 
 ```bash
-cd "$NAS_DIR/autodex_precision_insertion_handoff_20261010_652ac909"
+cd "$NAS_DIR/handoff/20261010_handoff_652ac909"
 sha256sum -c SHA256SUMS
-cd "$NAS_DIR/autodex_precision_insertion_runtime_addendum_20261010_652ac909"
+cd "$NAS_DIR/handoff/20261010_runtime_addendum_652ac909"
 sha256sum -c SHA256SUMS
-cd "$NAS_DIR/autodex_precision_insertion_perception_eval_20261010_652ac909"
+cd "$NAS_DIR/handoff/20261010_perception_eval_652ac909"
 sha256sum -c SHA256SUMS
 cd /home/ROBOT_USER/autodex-precision-insertion
 python demo/precision-insertion/verify_handoff_manifest.py \
-  --bundle-root "$NAS_DIR/autodex_precision_insertion_tabletop_v8_handoff_20261011_955e133"
+  --bundle-root "$NAS_DIR/handoff/20261011_tabletop_v8_handoff_955e133"
 python demo/precision-insertion/verify_handoff_manifest.py \
-  --bundle-root "$NAS_DIR/autodex_precision_insertion_foundpose_generated_20261011"
+  --bundle-root "$NAS_DIR/handoff/20261011_foundpose_generated"
 printf '%s  %s\n' \
   3198df432a5beb7d3a3470b6021512045171d27d3db85fec50a444f330b67c96 \
-  "$NAS_DIR/autodex_precision_insertion_foundpose_20261011/autodex_precision_foundpose_4objects_20261011.tar" \
+  "$NAS_DIR/handoff/20261011_foundpose/autodex_precision_foundpose_4objects_20261011.tar" \
   | sha256sum -c -
 printf '%s  %s\n' \
   c11a637bf167e48585baadd13734cfef5fd50072c1256d771518ba9c88fcf8a8 \
-  "$NAS_DIR/autodex_precision_insertion_foundpose_20261011/precision_foundpose_socket_20mm_20261011.tar" \
+  "$NAS_DIR/handoff/20261011_foundpose/precision_foundpose_socket_20mm_20261011.tar" \
   | sha256sum -c -
 python demo/precision-insertion/export_full_length_cylinder_handoff.py \
-  --verify-root "$NAS_DIR/autodex_precision_insertion_cylinder_full_length_addendum_20261011_eb38993"
+  --verify-root "$NAS_DIR/handoff/20261011_cylinder_full_length_addendum_eb38993"
 python demo/precision-insertion/export_current_cylinder_reset_handoff.py \
-  --verify-root "$NAS_DIR/autodex_precision_insertion_cylinder_reset1687_addendum_20261012"
+  --verify-root "$NAS_DIR/handoff/20261012_cylinder_reset1687_addendum"
 python demo/precision-insertion/export_local_qwen_handoff.py \
-  --verify-root "$NAS_DIR/autodex_precision_insertion_qwen3_vl_2b_20261012_89644892"
+  --verify-root "$NAS_DIR/handoff/20261012_qwen3_vl_2b_89644892"
 ```
 
 Install into a **new, empty** staging `shared_data` tree. The current
@@ -225,7 +225,7 @@ is `/home/robot/shared_data`:
 
 ```bash
 test ! -e "$DATA_DIR" && mkdir -p "$DATA_DIR"
-BASE="$NAS_DIR/autodex_precision_insertion_handoff_20261010_652ac909/payload/shared_data"
+BASE="$NAS_DIR/handoff/20261010_handoff_652ac909/payload/shared_data"
 cp -a "$BASE/." "$DATA_DIR/"
 PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/rehydrate_cylinder_socket_handoff.py \
@@ -238,7 +238,7 @@ python demo/precision-insertion/rehydrate_cylinder_key_scenes.py \
   --target-shared-root "$DATA_DIR" --install
 PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/rehydrate_full_length_cylinder_handoff.py \
-  --bundle-root "$NAS_DIR/autodex_precision_insertion_cylinder_full_length_addendum_20261011_eb38993" \
+  --bundle-root "$NAS_DIR/handoff/20261011_cylinder_full_length_addendum_eb38993" \
   --target-shared-root "$DATA_DIR" --install
 ```
 
@@ -257,16 +257,16 @@ producer paths. The reverse cell uses the current `001→000/1687` addendum.
 
 ```bash
 tar --no-same-owner -xf \
-  "$NAS_DIR/autodex_precision_insertion_foundpose_20261011/autodex_precision_foundpose_4objects_20261011.tar" \
+  "$NAS_DIR/handoff/20261011_foundpose/autodex_precision_foundpose_4objects_20261011.tar" \
   -C "$DATA_DIR" --wildcards \
   'AutoDex/foundpose_assets/precision_key_cylinder_r15_h80/*'
 tar --no-same-owner -xf \
-  "$NAS_DIR/autodex_precision_insertion_foundpose_20261011/precision_foundpose_socket_20mm_20261011.tar" \
+  "$NAS_DIR/handoff/20261011_foundpose/precision_foundpose_socket_20mm_20261011.tar" \
   -C "$DATA_DIR" --wildcards \
   'AutoDex/foundpose_assets/precision_socket_cylinder_gap_20mm/*'
 cp -a /home/robot/shared_data/AutoDex/content/assets/robot/fr3_inspire_description \
   "$DATA_DIR/AutoDex/content/assets/robot/"
-RESET_BUNDLE="$NAS_DIR/autodex_precision_insertion_cylinder_reset1687_addendum_20261012"
+RESET_BUNDLE="$NAS_DIR/handoff/20261012_cylinder_reset1687_addendum"
 PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/rehydrate_reset_handoff.py \
   --source-shared-root "$RESET_BUNDLE/payload/shared_data" \
@@ -281,7 +281,7 @@ PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   --source-reset-root "$DATA_DIR/AutoDex/precision_insertion/cylindrical/reorient_handoff_seed11012/reset_12" \
   --gap-mm 20 --from-pose-stem 1 --to-pose-stem 0 --seed-id 1687 \
   --output-manifest "$CHECK_DIR/reset1687_install.json"
-CURATED="$NAS_DIR/autodex_precision_insertion_reorient_curated_20261011/cylinder"
+CURATED="$NAS_DIR/handoff/20261011_reorient_curated/cylinder"
 PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/rehydrate_curated_reorient.py \
   --mode cylinder --gap-mm 20 \
@@ -296,7 +296,7 @@ PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   --output-manifest "$CHECK_DIR/reset191_install.json"
 MODEL_DIR="$DATA_DIR/AutoDex/models/Qwen3-VL-2B-Instruct"
 test ! -e "$MODEL_DIR" && mkdir -p "$MODEL_DIR"
-cp -a "$NAS_DIR/autodex_precision_insertion_qwen3_vl_2b_20261012_89644892/payload/model/." "$MODEL_DIR/"
+cp -a "$NAS_DIR/handoff/20261012_qwen3_vl_2b_89644892/payload/model/." "$MODEL_DIR/"
 ```
 
 With `precision_insertion.franka_integration:factory`, an omitted
@@ -681,9 +681,9 @@ for new recipient-camera frames), run:
 ```bash
 PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/audit_perception_handoff.py \
-  --capture-index "$NAS_DIR/autodex_precision_insertion_runtime_addendum_20261010_652ac909/latest_capture_index.json" \
-  --candidate-index "$NAS_DIR/autodex_precision_insertion_runtime_addendum_20261010_652ac909/existing_foundpose_candidates.json" \
-  --evaluation-root "$NAS_DIR/autodex_precision_insertion_perception_eval_20261010_652ac909" \
+  --capture-index "$NAS_DIR/handoff/20261010_runtime_addendum_652ac909/latest_capture_index.json" \
+  --candidate-index "$NAS_DIR/handoff/20261010_runtime_addendum_652ac909/existing_foundpose_candidates.json" \
+  --evaluation-root "$NAS_DIR/handoff/20261010_perception_eval_652ac909" \
   --output "$CHECK_DIR/perception_handoff.json"
 ```
 

@@ -17,10 +17,10 @@ from PIL import Image, ImageDraw
 
 
 DEFAULT_EVAL = Path(
-    "/mnt/paradex2/hyunsu/autodex_precision_insertion_perception_eval_20261010_652ac909"
+    "/mnt/paradex2/hyunsu/handoff/20261010_perception_eval_652ac909"
 )
 DEFAULT_CKPT = Path(
-    "/mnt/paradex2/hyunsu/autodex_precision_insertion_runtime_addendum_20261010_652ac909"
+    "/mnt/paradex2/hyunsu/handoff/20261010_runtime_addendum_652ac909"
     "/weights/sam3/sam3.pt"
 )
 SAM3_SOURCE = Path(__file__).resolve().parents[2] / "autodex/perception/thirdparty/sam3"

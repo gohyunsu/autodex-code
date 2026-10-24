@@ -92,7 +92,7 @@ against their installed candidate files.
 
 ## Four-gap NAS handoff and path relocation
 
-The [versioned NAS handoff](/mnt/paradex2/hyunsu/autodex_precision_insertion_square_fullkey1000_handoff_20261011_10c455d)
+The [versioned NAS handoff](/mnt/paradex2/hyunsu/handoff/20261011_square_fullkey1000_handoff_10c455d)
 contains all four key object-processing trees, the shared socket/fixture,
 their five v8 tabletop scenes each, and the full current candidate pools
 (124 candidate directories, of which 120 pass the nominal endpoint screen).
@@ -135,7 +135,7 @@ pickup–lift–repose–release preflight and observed landing are still absent
 The smaller 1,000-proposal scan remains archived separately and had seven
 MuJoCo passes but zero passes at the same illustrative gate.
 
-The [versioned NAS reset handoff](/mnt/paradex2/hyunsu/autodex_precision_insertion_reorient_square_0p5_5000_20261011_10c455d)
+The [versioned NAS reset handoff](/mnt/paradex2/hyunsu/handoff/20261011_reorient_square_0p5_5000_10c455d)
 includes all 33 seeds, the original key and scene snapshot, a source-hash
 manifest, and the 5 mm/10° audit. All files were byte-compared against the
 local curated root. `rehydrate_curated_reorient.py --mode square --gap-mm 0.5`

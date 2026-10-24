@@ -43,9 +43,9 @@ directory layout. Do not copy another object's `repre.pth` under a new name.
 ## Provenance and geometry choices
 
 The source snapshot is the NAS
-`autodex_precision_insertion_runtime_addendum_20261010_652ac909/source_snapshot/MV-GoTrack`;
+`handoff/20261010_runtime_addendum_652ac909/source_snapshot/MV-GoTrack`;
 the `onboard_custom_mesh_for_foundpose.py` version is the NAS
-`autodex_precision_insertion_handoff_20261010_652ac909/source/isolated_onboarding`
+`handoff/20261010_handoff_652ac909/source/isolated_onboarding`
 copy, which correctly converts AutoDex's solid OBJ/MTL color to vertex colors.
 The DINOv2 weight was already cached locally from the NAS snapshot.
 
@@ -78,8 +78,8 @@ calibration, reference distance, and that no completed/partial output already
 exists. Then run the generator in the isolated environment. For example:
 
 ```bash
-gotrack_root=/mnt/paradex2/hyunsu/autodex_precision_insertion_runtime_addendum_20261010_652ac909/source_snapshot/MV-GoTrack
-onboard_script=/mnt/paradex2/hyunsu/autodex_precision_insertion_handoff_20261010_652ac909/source/isolated_onboarding/onboard_custom_mesh_for_foundpose.py
+gotrack_root=/mnt/paradex2/hyunsu/handoff/20261010_runtime_addendum_652ac909/source_snapshot/MV-GoTrack
+onboard_script=/mnt/paradex2/hyunsu/handoff/20261010_handoff_652ac909/source/isolated_onboarding/onboard_custom_mesh_for_foundpose.py
 shared_root=/home/hyunsu/shared_data
 object_name=precision_key_1p0mm
 env PYTHONPATH="$gotrack_root:$gotrack_root/external/bop_toolkit:$gotrack_root/external/dinov2" \
@@ -106,7 +106,7 @@ The complete four-object tree was archived locally as
 bytes, SHA-256
 `3198df432a5beb7d3a3470b6021512045171d27d3db85fec50a444f330b67c96`).
 The NAS handoff is
-`/mnt/paradex2/hyunsu/autodex_precision_insertion_foundpose_20261011/autodex_precision_foundpose_4objects_20261011.tar`.
+`/mnt/paradex2/hyunsu/handoff/20261011_foundpose/autodex_precision_foundpose_4objects_20261011.tar`.
 Its SHA-256 was read back from the NAS on 2026-10-11 and **matched** the
 local digest above; a same-sized file alone would have been insufficient.
 The archive has
@@ -145,7 +145,7 @@ read-only replay of nine saved AutoDex views is described in
 the green file audit commissions the socket fixture for robot insertion.
 For AutoDex-PC handoff, the separately created
 `precision_foundpose_socket_20mm_20261011.tar` is in
-`/mnt/paradex2/hyunsu/autodex_precision_insertion_foundpose_20261011/`.
+`/mnt/paradex2/hyunsu/handoff/20261011_foundpose/`.
 It contains the `AutoDex/foundpose_assets/precision_socket_cylinder_gap_20mm/`
 tree relative to a shared-data root and has SHA-256
 `c11a637bf167e48585baadd13734cfef5fd50072c1256d771518ba9c88fcf8a8`;

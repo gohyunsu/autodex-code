@@ -118,7 +118,7 @@ PYTHONPATH=demo/precision-insertion:src \
 
 The new 112 installed candidate directories have a separate, append-only
 handoff at
-`/mnt/paradex2/hyunsu/autodex_precision_insertion_cylinder_full_length_addendum_20261011_eb38993`.
+`/mnt/paradex2/hyunsu/handoff/20261011_cylinder_full_length_addendum_eb38993`.
 Its `MANIFEST.json` binds all payload bytes, source key meshes, both physical
 key tabletop scenes and tabletop-pose files. The source-machine catalogues
 and promotion manifest are retained under `audit_only/`; they are **not**
@@ -137,17 +137,17 @@ install report before appending the new candidate IDs:
 ```bash
 PYTHONPATH=demo/precision-insertion:src python \
   demo/precision-insertion/export_full_length_cylinder_handoff.py \
-  --verify-root /mnt/paradex2/hyunsu/autodex_precision_insertion_cylinder_full_length_addendum_20261011_eb38993
+  --verify-root /mnt/paradex2/hyunsu/handoff/20261011_cylinder_full_length_addendum_eb38993
 
 PYTHONPATH=demo/precision-insertion:src python \
   demo/precision-insertion/rehydrate_full_length_cylinder_handoff.py \
-  --bundle-root /mnt/paradex2/hyunsu/autodex_precision_insertion_cylinder_full_length_addendum_20261011_eb38993 \
+  --bundle-root /mnt/paradex2/hyunsu/handoff/20261011_cylinder_full_length_addendum_eb38993 \
   --target-shared-root /ABSOLUTE/AUTODEX_PC/shared_data
 
 # Only after the dry run reports the expected 112 new IDs and no conflicts:
 PYTHONPATH=demo/precision-insertion:src python \
   demo/precision-insertion/rehydrate_full_length_cylinder_handoff.py \
-  --bundle-root /mnt/paradex2/hyunsu/autodex_precision_insertion_cylinder_full_length_addendum_20261011_eb38993 \
+  --bundle-root /mnt/paradex2/hyunsu/handoff/20261011_cylinder_full_length_addendum_eb38993 \
   --target-shared-root /ABSOLUTE/AUTODEX_PC/shared_data --install
 ```
 

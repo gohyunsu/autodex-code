@@ -66,8 +66,8 @@ does not install those assets into the local runtime.
 | Asset or mode | Present and usable now for offline work | Not available at the current canonical runtime path / qualification |
 | --- | --- | --- |
 | Object geometry | Metric key/socket `object_processing` meshes, exact socket collision meshes, task geometry, tabletop poses and FR3/Inspire URDF for all configured square and cylinder gaps | None of these CAD files is a measured socket pose. |
-| Perception model code/weights | NAS [runtime addendum](/mnt/paradex2/hyunsu/autodex_precision_insertion_runtime_addendum_20261010_652ac909) contains SAM3 and DINOv2 weights and source snapshots; YOLOE, FoundationPose and MV-GoTrack are optional alternatives, not extra requirements for the current SAM3/FoundPose path | NAS presence does not install a weight at a recipient process's expected cache/path. |
-| FoundPose representations | All 10 modes now have their key/socket PTHs at canonical local paths. Seven formerly missing objects (square keys 0.3/0.5/1.0 mm and cylinder sockets 1/3/5/10 mm) were rendered with the isolated MV-GoTrack generator on RTX 3090, reloaded and bound to exact raw-mesh hashes. The older NAS [pending candidates](/mnt/paradex2/hyunsu/autodex_precision_insertion_handoff_20261010_652ac909/pending_foundpose) were not promoted. | File generation and reload are **not** independent metric pose-accuracy evidence; the 2026-10-10 captured-frame evaluation still reports key-mask problems, and no physical socket-pose qualification is implied. |
+| Perception model code/weights | NAS [runtime addendum](/mnt/paradex2/hyunsu/handoff/20261010_runtime_addendum_652ac909) contains SAM3 and DINOv2 weights and source snapshots; YOLOE, FoundationPose and MV-GoTrack are optional alternatives, not extra requirements for the current SAM3/FoundPose path | NAS presence does not install a weight at a recipient process's expected cache/path. |
+| FoundPose representations | All 10 modes now have their key/socket PTHs at canonical local paths. Seven formerly missing objects (square keys 0.3/0.5/1.0 mm and cylinder sockets 1/3/5/10 mm) were rendered with the isolated MV-GoTrack generator on RTX 3090, reloaded and bound to exact raw-mesh hashes. The older NAS [pending candidates](/mnt/paradex2/hyunsu/handoff/20261010_handoff_652ac909/pending_foundpose) were not promoted. | File generation and reload are **not** independent metric pose-accuracy evidence; the 2026-10-10 captured-frame evaluation still reports key-mask problems, and no physical socket-pose qualification is implied. |
 | Square tabletop grasp pools | The [full-key 1,000-per-scene scan and supplemental pose-`000` scan](SQUARE_TABLETOP_1000.md) and source-verified current-pool catalogs have 31/24/24/41 nominal 20 mm endpoint-eligible grasps for gaps 0.3/0.5/1.0/1.5 mm respectively. All five tabletop poses have a candidate for 0.3, 1.0 and 1.5 mm. | The 0.5 mm pose `000` has **zero** eligible grasp after 1,000 initial plus 5,000 supplemental proposals; the 277 additionally MuJoCo-stable candidates all failed whole-hand/socket clearance at 20 mm. This finite scan is not a geometric impossibility proof or full Franka-path evidence. |
 | Cylinder grasp pool | A new [full-length 80 mm proposal run](FULL_LENGTH_CYLINDER_PROPOSALS.md) produced 123 unchanged-stock-v8 full-key MuJoCo passes from 2,000 BODex seeds. Its 112 distinct 20 mm endpoint-passing seeds were appended to the canonical v8 candidate tree at ID offset 20,000; the 12 historical candidates were preserved. The [new complete, zero-margin catalogs](COLLISION_ONLY_CATALOGS.md) index all 124 directories and admit 109/109/112/112/112/110 candidates for gaps 1/3/5/10/15/20 mm. | These are nominal offline grasp/endpoint passes, not actual pickup, transfer, insertion or physical success. Only historical candidate `table/0/194` at the 15 mm gap passed one hypothetical sampled full-chain replay; no new candidate has that evidence. The old 12-row cylinder catalogs are stale. |
 | Reset/reorient | Cylinder `000→001/191` and `001→000/1687` are installed in the canonical v8 reset tree after full-key source and MuJoCo checks; see the [forward](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/cylinder_reset_install_0_1_20261011.json) and [reverse](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/cylinder_reset_install_1_0_seed1687_stock_v8_20261011.json) installation manifests. With the current 20 mm-gap catalogue, reverse seed `001→000/1687` passed one synthetic pickup-to-fully-open release and `FR3_CLEAR_VIEW` retract [preflight](/home/hyunsu/shared_data/AutoDex/precision_insertion/cylindrical/synthetic_repose_full_open_clear_view_gap20_1to0_20261011/report.json). A curated **staging** square 1.5 mm `000→004/7` seed passed the same kind of [preflight](/home/hyunsu/shared_data/AutoDex/precision_insertion/square/synthetic_repose_full_open_clear_view_0_4_seed7_20261011/report.json); square 0.5 mm `000→004` is also staged ([detail](SQUARE_TABLETOP_1000.md)). | The forward cylinder `000→001/191` seed had **held descent unreachable** in the earlier hypothetical layout; a complete forward path is not proven. Reverse and square passes are each for one hypothetical layout, not measured-session or physical reset evidence. Other directed square cells remain incomplete. |
@@ -92,7 +92,7 @@ writable on the host:
   --output-root /mnt/paradex2/hyunsu/NEW_foundpose_generated_handoff
 ```
 
-The completed [2026-10-11 NAS handoff](/mnt/paradex2/hyunsu/autodex_precision_insertion_foundpose_generated_20261011)
+The completed [2026-10-11 NAS handoff](/mnt/paradex2/hyunsu/handoff/20261011_foundpose_generated)
 contains `foundpose_generated_7objects.tar` (5,654,118,400 bytes; read-back
 SHA256 `4ce436bec22998fed7c4f91f564f7ef3b1172a2a1999ca15f017b798cdd00094`)
 and `manifest.json`. The script writes paths relative to `shared_data`, checks
@@ -117,7 +117,7 @@ candidate, a staged reset seed or a
 `repre.pth` from another object a usable canonical asset just to make an
 inventory appear complete.
 
-The current [square four-gap NAS handoff](/mnt/paradex2/hyunsu/autodex_precision_insertion_square_fullkey1000_handoff_20261011_10c455d)
+The current [square four-gap NAS handoff](/mnt/paradex2/hyunsu/handoff/20261011_square_fullkey1000_handoff_10c455d)
 contains the newly screened tabletop pools. A relocated scratch installation
 rebuilt all four catalogs with identical 31/24/24/41 eligibility counts;
 the source catalogs inside the handoff remain audit-only on another PC.
@@ -170,7 +170,7 @@ remain installed, and [all six full-pool catalogues](COLLISION_ONLY_CATALOGS.md)
 were regenerated, source-reopened and preflighted. Runtime selection does
 not imply robot motion or physical validation.
 The 112 new candidate directories are also packaged in a
-[source-verified NAS addendum](/mnt/paradex2/hyunsu/autodex_precision_insertion_cylinder_full_length_addendum_20261011_eb38993).
+[source-verified NAS addendum](/mnt/paradex2/hyunsu/handoff/20261011_cylinder_full_length_addendum_eb38993).
 Its 904 files passed NAS read-back SHA256 verification. The addendum is
 append-only and its catalogues are **audit-only** on another host; see the
 [handoff/install instructions](FULL_LENGTH_CYLINDER_PROPOSALS.md).

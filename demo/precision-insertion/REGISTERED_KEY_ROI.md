@@ -76,7 +76,7 @@ exact source paths and geometry are recorded in the generated JSON reports:
 and
 [`25322644`](/home/hyunsu/shared_data/AutoDex/precision_insertion/registered_key_roi_saved_probe_20261011/25322644.json).
 Identical readback-verified copies for the AutoDex PC are under
-`/mnt/paradex2/hyunsu/autodex_precision_insertion_registered_key_roi_20261011/`.
+`/mnt/paradex2/hyunsu/handoff/20261011_registered_key_roi/`.
 
 `session_key_baseline.load_session_key_baseline(...)` reads
 one **explicitly selected** socket capture from the frozen session bundle. It
