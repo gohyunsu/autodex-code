@@ -27,6 +27,14 @@ GREEN = "#42f58d"  # observed SAM ellipse/center
 CYAN = "#00daf3"   # planned geometry or measured socket pose
 PINK = "#f85dc7"   # Qwen box or multiview reprojection
 YELLOW = "#ffe15b"  # SAM mask
+METHOD_BY_PANEL = {
+    "observed_ellipse": "sam_half_ellipse",
+    "spatial_proxy": "sam_half_ellipse",
+    "sam_boundary_end": "sam_boundary_end",
+    "sam_rectangle_end": "sam_rectangle_end",
+    "unconstrained_cv_ellipse": "unconstrained_cv_ellipse",
+    "planned_projection": "planned_pose_projection_diagnostic",
+}
 
 
 def read(path: Path) -> dict:
@@ -57,10 +65,12 @@ def point(P: np.ndarray, xyz: np.ndarray | tuple[float, float, float]) -> list[f
     return (h[:2] / h[2]).tolist()
 
 
-def socket_ring(run: Path, camera: str) -> list[list[float]]:
+def socket_ring(run: Path, camera: str,
+                fixture_root: Path | None = None) -> list[list[float]]:
     P, _socket, calibration = camera_projection(run, camera)
     mode = select_mode("cylinder", float(calibration["mode"]["gap_mm"]))
-    root = Path(read(run / "endpoint_catalog.json")["shared_root"])
+    root = (fixture_root if fixture_root is not None else
+            Path(read(run / "endpoint_catalog.json")["shared_root"]))
     geometry = read(AssetPaths(root, mode).task_geometry)
     radius = float(geometry["socket_bore_radius_m"])
     z = float(geometry["socket_entry_plane_z_m"])
@@ -150,7 +160,8 @@ def _caption(panel: Image.Image, label: str) -> Image.Image:
 
 
 def render_view(row: dict, bbox: dict, boundary: dict | None,
-                comparison: dict, runs_root: Path) -> tuple[dict[str, Image.Image], dict]:
+                comparison: dict, runs_root: Path,
+                fixture_root: Path | None = None) -> tuple[dict[str, Image.Image], dict]:
     identity = (row["run_id"], row["camera_id"], row["frame_id"], row["source_sha256"])
     if identity != (bbox["run_id"], bbox["camera_id"], bbox["frame_id"],
                     bbox["source_sha256"]):
@@ -245,7 +256,7 @@ def render_view(row: dict, bbox: dict, boundary: dict | None,
     panels["planned_projection"] = prior
 
     run = runs_root / row["run_id"]
-    ring = socket_ring(run, row["camera_id"])
+    ring = socket_ring(run, row["camera_id"], fixture_root)
     final = original.copy()
     draw = ImageDraw.Draw(final)
     draw.line(_local(ring, crop) + [_local(ring[0], crop)], fill=CYAN, width=3)
@@ -281,6 +292,8 @@ def main() -> None:
     parser.add_argument("--socket-qc", required=True, type=Path)
     parser.add_argument("--runs-root", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--fixture-root", type=Path,
+                        help="Current location of the session fixture assets if moved")
     args = parser.parse_args()
     accepted = set(read(args.socket_qc)["accepted_runs"])
     # The 103429 manual five-view set supersedes its one-view core record.
@@ -308,7 +321,15 @@ def main() -> None:
     for row in rows:
         key = (row["run_id"], row["camera_id"])
         panels, provenance = render_view(row, boxes[key], boundaries.get(key),
-                                          comparison, root)
+                                          comparison, root, args.fixture_root)
+        per_view_files = {}
+        for name, method_name in METHOD_BY_PANEL.items():
+            path = (output / "methods" / method_name / "per_view" / name /
+                    f"{row['run_id']}_{row['camera_id']}_frame{row['frame_id']}.png")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            panels[name].save(path)
+            per_view_files[name] = str(path)
+        provenance["per_view_files"] = per_view_files
         evidence.append(provenance)
         episode = episode_panels.setdefault(row["run_id"], {})
         for name, panel in panels.items():
@@ -326,14 +347,7 @@ def main() -> None:
             folder.mkdir(parents=True, exist_ok=True)
             canvas.save(folder / f"{run_id}.png")
 
-            method_name = {
-                "observed_ellipse": "sam_half_ellipse",
-                "spatial_proxy": "sam_half_ellipse",
-                "sam_boundary_end": "sam_boundary_end",
-                "sam_rectangle_end": "sam_rectangle_end",
-                "unconstrained_cv_ellipse": "unconstrained_cv_ellipse",
-                "planned_projection": "planned_pose_projection_diagnostic",
-            }.get(name)
+            method_name = METHOD_BY_PANEL.get(name)
             if method_name is not None:
                 method_dir = output / "methods" / method_name / name
                 method_dir.mkdir(parents=True, exist_ok=True)
@@ -448,6 +462,8 @@ def main() -> None:
         lines.extend(f"- {step}" for step in procedures[method_name])
         lines.extend(["", "## Evidence and interpretation", "",
                  "All images are overlays on saved real undistorted AutoDex frames.",
+                 "`per_view/` contains one PNG per camera frame; the other",
+                 "image folders contain episode-level multiview grids.",
                  "Source IDs, timestamps, original hashes, and mask hashes are in",
                  "`../../evidence_manifest.json`. Reprojection error measures",
                  "cross-camera consistency, not physical center accuracy.", "",
@@ -455,8 +471,9 @@ def main() -> None:
                  "the other candidates on the same accepted episodes; the",
                  "`../../socket_pose_visual_qc.json` records exclusions.", "",
                  "## Outputs", ""])
-        lines.extend(f"- `{p.relative_to(method_dir)}`" for p in
-                     image_rows + gif_rows + [method_dir / "results.json"])
+        lines.extend(
+            f"- [{p.relative_to(method_dir)}]({p.relative_to(method_dir)})"
+            for p in image_rows + gif_rows + [method_dir / "results.json"])
         (method_dir / "README.md").write_text("\n".join(lines)+"\n", encoding="utf-8")
     (output / "evidence_manifest.json").write_text(
         json.dumps({"schema": "saved_key_face_separate_roles_v1",

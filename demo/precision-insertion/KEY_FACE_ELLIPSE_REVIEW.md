@@ -2,6 +2,10 @@
 
 이 문서는 `/home/robot/shared_data/hyunsu/tmp/20261024_key_face_center_methods/`에 저장된 **읽기 전용 재생**의 절차와 결과다. 입력은 AutoDex가 이미 촬영한 undistorted `preinsert` PNG 및 해당 세션의 카메라·소켓 보정이다. 카메라 연결, 로봇 동작, 새 에피소드 XY 명령은 없다. 그림의 선과 점은 원본 위에 계산 결과를 그린 주석이다.
 
+## 파일 위치
+
+이 폴더의 `inputs/`는 이번 Qwen·SAM3 입력 및 마스크와 소켓 규격별 `fixture_assets/` 스냅샷, `methods/`는 방법별 최종 결과와 카메라별 PNG, `role_images/`는 표시 목적별 멀티뷰 그리드다. `archive/`에는 이전 키 끝점·타원 검토본을 모았다. 이동 전후 절대경로와 10개 뷰의 원본·마스크 해시 검증 기록은 `asset_layout.json`에, 규격별 형상 파일의 복사 출처와 SHA-256은 `inputs/fixture_assets/PROVENANCE.json`에 있다. 기존 대형 보관본 `../20261023_prev/`는 그대로 두었다. 실제 AutoDex 촬영 원본과 에피소드 보정 파일은 해당 AutoDex 실험 디렉터리에 남아 있다.
+
 ## 두 타원의 뜻
 
 - **초록색, 관측 타원:** Qwen이 키의 대략적인 박스를 찾고 SAM3가 분할한 **실제 영상 마스크의 아래쪽 윤곽**에 맞춘 타원이다. 그 중심을 키 아래 면 중심의 2D proxy로 선택했다. 이 적합에는 소켓 포즈, 계획 키의 원형 투영, 계획된 중심 좌표가 들어가지 않는다.
@@ -38,7 +42,7 @@ Find the WHITE CYLINDRICAL KEY directly held by the BLACK ROBOT HAND. Ignore any
 
 ## 그림과 GIF
 
-`methods/`에는 방법별 하위 폴더를 두었다. 각 방법 폴더에는 세 에피소드의 결과 PNG, `results.json`, 상세 `README.md`가 있다. `sam_half_ellipse/animations/`에는 대표 뷰의 단계별 GIF도 있다. 계획 자세 원 투영은 관측 후보와 구분해 `planned_pose_projection_diagnostic/`에 두었다.
+`methods/`에는 방법별 하위 폴더를 두었다. 각 방법 폴더의 `per_view/`에는 **카메라별 PNG 한 장씩** 저장했다. 파일명에는 에피소드 ID, 카메라 ID, 프레임 ID가 들어 있다. 그 밖에 세 에피소드의 멀티뷰 그리드, `results.json`, 상세 `README.md`가 있다. `sam_half_ellipse/animations/`에는 대표 뷰의 단계별 GIF도 있다. 계획 자세 원 투영은 관측 후보와 구분해 `planned_pose_projection_diagnostic/`에 두었다.
 
 그 밖에 **그림의 역할**별 `role_images/`도 나눴다. 세 에피소드 모두 같은 이름의 PNG가 있다.
 
@@ -49,10 +53,11 @@ Find the WHITE CYLINDRICAL KEY directly held by the BLACK ROBOT HAND. Ignore any
 - `role_images/planned_projection/`: 계획 6D 키 자세의 30 mm 지름 원 투영만 표시. **관측 타원이 아니다.**
 - `role_images/spatial_proxy/`: 관측 키 타원·다중 뷰 proxy의 재투영·측정 소켓 입구만 표시.
 - `animations/`: 실제 에피소드별 5단계 GIF. 각 단계는 대표 카메라 `24122734`의 동일한 저장 프레임을 쓴다. GIF에는 단계명만 있다. `animation_stages/`에 GIF의 개별 프레임도 있다. 다른 카메라는 각 역할별 PNG에서 볼 수 있다.
+- `methods/sam_half_ellipse/animations_multiview/`: 각 에피소드의 모든 저장 뷰를 가로로 동시에 보여주는 6단계 GIF. 마지막 두 단계에서 측정 소켓 자세의 축을 청록 점선으로, 다중 뷰 키 끝면 3D proxy와 같은 높이의 축 목표점 및 XY 화살표를 표시한다. 소켓 좌표계의 계산값은 모든 뷰 아래 공통 영역 한 곳에 mm로 표시한다. [계산과 색상 설명](/home/robot/shared_data/hyunsu/tmp/20261024_key_face_center_methods/methods/sam_half_ellipse/MULTIVIEW_XY_ANIMATION.md)에 기하식과 한계를 적었다.
 
-대표 사례: [5뷰 에피소드 관측 타원](/home/robot/shared_data/hyunsu/tmp/20261024_key_face_center_methods/methods/sam_half_ellipse/observed_ellipse/20261022_103429_752726.png), [별도 계획 타원](/home/robot/shared_data/hyunsu/tmp/20261024_key_face_center_methods/methods/planned_pose_projection_diagnostic/planned_projection/20261022_103429_752726.png), [단계 GIF](/home/robot/shared_data/hyunsu/tmp/20261024_key_face_center_methods/methods/sam_half_ellipse/animations/20261022_103429_752726.gif).
+대표 사례: [카메라 24122734 한 장의 관측 타원](/home/robot/shared_data/hyunsu/tmp/20261024_key_face_center_methods/methods/sam_half_ellipse/per_view/observed_ellipse/20261022_103429_752726_24122734_frame1761792.png), [5뷰 그리드](/home/robot/shared_data/hyunsu/tmp/20261024_key_face_center_methods/methods/sam_half_ellipse/observed_ellipse/20261022_103429_752726.png), [별도 계획 타원](/home/robot/shared_data/hyunsu/tmp/20261024_key_face_center_methods/methods/planned_pose_projection_diagnostic/planned_projection/20261022_103429_752726.png), [단계 GIF](/home/robot/shared_data/hyunsu/tmp/20261024_key_face_center_methods/methods/sam_half_ellipse/animations/20261022_103429_752726.gif).
 
-`evidence_manifest.json`에는 각 원본의 카메라·프레임 ID·timestamp·원본 SHA-256·마스크 SHA-256·프롬프트와 선택된 점 좌표를 보존했다. `method_comparison.json`에는 방법별 3D proxy와 카메라별 오차가 있다.
+`evidence_manifest.json`에는 각 원본의 카메라·프레임 ID·timestamp·원본 SHA-256·마스크 SHA-256·프롬프트·선택된 점 좌표와 해당 카메라별 이미지 경로를 보존했다. `method_comparison.json`에는 방법별 3D proxy와 카메라별 오차가 있다.
 
 ## 코드와 실행 범위
 

@@ -1,6 +1,6 @@
 # 저장된 pre-insertion 사진에서 키 끝면 중심의 시각적 proxy
 
-이 실험은 실제 AutoDex 에피소드에 저장된 **undistorted 원본 PNG**만 다시 읽는다. 카메라 연결, 로봇 명령, 다음 시행의 XY 갱신은 수행하지 않는다. 출력 그림과 JSON은 `/home/robot/shared_data/hyunsu/tmp/key_tip_method_20261024/`에 있다. 모든 점은 추정치이며, 실제 키 끝면의 3D 정답이나 로봇 목표점으로 사용하지 않았다.
+이 실험은 실제 AutoDex 에피소드에 저장된 **undistorted 원본 PNG**만 다시 읽는다. 카메라 연결, 로봇 명령, 다음 시행의 XY 갱신은 수행하지 않는다. 이전 검토의 출력 그림과 JSON은 `/home/robot/shared_data/hyunsu/tmp/20261024_key_face_center_methods/archive/previous_key_tip_review/`에 정리했다. 모든 점은 추정치이며, 실제 키 끝면의 3D 정답이나 로봇 목표점으로 사용하지 않았다.
 
 ## 입력과 단계
 
