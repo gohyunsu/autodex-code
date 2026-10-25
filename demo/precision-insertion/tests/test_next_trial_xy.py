@@ -39,6 +39,17 @@ def test_socket_xy_error_becomes_wrist_only_compensation(tmp_path):
     displacement = (T_socket_key @ corrected)[:3, 3] - (
         T_socket_key @ held)[:3, 3]
     assert displacement == pytest.approx([*delta, 0.0])
+    tilt = np.pi / 6
+    T_robot_socket = np.eye(4)
+    T_robot_socket[:3, :3] = [
+        [np.cos(tilt), 0, np.sin(tilt)],
+        [0, 1, 0],
+        [-np.sin(tilt), 0, np.cos(tilt)],
+    ]
+    robot_displacement = (T_robot_socket @ T_socket_key @ corrected)[:3, 3] - (
+        T_robot_socket @ T_socket_key @ held)[:3, 3]
+    assert robot_displacement == pytest.approx(
+        T_robot_socket[:3, :3] @ np.array([*delta, 0.0]))
     assert corrected[:3, :3] == pytest.approx(held[:3, :3])
     assert held[:3, 3] == pytest.approx([0.01, -0.02, 0.03])
     accumulated = compensated_key_hand_relation(

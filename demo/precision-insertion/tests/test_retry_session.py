@@ -27,12 +27,30 @@ from precision_insertion.records import begin_attempt  # noqa: E402
 from precision_insertion.retry_session import (  # noqa: E402
     RetrySessionLimits, assess_and_plan_observed_xy_retry,
     assess_unobserved_xy_diagnostic, assess_grounded_xy_diagnostic,
-    write_retry_session_artifacts,
+    write_retry_session_artifacts, _preinsert_xy_cameras,
 )
 from precision_insertion import retry_session  # noqa: E402
 from precision_insertion.xy_retry import XYRetryAssessment  # noqa: E402
 from precision_insertion.xy_voting import ChoiceDecision  # noqa: E402
 from test_xy_retry import _setup  # noqa: E402
+
+
+def test_tracked_tip_uses_configured_views_and_matching_temporal_camera(
+        monkeypatch):
+    cameras = [str(100 + index) for index in range(20)]
+    rows = {camera: {"frame_id": 42} for camera in cameras}
+    selected = ",".join(cameras[:5])
+    monkeypatch.setenv("PRECISION_VLM_CAMERA_IDS", selected)
+    window = {"temporal_window": {
+        "status": "complete", "camera_id": cameras[10],
+        "target_frame_id": 42}}
+    assert _preinsert_xy_cameras(rows, window, "tracked_tip") == sorted(
+        set(cameras[:5]) | {cameras[10]})
+    assert _preinsert_xy_cameras(rows, window, "sam_half_ellipse") == cameras[:5]
+    window["temporal_window"]["target_frame_id"] = 41
+    assert _preinsert_xy_cameras(rows, window, "tracked_tip") == cameras[:5]
+    monkeypatch.delenv("PRECISION_VLM_CAMERA_IDS")
+    assert _preinsert_xy_cameras(rows, {}, "tracked_tip") == sorted(cameras)
 
 
 def _inputs(tmp_path, monkeypatch):

@@ -150,6 +150,20 @@ their respective saved manifests. The ordinary `vlm` and optional
 `sam_half_ellipse` modes continue to use the same saved undistorted PNG for
 their per-view observation.
 
+The opt-in `tracked_tip` route previously re-read all 20 preinsert PNGs even
+when the live run configured five assessment cameras. It now uses those five
+and adds the temporal tracking camera only when the saved window identifies
+the exact preinsert frame. An offline replay with no camera selection still
+uses every available view. The raw 20-camera capture and its original frame
+IDs are unchanged. On one real saved preinsert bundle, warmed read, decode,
+decoded-pixel-hash and PNG-byte-hash loops took 0.868/0.893 s for 20 views
+and 0.266/0.291 s for the six configured-plus-temporal views. This isolates
+selected-view I/O; it excludes full raw-capture verification, inference and
+robot time. A public diagnostic test binds the selected frames into the saved
+retry report. None of the ten stored nominal post-lift reports in this
+experiment tree contains a nonzero `wrist_correction_socket_m`, so actual
+next-attempt application remains unobserved in these episodes.
+
 The old `max_total_offset_m` retry budget remains an optional legacy field;
 the active FR3 stage factory sets it to `None`. The live launcher defaults to
 the VLM estimator. Existing `BOARD_FREE_MODE.md` code is statically tested

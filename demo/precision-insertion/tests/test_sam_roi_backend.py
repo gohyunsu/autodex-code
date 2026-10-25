@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import numpy as np
 from PIL import Image
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion import retry_session  # noqa: E402
@@ -212,8 +213,9 @@ def test_saved_preinsert_xy_reuses_source_pngs_and_checks_their_hashes(tmp_path)
     assert not (tmp_path / "xy_bad").exists()
 
 
+@pytest.mark.parametrize("estimator", ["sam_half_ellipse", "tracked_tip"])
 def test_public_saved_diagnostic_binds_only_selected_camera_images(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, estimator,
 ):
     mode = select_mode("cylinder", 20.)
     bundle = tmp_path / "raw"
@@ -230,6 +232,9 @@ def test_public_saved_diagnostic_binds_only_selected_camera_images(
         png_hashes[camera] = hashlib.sha256(path.read_bytes()).hexdigest()
     manifest = {"frame_evidence": rows, "image_file_sha256": png_hashes,
                 "request_id": 42}
+    if estimator == "tracked_tip":
+        manifest["temporal_window"] = {
+            "status": "complete", "camera_id": "400", "target_frame_id": 400}
     (bundle / "manifest.json").write_text(json.dumps(manifest))
     postlift = tmp_path / "postlift.json"
     postlift.write_text("{}")
@@ -254,13 +259,21 @@ def test_public_saved_diagnostic_binds_only_selected_camera_images(
                         "validate_session_camera_calibration", lambda *_a, **_k: None)
 
     def alignment(**kwargs):
-        assert [frame.camera_id for frame in kwargs["frames"]] == [
-            "100", "200", "300"]
-        return ("geometry", {"status": "diagnostic_metric_xy_correction",
-                             "sam_half_ellipse_views": []}, {})
+        expected = (["100", "200", "300", "400"]
+                    if estimator == "tracked_tip" else
+                    ["100", "200", "300"])
+        assert [frame.camera_id for frame in kwargs["frames"]] == expected
+        record = {"status": "diagnostic_metric_xy_correction",
+                  "sam_half_ellipse_views": []}
+        return (("geometry", record) if estimator == "tracked_tip" else
+                ("geometry", record, {}))
 
-    monkeypatch.setattr(retry_session, "_compute_sam_half_ellipse_alignment",
-                        alignment)
+    if estimator == "tracked_tip":
+        monkeypatch.setattr(retry_session, "_compute_tracked_alignment",
+                            alignment)
+    else:
+        monkeypatch.setattr(retry_session, "_compute_sam_half_ellipse_alignment",
+                            alignment)
     calibration = SimpleNamespace(record={
         "camera_calibration_sha256": "calibration",
         "camera_calibration": {
@@ -280,10 +293,12 @@ def test_public_saved_diagnostic_binds_only_selected_camera_images(
         preinsert_checkpoint_path=checkpoint,
         postlift_preflight_report_path=postlift,
         backend=object(), limits=limits,
-        alignment_limits=SimpleNamespace(), xy_estimator="sam_half_ellipse",
-        sam_segmentor=object())
-    assert set(result.frame_binding) == {"100", "200", "300"}
+        alignment_limits=SimpleNamespace(), xy_estimator=estimator,
+        key_reference_dir=tmp_path, sam_segmentor=object())
+    expected = ({"100", "200", "300", "400"}
+                if estimator == "tracked_tip" else {"100", "200", "300"})
+    assert set(result.frame_binding) == expected
     output = write_saved_preinsert_xy_artifacts(result, tmp_path / "xy")
     report = json.loads((output / "report.json").read_text())
-    assert set(report["source_image_file_sha256"]) == {"100", "200", "300"}
+    assert set(report["source_image_file_sha256"]) == expected
     assert sorted(path.name for path in output.iterdir()) == ["report.json"]

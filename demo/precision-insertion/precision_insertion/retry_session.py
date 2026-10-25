@@ -75,6 +75,21 @@ def _digest(value: dict) -> str:
     ).encode("utf-8")).hexdigest()
 
 
+def _preinsert_xy_cameras(frame_rows: Mapping, capture: Mapping,
+                          xy_estimator: str) -> list[str]:
+    """Use the configured views plus the exact-frame temporal tip camera."""
+    selected = set(assessment_cameras(frame_rows))
+    if xy_estimator == "tracked_tip":
+        window = capture.get("temporal_window")
+        if isinstance(window, dict) and window.get("status") == "complete":
+            camera = window.get("camera_id")
+            if (camera in frame_rows and
+                    window.get("target_frame_id") ==
+                    frame_rows[camera]["frame_id"]):
+                selected.add(camera)
+    return sorted(selected)
+
+
 def _cylinder_tip_and_rois(
     *, postlift_file: Path, socket: np.ndarray, tip_z_m: float,
     socket_rim_z_m: float, frames: Sequence[CalibratedXYFrame],
@@ -1184,8 +1199,8 @@ def assess_saved_preinsert_xy_diagnostic(
         max_hand_command_error_raw=limits.max_hand_command_error_raw,
         max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
     frame_rows = capture["frame_evidence"]
-    selected_cameras = (sorted(frame_rows) if xy_estimator == "tracked_tip"
-                        else assessment_cameras(frame_rows))
+    selected_cameras = _preinsert_xy_cameras(
+        frame_rows, capture, xy_estimator)
     frames = []
     for camera in selected_cameras:
         row = frame_rows[camera]
