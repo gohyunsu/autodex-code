@@ -25,6 +25,12 @@ def _reply(value: dict) -> None:
     print(json.dumps(value, allow_nan=False), flush=True)
 
 
+def _error_response(request: dict, exc: Exception) -> dict:
+    return {"type": "error", "request_id": request.get("request_id"),
+            "camera_id": request.get("camera_id"),
+            "error": f"{type(exc).__name__}: {exc}"}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, required=True)
@@ -91,8 +97,7 @@ def main() -> int:
                 "cuda_peak_bytes": int(torch.cuda.max_memory_allocated()),
             })
         except Exception as exc:
-            _reply({"type": "error", "request_id": request_id,
-                    "error": f"{type(exc).__name__}: {exc}"})
+            _reply(_error_response(request, exc))
     return 0
 
 

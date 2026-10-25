@@ -22,6 +22,7 @@ from precision_insertion.retry_session import (  # noqa: E402
     write_saved_preinsert_xy_artifacts,
 )
 from precision_insertion.sam_roi_backend import SamRoiBackend  # noqa: E402
+from sam_roi_worker import _error_response  # noqa: E402
 
 
 def test_worker_protocol_keeps_rgb_roi_and_binary_mask(tmp_path):
@@ -55,6 +56,44 @@ for line in sys.stdin:
         assert mask[3, 2] == 255 and np.count_nonzero(mask) == 1
         assert metadata["score"] == .8
         assert metadata["model"] == str(checkpoint)
+    finally:
+        backend.close()
+
+
+def test_worker_error_is_camera_bound_and_next_view_can_continue(tmp_path):
+    assert _error_response(
+        {"request_id": "one", "camera_id": "cam_a"},
+        ValueError("mask failed")) == {
+            "type": "error", "request_id": "one", "camera_id": "cam_a",
+            "error": "ValueError: mask failed"}
+    worker = tmp_path / "worker.py"
+    worker.write_text('''
+import json, sys
+print(json.dumps({"type":"ready","model":sys.argv[2]}), flush=True)
+for line in sys.stdin:
+    row=json.loads(line)
+    if row["type"]=="close": break
+    common={"request_id":row["request_id"],"camera_id":row["camera_id"]}
+    if row["camera_id"]=="cam_a":
+        print(json.dumps({**common,"type":"error","error":"ValueError: mask failed"}),flush=True)
+    else:
+        print(json.dumps({**common,"type":"result","image_size_wh":[8,8],
+          "mask_png_base64":None,"score":None,"inference_s":0.01,
+          "cuda_peak_bytes":0}),flush=True)
+''')
+    checkpoint = tmp_path / "model.pt"
+    checkpoint.write_bytes(b"test")
+    backend = SamRoiBackend(
+        python_path=Path(sys.executable), checkpoint=checkpoint,
+        worker_path=worker, stderr_path=tmp_path / "worker.log")
+    try:
+        image = Image.new("RGB", (8, 8), "white")
+        with pytest.raises(RuntimeError, match="cam_a: ValueError: mask failed"):
+            backend.segment(image, camera_id="cam_a", prompt="white cylinder")
+        assert backend._process.poll() is None
+        mask, metadata = backend.segment(
+            image, camera_id="cam_b", prompt="white cylinder")
+        assert mask is None and metadata["inference_s"] == .01
     finally:
         backend.close()
 

@@ -138,7 +138,10 @@ terminates that worker. The affected view is recorded as unavailable; a later
 camera cannot consume a stale reply as its own mask. Without enough remaining
 views, the retry produces no metric XY advice and follows the ordinary
 recovery path. Subprocess protocol tests cover timeout, wrong ID, and bad
-JSON without contacting a camera or robot.
+JSON without contacting a camera or robot. The worker's ordinary error reply
+now includes its camera ID, matching the client protocol: a segmentation
+error on one view can be recorded and the healthy worker can process another
+view instead of being mistaken for a stale response.
 
 On the real preinsert bundle of `20261022_103429_752726`, three read-only
 repetitions of reading and re-encoding 20 PNGs to memory took
