@@ -88,6 +88,7 @@ from .retry_session import (
     assess_and_plan_observed_xy_retry, assess_unobserved_xy_diagnostic,
     write_retry_session_artifacts, write_saved_preinsert_xy_artifacts,
 )
+from .timing_profile import timed
 from .grounded_alignment import AlignmentLimits, NEXT_TRIAL_XY_MAX_STEP_M
 from .xy_voting import VLM_XY_STEP_M
 from .grounded_lateral import (
@@ -3152,7 +3153,9 @@ class SessionRunner:
             sam_segmentor=sam_segmentor)
         output = (self._attempt_dir / "xy_retry_assessments" /
                   f"{self._retry_assessment_index:03d}")
-        write_saved_preinsert_xy_artifacts(result, output)
+        with timed("xy_retry.source_artifact_write", phase="evidence",
+                   kind="io", selected_cameras=len(result.frame_binding)):
+            write_saved_preinsert_xy_artifacts(result, output)
         self._retry_assessment_index += 1
         return result
 

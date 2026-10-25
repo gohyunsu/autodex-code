@@ -30,8 +30,10 @@ producer. No live robot motion was run while implementing or testing it.
    increment. The approximation is not a measured physical face center.
 6. The attempt's `xy_retry_assessments/NNN/` report records image identities,
    Qwen prompt/answer, crop/ROI, SAM3 prompt, fit, model latency/CUDA peak and
-   PNG hashes. ROI masks are saved in `sam_roi_masks/`. A subsequent episode
-   consumes the advice through the same existing retry ledger.
+   PNG hashes. ROI masks are saved in `sam_roi_masks/`. The already saved raw
+   preinsert bundle remains the image source; only the selected camera PNG
+   byte hashes are rechecked, and no second full-frame PNG set is written.
+   A subsequent episode consumes the advice through the same retry ledger.
 
 The worker defaults to `/home/robot/anaconda3/envs/autodex/bin/python` and
 `/home/robot/shared_data/AutoDex/weights/sam3/sam3.pt`. Override them with
@@ -72,6 +74,10 @@ views and reports an approximate socket-frame tip
 `[-9.656, -2.600] mm`. The 3D point differs from the earlier offline proxy
 by at most `0.042 mm` per coordinate. This checks numerical wiring and
 evidence binding, not the physical accuracy of that correction.
+`saved_writer_replay_20261022_103429/report.json` exercises the new artifact
+writer on the same real raw bundle and masks. It binds the five selected
+source PNG hashes, saves five ROI masks, and creates no duplicate full-frame
+PNG directory.
 
 The saved comparison does not prove physical key-tip accuracy, fixture-pose
 accuracy, or insertion success. The active recipient stage's old path was

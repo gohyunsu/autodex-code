@@ -1254,7 +1254,8 @@ def assess_saved_preinsert_xy_diagnostic(
         hashlib.sha256(checkpoint_path.read_bytes()).hexdigest(), bundle,
         hashlib.sha256((bundle / "manifest.json").read_bytes()).hexdigest(),
         postlift_file, hashlib.sha256(postlift_file.read_bytes()).hexdigest(),
-        frame_rows, joint_sample, alignment, observations, sam_masks)
+        {camera: frame_rows[camera] for camera in selected_cameras},
+        joint_sample, alignment, observations, sam_masks)
 
 
 def assess_grounded_xy_diagnostic(
@@ -1404,6 +1405,30 @@ def assess_grounded_xy_diagnostic(
         verified, joint_sample, alignment, tuple(observations))
 
 
+def _write_sam_roi_masks(
+    result: PreinsertXYDiagnostic, target: Path, files: dict[str, str],
+) -> None:
+    if result.sam_roi_masks_png is None:
+        return
+    records = {row["camera_id"]: row for row in
+               result.alignment["sam_half_ellipse_views"]}
+    expected = {camera for camera, row in records.items()
+                if row.get("mask_file_sha256") is not None}
+    if set(result.sam_roi_masks_png) != expected:
+        raise ValueError("SAM ROI mask evidence is incomplete")
+    if expected:
+        mask_dir = target / "sam_roi_masks"
+        mask_dir.mkdir()
+    for camera, payload in sorted(result.sam_roi_masks_png.items()):
+        safe = _safe_id(camera, "SAM ROI camera ID")
+        path = mask_dir / f"{safe}.png"
+        digest = hashlib.sha256(payload).hexdigest()
+        if records[camera].get("mask_file_sha256") != digest:
+            raise ValueError("SAM ROI mask changed before artifact write")
+        path.write_bytes(payload)
+        files[str(path.relative_to(target))] = digest
+
+
 def write_retry_session_artifacts(
     result: RetrySessionResult | UnobservedXYDiagnostic | GroundedXYDiagnostic |
     PreinsertXYDiagnostic,
@@ -1429,25 +1454,8 @@ def write_retry_session_artifacts(
             raise ValueError("saved retry image differs from VLM source pixels")
         files[str(path.relative_to(target))] = hashlib.sha256(
             path.read_bytes()).hexdigest()
-    if (isinstance(result, PreinsertXYDiagnostic) and
-            result.sam_roi_masks_png is not None):
-        records = {row["camera_id"]: row for row in
-                   result.alignment["sam_half_ellipse_views"]}
-        expected = {camera for camera, row in records.items()
-                    if row.get("mask_file_sha256") is not None}
-        if set(result.sam_roi_masks_png) != expected:
-            raise ValueError("SAM ROI mask evidence is incomplete")
-        if expected:
-            mask_dir = target / "sam_roi_masks"
-            mask_dir.mkdir()
-        for camera, payload in sorted(result.sam_roi_masks_png.items()):
-            safe = _safe_id(camera, "SAM ROI camera ID")
-            path = mask_dir / f"{safe}.png"
-            digest = hashlib.sha256(payload).hexdigest()
-            if records[camera].get("mask_file_sha256") != digest:
-                raise ValueError("SAM ROI mask changed before artifact write")
-            path.write_bytes(payload)
-            files[str(path.relative_to(target))] = digest
+    if isinstance(result, PreinsertXYDiagnostic):
+        _write_sam_roi_masks(result, target, files)
     if (not isinstance(result, (GroundedXYDiagnostic, PreinsertXYDiagnostic)) and
             result.assessment is not None and result.assessment.overlays is not None):
         overlay_dir = target / "overlays"
@@ -1479,16 +1487,35 @@ def write_retry_session_artifacts(
 def write_saved_preinsert_xy_artifacts(
     result: PreinsertXYDiagnostic, output_dir: Path,
 ) -> Path:
-    """Persist a diagnostic by reloading its already verified raw bundle."""
+    """Reference the verified source PNGs without re-encoding them."""
     if not isinstance(result, PreinsertXYDiagnostic):
         raise TypeError("expected a saved preinsert XY diagnostic")
-    frames = []
+    bundle = result.preinsert_bundle_path
+    manifest_file = bundle / "manifest.json"
+    manifest_bytes = manifest_file.read_bytes()
+    if hashlib.sha256(manifest_bytes).hexdigest() != result.preinsert_manifest_sha256:
+        raise ValueError("saved preinsert manifest changed before artifact write")
+    manifest = json.loads(manifest_bytes)
+    source_files = {}
     for camera, row in sorted(result.frame_binding.items()):
-        image = cv2.imread(str(result.preinsert_bundle_path / "images" /
-                               f"{camera}.png"), cv2.IMREAD_COLOR)
-        if image is None or image_sha256(image) != row["image_sha256"]:
+        safe = _safe_id(camera, "saved preinsert camera ID")
+        expected = manifest["image_file_sha256"].get(camera)
+        if (manifest["frame_evidence"].get(camera) != row or
+                not isinstance(expected, str)):
+            raise ValueError("saved preinsert frame binding changed")
+        image_file = bundle / "images" / f"{safe}.png"
+        if hashlib.sha256(image_file.read_bytes()).hexdigest() != expected:
             raise ValueError("saved preinsert image changed before artifact write")
-        frames.append(LabeledFrame(
-            camera, "preinsert_hold", row["timestamp_s"],
-            Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))))
-    return write_retry_session_artifacts(result, frames, output_dir)
+        source_files[camera] = expected
+    target = Path(output_dir).expanduser().resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.mkdir(exist_ok=False)
+    files = {}
+    _write_sam_roi_masks(result, target, files)
+    report = result.to_record()
+    report["source_image_file_sha256"] = source_files
+    report["artifacts_sha256"] = files
+    with (target / "report.json").open("x", encoding="utf-8") as stream:
+        json.dump(report, stream, indent=2, sort_keys=True, allow_nan=False)
+        stream.write("\n")
+    return target

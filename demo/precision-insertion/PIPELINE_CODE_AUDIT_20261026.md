@@ -32,6 +32,13 @@ floating-point precision. Entry-to-verification translation equals
 is approximately `[0.0092, -0.0016, -1.0000]` in robot coordinates. This
 checks internal transform composition only; it cannot establish that the
 measured socket or hand-eye pose was physically correct.
+The same calculation was repeated on six saved **20 mm** post-lift reports
+from `20261020_090836_567804` through `20261021_121211_290331`.
+All six compose `T_robot_key_stage @ T_key_hand` exactly to their recorded
+wrist targets, place the entry key origin on the recorded socket XY axis,
+and move entry to verification by `0.020 m` along the recorded insertion
+axis (floating-point residual below `1.1e-16 m`). These records have zero
+retry XY correction, so they do not validate a physically applied correction.
 
 ## SAM3 half-ellipse: from offline result to optional live XY path
 
@@ -55,7 +62,16 @@ the stock AutoDex snapshot producer remain unchanged:
   next-trial advice. The attempt report records the image frame ID, camera
   timestamp/hash, prompts, response, ROI, fitted center, mask PNG hash,
   per-view model time and CUDA peak memory. The small mask PNGs are saved in
-  `xy_retry_assessments/NNN/sam_roi_masks/`.
+  `xy_retry_assessments/NNN/sam_roi_masks/`. The raw preinsert image bundle is
+  referenced by its saved manifest and source PNG hashes; the retry writer
+  no longer re-encodes all 20 camera PNGs into a second bundle.
+
+On the real preinsert bundle of `20261022_103429_752726`, three read-only
+repetitions of reading and re-encoding 20 PNGs to memory took
+`12.502 / 11.599 / 12.102 s`. Reading and hashing the five selected original
+PNG files took `0.009 / 0.008 / 0.007 s`. This isolates the redundant image
+work and excludes filesystem writes, inference, and robot time; it is not a
+measured end-to-end episode speedup.
 
 Full-frame SAM3 with `white cylinder` was rejected for this route: on six
 saved accepted-socket views it found the key in only two ROIs; changing the
