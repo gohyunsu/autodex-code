@@ -59,8 +59,10 @@ for line in sys.stdin:
         backend.close()
 
 
+@pytest.mark.parametrize("failure", [
+    None, "one_qwen", "one_sam", "all_qwen", "all_sam", "mixed_all"])
 def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, failure,
 ):
     mode = select_mode("cylinder", 20.)
     geometry = tmp_path / "geometry.json"
@@ -101,6 +103,10 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
         def infer_for_camera(self, camera, images, prompt):
             assert prompt.startswith(f"Camera {camera}.")
             assert images[0].size == (512, 512)
+            if (failure == "all_qwen" or
+                    failure == "one_qwen" and camera == "cam_c" or
+                    failure == "mixed_all" and camera == "cam_a"):
+                raise RuntimeError(f"capture-PC Qwen {camera} unavailable")
             return '{"bbox":[400,350,600,600]}'
 
     class MaskBackend:
@@ -108,11 +114,29 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
 
         def segment(self, image, *, camera_id, prompt):
             assert camera_id in rows and prompt == "white cylinder"
+            if (failure == "all_sam" or
+                    failure == "one_sam" and camera_id == "cam_c" or
+                    failure == "mixed_all" and camera_id != "cam_a"):
+                raise TimeoutError(f"SAM3 ROI {camera_id} timed out")
             mask = np.zeros((image.height, image.width), np.uint8)
             mask[62:145, 55:100] = 255
             return mask, {"score": .9, "inference_s": .01,
                           "cuda_peak_bytes": 100, "model": self.model}
 
+    if failure in {"all_qwen", "all_sam", "mixed_all"}:
+        source = ("XY VLM backend" if failure == "all_qwen" else
+                  "SAM3 ROI" if failure == "all_sam" else
+                  "XY VLM/SAM backend")
+        with pytest.raises(RuntimeError, match=source + " unavailable"):
+            retry_session._compute_sam_half_ellipse_alignment(
+                mode=mode, root=tmp_path, calibration=calibration,
+                postlift_file=postlift, frames=frames, frame_rows=rows,
+                backend=BoxBackend(), sam_segmentor=MaskBackend(),
+                intrinsics_full=intrinsics, extrinsics_full=extrinsics,
+                alignment_limits=SimpleNamespace(
+                    max_reprojection_px=5., min_parallax_deg=1.),
+                search_index=0, max_nominal_tip_height_error_m=.03)
+        return
     _hash, alignment, masks = (
         retry_session._compute_sam_half_ellipse_alignment(
             mode=mode, root=tmp_path, calibration=calibration,
@@ -123,9 +147,18 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
                 max_reprojection_px=5., min_parallax_deg=1.),
             search_index=0, max_nominal_tip_height_error_m=.03))
     assert alignment["estimator"] == "sam3_half_ellipse_key_face_proxy"
+    assert alignment["status"] == "diagnostic_metric_xy_correction"
     assert len(alignment["sam_half_ellipse_views"]) == 3
-    assert set(masks) == {"cam_a", "cam_b", "cam_c"}
+    expected = ({"cam_a", "cam_b", "cam_c"} if failure is None else
+                {"cam_a", "cam_b"})
+    assert set(masks) == expected
     for record in alignment["sam_half_ellipse_views"]:
+        if record["camera_id"] not in expected:
+            assert record["admitted"] is False
+            assert record["reason"] == (
+                "qwen_backend_unavailable" if failure == "one_qwen" else
+                "sam_backend_unavailable")
+            continue
         assert record["admitted"] is True
         assert record["mask_file_sha256"] == hashlib.sha256(
             masks[record["camera_id"]]).hexdigest()

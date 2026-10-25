@@ -811,6 +811,7 @@ def _observe_grounded_axis_line(
     backend: ImageVLM, frames: Sequence[CalibratedXYFrame], *,
     point_field: str, point_description: str, phase: str, stage: str,
     crop_context_by_camera: Mapping[str, str] | None = None,
+    tolerate_backend_failure: bool = False,
 ) -> tuple[list[GroundedLineView], list[VLMObservation]]:
     """Shared original-pixel parser for a visible key point and axis line."""
     if getattr(backend, "native_pixel_coordinates", False) is not True:
@@ -850,10 +851,21 @@ def _observe_grounded_axis_line(
             f"{coordinate_description}"
         )
         started = time.perf_counter()
-        with timed("vlm.infer", phase="vlm", kind="inference",
-                   stage="grounded_axis", camera_id=frame.camera_id,
-                   model=_backend_model(backend), image_count=1):
-            answer = backend.infer([frame.raw], prompt)
+        try:
+            with timed("vlm.infer", phase="vlm", kind="inference",
+                       stage="grounded_axis", camera_id=frame.camera_id,
+                       model=_backend_model(backend), image_count=1):
+                answer = backend.infer([frame.raw], prompt)
+        except (RuntimeError, TimeoutError) as exc:
+            if not tolerate_backend_failure:
+                raise
+            parsed = {point_field: None, "axis_line_px": None, "evidence": ""}
+            return (GroundedLineView(frame, None, None, ""),
+                    VLMObservation(
+                        stage, parsed, "", prompt,
+                        (f"{phase}/{frame.camera_id}@{frame.timestamp_s:.6f}",),
+                        f"backend_unavailable: {exc}", _backend_model(backend),
+                        time.perf_counter() - started))
         latency = time.perf_counter() - started
         if not isinstance(answer, str):
             raise TypeError("VLM backend must return text")
@@ -899,18 +911,21 @@ def _observe_grounded_axis_line(
 
 def observe_grounded_cylinder_axis(
     backend: ImageVLM, frames: Sequence[CalibratedXYFrame],
+    *, tolerate_backend_failure: bool = False,
 ) -> tuple[list[GroundedLineView], list[VLMObservation]]:
     """Ask for the insertion tip and visible axis before insertion."""
     return _observe_grounded_axis_line(
         backend, frames, point_field="tip_px",
         point_description="the insertion-tip centre",
         phase="raw_preinsert_hold",
-        stage="cylinder_tip_axis_line_grounding")
+        stage="cylinder_tip_axis_line_grounding",
+        tolerate_backend_failure=tolerate_backend_failure)
 
 
 def observe_grounded_cylinder_axis_cropped(
     backend: ImageVLM, frames: Sequence[CalibratedXYFrame], *,
     roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]],
+    tolerate_backend_failure: bool = False,
 ) -> tuple[list[GroundedLineView], list[VLMObservation]]:
     """Ground visible cylinder marks in lossless ROIs, return full pixels.
 
@@ -950,7 +965,8 @@ def observe_grounded_cylinder_axis_cropped(
         backend, cropped_frames, point_field="tip_px",
         point_description="the insertion-tip centre",
         phase="raw_preinsert_hold", stage="cylinder_tip_axis_line_grounding",
-        crop_context_by_camera=contexts)
+        crop_context_by_camera=contexts,
+        tolerate_backend_failure=tolerate_backend_failure)
     mapped_views, mapped_observations = [], []
     for original, local, observation in zip(frames, local_views, observations):
         crop = crops[original.camera_id]

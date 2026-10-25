@@ -223,6 +223,40 @@ def test_local_vlm_complete_json_fence_is_admitted_for_metric_pixels():
         assert bad[0].parse_error is not None
 
 
+def test_xy_grounding_keeps_other_cameras_after_one_backend_outage():
+    frames = [row.frame for row in _rig(
+        np.array([.0015, 0., .09]), np.array([.0015, 0., .14]))]
+
+    class Backend:
+        native_pixel_coordinates = True
+        max_parallel_views = 3
+
+        def infer(self, _images, prompt):
+            camera = next(frame for frame in frames
+                          if prompt.startswith(f"Camera {frame.camera_id}."))
+            if camera.camera_id == "back":
+                raise RuntimeError("capture-PC Qwen back unavailable")
+            tip = _pixel(camera, np.array([.0015, 0., .09]))
+            near = _pixel(camera, np.array([.0015, 0., .10]))
+            far = _pixel(camera, np.array([.0015, 0., .14]))
+            return json.dumps({"tip_px": tip,
+                               "axis_line_px": [near, far],
+                               "evidence": "visible shaft"})
+
+    views, records = observe_grounded_cylinder_axis(
+        Backend(), frames, tolerate_backend_failure=True)
+    assert [view.frame.camera_id for view in views if view.tip_uv_px] == [
+        "front", "side"]
+    assert records[2].raw_answer == ""
+    assert records[2].parse_error.startswith("backend_unavailable: ")
+    alignment = estimate_grounded_line_alignment(
+        views, socket_rim_z_m=.055, verification_depth_m=.02,
+        limits=_limits())
+    assert alignment["status"] == "diagnostic_metric_xy_correction"
+    with pytest.raises(RuntimeError, match="back unavailable"):
+        observe_grounded_cylinder_axis(Backend(), frames)
+
+
 def _line_rig(tip, axis, *, outlier=False):
     frames = [_camera("front", (.22, 0, .22)),
               _camera("side", (0, .22, .22)),

@@ -235,6 +235,19 @@ robot or camera connections. The aborted attempt has no saved per-view XY
 diagnostic report, so the exact rejected answer is not established by that
 artifact.
 
+Saved failed-trial XY diagnosis previously used `map_view_calls` in its Qwen
+landmark and Qwen-box/SAM3 paths, so one independent camera worker raising a
+timeout or runtime error discarded every completed view. Those two retry
+paths now record that camera as unavailable and fit from the remaining valid
+views. A total model outage remains distinct from a visual abstention: it
+records unavailable and cannot generate a synthetic exploratory XY step.
+Malformed response identity or mask geometry still raises normally. Synthetic
+three-camera tests retain a metric two-view result after one failed Qwen or
+SAM worker, and test complete Qwen, SAM, and mixed outages. The saved
+`20261021_111900_186891` grounding run reported CUDA OOM on all five Qwen
+views, so this change would not have supplied a metric result for that run.
+No live latency or insertion outcome is claimed from these offline tests.
+
 The saved 10 mm run `20261022_103429_752726` completed its 20 mm stock-force
 stroke, then failed 6.87 s into `trial.release_and_clear` with the generic
 `FR3 stream did not finish at a measured stationary endpoint` exception.

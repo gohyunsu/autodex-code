@@ -78,6 +78,8 @@ def test_live_grounded_advice_never_moves_xy_in_same_attempt(
     ("capture-PC Qwen 24122734: CUDA out of memory",
      "vlm_backend_unavailable"),
     ("SAM3 ROI worker response timed out", "sam_backend_unavailable"),
+    ("XY VLM/SAM backend unavailable for every selected camera",
+     "xy_backends_unavailable"),
 ])
 def test_optional_xy_diagnostic_records_model_outage(
         tmp_path, error, reason):

@@ -75,6 +75,19 @@ def _digest(value: dict) -> str:
     ).encode("utf-8")).hexdigest()
 
 
+def _require_any_xy_vlm_response(observations: Sequence) -> None:
+    """Keep a total inference outage distinct from visual abstention."""
+    if observations and all(
+            isinstance(row.parse_error, str) and
+            row.parse_error.startswith("backend_unavailable: ")
+            for row in observations):
+        cameras = [row.image_order[0].split("/")[-1].split("@")[0]
+                   for row in observations]
+        raise RuntimeError(
+            "XY VLM backend unavailable for every selected camera: "
+            + ", ".join(cameras))
+
+
 def _preinsert_xy_cameras(frame_rows: Mapping, capture: Mapping,
                           xy_estimator: str) -> list[str]:
     """Use the configured views plus the exact-frame temporal tip camera."""
@@ -853,15 +866,17 @@ def _compute_grounded_alignment(
             roi_xyxy_by_camera=roi_xyxy_by_camera)
         if roi_xyxy_by_camera is None:
             grounded, observations = observe_grounded_cylinder_axis(
-                backend, calibrated)
+                backend, calibrated, tolerate_backend_failure=True)
         else:
             grounded, observations = observe_grounded_cylinder_axis_cropped(
                 backend, calibrated,
                 roi_xyxy_by_camera={camera: roi_xyxy_by_camera[camera]
-                                    for camera in selected_cameras})
+                                    for camera in selected_cameras},
+                tolerate_backend_failure=True)
             for frame, observation in zip(calibrated, observations):
                 verify_native_crop_observation(
                     observation.to_record(), full_image_size_px=frame.raw.size)
+        _require_any_xy_vlm_response(observations)
         alignment = estimate_grounded_line_alignment(
             grounded,
             socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
@@ -1082,28 +1097,43 @@ def _compute_sam_half_ellipse_alignment(
         x0, y0, _x1, _y1 = crop
         prompt = f"Camera {camera}. {KEY_BOX_PROMPT}"
         image = frame.image.crop(crop)
-        with timed("vlm.infer", phase="vlm", kind="inference",
-                   stage="sam_key_box", camera_id=camera,
-                   model=str(getattr(backend, "model_id", type(backend).__name__)),
-                   image_count=1):
-            infer_for_camera = getattr(backend, "infer_for_camera", None)
-            answer = (infer_for_camera(camera, [image], prompt)
-                      if callable(infer_for_camera) else
-                      backend.infer([image], prompt))
         record.update(crop_xyxy=list(crop), qwen_prompt=prompt,
-                      qwen_response=answer,
                       planned_rear_full_px=list(rear),
                       nominal_tip_full_px=list(tip))
+        try:
+            with timed("vlm.infer", phase="vlm", kind="inference",
+                       stage="sam_key_box", camera_id=camera,
+                       model=str(getattr(
+                           backend, "model_id", type(backend).__name__)),
+                       image_count=1):
+                infer_for_camera = getattr(backend, "infer_for_camera", None)
+                answer = (infer_for_camera(camera, [image], prompt)
+                          if callable(infer_for_camera) else
+                          backend.infer([image], prompt))
+        except (RuntimeError, TimeoutError) as exc:
+            record.update(admitted=False, reason="qwen_backend_unavailable",
+                          qwen_response=None, backend_error=str(exc))
+            return None, record, None
+        record["qwen_response"] = answer
         box = parse_normalized_key_box(answer, canvas_size_wh=image.size)
         if box is None:
             record.update(admitted=False, reason="key_box_unavailable")
             return None, record, None
         roi = padded_key_box_roi(box, canvas_size_wh=image.size)
         rx0, ry0, rx1, ry1 = roi
-        with timed("sam3.roi_infer", phase="xy_retry", kind="inference",
-                   camera_id=camera, model=getattr(sam_segmentor, "model", "SAM3")):
-            mask, sam_metadata = sam_segmentor.segment(
-                image.crop(roi), camera_id=camera, prompt=KEY_MASK_PROMPT)
+        try:
+            with timed("sam3.roi_infer", phase="xy_retry", kind="inference",
+                       camera_id=camera,
+                       model=getattr(sam_segmentor, "model", "SAM3")):
+                mask, sam_metadata = sam_segmentor.segment(
+                    image.crop(roi), camera_id=camera,
+                    prompt=KEY_MASK_PROMPT)
+        except (RuntimeError, TimeoutError) as exc:
+            record.update(qwen_box_crop_px=list(box),
+                          roi_within_crop=list(roi), admitted=False,
+                          reason="sam_backend_unavailable",
+                          backend_error=str(exc))
+            return None, record, None
         record.update(qwen_box_crop_px=list(box), roi_within_crop=list(roi),
                       sam_inference=sam_metadata)
         if mask is None:
@@ -1132,6 +1162,20 @@ def _compute_sam_half_ellipse_alignment(
             calibrated, tuple(fit["center_full_px"]), None), record, mask_png
 
     measured = map_view_calls(backend, frames, measure)
+    backend_failures = {
+        record.get("reason") for _view, record, _mask in measured}
+    if measured and all(reason in {
+            "qwen_backend_unavailable", "sam_backend_unavailable"}
+            for reason in backend_failures):
+        if backend_failures == {"qwen_backend_unavailable"}:
+            source = "XY VLM backend"
+        elif backend_failures == {"sam_backend_unavailable"}:
+            source = "SAM3 ROI"
+        else:
+            source = "XY VLM/SAM backend"
+        raise RuntimeError(
+            f"{source} unavailable for every selected camera: "
+            + ", ".join(record["camera_id"] for _view, record, _mask in measured))
     views = [view for view, _record, _mask in measured if view is not None]
     alignment = tracked_tip_xy_alignment(
         views, nominal_tip_z_socket_m=float(nominal_tip[2]),
@@ -1388,16 +1432,18 @@ def assess_grounded_xy_diagnostic(
             roi_xyxy_by_camera=roi_xyxy_by_camera)
         if roi_xyxy_by_camera is None:
             grounded, observations = observe_grounded_cylinder_axis(
-                backend, calibrated)
+                backend, calibrated, tolerate_backend_failure=True)
         else:
             grounded, observations = observe_grounded_cylinder_axis_cropped(
                 backend, calibrated,
                 roi_xyxy_by_camera={camera: roi_xyxy_by_camera[camera]
-                                    for camera in selected_cameras})
+                                    for camera in selected_cameras},
+                tolerate_backend_failure=True)
             for frame, observation in zip(calibrated, observations):
                 verify_native_crop_observation(
                     observation.to_record(),
                     full_image_size_px=frame.raw.size)
+        _require_any_xy_vlm_response(observations)
         alignment = estimate_grounded_line_alignment(
             grounded,
             socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),

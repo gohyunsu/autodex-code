@@ -53,6 +53,18 @@ def test_tracked_tip_uses_configured_views_and_matching_temporal_camera(
     assert _preinsert_xy_cameras(rows, {}, "tracked_tip") == sorted(cameras)
 
 
+def test_xy_backend_outage_needs_a_successful_model_response():
+    failed = SimpleNamespace(
+        parse_error="backend_unavailable: capture-PC Qwen timed out",
+        image_order=("raw_preinsert_hold/24122734@1.000000",))
+    responded = SimpleNamespace(parse_error="invalid grounded line JSON",
+                                image_order=(
+                                    "raw_preinsert_hold/25305463@1.000000",))
+    with pytest.raises(RuntimeError, match="every selected camera: 24122734"):
+        retry_session._require_any_xy_vlm_response([failed])
+    retry_session._require_any_xy_vlm_response([failed, responded])
+
+
 def _inputs(tmp_path, monkeypatch):
     args = _setup(tmp_path)
     mode = args["mode"]

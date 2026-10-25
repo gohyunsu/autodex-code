@@ -68,11 +68,15 @@ class LiveGroundedRetryHandlers:
                 sam_segmentor=self.sam_segmentor,
                 **dict(self.diagnostic_parameters))
         except (RuntimeError, TimeoutError) as exc:
-            backend_outage = (
-                "vlm_backend_unavailable" if "capture-PC Qwen" in str(exc)
-                else "sam_backend_unavailable" if "SAM3 ROI" in str(exc)
-                else None)
-            if backend_outage is None:
+            message = str(exc)
+            if "XY VLM/SAM backend unavailable" in message:
+                backend_outage = "xy_backends_unavailable"
+            elif ("capture-PC Qwen" in message or
+                  "XY VLM backend unavailable" in message):
+                backend_outage = "vlm_backend_unavailable"
+            elif "SAM3 ROI" in message:
+                backend_outage = "sam_backend_unavailable"
+            else:
                 raise
             diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
             diagnostic_path.write_text(json.dumps({
