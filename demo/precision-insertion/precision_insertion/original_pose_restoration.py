@@ -140,7 +140,7 @@ def plan_original_pose_restoration(
             tabletop_pose_stem=source)
         planner.set_start_state(q)
         pickup = planner.plan(
-            scene, mode.key_object, "v8", hand="fr3_inspire",
+            scene, mode.key_object, "v8", hand="inspire",
             skip_done=False, success_only=False,
             candidate_override=override)
         seed = {"seed_id": "/".join(key), "source": "stable_v8_grasp",

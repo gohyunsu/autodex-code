@@ -219,8 +219,12 @@ def test_xy_advice_survives_intermediate_key_reorientation(monkeypatch, tmp_path
     assert runner._pending_next_trial_xy is advice
 
 
+@pytest.mark.parametrize("xy_source", [
+    "multiview_tip_and_axis",  # Qwen line estimate
+    "multiview_tip_xy_vertical_axis_assumption",  # tracked/SAM face point
+])
 def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
-        monkeypatch, tmp_path):
+        monkeypatch, tmp_path, xy_source):
     runner = _runner(monkeypatch, tmp_path)
     runner.max_xy_retries = 2
     runner.xy_update_weight = 0.5
@@ -273,7 +277,7 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
         alignment={"bounded_xy_increment_socket_m": [0.0006, -0.0008],
                    "inlier_cameras": ["cam0", "cam1"],
                    "status": "diagnostic_metric_xy_correction",
-                   "xy_source": "multiview_tip_and_axis"},
+                   "xy_source": xy_source},
         vlm_observations=())
     source = runner._attempt_dir / "xy_retry_assessments/000/report.json"
     source.parent.mkdir(parents=True)

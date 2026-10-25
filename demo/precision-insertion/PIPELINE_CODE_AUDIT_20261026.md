@@ -125,6 +125,13 @@ were also replayed through the live alignment function using saved Qwen
 answers and source PNGs. All five were admitted, and the result differed
 from the earlier offline 3D proxy by at most `0.042 mm` per coordinate.
 This is a same-evidence numerical consistency check, not physical validation.
+That replay produced `diagnostic_metric_xy_correction` with source
+`multiview_tip_xy_vertical_axis_assumption` and a bounded socket-frame
+increment of `[-9.6561, -2.6000] mm`. The session test now exercises this
+SAM/tracked-tip source through saved advice, fresh same-grasp preflight and
+the next attempt's wrist-correction field, alongside the Qwen line source.
+It verifies the wiring and arithmetic only; no historical robot trial
+applied this value.
 
 The shared tracked-tip/SAM multiview fit previously identified outlier
 cameras but returned the point fitted using **all** cameras. In a five-camera
