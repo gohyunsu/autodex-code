@@ -910,7 +910,11 @@ def _compute_tracked_alignment(
         if image is None or mask is None:
             records.append({"camera_id": camera, "frame_id":
                             frame_rows[camera]["frame_id"],
-                            "admitted": False, "reason": "key_reference_unavailable"})
+                            "image_sha256": frame_rows[camera]["image_sha256"],
+                            "admitted": False,
+                            "effective_tip_px": None,
+                            "effective_tip_source": None,
+                            "reason": "key_reference_unavailable"})
             continue
         T_camera_socket = camera_socket_transform(
             T_camera_world=extrinsics_full[camera],
@@ -931,6 +935,7 @@ def _compute_tracked_alignment(
             intrinsics=K, projected_rear_px=project(0.),
             projected_tip_px=project(tip_z))
         record["image_sha256"] = frame_rows[camera]["image_sha256"]
+        effective_tip_source = "saved_preinsert_png"
         if (window is not None and window.camera_id == camera and
                 window.target_frame_id == frame_rows[camera]["frame_id"] and
                 window.status == "complete"):
@@ -985,8 +990,14 @@ def _compute_tracked_alignment(
                         T_camera_socket, K)
                     measured = GroundedLineView(
                         calibrated, temporal_tip, None)
+                    effective_tip_source = "temporal_window_median"
                 else:
                     temporal_status = "tip_unobservable"
+        record["admitted"] = measured is not None
+        record["effective_tip_px"] = (None if measured is None else
+                                       list(measured.tip_uv_px))
+        record["effective_tip_source"] = (effective_tip_source
+                                           if measured is not None else None)
         records.append(record)
         if measured is not None:
             views.append(measured)

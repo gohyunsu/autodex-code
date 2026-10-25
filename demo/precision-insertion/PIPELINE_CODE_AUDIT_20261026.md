@@ -22,6 +22,22 @@ not change stock planning algorithms. Tests in `test_candidates.py`,
 `test_targets.py`, and `test_next_trial_xy.py` cover the object-local wrist
 convention, a tilted socket axis, cylinder yaw, and socket-frame correction.
 
+The FR3 executor is a separate comparison: `src/execution/franka_executor.py`
+is **not** byte-identical to stock. Its precision-branch changes inject the
+right-angle link7-to-hand transform, retain stock's 0.40 near-object/held-object
+speed scale as one configured value, and advance its streamed joint reference
+using measured tick time. The streaming command period remains the stock
+default of 20 ms (50 Hz). `follow_progress.py` keeps the reference moving
+continuously when the arm lags or is already farther along the planned path;
+`stream_timing.py` keeps filtering and command validity tied to wall time.
+`reset_scene.py` keeps a visually missed key at its tabletop scene pose
+instead of projecting a phantom carried key from the wrist. That tabletop
+pose can be stale if the missed grasp physically moved the key; a fresh key
+observation is still required before a new attempt. These changes are covered
+by `test_follow_progress.py`, `test_reset_scene.py`, and the integration
+tests, but no saved-image replay can prove the robot's actual tracking or
+contact behavior.
+
 As an independent arithmetic replay, the saved post-lift reports from
 `20261022_101456_545928`, `20261022_103429_752726`, and
 `20261022_105828_126084` were checked against their frozen socket records.
@@ -124,6 +140,15 @@ They should be evaluated against observed false stops and physical evidence,
 not removed solely because the stock pipeline lacks them. In particular,
 unknown key location after a controller abort cannot be turned into a
 measured `outside_socket` XY correction.
+
+The optional `tracked_tip` retry path can use a capture-PC JPEG window around
+the exact preinsert frame. The per-camera record now distinguishes the raw
+PNG observation from the effective temporal-median pixel used for multiview
+alignment, and its `admitted` field reports whether that effective view was
+actually included. Both sources retain their frame IDs and source hashes in
+their respective saved manifests. The ordinary `vlm` and optional
+`sam_half_ellipse` modes continue to use the same saved undistorted PNG for
+their per-view observation.
 
 The old `max_total_offset_m` retry budget remains an optional legacy field;
 the active FR3 stage factory sets it to `None`. The live launcher defaults to
