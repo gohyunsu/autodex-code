@@ -21,6 +21,15 @@ FR3/Inspire mount. This makes the planning model selection explicit; it does
 not change stock planning algorithms. Tests in `test_candidates.py`,
 `test_targets.py`, and `test_next_trial_xy.py` cover the object-local wrist
 convention, a tilted socket axis, cylinder yaw, and socket-frame correction.
+Stock `GraspPlanner.plan` expands cylinder candidates over its yaw grid only
+when it loads candidates itself. The precision pickup passes one explicit
+`candidate_override`, which stock deliberately leaves unexpanded. This keeps
+the selected v8 grasp fixed across controlled retries and preserves the same
+`T_robot_key @ T_key_hand` convention, but can miss a feasible yaw-equivalent
+pickup that stock's broader search would find. The later cylinder target yaw
+gauge is a separate held-key alignment step; it does not silently add pickup
+grasps. The tilted-socket correction test now also verifies that a socket-XY
+increment becomes `R_robot_socket @ [dx, dy, 0]` in robot coordinates.
 
 The FR3 executor is a separate comparison: `src/execution/franka_executor.py`
 is **not** byte-identical to stock. Its precision-branch changes inject the
