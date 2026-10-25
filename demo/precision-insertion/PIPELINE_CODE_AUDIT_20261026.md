@@ -65,6 +65,18 @@ and move entry to verification by `0.020 m` along the recorded insertion
 axis (floating-point residual below `1.1e-16 m`). These records have zero
 retry XY correction, so they do not validate a physically applied correction.
 
+A separate read-only arithmetic replay applied a synthetic socket-frame
+`(+2, -1) mm` wrist correction to all ten saved 10 mm and 20 mm post-lift
+reports. The copied task geometry was used only when its SHA-256 matched each
+saved report. For preinsert, entry and verification, the current
+`compensated_key_hand_relation` moved the wrist by the expected
+`R_robot_socket @ [0.002, -0.001, 0]` with maximum residual `9.63e-17 m`
+and no rotation change. The saved nominal compositions were exact at JSON
+precision. All ten historical yaw gauges and corrections were zero. The
+[per-attempt arithmetic report](/home/robot/shared_data/hyunsu/tmp/20261026_xy_correction_saved_replay/xy_correction_report.json)
+tests the implemented frame conversion against real saved plans; it cannot
+establish physical execution or a nonzero live retry.
+
 ## SAM3 half-ellipse: from offline result to optional live XY path
 
 At `568107f`, `held_key_tip.distal_key_mask_half_ellipse` was called only by
