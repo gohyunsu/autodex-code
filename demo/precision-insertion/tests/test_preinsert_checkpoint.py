@@ -31,6 +31,7 @@ from precision_insertion import preinsert_checkpoint  # noqa: E402
 from precision_insertion.raw_camera_capture import (  # noqa: E402
     RawCameraCapture, write_raw_camera_capture,
 )
+from precision_insertion.runtime_evidence_cache import live_evidence_cache  # noqa: E402
 from precision_insertion.records import begin_attempt  # noqa: E402
 from test_key_perception import CAMERAS, _session  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
@@ -258,6 +259,30 @@ def test_measured_preinsert_arrival_needs_multiview_visible_key(tmp_path):
     lifted_png.write_bytes(original_lifted_png)
     assert assess_preinsert_checkpoint(
         **{**args, "backend": _VLM("unobservable")}).preinsert_reached is None
+
+
+def test_live_preinsert_reuse_preserves_first_full_check_and_report_identity(
+    tmp_path, monkeypatch,
+):
+    args = _setup(tmp_path)
+    saved = write_preinsert_checkpoint(
+        assess_preinsert_checkpoint(**args), tmp_path / "cached_arrival")
+    original = saved.read_bytes()
+    with live_evidence_cache():
+        verified = verify_preinsert_checkpoint(saved)
+
+        def unexpected_capture_read(*_args, **_kwargs):
+            raise AssertionError("preinsert sources were read again")
+
+        monkeypatch.setattr(preinsert_checkpoint, "verify_raw_camera_capture",
+                            unexpected_capture_read)
+        assert verify_preinsert_checkpoint(saved) is verified
+        saved.write_bytes(original + b" ")
+        with pytest.raises(AssertionError, match="read again"):
+            verify_preinsert_checkpoint(saved)
+        saved.write_bytes(original)
+    with pytest.raises(AssertionError, match="read again"):
+        verify_preinsert_checkpoint(saved)
 
 
 def test_resized_preinsert_vlm_inputs_replay_from_saved_raw_frames(tmp_path):

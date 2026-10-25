@@ -126,6 +126,18 @@ defaults to the moved 2026-10-13 temporary path.
 
 ## Recovery-path latency change in this review
 
+The saved preinsert checkpoint was fully reverified at creation, then again
+at insertion handoff and failed-trial XY diagnosis. The latter calls decoded
+the selected source PNGs and replayed the visual record even during the same
+live session. It now follows the existing live lift-checkpoint cache: the
+first verification remains complete, while later calls in that session reuse
+the validated report only if its byte hash is unchanged. Offline verification
+still takes the full path, and the saved XY diagnostic independently reads
+and checks its selected undistorted frames. The reuse is timed as
+`evidence.live_preinsert_report_reuse`. A fixture test confirms that a changed
+report invalidates the cache and that it does not survive the session scope.
+No live-session speedup is claimed because the active stage is absent.
+
 `repose_path_audit.py` previously recomputed a fixed-pose inverse and called
 the exact Coal mesh-pair report at every FK sample. It now uses the same
 conservative AABB distance lower bound already present in

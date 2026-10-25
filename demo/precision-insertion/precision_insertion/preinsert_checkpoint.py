@@ -48,6 +48,8 @@ from .observer import (
 from .postlift_preflight import PostLiftPreflight
 from .raw_camera_capture import verify_raw_camera_capture
 from .records import AttemptRecord
+from .runtime_evidence_cache import recalled, remember
+from .timing_profile import timed
 from .world import validated_frozen_socket_pose
 from .visual_views import assessment_cameras
 
@@ -630,7 +632,14 @@ def write_preinsert_checkpoint(
 def verify_preinsert_checkpoint(report_path: Path) -> dict:
     """Recheck saved bytes; do not re-run VLM or certify external producers."""
     path = Path(report_path).expanduser().resolve()
-    report = json.loads(path.read_text(encoding="utf-8"))
+    report_bytes = path.read_bytes()
+    report_sha256 = hashlib.sha256(report_bytes).hexdigest()
+    cached = recalled("preinsert_checkpoint", path, "preinsert")
+    if cached is not None and cached["sha256"] == report_sha256:
+        with timed("evidence.live_preinsert_report_reuse", phase="evidence",
+                   kind="io"):
+            return cached["record"]
+    report = json.loads(report_bytes)
     if (not isinstance(report, dict) or report.get("schema") !=
             "precision_insertion_preinsert_checkpoint_v1" or
             report.get("robot_ready") is not False or
@@ -763,4 +772,6 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
     if (report["preinsert_reached"] is not expected_label or
             report["reason"] != expected_reason):
         raise ValueError("preinsert label contradicts saved evidence")
+    remember("preinsert_checkpoint", path, "preinsert", {
+        "sha256": report_sha256, "record": report})
     return report
