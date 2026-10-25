@@ -62,6 +62,20 @@ class SamRoiBackend:
         except json.JSONDecodeError as exc:
             raise RuntimeError("SAM3 ROI worker sent invalid JSON") from exc
 
+    def _retire_worker(self) -> None:
+        """Discard a worker whose pending response can no longer be bound."""
+        self._failed = True
+        process = self._process
+        if process.poll() is None:
+            try:
+                process.kill()
+            except OSError:
+                pass
+        try:
+            process.wait(timeout=5.)
+        except subprocess.TimeoutExpired:
+            pass
+
     def segment(self, image: Image.Image, *, camera_id: str,
                 prompt: str) -> tuple[np.ndarray | None, dict]:
         if (not isinstance(image, Image.Image) or image.mode != "RGB" or
@@ -88,24 +102,17 @@ class SamRoiBackend:
                 raise RuntimeError("SAM3 ROI worker exited unexpectedly") from exc
             try:
                 reply = self._read_line(self._response_timeout_s)
-            except TimeoutError:
-                # The outstanding reply has an unknown arrival time. Do not
-                # let a later camera consume it as its own measurement.
-                self._failed = True
-                if process.poll() is None:
-                    try:
-                        process.kill()
-                    except OSError:
-                        pass
-                try:
-                    process.wait(timeout=5.)
-                except subprocess.TimeoutExpired:
-                    pass
+            except (OSError, RuntimeError):
+                # Timeout, EOF or malformed JSON leaves the request/reply
+                # stream unbound. A later camera must start a new worker.
+                self._retire_worker()
                 raise
-        if (reply.get("request_id") != request_id or
-                reply.get("camera_id") != camera_id or
-                reply.get("type") not in {"result", "error"}):
-            raise ValueError("SAM3 ROI response identity changed")
+            if (not isinstance(reply, dict) or
+                    reply.get("request_id") != request_id or
+                    reply.get("camera_id") != camera_id or
+                    reply.get("type") not in {"result", "error"}):
+                self._retire_worker()
+                raise RuntimeError("SAM3 ROI response identity changed")
         if reply["type"] == "error":
             raise RuntimeError(f"SAM3 ROI {camera_id}: {reply.get('error')}")
         if reply.get("image_size_wh") != [image.width, image.height]:

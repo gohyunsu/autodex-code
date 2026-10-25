@@ -14,6 +14,21 @@ saved-evidence review. No camera, controller, or robot was started.
 | Preinsert / entry / verification | `targets.build_rigid_insertion_targets` composes `T_robot_socket @ T_socket_key @ T_key_hand`. The socket-frame XY offset is applied before this composition; the insertion direction is rotated by `T_robot_socket`. | Stock's world-vertical Jacobian stroke cannot directly represent a tilted socket axis. The demo's axial path and sampled held-key audit are insertion-specific. |
 | Failed return / reorientation | `original_pose_restoration.py` measures a fresh tabletop key, classifies its v8 pose, loads the selected local wrist relation, plans pickup and a CAD rest target, then checks release and exit. `repose_transition.py` uses saved v8 reset seeds for pose changes. | The candidate-to-world wrist multiplication and wrist-to-object inversion match stock `run_auto.py` and `executor/real.py`. A planned landing is not proof of the actual landed pose; the next trial recaptures the key. |
 
+For original-pose restoration, `reset_landing_geometry` transforms both the
+trial-start and newly observed world key poses through `inv(c2r)` and compares
+the same CAD mesh center in robot coordinates. `original_center_release_xy`
+subtracts the target v8 pose's rotated local mesh center from the desired
+robot-frame center, so a lying-to-upright reset does not shift the physical
+center by the key's half-length. The placement wrist is composed as
+`T_robot_key_rest @ T_key_hand`, equivalent to stock's
+`T_obj_target @ inv(T_obj_in_wrist)` when the grasp relation is the selected
+v8 object-local wrist. A fresh key capture follows each release; the live
+handler retries restoration up to three times and accepts a supported key
+within 30 mm of the original center. These are planned/observed transforms,
+not proof that the nominal post-squeeze key-to-hand relation is physically
+exact. The restoration, target-selection, and live-recovery tests pass without
+connecting hardware.
+
 `run_auto.py`, `run_pipeline.py`, `scene_cfg.py`, and `executor/real.py` are byte-identical in the two local
 checkouts. `autodex/planner/planner.py` differs by one constructor option:
 the precision checkout may inject a robot URDF path for the right-angle
@@ -116,6 +131,14 @@ the stock AutoDex snapshot producer remain unchanged:
   `xy_retry_assessments/NNN/sam_roi_masks/`. The raw preinsert image bundle is
   referenced by its saved manifest and source PNG hashes; the retry writer
   no longer re-encodes all 20 camera PNGs into a second bundle.
+
+The local SAM3 worker is request-bound to one camera at a time. If its reply
+times out, is malformed, or carries another request/camera ID, the client now
+terminates that worker. The affected view is recorded as unavailable; a later
+camera cannot consume a stale reply as its own mask. Without enough remaining
+views, the retry produces no metric XY advice and follows the ordinary
+recovery path. Subprocess protocol tests cover timeout, wrong ID, and bad
+JSON without contacting a camera or robot.
 
 On the real preinsert bundle of `20261022_103429_752726`, three read-only
 repetitions of reading and re-encoding 20 PNGs to memory took

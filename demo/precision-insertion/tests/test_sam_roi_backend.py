@@ -90,6 +90,41 @@ for line in sys.stdin:
         backend.close()
 
 
+@pytest.mark.parametrize("reply_kind", ["wrong_id", "invalid_json"])
+def test_unbound_worker_reply_cannot_reach_next_camera(
+        tmp_path, reply_kind):
+    worker = tmp_path / "bad_worker.py"
+    script = '''
+import json, sys
+print(json.dumps({"type":"ready","model":sys.argv[2]}), flush=True)
+for line in sys.stdin:
+    row=json.loads(line)
+    if row["type"]=="close": break
+    if "wrong_id"==REPLY_KIND:
+        print(json.dumps({"type":"result","request_id":"stale",
+          "camera_id":row["camera_id"],"image_size_wh":[8,8],
+          "mask_png_base64":None,"score":0.8,"inference_s":0.01,
+          "cuda_peak_bytes":0}),flush=True)
+    else:
+        print("not-json",flush=True)
+'''
+    worker.write_text(script.replace("REPLY_KIND", repr(reply_kind)))
+    checkpoint = tmp_path / "model.pt"
+    checkpoint.write_bytes(b"test")
+    backend = SamRoiBackend(
+        python_path=Path(sys.executable), checkpoint=checkpoint,
+        worker_path=worker, stderr_path=tmp_path / "worker.log")
+    try:
+        image = Image.new("RGB", (8, 8), "white")
+        with pytest.raises(RuntimeError):
+            backend.segment(image, camera_id="cam_a", prompt="white cylinder")
+        assert backend._process.poll() is not None
+        with pytest.raises(RuntimeError, match="not running"):
+            backend.segment(image, camera_id="cam_b", prompt="white cylinder")
+    finally:
+        backend.close()
+
+
 @pytest.mark.parametrize("failure", [
     None, "one_qwen", "one_sam", "all_qwen", "all_sam", "mixed_all"])
 def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
