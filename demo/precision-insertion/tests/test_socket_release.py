@@ -14,6 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion import socket_release  # noqa: E402
 from precision_insertion import stock_socket_release  # noqa: E402
+from precision_insertion.franka_completion_checked import (  # noqa: E402
+    CompletionCheckedFrankaMixin,
+)
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.path_audit import PathAuditLimits  # noqa: E402
 from autodex.utils.robot_config import FR3_CLEAR_VIEW, INSPIRE_INIT  # noqa: E402
@@ -213,6 +216,89 @@ def test_stock_release_executes_preplanned_axis_exit_then_clear_view(
     assert actions[0] == "open"
     assert actions.count("verify") == 2
     np.testing.assert_allclose(q[:7], FR3_CLEAR_VIEW)
+
+
+@pytest.mark.parametrize("failed_follow,expected_phase", [
+    (1, "axis_exit"), (2, "clear_view_retract")])
+def test_release_failure_records_the_motion_phase(
+        tmp_path, monkeypatch, failed_follow, expected_phase):
+    runner, handoff, limits, planner, _ = _setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(socket_release, "_check_path", lambda *_: {
+        "all_feasible": True, "first_invalid_index": None,
+        "status": None, "backend": "fake_stock_rollout"})
+    monkeypatch.setattr(stock_socket_release,
+                        "is_demo_completion_checked_executor", lambda _: True)
+    monkeypatch.setattr(stock_socket_release, "_metric_record",
+                        lambda *_a, **_k: ({
+                            "schema": "precision_insertion_stock_force_execution_v1",
+                            "measurement": {"safety_abort": False}}, 0., 1.))
+    metric = runner._attempt_dir / "stock_force_metric.json"
+    metric.write_text("{}", encoding="utf-8")
+    metric_ref = {"path": str(metric),
+                  "sha256": hashlib.sha256(metric.read_bytes()).hexdigest()}
+    calls = []
+
+    def follow(_path):
+        calls.append("follow")
+        if len(calls) == failed_follow:
+            raise RuntimeError("measured endpoint")
+
+    executor = SimpleNamespace(
+        release=lambda *_a, **_k: None,
+        stop_and_acknowledge=lambda: {"acknowledged": True})
+    clear = SimpleNamespace(
+        wait_for_open_hand=lambda *_a, **_k: None,
+        _follow_autodex=follow,
+        _verify_release_waypoint=lambda *_a, **_k: None)
+    decision = SimpleNamespace(action="await_guarded_insertion_and_observation")
+    runner.current_decision = lambda: decision
+    live = SimpleNamespace(opened=SimpleNamespace(runner=runner),
+                           clear_view=clear)
+    callback = stock_socket_release.StockSocketRelease(
+        executor=executor, planner=planner, read_state=lambda: None,
+        path_limits=limits)
+    plan = callback.prepare(live, runner, decision, handoff)
+    report = json.loads(plan.read_text(encoding="utf-8"))
+    with pytest.raises(RuntimeError, match="measured endpoint"):
+        callback(live, runner, decision, {
+            "safety_abort": False, "grasp_held": True,
+            "axial_handoff": report["handoff"],
+            "metric_record": metric_ref})
+    failure = json.loads((runner._attempt_dir / "socket_release_failure.json")
+                         .read_text(encoding="utf-8"))
+    assert failure["phase"] == expected_phase
+    assert len(calls) == failed_follow
+
+
+def test_completion_failure_reports_measured_error_without_ramping_hand():
+    class Stock:
+        def _follow(self, *_args, **_kwargs):
+            self._ramp_hand(np.zeros(6))
+
+    class Checked(CompletionCheckedFrankaMixin, Stock):
+        pass
+
+    class Arm:
+        def get_data(self):
+            return {"qpos": np.array([.07, 0, 0, 0, 0, 0, 0]),
+                    "qvel": np.zeros(7)}
+
+        def stop_streaming(self):
+            return {"type": "success"}
+
+        def is_error(self):
+            return False
+
+    executor = Checked()
+    executor.arm = Arm()
+    executor.land_tol = .02
+    executor.follow_tol = .04
+    executor._last_stop_on_contact = False
+    ramps = []
+    executor._ramp_hand = lambda target: ramps.append(target)
+    with pytest.raises(RuntimeError, match=r"joint_error_l2_rad=0\.070000"):
+        executor._follow(np.zeros((2, 7)), np.zeros((2, 6)))
+    assert ramps == []
 
 
 def test_stock_release_never_opens_after_force_stop(tmp_path, monkeypatch):

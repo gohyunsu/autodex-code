@@ -223,6 +223,25 @@ robot or camera connections. The aborted attempt has no saved per-view XY
 diagnostic report, so the exact rejected answer is not established by that
 artifact.
 
+The saved 10 mm run `20261022_103429_752726` completed its 20 mm stock-force
+stroke, then failed 6.87 s into `trial.release_and_clear` with the generic
+`FR3 stream did not finish at a measured stationary endpoint` exception.
+Its failure record confirms that a later stop was acknowledged and the
+measured maximum joint velocity was 0.0188 rad/s. It does **not** contain the
+failed segment or terminal joint error, so this evidence cannot distinguish
+an overstrict endpoint check from a real short motion or FR3 fault. The stock
+follower's normal streaming convergence is 0.04 rad L2 and may make a final
+blocking correction; the precision wrapper omits that correction near the
+socket and while holding a key, then checks the measured endpoint before a
+hand ramp or next motion. Saved transfer failures show why a stopped stream
+alone is not proof of arrival. The endpoint condition is retained pending
+measured evidence. New failures now include their release phase and the
+measured L2 joint error, velocity, limits, and FR3 error flag in the exception
+record. `trial.release_and_clear` now has nested open-hand, socket-axis exit,
+and clear-view retract spans. These changes add diagnosis and timing without
+changing motion or admission thresholds. `test_socket_release.py` covers both
+exit failure phases and terminal error reporting without connecting a robot.
+
 The saved 10 mm session `20261022_105828_126084` spent 22.99 s auditing
 498 nominal samples before pickup and 42.72 s auditing 263 new transfer/axial
 samples after lift. The second audit checks a newly planned path from the

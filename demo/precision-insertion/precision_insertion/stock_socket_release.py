@@ -18,6 +18,7 @@ from .post_insertion_release import (
     SCHEMA as RELEASE_SCHEMA, verify_post_insertion_release,
 )
 from .socket_release import plan_socket_release_exit, verify_socket_release_plan
+from .timing_profile import timed
 
 
 def _sha(path: Path) -> str:
@@ -107,19 +108,26 @@ class StockSocketRelease:
                        "started_at_s": started_at}, stream,
                       indent=2, sort_keys=True, allow_nan=False)
             stream.write("\n")
+        phase = "open_hand"
         try:
-            # Stock release performs its usual controlled Inspire ramp.
-            self.executor.release(None, open_to_init=True)
-            live.clear_view.wait_for_open_hand(
-                paths["axial_exit"][0], phase="socket_after_open")
+            with timed("trial.release.open_hand", phase="trial", kind="motion"):
+                # Stock release performs its usual controlled Inspire ramp.
+                self.executor.release(None, open_to_init=True)
+                live.clear_view.wait_for_open_hand(
+                    paths["axial_exit"][0], phase="socket_after_open")
             release_completed = time.time()
-            live.clear_view._follow_autodex(paths["axial_exit"].copy())
-            live.clear_view._verify_release_waypoint(
-                paths["axial_exit"][-1], phase="socket_axis_exit",
-                require_open=True)
-            live.clear_view._follow_autodex(paths["retract"].copy())
-            final = live.clear_view.verify_state(
-                self.read_state(), phase="socket_release_clear_view")
+            phase = "axis_exit"
+            with timed("trial.release.axis_exit", phase="trial", kind="motion"):
+                live.clear_view._follow_autodex(paths["axial_exit"].copy())
+                live.clear_view._verify_release_waypoint(
+                    paths["axial_exit"][-1], phase="socket_axis_exit",
+                    require_open=True)
+            phase = "clear_view_retract"
+            with timed("trial.release.clear_view_retract", phase="trial",
+                       kind="motion"):
+                live.clear_view._follow_autodex(paths["retract"].copy())
+                final = live.clear_view.verify_state(
+                    self.read_state(), phase="socket_release_clear_view")
             clear_completed = time.time()
             if not started_at < release_completed <= clear_completed:
                 raise RuntimeError("release/clear-view feedback is not ordered")
@@ -163,6 +171,7 @@ class StockSocketRelease:
                     "schema": "precision_insertion_socket_release_failure_v1",
                     "attempt_id": runner.active_attempt.attempt_id,
                     "release_plan": str(report_path),
+                    "phase": phase,
                     "error_type": type(exc).__name__, "error": str(exc),
                     "stop_acknowledgement": stop,
                 }, stream, indent=2, sort_keys=True, allow_nan=False)

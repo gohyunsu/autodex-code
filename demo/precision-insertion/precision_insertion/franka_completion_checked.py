@@ -106,15 +106,21 @@ class CompletionCheckedFrankaMixin:
             raise RuntimeError("FR3 has no terminal joint feedback")
         measured = np.asarray(state["qpos"], dtype=np.float64)
         velocity = np.asarray(state["qvel"], dtype=np.float64)
-        if (not np.all(np.isfinite(measured)) or
-                not np.all(np.isfinite(velocity)) or
-                bool(self.arm.is_error()) or
-                np.linalg.norm(measured - path[-1, :7]) >
-                self.completion_max_path_error_rad or
-                np.max(np.abs(velocity)) >
-                self.stop_max_joint_velocity_rad_s):
+        if not np.all(np.isfinite(measured)) or not np.all(np.isfinite(velocity)):
+            raise RuntimeError("FR3 terminal joint feedback is not finite")
+        endpoint_error = float(np.linalg.norm(measured - path[-1, :7]))
+        max_velocity = float(np.max(np.abs(velocity)))
+        arm_error = bool(self.arm.is_error())
+        if (arm_error or
+                endpoint_error > self.completion_max_path_error_rad or
+                max_velocity > self.stop_max_joint_velocity_rad_s):
             raise RuntimeError(
-                "FR3 stream did not finish at a measured stationary endpoint")
+                "FR3 stream did not finish at a measured stationary endpoint "
+                f"(joint_error_l2_rad={endpoint_error:.6f}, "
+                f"limit_l2_rad={self.completion_max_path_error_rad:.6f}, "
+                f"max_joint_velocity_rad_s={max_velocity:.6f}, "
+                f"velocity_limit_rad_s={self.stop_max_joint_velocity_rad_s:.6f}, "
+                f"arm_error={arm_error})")
         if hand_traj is not None:
             if len(deferred) != 1:
                 raise RuntimeError("stock follower did not defer one final hand ramp")
