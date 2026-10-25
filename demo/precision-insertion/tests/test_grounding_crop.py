@@ -96,6 +96,37 @@ def test_vlm_mark_in_padding_cannot_become_metric_landmark():
         observations[0].to_record(), full_image_size_px=frame.raw.size) is None
 
 
+def test_invalid_crop_canvas_mark_stays_rejected_without_aborting_other_views():
+    class Backend:
+        native_pixel_coordinates = True
+
+        def infer(self, _images, prompt):
+            x = 9999 if "Camera bad." in prompt else 30
+            return (f'{{"tip_px":[{x},20],"axis_line_px":'
+                    '[[40,30],[50,40]],"evidence":"visible shaft"}')
+
+    image = Image.new("RGB", (1280, 720))
+    intrinsics = np.array([[1000., 0., 640.], [0., 1000., 360.],
+                           [0., 0., 1.]])
+    frames = [CalibratedXYFrame(camera, 1., image, np.eye(4), intrinsics)
+              for camera in ("good1", "bad", "good2")]
+    views, observations = observe_grounded_cylinder_axis_cropped(
+        Backend(), frames,
+        roi_xyxy_by_camera={camera: (100, 100, 356, 356)
+                            for camera in ("good1", "bad", "good2")})
+    assert [view.frame.camera_id for view in views if view.tip_uv_px is not None] == [
+        "good1", "good2"]
+    rejected = observations[1].to_record()
+    assert rejected["parse_error"] == "line landmark outside original pixels"
+    assert rejected["pixel_mapping"]["mapped_full_pixels"] is None
+    assert verify_native_crop_observation(
+        rejected, full_image_size_px=image.size) is None
+    for index in (0, 2):
+        assert verify_native_crop_observation(
+            observations[index].to_record(),
+            full_image_size_px=image.size)["tip_px"] == [130., 120.]
+
+
 def test_saved_crop_mapping_replays_and_detects_tampering():
     class Backend:
         native_pixel_coordinates = True

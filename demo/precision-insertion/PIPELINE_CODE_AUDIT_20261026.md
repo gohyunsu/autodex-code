@@ -207,6 +207,22 @@ pair queries fell from 131 to 40; a single warmed local timing fell from
 36.4 ms to 20.4 ms. This is **not** a measured live-session time saving.
 The regression compares the entire audit result with and without pruning.
 
+The saved run `20261022_105828_126084` ended after a released-key
+`outside_socket` verdict: five `grounded_axis` VLM calls finished, then
+`action.assess_saved_preinsert_xy` raised `invalid crop mark was promoted to
+full pixels` at 173.07 s. The line parser had already rejected a VLM answer
+and produced a null observation with `parse_error`, but the
+crop mapper still wrote a dictionary of null full-frame marks. The evidence
+verifier interpreted that dictionary as a promoted invalid mark and aborted
+the session. The mapper now records `mapped_full_pixels=None` whenever the
+parser rejected the answer. The raw answer and parse error remain in the
+per-camera record; that view supplies no metric point, while other views can
+still be used. The verifier continues to reject actual mapping tampering.
+A mixed valid/invalid three-view regression reproduces this path without
+robot or camera connections. The aborted attempt has no saved per-view XY
+diagnostic report, so the exact rejected answer is not established by that
+artifact.
+
 The saved 10 mm session `20261022_105828_126084` spent 22.99 s auditing
 498 nominal samples before pickup and 42.72 s auditing 263 new transfer/axial
 samples after lift. The second audit checks a newly planned path from the

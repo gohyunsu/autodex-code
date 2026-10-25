@@ -956,6 +956,8 @@ def observe_grounded_cylinder_axis_cropped(
         crop = crops[original.camera_id]
         mapping = crop.mapping_record()
         try:
+            if observation.parse_error is not None:
+                raise ValueError(observation.parse_error)
             tip = (None if local.tip_uv_px is None else
                    crop.to_full_pixel(local.tip_uv_px))
             segment = (None if local.axis_line_uv_px is None else
