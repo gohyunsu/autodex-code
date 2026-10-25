@@ -22,6 +22,7 @@ from precision_insertion.config import select_mode
 from precision_insertion.held_key_tip import padded_key_box_roi, triangulate_tip_proxy
 from saved_key_face_palette import (
     ALTERNATIVE_PROXY, KEY_PROXY, OBSERVED_KEY, OBSERVED_KEY_MASK_RGBA,
+    OBSERVED_BOUNDARY_SAMPLE, MARKER_OUTLINE, PANEL_BACKGROUND,
     PALETTE, PLANNED_KEY, QWEN_BOX, SOCKET_POSE,
 )
 
@@ -148,11 +149,11 @@ def _local(points: list[list[float]] | list[float], crop: list[int]):
 def _dot(draw: ImageDraw.ImageDraw, xy: tuple[float, float], color: str, radius=6):
     x, y = xy
     draw.ellipse((x-radius, y-radius, x+radius, y+radius),
-                 fill=color, outline="#0b1421", width=2)
+                 fill=color, outline=MARKER_OUTLINE, width=2)
 
 
 def _caption(panel: Image.Image, label: str) -> Image.Image:
-    out = Image.new("RGB", (panel.width, panel.height+42), "#111927")
+    out = Image.new("RGB", (panel.width, panel.height+42), PANEL_BACKGROUND)
     out.paste(panel, (0, 42))
     ImageDraw.Draw(out).text((12, 8), label, font=ImageFont.truetype(FONT, 20),
                              fill="white")
@@ -210,7 +211,7 @@ def render_view(row: dict, bbox: dict, boundary: dict | None,
                   [_local(ellipse["ellipse_full_px"][0], crop)],
                   fill=OBSERVED_KEY, width=4)
         for sample in ellipse["distal_boundary_samples_full_px"]:
-            _dot(draw, _local(sample, crop), "#ffffff", radius=2)
+            _dot(draw, _local(sample, crop), OBSERVED_BOUNDARY_SAMPLE, radius=2)
         _dot(draw, _local(ellipse["center_full_px"], crop), OBSERVED_KEY, radius=8)
     panels["observed_ellipse"] = face
 
@@ -339,7 +340,7 @@ def main() -> None:
             # One figure has one visual question. Do not stack all overlays.
             cols = min(3, len(group))
             rows_count = math.ceil(len(group)/cols)
-            canvas = Image.new("RGB", (512*cols, 554*rows_count), "#111927")
+            canvas = Image.new("RGB", (512*cols, 554*rows_count), PANEL_BACKGROUND)
             for index, (camera, panel) in enumerate(group):
                 canvas.paste(_caption(panel, f"{camera} | {name.replace('_', ' ')}"),
                              ((index % cols)*512, (index // cols)*554))

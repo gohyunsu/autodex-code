@@ -18,9 +18,10 @@ from PIL import Image, ImageDraw, ImageFont
 
 from precision_insertion.assets import AssetPaths
 from precision_insertion.config import select_mode
-from compare_saved_key_face_methods import camera_projection, point
+from compare_saved_key_face_methods import camera_projection, point, socket_ring
 from saved_key_face_palette import (
-    AXIS_TARGET, KEY_PROXY, PALETTE, SOCKET_POSE, XY_SHIFT,
+    AXIS_TARGET, KEY_PROXY, MARKER_OUTLINE, PALETTE, PANEL_BACKGROUND,
+    SOCKET_POSE, XY_SHIFT,
 )
 
 
@@ -57,7 +58,7 @@ def dot(draw: ImageDraw.ImageDraw, xy: tuple[float, float],
         color: str, radius: int = 8) -> None:
     x, y = xy
     draw.ellipse((x-radius, y-radius, x+radius, y+radius),
-                 fill=color, outline="#09131e", width=2)
+                 fill=color, outline=MARKER_OUTLINE, width=2)
 
 
 def arrow(draw: ImageDraw.ImageDraw, start: tuple[float, float],
@@ -71,12 +72,12 @@ def arrow(draw: ImageDraw.ImageDraw, start: tuple[float, float],
     side = np.array([-direction[1], direction[0]])
     head_length = min(14., max(5., length*.35))
     head_half_width = max(4., head_length*.55)
-    draw.line((tuple(a), tuple(b)), fill="#09131e", width=9)
+    draw.line((tuple(a), tuple(b)), fill=MARKER_OUTLINE, width=9)
     draw.line((tuple(a), tuple(b)), fill=XY_SHIFT, width=5)
     head = [tuple(b),
             tuple(b-direction*head_length+side*head_half_width),
             tuple(b-direction*head_length-side*head_half_width)]
-    draw.polygon(head, fill=XY_SHIFT, outline="#09131e")
+    draw.polygon(head, fill=XY_SHIFT, outline=MARKER_OUTLINE)
 
 
 def axis_line(draw: ImageDraw.ImageDraw, start: tuple[float, float],
@@ -102,7 +103,7 @@ def compose(stage: str, cameras: list[str], panels: list[Image.Image],
             footer: tuple[str, str] | None = None) -> Image.Image:
     if len(cameras) != len(panels):
         raise ValueError("camera labels and image panels differ")
-    canvas = Image.new("RGB", (TILE*len(panels), TILE+164), "#111927")
+    canvas = Image.new("RGB", (TILE*len(panels), TILE+164), PANEL_BACKGROUND)
     draw = ImageDraw.Draw(canvas)
     title_font = ImageFont.truetype(FONT, 24)
     camera_font = ImageFont.truetype(FONT, 19)
@@ -189,8 +190,14 @@ def main() -> None:
             target_local = tuple(target-origin)
             axis_start = tuple(np.asarray(point(P, (0., 0., axis_start_z))) - origin)
             axis_end = tuple(np.asarray(point(P, (0., 0., axis_end_z))) - origin)
+            ring = [tuple(np.asarray(p) - origin) for p in
+                    socket_ring(runs_root/run_id, camera, args.fixture_root)]
             proxy_panel = panels_by_stage["spatial_proxy"][-1].copy()
-            axis_line(ImageDraw.Draw(proxy_panel), axis_start, axis_end)
+            proxy_draw = ImageDraw.Draw(proxy_panel)
+            axis_line(proxy_draw, axis_start, axis_end)
+            # The measured socket entry ring is the same geometry as the
+            # static review panel. Draw it last so the axis cannot erase it.
+            proxy_draw.line(ring + ring[:1], fill=SOCKET_POSE, width=3)
             xy_panel = proxy_panel.copy()
             draw = ImageDraw.Draw(xy_panel)
             dot(draw, current_local, KEY_PROXY, radius=7)
@@ -199,6 +206,7 @@ def main() -> None:
             x, y = target_local
             draw.ellipse((x-11, y-11, x+11, y+11),
                          outline=AXIS_TARGET, width=3)
+            draw.line(ring + ring[:1], fill=SOCKET_POSE, width=3)
             panels_by_stage["spatial_proxy"][-1] = proxy_panel
             panels_by_stage["xy_alignment"].append(xy_panel)
             view_evidence.append({
