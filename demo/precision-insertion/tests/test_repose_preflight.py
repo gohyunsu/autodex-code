@@ -149,7 +149,7 @@ def _fixture(tmp_path, monkeypatch):
     hand = trimesh.creation.box(extents=(0.006, 0.006, 0.006))
     hand.apply_translation([0.0, 0.0, 0.06])
     monkeypatch.setattr(
-        "precision_insertion.repose_path_audit._hand_link_meshes",
+        "precision_insertion.path_audit._hand_link_meshes",
         lambda *_: {"hand": hand})
     monkeypatch.setattr(
         "precision_insertion.repose_release._hand_link_meshes",
