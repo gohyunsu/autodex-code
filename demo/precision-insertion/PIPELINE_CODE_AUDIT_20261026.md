@@ -248,6 +248,14 @@ SAM worker, and test complete Qwen, SAM, and mixed outages. The saved
 views, so this change would not have supplied a metric result for that run.
 No live latency or insertion outcome is claimed from these offline tests.
 
+The local SAM3 ROI subprocess is shared by those camera calls. A timed-out
+request previously left the process alive, so its late response could be read
+as the next camera's response and raise an identity error after otherwise
+valid views had completed. The backend now retires that subprocess on timeout;
+waiting camera calls fail fast as unavailable while already completed views
+remain usable. A subprocess protocol test reproduces the timeout followed by
+a second camera request without starting SAM3 or robot hardware.
+
 The saved 10 mm run `20261022_103429_752726` completed its 20 mm stock-force
 stroke, then failed 6.87 s into `trial.release_and_clear` with the generic
 `FR3 stream did not finish at a measured stationary endpoint` exception.

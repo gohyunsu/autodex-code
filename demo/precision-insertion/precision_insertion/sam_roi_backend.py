@@ -19,6 +19,7 @@ class SamRoiBackend:
     def __init__(
         self, *, python_path: Path, checkpoint: Path, stderr_path: Path,
         worker_path: Path | None = None, startup_timeout_s: float = 180.,
+        response_timeout_s: float = 120.,
     ) -> None:
         python = Path(python_path).expanduser().resolve(strict=True)
         model = Path(checkpoint).expanduser().resolve(strict=True)
@@ -31,6 +32,8 @@ class SamRoiBackend:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         self._log = log_path.open("a", encoding="utf-8")
         self._lock = threading.Lock()
+        self._response_timeout_s = response_timeout_s
+        self._failed = False
         self.model = str(model)
         self._process = subprocess.Popen(
             [str(python), str(worker), "--checkpoint", str(model)],
@@ -75,14 +78,30 @@ class SamRoiBackend:
         }
         with self._lock:
             process = self._process
-            if process.poll() is not None or process.stdin is None:
+            if self._failed or process.poll() is not None or process.stdin is None:
                 raise RuntimeError("SAM3 ROI worker is not running")
             try:
                 process.stdin.write(json.dumps(request) + "\n")
                 process.stdin.flush()
             except BrokenPipeError as exc:
+                self._failed = True
                 raise RuntimeError("SAM3 ROI worker exited unexpectedly") from exc
-            reply = self._read_line(120.)
+            try:
+                reply = self._read_line(self._response_timeout_s)
+            except TimeoutError:
+                # The outstanding reply has an unknown arrival time. Do not
+                # let a later camera consume it as its own measurement.
+                self._failed = True
+                if process.poll() is None:
+                    try:
+                        process.kill()
+                    except OSError:
+                        pass
+                try:
+                    process.wait(timeout=5.)
+                except subprocess.TimeoutExpired:
+                    pass
+                raise
         if (reply.get("request_id") != request_id or
                 reply.get("camera_id") != camera_id or
                 reply.get("type") not in {"result", "error"}):

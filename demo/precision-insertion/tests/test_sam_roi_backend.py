@@ -59,6 +59,37 @@ for line in sys.stdin:
         backend.close()
 
 
+def test_timed_out_worker_cannot_reuse_stale_camera_reply(tmp_path):
+    worker = tmp_path / "slow_worker.py"
+    worker.write_text('''
+import json, sys, time
+print(json.dumps({"type":"ready","model":sys.argv[2]}), flush=True)
+for line in sys.stdin:
+    row=json.loads(line)
+    if row["type"]=="close": break
+    time.sleep(1.)
+    print(json.dumps({"type":"result","request_id":row["request_id"],
+      "camera_id":row["camera_id"],"image_size_wh":[8,8],
+      "mask_png_base64":None,"score":0.8,"inference_s":1.,
+      "cuda_peak_bytes":0}),flush=True)
+''')
+    checkpoint = tmp_path / "model.pt"
+    checkpoint.write_bytes(b"test")
+    backend = SamRoiBackend(
+        python_path=Path(sys.executable), checkpoint=checkpoint,
+        worker_path=worker, stderr_path=tmp_path / "worker.log",
+        response_timeout_s=.05)
+    try:
+        image = Image.new("RGB", (8, 8), "white")
+        with pytest.raises(TimeoutError, match="response timed out"):
+            backend.segment(image, camera_id="cam_a", prompt="white cylinder")
+        assert backend._process.poll() is not None
+        with pytest.raises(RuntimeError, match="not running"):
+            backend.segment(image, camera_id="cam_b", prompt="white cylinder")
+    finally:
+        backend.close()
+
+
 @pytest.mark.parametrize("failure", [
     None, "one_qwen", "one_sam", "all_qwen", "all_sam", "mixed_all"])
 def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
