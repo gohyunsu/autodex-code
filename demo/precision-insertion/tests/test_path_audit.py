@@ -24,8 +24,9 @@ from precision_insertion.path_audit import (  # noqa: E402
 )
 from precision_insertion import path_audit as path_audit_module  # noqa: E402
 from precision_insertion import repose_path_audit as repose_audit_module  # noqa: E402
+from precision_insertion.endpoint import _coal_mesh  # noqa: E402
 from precision_insertion.solid_occupancy import (  # noqa: E402
-    CylinderSocketOccupancy,
+    CylinderSocketOccupancy, SolidMeshOccupancy,
 )
 from precision_insertion.repose_path_audit import (  # noqa: E402
     audit_repose_held_paths,
@@ -261,6 +262,29 @@ def test_aabb_skip_preserves_exact_minimum_distances_and_collision_result(
     assert optimized[1] == pytest.approx(baseline[1], abs=1e-12)
     assert optimized[2] == baseline[2]
     assert len(calls) < baseline_calls
+
+
+def test_disjoint_aabb_skips_surface_collision_and_containment_but_not_distance(
+        monkeypatch):
+    moving = trimesh.creation.box(extents=(0.01, 0.01, 0.01))
+    fixed = trimesh.creation.box(extents=(0.01, 0.01, 0.01))
+    occupancy = SolidMeshOccupancy(fixed)
+    pose = np.eye(4)
+    pose[0, 3] = 0.1
+    assert path_audit_module._aabb_distance_lower_bound(
+        path_audit_module._box_corners(moving.bounds), fixed.bounds,
+        pose) > 2e-9
+    args = (_coal_mesh(moving), moving, _coal_mesh(fixed), fixed,
+            occupancy, pose)
+    baseline = path_audit_module._held_pair_report(*args)
+    with monkeypatch.context() as skip_calls:
+        skip_calls.setattr(coal, "collide", lambda *_: pytest.fail(
+            "disjoint meshes need no surface collision query"))
+        skip_calls.setattr(occupancy, "classify", lambda *_: pytest.fail(
+            "disjoint meshes need no solid occupancy query"))
+        optimized = path_audit_module._held_pair_report(*args, True)
+    assert optimized == baseline
+    assert optimized["minimum_surface_distance_m"] == pytest.approx(0.09)
 
 
 def test_repeated_held_audits_reuse_the_same_hand_geometry(tmp_path, monkeypatch):

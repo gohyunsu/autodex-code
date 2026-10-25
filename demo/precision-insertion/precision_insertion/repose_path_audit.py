@@ -153,9 +153,11 @@ def audit_repose_held_paths(
                             lower_bound - 1e-9 >=
                             minimum_distances.get(pair, float("inf"))):
                         continue
+                    # Proven AABB separation excludes surface intersection
+                    # and occupancy, while the exact distance remains needed.
                     report = _held_pair_report(
                         model, moving_mesh, obstacle, fixed_mesh,
-                        occupancy, relative)
+                        occupancy, relative, lower_bound > 2e-9)
                     distance = report["minimum_surface_distance_m"]
                     minimum_distances[pair] = min(
                         distance, minimum_distances.get(pair, float("inf")))

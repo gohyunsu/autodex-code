@@ -209,7 +209,8 @@ def _build_fixed_world_models(calibration, *, mode,
 
 def _held_pair_report(moving_model, moving_mesh, fixed_model,
                       fixed_mesh, fixed_occupancy,
-                      T_fixed_moving: np.ndarray) -> dict:
+                      T_fixed_moving: np.ndarray,
+                      disjoint_aabb: bool = False) -> dict:
     """Check surface crossing *and* a moving mesh enclosed by solid fixture.
 
     Coal's BVH checks triangle intersection, not solid containment. The
@@ -218,8 +219,10 @@ def _held_pair_report(moving_model, moving_mesh, fixed_model,
     wholly enclosed links would miss a disconnected finger-link mesh whose
     one component is enclosed and another component remains outside.
     """
-    report = _coal_models_report(moving_model, fixed_model, T_fixed_moving)
-    if report["colliding"]:
+    report = _coal_models_report(
+        moving_model, fixed_model, T_fixed_moving,
+        collision_excluded=disjoint_aabb)
+    if report["colliding"] or disjoint_aabb:
         return report
     vertices = (moving_mesh.vertices @ T_fixed_moving[:3, :3].T +
                 T_fixed_moving[:3, 3])
@@ -317,9 +320,13 @@ def _audit_held_geometry_samples(
                             lower_bound - 1e-9 >=
                             minimum_distances.get(pair, float("inf"))):
                         continue
+                    # More than 2 nm of AABB separation also excludes the
+                    # 1 nm padded occupancy box, so only exact distance is
+                    # needed. Keep collision queries for touching boxes:
+                    # Coal can report contact with a tiny positive distance.
                     result = _held_pair_report(
                         model, moving_mesh, fixed_model, fixed_mesh,
-                        occupancy, relative)
+                        occupancy, relative, lower_bound > 2e-9)
                     distance = result["minimum_surface_distance_m"]
                     minimum_distances[pair] = min(
                         distance, minimum_distances.get(pair, float("inf")))

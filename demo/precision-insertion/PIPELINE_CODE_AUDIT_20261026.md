@@ -184,6 +184,20 @@ pair queries fell from 131 to 40; a single warmed local timing fell from
 36.4 ms to 20.4 ms. This is **not** a measured live-session time saving.
 The regression compares the entire audit result with and without pruning.
 
+The saved 10 mm session `20261022_105828_126084` spent 22.99 s auditing
+498 nominal samples before pickup and 42.72 s auditing 263 new transfer/axial
+samples after lift. The second audit checks a newly planned path from the
+measured post-lift state, so reusing the first path result would be incorrect.
+Each audit now also omits Coal's surface-collision query and solid-occupancy
+classification when the already computed enclosing-box gap proves the meshes
+are disjoint by more than 2 nm. It still computes the exact mesh distance for
+the recorded pair minimum and uncertainty margin; overlapping and touching
+boxes still use both collision and distance queries. On a local 263-sample
+fixture, the complete audit result was identical, Coal collision calls fell
+from 1,052 to 38, and three warmed timings changed from 0.117/0.102/0.102 s
+to 0.058/0.052/0.053 s. This fixture is much smaller than the real Inspire
+meshes, so these timings do not predict the live session's speedup.
+
 ## Remaining evidence needed
 
 1. Replay additional rejected-socket and failed-grasp episodes with this

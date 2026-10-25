@@ -123,15 +123,19 @@ def _coal_mesh(mesh):
     return model
 
 
-def _coal_models_report(moving, fixed_model, T_fixed_moving: np.ndarray) -> dict:
+def _coal_models_report(moving, fixed_model, T_fixed_moving: np.ndarray,
+                        *, collision_excluded: bool = False) -> dict:
+    """Keep exact distance; omit collision only after a proven AABB separation."""
     import coal
 
     transform = coal.Transform3s(T_fixed_moving[:3, :3],
                                  T_fixed_moving[:3, 3])
-    collision = coal.CollisionResult()
-    colliding = bool(coal.collide(
-        moving, transform, fixed_model, coal.Transform3s(),
-        coal.CollisionRequest(), collision))
+    colliding = False
+    if not collision_excluded:
+        collision = coal.CollisionResult()
+        colliding = bool(coal.collide(
+            moving, transform, fixed_model, coal.Transform3s(),
+            coal.CollisionRequest(), collision))
     distance = coal.distance(
         moving, transform, fixed_model, coal.Transform3s(),
         coal.DistanceRequest(), coal.DistanceResult())
