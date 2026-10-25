@@ -16,8 +16,9 @@ from .assets import AssetPaths
 from .config import TaskMode
 from .geometry import pose_angle_deg, validate_se3
 from .path_audit import (
-    PathAuditLimits, _array_sha256, _fixed_world_models, _held_hand_models,
-    _held_pair_report, _immutable_key_model, _joint_path,
+    PathAuditLimits, _aabb_distance_lower_bound, _array_sha256, _box_corners,
+    _fixed_world_models, _held_hand_models, _held_pair_report,
+    _immutable_key_model, _joint_path,
     _poses_match, _sha256,
 )
 
@@ -109,6 +110,11 @@ def audit_repose_held_paths(
         raise FileNotFoundError("full key CAD and Franka/Inspire URDF are required")
     moving = {"key": _immutable_key_model(str(key_path))}
     moving.update(_held_hand_models(urdf, held))
+    moving_corners = {name: _box_corners(mesh.bounds)
+                      for name, (_model, mesh) in moving.items()}
+    fixed_frames = {
+        name: (np.linalg.inv(pose), np.asarray(mesh.bounds, dtype=np.float64))
+        for name, (_model, pose, mesh, _occupancy) in fixed.items()}
     key_in_hand = np.linalg.inv(key_hand)
     minimum_distances = {}
     for stage, poses in wrist.items():
@@ -133,16 +139,26 @@ def audit_repose_held_paths(
                         if (abs(key_bottom - table_top) <= 0.001 and
                                 key_bottom >= table_top - 0.001):
                             continue  # Planned support contact, not penetration.
-                    relative = np.linalg.inv(obstacle_pose) @ moving_pose
+                    fixed_inverse, fixed_bounds = fixed_frames[fixed_name]
+                    relative = fixed_inverse @ moving_pose
+                    pair = f"{moving_name}->{fixed_name}"
+                    required = (limits.minimum_hand_clearance_m
+                                if moving_name != "key" else 0.0)
+                    # The enclosing-box gap is a lower bound on the exact
+                    # mesh distance. Skip only when this sample cannot change
+                    # the pair minimum or violate the requested clearance.
+                    lower_bound = _aabb_distance_lower_bound(
+                        moving_corners[moving_name], fixed_bounds, relative)
+                    if (lower_bound > required + 1e-9 and
+                            lower_bound - 1e-9 >=
+                            minimum_distances.get(pair, float("inf"))):
+                        continue
                     report = _held_pair_report(
                         model, moving_mesh, obstacle, fixed_mesh,
                         occupancy, relative)
-                    pair = f"{moving_name}->{fixed_name}"
                     distance = report["minimum_surface_distance_m"]
                     minimum_distances[pair] = min(
                         distance, minimum_distances.get(pair, float("inf")))
-                    required = (limits.minimum_hand_clearance_m
-                                if moving_name != "key" else 0.0)
                     if report["colliding"] or distance < required:
                         failures.append({"stage": stage, "sample": i,
                                          "reason": "held_geometry_collision_or_clearance",

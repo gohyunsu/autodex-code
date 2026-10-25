@@ -23,6 +23,7 @@ from precision_insertion.path_audit import (  # noqa: E402
     PathAuditLimits, audit_held_joint_paths, audit_held_lateral_path,
 )
 from precision_insertion import path_audit as path_audit_module  # noqa: E402
+from precision_insertion import repose_path_audit as repose_audit_module  # noqa: E402
 from precision_insertion.solid_occupancy import (  # noqa: E402
     CylinderSocketOccupancy,
 )
@@ -480,6 +481,30 @@ def test_repose_keeps_frozen_socket_in_carried_world_and_samples_held_key(
     assert "key->mesh/fixture_socket" in passed["minimum_surface_distances_m"]
     assert passed["sample_counts"] == {
         "lift": 11, "transfer": 11, "descent": 11}
+
+
+def test_repose_aabb_skip_preserves_exact_audit_and_reduces_pair_queries(
+    tmp_path, monkeypatch,
+):
+    calibration, _, _ = _fixture(tmp_path, monkeypatch)
+    paths = _repose_paths()
+    original = repose_audit_module._held_pair_report
+    calls = []
+
+    def counted(*args):
+        calls.append(None)
+        return original(*args)
+
+    monkeypatch.setattr(repose_audit_module, "_held_pair_report", counted)
+    with monkeypatch.context() as without_skip:
+        without_skip.setattr(repose_audit_module, "_aabb_distance_lower_bound",
+                             lambda *_: 0.0)
+        baseline = _repose_audit(tmp_path, calibration, paths)
+    baseline_calls = len(calls)
+    calls.clear()
+    optimized = _repose_audit(tmp_path, calibration, paths)
+    assert optimized == baseline
+    assert len(calls) < baseline_calls
 
 
 def test_repose_rejects_changed_socket_or_held_path_collision(
