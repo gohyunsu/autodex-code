@@ -6,18 +6,13 @@ or robot. The one worker per capture PC is started by the live runtime.
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 import shutil
 
 
 REPO = Path(__file__).resolve().parents[2]
-STAGE = Path(
-    "/home/robot/shared_data/hyunsu/tmp/"
-    "precision_insertion_recipient_stage_20261013_b7e2392/"
-    "AutoDex/precision_insertion/cylindrical")
-WORKER_ROOT = Path(
-    "/home/robot/shared_data/hyunsu/tmp/precision_distributed_qwen_20261020")
 WORKERS = {
     "24122734": ("capture1", "precision_qwen3_vl_2b"),
     "25305463": ("capture2", "precision_qwen3_vl_2b"),
@@ -28,19 +23,32 @@ WORKERS = {
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source-config", type=Path, required=True,
+                        help="current FR3 runtime JSON to extend")
+    parser.add_argument("--output-config", type=Path, required=True,
+                        help="current distributed FR3 runtime JSON to write")
+    parser.add_argument("--worker-root", type=Path, required=True,
+                        help="shared directory containing capture-PC Qwen worker code")
+    args = parser.parse_args()
+    source_config = args.source_config.resolve(strict=True)
+    output_config = args.output_config.resolve()
+    if source_config == output_config:
+        parser.error("source and output config paths must differ")
+    if not output_config.parent.is_dir():
+        parser.error(f"output directory does not exist: {output_config.parent}")
+
     source = REPO / "demo/precision-insertion/precision_insertion"
-    package = WORKER_ROOT / "precision_insertion"
+    package = args.worker_root / "precision_insertion"
     package.mkdir(parents=True, exist_ok=True)
     for name in ("__init__.py", "local_qwen.py", "distributed_qwen_worker.py"):
         shutil.copy2(source / name, package / name)
 
-    original = STAGE / "franka_runtime_board9_gap20_stock_held.json"
-    output = STAGE / "franka_runtime_board9_gap20_distributed.json"
-    config = json.loads(original.read_text(encoding="utf-8"))
+    config = json.loads(source_config.read_text(encoding="utf-8"))
     config["vlm"].update({
         "mode": "distributed",
         "classification_image_size": [384, 288],
-        "worker_root": str(WORKER_ROOT),
+        "worker_root": str(args.worker_root.resolve()),
         "workers": {
             camera: {
                 "host": host,
@@ -50,9 +58,9 @@ def main() -> None:
             for camera, (host, venv) in WORKERS.items()
         },
     })
-    output.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n",
-                      encoding="utf-8")
-    print(output)
+    output_config.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n",
+                             encoding="utf-8")
+    print(output_config)
     for camera, (host, _) in WORKERS.items():
         print(f"{host}: {camera}")
 

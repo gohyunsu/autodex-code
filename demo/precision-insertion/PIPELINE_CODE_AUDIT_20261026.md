@@ -106,7 +106,10 @@ The old `max_total_offset_m` retry budget remains an optional legacy field;
 the active FR3 stage factory sets it to `None`. The live launcher defaults to
 the VLM estimator. Existing `BOARD_FREE_MODE.md` code is statically tested
 but the former recipient stage was moved, so `run_robot_pc.sh --check` cannot
-currently certify an active robot-PC asset installation.
+currently certify an active robot-PC asset installation. The launcher now
+requires an explicit current `PRECISION_STAGE_ROOT` and checks its three
+input files before opening any camera or robot connection; it no longer
+defaults to the moved 2026-10-13 temporary path.
 
 ## Recovery-path latency change in this review
 

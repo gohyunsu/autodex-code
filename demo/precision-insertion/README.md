@@ -78,8 +78,14 @@ precision-specific robot-loop code under this demo; stock AutoDex execution
 files remain unchanged.
 On the board-9 robot PC, manage long-lived daemons separately with
 `bash demo/precision-insertion/manage_robot_pc_services.sh start` (or
-`check`/`stop`), then run `bash demo/precision-insertion/run_robot_pc.sh
---run`. A pipeline exit no longer restarts or stops capture/Franka services.
+`check`/`stop`), then set `PRECISION_STAGE_ROOT` to the active cylindrical
+recipient stage and run `bash demo/precision-insertion/run_robot_pc.sh --check`
+before `--run`. The stage needs `launch.json`, the matching
+`recipient_gap{GAP_MM}_endpoint_catalog.json`, and `franka_runtime.json`;
+`PRECISION_LAUNCH_TEMPLATE`, `PRECISION_ENDPOINT_CATALOG`, and
+`PRECISION_ROBOT_CONFIG` can select explicit current files. No active stage
+is installed at the former 2026-10-13 temporary path. A pipeline exit no
+longer restarts or stops capture/Franka services.
 The default cylinder radial gap is 20 mm; set `PRECISION_GAP_MM` to 1, 3, 5,
 10, or 15 for the matching recipient-screened socket catalog after its
 file-only `--check`. Each physical socket change needs a new board/socket

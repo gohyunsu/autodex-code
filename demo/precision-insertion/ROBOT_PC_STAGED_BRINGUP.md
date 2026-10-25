@@ -7,12 +7,17 @@ its recipient-screened endpoint catalog. The same board/camera/FR3 runtime
 configuration is used; every physical socket change needs a fresh socket
 capture. See [CYLINDER_MULTI_GAP_READINESS_20261022.md](CYLINDER_MULTI_GAP_READINESS_20261022.md)
 for the asset inventory and limits of the static checks.
-It defaults to the distributed config
-`franka_runtime_board9_gap20_distributed.json` and five fixed VLM workers:
+Set `PRECISION_STAGE_ROOT` to the active cylinder recipient stage before using
+the launcher. It reads `launch.json`, the selected gap catalog, and
+`franka_runtime.json` from that stage unless the three corresponding file
+overrides are set. The distributed runtime uses five fixed VLM workers:
 capture1/24122734, capture2/25305463, capture3/25322638,
 capture5/25322649, capture6/25305461. Run
-`python3 demo/precision-insertion/setup_capture_qwen.py` to refresh the
-small worker files and staged runtime config after changing this checkout;
+`python3 demo/precision-insertion/setup_capture_qwen.py --source-config
+/absolute/path/to/current/franka_runtime_source.json --output-config
+"$PRECISION_STAGE_ROOT/franka_runtime.json" --worker-root
+"$PRECISION_STAGE_ROOT/qwen_worker"` to refresh the small worker files and
+staged runtime config after changing this checkout;
 the five local model copies and isolated Qwen environments are already
 installed on those hosts. The worker is started when the live pipeline loads
 the VLM after socket capture, before the key-placement prompt. The sections
@@ -29,8 +34,7 @@ level must not be reported as success at the next.
 
 The Oct 17 active-route failure-gate review is in
 [FAILURE_GATE_AUDIT_20261017.md](FAILURE_GATE_AUDIT_20261017.md).
-`run_robot_pc.sh` defaults to the staged
-`franka_runtime_board9_gap20_distributed.json`, which uses the five capture-PC
+The active stage's `franka_runtime.json` must configure the five capture-PC
 Qwen workers and the stock-style held-motion record without the former 3 Nm
 held-lift abort.
 `--check` only validates files; it does not connect a camera or robot.
@@ -846,6 +850,7 @@ remain on their original ports. The camera stream itself is opened and
 stopped by the existing AutoDex session context. From the host terminal:
 
 ```bash
+export PRECISION_STAGE_ROOT=/absolute/path/to/current/cylindrical/stage
 bash /home/robot/autodex-precision-insertion/demo/precision-insertion/run_robot_pc.sh --check
 bash /home/robot/autodex-precision-insertion/demo/precision-insertion/manage_robot_pc_services.sh start
 bash /home/robot/autodex-precision-insertion/demo/precision-insertion/manage_robot_pc_services.sh check

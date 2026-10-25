@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 
 ROOT=${PRECISION_REPO_ROOT:-/home/robot/autodex-precision-insertion}
-STAGE=${PRECISION_STAGE_ROOT:-/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392/AutoDex/precision_insertion/cylindrical}
+STAGE=${PRECISION_STAGE_ROOT:-}
 PY=${PRECISION_PLANNER_PY:-/home/robot/anaconda3/envs/planner/bin/python}
 CHECK_PY=${PRECISION_CHECK_PY:-/home/robot/anaconda3/envs/flir_env/bin/python}
 MODE=${1:---run}
@@ -27,6 +27,15 @@ fi
 if [[ "$SCENE_MODE" == board_free && -z "$TABLE_SURFACE_Z_M" ]]; then
   echo "board_free needs explicit PRECISION_TABLE_SURFACE_Z_M (metres in robot base frame)" >&2; exit 2
 fi
+if [[ -z "$STAGE" ]]; then
+  echo "PRECISION_STAGE_ROOT must name the active cylindrical recipient stage" >&2
+  exit 2
+fi
+if [[ ! -d "$STAGE" ]]; then
+  echo "active cylindrical recipient stage is missing: $STAGE" >&2
+  exit 2
+fi
+STAGE=$(realpath -e "$STAGE")
 
 cd "$ROOT"
 export PYTHONPATH="$ROOT:$ROOT/demo/precision-insertion:$ROOT/src"
@@ -35,9 +44,15 @@ export PRECISION_FR3_INSPIRE_URDF=${PRECISION_FR3_INSPIRE_URDF:-$ROOT/autodex/pl
 export PRECISION_VLM_CAMERA_IDS=${PRECISION_VLM_CAMERA_IDS:-24122734,25305463,25322638,25322649,25305461}
 PRECISION_XY_ESTIMATOR=${PRECISION_XY_ESTIMATOR:-vlm}
 
-LAUNCH_TEMPLATE="$STAGE/live_board9_gap20_20261013/launch.json"
-CATALOG=${PRECISION_ENDPOINT_CATALOG:-$STAGE/recipient_gap${GAP_MM}_endpoint_catalog_20261022.json}
-ROBOT=${PRECISION_ROBOT_CONFIG:-$STAGE/franka_runtime_board9_gap20_distributed.json}
+LAUNCH_TEMPLATE=${PRECISION_LAUNCH_TEMPLATE:-$STAGE/launch.json}
+CATALOG=${PRECISION_ENDPOINT_CATALOG:-$STAGE/recipient_gap${GAP_MM}_endpoint_catalog.json}
+ROBOT=${PRECISION_ROBOT_CONFIG:-$STAGE/franka_runtime.json}
+for required in "$LAUNCH_TEMPLATE" "$CATALOG" "$ROBOT"; do
+  if [[ ! -f "$required" ]]; then
+    echo "active recipient-stage input is missing: $required" >&2
+    exit 2
+  fi
+done
 
 if [[ "$MODE" == --check ]]; then
   CHECK_LAUNCH=$(mktemp /tmp/precision-launch-check.XXXXXX.json)
@@ -66,7 +81,7 @@ PY
 fi
 
 RUN_TAG="$(date +%Y%m%d_%H%M%S_%N)_$$"
-LAUNCH_DIR="$STAGE/live_${SCENE_MODE}_gap${GAP_MM}_20261023"
+LAUNCH_DIR="$STAGE/runs/live_${SCENE_MODE}_gap${GAP_MM}"
 mkdir -p "$LAUNCH_DIR"
 LAUNCH="$LAUNCH_DIR/launch_$RUN_TAG.json"
 "$CHECK_PY" - "$LAUNCH_TEMPLATE" "$LAUNCH" "$RUN_TAG" "$GAP_MM" \

@@ -596,7 +596,9 @@ PYTHONPATH="$PWD/demo/precision-insertion:$PWD/src:/path/to/robot_pc_integration
 The live CLI requires explicit frame-bound init daemon ports. On the
 board-9 robot PC, start or check the long-lived capture-PC and FR3 services
 with `bash demo/precision-insertion/manage_robot_pc_services.sh start` or
-`check`; then run `bash demo/precision-insertion/run_robot_pc.sh --run`.
+`check`; set `PRECISION_STAGE_ROOT` to the current cylindrical recipient stage,
+run `bash demo/precision-insertion/run_robot_pc.sh --check`, then run
+`bash demo/precision-insertion/run_robot_pc.sh --run`.
 To select temporal key-tip tracking for next-trial XY only, start the separate
 service on capture2, then select the mode for the robot run:
 
