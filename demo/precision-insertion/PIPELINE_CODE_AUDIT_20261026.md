@@ -1,7 +1,7 @@
 # Current code audit: key tip, transforms, and recovery latency
 
 This audit compares the local stock `/home/robot/AutoDex` checkout at
-`448732d` with `feat/precision-insertion` at `568107f`. It is a source and
+`448732d` with `feat/precision-insertion` through `3986712`. It is a source and
 saved-evidence review. No camera, controller, or robot was started.
 
 ## What is actually connected
@@ -14,7 +14,7 @@ saved-evidence review. No camera, controller, or robot was started.
 | Preinsert / entry / verification | `targets.build_rigid_insertion_targets` composes `T_robot_socket @ T_socket_key @ T_key_hand`. The socket-frame XY offset is applied before this composition; the insertion direction is rotated by `T_robot_socket`. | Stock's world-vertical Jacobian stroke cannot directly represent a tilted socket axis. The demo's axial path and sampled held-key audit are insertion-specific. |
 | Failed return / reorientation | `original_pose_restoration.py` measures a fresh tabletop key, classifies its v8 pose, loads the selected local wrist relation, plans pickup and a CAD rest target, then checks release and exit. `repose_transition.py` uses saved v8 reset seeds for pose changes. | The candidate-to-world wrist multiplication and wrist-to-object inversion match stock `run_auto.py` and `executor/real.py`. A planned landing is not proof of the actual landed pose; the next trial recaptures the key. |
 
-`run_auto.py` and `executor/real.py` are byte-identical in the two local
+`run_auto.py`, `run_pipeline.py`, `scene_cfg.py`, and `executor/real.py` are byte-identical in the two local
 checkouts. `autodex/planner/planner.py` differs by one constructor option:
 the precision checkout may inject a robot URDF path for the right-angle
 FR3/Inspire mount. This makes the planning model selection explicit; it does
@@ -46,6 +46,20 @@ observation is still required before a new attempt. These changes are covered
 by `test_follow_progress.py`, `test_reset_scene.py`, and the integration
 tests, but no saved-image replay can prove the robot's actual tracking or
 contact behavior.
+
+`autodex/planner/jacobian_stroke.py` also differs from stock: its FR3
+`held_object_speed_scale` default is 1.0 instead of 0.40. The numerical
+Jacobian, collision checks, and retimer are otherwise unchanged. This is a
+speed-policy correction in this separate checkout, not an insertion-specific
+geometry rule: both the stock vertical stroke used by lift/repose and the
+demo's socket-axis continuation use the same default. The FR3 executor still
+applies the 0.40 near-object/held playback scale once. The saved
+`20261020_094911_916554` run showed the previous planner-plus-executor
+reduction and the read-only replay in `TRIAL_20261020_094911.md` compares
+reference lengths; it does not measure post-change physical speed. The
+`test_axis_jacobian.py` retiming test checks that the socket-axis path reaches
+the retimer at the base joint limits. This deliberate stock divergence
+should remain visible when comparing timings or rebasing the checkout.
 
 As an independent arithmetic replay, the saved post-lift reports from
 `20261022_101456_545928`, `20261022_103429_752726`, and
