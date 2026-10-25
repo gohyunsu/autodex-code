@@ -184,7 +184,15 @@ def test_session_runner_dispatches_nominal_plan_without_physical_file(
         decision.required_before_motion)
     wrist_source = result.relation.wrist_source_path
     wrist_source.write_bytes(wrist_source.read_bytes() + b"changed")
-    assert runner.current_decision().reason == "nominal_postlift_evidence_changed"
+    # Decision lookup is cheap; the executor repeats source verification
+    # immediately before motion (as the direct verifier does here).
+    assert runner.current_decision().action == "transfer_execution_gate_required"
+    candidate_dir = (AssetPaths(tmp_path, args["mode"]).candidate_dir /
+                     Path(*result.candidate_key))
+    with pytest.raises(ValueError, match="nominal grasp source changed"):
+        verify_nominal_postlift_preflight(
+            runner._postlift_report_path, mode=args["mode"],
+            shared_root=tmp_path, candidate_dir=candidate_dir)
 
 
 def test_nominal_relation_reaches_preinsert_visual_checkpoint(

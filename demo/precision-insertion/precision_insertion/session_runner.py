@@ -390,23 +390,10 @@ class SessionRunner:
                     self._postlift_preflight, BoundedPostLiftPreflight)
                 nominal = isinstance(
                     self._postlift_preflight, NominalPostLiftPreflight)
-                if bounded or nominal:
-                    candidate_dir = (
-                        AssetPaths(self.shared_root, self.mode).candidate_dir /
-                        Path(*self._postlift_preflight.candidate_key))
-                    try:
-                        verifier = (verify_bounded_postlift_preflight if bounded
-                                    else verify_nominal_postlift_preflight)
-                        verifier(
-                            self._postlift_report_path, mode=self.mode,
-                            shared_root=self.shared_root,
-                            candidate_dir=candidate_dir)
-                    except (FileNotFoundError, KeyError, OSError, TypeError,
-                            ValueError):
-                        return SessionDecision(
-                            "stop_for_review",
-                            ("bounded_postlift_evidence_changed" if bounded
-                             else "nominal_postlift_evidence_changed"), None)
+                # The saved plan is verified when written. Keep this decision
+                # lookup cheap: execute_bound_held_transfer rechecks its
+                # candidate, trajectory archive and source bytes immediately
+                # before any motion, after the live start state is sampled.
                 return SessionDecision(
                     "transfer_execution_gate_required",
                     ("bounded_postlift_path_planned_arrival_unobserved"

@@ -266,6 +266,12 @@ def test_session_runner_keeps_bounded_path_separate_and_source_bound(
     assert json.loads(binding.read_text())["physical_calibration_sha256"] == (
         outcome.relation.calibration_sha256)
     args["physical_calibration_path"].write_text("{}", encoding="utf-8")
-    assert runner.current_decision().reason == "bounded_postlift_evidence_changed"
+    assert runner.current_decision().action == "transfer_execution_gate_required"
+    candidate_dir = (AssetPaths(tmp_path, args["mode"]).candidate_dir /
+                     Path(*outcome.candidate_key))
+    with pytest.raises(ValueError, match="physical grasp calibration file changed"):
+        bounded_module.verify_bounded_postlift_preflight(
+            runner._postlift_report_path, mode=args["mode"],
+            shared_root=tmp_path, candidate_dir=candidate_dir)
     runner._postlift_report_path.write_text("{}", encoding="utf-8")
     assert runner.current_decision().action == "stop_for_review"

@@ -40,6 +40,32 @@ KEY_A = ("table", "0", "3")
 KEY_B = ("table", "0", "4")
 
 
+def test_transfer_decision_skips_repeated_deep_archive_verification(
+        tmp_path, monkeypatch):
+    class NominalPlan:
+        status = "sampled_postlift_preflight_pass"
+
+    monkeypatch.setattr(session_runner, "NominalPostLiftPreflight", NominalPlan)
+    monkeypatch.setattr(
+        session_runner, "verify_nominal_postlift_preflight",
+        lambda *_args, **_kwargs: pytest.fail(
+            "decision lookup must not reverify the trajectory archive"))
+    report = tmp_path / "postlift_report.json"
+    report.write_text('{"status":"sampled_postlift_preflight_pass"}\n',
+                      encoding="utf-8")
+    runner = object.__new__(session_runner.SessionRunner)
+    runner._attempt = SimpleNamespace(
+        candidate_id="table/0/3", events=[],
+        labels={"grasp_success": True, "preinsert_reached": None})
+    runner._postlift_preflight = NominalPlan()
+    runner._postlift_report_path = report
+    runner._postlift_report_sha256 = hashlib.sha256(report.read_bytes()).hexdigest()
+    for _ in range(3):
+        assert runner.current_decision().action == "transfer_execution_gate_required"
+    report.write_text("{}\n", encoding="utf-8")
+    assert runner.current_decision().reason == "postlift_report_changed"
+
+
 def _observation(capture_id: str, timestamp: float) -> KeyPoseObservation:
     return KeyPoseObservation(
         capture_id=capture_id, request_id=int(timestamp),

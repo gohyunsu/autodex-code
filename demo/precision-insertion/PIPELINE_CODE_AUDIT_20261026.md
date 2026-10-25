@@ -217,6 +217,18 @@ defaults to the moved 2026-10-13 temporary path.
 
 ## Recovery-path latency change in this review
 
+The live action loop queries `SessionRunner.current_decision()` more than once
+between a passing post-lift plan and transfer. The decision previously ran the
+full nominal/bounded post-lift verifier on every lookup, including candidate
+and calibration reads plus both trajectory arrays in the saved NPZ. The plan
+is already verified when saved, and `execute_bound_held_transfer` repeats the
+full source/archive verification before it permits a motor command. Decision
+lookup now checks the bound report hash only. If a source file changes after
+planning, lookup can still return `transfer_execution_gate_required`, but the
+executor rejects the changed source before motion. Tests cover repeated
+lookup, report mutation, source mutation, and archive mutation. This removes
+duplicate pre-command I/O; no live timing gain has been measured.
+
 The saved preinsert checkpoint was fully reverified at creation, then again
 at insertion handoff and failed-trial XY diagnosis. The latter calls decoded
 the selected source PNGs and replayed the visual record even during the same
