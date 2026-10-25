@@ -3125,6 +3125,7 @@ class SessionRunner:
         roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]] | None = None,
         square_translation_only: bool = False,
         xy_estimator: str = "vlm",
+        sam_segmentor: object | None = None,
     ) -> PreinsertXYDiagnostic:
         """Reuse this attempt's pre-stroke raw snapshot for next-trial XY."""
         if (self.mode.family != "cylinder" or
@@ -3147,7 +3148,8 @@ class SessionRunner:
             square_translation_only=square_translation_only,
             search_index=self._future_xy_corrections_used,
             xy_estimator=xy_estimator,
-            key_reference_dir=self._key_evidence_dir)
+            key_reference_dir=self._key_evidence_dir,
+            sam_segmentor=sam_segmentor)
         output = (self._attempt_dir / "xy_retry_assessments" /
                   f"{self._retry_assessment_index:03d}")
         write_saved_preinsert_xy_artifacts(result, output)

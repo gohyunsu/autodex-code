@@ -75,4 +75,4 @@ Find the WHITE CYLINDRICAL KEY directly held by the BLACK ROBOT HAND. Ignore any
 
 ## 코드와 실행 범위
 
-`precision_insertion/held_key_tip.py`의 `distal_key_mask_half_ellipse`가 2D 관측 중심을 계산하고, `compare_saved_key_face_methods.py`가 실제 저장 자료 비교·역할별 PNG·GIF를 재현한다. `estimate_saved_key_face_ellipse.py`는 저장된 Qwen·SAM3 결과에서 타원 후보를 만든다. 이 방법은 현재 **읽기 전용 재생으로만 평가**했다. 실제 `retry_session.py`의 `vlm`·`tracked_tip` 경로를 바꾸지 않았고, 로봇 삽입용 XY로 배선하지 않았다. 실시간 적용 전에는 SAM3 마스크와 최소 2개 독립 카메라 결과가 그 경로에서 제시간에 생성되는지 별도 평가가 필요하다.
+`precision_insertion/held_key_tip.py`의 `distal_key_mask_half_ellipse`가 2D 관측 중심을 계산하고, `compare_saved_key_face_methods.py`가 실제 저장 자료 비교·역할별 PNG·GIF를 재현한다. `estimate_saved_key_face_ellipse.py`는 저장된 Qwen·SAM3 결과에서 타원 후보를 만든다. 2026-10-26에는 별도 `sam_half_ellipse` XY 모드를 연결했다. 기존 preinsert snapshot의 **같은 저장 프레임**에서 Qwen 박스를 얻고, 상주 SAM3 작업자가 해당 ROI만 분할한다. 전체 화면 SAM3는 6개 저장 뷰 중 4개에서 키를 놓쳤으므로 이 경로에 사용하지 않는다. ROI 작업자는 6개 모두에서 이전 저장 중심을 수치 오차 이내로 재현했다. 상세 경로와 한계는 [SAM_HALF_ELLIPSE_RUNTIME_20261026.md](SAM_HALF_ELLIPSE_RUNTIME_20261026.md)에 있다. 실제 로봇 시행에서의 정확도와 성공률은 아직 확인되지 않았고, 기본 XY 모드는 기존 `vlm`이다.

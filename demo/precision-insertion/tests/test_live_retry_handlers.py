@@ -16,7 +16,8 @@ from precision_insertion.session_policy import SessionDecision  # noqa: E402
     "abstain", "diagnostic_metric_xy_correction",
     "diagnostic_planar_xy_hypothesis", "diagnostic_exploratory_xy_step",
 ])
-@pytest.mark.parametrize("estimator", ["vlm", "tracked_tip"])
+@pytest.mark.parametrize("estimator", ["vlm", "tracked_tip",
+                                      "sam_half_ellipse"])
 def test_live_grounded_advice_never_moves_xy_in_same_attempt(
         tmp_path, status, estimator):
     decision = SessionDecision(
@@ -67,12 +68,19 @@ def test_live_grounded_advice_never_moves_xy_in_same_attempt(
     handler.assess_for_next_trial(runner, decision)
     assert events == [("diagnostic", backend, estimator), (
         ("unavailable", ("vlm_abstain" if estimator == "vlm" else
-                         "tracked_tip_unavailable")) if status == "abstain" else
+                         "tracked_tip_unavailable" if estimator == "tracked_tip"
+                         else "sam_half_ellipse_unavailable")) if status == "abstain" else
         ("next_trial", status))]
     assert set(handler.handlers()) == {"assess_saved_preinsert_xy"}
 
 
-def test_optional_xy_diagnostic_records_capture_model_outage(tmp_path):
+@pytest.mark.parametrize("error,reason", [
+    ("capture-PC Qwen 24122734: CUDA out of memory",
+     "vlm_backend_unavailable"),
+    ("SAM3 ROI worker response timed out", "sam_backend_unavailable"),
+])
+def test_optional_xy_diagnostic_records_model_outage(
+        tmp_path, error, reason):
     decision = SessionDecision(
         "assess_saved_preinsert_xy", "failed", "table/0/1")
     events = []
@@ -89,8 +97,7 @@ def test_optional_xy_diagnostic_records_capture_model_outage(tmp_path):
             return decision
 
         def prepare_saved_preinsert_xy_diagnostic(self, **_kwargs):
-            raise RuntimeError(
-                "capture-PC Qwen 24122734: OutOfMemoryError('CUDA out of memory')")
+            raise RuntimeError(error)
 
         def record_xy_retry_unavailable(self, **kwargs):
             events.append(kwargs)
@@ -102,6 +109,6 @@ def test_optional_xy_diagnostic_records_capture_model_outage(tmp_path):
         diagnostic_parameters={}, decision_time=lambda: 10.0)
     handler.assess_for_next_trial(runner, decision)
     assert len(events) == 1
-    assert events[0]["reason"] == "vlm_backend_unavailable"
+    assert events[0]["reason"] == reason
     report = events[0]["retry_assessment_path"]
-    assert '"reason": "vlm_backend_unavailable"' in report.read_text()
+    assert f'"reason": "{reason}"' in report.read_text()

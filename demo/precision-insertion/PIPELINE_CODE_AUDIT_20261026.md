@@ -33,13 +33,12 @@ is approximately `[0.0092, -0.0016, -1.0000]` in robot coordinates. This
 checks internal transform composition only; it cannot establish that the
 measured socket or hand-eye pose was physically correct.
 
-## The SAM3 half-ellipse tip is not the live XY estimator
+## SAM3 half-ellipse: from offline result to optional live XY path
 
-`held_key_tip.distal_key_mask_half_ellipse` is called by
-`estimate_saved_key_face_ellipse.py` over already saved Qwen boxes and SAM3
-ROI masks. `compare_saved_key_face_methods.py` uses those records to compute
-multi-view 3D proxies and pictures. Neither script is imported by the live
-retry action. The live CLI accepts only `vlm` and `tracked_tip`:
+At `568107f`, `held_key_tip.distal_key_mask_half_ellipse` was called only by
+saved-image tools. The live CLI had only `vlm` and `tracked_tip`. This review
+added an explicit `sam_half_ellipse` option; the ordinary `vlm` default and
+the stock AutoDex snapshot producer remain unchanged:
 
 - `vlm`: `retry_session._compute_grounded_alignment` asks Qwen for raw-pixel
   key landmarks/axis and computes socket-frame XY advice.
@@ -47,19 +46,32 @@ retry action. The live CLI accepts only `vlm` and `tracked_tip`:
   tabletop key mask as an appearance reference, then estimates a tip from
   saved preinsert RGB frames and optional temporal frames. This is **not**
   SAM3 half-ellipse fitting.
+- `sam_half_ellipse`: the saved, frame-bound undistorted preinsert PNG is
+  cropped around the planned key axis. The existing distributed Qwen backend
+  returns a coarse key box. A separate, warmed local process running the
+  installed AutoDex SAM3 model segments **that box's ROI of the same PNG**.
+  `distal_key_mask_half_ellipse` fits the mask boundary; the existing
+  multiview tip XY estimator converts the approximate point to bounded
+  next-trial advice. The attempt report records the image frame ID, camera
+  timestamp/hash, prompts, response, ROI, fitted center, mask PNG hash,
+  per-view model time and CUDA peak memory. The small mask PNGs are saved in
+  `xy_retry_assessments/NNN/sam_roi_masks/`.
 
-The ordinary preinsert checkpoint is a calibrated, undistorted camera
-snapshot with no SAM3 mask. The optional `init_key` checkpoint currently
-discards its returned mask when constructing `RawCameraCapture`. Therefore
-the exact same-frame mask and Qwen ROI required by the saved half-ellipse
-method do not reach `assess_saved_preinsert_xy_diagnostic`. Merely adding an
-estimator name would not connect the producer, evidence writer, and consumer.
-The saved comparison selected three visually screened socket sessions, with
-2, 5, and 3 views; no measured physical face-center ground truth exists.
-The technique must remain an advisory/offline result until same-frame masks,
-frame identity, model latency, and multi-view behavior are verified in the
-live path. Do not report its 3D proxy as an insertion pose or silently use
-it to command motion.
+Full-frame SAM3 with `white cylinder` was rejected for this route: on six
+saved accepted-socket views it found the key in only two ROIs; changing the
+full-frame text prompt did not make all six reliable. The warmed ROI worker
+reproduced the saved half-ellipse centers in all six, with maximum delta
+`0.000017 px` (numerical replay). Its model load took 12.14 s with cached
+weights and its per-ROI inference took 0.25–0.62 s; one earlier cold load
+took 56.38 s. The results and mask files are under
+`/home/robot/shared_data/hyunsu/tmp/20261026_sam_half_ellipse_live_wiring/`.
+The saved comparison still has no physical face-center ground truth, and the
+new mode has not run a live insertion. It is opt-in only.
+The five configured views of accepted 10 mm run `20261022_103429_752726`
+were also replayed through the live alignment function using saved Qwen
+answers and source PNGs. All five were admitted, and the result differed
+from the earlier offline 3D proxy by at most `0.042 mm` per coordinate.
+This is a same-evidence numerical consistency check, not physical validation.
 
 ## Extra criteria and their purpose
 
@@ -95,9 +107,8 @@ The regression compares the entire audit result with and without pruning.
 
 ## Remaining evidence needed
 
-1. Carry exact preinsert frame IDs, timestamps, image hashes, Qwen boxes,
-   and same-frame SAM3 masks through an optional live capture/diagnostic
-   path; replay accepted and rejected saved cases before enabling XY updates.
+1. Replay additional rejected-socket and failed-grasp episodes with this
+   optional route; distinguish bad fixture pose from key-mask error.
 2. Restore and rehydrate an active recipient stage, then run static
    `run_robot_pc.sh --check` without connecting cameras or the robot.
 3. Measure actual planning and recovery times after the AABB change. Local

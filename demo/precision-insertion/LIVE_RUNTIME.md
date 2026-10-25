@@ -499,7 +499,7 @@ its original tabletop pose/position before a new attempt. The older guarded
 withdrawal and held-key return utilities remain available to other opt-in
 paths, but they are **not** the active cylinder insertion-failure route.
 
-The failed-trial XY pixel estimator has two explicit modes.
+The failed-trial XY pixel estimator has three explicit modes.
 `--xy-estimator vlm` is the current default and retains native-pixel Qwen
 grounding.
 `--xy-estimator tracked_tip` uses the initial key masks as per-camera colour
@@ -517,6 +517,16 @@ trial. Lift, pre-insertion and final task labels still use Qwen. The tracker
 does not stream continuous video into robot control. The mode remains
 experimental: image estimates are not contact-time ground truth, and no
 physical trial with the temporal path has been run.
+
+`--xy-estimator sam_half_ellipse` keeps the ordinary preinsert snapshot. On
+failed-trial diagnosis, Qwen locates the white key in a 512 px planned-axis
+crop of that **same saved frame**; a warmed local AutoDex SAM3 process
+segments only the padded key box. The half-ellipse center is translated back
+to full undistorted pixels and fed to the existing multiview next-trial XY
+estimator. Per-view image/frame identity, Qwen response, ROI, mask PNG,
+fitted point, model time and CUDA peak are saved. This is opt-in and has been
+replayed on saved images, not physically tested in a live insertion. See
+[SAM_HALF_ELLIPSE_RUNTIME_20261026.md](SAM_HALF_ELLIPSE_RUNTIME_20261026.md).
 
 For VLM checkpoints, `make_checkpoint_capture` in
 `precision_insertion.checkpoint_camera` supplies the existing handlers'

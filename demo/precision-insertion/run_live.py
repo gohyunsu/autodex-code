@@ -87,9 +87,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--label-mode", choices=(
         "vlm_only", "manual"), default="vlm_only",
         help="task labels: VLM only or interactive human with independent VLM evidence")
-    parser.add_argument("--xy-estimator", choices=("vlm", "tracked_tip"),
+    parser.add_argument("--xy-estimator", choices=("vlm", "tracked_tip",
+                                                  "sam_half_ellipse"),
                         default="vlm", help="failed-trial XY point estimator; "
-                        "tracked_tip uses saved preinsert images and initial key masks")
+                        "tracked_tip uses saved preinsert images and initial key masks; "
+                        "sam_half_ellipse runs Qwen box then warmed SAM3 on "
+                        "the same saved image ROI")
     parser.add_argument("--annotator", help="required with --label-mode manual")
     parser.add_argument("--enable-robot-motion", action="store_true",
                         help="required: initial clear-view and trial motions")

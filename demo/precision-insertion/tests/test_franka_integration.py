@@ -500,3 +500,54 @@ def test_tracked_mode_attaches_exact_preinsert_camera_window(monkeypatch, tmp_pa
     integration.build_components(live)
     assert calls == [{"host": "capture2", "port": 16951,
                       "camera_id": "25322651", "target_frame_id": 42}]
+
+
+def test_sam_roi_worker_warms_before_retry_and_closes_with_session(
+    monkeypatch, tmp_path,
+):
+    core = SimpleNamespace(
+        clear_view=object(), planner=object(), executor=object(),
+        read_state=lambda: None, sampler=None, close=lambda: events.append("core_close"))
+    events = []
+    monkeypatch.setattr(franka_integration, "open_franka_core", lambda _: core)
+    monkeypatch.setattr(franka_integration,
+                        "FrankaForceStopInsertionAdapter", lambda _: object())
+    module = ModuleType("robot_pc_stages")
+    module.configure = lambda *_: {
+        "shared": {"backend": object()},
+        "stages": {"task": {}, "retry": {}}}
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.delenv("PRECISION_SAM_CHECKPOINT", raising=False)
+    monkeypatch.delenv("PRECISION_SAM_PYTHON", raising=False)
+
+    class MaskWorker:
+        def __init__(self, **kwargs):
+            events.append(("warm", kwargs))
+
+        def close(self):
+            events.append("sam_close")
+
+    monkeypatch.setattr(franka_integration, "SamRoiBackend", MaskWorker)
+
+    def assemble(_live, **kwargs):
+        retry = kwargs["stages"]["retry"]
+        assert retry["xy_estimator"] == "sam_half_ellipse"
+        assert isinstance(retry["sam_segmentor"], MaskWorker)
+        events.append("assembled")
+        return ()
+
+    monkeypatch.setattr(franka_integration, "assemble_live_components", assemble)
+    options = replace(_options(tmp_path, _config()),
+                      xy_estimator="sam_half_ellipse")
+    live = SimpleNamespace(
+        cameras=SimpleNamespace(launch=SimpleNamespace(
+            shared_root=tmp_path, image_hw=(1080, 1920))),
+        opened=SimpleNamespace(runner=SimpleNamespace(
+            mode=SimpleNamespace(family="cylinder"))))
+    integration = franka_integration.factory(options)
+    integration.build_components(live)
+    integration.close()
+    assert events[0][0] == "warm"
+    assert events[0][1]["checkpoint"] == (
+        Path("/home/robot/shared_data/AutoDex/weights/sam3/sam3.pt"))
+    assert events[1:] == ["assembled", "sam_close", "core_close"]

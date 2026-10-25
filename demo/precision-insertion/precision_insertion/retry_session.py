@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import hashlib
+import io
 import json
 import math
 from pathlib import Path
@@ -38,6 +39,10 @@ from .grounding_crop import (
     nominal_preinsert_rois, verify_native_crop_observation,
 )
 from .held_relation import HeldRelation, resolve_postlift_held_relation
+from .held_key_tip import (
+    KEY_BOX_PROMPT, KEY_MASK_PROMPT, distal_key_mask_half_ellipse,
+    padded_key_box_roi, parse_normalized_key_box, projected_key_axis_crop,
+)
 from .key_perception import KeyPoseObservation, verify_key_capture_artifacts
 from .live_robot_state import LiveRobotState
 from .guarded_axial_handoff import _state_from_record
@@ -57,6 +62,7 @@ from .tip_tracking import (
 )
 from .tip_frame_window import load_tip_frame_window
 from .timing_profile import timed
+from .view_parallel import map_view_calls
 from .xy_retry import XYRetryAssessment, assess_xy_retry
 from .visual_views import assessment_cameras
 from .xy_overlay import CalibratedXYFrame, camera_socket_transform
@@ -276,6 +282,7 @@ class PreinsertXYDiagnostic:
     joint_sample: LiveRobotState
     alignment: dict
     vlm_observations: tuple
+    sam_roi_masks_png: Mapping[str, bytes] | None = None
 
     def to_record(self) -> dict:
         return {
@@ -1002,6 +1009,122 @@ def _compute_tracked_alignment(
     return hashlib.sha256(geometry_bytes).hexdigest(), alignment
 
 
+def _compute_sam_half_ellipse_alignment(
+    *, mode: TaskMode, root: Path, calibration, postlift_file: Path,
+    frames: Sequence[LabeledFrame], frame_rows: Mapping,
+    backend: ImageVLM, sam_segmentor: object,
+    intrinsics_full: Mapping, extrinsics_full: Mapping,
+    alignment_limits: AlignmentLimits, search_index: int,
+    max_nominal_tip_height_error_m: float,
+) -> tuple[str, dict, dict[str, bytes]]:
+    """Qwen box then stock SAM3 on the same saved, undistorted frame ROI."""
+    geometry_bytes = AssetPaths(root, mode).task_geometry.read_bytes()
+    geometry = json.loads(geometry_bytes)
+    socket = validated_frozen_socket_pose(
+        mode=mode, shared_root=root, calibration=calibration)
+    c2r = validate_se3(calibration.record["c2r"], name="session C2R")
+    postlift = json.loads(postlift_file.read_text(encoding="utf-8"))
+    key = validate_se3(postlift["targets"]["T_robot_key_preinsert"],
+                       name="commanded preinsert key target")
+    tip_z = float(geometry["key_frame"]["tip_z_m"])
+    nominal_tip = np.linalg.inv(socket) @ key @ np.array([0., 0., tip_z, 1.])
+    if not callable(getattr(sam_segmentor, "segment", None)):
+        raise TypeError("SAM half-ellipse needs a warmed ROI segmentor")
+
+    def measure(frame: LabeledFrame):
+        camera = frame.camera_id
+        row = frame_rows[camera]
+        K = np.asarray(intrinsics_full[camera]["K_undist"], dtype=float)
+        E = np.asarray(extrinsics_full[camera], dtype=float)
+        T_camera_robot = E @ c2r
+        T_camera_socket = camera_socket_transform(
+            T_camera_world=E, T_world_robot=c2r, T_robot_socket=socket)
+        record = {
+            "camera_id": camera, "frame_id": row["frame_id"],
+            "timestamp_s": row["timestamp_s"],
+            "image_sha256": row["image_sha256"],
+            "sam_prompt": KEY_MASK_PROMPT,
+        }
+        try:
+            crop, rear, tip = projected_key_axis_crop(
+                image_size_wh=frame.image.size, intrinsics=K,
+                T_camera_robot=T_camera_robot, T_robot_key=key,
+                tip_z_m=tip_z)
+        except ValueError as exc:
+            record.update(admitted=False, reason=str(exc))
+            return None, record, None
+        x0, y0, _x1, _y1 = crop
+        prompt = f"Camera {camera}. {KEY_BOX_PROMPT}"
+        image = frame.image.crop(crop)
+        with timed("vlm.infer", phase="vlm", kind="inference",
+                   stage="sam_key_box", camera_id=camera,
+                   model=str(getattr(backend, "model_id", type(backend).__name__)),
+                   image_count=1):
+            infer_for_camera = getattr(backend, "infer_for_camera", None)
+            answer = (infer_for_camera(camera, [image], prompt)
+                      if callable(infer_for_camera) else
+                      backend.infer([image], prompt))
+        record.update(crop_xyxy=list(crop), qwen_prompt=prompt,
+                      qwen_response=answer,
+                      planned_rear_full_px=list(rear),
+                      nominal_tip_full_px=list(tip))
+        box = parse_normalized_key_box(answer, canvas_size_wh=image.size)
+        if box is None:
+            record.update(admitted=False, reason="key_box_unavailable")
+            return None, record, None
+        roi = padded_key_box_roi(box, canvas_size_wh=image.size)
+        rx0, ry0, rx1, ry1 = roi
+        with timed("sam3.roi_infer", phase="xy_retry", kind="inference",
+                   camera_id=camera, model=getattr(sam_segmentor, "model", "SAM3")):
+            mask, sam_metadata = sam_segmentor.segment(
+                image.crop(roi), camera_id=camera, prompt=KEY_MASK_PROMPT)
+        record.update(qwen_box_crop_px=list(box), roi_within_crop=list(roi),
+                      sam_inference=sam_metadata)
+        if mask is None:
+            record.update(admitted=False, reason="sam_mask_unavailable")
+            return None, record, None
+        mask = np.asarray(mask, dtype=np.uint8)
+        if (mask.shape != (ry1-ry0, rx1-rx0) or
+                not np.all((mask == 0) | (mask == 255))):
+            raise ValueError("SAM ROI mask changed Qwen crop geometry")
+        stream = io.BytesIO()
+        Image.fromarray(mask).save(stream, format="PNG")
+        mask_png = stream.getvalue()
+        record.update(mask_file=f"sam_roi_masks/{camera}.png",
+                      mask_file_sha256=hashlib.sha256(mask_png).hexdigest())
+        fit = distal_key_mask_half_ellipse(
+            mask, planned_rear_px=rear, planned_tip_px=tip,
+            mask_origin_px=(x0+rx0, y0+ry0))
+        record["sam_half_ellipse"] = fit
+        if fit is None:
+            record.update(admitted=False, reason="key_mask_end_unavailable")
+            return None, record, mask_png
+        record.update(admitted=True, reason="observed_sam_half_ellipse")
+        calibrated = CalibratedXYFrame(
+            camera, frame.timestamp_s, frame.image, T_camera_socket, K)
+        return GroundedLineView(
+            calibrated, tuple(fit["center_full_px"]), None), record, mask_png
+
+    measured = map_view_calls(backend, frames, measure)
+    views = [view for view, _record, _mask in measured if view is not None]
+    alignment = tracked_tip_xy_alignment(
+        views, nominal_tip_z_socket_m=float(nominal_tip[2]),
+        search_index=search_index,
+        max_reprojection_px=alignment_limits.max_reprojection_px,
+        min_parallax_deg=alignment_limits.min_parallax_deg,
+        max_nominal_tip_height_error_m=max_nominal_tip_height_error_m)
+    alignment.update(
+        estimator="sam3_half_ellipse_key_face_proxy",
+        sam_half_ellipse_views=[record for _view, record, _mask in measured],
+        grounding_input="same_saved_frame_qwen_box_and_sam3_roi_mask",
+        socket_entry_plane_z_m=float(geometry["socket_entry_plane_z_m"]),
+        verification_depth_m=mode.target_depth_m,
+        key_object=mode.key_object, socket_object=mode.socket_object)
+    masks = {record["camera_id"]: mask for _view, record, mask in measured
+             if mask is not None}
+    return hashlib.sha256(geometry_bytes).hexdigest(), alignment, masks
+
+
 def assess_saved_preinsert_xy_diagnostic(
     *, mode: TaskMode, shared_root: Path, calibration, catalog: dict,
     trial, attempt: AttemptRecord, preinsert_checkpoint_path: Path,
@@ -1011,16 +1134,22 @@ def assess_saved_preinsert_xy_diagnostic(
     roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]] | None = None,
     square_translation_only: bool = False, search_index: int = 0,
     xy_estimator: str = "vlm", key_reference_dir: Path | None = None,
+    sam_segmentor: object | None = None,
 ) -> PreinsertXYDiagnostic:
     """Compute next-attempt XY from the raw snapshot saved before insertion."""
     limits.validate()
     if type(square_translation_only) is not bool or (
             square_translation_only and mode.family != "square"):
         raise ValueError("square translation-only grounding needs square mode")
-    if xy_estimator not in {"vlm", "tracked_tip"} or (
-            xy_estimator == "tracked_tip" and
-            (mode.family != "cylinder" or key_reference_dir is None)):
-        raise ValueError("tracked tip needs cylinder mode and initial key evidence")
+    if xy_estimator not in {"vlm", "tracked_tip", "sam_half_ellipse"}:
+        raise ValueError("unknown saved preinsert XY estimator")
+    if (xy_estimator in {"tracked_tip", "sam_half_ellipse"} and
+            mode.family != "cylinder"):
+        raise ValueError("key-tip estimator needs cylinder mode")
+    if xy_estimator == "tracked_tip" and key_reference_dir is None:
+        raise ValueError("tracked tip needs initial key evidence")
+    if xy_estimator == "sam_half_ellipse" and sam_segmentor is None:
+        raise ValueError("SAM half-ellipse needs a warmed ROI segmentor")
     root = Path(shared_root).expanduser().resolve()
     _insertion, _postlift, postlift_file, validated_root = (
         _validated_retry_trial_context(
@@ -1073,6 +1202,7 @@ def assess_saved_preinsert_xy_diagnostic(
         calibrated_camera_ids=set(calibration.record["camera_calibration"]
                                   ["intrinsics_full"]))
     snapshot = calibration.record["camera_calibration"]
+    sam_masks = None
     if xy_estimator == "tracked_tip":
         with timed("xy_retry.tracked_tip_alignment", phase="xy_retry",
                    cameras=len(frames)):
@@ -1087,6 +1217,22 @@ def assess_saved_preinsert_xy_diagnostic(
                 search_index=search_index,
                 max_nominal_tip_height_error_m=(
                     limits.max_grasp_translation_drift_m))
+        observations = ()
+    elif xy_estimator == "sam_half_ellipse":
+        with timed("xy_retry.sam_half_ellipse_alignment", phase="xy_retry",
+                   cameras=len(frames)):
+            geometry_hash, alignment, sam_masks = (
+                _compute_sam_half_ellipse_alignment(
+                    mode=mode, root=root, calibration=calibration,
+                    postlift_file=postlift_file, frames=frames,
+                    frame_rows=frame_rows, backend=backend,
+                    sam_segmentor=sam_segmentor,
+                    intrinsics_full=snapshot["intrinsics_full"],
+                    extrinsics_full=snapshot["extrinsics_full"],
+                    alignment_limits=alignment_limits,
+                    search_index=search_index,
+                    max_nominal_tip_height_error_m=(
+                        limits.max_grasp_translation_drift_m)))
         observations = ()
     else:
         geometry_hash, alignment, observations = _compute_grounded_alignment(
@@ -1108,7 +1254,7 @@ def assess_saved_preinsert_xy_diagnostic(
         hashlib.sha256(checkpoint_path.read_bytes()).hexdigest(), bundle,
         hashlib.sha256((bundle / "manifest.json").read_bytes()).hexdigest(),
         postlift_file, hashlib.sha256(postlift_file.read_bytes()).hexdigest(),
-        frame_rows, joint_sample, alignment, observations)
+        frame_rows, joint_sample, alignment, observations, sam_masks)
 
 
 def assess_grounded_xy_diagnostic(
@@ -1283,6 +1429,25 @@ def write_retry_session_artifacts(
             raise ValueError("saved retry image differs from VLM source pixels")
         files[str(path.relative_to(target))] = hashlib.sha256(
             path.read_bytes()).hexdigest()
+    if (isinstance(result, PreinsertXYDiagnostic) and
+            result.sam_roi_masks_png is not None):
+        records = {row["camera_id"]: row for row in
+                   result.alignment["sam_half_ellipse_views"]}
+        expected = {camera for camera, row in records.items()
+                    if row.get("mask_file_sha256") is not None}
+        if set(result.sam_roi_masks_png) != expected:
+            raise ValueError("SAM ROI mask evidence is incomplete")
+        if expected:
+            mask_dir = target / "sam_roi_masks"
+            mask_dir.mkdir()
+        for camera, payload in sorted(result.sam_roi_masks_png.items()):
+            safe = _safe_id(camera, "SAM ROI camera ID")
+            path = mask_dir / f"{safe}.png"
+            digest = hashlib.sha256(payload).hexdigest()
+            if records[camera].get("mask_file_sha256") != digest:
+                raise ValueError("SAM ROI mask changed before artifact write")
+            path.write_bytes(payload)
+            files[str(path.relative_to(target))] = digest
     if (not isinstance(result, (GroundedXYDiagnostic, PreinsertXYDiagnostic)) and
             result.assessment is not None and result.assessment.overlays is not None):
         overlay_dir = target / "overlays"

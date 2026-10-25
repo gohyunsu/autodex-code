@@ -184,7 +184,7 @@ def run_integrated_live_session(
         raise ValueError("manual labeling needs a named annotator")
     if options.label_mode == "evidence_fused":
         raise ValueError("current cylinder live loop needs vlm_only or manual labels")
-    if options.xy_estimator not in {"vlm", "tracked_tip"}:
+    if options.xy_estimator not in {"vlm", "tracked_tip", "sam_half_ellipse"}:
         raise ValueError("unknown next-trial XY estimator")
     with timed("startup.launch_config", phase="startup", kind="io"):
         launch = load_session_launch(options.launch_config_path)

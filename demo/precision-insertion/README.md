@@ -26,6 +26,11 @@ lift/preinsert/final VLM labels remain in use. Start its capture-PC service
 separately with `bash demo/precision-insertion/manage_robot_pc_services.sh
 start-tracker`. See
 [LIVE_RUNTIME.md](LIVE_RUNTIME.md) for the exact boundary and limitations.
+`PRECISION_XY_ESTIMATOR=sam_half_ellipse` selects an optional failed-trial
+XY estimator that applies Qwen key-box grounding and a warmed local AutoDex
+SAM3 model to the **same saved preinsert frame**. The ordinary snapshot and
+lift/preinsert/final labels remain unchanged. See
+[SAM_HALF_ELLIPSE_RUNTIME_20261026.md](SAM_HALF_ELLIPSE_RUNTIME_20261026.md).
 The operator-stopped approach and its measured timing are recorded in
 [STOPPED_TRIAL_20261017.md](STOPPED_TRIAL_20261017.md). The 2026-10-20 live
 trial reached transfer; its false positive lift label, transfer stall, and

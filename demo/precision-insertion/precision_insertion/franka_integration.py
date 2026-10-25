@@ -12,6 +12,7 @@ from dataclasses import replace
 from importlib import import_module
 import json
 import math
+import os
 from pathlib import Path
 from typing import Mapping
 
@@ -33,6 +34,7 @@ from .observer import load_vlm_backend
 from .runtime_assembly import assemble_live_components
 from .timing_profile import timed
 from .raw_camera_capture import RawCameraCapture
+from .sam_roi_backend import SamRoiBackend
 from .tip_frame_window import fetch_tip_frame_window
 from .visual_views import assessment_cameras
 
@@ -234,6 +236,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     held_motion_monitor = parsed["held_motion_monitor"]
     build_stages = parsed["build_stages"]
     backend = None
+    sam_segmentor = None
     with timed("startup.franka_planner_core", phase="startup"):
         core = open_franka_core(feedback)
     if sampling is not None:
@@ -296,8 +299,20 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                         parallel_views=vlm["parallel_views"],
                         **({"classification_image_size": image_size}
                            if image_size is not None else {}))
-        nonlocal backend
+        nonlocal backend, sam_segmentor
         backend = shared["backend"]
+        if options.xy_estimator == "sam_half_ellipse":
+            model = Path(os.environ.get(
+                "PRECISION_SAM_CHECKPOINT",
+                "/home/robot/shared_data/AutoDex/weights/sam3/sam3.pt"))
+            python = Path(os.environ.get(
+                "PRECISION_SAM_PYTHON",
+                "/home/robot/anaconda3/envs/autodex/bin/python"))
+            with timed("startup.sam3_roi_model_load", phase="startup"):
+                sam_segmentor = SamRoiBackend(
+                    python_path=python, checkpoint=model,
+                    stderr_path=(options.run_output_dir /
+                                 "sam_roi_worker.stderr.log"))
         shared.update(planner=core.planner, read_state=core.read_state)
         if core.sampler is not None:
             shared.update(
@@ -311,6 +326,8 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             family=family)
         if family == "cylinder" and "retry" in stages:
             stages["retry"]["xy_estimator"] = options.xy_estimator
+            if sam_segmentor is not None:
+                stages["retry"]["sam_segmentor"] = sam_segmentor
         if (family == "cylinder" and options.xy_estimator == "tracked_tip"
                 and "task" in stages):
             if _TIP_CAMERA_ID not in live.cameras.launch.camera_ids:
@@ -428,9 +445,13 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
 
     def close() -> None:
         try:
-            if callable(getattr(backend, "close", None)):
-                backend.close()
+            if sam_segmentor is not None:
+                sam_segmentor.close()
         finally:
-            core.close()
+            try:
+                if callable(getattr(backend, "close", None)):
+                    backend.close()
+            finally:
+                core.close()
 
     return LiveRuntimeIntegration(core.clear_view, components, close)
