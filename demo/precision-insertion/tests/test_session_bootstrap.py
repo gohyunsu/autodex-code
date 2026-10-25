@@ -41,18 +41,25 @@ def _capture(capture_id: str, timestamp: float) -> sb.SocketCaptureInput:
 def _bootstrap(monkeypatch, captures=None, board_source="camera_acquisition",
                extra_camera_ids=(), board_frame_evidence=None,
                socket_refiner=None, body_source=False,
-               socket_perception_mode="iou"):
+               socket_perception_mode="iou", scene_mode="charuco_board"):
     received = {}
 
     def fake_calibrate_session(**kwargs):
         received.update(kwargs)
         refinements = kwargs.get("socket_capture_refinements") or ()
         return SessionCalibration(
-            board={"test": True}, socket_pose_robot=np.eye(4),
+            board=({"source": "configured_table_surface", "table_surface_z_m": .04}
+                   if scene_mode == "board_free" else {"test": True}),
+            socket_pose_robot=np.eye(4),
             socket_diagnostics={"accepted": True},
             collision_scene={"mesh": {}, "cuboid": {}},
             record={"schema": "precision_insertion_session_calibration_v1",
-                    "board": {"test": True}, "socket_observations": [],
+                    "scene_mode": scene_mode,
+                    **({"support_surface": {"source": "configured_table_surface",
+                                             "table_surface_z_m": .04}}
+                       if scene_mode == "board_free" else
+                       {"board": {"test": True}}),
+                    "socket_observations": [],
                     "socket_pose_source": (
                         ("per_capture_board_constrained_body" if body_source else
                          "per_capture_stock_multiview_refinement") if refinements
@@ -63,16 +70,19 @@ def _bootstrap(monkeypatch, captures=None, board_source="camera_acquisition",
 
     monkeypatch.setattr(sb, "calibrate_session", fake_calibrate_session)
     camera_ids = {"cam_a", "cam_b", *extra_camera_ids}
-    board = {serial: np.zeros((24, 32, 3), dtype=np.uint8)
-             for serial in camera_ids}
-    board_times = {"cam_a": 90.0, "cam_b": 90.005}
-    board_times.update({serial: 90.006 for serial in extra_camera_ids})
+    board = ({serial: np.zeros((24, 32, 3), dtype=np.uint8)
+              for serial in camera_ids} if scene_mode == "charuco_board" else {})
+    board_times = ({"cam_a": 90.0, "cam_b": 90.005}
+                   if scene_mode == "charuco_board" else {})
+    if scene_mode == "charuco_board":
+        board_times.update({serial: 90.006 for serial in extra_camera_ids})
     result = sb.bootstrap_session(
         mode=select_mode("cylinder", 20), object_root=Path("/unused"),
-        board_request_id=90,
+        board_request_id=90 if scene_mode == "charuco_board" else None,
         board_images_bgr=board,
         board_timestamps_s=board_times,
-        board_timestamp_source=board_source,
+        board_timestamp_source=(board_source if scene_mode == "charuco_board"
+                                else "not_applicable"),
         socket_captures=(_capture("socket_1", 100.0),
                          _capture("socket_2", 101.0)) if captures is None
                         else captures,
@@ -85,7 +95,9 @@ def _bootstrap(monkeypatch, captures=None, board_source="camera_acquisition",
         max_socket_translation_mm=1.0, max_socket_angle_deg=1.0,
         board_frame_evidence=board_frame_evidence,
         socket_refiner=socket_refiner,
-        socket_perception_mode=socket_perception_mode)
+        socket_perception_mode=socket_perception_mode,
+        scene_mode=scene_mode,
+        table_surface_z_m=.04 if scene_mode == "board_free" else None)
     return result, received
 
 
@@ -111,6 +123,26 @@ def test_one_socket_capture_reaches_calibration_and_evidence(monkeypatch, tmp_pa
     manifest = sb.verify_session_evidence_bundle(target)
     assert manifest["socket_capture_ids"] == ["socket_1"]
     assert manifest["socket_request_ids"] == [100]
+
+
+def test_board_free_bootstrap_saves_socket_without_board(monkeypatch, tmp_path):
+    def refine(capture, _admission):
+        return SocketCaptureRefinement(
+            capture.capture_id, capture.request_id, np.eye(4),
+            ("cam_a", "cam_b"), "cam_a", {"cam_a": .9, "cam_b": .9},
+            .8, {}, "0" * 64)
+
+    result, received = _bootstrap(
+        monkeypatch, captures=[_capture("socket_1", 100.0)],
+        socket_refiner=refine,
+        socket_perception_mode="ignore_sil_loss", scene_mode="board_free")
+    assert received["board_images_bgr"] == {}
+    assert received["table_surface_z_m"] == .04
+    target = sb.write_session_bootstrap_artifacts(result, tmp_path / "board_free")
+    assert not (target / "board").exists()
+    manifest = sb.verify_session_evidence_bundle(target)
+    assert manifest["scene_mode"] == "board_free"
+    assert "board_request_id" not in manifest
 
 
 def test_refinement_callback_receives_admitted_views_and_is_saved(

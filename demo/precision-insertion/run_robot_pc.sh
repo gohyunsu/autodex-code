@@ -9,6 +9,8 @@ PY=${PRECISION_PLANNER_PY:-/home/robot/anaconda3/envs/planner/bin/python}
 CHECK_PY=${PRECISION_CHECK_PY:-/home/robot/anaconda3/envs/flir_env/bin/python}
 MODE=${1:---run}
 GAP_MM=${PRECISION_GAP_MM:-20}
+SCENE_MODE=${PRECISION_SCENE_MODE:-charuco_board}
+TABLE_SURFACE_Z_M=${PRECISION_TABLE_SURFACE_Z_M:-}
 
 case "$GAP_MM" in
   1|3|5|10|15|20) ;;
@@ -18,6 +20,12 @@ esac
 if [[ "$MODE" != --run && "$MODE" != --check && "$MODE" != --plan-only ]]; then
   echo "usage: $0 [--run|--check|--plan-only]" >&2
   exit 2
+fi
+if [[ "$SCENE_MODE" != charuco_board && "$SCENE_MODE" != board_free ]]; then
+  echo "PRECISION_SCENE_MODE must be charuco_board or board_free" >&2; exit 2
+fi
+if [[ "$SCENE_MODE" == board_free && -z "$TABLE_SURFACE_Z_M" ]]; then
+  echo "board_free needs explicit PRECISION_TABLE_SURFACE_Z_M (metres in robot base frame)" >&2; exit 2
 fi
 
 cd "$ROOT"
@@ -34,14 +42,21 @@ ROBOT=${PRECISION_ROBOT_CONFIG:-$STAGE/franka_runtime_board9_gap20_distributed.j
 if [[ "$MODE" == --check ]]; then
   CHECK_LAUNCH=$(mktemp /tmp/precision-launch-check.XXXXXX.json)
   trap 'rm -f "$CHECK_LAUNCH"' EXIT
-  "$CHECK_PY" - "$LAUNCH_TEMPLATE" "$CHECK_LAUNCH" "$GAP_MM" <<'PY'
+  "$CHECK_PY" - "$LAUNCH_TEMPLATE" "$CHECK_LAUNCH" "$GAP_MM" "$SCENE_MODE" "$TABLE_SURFACE_Z_M" <<'PY'
 import json
 from pathlib import Path
 import sys
 
 record = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 record["mode"] = {"family": "cylinder", "gap_mm": int(sys.argv[3])}
-record["socket_perception_mode"] = "board_constrained_body"
+scene_mode, table_z = sys.argv[4:6]
+record["scene_mode"] = scene_mode
+record["socket_perception_mode"] = ("ignore_sil_loss" if scene_mode == "board_free"
+                                    else "board_constrained_body")
+if scene_mode == "board_free":
+    record["table_surface_z_m"] = float(table_z)
+    for key in ("board_id", "minimum_board_corners", "board_capture_phase"):
+        record.pop(key, None)
 Path(sys.argv[2]).write_text(json.dumps(record), encoding="utf-8")
 PY
   "$CHECK_PY" demo/precision-insertion/run_live.py --preflight \
@@ -51,20 +66,27 @@ PY
 fi
 
 RUN_TAG="$(date +%Y%m%d_%H%M%S_%N)_$$"
-LAUNCH_DIR="$STAGE/live_board9_gap${GAP_MM}_20261022"
+LAUNCH_DIR="$STAGE/live_${SCENE_MODE}_gap${GAP_MM}_20261023"
 mkdir -p "$LAUNCH_DIR"
 LAUNCH="$LAUNCH_DIR/launch_$RUN_TAG.json"
 "$CHECK_PY" - "$LAUNCH_TEMPLATE" "$LAUNCH" "$RUN_TAG" "$GAP_MM" \
-  "${PRECISION_REUSE_SESSION_EVIDENCE:-}" "$LAUNCH_DIR" <<'PY'
+  "${PRECISION_REUSE_SESSION_EVIDENCE:-}" "$LAUNCH_DIR" "$SCENE_MODE" "$TABLE_SURFACE_Z_M" <<'PY'
 import json
 from pathlib import Path
 import sys
 
 template, output, run_tag = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 gap_mm, reused_evidence, launch_dir = int(sys.argv[4]), sys.argv[5], Path(sys.argv[6])
+scene_mode, table_z = sys.argv[7:9]
 record = json.loads(template.read_text(encoding="utf-8"))
 record["mode"] = {"family": "cylinder", "gap_mm": gap_mm}
-record["socket_perception_mode"] = "board_constrained_body"
+record["scene_mode"] = scene_mode
+record["socket_perception_mode"] = ("ignore_sil_loss" if scene_mode == "board_free"
+                                    else "board_constrained_body")
+if scene_mode == "board_free":
+    record["table_surface_z_m"] = float(table_z)
+    for key in ("board_id", "minimum_board_corners", "board_capture_phase"):
+        record.pop(key, None)
 fresh_evidence = launch_dir / f"session_evidence_{run_tag}"
 if fresh_evidence.exists():
     raise FileExistsError(f"session evidence already exists: {fresh_evidence}")

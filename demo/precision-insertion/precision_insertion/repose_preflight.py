@@ -144,23 +144,26 @@ def validate_repose_rest_target(
     if abs(min_z - table_z) > tolerance:
         raise ValueError("reset target key bottom does not match measured table")
     raw_corners = calibration.board.get("corners_robot_m")
-    if raw_corners is None:
+    if raw_corners is None and calibration.record.get(
+            "scene_mode", "charuco_board") != "board_free":
         raise ValueError("measured ChArUco corners are needed for reset footprint")
-    corners = np.asarray(raw_corners, dtype=np.float64)
-    if (corners.ndim != 2 or corners.shape[1] != 3 or len(corners) < 3 or
-            not np.all(np.isfinite(corners))):
-        raise ValueError("measured ChArUco corners are needed for reset footprint")
-    from scipy.spatial import ConvexHull, QhullError
+    board_edge_distance = None
+    if raw_corners is not None:
+        corners = np.asarray(raw_corners, dtype=np.float64)
+        if (corners.ndim != 2 or corners.shape[1] != 3 or len(corners) < 3 or
+                not np.all(np.isfinite(corners))):
+            raise ValueError("measured ChArUco corners are invalid")
+        from scipy.spatial import ConvexHull, QhullError
 
-    try:
-        hull = ConvexHull(corners[:, :2])
-    except QhullError as exc:
-        raise ValueError("measured ChArUco footprint is degenerate") from exc
-    signed = (vertices[:, :2] @ hull.equations[:, :2].T +
-              hull.equations[:, 2])
-    board_edge_distance = float(np.min(-signed))
-    if board_edge_distance < board_margin:
-        raise ValueError("reset key footprint exceeds measured ChArUco interior")
+        try:
+            hull = ConvexHull(corners[:, :2])
+        except QhullError as exc:
+            raise ValueError("measured ChArUco footprint is degenerate") from exc
+        signed = (vertices[:, :2] @ hull.equations[:, :2].T +
+                  hull.equations[:, 2])
+        board_edge_distance = float(np.min(-signed))
+        if board_edge_distance < board_margin:
+            raise ValueError("reset key footprint exceeds measured ChArUco interior")
     fixed, _ = _fixed_world_models(
         calibration, mode=mode, shared_root=shared_root)
     socket_model, socket_pose, socket_mesh, occupancy = fixed["mesh/fixture_socket"]

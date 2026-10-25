@@ -37,7 +37,7 @@ from .timing_profile import timed
 class StartedPrecisionSession:
     calibration: SessionCalibration
     evidence_dir: Path
-    board_request_id: int
+    board_request_id: int | None
     socket_request_ids: tuple[int, ...]
     producer_manifest: dict | None = None
 
@@ -64,6 +64,8 @@ def start_precision_session(
     board_capture_phase: str = "empty_before_socket",
     confirm_socket_placement: Callable[[], bool] | None = None,
     fixture_contract_validated: bool = False,
+    scene_mode: str = "charuco_board",
+    table_surface_z_m: float | None = None,
 ) -> StartedPrecisionSession:
     """Acquire and freeze one session, without touching Franka/Inspire.
 
@@ -118,19 +120,26 @@ def start_precision_session(
             any(type(size) is not int or size <= 0 for size in image_hw)):
         raise ValueError("undistorted camera image shape must be positive H,W")
     validate_se3(c2r, name="Franka hand-eye C2R")
-    if board_id not in ("9", "11"):
+    if scene_mode not in ("charuco_board", "board_free"):
+        raise ValueError("unknown scene mode")
+    board_free = scene_mode == "board_free"
+    if board_free and (type(table_surface_z_m) not in (int, float) or
+                       not math.isfinite(table_surface_z_m) or
+                       socket_perception_mode == "board_constrained_body"):
+        raise ValueError("board-free scene needs a table height and FoundPose")
+    if not board_free and board_id not in ("9", "11"):
         raise ValueError("session board_id must be 9 or 11")
-    if (type(minimum_board_corners) is not int or
+    if not board_free and (type(minimum_board_corners) is not int or
             not 36 <= minimum_board_corners <= 54 or
             (board_id == "11" and minimum_board_corners != 54)):
         raise ValueError("session minimum_board_corners is invalid")
-    if board_capture_phase not in ("empty_before_socket", "socket_present_partial"):
+    if not board_free and board_capture_phase not in ("empty_before_socket", "socket_present_partial"):
         raise ValueError("session board_capture_phase is invalid")
-    if (board_capture_phase == "empty_before_socket" and
+    if (not board_free and board_capture_phase == "empty_before_socket" and
             (minimum_board_corners != 54 or
              not callable(confirm_socket_placement))):
         raise ValueError("empty-board session needs all corners and an operator placement gate")
-    if (board_capture_phase == "socket_present_partial" and
+    if (not board_free and board_capture_phase == "socket_present_partial" and
             (board_id != "9" or minimum_board_corners == 54)):
         raise ValueError("socket-present partial board mode needs board 9 and an explicit lower corner limit")
     if (not isinstance(base_scene, dict) or
@@ -168,20 +177,23 @@ def start_precision_session(
         used_requests.add(value)
         return value
 
-    with timed("board.capture", phase="board", kind="camera"):
-        board = collect_board_snapshot(
-            snapshot_orchestrator=snapshot_orchestrator,
-            calibrated_camera_ids=calibrated_camera_ids,
-            acquisition_metadata_for_request=acquisition_metadata_for_request,
-            timeout_s=float(board_timeout_s), request_id_factory=next_request_id)
-    from src.execution.charuco_tabletop import measure_tabletop_from_images
-    with timed("board.charuco_fit", phase="board"):
-        measured_board = measure_tabletop_from_images(
-            board.images_bgr, intrinsics_full, extrinsics_full, c2r,
-            board_id=board_id, minimum_board_corners=minimum_board_corners)
-    if (board_capture_phase == "empty_before_socket" and
-            not _confirmed_socket_placement(confirm_socket_placement)):
-        raise RuntimeError("operator did not confirm socket placement")
+    board = None
+    measured_board = None
+    if not board_free:
+        with timed("board.capture", phase="board", kind="camera"):
+            board = collect_board_snapshot(
+                snapshot_orchestrator=snapshot_orchestrator,
+                calibrated_camera_ids=calibrated_camera_ids,
+                acquisition_metadata_for_request=acquisition_metadata_for_request,
+                timeout_s=float(board_timeout_s), request_id_factory=next_request_id)
+        from src.execution.charuco_tabletop import measure_tabletop_from_images
+        with timed("board.charuco_fit", phase="board"):
+            measured_board = measure_tabletop_from_images(
+                board.images_bgr, intrinsics_full, extrinsics_full, c2r,
+                board_id=board_id, minimum_board_corners=minimum_board_corners)
+        if (board_capture_phase == "empty_before_socket" and
+                not _confirmed_socket_placement(confirm_socket_placement)):
+            raise RuntimeError("operator did not confirm socket placement")
     with timed(("socket.mask_init" if socket_perception_mode ==
                 "board_constrained_body" else "socket.model_init"),
                phase="socket"):
@@ -214,11 +226,12 @@ def start_precision_session(
     with timed("socket.bootstrap_refinement", phase="socket"):
         bootstrap = bootstrap_session(
             mode=mode, object_root=paths.object_root,
-            board_request_id=board.request_id,
-            board_images_bgr=board.images_bgr,
-            board_timestamps_s=board.frame_timestamps_s,
-            board_timestamp_source=board.frame_timestamp_source,
-            board_frame_evidence=board.frame_evidence,
+            board_request_id=board.request_id if board else None,
+            board_images_bgr=board.images_bgr if board else {},
+            board_timestamps_s=board.frame_timestamps_s if board else {},
+            board_timestamp_source=(board.frame_timestamp_source if board
+                                    else "not_applicable"),
+            board_frame_evidence=board.frame_evidence if board else None,
             socket_captures=captures,
             calibrated_camera_ids=calibrated_camera_ids,
             view_limits=view_limits,
@@ -230,6 +243,7 @@ def start_precision_session(
             minimum_board_corners=minimum_board_corners,
             board_capture_phase=board_capture_phase,
             measured_board=measured_board,
+            scene_mode=scene_mode, table_surface_z_m=table_surface_z_m,
             socket_perception_mode=socket_perception_mode,
             max_socket_translation_mm=float(max_socket_translation_mm),
             max_socket_angle_deg=float(max_socket_angle_deg),
@@ -239,7 +253,8 @@ def start_precision_session(
                 socket_object=mode.socket_object, raw_mesh=socket_mesh,
                 minimum_refined_iou=float(minimum_socket_refined_iou),
                 perception_mode=socket_perception_mode,
-                board_pose_robot=np.asarray(measured_board["T_robot_board"]),
+                board_pose_robot=(np.asarray(measured_board["T_robot_board"])
+                                  if measured_board else None),
                 c2r=c2r))
     with timed("socket.evidence_write", phase="socket", kind="io"):
         saved = write_session_bootstrap_artifacts(bootstrap, output)
@@ -252,7 +267,7 @@ def start_precision_session(
     if (not isinstance(manifest, dict) or
             manifest.get("schema") !=
             "precision_insertion_session_evidence_bundle_v1" or
-            manifest.get("board_request_id") != board.request_id or
+            manifest.get("board_request_id") != (board.request_id if board else None) or
             manifest.get("socket_request_ids") != [
                 capture.request_id for capture in captures] or
             manifest.get("socket_capture_ids") != [
@@ -264,7 +279,7 @@ def start_precision_session(
             saved / "session_calibration.json", mode=mode, shared_root=root)
     return StartedPrecisionSession(
         calibration=reopened, evidence_dir=saved,
-        board_request_id=board.request_id,
+        board_request_id=board.request_id if board else None,
         socket_request_ids=tuple(capture.request_id for capture in captures),
         producer_manifest=manifest)
 

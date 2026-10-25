@@ -214,6 +214,28 @@ def test_stock_socket_perception_mode_is_explicit_in_launch(tmp_path):
         launch.load_session_launch(config)
 
 
+def test_board_free_launch_requires_explicit_height_and_foundpose(tmp_path):
+    config, record = _config(tmp_path)
+    record.pop("camera_time_calibrations")
+    record["camera_time_mode"] = "bounded_request_interval"
+    record["scene_mode"] = "board_free"
+    record["socket_perception_mode"] = "ignore_sil_loss"
+    config.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match="table_surface_z_m"):
+        launch.load_session_launch(config)
+    record["table_surface_z_m"] = .04
+    config.write_text(json.dumps(record), encoding="utf-8")
+    loaded = launch.load_session_launch(config)
+    assert loaded.readiness()["scene_mode"] == "board_free"
+    assert "board_id" not in loaded.readiness()
+    assert loaded.board_id is None
+    assert loaded.table_surface_z_m == .04
+    record["socket_perception_mode"] = "board_constrained_body"
+    config.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match="board-free scene needs FoundPose"):
+        launch.load_session_launch(config)
+
+
 def test_board_9_partial_corner_contract_is_explicit(tmp_path):
     config, record = _config(tmp_path)
     record["board_id"] = "9"

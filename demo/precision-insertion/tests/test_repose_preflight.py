@@ -381,6 +381,29 @@ def test_repose_rejects_key_footprint_outside_measured_board(
     assert planner.calls == []
 
 
+def test_repose_only_skips_board_footprint_in_board_free_mode(
+    tmp_path, monkeypatch,
+):
+    calibration, _scene, _pickup, rest, limits = _fixture(tmp_path, monkeypatch)
+    surface = {"table_surface_z_m": 0.0}
+    common = dict(
+        shared_root=tmp_path, mode=MODE, T_robot_key_rest=rest,
+        support_tolerance_m=limits.goal_position_tolerance_m,
+        minimum_rest_socket_clearance_m=0.01,
+        minimum_board_edge_clearance_m=0.01)
+    missing_board = SessionCalibration(
+        surface, calibration.socket_pose_robot, calibration.socket_diagnostics,
+        calibration.collision_scene, calibration.record)
+    with pytest.raises(ValueError, match="ChArUco corners are needed"):
+        validate_repose_rest_target(calibration=missing_board, **common)
+    board_free = SessionCalibration(
+        surface, calibration.socket_pose_robot, calibration.socket_diagnostics,
+        calibration.collision_scene,
+        {**calibration.record, "scene_mode": "board_free"})
+    report = validate_repose_rest_target(calibration=board_free, **common)
+    assert report["minimum_board_edge_distance_m"] is None
+
+
 def test_repose_reports_transfer_infeasible_without_running_descent(
     tmp_path, monkeypatch,
 ):

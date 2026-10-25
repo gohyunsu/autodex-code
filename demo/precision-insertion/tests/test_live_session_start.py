@@ -169,6 +169,45 @@ def test_board_constrained_socket_skips_stock_renderer(tmp_path, monkeypatch):
                       "reload_frozen_world"]
 
 
+def test_board_free_starts_foundpose_without_board_capture(tmp_path, monkeypatch):
+    arguments, events, _repre = _setup(
+        tmp_path, monkeypatch, request_ids=(12,), socket_count=1)
+    arguments.update(scene_mode="board_free", table_surface_z_m=.04,
+                     socket_perception_mode="ignore_sil_loss")
+    monkeypatch.setattr(start, "collect_board_snapshot",
+                        lambda **_kwargs: pytest.fail("board capture called"))
+    monkeypatch.setattr(
+        "src.execution.charuco_tabletop.measure_tabletop_from_images",
+        lambda *_args, **_kwargs: pytest.fail("board fit called"))
+
+    def bootstrap(**kwargs):
+        events.append("freeze_world")
+        assert kwargs["board_request_id"] is None
+        assert kwargs["board_images_bgr"] == {}
+        assert kwargs["scene_mode"] == "board_free"
+        assert kwargs["table_surface_z_m"] == .04
+        assert callable(kwargs["socket_refiner"])
+        return SimpleNamespace(calibration=SimpleNamespace(record={"schema": "test"}))
+
+    def write(_bootstrap, output):
+        events.append("save")
+        output.mkdir()
+        (output / "evidence_manifest.json").write_text(json.dumps({
+            "schema": "precision_insertion_session_evidence_bundle_v1",
+            "socket_request_ids": [12], "socket_capture_ids": ["socket_000"],
+            "all_frames_bound_to_acquisition_evidence": True,
+        }))
+        return output
+
+    monkeypatch.setattr(start, "bootstrap_session", bootstrap)
+    monkeypatch.setattr(start, "write_session_bootstrap_artifacts", write)
+    result = start.start_precision_session(**arguments)
+    assert result.board_request_id is None
+    assert result.socket_request_ids == (12,)
+    assert events == ["socket_renderer", "socket_init", "socket_000",
+                      "freeze_world", "save", "reload_frozen_world"]
+
+
 def test_validated_launch_does_not_repeat_fixture_hash_check(
         tmp_path, monkeypatch):
     arguments, events, _repre = _setup(tmp_path, monkeypatch)

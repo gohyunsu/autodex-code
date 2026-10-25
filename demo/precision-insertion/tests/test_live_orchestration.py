@@ -146,22 +146,31 @@ def test_live_session_reuses_already_validated_launch(
     assert events.count("catalog_preflight") == 1
 
 
+@pytest.mark.parametrize("board_free", (False, True))
 def test_reused_socket_evidence_skips_live_board_and_socket_capture(
-        tmp_path, monkeypatch):
+        tmp_path, monkeypatch, board_free):
     events = []
     launch = _patch_camera_lifetime(monkeypatch, events)
     launch.mode.key_object = "precision_key_cylinder_r15_h80"
     launch.camera_ids = ("cam_a",)
     launch.intrinsics_full = {"cam_a": {"K_undist": np.eye(3).tolist()}}
     launch.extrinsics_full = {"cam_a": np.eye(4)}
-    launch.board_id = "9"
+    launch.c2r = np.eye(4)
+    launch.scene_mode = "board_free" if board_free else "charuco_board"
+    launch.board_id = None if board_free else "9"
+    launch.table_surface_z_m = .04 if board_free else None
     catalog = tmp_path / "catalog.json"
     catalog.write_text("{}", encoding="utf-8")
     saved = tmp_path / "saved_socket"
     saved.mkdir()
-    manifest = {"board_request_id": 11, "socket_request_ids": [12],
+    manifest = {"socket_request_ids": [12],
                 "socket_capture_ids": ["socket_000"]}
-    calibration = SimpleNamespace(record={"board": {"board": "9"}})
+    if not board_free:
+        manifest["board_request_id"] = 11
+    calibration = SimpleNamespace(record=(
+        {"scene_mode": "board_free", "support_surface": {
+            "source": "configured_table_surface", "table_surface_z_m": .04}}
+        if board_free else {"board": {"board": "9"}}))
     monkeypatch.setattr(orchestration, "verify_session_evidence_bundle",
                         lambda path: events.append("saved_evidence_verified") or manifest)
     monkeypatch.setattr(orchestration, "load_session_calibration",
@@ -182,6 +191,7 @@ def test_reused_socket_evidence_skips_live_board_and_socket_capture(
             reuse_session_evidence_dir=saved) as live:
         assert live.started.evidence_dir == saved
         assert live.started.socket_request_ids == (12,)
+        assert live.started.board_request_id == (None if board_free else 11)
     assert events.index("saved_evidence_verified") < events.index("home_clear_view")
     assert "key_renderer_warmup" in events
     assert "socket_frozen" not in events

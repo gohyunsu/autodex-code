@@ -50,7 +50,7 @@ class SocketCaptureInput:
 @dataclass(frozen=True)
 class SessionBootstrap:
     calibration: SessionCalibration
-    board_request_id: int
+    board_request_id: int | None
     board_images_bgr: Mapping[str, np.ndarray]
     board_timestamps_s: Mapping[str, float]
     board_timestamp_source: str
@@ -81,7 +81,7 @@ def _bgr_image(image: np.ndarray, name: str) -> np.ndarray:
 
 
 def bootstrap_session(
-    *, mode: TaskMode, object_root: Path, board_request_id: int,
+    *, mode: TaskMode, object_root: Path, board_request_id: int | None,
     board_images_bgr: Mapping[str, np.ndarray],
     board_timestamps_s: Mapping[str, float],
     board_timestamp_source: str,
@@ -98,6 +98,8 @@ def bootstrap_session(
     board_capture_phase: str = "empty_before_socket",
     measured_board: dict | None = None,
     socket_perception_mode: str = "iou",
+    scene_mode: str = "charuco_board",
+    table_surface_z_m: float | None = None,
 ) -> SessionBootstrap:
     """Admit socket observations, then freeze one AutoDex world.
 
@@ -106,14 +108,24 @@ def bootstrap_session(
     ``camera_acquisition`` is an assertion by the capture adapter, not a value
     inferred from AutoDex's publication timestamps.
     """
-    if not isinstance(board_images_bgr, Mapping) or not board_images_bgr:
-        raise ValueError("board camera images are required")
+    board_free = scene_mode == "board_free"
+    if scene_mode not in ("charuco_board", "board_free"):
+        raise ValueError("unknown scene mode")
+    if (not isinstance(board_images_bgr, Mapping) or
+            (not board_free and not board_images_bgr) or
+            (board_free and (board_images_bgr or board_request_id is not None or
+                             board_frame_evidence is not None))):
+        raise ValueError("board capture does not match scene mode")
     if socket_perception_mode not in ("iou", "ignore_sil_loss",
                                       "board_constrained_body"):
         raise ValueError("unknown socket perception mode")
-    _request_id(board_request_id, "board")
-    if board_timestamp_source != "camera_acquisition":
-        raise ValueError("board images require camera acquisition timestamps")
+    if board_free and (socket_perception_mode == "board_constrained_body" or
+                       socket_refiner is None):
+        raise ValueError("board-free socket needs stock FoundPose refinement")
+    if not board_free:
+        _request_id(board_request_id, "board")
+    if board_timestamp_source != ("not_applicable" if board_free else "camera_acquisition"):
+        raise ValueError("board images require camera acquisition timestamps or board-free not_applicable")
     if set(board_images_bgr) != set(board_timestamps_s):
         raise ValueError("board image and acquisition-time camera IDs must match")
     if set(intrinsics_full) != set(extrinsics_full) or (
@@ -139,7 +151,7 @@ def bootstrap_session(
     admissions: list[SocketCaptureEvidence] = []
     refinements: list[SocketCaptureRefinement] = []
     seen_ids: set[str] = set()
-    seen_requests: set[int] = {board_request_id}
+    seen_requests: set[int] = set() if board_free else {board_request_id}
     for capture in socket_captures:
         if not isinstance(capture, SocketCaptureInput):
             raise TypeError("socket captures must be SocketCaptureInput")
@@ -242,6 +254,7 @@ def bootstrap_session(
             minimum_board_corners=minimum_board_corners,
             board_capture_phase=board_capture_phase,
             measured_board=measured_board,
+            scene_mode=scene_mode, table_surface_z_m=table_surface_z_m,
         )
     return SessionBootstrap(
         calibration, board_request_id, board_images_bgr, board_timestamps_s,
@@ -282,15 +295,16 @@ def write_session_bootstrap_artifacts(
     target.parent.mkdir(parents=True, exist_ok=True)
     target.mkdir(exist_ok=False)
     files: dict[str, str] = {}
-    board_dir = target / "board"
-    board_dir.mkdir()
-    board_jobs = [
-        (camera_id, board_dir / f"{_safe_id(camera_id, 'camera ID')}.png",
-         image, "board_original")
-        for camera_id, image in sorted(bootstrap.board_images_bgr.items())]
-    board_results, _ = write_png_jobs(board_jobs, phase="board")
-    for camera_id, _, digest in board_results:
-        files[f"board/{camera_id}.png"] = digest
+    if bootstrap.board_request_id is not None:
+        board_dir = target / "board"
+        board_dir.mkdir()
+        board_jobs = [
+            (camera_id, board_dir / f"{_safe_id(camera_id, 'camera ID')}.png",
+             image, "board_original")
+            for camera_id, image in sorted(bootstrap.board_images_bgr.items())]
+        board_results, _ = write_png_jobs(board_jobs, phase="board")
+        for camera_id, _, digest in board_results:
+            files[f"board/{camera_id}.png"] = digest
     socket_root = target / "socket"
     socket_root.mkdir()
     refined_by_capture = {
@@ -344,18 +358,14 @@ def write_session_bootstrap_artifacts(
     calibration_file = target / "session_calibration.json"
     files[str(calibration_file.relative_to(target))] = _write_json(
         calibration_file, bootstrap.calibration.record)
-    _write_json(target / "evidence_manifest.json", {
+    manifest = {
         "schema": "precision_insertion_session_evidence_bundle_v1",
-        "board_timestamp_source": bootstrap.board_timestamp_source,
-        "board_request_id": bootstrap.board_request_id,
-        "board_timestamps_s": dict(bootstrap.board_timestamps_s),
-        "board_frame_evidence": (dict(bootstrap.board_frame_evidence)
-                                 if bootstrap.board_frame_evidence is not None
-                                 else None),
-        "all_frames_bound_to_acquisition_evidence": (
-            bootstrap.board_frame_evidence is not None and
-            all(capture.frame_evidence is not None
-                for capture in bootstrap.socket_captures)),
+        "scene_mode": bootstrap.calibration.record.get("scene_mode", "charuco_board"),
+        "all_frames_bound_to_acquisition_evidence": all(
+            capture.frame_evidence is not None
+            for capture in bootstrap.socket_captures) and (
+            bootstrap.board_request_id is None or
+            bootstrap.board_frame_evidence is not None),
         "socket_capture_ids": [capture.capture_id for capture in
                                bootstrap.socket_captures],
         "socket_request_ids": [capture.request_id for capture in
@@ -365,7 +375,16 @@ def write_session_bootstrap_artifacts(
         "files_sha256": files,
         "scope": "saved_calibration_evidence_not_live_robot_authorization",
         "robot_ready": False,
-    })
+    }
+    if bootstrap.board_request_id is not None:
+        manifest.update(
+            board_timestamp_source=bootstrap.board_timestamp_source,
+            board_request_id=bootstrap.board_request_id,
+            board_timestamps_s=dict(bootstrap.board_timestamps_s),
+            board_frame_evidence=(dict(bootstrap.board_frame_evidence)
+                                  if bootstrap.board_frame_evidence is not None
+                                  else None))
+    _write_json(target / "evidence_manifest.json", manifest)
     return target
 
 
@@ -399,6 +418,13 @@ def verify_session_evidence_bundle(output_dir: Path) -> dict:
     calibration = json.loads((root / "session_calibration.json").read_text(
         encoding="utf-8"))
     source = calibration.get("socket_pose_source")
+    board_free = calibration.get("scene_mode") == "board_free"
+    if manifest.get("scene_mode", "charuco_board") != calibration.get(
+            "scene_mode", "charuco_board"):
+        raise ValueError("manifest scene mode differs from calibration")
+    if board_free and (manifest.get("board_request_id") is not None or
+                       (root / "board").exists()):
+        raise ValueError("board-free evidence contains board capture")
     if manifest.get("socket_pose_source") != source:
         raise ValueError("manifest socket pose source differs from calibration")
     refinements = calibration.get("socket_capture_refinements", [])
@@ -473,6 +499,6 @@ def verify_session_evidence_bundle(output_dir: Path) -> dict:
                 payload.get("frame_timestamps_s")):
             raise ValueError("saved socket timing differs from frame evidence")
     if manifest.get("all_frames_bound_to_acquisition_evidence", False) != (
-            board_evidence is not None and bound_sockets):
+            (board_free or board_evidence is not None) and bound_sockets):
         raise ValueError("saved frame-binding flag conflicts with evidence")
     return manifest

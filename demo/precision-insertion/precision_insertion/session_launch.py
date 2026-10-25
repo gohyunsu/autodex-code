@@ -65,15 +65,17 @@ class SessionLaunch:
     max_socket_angle_deg: float
     minimum_socket_refined_iou: float
     socket_perception_mode: str = "iou"
-    board_id: str = "11"
-    minimum_board_corners: int = 54
-    board_capture_phase: str = "empty_before_socket"
+    board_id: str | None = "11"
+    minimum_board_corners: int | None = 54
+    board_capture_phase: str | None = "empty_before_socket"
     camera_time_mode: str = "calibrated_frame_id"
     execution_scope: str = "live"
     fixture_contract_validated: bool = False
+    scene_mode: str = "charuco_board"
+    table_surface_z_m: float | None = None
 
     def readiness(self) -> dict:
-        return {
+        result = {
             "schema": "precision_insertion_live_session_readiness_v1",
             "mode": {"family": self.mode.family, "gap_mm": self.mode.gap_mm},
             "camera_ids": sorted(self.camera_ids),
@@ -85,15 +87,19 @@ class SessionLaunch:
                 for serial, row in sorted(self.camera_times.items())},
             "camera_time_mode": self.camera_time_mode,
             "execution_scope": self.execution_scope,
-            "board_id": self.board_id,
-            "minimum_board_corners": self.minimum_board_corners,
-            "board_capture_phase": self.board_capture_phase,
+            "scene_mode": self.scene_mode,
+            "table_surface_z_m": self.table_surface_z_m,
             "minimum_socket_refined_iou": self.minimum_socket_refined_iou,
             "socket_perception_mode": self.socket_perception_mode,
             "socket_capture_count": self.socket_capture_count,
             "scope": "file_preflight_not_live_camera_or_pose_accuracy",
             "robot_ready": False,
         }
+        if self.scene_mode == "charuco_board":
+            result.update(board_id=self.board_id,
+                          minimum_board_corners=self.minimum_board_corners,
+                          board_capture_phase=self.board_capture_phase)
+        return result
 
 
 @dataclass(frozen=True)
@@ -137,6 +143,8 @@ class OpenSessionCameras:
             board_id=launch.board_id,
             minimum_board_corners=launch.minimum_board_corners,
             board_capture_phase=launch.board_capture_phase,
+            scene_mode=launch.scene_mode,
+            table_surface_z_m=launch.table_surface_z_m,
             fixture_contract_validated=launch.fixture_contract_validated,
             confirm_socket_placement=confirm_socket_placement)
 
@@ -215,19 +223,33 @@ def load_session_launch(
     if not isinstance(mode_record, dict):
         raise ValueError("launch config needs an explicit socket/key mode")
     mode = select_mode(mode_record["family"], mode_record["gap_mm"])
-    board_id = record.get("board_id", "11")
-    if board_id not in ("9", "11"):
+    scene_mode = record.get("scene_mode", "charuco_board")
+    if scene_mode not in ("charuco_board", "board_free"):
+        raise ValueError("unknown scene mode")
+    table_surface_z_m = record.get("table_surface_z_m")
+    if scene_mode == "board_free":
+        if (type(table_surface_z_m) not in (int, float) or
+                not math.isfinite(table_surface_z_m)):
+            raise ValueError("board-free scene needs an explicit table_surface_z_m")
+        table_surface_z_m = float(table_surface_z_m)
+    elif table_surface_z_m is not None:
+        raise ValueError("ChArUco mode measures its own table surface")
+    board_id = (record.get("board_id", "11") if scene_mode == "charuco_board"
+                else None)
+    if scene_mode == "charuco_board" and board_id not in ("9", "11"):
         raise ValueError("launch board_id must be 9 or 11")
-    minimum_board_corners = record.get("minimum_board_corners", 54)
-    if (type(minimum_board_corners) is not int or
+    minimum_board_corners = (record.get("minimum_board_corners", 54)
+                             if scene_mode == "charuco_board" else None)
+    if (scene_mode == "charuco_board" and (type(minimum_board_corners) is not int or
             not 36 <= minimum_board_corners <= 54 or
-            (board_id == "11" and minimum_board_corners != 54)):
+            (board_id == "11" and minimum_board_corners != 54))):
         raise ValueError("launch minimum_board_corners is invalid")
-    board_capture_phase = record.get("board_capture_phase", "empty_before_socket")
+    board_capture_phase = (record.get("board_capture_phase", "empty_before_socket")
+                           if scene_mode == "charuco_board" else None)
     execution_scope = record.get("execution_scope", "live")
     if execution_scope not in ("live", "static_preflight_only"):
         raise ValueError("unknown launch execution_scope")
-    if (board_capture_phase == "empty_before_socket" and
+    if scene_mode == "charuco_board" and (board_capture_phase == "empty_before_socket" and
             minimum_board_corners != 54 or
             board_capture_phase == "socket_present_partial" and
             (board_id != "9" or minimum_board_corners == 54) or
@@ -326,6 +348,8 @@ def load_session_launch(
     if socket_perception_mode not in ("iou", "ignore_sil_loss",
                                       "board_constrained_body"):
         raise ValueError("unknown socket perception mode")
+    if scene_mode == "board_free" and socket_perception_mode == "board_constrained_body":
+        raise ValueError("board-free scene needs FoundPose socket perception")
     if socket_perception_mode == "board_constrained_body" and mode.family != "cylinder":
         raise ValueError(
             "board-constrained body fit is only for the fixed cylinder socket")
@@ -342,6 +366,7 @@ def load_session_launch(
         socket_perception_mode=socket_perception_mode,
         minimum_board_corners=minimum_board_corners,
         board_capture_phase=board_capture_phase,
+        scene_mode=scene_mode, table_surface_z_m=table_surface_z_m,
         camera_time_mode=time_mode, execution_scope=execution_scope,
         fixture_contract_validated=mode.family == "cylinder")
 

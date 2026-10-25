@@ -1,7 +1,8 @@
-"""Read-only ChArUco-then-socket calibration for one insertion session.
+"""Read-only socket calibration for one insertion session.
 
 The caller acquires synchronized AutoDex images and quality-checked FoundPose
-observations. This module reuses AutoDex's board measurement, freezes an
+observations. Board sessions reuse AutoDex's ChArUco measurement; board-free
+sessions use an explicitly configured support height. Both freeze an
 *observed* medoid of one refined pose per independent socket capture, and
 adds the exact socket mesh to a copy of the collision scene. It neither
 captures images nor connects to, commands, or authorizes the robot.
@@ -80,6 +81,7 @@ def validate_session_camera_calibration(
     intrinsics_undist: Mapping[str, np.ndarray],
     extrinsics_full: Mapping[str, np.ndarray],
     calibrated_camera_ids: set[str],
+    c2r: np.ndarray | None = None,
 ) -> None:
     """Reject a key/retry camera rig different from the frozen session rig.
 
@@ -88,6 +90,11 @@ def validate_session_camera_calibration(
     it does not certify physical camera stability or hand-eye accuracy.
     """
     record = calibration.record
+    if c2r is not None and not np.allclose(
+            validate_se3(record.get("c2r"), name="frozen hand-eye C2R"),
+            validate_se3(c2r, name="live hand-eye C2R"),
+            rtol=0, atol=1e-10):
+        raise ValueError("live hand-eye C2R differs from frozen session")
     snapshot = record.get("camera_calibration")
     if (not isinstance(snapshot, dict) or
             record.get("camera_calibration_sha256") !=
@@ -190,11 +197,25 @@ def load_session_calibration(
                 camera_calibration_hash != _canonical_sha256(
                     camera_calibration)):
             raise ValueError("saved camera calibration changed or is incomplete")
-    board = record.get("board")
+    scene_mode = record.get("scene_mode", "charuco_board")
+    if scene_mode not in ("charuco_board", "board_free"):
+        raise ValueError("unknown saved scene mode")
+    board = (record.get("support_surface") if scene_mode == "board_free"
+             else record.get("board"))
     if not isinstance(board, dict):
-        raise ValueError("saved ChArUco board measurement is missing")
-    if (record.get("board_timestamp_source") != "camera_acquisition" or
-            not isinstance(record.get("socket_observations"), list) or
+        raise ValueError("saved support surface is missing")
+    if scene_mode == "board_free":
+        if (board.get("source") != "configured_table_surface" or
+                type(board.get("table_surface_z_m")) not in (int, float) or
+                not math.isfinite(board["table_surface_z_m"]) or
+                record.get("board") is not None or
+                record.get("board_timestamp_source") is not None or
+                record.get("socket_pose_source") !=
+                "per_capture_stock_multiview_refinement"):
+            raise ValueError("board-free support surface is invalid")
+    elif record.get("board_timestamp_source") != "camera_acquisition":
+        raise ValueError("saved ChArUco timestamp source is invalid")
+    if (not isinstance(record.get("socket_observations"), list) or
             not record["socket_observations"] or
             any(not isinstance(row, dict) or
                 row.get("timestamp_source") != "camera_acquisition"
@@ -203,7 +224,7 @@ def load_session_calibration(
     from autodex.utils.tabletop_geometry import table_cuboid
 
     if scene["cuboid"].get("table") != table_cuboid(board):
-        raise ValueError("saved table cuboid differs from ChArUco board")
+        raise ValueError("saved table cuboid differs from support surface")
     hashes = record.get("fixed_mesh_sha256")
     if not isinstance(hashes, dict) or set(hashes) != set(scene["mesh"]):
         raise ValueError("saved fixed mesh hashes are missing")
@@ -467,13 +488,15 @@ def calibrate_session(
     minimum_board_corners: int = 54,
     board_capture_phase: str = "empty_before_socket",
     measured_board: dict | None = None,
+    scene_mode: str = "charuco_board",
+    table_surface_z_m: float | None = None,
 ) -> SessionCalibration:
     """Build one frozen calibration from supplied, already-captured evidence.
 
     A ``capture_id`` is one simultaneous multi-camera socket snapshot.
     Two different captures are required only to test fixture repeatability.
-    ``pose_world`` uses the same world frame as ``c2r`` and AutoDex's board
-    measurement. Bounds are explicit commissioning inputs, not defaults.
+    ``pose_world`` uses the same world frame as ``c2r`` and AutoDex camera
+    calibration. Bounds are explicit commissioning inputs, not defaults.
 
     When ``socket_capture_refinements`` is provided, each capture contributes
     exactly one independently refined pose. With one capture, its observed
@@ -488,11 +511,15 @@ def calibrate_session(
     angle_limit = _positive(max_socket_angle_deg, "max_socket_angle_deg")
     if min_socket_captures < 1 or min_views_per_capture < 2:
         raise ValueError("require at least one socket capture and two views per capture")
-    if board_timestamp_source != "camera_acquisition":
+    if scene_mode not in ("charuco_board", "board_free"):
+        raise ValueError("unknown scene mode")
+    if scene_mode == "board_free" and socket_capture_refinements is None:
+        raise ValueError("board-free socket needs stock FoundPose refinement")
+    if scene_mode == "charuco_board" and board_timestamp_source != "camera_acquisition":
         raise ValueError("ChArUco images require camera acquisition timestamps")
-    if board_capture_phase not in ("empty_before_socket", "socket_present_partial"):
+    if scene_mode == "charuco_board" and board_capture_phase not in ("empty_before_socket", "socket_present_partial"):
         raise ValueError("unknown board capture phase")
-    if (board_capture_phase == "empty_before_socket" and
+    if scene_mode == "charuco_board" and (board_capture_phase == "empty_before_socket" and
             minimum_board_corners != 54 or
             board_capture_phase == "socket_present_partial" and
             (board_id != "9" or minimum_board_corners == 54)):
@@ -502,7 +529,9 @@ def calibrate_session(
     if not camera_ids or set(intrinsics_full) != set(extrinsics_full):
         raise ValueError("intrinsic and extrinsic camera IDs must match and be nonempty")
     board_ids = set(board_images_bgr)
-    if not board_ids or board_ids != set(board_timestamps_s):
+    if (board_ids != set(board_timestamps_s) or
+            (scene_mode == "charuco_board" and not board_ids) or
+            (scene_mode == "board_free" and bool(board_ids))):
         raise ValueError("board images and timestamps must have identical camera IDs")
     if not board_ids <= camera_ids:
         raise ValueError("board snapshot contains an uncalibrated camera")
@@ -510,7 +539,7 @@ def calibrate_session(
         camera: _finite_time(board_timestamps_s[camera], f"board timestamp {camera}")
         for camera in board_ids
     }
-    if max(board_times.values()) - min(board_times.values()) > skew:
+    if board_times and max(board_times.values()) - min(board_times.values()) > skew:
         raise ValueError("board snapshot is not synchronized")
 
     c2r_matrix = validate_se3(c2r, name="c2r")
@@ -609,7 +638,7 @@ def calibrate_session(
 
     ordered_groups = sorted(
         groups.items(), key=lambda item: min(float(o.timestamp_s) for o in item[1]))
-    prior_capture_end = max(board_times.values())
+    prior_capture_end = max(board_times.values()) if board_times else -math.inf
     for capture_id, observations in ordered_groups:
         ids = [o.camera_id for o in observations]
         if len(observations) < min_views_per_capture or len(ids) != len(set(ids)):
@@ -618,7 +647,9 @@ def calibrate_session(
         if max(times) - min(times) > skew:
             raise ValueError(f"socket capture {capture_id} is not synchronized")
         if min(times) <= prior_capture_end:
-            raise ValueError("socket captures must follow board capture in time")
+            if board_times:
+                raise ValueError("socket captures must follow board capture in time")
+            raise ValueError("socket captures must be sequential")
         prior_capture_end = max(times)
 
     mesh = Path(socket_collision_mesh).expanduser().resolve()
@@ -651,20 +682,26 @@ def calibrate_session(
     elif mode.family != "square":
         raise ValueError(f"unsupported insertion family: {mode.family}")
 
-    # This is intentionally called only after temporal and asset validation:
-    # measuring an empty board is the first geometric operation in a session.
-    from src.execution.charuco_tabletop import measure_tabletop_from_images
     from autodex.utils.tabletop_geometry import table_cuboid
 
-    if measured_board is None:
+    if scene_mode == "board_free":
+        if (type(table_surface_z_m) not in (int, float) or
+                not math.isfinite(table_surface_z_m) or measured_board is not None or
+                board_timestamp_source != "not_applicable" or body_fit_count):
+            raise ValueError("board-free scene needs a configured table surface")
+        board = {"source": "configured_table_surface",
+                 "table_surface_z_m": float(table_surface_z_m)}
+    elif measured_board is None:
+        from src.execution.charuco_tabletop import measure_tabletop_from_images
         board = measure_tabletop_from_images(
             board_images_bgr, intrinsics_full, extrinsics_full, c2r_matrix,
             board_id=board_id, minimum_board_corners=minimum_board_corners)
     else:
         board = measured_board
-    if not isinstance(board, dict) or board.get("board") != board_id:
-        raise ValueError("measured board does not match session board")
-    validate_se3(board.get("T_robot_board"), name="measured T_robot_board")
+    if scene_mode == "charuco_board":
+        if not isinstance(board, dict) or board.get("board") != board_id:
+            raise ValueError("measured board does not match session board")
+        validate_se3(board.get("T_robot_board"), name="measured T_robot_board")
     for refinement in refined_by_capture.values():
         if refinement.refinement_gate == "board_constrained_body":
             pose_robot = world_to_robot @ validate_se3(refinement.pose_world)
@@ -737,10 +774,7 @@ def calibrate_session(
             "key_object": mode.key_object,
             "socket_object": mode.socket_object,
         },
-        "board": board,
-        "board_capture_phase": board_capture_phase,
-        "board_timestamps_s": board_times,
-        "board_timestamp_source": board_timestamp_source,
+        "scene_mode": scene_mode,
         "socket_observations": source_rows,
         "socket_pose_source": pose_source,
         "socket_capture_refinements": [
@@ -759,6 +793,12 @@ def calibrate_session(
         "scope": "read_only_session_calibration_not_robot_authorization",
         "robot_ready": False,
     }
+    if scene_mode == "board_free":
+        record["support_surface"] = board
+    else:
+        record.update(board=board, board_capture_phase=board_capture_phase,
+                      board_timestamps_s=board_times,
+                      board_timestamp_source=board_timestamp_source)
     record["socket_capture_refinements_sha256"] = _canonical_sha256({
         "refinements": record["socket_capture_refinements"]})
     return SessionCalibration(board, selected, diagnostics, scene, record)

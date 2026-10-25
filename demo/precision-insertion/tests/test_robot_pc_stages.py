@@ -23,9 +23,10 @@ from precision_insertion.runtime_assembly import (  # noqa: E402
 )
 
 
-def _fixture(*, board="9", gap=20, sampler=True):
+def _fixture(*, board="9", gap=20, sampler=True, scene_mode="charuco_board"):
     launch = SimpleNamespace(
-        mode=SimpleNamespace(family="cylinder", gap_mm=gap), board_id=board)
+        mode=SimpleNamespace(family="cylinder", gap_mm=gap),
+        board_id=board, scene_mode=scene_mode)
     clear_view = SimpleNamespace(
         before_key_capture=lambda: None,
         verify_state=lambda state, **_kwargs: state)
@@ -85,6 +86,16 @@ def test_board9_binding_assembles_all_current_actions_without_hardware():
 def test_board9_binding_accepts_configured_cylinder_gaps_without_hardware(gap):
     core, live, options, calls = _fixture(gap=gap)
     assert configure(core, live, options)["held_relation_route"] == "nominal"
+    assert calls == []
+
+
+def test_board_free_binding_assembles_same_stages_without_hardware():
+    core, live, options, calls = _fixture(board=None, scene_mode="board_free")
+    parameters = configure(core, live, options)
+    assert set(parameters["stages"]) == {
+        "key_planning", "pickup", "lift", "held_relation", "task", "retry",
+        "held_return", "transfer_recovery", "repose_planning",
+        "repose_execution"}
     assert calls == []
 
 

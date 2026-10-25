@@ -166,12 +166,19 @@ def open_live_precision_session(
                 intrinsics_undist={serial: row["K_undist"] for serial, row in
                                    launch.intrinsics_full.items()},
                 extrinsics_full=launch.extrinsics_full,
-                calibrated_camera_ids=set(launch.camera_ids))
-            if calibration.record["board"].get("board") != launch.board_id:
-                raise ValueError("saved session board differs from live launch")
+                calibrated_camera_ids=set(launch.camera_ids),
+                c2r=launch.c2r)
+            launch_scene_mode = getattr(launch, "scene_mode", "charuco_board")
+            if calibration.record.get("scene_mode", "charuco_board") != launch_scene_mode:
+                raise ValueError("saved session scene mode differs from live launch")
+            if launch_scene_mode == "charuco_board":
+                if calibration.record["board"].get("board") != launch.board_id:
+                    raise ValueError("saved session board differs from live launch")
+            elif calibration.record["support_surface"]["table_surface_z_m"] != launch.table_surface_z_m:
+                raise ValueError("saved table surface differs from live launch")
             saved_session = StartedPrecisionSession(
                 calibration=calibration, evidence_dir=saved_path,
-                board_request_id=manifest["board_request_id"],
+                board_request_id=manifest.get("board_request_id"),
                 socket_request_ids=tuple(manifest["socket_request_ids"]),
                 producer_manifest=manifest)
     # Stock AutoDex free-space home is appropriate only before the session's

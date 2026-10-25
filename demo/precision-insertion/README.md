@@ -2917,3 +2917,9 @@ implemented, there is intentionally no robot-mode command to run here.
 The path component `precision-insertion` is a directory name, not an importable
 Python package name. If helper modules are added, use an importable package
 name such as `precision_insertion` inside this directory.
+
+# Board-free cylinder trial
+
+For a session with no physical ChArUco board, see [BOARD_FREE_MODE.md](BOARD_FREE_MODE.md).
+It uses the existing camera and hand-eye calibration, requires an explicit
+working-surface height, and remeasures the socket with FoundPose.

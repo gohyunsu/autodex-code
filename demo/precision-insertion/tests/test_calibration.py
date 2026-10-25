@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.calibration import (  # noqa: E402
     SocketCaptureRefinement, SocketObservation, calibrate_session, load_session_calibration,
-    write_session_calibration,
+    validate_session_camera_calibration, write_session_calibration,
 )
 from precision_insertion.assets import AssetPaths  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
@@ -141,6 +141,25 @@ def test_calibration_freezes_robot_pose_and_adds_socket_without_mutation(
         "cam_a", "cam_b"}
 
 
+def test_reused_session_rejects_changed_handeye_transform(
+        tmp_path, board_measurement):
+    args = _arguments(tmp_path)
+    args["intrinsics_full"] = {
+        camera: {"K_undist": np.eye(3)} for camera in ("cam_a", "cam_b")}
+    calibration = calibrate_session(**args)
+    common = dict(
+        intrinsics_undist={camera: np.eye(3) for camera in ("cam_a", "cam_b")},
+        extrinsics_full=args["extrinsics_full"],
+        calibrated_camera_ids={"cam_a", "cam_b"})
+    validate_session_camera_calibration(
+        calibration, **common, c2r=args["c2r"])
+    changed_c2r = args["c2r"].copy()
+    changed_c2r[0, 3] += 0.001
+    with pytest.raises(ValueError, match="hand-eye C2R differs"):
+        validate_session_camera_calibration(
+            calibration, **common, c2r=changed_c2r)
+
+
 def test_board_9_and_partial_corner_limit_reach_stock_measurement(
     tmp_path, board_measurement,
 ):
@@ -156,6 +175,42 @@ def test_board_9_and_partial_corner_limit_reach_stock_measurement(
     assert json.loads(saved.read_text(encoding="utf-8")) == result.record
     with pytest.raises(FileExistsError):
         write_session_calibration(result, saved)
+
+
+def test_board_free_socket_reuses_handeye_and_fresh_foundpose_without_board(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.execution.charuco_tabletop.measure_tabletop_from_images",
+        lambda *_a, **_k: pytest.fail("board detector called in board-free mode"))
+    args = _arguments(tmp_path, family="cylinder")
+    paths = AssetPaths(tmp_path, args["mode"])
+    paths.socket_collision_mesh.parent.mkdir(parents=True)
+    paths.socket_collision_mesh.write_bytes(args["socket_collision_mesh"].read_bytes())
+    args["socket_collision_mesh"] = paths.socket_collision_mesh
+    symmetry = (paths.object_root / args["mode"].socket_object /
+                "processed_data/info/symmetry.json")
+    symmetry.parent.mkdir(parents=True, exist_ok=True)
+    symmetry.write_text(json.dumps({
+        "type": "Cinf", "axes": [{"axis": [0, 0, 1], "fold": "inf"}]
+    }), encoding="utf-8")
+    args["object_root"] = paths.object_root
+    args["socket_capture_refinements"] = _refinements(args)
+    args.update(board_images_bgr={}, board_timestamps_s={},
+                board_timestamp_source="not_applicable",
+                scene_mode="board_free", table_surface_z_m=.04)
+    result = calibrate_session(**args)
+    assert "board" not in result.record
+    assert result.record["support_surface"] == {
+        "source": "configured_table_surface", "table_surface_z_m": .04}
+    assert result.record["socket_pose_source"] == (
+        "per_capture_stock_multiview_refinement")
+    assert result.record["c2r"] == args["c2r"].tolist()
+    table = result.collision_scene["cuboid"]["table"]
+    assert table["pose"][2] + table["dims"][2] / 2 == pytest.approx(.04)
+    saved = write_session_calibration(result, tmp_path / "board_free.json")
+    loaded = load_session_calibration(saved, mode=args["mode"],
+                                      shared_root=tmp_path)
+    np.testing.assert_allclose(loaded.socket_pose_robot, result.socket_pose_robot)
 
 
 def test_refined_session_counts_captures_not_camera_views_and_replays(
