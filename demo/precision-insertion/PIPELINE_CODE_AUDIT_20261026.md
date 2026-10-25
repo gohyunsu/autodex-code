@@ -89,6 +89,19 @@ answers and source PNGs. All five were admitted, and the result differed
 from the earlier offline 3D proxy by at most `0.042 mm` per coordinate.
 This is a same-evidence numerical consistency check, not physical validation.
 
+The shared tracked-tip/SAM multiview fit previously identified outlier
+cameras but returned the point fitted using **all** cameras. In a five-camera
+synthetic calibration check, one key-tip point displaced by 100 px left four
+inliers yet moved the fitted XY point by about 6.4 mm and its height by
+44.7 mm. With the live 10 mm nominal-height bound, that point became an
+exploratory fallback despite four exact inlier points. The estimator now
+refits the point using its existing inlier set when at least one camera is
+rejected; it changes no admission limit or next-trial step bound. The same
+five real saved observations from `20261022_103429_752726` all remain inliers
+and produce the identical point. The frame IDs, timestamps, source PNG byte
+hashes, and resulting residuals are in
+`/home/robot/shared_data/hyunsu/tmp/20261026_sam_half_ellipse_live_wiring/tip_inlier_refit_saved_replay.json`.
+
 ## Extra criteria and their purpose
 
 The stock planner supplies IK, world/self collision, and trajectory

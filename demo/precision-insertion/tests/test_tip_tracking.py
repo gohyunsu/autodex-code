@@ -65,6 +65,30 @@ def test_four_calibrated_tip_views_give_bounded_xy_increment():
     assert np.linalg.norm(result["bounded_xy_increment_socket_m"]) <= .010000001
 
 
+def test_bad_tip_view_does_not_shift_the_multiview_xy_point():
+    key_tip = np.array([.010, -.005, 1.])
+    K = np.array([[1000., 0., 1024.], [0., 1000., 768.], [0., 0., 1.]])
+    views = []
+    for index, (x, y) in enumerate(((-.20, 0.), (-.10, .10),
+                                    (0., -.10), (.10, .05), (.20, -.05))):
+        T = np.eye(4)
+        T[:3, 3] = [-x, -y, 0.]
+        projected = K @ (T[:3, :3] @ key_tip + T[:3, 3])
+        uv = projected[:2] / projected[2]
+        if index == 4:
+            uv += [100., -100.]
+        frame = CalibratedXYFrame(
+            str(index), 100., Image.new("RGB", (2048, 1536)), T, K)
+        views.append(GroundedLineView(frame, tuple(uv), None))
+    result = tracked_tip_xy_alignment(
+        views, nominal_tip_z_socket_m=1., search_index=0,
+        max_reprojection_px=4., min_parallax_deg=1.,
+        max_nominal_tip_height_error_m=.01)
+    assert result["status"] == "diagnostic_metric_xy_correction"
+    assert result["inlier_cameras"] == ["0", "1", "2", "3"]
+    np.testing.assert_allclose(result["tip_socket_m"], key_tip, atol=1e-6)
+
+
 def test_missing_target_frame_does_not_invent_tip():
     reference = np.full((100, 100, 3), 240, dtype=np.uint8)
     mask = np.full((100, 100), 255, dtype=np.uint8)

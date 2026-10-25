@@ -226,8 +226,22 @@ def tracked_tip_xy_alignment(
     # A segmented cylinder end spans several pixels. The camera-consistency
     # tolerance is an observation precision, not a robot motion gate.
     pixel_tolerance = max(15., 4 * max_reprojection_px)
-    inliers = [view.frame.camera_id for view, error in zip(views, errors)
-               if error <= pixel_tolerance]
+    inlier_indices = np.flatnonzero(errors <= pixel_tolerance)
+    if fit.success and 3 <= len(inlier_indices) < len(views):
+        # The robust all-view fit identifies bad camera observations. Refit
+        # the reported point using only the accepted views; otherwise a large
+        # outlier still shifts the command correction by several millimetres.
+        def accepted_residual(point):
+            return residual(point).reshape(-1, 2)[inlier_indices].ravel()
+
+        refined = least_squares(accepted_residual, fit.x)
+        if refined.success and np.all(np.isfinite(refined.x)):
+            refined_errors = np.linalg.norm(
+                residual(refined.x).reshape(-1, 2), axis=1)
+            if np.all(refined_errors[inlier_indices] <= pixel_tolerance):
+                fit = refined
+                errors = refined_errors
+    inliers = [views[index].frame.camera_id for index in inlier_indices]
     if (not fit.success or not np.all(np.isfinite(fit.x)) or
             len(inliers) < 3 or
             abs(fit.x[2] - nominal_tip_z_socket_m) >
