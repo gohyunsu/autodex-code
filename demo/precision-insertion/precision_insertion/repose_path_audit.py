@@ -14,11 +14,10 @@ import numpy as np
 
 from .assets import AssetPaths
 from .config import TaskMode
-from .endpoint import _coal_mesh, _hand_link_meshes, _load_mesh
 from .geometry import pose_angle_deg, validate_se3
 from .path_audit import (
-    PathAuditLimits, _array_sha256, _fixed_world_models, _held_pair_report,
-    _joint_path,
+    PathAuditLimits, _array_sha256, _fixed_world_models, _held_hand_models,
+    _held_pair_report, _immutable_key_model, _joint_path,
     _poses_match, _sha256,
 )
 
@@ -108,12 +107,8 @@ def audit_repose_held_paths(
     urdf = assets.robot_urdf
     if not key_path.is_file() or not urdf.is_file():
         raise FileNotFoundError("full key CAD and Franka/Inspire URDF are required")
-    key_mesh = _load_mesh(key_path)
-    if not key_mesh.is_watertight:
-        raise ValueError("full key CAD mesh is not watertight")
-    moving = {"key": (_coal_mesh(key_mesh), key_mesh)}
-    moving.update({f"hand/{name}": (_coal_mesh(mesh), mesh)
-                   for name, mesh in _hand_link_meshes(urdf, held).items()})
+    moving = {"key": _immutable_key_model(str(key_path))}
+    moving.update(_held_hand_models(urdf, held))
     key_in_hand = np.linalg.inv(key_hand)
     minimum_distances = {}
     for stage, poses in wrist.items():

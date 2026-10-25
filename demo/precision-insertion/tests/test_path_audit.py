@@ -60,9 +60,6 @@ def _fixture(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "precision_insertion.path_audit._hand_link_meshes",
         lambda *_: {"hand": hand})
-    monkeypatch.setattr(
-        "precision_insertion.repose_path_audit._hand_link_meshes",
-        lambda *_: {"hand": hand})
 
     board = {"table_surface_z_m": -0.1}
     socket_pose = np.eye(4)
@@ -263,6 +260,37 @@ def test_aabb_skip_preserves_exact_minimum_distances_and_collision_result(
     assert optimized[1] == pytest.approx(baseline[1], abs=1e-12)
     assert optimized[2] == baseline[2]
     assert len(calls) < baseline_calls
+
+
+def test_repeated_held_audits_reuse_the_same_hand_geometry(tmp_path, monkeypatch):
+    calibration, targets, paths = _fixture(tmp_path, monkeypatch)
+    original = path_audit_module._hand_link_meshes
+    calls = []
+
+    def counted(*args):
+        calls.append(None)
+        return original(*args)
+
+    monkeypatch.setattr(path_audit_module, "_hand_link_meshes", counted)
+    path_audit_module._immutable_hand_models.cache_clear()
+    wrist = {"transfer": [np.eye(4)]}
+    first = path_audit_module._audit_held_geometry_samples(
+        shared_root=tmp_path, mode=targets.mode, calibration=calibration,
+        wrist=wrist, T_key_hand=targets.T_key_hand,
+        held_hand_q=np.zeros(6), minimum_hand_clearance_m=0.)
+    second = path_audit_module._audit_held_geometry_samples(
+        shared_root=tmp_path, mode=targets.mode, calibration=calibration,
+        wrist=wrist, T_key_hand=targets.T_key_hand,
+        held_hand_q=np.zeros(6), minimum_hand_clearance_m=0.)
+    assert len(calls) == 1
+    assert first == second
+    paths.robot_urdf.write_text("revised adapter test URDF", encoding="utf-8")
+    path_audit_module._audit_held_geometry_samples(
+        shared_root=tmp_path, mode=targets.mode, calibration=calibration,
+        wrist=wrist, T_key_hand=targets.T_key_hand,
+        held_hand_q=np.zeros(6), minimum_hand_clearance_m=0.)
+    assert len(calls) == 2
+    path_audit_module._immutable_hand_models.cache_clear()
 
 
 def test_optional_lift_checks_key_socket_and_monotone_world_z(

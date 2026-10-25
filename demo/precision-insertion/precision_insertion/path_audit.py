@@ -80,6 +80,29 @@ def _immutable_key_model(path: str):
     return _coal_mesh(mesh), mesh
 
 
+@lru_cache(maxsize=4)
+def _immutable_hand_models(robot_path: str, file_signature: tuple[int, int],
+                           hand_q_bytes: bytes):
+    """Reuse the same held Inspire geometry across audits of one hand pose.
+
+    The file signature invalidates the cache if a later session installs a
+    revised robot/adapter URDF at the same path. Coal's BVHs are queried with
+    separate transforms and results; neither the models nor the local meshes
+    are modified by an audit.
+    """
+    hand_q = np.frombuffer(hand_q_bytes, dtype=np.float64)
+    return {f"hand/{name}": (_coal_mesh(mesh), mesh)
+            for name, mesh in _hand_link_meshes(
+                Path(robot_path), hand_q).items()}
+
+
+def _held_hand_models(robot_path: Path, hand_q: np.ndarray):
+    stat = robot_path.stat()
+    return _immutable_hand_models(
+        str(robot_path), (stat.st_mtime_ns, stat.st_size),
+        np.ascontiguousarray(hand_q, dtype=np.float64).tobytes())
+
+
 def _array_sha256(value: np.ndarray) -> str:
     array = np.ascontiguousarray(value, dtype=np.float64)
     digest = hashlib.sha256()
@@ -257,9 +280,7 @@ def _audit_held_geometry_samples(
     with timed("audit.key_model_lookup", phase="planning", kind="geometry"):
         moving = {"key": _immutable_key_model(str(key_path))}
     with timed("audit.hand_urdf_fk", phase="planning", kind="geometry"):
-        moving.update({f"hand/{name}": (_coal_mesh(mesh), mesh)
-                       for name, mesh in _hand_link_meshes(
-                           robot_path, held_hand_q).items()})
+        moving.update(_held_hand_models(robot_path, held_hand_q))
     moving_corners = {name: _box_corners(mesh.bounds)
                       for name, (_model, mesh) in moving.items()}
     fixed_frames = {
