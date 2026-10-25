@@ -18,7 +18,7 @@ from scipy.optimize import least_squares
 
 from .grounded_alignment import (
     GroundedLineView, NEXT_TRIAL_XY_MAX_STEP_M,
-    resolve_xy_only_cylinder_alignment,
+    _parallax, resolve_xy_only_cylinder_alignment,
 )
 from .xy_overlay import CalibratedXYFrame
 
@@ -198,6 +198,9 @@ def tracked_tip_xy_alignment(
         max_nominal_tip_height_error_m=max_nominal_tip_height_error_m)
     if len(views) < 3:
         return dict(fallback(views), estimator="tracked_visible_key_tip")
+    if _parallax(views) < min_parallax_deg:
+        return dict(fallback(views), estimator="tracked_visible_key_tip",
+                    tracker_reason="insufficient_camera_parallax")
 
     projections = [np.asarray(view.frame.intrinsics, dtype=float) @
                    np.asarray(view.frame.T_camera_socket, dtype=float)[:3]
@@ -242,6 +245,11 @@ def tracked_tip_xy_alignment(
                 fit = refined
                 errors = refined_errors
     inliers = [views[index].frame.camera_id for index in inlier_indices]
+    if len(inliers) >= 3 and _parallax(
+            [views[index] for index in inlier_indices]) < min_parallax_deg:
+        return dict(fallback([views[index] for index in inlier_indices]),
+                    estimator="tracked_visible_key_tip",
+                    tracker_reason="insufficient_inlier_camera_parallax")
     if (not fit.success or not np.all(np.isfinite(fit.x)) or
             len(inliers) < 3 or
             abs(fit.x[2] - nominal_tip_z_socket_m) >

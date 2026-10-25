@@ -89,6 +89,26 @@ def test_bad_tip_view_does_not_shift_the_multiview_xy_point():
     np.testing.assert_allclose(result["tip_socket_m"], key_tip, atol=1e-6)
 
 
+def test_nearly_parallel_tip_views_do_not_claim_metric_depth():
+    key_tip = np.array([.010, -.005, 1.])
+    K = np.array([[1000., 0., 1024.], [0., 1000., 768.], [0., 0., 1.]])
+    views = []
+    for index, camera_x in enumerate((-.0001, 0., .0001)):
+        T = np.eye(4)
+        T[0, 3] = -camera_x
+        projected = K @ (T[:3, :3] @ key_tip + T[:3, 3])
+        uv = tuple(projected[:2] / projected[2])
+        frame = CalibratedXYFrame(
+            str(index), 100., Image.new("RGB", (2048, 1536)), T, K)
+        views.append(GroundedLineView(frame, uv, None))
+    result = tracked_tip_xy_alignment(
+        views, nominal_tip_z_socket_m=1., search_index=0,
+        max_reprojection_px=3., min_parallax_deg=5.,
+        max_nominal_tip_height_error_m=.01)
+    assert result["status"] != "diagnostic_metric_xy_correction"
+    assert result["tracker_reason"] == "insufficient_camera_parallax"
+
+
 def test_missing_target_frame_does_not_invent_tip():
     reference = np.full((100, 100, 3), 240, dtype=np.uint8)
     mask = np.full((100, 100), 255, dtype=np.uint8)

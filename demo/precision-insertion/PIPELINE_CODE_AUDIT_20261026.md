@@ -102,6 +102,16 @@ and produce the identical point. The frame IDs, timestamps, source PNG byte
 hashes, and resulting residuals are in
 `/home/robot/shared_data/hyunsu/tmp/20261026_sam_half_ellipse_live_wiring/tip_inlier_refit_saved_replay.json`.
 
+The same estimator also bypassed its configured minimum camera parallax when
+at least three tip views were present. Three synthetic cameras separated by
+only 0.011 degrees produced a `diagnostic_metric_xy_correction` despite a
+5-degree limit. It now applies that existing limit before triangulation and
+again to the accepted inlier cameras; insufficient parallax uses the existing
+nonmetric XY fallback. Replaying the five saved 10 mm views with production
+limits gives 137.25 degrees of parallax and the unchanged point
+`[0.016843, 0.004535, 0.083036] m` in the socket frame. This checks the
+geometry and saved data only, not physical endpoint accuracy.
+
 ## Extra criteria and their purpose
 
 The stock planner supplies IK, world/self collision, and trajectory
