@@ -1432,6 +1432,86 @@ def test_failed_insertion_auto_return_observation_restarts_with_fresh_key(
     assert saved["recovery_mode"] == "released_key_clear_view_then_restore"
 
 
+@pytest.mark.parametrize("recovery_kind", ["automatic", "manual"])
+def test_force_stop_return_observation_restarts_with_fresh_key(
+        monkeypatch, tmp_path, recovery_kind):
+    runner = _runner(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        session_runner, "plan_admitted_key_trial",
+        lambda **kwargs: _report(runner, kwargs["key_observation"]))
+    _plan(runner, _observation("key_1", 10.0))
+    runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
+    runner.observe_stage("grasp_success", True, timestamp_s=10.3,
+                         evidence_refs=_bind_lift(runner))
+    _bind_postlift(runner)
+    runner.observe_stage(
+        "preinsert_reached", True, timestamp_s=10.4,
+        evidence_refs=_bind_preinsert(runner, monkeypatch))
+    runner._record(lambda row: row.record_insertion_evidence(
+        InsertionEvidence("unobservable", None, None, None, True, True),
+        timestamp_s=10.5,
+        evidence_refs={"force_trace": "wrench/force.json",
+                       "axial_withdrawal": "robot/ascent.json"}))
+    runner.record_failure(
+        "force_abort", timestamp_s=10.55,
+        evidence_refs={"force_trace": "wrench/force.json"})
+    assert runner.current_decision().action == "recover_held_key_then_reobserve"
+
+    monkeypatch.setattr(
+        session_runner, "classify_key_tabletop_pose",
+        lambda **_kwargs: {"stem": "000", "rotation_error_deg": 0.0})
+    monkeypatch.setattr(
+        session_runner, "validate_repose_rest_target",
+        lambda **_kwargs: {"key_socket_clearance_m": 0.1})
+    monkeypatch.setattr(
+        session_runner, "_load_mesh",
+        lambda _path: SimpleNamespace(bounds=np.array([
+            [-0.01, -0.01, 0.0], [0.01, 0.01, 0.08]])))
+    recovery = tmp_path / "force_stop_return.json"
+    if recovery_kind == "automatic":
+        return_plan = tmp_path / "force_stop_return_plan.json"
+        return_plan.write_text(json.dumps({
+            "return_origin": "insertion",
+            "sources": {"postlift_report": {
+                "path": str(runner._postlift_report_path.resolve()),
+                "sha256": runner._postlift_report_sha256}},
+        }), encoding="utf-8")
+        recovery.write_text(json.dumps({
+            "schema": "precision_insertion_failed_return_execution_v1",
+        }), encoding="utf-8")
+        monkeypatch.setattr(
+            session_runner, "verify_failed_return_execution",
+            lambda **_kwargs: {
+                "plan_report": {"path": str(return_plan)},
+                "exit_completed_at_s": 10.7})
+    else:
+        recovery.write_text(json.dumps({
+            "schema": "precision_insertion_supervised_reset_v1",
+            "attempt_id": "attempt_1", "method": "supervised_manual_return",
+            "reviewed_by": "operator", "completed_at_s": 10.7,
+            "socket_clear": True, "hand_open": True,
+            "key_removed_from_socket": False,
+        }), encoding="utf-8")
+    landed = _observation("reset_key", 11.0)
+    evidence_dir = _save_evidence(runner, landed)
+    result = runner.observe_reset_landing(
+        key_observation=landed, key_evidence_dir=evidence_dir,
+        recovery_log_path=recovery, timestamp_s=11.05,
+        max_pose_error_deg=5.0, max_return_center_shift_m=0.01,
+        support_tolerance_m=0.002,
+        minimum_rest_socket_clearance_m=0.005,
+        minimum_board_edge_clearance_m=0.005)
+    assert result.failure_code == "force_abort"
+    assert result.labels["reset_success"] is True
+    assert runner.current_decision().action == "reobserve_key_and_preflight"
+    saved = json.loads((runner._attempt_dir / "reset_landing.json").read_text())
+    assert saved["recovery_mode"] == (
+        "planned_held_return" if recovery_kind == "automatic" else
+        "supervised_manual_return")
+    _plan(runner, _observation("key_2", 12.0))
+    assert runner.current_decision().action == "execution_gate_required"
+
+
 def test_unknown_preinsert_checkpoint_routes_to_recovery_not_repeat_transfer(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)

@@ -674,8 +674,7 @@ A supervised reset log is JSON with schema
 `precision_insertion_supervised_reset_v1`, the exact `attempt_id`,
 `method: "supervised_manual_return"`, a nonempty `reviewed_by`, a
 `completed_at_s` later than the attempt's last event, and boolean
-`socket_clear`/`hand_open` values of `true`. If insertion was attempted,
-`key_removed_from_socket` must also be `true`. These are operator assertions,
+`socket_clear`/`hand_open` values of `true`. These are operator assertions,
 not sensor proof; `observe_reset_landing` independently checks the returned
 key's fresh multi-view pose and fixed-socket/table geometry.
 

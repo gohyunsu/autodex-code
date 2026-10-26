@@ -664,6 +664,17 @@ The complete non-moving demo suite after this policy fix passed in the
 `planner` environment: **1212 passed, 5 skipped in 45.51 s**. Skips require
 hardware/CUDA or optional runtime dependencies; this result does not verify
 physical recovery.
+An additional runner-level regression now follows the force-stop record
+through `observe_reset_landing` and into a new key preflight, for both the
+automatic held return and a supervised return. This exposed an unrelated
+manual-log gate: it required `key_removed_from_socket=true` after **any**
+insertion attempt, including a force stop where the key remained in the
+hand. The manual log already requires `socket_clear=true` and `hand_open=true`,
+and the runner independently requires a fresh supported tabletop key pose.
+The redundant field is no longer required; neither the automatic return nor
+the fresh landing checks changed.
+The full non-moving suite after the runner-level regression and gate removal
+passed: **1214 passed, 5 skipped in 41.39 s** (`planner` environment).
 
 ## Remaining evidence needed
 

@@ -2241,9 +2241,7 @@ class SessionRunner:
                     not recovery["reviewed_by"].strip() or
                     recovery.get("socket_clear") is not True or
                     recovery.get("hand_open") is not True or
-                    not math.isfinite(completed) or
-                    (self._attempt.labels["insertion_success"] is not None and
-                     recovery.get("key_removed_from_socket") is not True)):
+                    not math.isfinite(completed)):
                 raise ValueError("reset needs a later supervised recovery log")
             recovery_mode = "supervised_manual_return"
         if completed <= self._attempt.events[-1]["timestamp_s"]:
