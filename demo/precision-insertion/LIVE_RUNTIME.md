@@ -530,6 +530,11 @@ estimator. Per-view image/frame identity, Qwen response, ROI, mask PNG,
 fitted point, model time and CUDA peak are saved. This is opt-in and has been
 replayed on saved images, not physically tested in a live insertion. See
 [SAM_HALF_ELLIPSE_RUNTIME_20261026.md](SAM_HALF_ELLIPSE_RUNTIME_20261026.md).
+With the five independent capture-PC Qwen workers, all selected views start
+together. Diagnosis proceeds as soon as three completed SAM points form a
+metric multiview fit; otherwise it waits for the remaining views. All source
+frame IDs, timestamps and hashes stay bound to the saved raw snapshot, while
+the diagnostic records only the views completed before its decision.
 
 For VLM checkpoints, `make_checkpoint_capture` in
 `precision_insertion.checkpoint_camera` supplies the existing handlers'

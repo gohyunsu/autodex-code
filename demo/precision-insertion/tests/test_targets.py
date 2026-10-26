@@ -15,6 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.assets import AssetPaths  # noqa: E402
 from precision_insertion.calibration import SessionCalibration  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
+from precision_insertion.next_trial_xy import (  # noqa: E402
+    compensated_key_hand_relation,
+)
 from precision_insertion.targets import build_rigid_insertion_targets  # noqa: E402
 from precision_insertion.world import add_fixed_mesh_fixtures  # noqa: E402
 
@@ -116,6 +119,37 @@ def test_targets_reject_wrong_socket_geometry_and_bad_preinsert(tmp_path):
         build_rigid_insertion_targets(
             mode=mode, shared_root=tmp_path, calibration=session,
             T_key_hand=np.eye(4), xy_offset_socket_m=(float("nan"), 0.0))
+
+
+def test_tip_xy_advice_moves_wrist_in_tilted_socket_frame_only(tmp_path):
+    mode = select_mode("cylinder", 20)
+    session, _, _ = _fixture(tmp_path, mode)
+    relation = np.eye(4)
+    relation[:3, 3] = [0.01, -0.02, 0.03]
+    observed_tip_xy_socket_m = np.array([0.004, -0.003])
+    wrist_correction_socket_m = -observed_tip_xy_socket_m
+    command = compensated_key_hand_relation(
+        mode=mode, shared_root=tmp_path, T_key_hand=relation,
+        wrist_correction_socket_m=tuple(wrist_correction_socket_m))
+    baseline = build_rigid_insertion_targets(
+        mode=mode, shared_root=tmp_path, calibration=session,
+        T_key_hand=relation)
+    corrected = build_rigid_insertion_targets(
+        mode=mode, shared_root=tmp_path, calibration=session,
+        T_key_hand=command)
+
+    for phase in ("preinsert", "entry", "verification"):
+        key = getattr(baseline, f"T_robot_key_{phase}")
+        hand = getattr(baseline, f"T_robot_hand_{phase}")
+        new_key = getattr(corrected, f"T_robot_key_{phase}")
+        new_hand = getattr(corrected, f"T_robot_hand_{phase}")
+        np.testing.assert_allclose(new_key, key)
+        np.testing.assert_allclose(new_hand, new_key @ command)
+        np.testing.assert_allclose(new_hand[:3, :3], hand[:3, :3])
+        shift_socket = session.socket_pose_robot[:3, :3].T @ (
+            new_hand[:3, 3] - hand[:3, 3])
+        np.testing.assert_allclose(
+            shift_socket, [*wrist_correction_socket_m, 0.0], atol=1e-12)
 
 
 def test_cylinder_targets_preserve_observed_yaw_gauge(tmp_path):

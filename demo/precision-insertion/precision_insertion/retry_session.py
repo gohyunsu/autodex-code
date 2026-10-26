@@ -13,6 +13,7 @@ import io
 import json
 import math
 from pathlib import Path
+import threading
 from typing import Callable, Mapping, Sequence
 
 import cv2
@@ -62,7 +63,7 @@ from .tip_tracking import (
 )
 from .tip_frame_window import load_tip_frame_window
 from .timing_profile import timed
-from .view_parallel import map_view_calls
+from .view_parallel import map_view_calls, map_view_calls_until
 from .xy_retry import XYRetryAssessment, assess_xy_retry
 from .visual_views import assessment_cameras
 from .xy_overlay import CalibratedXYFrame, camera_socket_transform
@@ -1071,6 +1072,8 @@ def _compute_sam_half_ellipse_alignment(
     nominal_tip = np.linalg.inv(socket) @ key @ np.array([0., 0., tip_z, 1.])
     if not callable(getattr(sam_segmentor, "segment", None)):
         raise TypeError("SAM half-ellipse needs a warmed ROI segmentor")
+    metric_quorum = threading.Event()
+    sam_gate = threading.Lock()
 
     def measure(frame: LabeledFrame):
         camera = frame.camera_id
@@ -1122,12 +1125,18 @@ def _compute_sam_half_ellipse_alignment(
         roi = padded_key_box_roi(box, canvas_size_wh=image.size)
         rx0, ry0, rx1, ry1 = roi
         try:
-            with timed("sam3.roi_infer", phase="xy_retry", kind="inference",
-                       camera_id=camera,
-                       model=getattr(sam_segmentor, "model", "SAM3")):
-                mask, sam_metadata = sam_segmentor.segment(
-                    image.crop(roi), camera_id=camera,
-                    prompt=KEY_MASK_PROMPT)
+            with sam_gate:
+                if metric_quorum.is_set():
+                    record.update(qwen_box_crop_px=list(box),
+                                  roi_within_crop=list(roi), admitted=False,
+                                  reason="metric_quorum_already_complete")
+                    return None, record, None
+                with timed("sam3.roi_infer", phase="xy_retry", kind="inference",
+                           camera_id=camera,
+                           model=getattr(sam_segmentor, "model", "SAM3")):
+                    mask, sam_metadata = sam_segmentor.segment(
+                        image.crop(roi), camera_id=camera,
+                        prompt=KEY_MASK_PROMPT)
         except (RuntimeError, TimeoutError) as exc:
             record.update(qwen_box_crop_px=list(box),
                           roi_within_crop=list(roi), admitted=False,
@@ -1162,7 +1171,32 @@ def _compute_sam_half_ellipse_alignment(
         return GroundedLineView(
             calibrated, tuple(fit["center_full_px"]), None), record, mask_png
 
-    measured = map_view_calls(backend, frames, measure)
+    def sufficient(completed: Mapping[int, tuple]) -> bool:
+        views = [completed[index][0] for index in sorted(completed)
+                 if completed[index][0] is not None]
+        if len(views) < 3:
+            return False
+        trial = tracked_tip_xy_alignment(
+            views, nominal_tip_z_socket_m=float(nominal_tip[2]),
+            search_index=search_index,
+            max_reprojection_px=alignment_limits.max_reprojection_px,
+            min_parallax_deg=alignment_limits.min_parallax_deg,
+            max_nominal_tip_height_error_m=max_nominal_tip_height_error_m)
+        if (trial["status"] != "diagnostic_metric_xy_correction" or
+                len(trial.get("inlier_cameras", ())) < 3):
+            return False
+        metric_quorum.set()
+        return True
+
+    if (len(frames) > 3 and
+            getattr(backend, "independent_remote_inference", False) and
+            callable(getattr(backend, "register_view_pool", None))):
+        completed = map_view_calls_until(
+            backend, tuple(range(len(frames))),
+            lambda index: measure(frames[index]), sufficient)
+        measured = [completed[index] for index in sorted(completed)]
+    else:
+        measured = map_view_calls(backend, frames, measure)
     backend_failures = {
         record.get("reason") for _view, record, _mask in measured}
     if measured and all(reason in {

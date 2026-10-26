@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import threading
 from types import SimpleNamespace
 
 import numpy as np
@@ -333,6 +334,101 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
         assert record["mask_file_sha256"] == hashlib.sha256(
             masks[record["camera_id"]]).hexdigest()
         assert abs(record["sam_half_ellipse"]["center_full_px"][1]-848.) < 12.
+
+
+@pytest.mark.parametrize("first_bad", [False, True])
+def test_remote_sam_tip_uses_first_metric_quorum_or_later_views(
+    tmp_path, monkeypatch, first_bad,
+):
+    mode = select_mode("cylinder", 20)
+    geometry = tmp_path / "geometry.json"
+    geometry.write_text(json.dumps({
+        "key_frame": {"tip_z_m": .08},
+        "socket_entry_plane_z_m": 0.0,
+    }), encoding="utf-8")
+    monkeypatch.setattr(retry_session, "AssetPaths",
+                        lambda *_: SimpleNamespace(task_geometry=geometry))
+    monkeypatch.setattr(retry_session, "validated_frozen_socket_pose",
+                        lambda **_: np.eye(4))
+    key = np.eye(4)
+    key[:3, :3] = [[1., 0., 0.], [0., 0., 1.], [0., -1., 0.]]
+    key[:3, 3] = [0., 0., 1.]
+    postlift = tmp_path / "postlift.json"
+    postlift.write_text(json.dumps({
+        "targets": {"T_robot_key_preinsert": key.tolist()}}),
+        encoding="utf-8")
+    K = np.array([[1000., 0., 1024.], [0., 1000., 768.], [0., 0., 1.]])
+    calibration = SimpleNamespace(record={"c2r": np.eye(4).tolist()})
+    frames, rows, intrinsics, extrinsics = [], {}, {}, {}
+    for index, (camera, translation) in enumerate((
+            ("cam_a", -.05), ("cam_b", 0.), ("cam_c", .05),
+            ("cam_d", .10), ("cam_e", .15)), 1):
+        E = np.eye(4)
+        E[0, 3] = translation
+        image = Image.new("RGB", (2048, 1536), "black")
+        frames.append(LabeledFrame(camera, "preinsert_hold", 100., image))
+        rows[camera] = {"frame_id": index, "timestamp_s": 100.,
+                        "image_sha256": image_sha256(np.asarray(image).copy())}
+        intrinsics[camera] = {"K_undist": K.tolist()}
+        extrinsics[camera] = E.tolist()
+
+    release_late = threading.Event()
+
+    class FiveWorkers:
+        max_parallel_views = 5
+        early_quorum_views = 3
+        independent_remote_inference = True
+        model_id = "five-camera-test"
+
+        def __init__(self):
+            self.pools = []
+
+        def register_view_pool(self, pool):
+            self.pools.append(pool)
+
+        def infer_for_camera(self, camera, images, prompt):
+            if camera == "cam_d":
+                release_late.wait(timeout=.2 if first_bad else 3.)
+            elif camera == "cam_e":
+                release_late.wait(timeout=3.)
+            return '{"bbox":[400,350,600,600]}'
+
+    class MaskBackend:
+        model = "mask-test"
+
+        def __init__(self):
+            self.calls = []
+
+        def segment(self, image, *, camera_id, prompt):
+            self.calls.append(camera_id)
+            if first_bad and camera_id == "cam_a":
+                return np.zeros((3, 4), np.uint8), {}
+            mask = np.zeros((image.height, image.width), np.uint8)
+            mask[62:145, 55:100] = 255
+            return mask, {"score": .9}
+
+    backend, segmentor = FiveWorkers(), MaskBackend()
+    try:
+        _hash, alignment, masks = (
+            retry_session._compute_sam_half_ellipse_alignment(
+                mode=mode, root=tmp_path, calibration=calibration,
+                postlift_file=postlift, frames=frames, frame_rows=rows,
+                backend=backend, sam_segmentor=segmentor,
+                intrinsics_full=intrinsics, extrinsics_full=extrinsics,
+                alignment_limits=SimpleNamespace(
+                    max_reprojection_px=5., min_parallax_deg=1.),
+                search_index=0, max_nominal_tip_height_error_m=.03))
+        assert alignment["status"] == "diagnostic_metric_xy_correction"
+        assert len(alignment["sam_half_ellipse_views"]) == (
+            3 if not first_bad else 4)
+        assert {"cam_b", "cam_c"} <= set(masks)
+        assert ("cam_a" in masks) is not first_bad
+    finally:
+        release_late.set()
+        for pool in backend.pools:
+            pool.shutdown(wait=True)
+    assert {"cam_a", "cam_b", "cam_c"} <= set(segmentor.calls)
+    assert ("cam_d" in segmentor.calls or "cam_e" in segmentor.calls) is first_bad
 
 
 def test_sam_roi_mask_bytes_are_saved_with_the_xy_diagnostic(tmp_path):

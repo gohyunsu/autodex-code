@@ -458,12 +458,14 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
 
     def close() -> None:
         try:
-            if sam_segmentor is not None:
-                sam_segmentor.close()
+            # A three-view XY quorum can leave remote Qwen requests draining.
+            # Their view threads may still be entering the shared SAM worker.
+            if callable(getattr(backend, "close", None)):
+                backend.close()
         finally:
             try:
-                if callable(getattr(backend, "close", None)):
-                    backend.close()
+                if sam_segmentor is not None:
+                    sam_segmentor.close()
             finally:
                 core.close()
 

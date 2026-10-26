@@ -84,7 +84,19 @@ writer on the same real raw bundle and masks. It binds the five selected
 source PNG hashes, saves five ROI masks, and creates no duplicate full-frame
 PNG directory.
 
+In the distributed live path, five Qwen box requests start on separate capture
+PCs. The diagnostic can return after the first three completed SAM points
+pass the existing multiview fit; if they do not, it waits for later views.
+The saved raw snapshot still binds all selected camera IDs, frame IDs,
+timestamps and hashes. Only completed inference views and their masks appear
+in that diagnostic report. Remaining remote calls drain before the SAM worker
+is closed. The five-view replay above deliberately evaluates every view and
+is not a live latency measurement.
+
 The saved comparison does not prove physical key-tip accuracy, fixture-pose
-accuracy, or insertion success. The active recipient stage's old path was
-moved, so `run_robot_pc.sh --check` still cannot certify a deployable robot
-session until that stage is restored at a current, non-archive path.
+accuracy, or insertion success. A new file-only 20 mm recipient stage at
+`/home/robot/precision_stage_20261026` passed `run_robot_pc.sh --check` with
+the paired `20261023_040546` calibration; its launch is explicitly
+`static_preflight_only`. See the report under
+`/home/robot/shared_data/hyunsu/tmp/20261026_precision_cylinder_static_audit`.
+That check does not test the live Qwen/SAM workers, cameras or robot motion.

@@ -514,7 +514,8 @@ def test_sam_roi_worker_warms_before_retry_and_closes_with_session(
                         "FrankaForceStopInsertionAdapter", lambda _: object())
     module = ModuleType("robot_pc_stages")
     module.configure = lambda *_: {
-        "shared": {"backend": object()},
+        "shared": {"backend": SimpleNamespace(
+            close=lambda: events.append("vlm_close"))},
         "stages": {"task": {}, "retry": {}}}
     monkeypatch.setitem(sys.modules, module.__name__, module)
     python = tmp_path / "sam-python"
@@ -555,7 +556,8 @@ def test_sam_roi_worker_warms_before_retry_and_closes_with_session(
     assert events[0][0] == "warm"
     assert events[0][1]["python_path"] == python
     assert events[0][1]["checkpoint"] == checkpoint
-    assert events[1:] == ["assembled", "sam_close", "core_close"]
+    assert events[1:] == ["assembled", "vlm_close", "sam_close",
+                          "core_close"]
 
 
 @pytest.mark.parametrize("missing", ["python", "checkpoint"])
