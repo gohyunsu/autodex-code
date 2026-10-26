@@ -260,6 +260,18 @@ took 56.38 s. The results and mask files are under
 `/home/robot/shared_data/hyunsu/tmp/20261026_sam_half_ellipse_live_wiring/`.
 The saved comparison still has no physical face-center ground truth, and the
 new mode has not run a live insertion. It is opt-in only.
+An [inventory of all saved 20 mm attempts](/home/robot/shared_data/hyunsu/tmp/20261026_tip_20mm_evidence_inventory/README.md)
+found 26 insertion attempt records, only three with preinsert raw captures.
+All three were excluded by the earlier socket-rim visual QC; the others have no
+preinsert images. Thus the accepted socket-pose replay here covers 10 mm
+only. There is currently no socket-valid saved 20 mm image set that can
+establish this end-point method's physical accuracy. CUDA is unavailable in
+this execution environment, so no new 20 mm Qwen/SAM inference was run.
+On the accepted 10 mm bundle, five-frame PNG decode, decoded-pixel SHA-256,
+color conversion and PIL construction took 0.259/0.273/0.300 s serially and
+0.106/0.094/0.098 s with four workers. The ~0.18 s warm difference is small
+next to model loading and inference; this audit did not add a more complex
+live frame-loader just for that difference.
 The five configured views of accepted 10 mm run `20261022_103429_752726`
 were also replayed through the live alignment function using saved Qwen
 answers and source PNGs. All five were admitted, and the result differed
