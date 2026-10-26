@@ -799,6 +799,7 @@ class FrankaExecutor:
         profile_scale = 1.0
         effective_speed = speed
         incomplete_reason = None
+        stream_stop_error = None
         if held_cap is not None:
             print(f"[franka] held-object speed cap: {held_cap:.2f}x", flush=True)
         try:
@@ -970,10 +971,22 @@ class FrankaExecutor:
             # enough — streaming_active_ stays true.
             try:
                 print("  [follow] stop_streaming ...", flush=True)
-                self.arm.stop_streaming()
-                print("  [follow] stop_streaming done", flush=True)
+                response = self.arm.stop_streaming()
+                if not isinstance(response, dict) or response.get("type") != "success":
+                    stream_stop_error = f"daemon response: {response!r}"
+                    print(f"[franka] stop_streaming failed: {stream_stop_error}",
+                          flush=True)
+                else:
+                    print("  [follow] stop_streaming done", flush=True)
             except Exception as e:
+                stream_stop_error = repr(e)
                 print(f"[franka] stop_streaming failed: {e!r}", flush=True)
+            # A deliberate wrench stop returns from inside the try block;
+            # reject a failed daemon stop here before its caller can ascend.
+            if stream_stop_error is not None and self._last_stop_on_contact:
+                raise RuntimeError(f"FR3 stream stop failed: {stream_stop_error}")
+        if stream_stop_error is not None:
+            raise RuntimeError(f"FR3 stream stop failed: {stream_stop_error}")
         # A timeout or stalled reference did not traverse the planned path.
         # The old fall-through ramped the hand and made a direct blocking move
         # to the final joint target, potentially cutting across that path.

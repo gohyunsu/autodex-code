@@ -22,8 +22,9 @@ def test_incomplete_stream_stops_without_final_hand_or_arm_command():
         module.time.sleep = lambda _seconds: None
 
         class Arm:
-            def __init__(self, wrench=0.):
+            def __init__(self, wrench=0., stop_response=None):
                 self.wrench = wrench
+                self.stop_response = stop_response
                 self.stops = 0
                 self.velocities = []
 
@@ -36,7 +37,8 @@ def test_incomplete_stream_stops_without_final_hand_or_arm_command():
 
             def stop_streaming(self):
                 self.stops += 1
-                return {"type": "success"}
+                return (self.stop_response if self.stop_response is not None
+                        else {"type": "success"})
 
             def is_error(self):
                 return False
@@ -77,11 +79,31 @@ def test_incomplete_stream_stops_without_final_hand_or_arm_command():
         normal._follow(np.zeros((2, 7)), hand)
         assert arrived.stops == 1
 
+        # A daemon refusal cannot be followed by a hand ramp or landing move.
+        rejected = Arm(stop_response={"type": "error", "message": "offline"})
+        try:
+            executor(rejected)._follow(np.zeros((2, 7)), hand)
+        except RuntimeError as exc:
+            assert "stream stop failed" in str(exc)
+        else:
+            raise AssertionError("failed daemon stop was treated as complete")
+        assert rejected.stops == 1
+
         # A deliberate stock wrench stop returns for reverse-axis recovery.
         contact = Arm(wrench=13.)
         stopped = executor(contact)
         stopped._follow(path, stop_wrench_z=12., abort_on_contact=True)
         assert stopped._last_stop_on_contact and contact.stops == 1
+
+        unacknowledged_contact = Arm(
+            wrench=13., stop_response={"type": "error", "message": "offline"})
+        try:
+            executor(unacknowledged_contact)._follow(
+                path, stop_wrench_z=12., abort_on_contact=True)
+        except RuntimeError as exc:
+            assert "stream stop failed" in str(exc)
+        else:
+            raise AssertionError("unacknowledged force stop could reverse")
 
         timed_out = Arm()
         try:

@@ -171,7 +171,14 @@ or endpoint threshold was added. A CPU-only test executes the actual follower
 with inert arm/hand objects and covers normal arrival, deliberate 12 N force
 stop, timeout, stall, and tick-budget exhaustion. The original AutoDex checkout
 was not changed.
-The full non-moving demo suite passes **1231 passed, 5 skipped in 43.61 s**
+The same stock follower also printed a failed `stop_streaming` call but could
+still enter its terminal hand ramp or direct landing move. This checkout now
+checks the daemon response and propagates a failed stop before those commands.
+For an intentional force stop, a failed stop also prevents the reverse-axis
+ascent. This uses the daemon's existing success/error result, not a new
+position, force, or timing threshold. The inert-controller regression covers
+both a rejected normal stop and a rejected force stop.
+The full non-moving demo suite passes **1231 passed, 5 skipped in 45.33 s**
 with the `planner` Python environment. The file-only robot-PC `--check`
 also passes; it reports `static_preflight_only` and `robot_ready=false`.
 The mount-frame comparison uncovered a separate correctness error: ParaDex
