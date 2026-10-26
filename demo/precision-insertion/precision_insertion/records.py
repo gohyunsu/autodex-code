@@ -253,8 +253,8 @@ class AttemptRecord:
             raise ValueError("next-trial advice needs socket XY meters")
         dx, dy = (float(value) for value in increment_socket_xy_m)
         if (not math.isfinite(dx) or not math.isfinite(dy) or
-                not 0 < math.hypot(dx, dy) <= NEXT_TRIAL_XY_MAX_STEP_M + 1e-12):
-            raise ValueError("next-trial XY step must be nonzero and at most 10 mm")
+                math.hypot(dx, dy) > NEXT_TRIAL_XY_MAX_STEP_M + 1e-12):
+            raise ValueError("next-trial XY step must be at most 10 mm")
         if not math.isfinite(update_weight) or not 0 < update_weight <= 1:
             raise ValueError("XY update weight must be in (0, 1]")
         applied = tuple(float(v) for v in applied_step_socket_xy_m)
@@ -278,6 +278,10 @@ class AttemptRecord:
                 "diagnostic_planar_xy_hypothesis",
                 "diagnostic_exploratory_xy_step"}:
             raise ValueError("next-trial advice needs a recognized XY source kind")
+        if (dx == 0.0 and dy == 0.0 and
+                (advice_kind == "diagnostic_exploratory_xy_step" or
+                 not supporting_cameras)):
+            raise ValueError("zero XY update needs a measured tip")
         refs = _refs(evidence_refs, "preinsert_reached", False)
         if ("grounded_xy" not in refs or
                 not ({"axial_withdrawal", "preinsert_snapshot"} & refs.keys())):

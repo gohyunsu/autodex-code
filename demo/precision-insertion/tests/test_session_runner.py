@@ -249,8 +249,9 @@ def test_xy_advice_survives_intermediate_key_reorientation(monkeypatch, tmp_path
     "multiview_tip_and_axis",  # Qwen line estimate
     "multiview_tip_xy_vertical_axis_assumption",  # tracked/SAM face point
 ])
+@pytest.mark.parametrize("increment", [(0.0006, -0.0008), (0.0, 0.0)])
 def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
-        monkeypatch, tmp_path, xy_source):
+        monkeypatch, tmp_path, xy_source, increment):
     runner = _runner(monkeypatch, tmp_path)
     runner.max_xy_retries = 2
     runner.xy_update_weight = 0.5
@@ -300,7 +301,7 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
         postlift_preflight_path=tmp_path / "postlift.json",
         postlift_preflight_sha256="postlift_hash", frame_binding={},
         joint_sample=SimpleNamespace(to_record=lambda: {}),
-        alignment={"bounded_xy_increment_socket_m": [0.0006, -0.0008],
+        alignment={"bounded_xy_increment_socket_m": list(increment),
                    "inlier_cameras": ["cam0", "cam1"],
                    "status": "diagnostic_metric_xy_correction",
                    "xy_source": xy_source},
@@ -330,9 +331,13 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
     assert captured[0]["retry_pose_stem"] == "000"
     assert KEY_A not in captured[0]["attempted"]
     runner.begin_selected_attempt(attempt_id="attempt_2", started_at_s=7.2)
+    expected = tuple(0.5 * value for value in increment)
     assert runner.active_attempt.wrist_correction_socket_m == pytest.approx(
-        (0.0003, -0.0004))
+        expected)
     assert runner.active_attempt.xy_offset_socket_m == (0.0, 0.0)
+    binding = json.loads((runner._attempt_dir /
+                          "preflight_binding.json").read_text())
+    assert binding["next_trial_xy_source"] == str(source)
     assert runner._pending_next_trial_xy is None
     assert runner.current_decision().action == "await_lift_observation"
 
@@ -388,20 +393,19 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
         timestamp_s=11.0)
     advice2 = json.loads((runner._attempt_dir /
                           "next_trial_xy_advice.json").read_text())
-    assert advice2["prior_wrist_correction_socket_m"] == pytest.approx(
-        [0.0003, -0.0004])
+    assert advice2["prior_wrist_correction_socket_m"] == pytest.approx(expected)
     assert advice2["advice_kind"] == "diagnostic_exploratory_xy_step"
     assert advice2["xy_source"] == "no_metric_measurement_exploratory_search"
     assert advice2["supporting_cameras"] == []
     assert advice2["next_wrist_correction_socket_m"] == pytest.approx(
-        [0.0013, -0.0004])
+        [expected[0] + 0.001, expected[1]])
     runner._record(lambda row: row.record_stage(
         "reset_success", True, timestamp_s=12.0,
         evidence_refs={"key_pose": "fresh_key3.json"}))
     _plan(runner, _observation("key_3", 13.0))
     runner.begin_selected_attempt(attempt_id="attempt_3", started_at_s=13.2)
     assert runner.active_attempt.wrist_correction_socket_m == pytest.approx(
-        (0.0013, -0.0004))
+        (expected[0] + 0.001, expected[1]))
 
 
 def test_grounded_lateral_session_only_accepts_own_saved_diagnostic(

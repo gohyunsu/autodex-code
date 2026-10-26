@@ -275,7 +275,7 @@ def resolve_xy_only_cylinder_alignment(
                 point = origin + distance * direction
                 source = "single_view_nominal_tip_height_plane"
                 supporting = [view.frame.camera_id]
-    if point is None or not np.all(np.isfinite(point)) or np.linalg.norm(point[:2]) < 1e-9:
+    if point is None or not np.all(np.isfinite(point)):
         # A missing visual measurement cannot identify a metric correction.
         # Explore a small, explicitly non-measured direction instead.
         angle = search_index * math.pi * (3.0 - math.sqrt(5.0))
@@ -284,7 +284,8 @@ def resolve_xy_only_cylinder_alignment(
     else:
         correction = -np.asarray(point[:2], dtype=float)
     magnitude = float(np.linalg.norm(correction))
-    increment = correction * min(1.0, NEXT_TRIAL_XY_MAX_STEP_M / magnitude)
+    increment = correction * min(
+        1.0, NEXT_TRIAL_XY_MAX_STEP_M / max(magnitude, 1e-12))
     status = (
         "diagnostic_exploratory_xy_step"
         if source == "no_metric_measurement_exploratory_search" else

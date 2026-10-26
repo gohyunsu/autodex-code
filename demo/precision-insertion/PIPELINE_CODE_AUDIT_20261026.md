@@ -190,6 +190,17 @@ per-camera residual in the report. It does **not** establish the true physical
 key face center or justify a tighter failure gate. The source-frame replay is
 `/home/robot/shared_data/hyunsu/tmp/20261026_sam_half_ellipse_live_wiring/tip_subset_sensitivity_saved_replay.json`.
 
+A centered measured tip exposed a retry seam that the nonzero saved runs could
+not exercise. The two-view fallback treated a valid socket-frame XY point near
+`(0, 0)` as missing and invented a 2 mm exploration step. The three-plus-view
+tip fit could return a zero step, but the attempt ledger rejected it and ended
+the retry. Both now keep a measured zero correction as zero. The same-grasp
+next attempt records the diagnostic source even when its cumulative wrist
+correction remains `(0, 0)`; a zero exploratory step with no measured tip is
+still invalid. Synthetic centered-tip tests and the full session-ledger test
+cover this path. This avoids turning a valid centered observation into an
+unmeasured motion and does not assert physical insertion success.
+
 The shared tracked-tip/SAM multiview fit previously identified outlier
 cameras but returned the point fitted using **all** cameras. In a five-camera
 synthetic calibration check, one key-tip point displaced by 100 px left four

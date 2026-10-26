@@ -1039,6 +1039,7 @@ class SessionRunner:
         assert key is not None
         pending_xy = self._pending_next_trial_xy
         correction = (0.0, 0.0)
+        applied_xy = False
         if pending_xy is not None:
             source = Path(pending_xy["diagnostic_report_path"]).resolve()
             if (pending_xy["session_calibration_sha256"] != self.session_sha256 or
@@ -1052,6 +1053,7 @@ class SessionRunner:
                     self._preflight.pose_class["stem"]):
                 correction = tuple(
                     pending_xy["next_wrist_correction_socket_m"])
+                applied_xy = True
             self._pending_next_trial_xy = None
         attempt = begin_attempt(
             attempt_id=attempt_id, mode=self.mode,
@@ -1071,10 +1073,10 @@ class SessionRunner:
                 verified["measured_start_state_sha256"]),
             "session_calibration_sha256": self.session_sha256,
             "next_trial_xy_source": (
-                None if correction == (0.0, 0.0) else
+                None if not applied_xy else
                 pending_xy["diagnostic_report_path"]),
             "next_trial_xy_source_sha256": (
-                None if correction == (0.0, 0.0) else
+                None if not applied_xy else
                 pending_xy["diagnostic_report_sha256"]),
             "wrist_correction_socket_m": list(correction),
             "robot_ready": False,

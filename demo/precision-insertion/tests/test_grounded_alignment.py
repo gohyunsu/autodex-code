@@ -384,6 +384,20 @@ def test_xy_only_retry_one_view_uses_nominal_height_and_zero_view_explores():
     assert np.linalg.norm(none["bounded_xy_increment_socket_m"]) == pytest.approx(.002)
 
 
+def test_xy_only_retry_measured_center_does_not_invent_exploration():
+    rows = _line_rig(np.array([0., 0., .09]),
+                     np.array([0., 0., -1.]))
+    missing = [GroundedLineView(v.frame, v.tip_uv_px, None) for v in rows]
+    result = resolve_xy_only_cylinder_alignment(
+        missing, {"status": "abstain"}, nominal_tip_z_socket_m=.09,
+        search_index=0, max_reprojection_px=3., min_parallax_deg=5.,
+        max_nominal_tip_height_error_m=.01)
+    assert result["status"] == "diagnostic_metric_xy_correction"
+    assert result["xy_source"] == "multiview_tip_xy_vertical_axis_assumption"
+    assert np.linalg.norm(result["bounded_xy_increment_socket_m"]) < 1e-9
+    assert len(result["inlier_cameras"]) >= 2
+
+
 def test_xy_only_retry_does_not_call_wrong_height_tip_a_metric_measurement():
     rows = _line_rig(np.array([.013, -.004, .13]),
                      np.array([0., 0., -1.]))
