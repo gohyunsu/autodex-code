@@ -647,6 +647,24 @@ capture callback. Its non-moving handler, assembly and session-runner tests
 pass (56 passed, 3 skipped); the factory/stage/handler focused tests pass
 55/55 after this removal.
 
+The post-failure policy had a separate decision-loop bug: after a stock
+force-stop ascent or a slipped-key recovery, the recovery handler could save
+a fresh, successful key landing, but the attempt retained its original
+`force_abort` or `slip` failure code. `decide_after_attempt` checked that
+code before the observed `reset_success` label and requested the same
+recovery again. The action loop then stopped with `decision_unchanged`.
+It now gives a successful, freshly observed landing precedence over the
+earlier failure code and advances to fresh-key preflight; a failed landing
+still stops. A regression drives the actual action loop from force stop
+through an observed reset, and another checks the slipped-key route. This
+does not classify force-stop contact as a visual XY error: the immediate
+axis withdrawal and held-key return remain the stock-aligned response, and
+the released-key visual XY diagnostic remains a separate path.
+The complete non-moving demo suite after this policy fix passed in the
+`planner` environment: **1212 passed, 5 skipped in 45.51 s**. Skips require
+hardware/CUDA or optional runtime dependencies; this result does not verify
+physical recovery.
+
 ## Remaining evidence needed
 
 1. Replay additional rejected-socket and failed-grasp episodes with this

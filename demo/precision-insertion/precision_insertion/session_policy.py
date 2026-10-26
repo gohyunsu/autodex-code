@@ -100,6 +100,10 @@ def decide_after_attempt(
 
     if labels["reset_success"] is False or attempt.failure_code == "reset_failed":
         return result("stop_for_review", "safety_or_reset_failure")
+    if labels["reset_success"] is True:
+        return result(
+            "reobserve_key_and_preflight", "reset_observed",
+            "fresh_key_pose", "fresh_robot_state")
     if attempt.failure_code == "force_abort":
         insertion = next((event for event in reversed(attempt.events)
                           if event["stage"] == "insertion_success"), None)
@@ -142,10 +146,6 @@ def decide_after_attempt(
     if labels["insertion_success"] is True:
         return result(
             "session_success", "observed_task_success_end_session")
-    if labels["reset_success"] is True:
-        return result(
-            "reobserve_key_and_preflight", "reset_observed",
-            "fresh_key_pose", "fresh_robot_state")
     if attempt.failure_code in {
             "pickup_execution_failed", "post_squeeze_preflight_failed",
             "lift_execution_failed"}:

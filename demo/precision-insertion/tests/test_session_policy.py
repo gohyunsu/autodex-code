@@ -12,6 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.config import select_mode  # noqa: E402
+from precision_insertion.action_loop import run_session_actions  # noqa: E402
 from precision_insertion.outcome import InsertionEvidence  # noqa: E402
 from precision_insertion.records import begin_attempt  # noqa: E402
 from precision_insertion.session_policy import (  # noqa: E402
@@ -195,6 +196,54 @@ def test_stock_force_stop_returns_held_key_only_after_logged_ascent():
     record.events[2]["evidence_refs"].pop("axial_withdrawal")
     assert decide_after_attempt(
         record, max_xy_retries=1).action == "stop_for_review"
+
+
+def test_force_stop_recovery_advances_after_fresh_reset_observation():
+    record = _attempt()
+    _grasp(record)
+    _hold(record)
+    record.record_insertion_evidence(
+        InsertionEvidence("unobservable", None, None, None, True, True),
+        timestamp_s=4.0,
+        evidence_refs={"force_trace": "robot/force.json",
+                       "axial_withdrawal": "robot/ascent.json"})
+    record.record_failure(
+        "force_abort", timestamp_s=4.1,
+        evidence_refs={"force_trace": "robot/force.json"})
+    assert decide_after_attempt(
+        record, max_xy_retries=1).action == "recover_held_key_then_reobserve"
+
+    class Runner:
+        def current_decision(self):
+            return decide_after_attempt(record, max_xy_retries=1)
+
+    def recover(_runner, _decision):
+        record.record_stage(
+            "reset_success", True, timestamp_s=5.0,
+            evidence_refs={"key_pose": "fresh_landed_key.json"})
+
+    outcome = run_session_actions(
+        Runner(), handlers={"recover_held_key_then_reobserve": recover},
+        stop_before_actions={"reobserve_key_and_preflight": "recovery_complete"})
+    assert outcome.status == "recovery_complete"
+    assert [decision.action for decision in outcome.visited] == [
+        "recover_held_key_then_reobserve", "reobserve_key_and_preflight"]
+    assert outcome.decision.reason == "reset_observed"
+
+
+def test_slipped_key_recovery_advances_after_fresh_reset_observation():
+    record = _attempt()
+    _grasp(record, False)
+    record.record_failure(
+        "slip", timestamp_s=3.0,
+        evidence_refs={"camera": "images/slip.json"})
+    assert decide_after_attempt(
+        record, max_xy_retries=None).action == "recover_key_then_reobserve"
+    record.record_stage(
+        "reset_success", True, timestamp_s=4.0,
+        evidence_refs={"key_pose": "fresh_landed_key.json"})
+    assert decide_after_attempt(
+        record, max_xy_retries=None).action == "reobserve_key_and_preflight"
 
 
 def test_next_trial_xy_has_10mm_step_but_no_cumulative_limit():
