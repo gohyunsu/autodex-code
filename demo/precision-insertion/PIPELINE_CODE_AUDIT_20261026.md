@@ -153,6 +153,17 @@ precision. All ten historical yaw gauges and corrections were zero. The
 tests the implemented frame conversion against real saved plans; it cannot
 establish physical execution or a nonzero live retry.
 
+The saved SAM diagnostic increments from three 10 mm episodes were also
+applied counterfactually to those episodes' saved nominal post-lift relations
+using the current staged fixture. The staged verification transform exactly
+reproduced each saved key target. Across preinsert, entry and verification,
+the corrected wrist shifted by `R_robot_socket @ [dx, dy, 0]` with maximum
+arithmetic residual `6.85e-17 m`; key targets and wrist rotations did not
+change. Frame IDs, timestamps, source PNG/mask hashes and each calculation
+are in the [saved SAM advice replay](/home/robot/shared_data/hyunsu/tmp/20261026_saved_sam_advice_pose_replay/README.md).
+These saved attempts had zero applied XY correction, so the replay proves
+software coordinate arithmetic, not a physical corrected trial.
+
 ## SAM3 half-ellipse: from offline result to optional live XY path
 
 At `568107f`, `held_key_tip.distal_key_mask_half_ellipse` was called only by
