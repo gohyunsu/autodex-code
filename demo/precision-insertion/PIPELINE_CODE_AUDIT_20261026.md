@@ -939,6 +939,37 @@ establish physical recovery success. The full non-moving suite after this
 change passes **1234 passed, 5 skipped**; the 20 mm file-only `--check`
 passes with `robot_ready=false`.
 
+## Reused force-stop ascent and measured finger settling
+
+The stock FR3 force-stop follower holds Inspire closed during its reverse-axis
+ascent. The demo's held-return handler reuses that ascent instead of issuing a
+second withdrawal, then plans the key's return from fresh measured joints.
+Its extra 0.02 rad unchanged-pose check previously compared all 13 joints.
+Measured Inspire fingers can settle against the held object even when the arm
+has not moved; stock AutoDex does not use finger settling to reject a return.
+The comparison now covers the seven FR3 arm joints only. The current
+Inspire feedback still has to agree with its raw motor readings and the
+configured command-error limit, and the return planner still uses the current
+measured 13-joint state, source-bound ascent log and sampled path audit. A
+non-moving regression uses a valid 20-raw-unit finger change (over 0.02 rad)
+with a stationary arm, and the existing moved-arm test still rejects 0.1 rad.
+This is a software-path check, not evidence that a physical key remained held.
+
+The saved `20261021_092625_546425` recovery-key capture took 64.015 s,
+including approximately 50.08 s waiting for the first stock PNG writes.
+That timing predates the current pose-only recovery producer, which skips the
+same-request PNG wait when registered ROI assistance is absent. A separate
+saved `20261022_103429_752726` initial key capture took 2.873 s and its
+following raw visual snapshot took 1.117 s; neither proves the duration of a
+new live recovery. Five actual 10 mm preinsert PNGs cost 8.38 s on an initial
+cold read but only about 0.011 s to hash after they were cached. The XY
+diagnostic necessarily reads those selected images for inference, so removing
+its later byte-hash check would not remove that cold read and offers no
+material measured latency gain here. The source-hash check remains.
+The full non-moving suite after the arm-only comparison passes **1234
+passed, 5 skipped**. The 20 mm file-only `--check` still reports 98 eligible
+candidates, `execution_scope=static_preflight_only`, and `robot_ready=false`.
+
 ## Remaining evidence needed
 
 1. Replay additional rejected-socket and failed-grasp episodes with this

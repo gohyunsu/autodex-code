@@ -15,6 +15,7 @@ from precision_insertion import live_recovery_handlers  # noqa: E402
 from precision_insertion.live_key_trial import ReturnedKeyCapture  # noqa: E402
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.session_policy import SessionDecision  # noqa: E402
+from autodex.utils.sync import convert_inspire_raw  # noqa: E402
 
 
 CAPTURE = {
@@ -158,12 +159,24 @@ def test_held_return_clears_view_then_recaptures_same_session(
     assert runner.current_decision().action == "reobserve_key_and_preflight"
 
 
-def test_held_return_reuses_stationary_retry_withdrawal_without_second_command(
+def test_held_return_reuses_withdrawal_after_inspire_fingers_settle(
         tmp_path, monkeypatch):
     bound, runner, events = _setup(tmp_path)
-    earlier = _state()
-    current = replace(_state(), sample_timestamp_s=21.,
-                      arm_timestamp_s=21., hand_timestamp_s=21.)
+    def measured(raw_value, timestamp):
+        raw = np.full(6, raw_value)
+        commanded = np.full(6, 500.)
+        state = LiveRobotState(
+            np.r_[np.zeros(7), convert_inspire_raw(raw[None])[0]],
+            np.zeros(7), timestamp, timestamp, 10., timestamp,
+            raw, commanded, abs(raw_value - 500.), np.zeros(6))
+        state.validate(max_arm_hand_skew_s=.1,
+                       max_hand_command_error_raw=30.,
+                       max_arm_velocity_rad_s=.05)
+        return state
+
+    earlier = measured(500., 20.)
+    current = measured(520., 21.)
+    assert np.max(np.abs(current.full_q[7:] - earlier.full_q[7:])) > .02
     bound.read_state = lambda: current
     bound.reuse_withdrawal = lambda: (
         "attempt_001", earlier, tmp_path / "withdrawal.json")
