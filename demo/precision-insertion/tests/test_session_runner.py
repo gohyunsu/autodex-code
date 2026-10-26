@@ -1556,6 +1556,60 @@ def test_unknown_preinsert_checkpoint_routes_to_recovery_not_repeat_transfer(
     assert runner.current_decision().action == "recover_key_then_reobserve"
 
 
+@pytest.mark.parametrize("source,safety_abort,completed,allowed", [
+    ("stock_franka_force_stop_follow", True, 10.4, True),
+    ("commissioned_guarded_controller", False, 10.6, False),
+])
+def test_stock_force_return_uses_fresh_state_after_bookkeeping_delay(
+        tmp_path, monkeypatch, source, safety_abort, completed, allowed):
+    runner = object.__new__(session_runner.SessionRunner)
+    runner._attempt = SimpleNamespace(
+        attempt_id="attempt_1", candidate_id="table/0/3",
+        started_at_s=10.0,
+        events=[{"stage": "insertion_success", "timestamp_s": 10.5}])
+    runner._attempt_dir = tmp_path
+    runner._preflight = object()
+    runner._postlift_preflight = SimpleNamespace(
+        status="sampled_postlift_preflight_pass")
+    report = tmp_path / "postlift.json"
+    report.write_text("{}", encoding="utf-8")
+    runner._postlift_report_path = report
+    runner._postlift_report_sha256 = hashlib.sha256(report.read_bytes()).hexdigest()
+    monkeypatch.setattr(runner, "current_decision", lambda: SimpleNamespace(
+        action="recover_held_key_then_reobserve"))
+    marker = object()
+    monkeypatch.setattr(runner, "_plan_held_return_from_state",
+                        lambda **_kwargs: marker)
+    withdrawal = tmp_path / "withdrawal.json"
+    withdrawal.write_text(json.dumps({
+        "schema": "precision_insertion_guarded_withdrawal_v1",
+        "attempt_id": "attempt_1", "candidate_id": "table/0/3",
+        "status": "withdrawn_to_preinsert_hold", "source": source,
+        "key_still_held": True, "safety_abort": safety_abort,
+        "completed_at_s": completed,
+    }), encoding="utf-8")
+    hand_raw = np.zeros(6)
+    state = LiveRobotState(
+        np.r_[np.zeros(7), convert_inspire_raw(hand_raw[None])[0]],
+        np.zeros(7), 15., 15., 100., 15.,
+        np.zeros(6), np.zeros(6), 0., np.zeros(6))
+    args = dict(
+        planner=object(), withdrawn_state=state,
+        withdrawal_evidence_path=withdrawal,
+        limits=PathAuditLimits(.1, .01, 5., .001, 2., .001, 2., .001),
+        release_height_m=0., minimum_rest_socket_clearance_m=.005,
+        minimum_board_edge_clearance_m=.005,
+        minimum_release_key_clearance_m=.005,
+        max_withdrawal_state_gap_s=.2,
+        max_arm_hand_skew_s=.02, max_hand_command_error_raw=20.,
+        max_arm_velocity_rad_s=.05)
+    if allowed:
+        assert runner.prepare_failed_insertion_return(**args) is marker
+    else:
+        with pytest.raises(ValueError, match="recent held withdrawal"):
+            runner.prepare_failed_insertion_return(**args)
+
+
 @pytest.mark.skip(reason="held-key return was replaced by released-key restoration")
 def test_failed_return_plan_reuses_postlift_relation_and_frozen_world(
         monkeypatch, tmp_path):

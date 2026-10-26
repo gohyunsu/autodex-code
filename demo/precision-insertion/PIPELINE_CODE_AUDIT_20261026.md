@@ -46,6 +46,16 @@ records abstention and proceeds without a new XY increment. The insertion
 contact is never converted directly into a measured image-space error.
 `test_session_policy.py`, `test_session_runner.py`, and
 `test_live_retry_handlers.py` cover this recovery-to-diagnostic route.
+The stock force-stop return previously also required the fresh state sample
+to arrive within one second of the completed ascent log. That duplicated the
+live FR3 reader's current-packet check and could reject a stationary arm
+after bookkeeping took longer than one second. The stock ascent return now
+uses the fresh measured state and the existing joint-drift check without a
+log-to-state age cap. The separate commissioned-withdrawal route retains its
+configured gap bound. A two-source regression checks both cases; neither
+change alters the axial ascent or the return trajectory planner.
+The complete non-moving demo suite after this change passes
+**1230 passed, 5 skipped**.
 
 For original-pose restoration, `reset_landing_geometry` transforms both the
 trial-start and newly observed world key poses through `inv(c2r)` and compares

@@ -1914,6 +1914,10 @@ class SessionRunner:
         completed = float(withdrawal.get("completed_at_s", float("nan")))
         stock_force_withdrawal = (
             withdrawal.get("source") == "stock_franka_force_stop_follow")
+        # The stock ascent has already ended. Its caller reads a fresh state
+        # and checks stationary joint drift; later bookkeeping time is not a
+        # reason to reject an otherwise unchanged hold. Keep the controller
+        # gap bound for a separately commissioned withdrawal source.
         if (withdrawal.get("schema") !=
                 "precision_insertion_guarded_withdrawal_v1" or
                 withdrawal.get("attempt_id") != self._attempt.attempt_id or
@@ -1929,8 +1933,9 @@ class SessionRunner:
                  else completed <= insertion_at) or
                 (stock_force_withdrawal and completed > insertion_at) or
                 withdrawn_state.sample_timestamp_s <= completed or
-                withdrawn_state.sample_timestamp_s - completed >
-                max_withdrawal_state_gap_s):
+                (not stock_force_withdrawal and
+                 withdrawn_state.sample_timestamp_s - completed >
+                 max_withdrawal_state_gap_s)):
             raise ValueError("failed return needs this attempt's recent held withdrawal")
         return self._plan_held_return_from_state(
             planner=planner, held_state=withdrawn_state,
