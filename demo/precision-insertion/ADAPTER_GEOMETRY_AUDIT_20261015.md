@@ -87,10 +87,32 @@ recovered October transform. `run_robot_pc.sh` selects it with
 `PRECISION_FR3_INSPIRE_URDF` for `--check`, `--plan-only`, and `--run`.
 `GraspPlanner` accepts that URDF as an optional robot-model path while keeping
 its stock FR3 hand config, seeds, and other planning parameters. The
-`FrankaExecutor` accepts the same URDF's composed `fr3_link7 → base_link`
-fixed transform for live wrist references. `AssetPaths.robot_urdf` supplies
+`FrankaExecutor` uses that URDF's `fr3_link8 → base_link` fixed transform for
+live wrist references, because ParaDex exposes libfranka `O_T_EE` at
+`fr3_link8`. `AssetPaths.robot_urdf` supplies
 that same file to hand-mesh collision and camera overlays. All three consume
 one model; no NAS asset or original AutoDex source file is rewritten.
+
+### October 26 measured-EE frame correction
+
+The earlier precision executor passed the composed `fr3_link7 → base_link`
+transform to its measured `O_T_EE` path. That counted the fixed 107 mm
+`fr3_joint8` segment twice. A read-only replay of 21 evenly spaced raw arm
+samples from each of three October 12 Pepsi v8 episodes compared saved
+`O_T_EE` with FK from the recovered mount URDF. Its maximum translation
+residual to `fr3_link8` was 0.259 mm and maximum orientation residual was
+0.000014°. Applying only `fr3_link8 → base_link` kept the hand-base residual
+below 0.260 mm; applying the old composed transform put it about 107 mm away.
+The episode paths, source hashes, sample indices, and per-episode maxima are
+in `/home/robot/shared_data/hyunsu/tmp/20261026_fr3_otee_mount_frame_audit/report.json`.
+The precision factory now passes `link8_to_hand` into the executor, and the
+executor's generic FR3 default also removes the known 107 mm fixed segment.
+The stock `/home/robot/AutoDex` checkout remains untouched. This corrects
+live wrist feedback, endpoint comparisons and the wrist-distance fallback;
+the cuRobo planning URDF and joint trajectories already used the recovered
+mount. Saved data does not prove the current robot's EE configuration or
+physical hand-eye calibration, so this is a source/frame correction with
+historical state evidence rather than a new live verification.
 
 A four-camera read-only overlay of the October 15 snapshot is under
 `/tmp/precision-current-overlay-20261015/adapter_compare_inferred_*.jpg`.

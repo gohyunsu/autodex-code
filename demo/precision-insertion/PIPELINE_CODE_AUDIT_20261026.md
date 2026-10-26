@@ -67,7 +67,7 @@ increment becomes `R_robot_socket @ [dx, dy, 0]` in robot coordinates.
 
 The FR3 executor is a separate comparison: `src/execution/franka_executor.py`
 is **not** byte-identical to stock. Its precision-branch changes inject the
-right-angle link7-to-hand transform, retain stock's 0.40 near-object/held-object
+right-angle `O_T_EE`/link8-to-hand transform, retain stock's 0.40 near-object/held-object
 speed scale as one configured value, and advance its streamed joint reference
 using measured tick time. The streaming command period remains the stock
 default of 20 ms (50 Hz). `follow_progress.py` keeps the reference moving
@@ -83,6 +83,19 @@ remainder of each 20 ms tick, whereas stock sleeps a full 20 ms *after* state,
 FK, and command work; actual command rate still depends on robot-PC load.
 This source comparison finds no second executor-side near/held slowdown to
 remove. It does not measure the achieved joint speed or smoothness.
+The mount-frame comparison uncovered a separate correctness error: ParaDex
+`position` is libfranka `O_T_EE`, which matches recovered-URDF `fr3_link8` in
+three saved v8 episodes. The previous precision factory passed a
+`fr3_link7 → base_link` matrix to the executor and double-applied the 107 mm
+`fr3_joint8` segment in live wrist feedback. It now passes
+`fr3_link8 → base_link`; the branch's generic FR3 default is converted to
+the same EE frame. The saved replay maxima are 0.259 mm for `O_T_EE` versus
+URDF link8 and about 107 mm for the old hand-base estimate; see
+`ADAPTER_GEOMETRY_AUDIT_20261015.md` and the hashed report under
+`/home/robot/shared_data/hyunsu/tmp/20261026_fr3_otee_mount_frame_audit/`.
+The planner's fixed-joint URDF did not change. This fixes the feedback pose
+used by endpoint checks and fallback proximity, without loosening a motion
+failure threshold or changing a planned target.
 `reset_scene.py` keeps a visually missed key at its tabletop scene pose
 instead of projecting a phantom carried key from the wrist. That tabletop
 pose can be stale if the missed grasp physically moved the key; a fresh key
@@ -597,7 +610,10 @@ October 26, the full demo suite completed with
 CUDA import failure above is historical and is not the current suite result.
 These tests cover the SAM diagnostic-to-ledger-to-next-wrist software route,
 but the optional SAM mode has no live robot execution or physical tip ground
-truth in this audit. A static
+truth in this audit. After the measured-EE mount correction and its saved
+raw-state regression, the same complete command passed again:
+**1205 passed, 5 skipped in 42.98 s**. The mount-focused tests passed
+**46/46**. A static
 `run_robot_pc.sh --check` attempt stopped before any camera or robot connection
 because `PRECISION_STAGE_ROOT` is unset and the former recipient stage is in
 `hyunsu/tmp/20261023_prev`, not an active installation.

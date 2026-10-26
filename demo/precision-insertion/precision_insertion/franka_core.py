@@ -19,7 +19,7 @@ from typing import Callable
 from .clear_view import ClearViewForPerception
 from .feedback_buffer import ExposureStateBuffer, RobotFeedbackSampler
 from .live_robot_state import LiveRobotState, read_live_franka_inspire_state
-from .mount_geometry import link7_to_hand
+from .mount_geometry import link8_to_hand
 
 
 # Match stock AutoDex FR3's near-object and held-object speed scale.
@@ -151,8 +151,8 @@ def open_franka_core(
         from .franka_completion_checked import completion_checked_franka_class
 
         executor_factory = lambda: completion_checked_franka_class()(
-            hand_name="inspire", link7_to_hand=(
-                None if mount_urdf is None else link7_to_hand(mount_urdf)),
+            hand_name="inspire", ee_to_hand=(
+                None if mount_urdf is None else link8_to_hand(mount_urdf)),
             object_safety_speed_scale=PRECISION_OBJECT_SAFETY_SPEED_SCALE)
     executor = executor_factory()
     try:

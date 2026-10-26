@@ -2,9 +2,8 @@
 ``autodex/executor/real.py`` (RealExecutor), with ONLY the arm-driver bits
 swapped for the FR3:
 
-  * 7-DOF arm, homed via FR3_INIT; clear-view = FR3_INIT with j0 rotated -40°
-    (same convention as real.py: ``clear_view_arm[0] -= deg2rad(40)``) so the
-    arm is out of the cameras' view of the object during perception.
+  * 7-DOF arm, homed via FR3_INIT; clear-view uses the configured FR3_CLEAR_VIEW
+    joint target so the arm is out of the cameras' view during perception.
   * Trajectory following: the FR3 daemon's ``move()`` BLOCKS (no continuous
     position servo like the xarm), so a dense cuRobo trajectory is followed by
     STREAMING joint velocities (``set_joint_velocity``) — the arm stays ON the
@@ -16,8 +15,8 @@ swapped for the FR3:
     joint space (FR3 Cartesian servo is not used).
   * Reset = ``planner.plan_js_to_init`` retract to clear-view, avoiding the
     placed object (mirrors real.py ``reset``).
-  * Place = FR3 NATIVE cartesian impedance + direct ``wrench`` contact (FR3 has
-    link-side torque sensors — no learned tau model / current admittance).
+  * Place = planned joint-space transfer and vertical descent with a direct
+    ``wrench`` contact stop (FR3 has link-side torque sensors).
   * Errors: ``error_recovery`` / ``is_error`` replace xarm ``clear_error`` /
     ``get_err_warn_code``.
 
@@ -58,6 +57,13 @@ APPROACH_SLOWDOWN_NEAR_M = 0.15
 # close to an object, and every motion while an object is held.  Keeping two
 # equal constants made it possible for recovery and normal execution to drift.
 OBJECT_SAFETY_SPEED_SCALE = 0.4
+# ParaDex exposes libfranka O_T_EE. Saved FR3 state agrees with the URDF's
+# fr3_link8, 107 mm beyond fr3_link7. The stock constant maps link7 to hand;
+# remove that fixed segment before applying it to measured O_T_EE. Precision
+# runs pass their selected URDF's link8-to-hand transform explicitly.
+_FR3_DEFAULT_EE_TO_WRIST = FR3_INSPIRE_LINK_TO_WRIST.copy()
+_FR3_LINK7_TO_EE_Z_M = 0.107
+_FR3_DEFAULT_EE_TO_WRIST[2, 3] -= _FR3_LINK7_TO_EE_Z_M
 # A placement always passes through a point exactly 10 cm above its release
 # pose: approach that point first, descend vertically 10 cm, release, then
 # lift vertically 10 cm before any lateral retreat.  These are planned joint
@@ -87,7 +93,7 @@ class FrankaExecutor:
                  traj_speed: float = 1, max_lead: float = 0.12,
                  land_tol: float = 0.02, follow_timeout_s: float = 90.0,
                  follow_log_every_s: float = 2.0, accel_max: float = 4.0,
-                 link7_to_hand: Optional[np.ndarray] = None,
+                 ee_to_hand: Optional[np.ndarray] = None,
                  object_safety_speed_scale: float = OBJECT_SAFETY_SPEED_SCALE):
         assert hand_name in ("inspire", "inspire_left"), \
             f"franka executor supports inspire hands only, got {hand_name}"
@@ -166,11 +172,13 @@ class FrankaExecutor:
         # Last command actually sent to the hand (controller units) — the start
         # point for _ramp_hand, so a ramp never jumps from a stale value.
         self._last_hand_action = _convert_inspire(self._hand_init)
+        # Historical private name used by other AutoDex helpers. For FR3 this
+        # maps the measured O_T_EE frame (URDF fr3_link8) to Inspire base_link.
         self._link6_to_wrist = np.asarray(
-            FR3_INSPIRE_LINK_TO_WRIST if link7_to_hand is None else link7_to_hand,
+            _FR3_DEFAULT_EE_TO_WRIST if ee_to_hand is None else ee_to_hand,
             dtype=np.float64).copy()
         if self._link6_to_wrist.shape != (4, 4):
-            raise ValueError("FR3 link7-to-hand transform must be 4x4")
+            raise ValueError("FR3 EE-to-hand transform must be 4x4")
         self._convert = _convert_inspire
         self.state_timestamps = []
         # Per-call breakdowns remain runtime diagnostics. Persisted durations

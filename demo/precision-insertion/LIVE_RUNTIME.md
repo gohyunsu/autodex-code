@@ -118,7 +118,10 @@ explicit motion opt-in. For nonmoving connection checks use
 [`probe_robot_feedback_only.py`](probe_robot_feedback_only.py).
 The robot-PC script selects the recovered October 12 right-angle URDF via
 `PRECISION_FR3_INSPIRE_URDF`. The planner, executor wrist reference, collision
-checks and camera overlays then use the same mount; see
+checks and camera overlays then use the same mount. ParaDex `position` is
+libfranka `O_T_EE` at URDF `fr3_link8`, so the executor uses the URDF's
+`fr3_link8 → base_link` transform. Applying `fr3_link7 → base_link` to that
+state would double-count the 107 mm fixed flange segment; see
 [ADAPTER_GEOMETRY_AUDIT_20261015.md](ADAPTER_GEOMETRY_AUDIT_20261015.md).
 Direct `run_live.py` invocations must export the same variable; the wrapper
 sets it automatically.
