@@ -30,6 +30,24 @@ not proof that the nominal post-squeeze key-to-hand relation is physically
 exact. The restoration, target-selection, and live-recovery tests pass without
 connecting hardware.
 
+A read-only replay of the actual `20261021_140856_019116` attempt
+`attempt_d729c8e4814a401abc219bb3371c2747` checks the easy-to-miss
+end-for-end cylinder case. The original observed key's local +Z axis points
+almost opposite to the canonical `001` rest pose (axis dot product `-0.9085`).
+The two pose **origins** differ by `78.145 mm` in XY. With the nominal
+80 mm cylinder's local midpoint `[0, 0, 0.040] m`, however, the planned rest
+and original physical centers agree in XY to floating-point precision. This
+supports the center-compensated transform in the current code; comparing pose
+origins alone would incorrectly call this a large return error. The saved
+controller record contains the pickup, lift, transfer, supported descent,
+release, exit, and acknowledged stop, but this historical attempt has no
+`reset_landing.json` or later key image. It therefore proves the planned
+coordinate arithmetic and recorded robot waypoints, not where the key
+physically landed. The nominal midpoint has not been rechecked against the
+historical mesh because its stage was moved; the current runtime must not
+depend on that archived stage. The source hashes, matrices and calculation are
+in `/home/robot/shared_data/hyunsu/tmp/20261026_restoration_pose_replay/`.
+
 `run_auto.py`, `run_pipeline.py`, `scene_cfg.py`, and `executor/real.py` are byte-identical in the two local
 checkouts. `autodex/planner/planner.py` differs by one constructor option:
 the precision checkout may inject a robot URDF path for the right-angle
