@@ -329,6 +329,19 @@ records each original PNG and mask hash, frame ID, timestamp, calibration and
 post-lift report hash, limits and result. It does not rerun SAM or validate a
 physical contact outcome.
 
+The ten saved ROI-worker masks behind those three episodes were then replayed
+through the **current** `projected_key_axis_crop` and
+`distal_key_mask_half_ellipse` functions, using each saved Qwen box crop/ROI,
+its frozen camera calibration, and its post-lift target. All ten recomputed
+full-image centers exactly matched the recorded worker-replay centers at
+JSON precision. The [mask-to-point replay](</home/robot/shared_data/hyunsu/tmp/20261026_sam_half_ellipse_live_wiring/roi_mask_to_tip_current_code_replay.json>)
+binds each mask to its source PNG hash, frame ID, timestamp, calibration and
+post-lift report. This checks the pixel-coordinate mapping and fit using
+existing masks; it does not rerun Qwen/SAM or independently measure the
+physical distal face. The full `demo/precision-insertion/tests` suite passed
+with `1204 passed, 5 skipped` in the planner environment without camera or
+robot access.
+
 ## Extra criteria and their purpose
 
 The stock planner supplies IK, world/self collision, and trajectory
