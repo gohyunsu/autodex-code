@@ -164,6 +164,19 @@ class DistributedQwenBackend:
     def infer(self, images: list[Image.Image], prompt: str) -> str:
         return self.infer_for_camera(self._camera_from_prompt(prompt), images, prompt)
 
+    @staticmethod
+    def _retire_channel(process: subprocess.Popen) -> None:
+        """Drop an unbound request/reply stream before another request."""
+        if process.poll() is None:
+            try:
+                process.kill()
+            except OSError:
+                pass
+        try:
+            process.wait(timeout=5.)
+        except subprocess.TimeoutExpired:
+            pass
+
     def infer_for_camera(
         self, camera: str, images: list[Image.Image], prompt: str,
     ) -> str:
@@ -190,19 +203,38 @@ class DistributedQwenBackend:
                 raise RuntimeError(f"capture-PC Qwen {camera} exited; see {log_file}")
             started = time.perf_counter()
             assert process.stdin is not None and process.stdout is not None
-            process.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
-            process.stdin.flush()
+            try:
+                process.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
+                process.stdin.flush()
+            except OSError as exc:
+                self._retire_channel(process)
+                raise RuntimeError(
+                    f"capture-PC Qwen {camera} request failed; see {log_file}") from exc
             ready, _, _ = select.select([process.stdout], [], [], 300.)
             if not ready:
+                self._retire_channel(process)
                 raise TimeoutError(f"capture-PC Qwen {camera} inference timed out")
             line = process.stdout.readline()
             if not line:
+                self._retire_channel(process)
                 raise RuntimeError(f"capture-PC Qwen {camera} exited; see {log_file}")
-            reply = json.loads(line)
+            try:
+                reply = json.loads(line)
+            except json.JSONDecodeError as exc:
+                self._retire_channel(process)
+                raise RuntimeError(
+                    f"capture-PC Qwen {camera} sent invalid JSON") from exc
+            if (not isinstance(reply, dict) or
+                    reply.get("request_id") != request_id or
+                    reply.get("camera_id") != camera):
+                self._retire_channel(process)
+                raise RuntimeError(
+                    f"capture-PC Qwen {camera} response identity changed")
+            if reply.get("type") not in {"result", "error"}:
+                self._retire_channel(process)
+                raise RuntimeError(
+                    f"capture-PC Qwen {camera} response type changed")
             elapsed = time.perf_counter() - started
-        if (reply.get("request_id") != request_id or
-                reply.get("camera_id") != camera):
-            raise ValueError("capture-PC Qwen response identity changed")
         if reply.get("type") != "result" or not isinstance(reply.get("answer"), str):
             raise RuntimeError(f"capture-PC Qwen {camera}: {reply.get('error')}")
         if self.log_path is not None:

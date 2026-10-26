@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 import re
 import shlex
@@ -10,9 +11,9 @@ import sys
 import threading
 import time
 from io import StringIO
-from contextlib import redirect_stdout
 
 import numpy as np
+import pytest
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -82,6 +83,50 @@ def test_capture_worker_shutdown_releases_model_process(monkeypatch):
         "type": "shutdown", "camera_id": "24122734"}
 
 
+@pytest.mark.parametrize("failure,reply,expected", [
+    ("timeout", "", "inference timed out"),
+    ("wrong_id", '{"type":"result","request_id":"stale",'
+     '"camera_id":"24122734"}\n', "response identity changed"),
+    ("bad_json", "model progress\n", "sent invalid JSON"),
+])
+def test_unbound_qwen_reply_retires_only_its_worker(
+        monkeypatch, failure, reply, expected):
+    class Process:
+        def __init__(self):
+            self.stdin = StringIO()
+            self.stdout = StringIO(reply)
+            self.killed = False
+
+        def poll(self):
+            return -9 if self.killed else None
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout):
+            assert timeout == 5.
+            return -9
+
+    process = Process()
+    other = Process()
+    backend = object.__new__(DistributedQwenBackend)
+    backend._channels = {
+        "24122734": (process, threading.Lock(), Path("/tmp/qwen-test.log")),
+        "25322649": (other, threading.Lock(), Path("/tmp/qwen-other.log"))}
+    backend.max_new_tokens = 32
+    backend.log_path = None
+    monkeypatch.setattr(distributed_qwen.select, "select",
+                        lambda streams, *_: (
+                            [] if failure == "timeout" else streams, [], []))
+    image = Image.new("RGB", (32, 32), "white")
+    with pytest.raises((RuntimeError, TimeoutError), match=expected):
+        backend.infer_for_camera("24122734", [image], "key box")
+    assert process.killed
+    assert not other.killed
+    with pytest.raises(RuntimeError, match="exited"):
+        backend.infer_for_camera("24122734", [image], "key box")
+
+
 def test_remote_worker_exits_cleanly_on_shutdown(monkeypatch):
     class FakeCuda:
         @staticmethod
@@ -105,11 +150,31 @@ def test_remote_worker_exits_cleanly_on_shutdown(monkeypatch):
     monkeypatch.setattr(sys, "stdin", StringIO(
         '{"type":"shutdown","camera_id":"24122734"}\n'))
     output = StringIO()
-    with redirect_stdout(output):
-        distributed_qwen_worker.serve(
-            camera_id="24122734", model_id="unused", max_input_size=(640, 480))
+    distributed_qwen_worker.serve(
+        camera_id="24122734", model_id="unused",
+        max_input_size=(640, 480), protocol=output)
     assert [json.loads(line)["type"] for line in output.getvalue().splitlines()] == [
         "ready", "stopped"]
+
+
+def test_capture_worker_reserves_stdout_for_json_before_model_load():
+    source_root = Path(__file__).resolve().parents[1]
+    code = (
+        "import os, sys\n"
+        f"sys.path.insert(0, {str(source_root)!r})\n"
+        "from precision_insertion.distributed_qwen_worker import "
+        "_isolate_protocol_stdout\n"
+        "protocol = _isolate_protocol_stdout()\n"
+        "print('model progress', flush=True)\n"
+        "os.write(1, b'native progress\\n')\n"
+        "print('{\"type\":\"ready\"}', file=protocol, flush=True)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True,
+        check=True)
+    assert result.stdout.strip() == '{"type":"ready"}'
+    assert "model progress" in result.stderr
+    assert "native progress" in result.stderr
 
 
 def test_first_three_consistent_responses_finish_checkpoint_while_others_drain():

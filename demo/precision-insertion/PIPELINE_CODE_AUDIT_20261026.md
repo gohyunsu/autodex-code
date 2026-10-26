@@ -406,6 +406,17 @@ waiting camera calls fail fast as unavailable while already completed views
 remain usable. A subprocess protocol test reproduces the timeout followed by
 a second camera request without starting SAM3 or robot hardware.
 
+The five capture-PC Qwen workers have the same request/reply risk. A timed-out
+or malformed response previously left its SSH worker open, and an identity
+mismatch surfaced as an uncaught `ValueError` in the saved XY path. The robot-PC
+client now retires only that camera's channel on timeout, malformed JSON, or
+wrong request/camera identity while holding the per-camera request lock. The
+worker also reserves stdout for JSON before loading Qwen; library prints and
+native writes go to stderr. CPU-only protocol tests cover channel retirement,
+other-camera isolation, and stdout separation. This is a demo-specific remote
+inference transport; stock AutoDex does not use these SSH workers. It changes
+failure containment, not the VLM prompt, mask fit, or XY command value.
+
 The saved 10 mm run `20261022_103429_752726` completed its 20 mm stock-force
 stroke, then failed 6.87 s into `trial.release_and_clear` with the generic
 `FR3 stream did not finish at a measured stationary endpoint` exception.

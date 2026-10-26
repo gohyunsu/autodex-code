@@ -11,12 +11,21 @@ import argparse
 import base64
 import io
 import json
+import os
 import sys
 import time
 
 from PIL import Image
 
 from .local_qwen import LocalQwenModel
+
+
+def _isolate_protocol_stdout():
+    """Reserve the JSON pipe before model loading or inference can print."""
+    protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w",
+                         encoding="utf-8", buffering=1)
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    return protocol
 
 
 def _native_images(model: LocalQwenModel, images: list[Image.Image]) -> list[Image.Image]:
@@ -58,7 +67,9 @@ def _images(payload: dict) -> list[Image.Image]:
 
 
 def serve(*, camera_id: str, model_id: str,
-          max_input_size: tuple[int, int]) -> None:
+          max_input_size: tuple[int, int], protocol=None) -> None:
+    if protocol is None:
+        protocol = _isolate_protocol_stdout()
     import torch
 
     model = LocalQwenModel(model_id=model_id, max_input_size=max_input_size)
@@ -66,7 +77,7 @@ def serve(*, camera_id: str, model_id: str,
                       "model_id": model_id,
                       "gpu_name": torch.cuda.get_device_name(0),
                       "cuda_allocated_bytes": torch.cuda.memory_allocated()}),
-          flush=True)
+          file=protocol, flush=True)
     for line in sys.stdin:
         request = None
         try:
@@ -74,7 +85,7 @@ def serve(*, camera_id: str, model_id: str,
             if (request.get("type") == "shutdown" and
                     request.get("camera_id") == camera_id):
                 print(json.dumps({"type": "stopped", "camera_id": camera_id}),
-                      flush=True)
+                      file=protocol, flush=True)
                 break
             if request.get("type") != "infer" or request.get("camera_id") != camera_id:
                 raise ValueError("request is for another camera")
@@ -96,7 +107,7 @@ def serve(*, camera_id: str, model_id: str,
             reply = {"type": "error", "request_id": request.get("request_id")
                      if isinstance(request, dict) else None,
                      "camera_id": camera_id, "error": repr(exc)}
-        print(json.dumps(reply, ensure_ascii=False), flush=True)
+        print(json.dumps(reply, ensure_ascii=False), file=protocol, flush=True)
 
 
 def main() -> None:
