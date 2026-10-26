@@ -189,14 +189,27 @@ def tracked_tip_xy_alignment(
 
     With three or more views, use one robust multi-view fit. This avoids a
     misleading two-view hypothesis winning solely because both points have a
-    small pixel residual. Sparse views use the existing AutoDex XY fallback.
+    small pixel residual. One or two usable views retain their explicit
+    planar or triangulated hypotheses; no consistent tip means no XY advice.
     """
-    fallback = lambda selected: resolve_xy_only_cylinder_alignment(
-        selected, {"status": "abstain"},
-        nominal_tip_z_socket_m=nominal_tip_z_socket_m,
-        search_index=search_index, max_reprojection_px=max_reprojection_px,
-        min_parallax_deg=min_parallax_deg,
-        max_nominal_tip_height_error_m=max_nominal_tip_height_error_m)
+    def fallback(selected):
+        proposal = resolve_xy_only_cylinder_alignment(
+            selected, {"status": "abstain"},
+            nominal_tip_z_socket_m=nominal_tip_z_socket_m,
+            search_index=search_index, max_reprojection_px=max_reprojection_px,
+            min_parallax_deg=min_parallax_deg,
+            max_nominal_tip_height_error_m=max_nominal_tip_height_error_m)
+        if proposal["status"] != "diagnostic_exploratory_xy_step":
+            return proposal
+        # The VLM route may explicitly explore after an unobservable image.
+        # A tracker/SAM result without a consistent visible tip has no point
+        # from which to derive a wrist correction.
+        return {
+            "status": "abstain", "reason": "no_consistent_visible_key_tip",
+            "xy_source": "none", "inlier_cameras": [],
+            "nominal_tip_z_socket_m": float(nominal_tip_z_socket_m),
+            "tip_socket_m": None,
+        }
     if len(views) < 3:
         return dict(fallback(views), estimator="tracked_visible_key_tip")
     if _parallax(views) < min_parallax_deg:

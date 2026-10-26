@@ -172,9 +172,22 @@ def test_behind_camera_rays_do_not_become_metric_xy_advice():
         views, nominal_tip_z_socket_m=.085, search_index=0,
         max_reprojection_px=3., min_parallax_deg=5.,
         max_nominal_tip_height_error_m=.01)
-    assert result["status"] == "diagnostic_exploratory_xy_step"
+    assert result["status"] == "abstain"
+    assert "bounded_xy_increment_socket_m" not in result
     assert result["inlier_cameras"] == []
     assert result["tip_socket_m"] is None
+
+
+def test_missing_tip_views_do_not_create_a_blind_next_trial_step():
+    result = tracked_tip_xy_alignment(
+        [], nominal_tip_z_socket_m=.085, search_index=2,
+        max_reprojection_px=3., min_parallax_deg=5.,
+        max_nominal_tip_height_error_m=.01)
+    assert result["status"] == "abstain"
+    assert result["reason"] == "no_consistent_visible_key_tip"
+    assert result["xy_source"] == "none"
+    assert result["inlier_cameras"] == []
+    assert "bounded_xy_increment_socket_m" not in result
 
 
 def test_missing_target_frame_does_not_invent_tip():

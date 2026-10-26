@@ -737,6 +737,19 @@ it cannot quantify a second capture's cost. A future reuse path needs to
 preserve the initial image/frame binding and check the measured robot state;
 simply removing the freshness condition is not a valid latency fix.
 
+An additional saved-image trace found that the shared VLM fallback can emit an
+explicitly exploratory 2 mm step when no tip is visible. The optional
+SAM/tracked-tip path had inherited that branch, so an empty SAM mask could
+become next-trial wrist advice despite having no observed endpoint. It now
+records `abstain` without an XY increment in that case. The existing
+single-view planar and two-or-more-view metric paths remain available. The
+live handler records `sam_half_ellipse_unavailable` or
+`tracked_tip_unavailable` and continues recovery; it issues no correction
+from a missing or inconsistent tip. The VLM route's separately labeled
+exploratory policy is unchanged. Synthetic no-tip, behind-camera, SAM-mask,
+and live-handler tests cover this distinction; they do not establish the
+physical accuracy of an accepted tip.
+
 ## Remaining evidence needed
 
 1. Replay additional rejected-socket and failed-grasp episodes with this

@@ -216,7 +216,7 @@ for line in sys.stdin:
 
 @pytest.mark.parametrize("failure", [
     None, "one_qwen", "one_sam", "one_invalid_mask", "one_end_on",
-    "all_qwen", "all_sam", "mixed_all"])
+    "all_qwen", "all_sam", "mixed_all", "all_empty_mask"])
 def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
     tmp_path, monkeypatch, failure,
 ):
@@ -282,7 +282,8 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
             if failure == "one_invalid_mask" and camera_id == "cam_c":
                 return np.zeros((3, 4), np.uint8), {}
             mask = np.zeros((image.height, image.width), np.uint8)
-            mask[62:145, 55:100] = 255
+            if failure != "all_empty_mask":
+                mask[62:145, 55:100] = 255
             return mask, {"score": .9, "inference_s": .01,
                           "cuda_peak_bytes": 100, "model": self.model}
 
@@ -310,6 +311,14 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
                 max_reprojection_px=5., min_parallax_deg=1.),
             search_index=0, max_nominal_tip_height_error_m=.03))
     assert alignment["estimator"] == "sam3_half_ellipse_key_face_proxy"
+    if failure == "all_empty_mask":
+        assert alignment["status"] == "abstain"
+        assert alignment["inlier_cameras"] == []
+        assert "bounded_xy_increment_socket_m" not in alignment
+        assert all(row["reason"] == "key_mask_end_unavailable"
+                   for row in alignment["sam_half_ellipse_views"])
+        assert set(masks) == {"cam_a", "cam_b", "cam_c"}
+        return
     assert alignment["status"] == "diagnostic_metric_xy_correction"
     assert len(alignment["sam_half_ellipse_views"]) == 3
     expected = ({"cam_a", "cam_b", "cam_c"} if failure is None else
