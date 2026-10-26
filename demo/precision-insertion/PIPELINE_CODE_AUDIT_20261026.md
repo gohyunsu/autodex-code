@@ -218,6 +218,13 @@ so composition through `T_robot_socket @ T_socket_key` moves the wrist by
 axis. The session regression now runs the SAM handler into the real ledger
 and through the fresh same-grasp attempt for both a nonzero and zero metric
 increment. It confirms the software seam, not the physical tip location.
+The synthetic same-frame ROI regression additionally checks both full-image
+pixel coordinates and the sign of the triangulated socket-frame X correction.
+It composes that nonzero increment through the next-attempt key-to-hand
+command as well, covering crop-origin addition, camera projection, the advice
+sign, and socket-frame wrist translation together. The accepted 10 mm
+saved-image proxies remain visual estimates rather than
+independent measurements of the key's physical end.
 
 The local SAM3 worker is request-bound to one camera at a time. If its reply
 times out, is malformed, or carries another request/camera ID, the client now

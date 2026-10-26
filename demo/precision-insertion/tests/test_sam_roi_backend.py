@@ -15,7 +15,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion import retry_session  # noqa: E402
+from precision_insertion.assets import AssetPaths  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
+from precision_insertion.next_trial_xy import (  # noqa: E402
+    compensated_key_hand_relation,
+)
 from precision_insertion.observer import LabeledFrame  # noqa: E402
 from precision_insertion.frame_provenance import image_sha256  # noqa: E402
 from precision_insertion.retry_session import (  # noqa: E402
@@ -221,13 +225,15 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
     tmp_path, monkeypatch, failure,
 ):
     mode = select_mode("cylinder", 20.)
-    geometry = tmp_path / "geometry.json"
+    geometry = AssetPaths(tmp_path, mode).task_geometry
+    geometry.parent.mkdir(parents=True)
     geometry.write_text(json.dumps({
         "key_frame": {"tip_z_m": .08},
         "socket_entry_plane_z_m": 0.0,
+        "T_socket_key_verification": [
+            [1., 0., 0., 0.], [0., 0., 1., 0.],
+            [0., -1., 0., 0.], [0., 0., 0., 1.]],
     }), encoding="utf-8")
-    monkeypatch.setattr(retry_session, "AssetPaths",
-                        lambda *_: SimpleNamespace(task_geometry=geometry))
     monkeypatch.setattr(retry_session, "validated_frozen_socket_pose",
                         lambda **_: np.eye(4))
     key = np.eye(4)
@@ -283,7 +289,7 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
                 return np.zeros((3, 4), np.uint8), {}
             mask = np.zeros((image.height, image.width), np.uint8)
             if failure != "all_empty_mask":
-                mask[62:145, 55:100] = 255
+                mask[62:145, 70:115] = 255
             return mask, {"score": .9, "inference_s": .01,
                           "cuda_peak_bytes": 100, "model": self.model}
 
@@ -342,7 +348,20 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
         assert record["admitted"] is True
         assert record["mask_file_sha256"] == hashlib.sha256(
             masks[record["camera_id"]]).hexdigest()
+        assert abs(record["sam_half_ellipse"]["center_full_px"][0] -
+                   record["nominal_tip_full_px"][0] - 15.) < 5.
         assert abs(record["sam_half_ellipse"]["center_full_px"][1]-848.) < 12.
+    assert alignment["tip_socket_m"][0] > .005
+    assert alignment["bounded_xy_increment_socket_m"][0] < 0.
+    command = compensated_key_hand_relation(
+        mode=mode, shared_root=tmp_path, T_key_hand=np.eye(4),
+        wrist_correction_socket_m=tuple(
+            alignment["bounded_xy_increment_socket_m"]))
+    verification = np.asarray(json.loads(geometry.read_text())[
+        "T_socket_key_verification"])
+    command_shift = (verification @ command)[:3, 3] - verification[:3, 3]
+    assert command_shift == pytest.approx([
+        *alignment["bounded_xy_increment_socket_m"], 0.])
 
 
 @pytest.mark.parametrize("first_bad", [False, True])
