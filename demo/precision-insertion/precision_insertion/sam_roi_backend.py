@@ -36,10 +36,14 @@ class SamRoiBackend:
         self._response_timeout_s = response_timeout_s
         self._failed = False
         self.model = str(model)
-        self._process = subprocess.Popen(
-            [str(python), str(worker), "--checkpoint", str(model)],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self._log,
-            text=True, bufsize=1)
+        try:
+            self._process = subprocess.Popen(
+                [str(python), str(worker), "--checkpoint", str(model)],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self._log,
+                text=True, bufsize=1)
+        except BaseException:
+            self._log.close()
+            raise
         try:
             ready = self._read_line(startup_timeout_s)
             if ready.get("type") != "ready" or ready.get("model") != str(model):

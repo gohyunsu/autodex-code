@@ -877,6 +877,22 @@ exploratory policy is unchanged. Synthetic no-tip, behind-camera, SAM-mask,
 and live-handler tests cover this distinction; they do not establish the
 physical accuracy of an accepted tip.
 
+The SAM half-ellipse factory now loads its CUDA worker before opening the
+command-capable FR3 core. Previously it checked only the Python/checkpoint
+paths up front, then loaded the model during handler assembly after the
+initial robot and camera session. A CUDA/model-load failure could therefore
+terminate that session after its clear-view move. The worker now warms first,
+closes if FR3 startup fails, and moves its stderr log into the run directory
+on orderly exit. Startup-order/resource tests and the full non-moving suite
+pass (**1233 passed, 5 skipped**). The file-only 20 mm
+`run_robot_pc.sh --check` passes with the SAM mode, but reports
+`robot_ready=false`; it still does not load CUDA or contact a robot.
+The [current-head saved SAM-to-wrist replay](</home/robot/shared_data/hyunsu/tmp/20261026_saved_sam_advice_pose_replay/current_head_8f1b0f0/README.md>)
+checks three saved 10 mm advice steps and a nonzero-yaw 10/20 mm
+counterfactual against `8f1b0f0`; maximum wrist-shift residuals were
+`6.85e-17 m` and `1.26e-10 m`, respectively. These are arithmetic checks,
+not measured motion or physical tip-center accuracy.
+
 ## Remaining evidence needed
 
 1. Replay additional rejected-socket and failed-grasp episodes with this

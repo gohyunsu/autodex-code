@@ -15,6 +15,7 @@ import math
 import os
 from pathlib import Path
 from typing import Mapping
+from uuid import uuid4
 
 from .checkpoint_camera import make_checkpoint_capture
 from .franka_core import (
@@ -254,15 +255,33 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                  if options.xy_estimator == "sam_half_ellipse" else None)
     backend = None
     sam_segmentor = None
-    with timed("startup.franka_planner_core", phase="startup"):
-        core = open_franka_core(feedback)
-    if sampling is not None:
-        try:
+    sam_log = (options.run_output_dir.parent /
+               f".{options.run_output_dir.name}.sam_roi_worker.{uuid4().hex}.stderr.log"
+               if sam_paths is not None else None)
+    if sam_paths is not None:
+        python, model = sam_paths
+        # Loading the CUDA model can fail even when its files exist. Finish
+        # that work before opening the command-capable FR3 connection or
+        # asking the robot to move to clear view.
+        with timed("startup.sam3_roi_model_load", phase="startup"):
+            sam_segmentor = SamRoiBackend(
+                python_path=python, checkpoint=model,
+                stderr_path=sam_log)
+    core = None
+    try:
+        with timed("startup.franka_planner_core", phase="startup"):
+            core = open_franka_core(feedback)
+        if sampling is not None:
             with timed("startup.feedback_sampler", phase="startup"):
                 core.start_feedback_sampler(sampling)
-        except BaseException:
-            core.close()
-            raise
+    except BaseException:
+        try:
+            if sam_segmentor is not None:
+                sam_segmentor.close()
+        finally:
+            if core is not None:
+                core.close()
+        raise
 
     def components(live):
         with timed("startup.robot_pc_stage_factory", phase="startup"):
@@ -316,15 +335,8 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                         parallel_views=vlm["parallel_views"],
                         **({"classification_image_size": image_size}
                            if image_size is not None else {}))
-        nonlocal backend, sam_segmentor
+        nonlocal backend
         backend = shared["backend"]
-        if sam_paths is not None:
-            python, model = sam_paths
-            with timed("startup.sam3_roi_model_load", phase="startup"):
-                sam_segmentor = SamRoiBackend(
-                    python_path=python, checkpoint=model,
-                    stderr_path=(options.run_output_dir /
-                                 "sam_roi_worker.stderr.log"))
         shared.update(planner=core.planner, read_state=core.read_state)
         if core.sampler is not None:
             shared.update(
@@ -466,6 +478,12 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 if sam_segmentor is not None:
                     sam_segmentor.close()
             finally:
-                core.close()
+                try:
+                    if (sam_log is not None and sam_log.is_file() and
+                            options.run_output_dir.is_dir()):
+                        sam_log.replace(
+                            options.run_output_dir / "sam_roi_worker.stderr.log")
+                finally:
+                    core.close()
 
     return LiveRuntimeIntegration(core.clear_view, components, close)

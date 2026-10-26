@@ -505,11 +505,12 @@ def test_tracked_mode_attaches_exact_preinsert_camera_window(monkeypatch, tmp_pa
 def test_sam_roi_worker_warms_before_retry_and_closes_with_session(
     monkeypatch, tmp_path,
 ):
+    events = []
     core = SimpleNamespace(
         clear_view=object(), planner=object(), executor=object(),
         read_state=lambda: None, sampler=None, close=lambda: events.append("core_close"))
-    events = []
-    monkeypatch.setattr(franka_integration, "open_franka_core", lambda _: core)
+    monkeypatch.setattr(franka_integration, "open_franka_core",
+                        lambda _: (events.append("core_open") or core))
     monkeypatch.setattr(franka_integration,
                         "FrankaForceStopInsertionAdapter", lambda _: object())
     module = ModuleType("robot_pc_stages")
@@ -529,6 +530,7 @@ def test_sam_roi_worker_warms_before_retry_and_closes_with_session(
     class MaskWorker:
         def __init__(self, **kwargs):
             events.append(("warm", kwargs))
+            kwargs["stderr_path"].write_text("SAM worker log\n", encoding="utf-8")
 
         def close(self):
             events.append("sam_close")
@@ -552,12 +554,61 @@ def test_sam_roi_worker_warms_before_retry_and_closes_with_session(
             mode=SimpleNamespace(family="cylinder"))))
     integration = franka_integration.factory(options)
     integration.build_components(live)
+    options.run_output_dir.mkdir()
     integration.close()
     assert events[0][0] == "warm"
     assert events[0][1]["python_path"] == python
     assert events[0][1]["checkpoint"] == checkpoint
-    assert events[1:] == ["assembled", "vlm_close", "sam_close",
+    assert events[1:] == ["core_open", "assembled", "vlm_close", "sam_close",
                           "core_close"]
+    assert (options.run_output_dir / "sam_roi_worker.stderr.log").read_text() == (
+        "SAM worker log\n")
+
+
+def test_sam_model_load_failure_never_opens_fr3(monkeypatch, tmp_path):
+    python = tmp_path / "sam-python"
+    python.write_text("#!/bin/sh\n", encoding="utf-8")
+    python.chmod(0o755)
+    checkpoint = tmp_path / "sam.pt"
+    checkpoint.write_bytes(b"test checkpoint")
+    monkeypatch.setenv("PRECISION_SAM_PYTHON", str(python))
+    monkeypatch.setenv("PRECISION_SAM_CHECKPOINT", str(checkpoint))
+    monkeypatch.setattr(franka_integration, "SamRoiBackend",
+                        lambda **_kwargs: (_ for _ in ()).throw(
+                            RuntimeError("SAM CUDA unavailable")))
+    monkeypatch.setattr(franka_integration, "open_franka_core",
+                        lambda _: pytest.fail("FR3 opened before SAM loaded"))
+    options = replace(_options(tmp_path, _config()),
+                      xy_estimator="sam_half_ellipse")
+    with pytest.raises(RuntimeError, match="SAM CUDA unavailable"):
+        franka_integration.factory(options)
+
+
+def test_sam_worker_closes_if_fr3_core_fails(monkeypatch, tmp_path):
+    python = tmp_path / "sam-python"
+    python.write_text("#!/bin/sh\n", encoding="utf-8")
+    python.chmod(0o755)
+    checkpoint = tmp_path / "sam.pt"
+    checkpoint.write_bytes(b"test checkpoint")
+    monkeypatch.setenv("PRECISION_SAM_PYTHON", str(python))
+    monkeypatch.setenv("PRECISION_SAM_CHECKPOINT", str(checkpoint))
+    events = []
+
+    class MaskWorker:
+        def __init__(self, **_kwargs):
+            events.append("sam_open")
+
+        def close(self):
+            events.append("sam_close")
+
+    monkeypatch.setattr(franka_integration, "SamRoiBackend", MaskWorker)
+    monkeypatch.setattr(franka_integration, "open_franka_core",
+                        lambda _: (_ for _ in ()).throw(RuntimeError("FR3 offline")))
+    options = replace(_options(tmp_path, _config()),
+                      xy_estimator="sam_half_ellipse")
+    with pytest.raises(RuntimeError, match="FR3 offline"):
+        franka_integration.factory(options)
+    assert events == ["sam_open", "sam_close"]
 
 
 @pytest.mark.parametrize("missing", ["python", "checkpoint"])

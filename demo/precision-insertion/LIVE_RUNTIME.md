@@ -515,6 +515,10 @@ The generic `run_live.py` CLI and board-9 `run_robot_pc.sh` launcher default
 to `vlm`, which retains native-pixel Qwen grounding. Set
 `PRECISION_XY_ESTIMATOR=sam_half_ellipse` for the Qwen-box/SAM3 point mode
 when the robot PC has a usable CUDA device.
+The SAM worker loads before the FR3 core opens. A missing CUDA device or
+model-load failure therefore stops startup before any robot connection or
+clear-view move. On orderly exit its stderr log is moved into the run directory
+as `sam_roi_worker.stderr.log`.
 `--xy-estimator tracked_tip` uses the initial key masks as per-camera colour
 references. At the preinsert snapshot, capture2 returns a seven-frame JPEG
 window around camera `25322651`'s exact source frame ID, with each source ID
