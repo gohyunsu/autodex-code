@@ -477,13 +477,16 @@ collisions with the table during transfer, rather than an added clearance
 margin or path-sampling threshold. Those collision checks remain in place.
 
 The optional `tracked_tip` retry path can use a capture-PC JPEG window around
-the exact preinsert frame. The per-camera record now distinguishes the raw
-PNG observation from the effective temporal-median pixel used for multiview
-alignment, and its `admitted` field reports whether that effective view was
-actually included. Both sources retain their frame IDs and source hashes in
-their respective saved manifests. The ordinary `vlm` and optional
+the exact preinsert frame. The per-camera record distinguishes the raw PNG
+observation from the effective temporal-median pixel passed to multiview
+alignment. Its `admitted` field means that a usable **2D point** was supplied;
+the fit's `inlier_cameras` identifies the views that actually contributed to
+the accepted **3D point**. A view can be admitted locally and rejected by the
+multiview fit. Both sources retain their frame IDs and source hashes in their
+respective saved manifests. The ordinary `vlm` and optional
 `sam_half_ellipse` modes continue to use the same saved undistorted PNG for
-their per-view observation.
+their per-view observation. The SAM view records use the same local meaning
+for `admitted` and also report final `inlier_cameras` separately.
 
 The opt-in `tracked_tip` route previously re-read all 20 preinsert PNGs even
 when the live run configured five assessment cameras. It now uses those five
