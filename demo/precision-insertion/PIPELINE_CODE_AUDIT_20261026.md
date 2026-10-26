@@ -311,6 +311,24 @@ recomputed result are in
 The available saved frames still lack an independently measured physical face
 center.
 
+The current XY function was also replayed against **all three** visually
+accepted 10 mm socket episodes in the saved SAM half-ellipse comparison,
+using each episode's original point pixels, frozen intrinsics/extrinsics,
+socket pose and post-lift target. It returned metric XY advice for the two-,
+five- and three-view sets, respectively. The reconstructed socket-frame tips
+were `[0.016486, 0.003040, 0.083239]`,
+`[0.016843, 0.004535, 0.083036]` and
+`[0.031266, 0.009530, 0.093847] m`; the commanded preinsert tip height was
+`0.085 m` in all three. The two-view case has no independent third-view
+cross-check. The three-view case is `8.85 mm` above nominal and therefore
+passes the current `10 mm` height limit narrowly; its saved offline
+leave-one-view-out error reached `10.74 px`. This is a reason to retain the
+per-view observations and avoid presenting its XY advice as a measured true
+key center. The [read-only replay](</home/robot/shared_data/hyunsu/tmp/20261026_sam_half_ellipse_live_wiring/accepted_runs_current_xy_replay.json>)
+records each original PNG and mask hash, frame ID, timestamp, calibration and
+post-lift report hash, limits and result. It does not rerun SAM or validate a
+physical contact outcome.
+
 ## Extra criteria and their purpose
 
 The stock planner supplies IK, world/self collision, and trajectory
