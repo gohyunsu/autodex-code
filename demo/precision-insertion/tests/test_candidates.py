@@ -43,14 +43,20 @@ def _session_record(mode, paths):
     }
 
 
-def _candidate_fixture(tmp_path, mode=None):
+def _candidate_fixture(tmp_path, mode=None, monkeypatch=None):
     mode = mode or select_mode("square", 1.5)
+    if mode.family == "cylinder" and monkeypatch is not None:
+        monkeypatch.setenv("PRECISION_FR3_INSPIRE_URDF",
+                           str(tmp_path / "test_oct12_mount.urdf"))
     paths = AssetPaths(tmp_path, mode)
     shared_files = [
         paths.key_planning_mesh, paths.raw_mesh(mode.key_object),
         paths.socket_collision_mesh, paths.task_geometry, paths.robot_urdf,
     ]
     for file in shared_files:
+        if mode.family == "cylinder" and monkeypatch is None and file == paths.robot_urdf:
+            # The default mount is a repository asset, never a writable test fixture.
+            continue
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text("mesh test", encoding="utf-8")
     key_urdf = (paths.object_dir(mode.key_object) / "processed_data" /
@@ -194,9 +200,9 @@ def test_catalog_detects_changed_scene_and_evidence(tmp_path):
     assert "grasp evidence changed" in result["reason"]
 
 
-def test_promoted_cylinder_source_bytes_are_bound_to_catalog(tmp_path):
+def test_promoted_cylinder_source_bytes_are_bound_to_catalog(tmp_path, monkeypatch):
     mode, paths, candidates, screen = _candidate_fixture(
-        tmp_path, select_mode("cylinder", 15))
+        tmp_path, select_mode("cylinder", 15), monkeypatch)
     candidate = candidates[0]
     for name, payload in (("bodex_info.npy", b"proposal"),
                           ("sim_traj.json", b"{}"),
@@ -236,9 +242,9 @@ def test_promoted_cylinder_source_bytes_are_bound_to_catalog(tmp_path):
         "stale_cylinder_source_file")
 
 
-def test_cylinder_catalog_rejects_legacy_scene_mesh_path(tmp_path):
+def test_cylinder_catalog_rejects_legacy_scene_mesh_path(tmp_path, monkeypatch):
     mode, paths, _candidates, screen = _candidate_fixture(
-        tmp_path, select_mode("cylinder", 20))
+        tmp_path, select_mode("cylinder", 20), monkeypatch)
     scene = paths.scene_dir / "0.json"
     record = json.loads(scene.read_text(encoding="utf-8"))
     record["scene"]["mesh"]["target"]["file_path"] = str(
@@ -254,9 +260,9 @@ def test_cylinder_catalog_rejects_legacy_scene_mesh_path(tmp_path):
     assert "not bound to object_processing" in catalog["errors"][0]["error"]
 
 
-def test_cylinder_catalog_rejects_mixed_tabletop_pose(tmp_path):
+def test_cylinder_catalog_rejects_mixed_tabletop_pose(tmp_path, monkeypatch):
     mode, paths, _candidates, screen = _candidate_fixture(
-        tmp_path, select_mode("cylinder", 20))
+        tmp_path, select_mode("cylinder", 20), monkeypatch)
     scene = paths.scene_dir / "0.json"
     record = json.loads(scene.read_text(encoding="utf-8"))
     record["scene"]["mesh"]["target"]["pose"][0] = .01
@@ -317,11 +323,11 @@ def test_changed_candidate_pool_and_unapproved_override_rejected(tmp_path):
 
 
 def test_cylinder_grasps_shared_but_socket_catalogs_are_not_interchangeable(
-    tmp_path,
+    tmp_path, monkeypatch,
 ):
     easy = select_mode("cylinder", 20)
     tight = select_mode("cylinder", 1)
-    _, easy_paths, candidates, _ = _candidate_fixture(tmp_path, easy)
+    _, easy_paths, candidates, _ = _candidate_fixture(tmp_path, easy, monkeypatch)
     tight_paths = AssetPaths(tmp_path, tight)
     for path in (tight_paths.socket_collision_mesh, tight_paths.task_geometry):
         path.parent.mkdir(parents=True, exist_ok=True)

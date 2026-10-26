@@ -117,15 +117,16 @@ stock executor performs FR3 stop/recovery/collision setup and the Inspire
 constructor writes angle, speed and force registers. Call it only after
 explicit motion opt-in. For nonmoving connection checks use
 [`probe_robot_feedback_only.py`](probe_robot_feedback_only.py).
-The robot-PC script selects the recovered October 12 right-angle URDF via
-`PRECISION_FR3_INSPIRE_URDF`. The planner, executor wrist reference, collision
-checks and camera overlays then use the same mount. ParaDex `position` is
+The precision runtime defaults to the checkout's October 12 right-angle URDF;
+`PRECISION_FR3_INSPIRE_URDF` can select another measured mount. The robot-PC
+script explicitly selects that same file. The planner, executor wrist
+reference, collision checks and camera overlays then use one mount. ParaDex `position` is
 libfranka `O_T_EE` at URDF `fr3_link8`, so the executor uses the URDF's
 `fr3_link8 → base_link` transform. Applying `fr3_link7 → base_link` to that
 state would double-count the 107 mm fixed flange segment; see
 [ADAPTER_GEOMETRY_AUDIT_20261015.md](ADAPTER_GEOMETRY_AUDIT_20261015.md).
-Direct `run_live.py` invocations must export the same variable; the wrapper
-sets it automatically.
+Direct `run_live.py` invocations use the current mount even without that
+environment variable; the wrapper still sets it explicitly.
 As in stock `run_auto.py`, core construction binds the shared planner to
 `FrankaExecutor.set_speed_profile_planner` before the initial clear-view move,
 so generic return and recovery paths use the stock object-proximity speed

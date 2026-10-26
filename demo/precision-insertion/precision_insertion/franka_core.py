@@ -12,10 +12,9 @@ Inspire angle writes, so it belongs only to the motion-authorized stage.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
-from pathlib import Path
 from typing import Callable
 
+from .assets import selected_fr3_inspire_urdf
 from .clear_view import ClearViewForPerception
 from .feedback_buffer import ExposureStateBuffer, RobotFeedbackSampler
 from .live_robot_state import LiveRobotState, read_live_franka_inspire_state
@@ -132,15 +131,14 @@ def open_franka_core(
     """
     if not isinstance(feedback, FrankaFeedbackSettings):
         raise TypeError("FR3 runtime needs explicit feedback settings")
-    mount_path = os.environ.get("PRECISION_FR3_INSPIRE_URDF")
-    mount_urdf = (Path(mount_path).expanduser().resolve()
-                  if mount_path else None)
+    mount_urdf = selected_fr3_inspire_urdf()
+    if not mount_urdf.is_file():
+        raise FileNotFoundError(f"selected FR3/Inspire mount URDF is missing: {mount_urdf}")
     if planner_factory is None:
         from autodex.planner import GraspPlanner
 
         planner_factory = lambda: GraspPlanner(
-            hand="fr3_inspire", robot_urdf_path=(
-                None if mount_urdf is None else str(mount_urdf)))
+            hand="fr3_inspire", robot_urdf_path=str(mount_urdf))
     # cuRobo loads CUDA during planner construction. Do that before opening a
     # robot connection, so a missing GPU never touches the Franka daemon.
     planner = planner_factory()
@@ -151,8 +149,7 @@ def open_franka_core(
         from .franka_completion_checked import completion_checked_franka_class
 
         executor_factory = lambda: completion_checked_franka_class()(
-            hand_name="inspire", ee_to_hand=(
-                None if mount_urdf is None else link8_to_hand(mount_urdf)),
+            hand_name="inspire", ee_to_hand=link8_to_hand(mount_urdf),
             object_safety_speed_scale=PRECISION_OBJECT_SAFETY_SPEED_SCALE)
     executor = executor_factory()
     try:

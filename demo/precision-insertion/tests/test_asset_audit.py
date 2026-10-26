@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from precision_insertion.assets import audit_assets  # noqa: E402
+from precision_insertion.assets import AssetPaths, audit_assets  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
 
 
@@ -34,6 +34,17 @@ def test_exact_mode_ids_and_gaps():
         select_mode("square", 0.1)
     with pytest.raises(ValueError, match="cylinder radial gap"):
         select_mode("cylinder", 0.5)
+
+
+def test_cylinder_mount_default_matches_current_precision_urdf(
+        tmp_path, monkeypatch):
+    monkeypatch.delenv("PRECISION_FR3_INSPIRE_URDF", raising=False)
+    current = AssetPaths(tmp_path, select_mode("cylinder", 20)).robot_urdf
+    assert current.name == "fr3_inspire_oct12_mount.urdf"
+    assert current.is_file()
+    assert AssetPaths(tmp_path, select_mode("square", 1.5)).robot_urdf == (
+        tmp_path / "AutoDex" / "content" / "assets" / "robot" /
+        "fr3_inspire_description" / "fr3_inspire.urdf")
 
 
 def test_generation_markers_are_not_foundpose_or_candidate_assets(tmp_path):

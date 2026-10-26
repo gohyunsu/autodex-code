@@ -200,6 +200,8 @@ def test_retry_endpoint_uses_observed_key_hand_transform(tmp_path, monkeypatch):
 
 def test_cylinder_endpoint_uses_same_yaw_gauge_as_target(tmp_path, monkeypatch):
     mode = select_mode("cylinder", 20)
+    monkeypatch.setenv("PRECISION_FR3_INSPIRE_URDF",
+                       str(tmp_path / "test_oct12_mount.urdf"))
     paths = AssetPaths(tmp_path, mode)
     for file in (paths.raw_mesh(mode.key_object), paths.socket_collision_mesh,
                  paths.robot_urdf):

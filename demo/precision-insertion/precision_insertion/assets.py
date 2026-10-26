@@ -9,6 +9,19 @@ from pathlib import Path
 from .config import TaskMode
 
 
+_CURRENT_FR3_INSPIRE_URDF = (
+    Path(__file__).resolve().parents[3] / "autodex" / "planner" / "src" /
+    "curobo" / "content" / "assets" / "robot" /
+    "fr3_inspire_description" / "fr3_inspire_oct12_mount.urdf")
+
+
+def selected_fr3_inspire_urdf() -> Path:
+    """One mount source for the precision planner, executor and geometry."""
+    override = os.environ.get("PRECISION_FR3_INSPIRE_URDF")
+    return (Path(override).expanduser().resolve()
+            if override else _CURRENT_FR3_INSPIRE_URDF)
+
+
 @dataclass(frozen=True)
 class AssetPaths:
     shared_root: Path
@@ -55,9 +68,9 @@ class AssetPaths:
 
     @property
     def robot_urdf(self) -> Path:
-        override = os.environ.get("PRECISION_FR3_INSPIRE_URDF")
-        if override:
-            return Path(override).expanduser().resolve()
+        if self.mode.family == "cylinder" or os.environ.get(
+                "PRECISION_FR3_INSPIRE_URDF"):
+            return selected_fr3_inspire_urdf()
         return (self.shared_root / "AutoDex" / "content" / "assets" /
                 "robot" / "fr3_inspire_description" / "fr3_inspire.urdf")
 

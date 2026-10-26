@@ -15,6 +15,38 @@ controller, or robot was started.
 | Preinsert / entry / verification | `targets.build_rigid_insertion_targets` composes `T_robot_socket @ T_socket_key @ T_key_hand`. The socket-frame XY offset is applied before this composition; the insertion direction is rotated by `T_robot_socket`. | Stock's world-vertical Jacobian stroke cannot directly represent a tilted socket axis. The demo's axial path and sampled held-key audit are insertion-specific. |
 | Failed return / reorientation | `original_pose_restoration.py` measures a fresh tabletop key, classifies its v8 pose, loads the selected local wrist relation, plans pickup and a CAD rest target, then checks release and exit. `repose_transition.py` uses saved v8 reset seeds for pose changes. | The candidate-to-world wrist multiplication and wrist-to-object inversion match stock `run_auto.py` and `executor/real.py`. A planned landing is not proof of the actual landed pose; the next trial recaptures the key. |
 
+The stock AutoDex checkout still uses its original FR3 mount and clear-view
+configuration. The precision runner uses the October 12 right-angle Inspire
+mount. `run_robot_pc.sh` already exported that URDF, but a direct
+`run_live.py` invocation without the environment variable could use the
+planner's default URDF and the executor's fallback hand offset while
+`AssetPaths.robot_urdf` audited the old NAS URDF. These are different geometry
+sources for one physical hand. Cylinder precision code now selects the same
+checkout right-angle URDF by default for planner construction, executor
+`fr3_link8 → base_link` feedback and geometry assets. An explicit
+`PRECISION_FR3_INSPIRE_URDF` still selects one alternate file for all three;
+the square offline asset fallback remains unchanged. This removes an
+inconsistent direct-entry path, not a robot-motion gate. Static and injected
+factory tests check both default and explicit selection without opening FR3.
+The cylinder test fixtures now write synthetic URDF bytes only under pytest's
+temporary directory. Previously they could overwrite the checkout's selected
+mount, making later geometry tests fail on invalid XML. The restored checkout
+URDF is unchanged from HEAD. The complete non-moving suite passes
+**1228 passed, 5 skipped**; `run_robot_pc.sh --check` passes against the
+current static 20 mm stage with 98 eligible candidates. Its
+`static_preflight_only` scope remains a file check, not a camera or robot test.
+
+For a stock 12 N force stop, `live_task_handlers` records the completed
+reverse-axis ascent and `force_abort`. `session_policy` first routes the held
+key through return and a fresh tabletop observation. Only after
+`reset_success=true` does it select `assess_saved_preinsert_xy`; the selected
+`vlm`, `tracked_tip`, or `sam_half_ellipse` estimator reads the saved preinsert
+frames and records advice for the **next** pickup. An unavailable observation
+records abstention and proceeds without a new XY increment. The insertion
+contact is never converted directly into a measured image-space error.
+`test_session_policy.py`, `test_session_runner.py`, and
+`test_live_retry_handlers.py` cover this recovery-to-diagnostic route.
+
 For original-pose restoration, `reset_landing_geometry` transforms both the
 trial-start and newly observed world key poses through `inv(c2r)` and compares
 the same CAD mesh center in robot coordinates. `original_center_release_xy`

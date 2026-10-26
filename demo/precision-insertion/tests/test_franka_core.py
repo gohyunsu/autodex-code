@@ -46,14 +46,19 @@ def test_franka_core_uses_stock_fr3_objects_without_homing(monkeypatch):
     assert "home" not in events
 
 
-def test_franka_core_passes_one_selected_mount_to_planner_and_executor(monkeypatch):
+@pytest.mark.parametrize("explicit_override", [False, True])
+def test_franka_core_passes_one_selected_mount_to_planner_and_executor(
+        monkeypatch, explicit_override):
     from autodex import planner as stock_planner
     from precision_insertion import franka_completion_checked
 
     urdf = (Path(__file__).resolve().parents[3] / "autodex" / "planner" /
             "src" / "curobo" / "content" / "assets" / "robot" /
             "fr3_inspire_description" / "fr3_inspire_oct12_mount.urdf")
-    monkeypatch.setenv("PRECISION_FR3_INSPIRE_URDF", str(urdf))
+    if explicit_override:
+        monkeypatch.setenv("PRECISION_FR3_INSPIRE_URDF", str(urdf))
+    else:
+        monkeypatch.delenv("PRECISION_FR3_INSPIRE_URDF", raising=False)
     seen = {}
 
     def planner_factory(**kwargs):
