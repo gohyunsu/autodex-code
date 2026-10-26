@@ -12,14 +12,23 @@ the launcher. It reads `launch.json`, the selected gap catalog, and
 `franka_runtime.json` from that stage unless the three corresponding file
 overrides are set. The distributed runtime uses five fixed VLM workers:
 capture1/24122734, capture2/25305463, capture3/25322638,
-capture5/25322649, capture6/25305461. Run
-`python3 demo/precision-insertion/setup_capture_qwen.py --source-config
-/absolute/path/to/current/franka_runtime_source.json --output-config
-"$PRECISION_STAGE_ROOT/franka_runtime.json" --worker-root
-"$PRECISION_STAGE_ROOT/qwen_worker"` to refresh the small worker files and
-staged runtime config after changing this checkout;
-the five local model copies and isolated Qwen environments are already
-installed on those hosts. The worker is started when the live pipeline loads
+capture5/25322649, capture6/25305461. Refresh the small worker files and
+staged runtime config after changing this checkout:
+
+```bash
+WORKER_ROOT=/home/robot/shared_data/hyunsu/tmp/$(date +%Y%m%d)_precision_qwen_worker
+python3 demo/precision-insertion/setup_capture_qwen.py \
+  --source-config /absolute/path/to/current/franka_runtime_source.json \
+  --output-config "$PRECISION_STAGE_ROOT/franka_runtime.json" \
+  --worker-root "$WORKER_ROOT"
+```
+
+The worker root must be on a shared mount visible as
+`/home/captureN/shared_data/...` on each capture PC; a robot-PC-only stage
+directory is not visible to the SSH workers. Verify the worker files from
+all five capture PCs before a live run. The five local model copies and
+isolated Qwen environments are already installed on those hosts. The worker
+is started when the live pipeline loads
 the VLM after socket capture, before the key-placement prompt. The sections
 below retain the earlier commissioning record and may describe former paths.
 
@@ -235,7 +244,8 @@ PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   demo/precision-insertion/rehydrate_cylinder_socket_handoff.py \
   --source-shared-root "$BASE" \
   --source-origin-shared-root /home/robot/shared_data \
-  --target-shared-root "$DATA_DIR" --install
+  --target-shared-root "$DATA_DIR" \
+  --archive-source-bound-templates --install
 python demo/precision-insertion/rehydrate_cylinder_key_scenes.py \
   --source-shared-root "$BASE" \
   --source-origin-shared-root /home/robot/shared_data \
@@ -246,7 +256,10 @@ PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" python \
   --target-shared-root "$DATA_DIR" --install
 ```
 
-The installers verify source files and refuse conflicting recipient files.
+The base copy contains source-bound socket fixture JSONs. The socket
+installer archives only byte-identical copies of those templates before
+writing recipient paths; it still refuses unrelated recipient changes. The
+installers verify source files and refuse conflicting recipient files.
 Install the exact key/socket FoundPose representations and the selected
 directed reset seeds using their handoff manifests. Never use a source-bound
 `audit_only` catalog as a runtime catalog. Rebuild the complete selected-gap
@@ -268,6 +281,7 @@ tar --no-same-owner -xf \
   "$NAS_DIR/handoff/20261011_foundpose/precision_foundpose_socket_20mm_20261011.tar" \
   -C "$DATA_DIR" --wildcards \
   'AutoDex/foundpose_assets/precision_socket_cylinder_gap_20mm/*'
+mkdir -p "$DATA_DIR/AutoDex/content/assets/robot"
 cp -a /home/robot/shared_data/AutoDex/content/assets/robot/fr3_inspire_description \
   "$DATA_DIR/AutoDex/content/assets/robot/"
 RESET_BUNDLE="$NAS_DIR/handoff/20261012_cylinder_reset1687_addendum"
