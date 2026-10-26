@@ -525,6 +525,13 @@ key center. The [read-only replay](</home/robot/shared_data/hyunsu/tmp/20261026_
 records each original PNG and mask hash, frame ID, timestamp, calibration and
 post-lift report hash, limits and result. It does not rerun SAM or validate a
 physical contact outcome.
+The live distributed Qwen workers are fixed to one camera per capture PC.
+Only the `20261022_103429_752726` replay uses exactly those five configured
+cameras. The other two accepted offline replays include `25322651`, while
+the live capture2 worker currently serves `25305463`. Their two- and
+three-view results therefore cannot be claimed as live-view outcomes. A
+camera swap would also change lift/preinsert/final classification evidence;
+it needs its own saved-label comparison before changing the worker mapping.
 
 The ten saved ROI-worker masks behind those three episodes were then replayed
 through the **current** `projected_key_axis_crop` and
@@ -1008,3 +1015,5 @@ the model file and `robot_ready=false`.
    unit-fixture timings cannot establish an end-to-end gain.
 4. Independently check physical mount/hand-eye and held-key motion on the
    robot before treating planned pose transforms as measured accuracy.
+5. Compare saved lift/preinsert/final labels before considering a capture2
+   worker swap from `25305463` to `25322651` for live SAM XY coverage.
