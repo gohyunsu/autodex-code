@@ -57,6 +57,19 @@ change alters the axial ascent or the return trajectory planner.
 The complete non-moving demo suite after this change passes
 **1230 passed, 5 skipped**.
 
+At HEAD `091292e`, the force-stop policy/runner/retry regressions were rerun:
+**93 passed, 3 skipped**. A separate tip, target, nominal post-lift, and
+restoration subset passed **34/34**. The full non-moving suite passed again:
+**1230 passed, 5 skipped in 45.18 s**. The file-only 20 mm `--check` also
+passed with `PRECISION_XY_ESTIMATOR=sam_half_ellipse`; its recipient stage
+remains `static_preflight_only`, so this check does not start or validate a
+SAM CUDA worker. Current-head arithmetic replay of the three saved 10 mm SAM
+increments had a maximum wrist-shift residual of `6.85e-17 m`; a saved 10 mm
+and 20 mm yaw/XY counterfactual had a maximum residual of `1.26e-10 m`.
+The source-bound [current-head replay](</home/robot/shared_data/hyunsu/tmp/20261026_saved_sam_advice_pose_replay/current_head_091292e/README.md>)
+records inputs and results. These are software-frame checks, not physical
+tip-center or robot-motion measurements.
+
 For original-pose restoration, `reset_landing_geometry` transforms both the
 trial-start and newly observed world key poses through `inv(c2r)` and compares
 the same CAD mesh center in robot coordinates. `original_center_release_xy`
