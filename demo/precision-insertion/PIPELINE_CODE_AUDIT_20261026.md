@@ -133,6 +133,17 @@ the stock AutoDex snapshot producer remain unchanged:
   referenced by its saved manifest and source PNG hashes; the retry writer
   no longer re-encodes all 20 camera PNGs into a second bundle.
 
+The live SAM route passes its diagnostic through `LiveGroundedRetryHandlers`
+to the real `SessionRunner` ledger. A same-grasp, same-tabletop-pose preflight
+then consumes the bounded socket-frame increment as a cumulative wrist
+correction; an intermediate key reorientation retains the pending advice.
+The corrected key-to-hand translation uses `R_socket_key.T @ [dx, dy, 0]`,
+so composition through `T_robot_socket @ T_socket_key` moves the wrist by
+`[dx, dy]` in the socket plane while leaving the CAD key target on the socket
+axis. The session regression now runs the SAM handler into the real ledger
+and through the fresh same-grasp attempt for both a nonzero and zero metric
+increment. It confirms the software seam, not the physical tip location.
+
 The local SAM3 worker is request-bound to one camera at a time. If its reply
 times out, is malformed, or carries another request/camera ID, the client now
 terminates that worker. The affected view is recorded as unavailable; a later

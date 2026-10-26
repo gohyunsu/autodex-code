@@ -19,6 +19,9 @@ from precision_insertion.calibration import SessionCalibration  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.key_perception import KeyPoseObservation  # noqa: E402
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
+from precision_insertion.live_retry_handlers import (  # noqa: E402
+    LiveGroundedRetryHandlers,
+)
 from precision_insertion.path_audit import PathAuditLimits  # noqa: E402
 from precision_insertion.trial_preflight import (  # noqa: E402
     TrialPreflight, write_trial_preflight_artifacts,
@@ -309,9 +312,34 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
     source = runner._attempt_dir / "xy_retry_assessments/000/report.json"
     source.parent.mkdir(parents=True)
     source.write_text(json.dumps(diagnostic.to_record()), encoding="utf-8")
-    runner.record_next_trial_xy_advice(
-        diagnostic=diagnostic, diagnostic_report_path=source,
-        timestamp_s=5.0)
+    if xy_source == "multiview_tip_xy_vertical_axis_assumption":
+        # Exercise the live SAM handler through the real session ledger, then
+        # continue below through fresh same-grasp planning and target binding.
+        runner._postlift_report_path = tmp_path / "postlift.json"
+        runner._postlift_report_path.write_text("{}", encoding="utf-8")
+        segmentor = object()
+        calls = []
+
+        def saved_tip_diagnostic(**kwargs):
+            calls.append(kwargs)
+            return diagnostic
+
+        monkeypatch.setattr(runner, "prepare_saved_preinsert_xy_diagnostic",
+                            saved_tip_diagnostic)
+        handler = LiveGroundedRetryHandlers(
+            live=SimpleNamespace(opened=SimpleNamespace(runner=runner)),
+            backend=object(), retry_limits=object(),
+            alignment_limits=object(), diagnostic_parameters={},
+            xy_estimator="sam_half_ellipse", sam_segmentor=segmentor,
+            decision_time=lambda: 5.0)
+        handler.assess_for_next_trial(runner, runner.current_decision())
+        assert len(calls) == 1
+        assert calls[0]["xy_estimator"] == "sam_half_ellipse"
+        assert calls[0]["sam_segmentor"] is segmentor
+    else:
+        runner.record_next_trial_xy_advice(
+            diagnostic=diagnostic, diagnostic_report_path=source,
+            timestamp_s=5.0)
     assert runner.current_decision().action == "recover_released_key_then_reobserve"
     assert runner.active_attempt.xy_offset_socket_m == (0.0, 0.0)
     assert all(event["stage"] != "xy_retry" for event in runner.active_attempt.events)
