@@ -73,6 +73,16 @@ using measured tick time. The streaming command period remains the stock
 default of 20 ms (50 Hz). `follow_progress.py` keeps the reference moving
 continuously when the arm lags or is already farther along the planned path;
 `stream_timing.py` keeps filtering and command validity tied to wall time.
+The current `_follow` computes free-hand playback as `speed * profile_scale`,
+where `profile_scale` is 1.0 beyond 30 cm, falls linearly to 0.40 from 30 to
+15 cm, and stays 0.40 nearer the object. While holding a key it instead uses
+`min(speed, 0.40)` and does not multiply by the proximity profile. The live
+pickup and held-transfer callers use the default `speed=1.0`, so their near
+and held playback scales are both 0.40. The branch also sleeps only for the
+remainder of each 20 ms tick, whereas stock sleeps a full 20 ms *after* state,
+FK, and command work; actual command rate still depends on robot-PC load.
+This source comparison finds no second executor-side near/held slowdown to
+remove. It does not measure the achieved joint speed or smoothness.
 `reset_scene.py` keeps a visually missed key at its tabletop scene pose
 instead of projecting a phantom carried key from the wrist. That tabletop
 pose can be stale if the missed grasp physically moved the key; a fresh key
@@ -569,9 +579,9 @@ composes the placement wrist as `T_robot_key_rest @ T_key_hand`. The same
 branch-local `FR3_CLEAR_VIEW` joint target is used by clear-view, release,
 restoration, and repose paths; stock's unmodified clear-view target is not
 mixed into these plans. These tests and algebraic checks do not establish physical
-placement accuracy. An attempted full test collection stopped while importing
+placement accuracy. An earlier full test collection stopped while importing
 cuRobo because CUDA was unavailable to PyTorch in this environment at that
-time; no full-suite pass is claimed.
+time; the subsequent full-suite result appears below.
 The October 26 retry confirmed the boundary: `nvidia-smi` lists an RTX 3090,
 but this execution environment exposes no `/dev/nvidia*` device nodes and
 both `autodex` and `planner` PyTorch environments report zero CUDA devices.
@@ -580,7 +590,14 @@ The release, completion, clear-view, force insertion, live task, FR3 assembly,
 SAM ROI, XY transform, and session-runner regressions were rerun after caching
 the release plan: 119 passed, four skipped. One skipped test imports the stock
 executor and requires CUDA; it now imports stock only when executed, so the
-completion wrapper's CPU-only regressions still run on this PC. A static
+completion wrapper's CPU-only regressions still run on this PC. Later on
+October 26, the full demo suite completed with
+`PYTHONPATH=$PWD/demo/precision-insertion /home/robot/anaconda3/envs/planner/bin/python -m pytest -q demo/precision-insertion/tests`:
+**1204 passed, 5 skipped in 44.75 s** at local HEAD `56ce93f`. The earlier
+CUDA import failure above is historical and is not the current suite result.
+These tests cover the SAM diagnostic-to-ledger-to-next-wrist software route,
+but the optional SAM mode has no live robot execution or physical tip ground
+truth in this audit. A static
 `run_robot_pc.sh --check` attempt stopped before any camera or robot connection
 because `PRECISION_STAGE_ROOT` is unset and the former recipient stage is in
 `hyunsu/tmp/20261023_prev`, not an active installation.
