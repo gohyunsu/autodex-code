@@ -1015,5 +1015,46 @@ the model file and `robot_ready=false`.
    unit-fixture timings cannot establish an end-to-end gain.
 4. Independently check physical mount/hand-eye and held-key motion on the
    robot before treating planned pose transforms as measured accuracy.
-5. Compare saved lift/preinsert/final labels before considering a capture2
-   worker swap from `25305463` to `25322651` for live SAM XY coverage.
+5. Resolve the saved lift-label ambiguity below, then compare preinsert and
+   final labels before considering a capture2 worker swap from `25305463`
+   to `25322651` for live SAM XY coverage.
+
+## Saved capture2 lift-view comparison (read-only, 2026-10-26)
+
+The current distributed worker fixes capture2 to camera `25305463`. Its
+alternative `25322651` shows the held white peg more clearly in the saved
+`20261022_103429_752726` lift image and is available in the same 20-camera
+capture bundles. We replayed both cameras on that visually confirmed held
+attempt and the visibly missed `20261020_090836_567804` attempt using the
+unchanged current observer prompt, Qwen3-VL-2B capture2 weights, and the
+actual 384×288 classification transform. Original paths, frame/capture IDs,
+timestamps, PNG hashes, prompts, replies, CUDA peaks and call durations are
+preserved in
+`/home/robot/shared_data/hyunsu/tmp/20261026_capture2_view_swap_eval/result.json`.
+
+| Saved lift scene | Reference from raw image | Current 25305463 | Alternative 25322651 |
+|---|---|---|---|
+| 2026-10-20 09:08 | peg on board, empty hand (`miss`) | `miss`, 1.387 s | `miss`, 1.106 s |
+| 2026-10-22 10:34 | peg visibly held above board (`held`) | `miss`, 0.791 s | `miss`, 0.695 s |
+
+One replay per cell; these times exclude model loading and are remote GPU
+inference, not full pipeline latency. The measured model loads were 10.509 s
+and 6.312 s, sequentially on capture2. The raw success photo visibly shows
+the peg under the gripper in `25322651`, while the model says it is on the
+checkerboard. A diagnostic prompt that distinguished the solid peg from the
+hollow flanged socket returned `held` for *both* saved cases at 384×288 and
+768×576; the current prompt returned `miss` for both at both sizes. Exact
+replies and measurements are in `variants.json` beside `result.json`. Thus a
+camera swap, prompt wording, or larger input alone has not solved the
+observed false decision. The live camera mapping and prompt remain unchanged;
+more saved positive and negative cases, including preinsert/final labels,
+are needed before modifying them.
+
+The user-approved force-stop path is already represented in the live policy:
+an axial force stop with recorded withdrawal goes through stock-style held-key
+return, observed `reset_success`, then `assess_saved_preinsert_xy` on that
+attempt's original preinsert raw bundle. `record_next_trial_xy_advice` stores
+the result for a fresh pickup only. If the estimator cannot establish a
+supported XY result, it records unavailability and continues with fresh key
+observation without inventing an offset. The session policy and runner tests
+cover this sequence; this saved-image comparison did not move the robot.
