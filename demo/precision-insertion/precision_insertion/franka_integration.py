@@ -61,6 +61,22 @@ _TIP_CAMERA_HOST = "capture2"
 _TIP_CAMERA_PORT = 16951
 
 
+def _sam_runtime_paths() -> tuple[Path, Path]:
+    """Resolve optional SAM inputs before constructing a command-capable FR3 core."""
+    python = Path(os.environ.get(
+        "PRECISION_SAM_PYTHON",
+        "/home/robot/anaconda3/envs/autodex/bin/python")).expanduser()
+    checkpoint = Path(os.environ.get(
+        "PRECISION_SAM_CHECKPOINT",
+        "/home/robot/shared_data/AutoDex/weights/sam3/sam3.pt"
+    )).expanduser()
+    if not python.is_file() or not os.access(python, os.X_OK):
+        raise FileNotFoundError(f"SAM3 Python is missing or not executable: {python}")
+    if not checkpoint.is_file():
+        raise FileNotFoundError(f"SAM3 checkpoint is missing: {checkpoint}")
+    return python.resolve(), checkpoint.resolve()
+
+
 def _vlm_settings(value: object) -> dict:
     if value is None:
         return {"mode": "local", "model_id": None,
@@ -235,6 +251,8 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     lift_monitor = parsed["lift_monitor"]
     held_motion_monitor = parsed["held_motion_monitor"]
     build_stages = parsed["build_stages"]
+    sam_paths = (_sam_runtime_paths()
+                 if options.xy_estimator == "sam_half_ellipse" else None)
     backend = None
     sam_segmentor = None
     with timed("startup.franka_planner_core", phase="startup"):
@@ -301,13 +319,8 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                            if image_size is not None else {}))
         nonlocal backend, sam_segmentor
         backend = shared["backend"]
-        if options.xy_estimator == "sam_half_ellipse":
-            model = Path(os.environ.get(
-                "PRECISION_SAM_CHECKPOINT",
-                "/home/robot/shared_data/AutoDex/weights/sam3/sam3.pt"))
-            python = Path(os.environ.get(
-                "PRECISION_SAM_PYTHON",
-                "/home/robot/anaconda3/envs/autodex/bin/python"))
+        if sam_paths is not None:
+            python, model = sam_paths
             with timed("startup.sam3_roi_model_load", phase="startup"):
                 sam_segmentor = SamRoiBackend(
                     python_path=python, checkpoint=model,

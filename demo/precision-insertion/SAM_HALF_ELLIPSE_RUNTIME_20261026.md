@@ -38,10 +38,15 @@ producer. No live robot motion was run while implementing or testing it.
 The worker defaults to `/home/robot/anaconda3/envs/autodex/bin/python` and
 `/home/robot/shared_data/AutoDex/weights/sam3/sam3.pt`. Override them with
 `PRECISION_SAM_PYTHON` and `PRECISION_SAM_CHECKPOINT` if that current robot-PC
-installation changes. The worker starts during session startup and exits
-with the integration. `startup.sam3_roi_model_load`, `vlm.infer` with stage
-`sam_key_box`, `sam3.roi_infer`, and `xy_retry.sam_half_ellipse_alignment` are
+installation changes. The selected Python and checkpoint files are checked
+before the command-capable FR3 core opens. The worker starts during session
+startup and exits with the integration. `startup.sam3_roi_model_load`,
+`vlm.infer` with stage `sam_key_box`, `sam3.roi_infer`, and
+`xy_retry.sam_half_ellipse_alignment` are
 timed separately.
+The file-order regression and the full demo suite passed after this change:
+`1207 passed, 5 skipped` in the planner environment. The checks did not open
+a camera or robot connection.
 
 ## Saved-camera verification
 

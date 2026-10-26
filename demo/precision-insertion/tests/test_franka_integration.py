@@ -517,8 +517,13 @@ def test_sam_roi_worker_warms_before_retry_and_closes_with_session(
         "shared": {"backend": object()},
         "stages": {"task": {}, "retry": {}}}
     monkeypatch.setitem(sys.modules, module.__name__, module)
-    monkeypatch.delenv("PRECISION_SAM_CHECKPOINT", raising=False)
-    monkeypatch.delenv("PRECISION_SAM_PYTHON", raising=False)
+    python = tmp_path / "sam-python"
+    python.write_text("#!/bin/sh\n", encoding="utf-8")
+    python.chmod(0o755)
+    checkpoint = tmp_path / "sam.pt"
+    checkpoint.write_bytes(b"test checkpoint")
+    monkeypatch.setenv("PRECISION_SAM_PYTHON", str(python))
+    monkeypatch.setenv("PRECISION_SAM_CHECKPOINT", str(checkpoint))
 
     class MaskWorker:
         def __init__(self, **kwargs):
@@ -548,6 +553,29 @@ def test_sam_roi_worker_warms_before_retry_and_closes_with_session(
     integration.build_components(live)
     integration.close()
     assert events[0][0] == "warm"
-    assert events[0][1]["checkpoint"] == (
-        Path("/home/robot/shared_data/AutoDex/weights/sam3/sam3.pt"))
+    assert events[0][1]["python_path"] == python
+    assert events[0][1]["checkpoint"] == checkpoint
     assert events[1:] == ["assembled", "sam_close", "core_close"]
+
+
+@pytest.mark.parametrize("missing", ["python", "checkpoint"])
+def test_sam_configuration_fails_before_fr3_core_opens(
+    monkeypatch, tmp_path, missing,
+):
+    python = tmp_path / "sam-python"
+    checkpoint = tmp_path / "sam.pt"
+    if missing != "python":
+        python.write_text("#!/bin/sh\n", encoding="utf-8")
+        python.chmod(0o755)
+    if missing != "checkpoint":
+        checkpoint.write_bytes(b"test checkpoint")
+    monkeypatch.setenv("PRECISION_SAM_PYTHON", str(python))
+    monkeypatch.setenv("PRECISION_SAM_CHECKPOINT", str(checkpoint))
+    monkeypatch.setattr(
+        franka_integration, "open_franka_core",
+        lambda _: pytest.fail("FR3 core opened before SAM inputs were checked"))
+    options = replace(_options(tmp_path, _config()),
+                      xy_estimator="sam_half_ellipse")
+    label = "Python" if missing == "python" else "checkpoint"
+    with pytest.raises(FileNotFoundError, match=f"SAM3 {label}"):
+        franka_integration.factory(options)
