@@ -501,10 +501,18 @@ advice. The held-return handler then observes the released key and restores
 its original tabletop pose/position before a new attempt. The older guarded
 withdrawal and held-key return utilities remain available to other opt-in
 paths, but they are **not** the active cylinder insertion-failure route.
+On a stock force stop, the robot completes its recorded reverse-axis ascent
+and returns the held key first. Only after a fresh tabletop observation
+records a successful return does the same saved preinsert snapshot enter the
+next-trial XY diagnostic. The pre-contact image can suggest an XY correction;
+it does not identify the cause or location of contact. An unavailable tip
+estimate leaves the next attempt without a new XY step.
 
 The failed-trial XY pixel estimator has three explicit modes.
-`--xy-estimator vlm` is the current default and retains native-pixel Qwen
-grounding.
+The generic `run_live.py` CLI and board-9 `run_robot_pc.sh` launcher default
+to `vlm`, which retains native-pixel Qwen grounding. Set
+`PRECISION_XY_ESTIMATOR=sam_half_ellipse` for the Qwen-box/SAM3 point mode
+when the robot PC has a usable CUDA device.
 `--xy-estimator tracked_tip` uses the initial key masks as per-camera colour
 references. At the preinsert snapshot, capture2 returns a seven-frame JPEG
 window around camera `25322651`'s exact source frame ID, with each source ID
@@ -616,7 +624,7 @@ PRECISION_XY_ESTIMATOR=tracked_tip bash demo/precision-insertion/run_robot_pc.sh
 ```
 
 `run_robot_pc.sh` checks that service before a tracked-tip run. Omit the
-environment variable for the existing VLM XY route. The mode affects only
+environment variable for the existing Qwen XY route. The mode affects only
 failed-trial diagnosis; robot motion still requires the normal `--run`
 procedure. `manage_robot_pc_services.sh stop-tracker` stops its managed
 capture2 process; `stop` also stops it along with the other managed daemons.

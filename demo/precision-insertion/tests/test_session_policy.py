@@ -198,7 +198,7 @@ def test_stock_force_stop_returns_held_key_only_after_logged_ascent():
         record, max_xy_retries=1).action == "stop_for_review"
 
 
-def test_force_stop_recovery_advances_after_fresh_reset_observation():
+def test_force_stop_recovery_diagnoses_saved_xy_before_next_key():
     record = _attempt()
     _grasp(record)
     _hold(record)
@@ -222,13 +222,23 @@ def test_force_stop_recovery_advances_after_fresh_reset_observation():
             "reset_success", True, timestamp_s=5.0,
             evidence_refs={"key_pose": "fresh_landed_key.json"})
 
+    def diagnose(_runner, _decision):
+        record.record_xy_retry_unavailable(
+            reason="sam_half_ellipse_unavailable", timestamp_s=5.1,
+            evidence_refs={"retry_assessment": "xy/sam_abstain.json"})
+
     outcome = run_session_actions(
-        Runner(), handlers={"recover_held_key_then_reobserve": recover},
+        Runner(), handlers={
+            "recover_held_key_then_reobserve": recover,
+            "assess_saved_preinsert_xy": diagnose},
         stop_before_actions={"reobserve_key_and_preflight": "recovery_complete"})
     assert outcome.status == "recovery_complete"
     assert [decision.action for decision in outcome.visited] == [
-        "recover_held_key_then_reobserve", "reobserve_key_and_preflight"]
+        "recover_held_key_then_reobserve", "assess_saved_preinsert_xy",
+        "reobserve_key_and_preflight"]
     assert outcome.decision.reason == "reset_observed"
+    assert decide_after_attempt(record, max_xy_retries=0).action == (
+        "reobserve_key_and_preflight")
 
 
 def test_slipped_key_recovery_advances_after_fresh_reset_observation():

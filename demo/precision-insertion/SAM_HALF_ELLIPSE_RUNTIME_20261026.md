@@ -1,10 +1,14 @@
-# Optional same-frame SAM3 half-ellipse XY estimator
+# Same-frame SAM3 half-ellipse XY estimator
 
 The cylinder live CLI accepts `--xy-estimator sam_half_ellipse`; the robot-PC
-launcher accepts `PRECISION_XY_ESTIMATOR=sam_half_ellipse`. The default is
-still `vlm`. This option changes **failed-trial next-episode XY advice**. It
+launcher accepts `PRECISION_XY_ESTIMATOR=sam_half_ellipse`. Both default to
+`vlm`; SAM is opt-in until a live CUDA worker is verified. This mode changes
+**failed-trial next-episode XY advice**. It
 does not replace lift/preinsert/final VLM labels or the stock snapshot camera
 producer. No live robot motion was run while implementing or testing it.
+After a force stop, it runs only after the held key has been returned and a
+fresh tabletop observation confirms recovery. Its source remains the saved
+pre-contact preinsert image, not a contact-time measurement.
 
 ## Data path
 

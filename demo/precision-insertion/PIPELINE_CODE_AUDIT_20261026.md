@@ -185,8 +185,9 @@ for a future nonzero-yaw next-trial route.
 
 At `568107f`, `held_key_tip.distal_key_mask_half_ellipse` was called only by
 saved-image tools. The live CLI had only `vlm` and `tracked_tip`. This review
-added an explicit `sam_half_ellipse` option; the ordinary `vlm` default and
-the stock AutoDex snapshot producer remain unchanged:
+added an explicit `sam_half_ellipse` option; the generic CLI and robot-PC
+launcher retain their `vlm` default. The stock AutoDex snapshot producer
+remains unchanged:
 
 - `vlm`: `retry_session._compute_grounded_alignment` asks Qwen for raw-pixel
   key landmarks/axis and computes socket-frame XY advice.
@@ -683,12 +684,13 @@ a fresh, successful key landing, but the attempt retained its original
 code before the observed `reset_success` label and requested the same
 recovery again. The action loop then stopped with `decision_unchanged`.
 It now gives a successful, freshly observed landing precedence over the
-earlier failure code and advances to fresh-key preflight; a failed landing
-still stops. A regression drives the actual action loop from force stop
-through an observed reset, and another checks the slipped-key route. This
-does not classify force-stop contact as a visual XY error: the immediate
-axis withdrawal and held-key return remain the stock-aligned response, and
-the released-key visual XY diagnostic remains a separate path.
+earlier failure code; a failed landing still stops. A regression drives the
+actual action loop from force stop through an observed reset, and another
+checks the slipped-key route. The immediate axis withdrawal and held-key
+return remain the stock-aligned response. After the return is observed, the
+same saved preinsert image may produce next-trial XY advice before fresh-key
+preflight; it does not classify the force contact itself as a visually
+measured XY error.
 The complete non-moving demo suite after this policy fix passed in the
 `planner` environment: **1212 passed, 5 skipped in 45.51 s**. Skips require
 hardware/CUDA or optional runtime dependencies; this result does not verify
@@ -706,6 +708,22 @@ The full non-moving suite after the runner-level regression and gate removal
 passed: **1214 passed, 5 skipped in 41.39 s** (`planner` environment).
 After the cylinder-yaw XY composition fix, the same full suite passed:
 **1216 passed, 5 skipped in 42.54 s**.
+
+The saved-preinsert diagnostic now also follows a **recovered** stock force
+stop. The order is recorded reverse-axis ascent, held-key tabletop return,
+fresh `reset_success=true` observation, saved-image XY diagnosis, then fresh
+key preflight. The diagnosis reads the pre-contact image and updates only the
+next trial's socket-frame XY command. A failed return stops; a missing tip
+records unavailability and continues without a new XY step. The change also
+aligns the ledger's accepted unavailable reasons with the live SAM/tracker
+handler, which previously raised on a legitimate abstention. The ordinary
+released-key failure route and stock force-stop motion are unchanged.
+The non-moving suite passes **1221 passed, 5 skipped in 43.80 s**; `bash -n`
+and `git diff --check` pass. No force-stop SAM diagnosis has been run on a
+robot: this host currently exposes no CUDA device to the AutoDex environment,
+so `run_robot_pc.sh` retains the existing `vlm` default. Select
+`PRECISION_XY_ESTIMATOR=sam_half_ellipse` only when its local CUDA worker is
+available.
 
 ## Remaining evidence needed
 

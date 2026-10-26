@@ -32,6 +32,7 @@ from precision_insertion.retry_session import (  # noqa: E402
     GroundedXYDiagnostic, PreinsertXYDiagnostic,
 )
 from precision_insertion.records import begin_attempt  # noqa: E402
+from precision_insertion.session_policy import decide_after_attempt  # noqa: E402
 from precision_insertion import session_runner  # noqa: E402
 from precision_insertion.xy_retry import XYRetryAssessment  # noqa: E402
 from precision_insertion.xy_voting import ChoiceDecision  # noqa: E402
@@ -253,8 +254,9 @@ def test_xy_advice_survives_intermediate_key_reorientation(monkeypatch, tmp_path
     "multiview_tip_xy_vertical_axis_assumption",  # tracked/SAM face point
 ])
 @pytest.mark.parametrize("increment", [(0.0006, -0.0008), (0.0, 0.0)])
+@pytest.mark.parametrize("force_stop", [False, True])
 def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
-        monkeypatch, tmp_path, xy_source, increment):
+        monkeypatch, tmp_path, xy_source, increment, force_stop):
     runner = _runner(monkeypatch, tmp_path)
     runner.max_xy_retries = 2
     runner.xy_update_weight = 0.5
@@ -273,13 +275,28 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
                        "key_socket_pose": "hold.json",
                        "grasp_state": "hand.json",
                        "postlift_preflight": "postlift.json"})
-    first.record_insertion_evidence(
-        InsertionEvidence("partial", (0.005, 0.008),
-                          "key_pose_multiview", True, False, True),
-        timestamp_s=4.0,
-        evidence_refs={"vlm_observation": "insert.json",
-                       "key_depth": "depth.json", "alignment": "axis.json",
-                       "force_trace": "force.json"})
+    if force_stop:
+        first.record_insertion_evidence(
+            InsertionEvidence("unobservable", None, None, None, True, True),
+            timestamp_s=4.0,
+            evidence_refs={"force_trace": "force.json",
+                           "axial_withdrawal": "withdrawal.json"})
+        first.record_failure(
+            "force_abort", timestamp_s=4.1,
+            evidence_refs={"force_trace": "force.json"})
+        assert decide_after_attempt(
+            first, max_xy_retries=2).action == "recover_held_key_then_reobserve"
+        first.record_stage(
+            "reset_success", True, timestamp_s=4.5,
+            evidence_refs={"key_pose": "fresh_landed_key.json"})
+    else:
+        first.record_insertion_evidence(
+            InsertionEvidence("partial", (0.005, 0.008),
+                              "key_pose_multiview", True, False, True),
+            timestamp_s=4.0,
+            evidence_refs={"vlm_observation": "insert.json",
+                           "key_depth": "depth.json", "alignment": "axis.json",
+                           "force_trace": "force.json"})
     runner._attempt = first
     runner._attempt_dir = runner.output_dir / "attempts" / first.attempt_id
     runner._attempt_dir.mkdir(parents=True)
@@ -340,12 +357,15 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
         runner.record_next_trial_xy_advice(
             diagnostic=diagnostic, diagnostic_report_path=source,
             timestamp_s=5.0)
-    assert runner.current_decision().action == "recover_released_key_then_reobserve"
+    assert runner.current_decision().action == (
+        "reobserve_key_and_preflight" if force_stop else
+        "recover_released_key_then_reobserve")
     assert runner.active_attempt.xy_offset_socket_m == (0.0, 0.0)
     assert all(event["stage"] != "xy_retry" for event in runner.active_attempt.events)
-    runner._record(lambda row: row.record_stage(
-        "reset_success", True, timestamp_s=6.0,
-        evidence_refs={"key_pose": "fresh_key.json"}))
+    if not force_stop:
+        runner._record(lambda row: row.record_stage(
+            "reset_success", True, timestamp_s=6.0,
+            evidence_refs={"key_pose": "fresh_key.json"}))
     captured = []
 
     def plan_next(**kwargs):
@@ -1503,11 +1523,18 @@ def test_force_stop_return_observation_restarts_with_fresh_key(
         minimum_board_edge_clearance_m=0.005)
     assert result.failure_code == "force_abort"
     assert result.labels["reset_success"] is True
-    assert runner.current_decision().action == "reobserve_key_and_preflight"
+    assert runner.current_decision().action == "assess_saved_preinsert_xy"
     saved = json.loads((runner._attempt_dir / "reset_landing.json").read_text())
     assert saved["recovery_mode"] == (
         "planned_held_return" if recovery_kind == "automatic" else
         "supervised_manual_return")
+    unavailable = runner._attempt_dir / "xy_retry_assessments/000/report.json"
+    unavailable.parent.mkdir(parents=True)
+    unavailable.write_text('{"status":"abstain"}', encoding="utf-8")
+    runner.record_xy_retry_unavailable(
+        reason="sam_half_ellipse_unavailable",
+        retry_assessment_path=unavailable, timestamp_s=11.1)
+    assert runner.current_decision().action == "reobserve_key_and_preflight"
     _plan(runner, _observation("key_2", 12.0))
     assert runner.current_decision().action == "execution_gate_required"
 

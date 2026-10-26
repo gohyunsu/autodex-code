@@ -342,6 +342,7 @@ class PreinsertXYDiagnostic:
 def _validated_retry_trial_context(
     *, mode: TaskMode, shared_root: Path, calibration, catalog: dict,
     trial, attempt: AttemptRecord, postlift_preflight_report_path: Path,
+    allow_recovered_force_stop: bool = False,
 ) -> tuple[dict, dict, Path, Path]:
     """Shared failed-trial and saved-plan gate for both retry assessments."""
     if (not isinstance(attempt, AttemptRecord) or
@@ -355,9 +356,12 @@ def _validated_retry_trial_context(
     if insertion is None:
         raise ValueError("retry needs a saved insertion observation")
     insertion_input = insertion["detail"]["input"]
+    recovered_force_stop = (allow_recovered_force_stop and
+                            attempt.recovered_force_stop_for_xy())
     if (insertion_input["grasp_held"] is not True or
-            insertion_input["safety_abort"] is not False or
-            attempt.failure_code in {"slip", "force_abort", "reset_failed"}):
+            (not recovered_force_stop and
+             (insertion_input["safety_abort"] is not False or
+              attempt.failure_code in {"slip", "force_abort", "reset_failed"}))):
         raise ValueError("retry cannot follow slip or a safety abort")
     preinsert = next((
         event for event in reversed(attempt.events)
@@ -1260,7 +1264,8 @@ def assess_saved_preinsert_xy_diagnostic(
         _validated_retry_trial_context(
             mode=mode, shared_root=root, calibration=calibration,
             catalog=catalog, trial=trial, attempt=attempt,
-            postlift_preflight_report_path=postlift_preflight_report_path))
+            postlift_preflight_report_path=postlift_preflight_report_path,
+            allow_recovered_force_stop=True))
     if validated_root != root:
         raise ValueError("saved preinsert diagnostic changed shared root")
     checkpoint_path = Path(preinsert_checkpoint_path).expanduser().resolve()

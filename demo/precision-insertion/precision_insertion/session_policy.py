@@ -101,6 +101,16 @@ def decide_after_attempt(
     if labels["reset_success"] is False or attempt.failure_code == "reset_failed":
         return result("stop_for_review", "safety_or_reset_failure")
     if labels["reset_success"] is True:
+        if (attempt.recovered_force_stop_for_xy() and
+                max_xy_retries != 0 and
+                not any(event["stage"] in {
+                    "next_trial_xy_advice", "xy_retry_unavailable"}
+                    for event in attempt.events)):
+            return result(
+                "assess_saved_preinsert_xy",
+                "recovered_force_stop_saved_preinsert_diagnostic",
+                "saved_preinsert_raw_multiview_tip_observation",
+                "next_attempt_only_no_lateral_motion")
         return result(
             "reobserve_key_and_preflight", "reset_observed",
             "fresh_key_pose", "fresh_robot_state")

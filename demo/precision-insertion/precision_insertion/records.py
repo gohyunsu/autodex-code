@@ -220,7 +220,23 @@ class AttemptRecord:
             "scope": "observed_safe_preflight_not_motion_authorization",
         })
 
-    def _require_retryable_failure(self) -> None:
+    def recovered_force_stop_for_xy(self) -> bool:
+        """A force stop may inform the next trial only after observed return."""
+        if (self.mode.family != "cylinder" or
+                self.failure_code != "force_abort" or
+                self.labels["insertion_success"] is not False or
+                self.labels["reset_success"] is not True):
+            return False
+        insertion = next((event for event in reversed(self.events)
+                          if event["stage"] == "insertion_success"), None)
+        if insertion is None:
+            return False
+        observed = insertion["detail"]["input"]
+        return (observed["grasp_held"] is True and
+                observed["safety_abort"] is True and
+                bool(insertion["evidence_refs"].get("axial_withdrawal")))
+
+    def _require_retryable_failure(self, *, saved_preinsert: bool = False) -> None:
         if not any(event["stage"] == "insertion_success" for event in self.events):
             raise ValueError("retry needs a preceding insertion observation")
         if self.labels["insertion_success"] is not False or self._pending_retry:
@@ -229,9 +245,12 @@ class AttemptRecord:
             event for event in reversed(self.events)
             if event["stage"] == "insertion_success")
         insertion_input = last_insertion["detail"]["input"]
+        recovered_force_stop = (saved_preinsert and
+                                self.recovered_force_stop_for_xy())
         if (insertion_input["grasp_held"] is not True or
-                insertion_input["safety_abort"] is not False or
-                self.failure_code in {"force_abort", "slip", "reset_failed"}):
+                (not recovered_force_stop and
+                 (insertion_input["safety_abort"] is not False or
+                  self.failure_code in {"force_abort", "slip", "reset_failed"}))):
             raise ValueError("retry requires held grasp without safety abort")
 
     def record_next_trial_xy_advice(
@@ -245,7 +264,7 @@ class AttemptRecord:
         """Record advice for a *new pickup*, without moving this held grasp."""
         if self.mode.family != "cylinder":
             raise ValueError("square mode has no XY error correction")
-        self._require_retryable_failure()
+        self._require_retryable_failure(saved_preinsert=True)
         if any(event["stage"] == "next_trial_xy_advice" for event in self.events):
             raise ValueError("this failure already produced next-trial advice")
         if (not isinstance(increment_socket_xy_m, (tuple, list)) or
@@ -364,9 +383,11 @@ class AttemptRecord:
         evidence_refs: Mapping[str, str],
     ) -> None:
         """End this held-key retry branch when no usable correction exists."""
-        self._require_retryable_failure()
+        self._require_retryable_failure(saved_preinsert=True)
         if reason not in {
                 "vlm_abstain", "vlm_backend_unavailable",
+                "tracked_tip_unavailable", "sam_half_ellipse_unavailable",
+                "sam_backend_unavailable", "xy_backends_unavailable",
                 "lateral_preflight_failed",
                 "xy_update_budget_exhausted",
                 "held_key_pose_unavailable",

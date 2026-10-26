@@ -28,6 +28,7 @@ from precision_insertion.retry_session import (  # noqa: E402
     RetrySessionLimits, assess_and_plan_observed_xy_retry,
     assess_unobserved_xy_diagnostic, assess_grounded_xy_diagnostic,
     write_retry_session_artifacts, _preinsert_xy_cameras,
+    _validated_retry_trial_context,
 )
 from precision_insertion import retry_session  # noqa: E402
 from precision_insertion.xy_retry import XYRetryAssessment  # noqa: E402
@@ -195,6 +196,75 @@ def _inputs(tmp_path, monkeypatch):
         withdrawal_evidence_path=withdrawal,
         postlift_preflight_report_path=postlift_file,
         decision_timestamp_s=100.05, limits=limits)
+
+
+def test_saved_xy_accepts_only_observed_recovered_force_stop(
+        tmp_path, monkeypatch):
+    mode = select_mode("cylinder", 20)
+    session = {"schema": "precision_insertion_session_calibration_v1",
+               "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
+                        "key_object": mode.key_object,
+                        "socket_object": mode.socket_object}}
+    calibration = SimpleNamespace(record=session)
+    catalog = {"shared_root": str(tmp_path)}
+    monkeypatch.setattr(retry_session, "validate_catalog_session",
+                        lambda *_args, **_kwargs: None)
+    attempt = begin_attempt(
+        attempt_id="trial_1", mode=mode, session_record=session,
+        candidate_id="table/0/1", tabletop_pose_stem="000",
+        xy_offset_socket_m=(0.0, 0.0), started_at_s=99.0)
+    postlift = tmp_path / "postlift.json"
+    postlift.write_text(json.dumps({
+        "schema": "precision_insertion_postlift_preflight_v1",
+        "status": "sampled_postlift_preflight_pass",
+        "attempt_id": attempt.attempt_id,
+        "candidate_key": ["table", "0", "1"],
+        "session_calibration_sha256": attempt.session_calibration_sha256,
+        "catalog_sha256": retry_session._digest(catalog),
+        "planning": {"sampled_planning_pass": True},
+        "observed_held_relation": {},
+    }), encoding="utf-8")
+    attempt.record_stage(
+        "grasp_success", True, timestamp_s=99.2,
+        evidence_refs={"vlm_observation": "lift.json",
+                       "raw_lift_visual": "lift.png"})
+    attempt.record_stage(
+        "preinsert_reached", True, timestamp_s=99.4,
+        evidence_refs={"trajectory": "transfer.json",
+                       "key_socket_pose": "hold.json",
+                       "grasp_state": "hand.json",
+                       "postlift_preflight": str(postlift)})
+    attempt.record_insertion_evidence(
+        InsertionEvidence("unobservable", None, None, None, True, True),
+        timestamp_s=99.6,
+        evidence_refs={"force_trace": "force.json",
+                       "axial_withdrawal": "withdrawal.json"})
+    attempt.record_failure(
+        "force_abort", timestamp_s=99.7,
+        evidence_refs={"force_trace": "force.json"})
+    args = dict(
+        mode=mode, shared_root=tmp_path, calibration=calibration,
+        catalog=catalog, attempt=attempt,
+        trial=SimpleNamespace(
+            status="sampled_planning_pass",
+            selected_candidate_key=("table", "0", "1"),
+            insertion_plan=SimpleNamespace(sampled_planning_pass=True),
+            pose_class={"stem": "000"},
+            session_calibration_sha256=attempt.session_calibration_sha256,
+            catalog_sha256=retry_session._digest(catalog)),
+        postlift_preflight_report_path=postlift)
+    with pytest.raises(ValueError, match="safety abort"):
+        _validated_retry_trial_context(
+            **args, allow_recovered_force_stop=True)
+    attempt.record_stage(
+        "reset_success", True, timestamp_s=99.8,
+        evidence_refs={"key_pose": "landed_key.json"})
+    with pytest.raises(ValueError, match="safety abort"):
+        _validated_retry_trial_context(**args)
+    _, _, selected, root = _validated_retry_trial_context(
+        **args, allow_recovered_force_stop=True)
+    assert selected == postlift
+    assert root == tmp_path.resolve()
 
 
 def test_same_frame_held_pose_and_measured_hand_gate_retry_before_vote(
