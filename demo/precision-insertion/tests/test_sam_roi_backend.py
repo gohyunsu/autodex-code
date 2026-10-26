@@ -164,8 +164,44 @@ for line in sys.stdin:
         backend.close()
 
 
+@pytest.mark.parametrize("reply_kind", ["wrong_size", "invalid_png", "missing_metadata"])
+def test_invalid_worker_payload_is_one_view_backend_failure(tmp_path, reply_kind):
+    worker = tmp_path / "bad_payload_worker.py"
+    script = '''
+import json, sys
+print(json.dumps({"type":"ready","model":sys.argv[2]}), flush=True)
+for line in sys.stdin:
+    row=json.loads(line)
+    if row["type"]=="close": break
+    reply={"type":"result","request_id":row["request_id"],
+      "camera_id":row["camera_id"],"image_size_wh":[8,8],
+      "mask_png_base64":None,"score":0.8,"inference_s":0.01,
+      "cuda_peak_bytes":0}
+    if REPLY_KIND=="wrong_size": reply["image_size_wh"]=[9,8]
+    if REPLY_KIND=="invalid_png": reply["mask_png_base64"]="not-base64"
+    if REPLY_KIND=="missing_metadata": del reply["inference_s"]
+    print(json.dumps(reply),flush=True)
+'''
+    worker.write_text(script.replace("REPLY_KIND", repr(reply_kind)))
+    checkpoint = tmp_path / "model.pt"
+    checkpoint.write_bytes(b"test")
+    backend = SamRoiBackend(
+        python_path=Path(sys.executable), checkpoint=checkpoint,
+        worker_path=worker, stderr_path=tmp_path / "worker.log")
+    try:
+        image = Image.new("RGB", (8, 8), "white")
+        with pytest.raises(RuntimeError, match="response payload is invalid"):
+            backend.segment(image, camera_id="cam_a", prompt="white cylinder")
+        assert backend._process.poll() is not None
+        with pytest.raises(RuntimeError, match="not running"):
+            backend.segment(image, camera_id="cam_b", prompt="white cylinder")
+    finally:
+        backend.close()
+
+
 @pytest.mark.parametrize("failure", [
-    None, "one_qwen", "one_sam", "all_qwen", "all_sam", "mixed_all"])
+    None, "one_qwen", "one_sam", "one_invalid_mask",
+    "all_qwen", "all_sam", "mixed_all"])
 def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
     tmp_path, monkeypatch, failure,
 ):
@@ -223,6 +259,8 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
                     failure == "one_sam" and camera_id == "cam_c" or
                     failure == "mixed_all" and camera_id != "cam_a"):
                 raise TimeoutError(f"SAM3 ROI {camera_id} timed out")
+            if failure == "one_invalid_mask" and camera_id == "cam_c":
+                return np.zeros((3, 4), np.uint8), {}
             mask = np.zeros((image.height, image.width), np.uint8)
             mask[62:145, 55:100] = 255
             return mask, {"score": .9, "inference_s": .01,
@@ -262,7 +300,8 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
             assert record["admitted"] is False
             assert record["reason"] == (
                 "qwen_backend_unavailable" if failure == "one_qwen" else
-                "sam_backend_unavailable")
+                "sam_backend_unavailable" if failure == "one_sam" else
+                "sam_mask_invalid")
             continue
         assert record["admitted"] is True
         assert record["mask_file_sha256"] == hashlib.sha256(

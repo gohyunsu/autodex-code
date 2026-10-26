@@ -1,8 +1,9 @@
 # Current code audit: key tip, transforms, and recovery latency
 
 This audit compares the local stock `/home/robot/AutoDex` checkout at
-`448732d` with `feat/precision-insertion` through `3986712`. It is a source and
-saved-evidence review. No camera, controller, or robot was started.
+`448732d` with `feat/precision-insertion` through `8af32ec` and the changes
+described below. It is a source and saved-evidence review. No camera,
+controller, or robot was started.
 
 ## What is actually connected
 
@@ -142,6 +143,13 @@ JSON without contacting a camera or robot. The worker's ordinary error reply
 now includes its camera ID, matching the client protocol: a segmentation
 error on one view can be recorded and the healthy worker can process another
 view instead of being mistaken for a stale response.
+The same per-view handling now covers a malformed result payload (wrong image
+size, unreadable mask, or missing inference metadata): the client retires the
+worker and reports that camera as unavailable. A mask with the wrong ROI shape
+is omitted as one invalid observation. Neither is allowed to supply a pixel
+point, and healthy views can still yield an XY diagnostic. If the backend is
+unavailable for every view, the live retry handler records an unavailable
+diagnostic and continues recovery without a measured XY update.
 
 On the real preinsert bundle of `20261022_103429_752726`, three read-only
 repetitions of reading and re-encoding 20 PNGs to memory took
@@ -172,6 +180,15 @@ SAM/tracked-tip source through saved advice, fresh same-grasp preflight and
 the next attempt's wrist-correction field, alongside the Qwen line source.
 It verifies the wiring and arithmetic only; no historical robot trial
 applied this value.
+On the same five real saved observations, removing any one camera changes the
+fitted socket-frame XY by at most `0.79 mm`. Across all ten three-camera
+subsets, the largest change from the five-view fit is `2.52 mm`. Camera
+`25322649` has a `6.83 px` residual in the five-view fit; it remains within
+the tip proxy's `15 px` observation tolerance. This sensitivity check supports
+using the five selected views for the optional SAM retry and retaining each
+per-camera residual in the report. It does **not** establish the true physical
+key face center or justify a tighter failure gate. The source-frame replay is
+`/home/robot/shared_data/hyunsu/tmp/20261026_sam_half_ellipse_live_wiring/tip_subset_sensitivity_saved_replay.json`.
 
 The shared tracked-tip/SAM multiview fit previously identified outlier
 cameras but returned the point fitted using **all** cameras. In a five-camera

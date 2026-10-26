@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import io
 import json
 from pathlib import Path
@@ -113,22 +114,28 @@ class SamRoiBackend:
                     reply.get("type") not in {"result", "error"}):
                 self._retire_worker()
                 raise RuntimeError("SAM3 ROI response identity changed")
-        if reply["type"] == "error":
-            raise RuntimeError(f"SAM3 ROI {camera_id}: {reply.get('error')}")
-        if reply.get("image_size_wh") != [image.width, image.height]:
-            raise ValueError("SAM3 ROI response image size changed")
-        encoded = reply.get("mask_png_base64")
-        mask = None
-        if encoded is not None:
-            with Image.open(io.BytesIO(base64.b64decode(encoded, validate=True))) as output:
-                mask = np.asarray(output.convert("L"), dtype=np.uint8).copy()
-            if (mask.shape != (image.height, image.width) or
-                    not np.all((mask == 0) | (mask == 255))):
-                raise ValueError("SAM3 ROI response mask is invalid")
-        metadata = {key: reply[key] for key in (
-            "score", "inference_s", "cuda_peak_bytes")}
-        metadata["model"] = self.model
-        return mask, metadata
+            if reply["type"] == "error":
+                raise RuntimeError(f"SAM3 ROI {camera_id}: {reply.get('error')}")
+            try:
+                if reply.get("image_size_wh") != [image.width, image.height]:
+                    raise ValueError("image size changed")
+                encoded = reply["mask_png_base64"]
+                mask = None
+                if encoded is not None:
+                    with Image.open(io.BytesIO(base64.b64decode(
+                            encoded, validate=True))) as output:
+                        mask = np.asarray(output.convert("L"), dtype=np.uint8).copy()
+                    if (mask.shape != (image.height, image.width) or
+                            not np.all((mask == 0) | (mask == 255))):
+                        raise ValueError("mask is invalid")
+                metadata = {key: reply[key] for key in (
+                    "score", "inference_s", "cuda_peak_bytes")}
+            except (KeyError, TypeError, ValueError, OSError,
+                    binascii.Error) as exc:
+                self._retire_worker()
+                raise RuntimeError("SAM3 ROI response payload is invalid") from exc
+            metadata["model"] = self.model
+            return mask, metadata
 
     def close(self) -> None:
         process = getattr(self, "_process", None)

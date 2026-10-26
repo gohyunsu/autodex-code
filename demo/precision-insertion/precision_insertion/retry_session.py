@@ -1142,7 +1142,8 @@ def _compute_sam_half_ellipse_alignment(
         mask = np.asarray(mask, dtype=np.uint8)
         if (mask.shape != (ry1-ry0, rx1-rx0) or
                 not np.all((mask == 0) | (mask == 255))):
-            raise ValueError("SAM ROI mask changed Qwen crop geometry")
+            record.update(admitted=False, reason="sam_mask_invalid")
+            return None, record, None
         stream = io.BytesIO()
         Image.fromarray(mask).save(stream, format="PNG")
         mask_png = stream.getvalue()
