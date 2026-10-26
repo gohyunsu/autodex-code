@@ -121,7 +121,8 @@ def test_targets_reject_wrong_socket_geometry_and_bad_preinsert(tmp_path):
             T_key_hand=np.eye(4), xy_offset_socket_m=(float("nan"), 0.0))
 
 
-def test_tip_xy_advice_moves_wrist_in_tilted_socket_frame_only(tmp_path):
+@pytest.mark.parametrize("yaw", [0.0, 0.8, -1.4])
+def test_tip_xy_advice_moves_wrist_in_tilted_socket_frame_only(tmp_path, yaw):
     mode = select_mode("cylinder", 20)
     session, _, _ = _fixture(tmp_path, mode)
     relation = np.eye(4)
@@ -130,13 +131,14 @@ def test_tip_xy_advice_moves_wrist_in_tilted_socket_frame_only(tmp_path):
     wrist_correction_socket_m = -observed_tip_xy_socket_m
     command = compensated_key_hand_relation(
         mode=mode, shared_root=tmp_path, T_key_hand=relation,
-        wrist_correction_socket_m=tuple(wrist_correction_socket_m))
+        wrist_correction_socket_m=tuple(wrist_correction_socket_m),
+        cylinder_yaw_gauge_socket_rad=yaw)
     baseline = build_rigid_insertion_targets(
         mode=mode, shared_root=tmp_path, calibration=session,
-        T_key_hand=relation)
+        T_key_hand=relation, cylinder_yaw_gauge_socket_rad=yaw)
     corrected = build_rigid_insertion_targets(
         mode=mode, shared_root=tmp_path, calibration=session,
-        T_key_hand=command)
+        T_key_hand=command, cylinder_yaw_gauge_socket_rad=yaw)
 
     for phase in ("preinsert", "entry", "verification"):
         key = getattr(baseline, f"T_robot_key_{phase}")

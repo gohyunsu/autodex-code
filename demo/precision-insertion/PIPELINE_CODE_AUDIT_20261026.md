@@ -164,6 +164,23 @@ are in the [saved SAM advice replay](/home/robot/shared_data/hyunsu/tmp/20261026
 These saved attempts had zero applied XY correction, so the replay proves
 software coordinate arithmetic, not a physical corrected trial.
 
+The same next-trial XY composition was checked with a nonzero cylinder yaw
+gauge. `build_rigid_insertion_targets` rotates a cylinder key target by that
+gauge, while `compensated_key_hand_relation` previously inverted only the
+ungauged CAD key rotation. That would rotate the requested socket-XY wrist
+increment by the yaw. The helper now inverts the **effective**
+`R_gauge @ R_socket_key` rotation and accepts the same yaw gauge as the target
+builder. A tilted-socket regression covers zero, positive and negative yaw
+through preinsert, entry and verification. On one hash-matched saved 10 mm
+and one 20 mm post-lift plan, a counterfactual 0.8 rad yaw and (+2, -1) mm
+increment yielded a maximum 1.26e-10 m composition residual; the old formula
+would miss by 1.742 mm. [Replay script and results](/home/robot/shared_data/hyunsu/tmp/20261026_cylinder_yaw_xy_replay/README.md)
+record the source hashes. The active nominal path uses yaw zero and those
+historical plans also used yaw zero, so this finding does not explain a
+previous physical trial's offset. The post-shift route uses a newly
+reconstructed held relation; this fix is the general compensation primitive
+for a future nonzero-yaw next-trial route.
+
 ## SAM3 half-ellipse: from offline result to optional live XY path
 
 At `568107f`, `held_key_tip.distal_key_mask_half_ellipse` was called only by
@@ -675,6 +692,8 @@ The redundant field is no longer required; neither the automatic return nor
 the fresh landing checks changed.
 The full non-moving suite after the runner-level regression and gate removal
 passed: **1214 passed, 5 skipped in 41.39 s** (`planner` environment).
+After the cylinder-yaw XY composition fix, the same full suite passed:
+**1216 passed, 5 skipped in 42.54 s**.
 
 ## Remaining evidence needed
 
