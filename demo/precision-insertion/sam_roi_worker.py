@@ -13,6 +13,7 @@ import argparse
 import base64
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -21,8 +22,17 @@ import numpy as np
 from PIL import Image
 
 
-def _reply(value: dict) -> None:
-    print(json.dumps(value, allow_nan=False), flush=True)
+def _isolate_protocol_stdout():
+    """Keep model/library diagnostics out of the JSON reply pipe."""
+    # Preserve the pipe for replies, then redirect even native fd-1 writes.
+    protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w",
+                         encoding="utf-8", buffering=1)
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    return protocol
+
+
+def _reply(value: dict, protocol) -> None:
+    print(json.dumps(value, allow_nan=False), file=protocol, flush=True)
 
 
 def _error_response(request: dict, exc: Exception) -> dict:
@@ -35,6 +45,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, required=True)
     args = parser.parse_args()
+    protocol = _isolate_protocol_stdout()
     checkpoint = args.checkpoint.expanduser().resolve(strict=True)
     sam3_source = (Path(__file__).resolve().parents[2] /
                    "autodex/perception/thirdparty/sam3")
@@ -53,7 +64,7 @@ def main() -> int:
             load_from_HF=False)
         processor = Sam3Processor(
             model, device="cuda", confidence_threshold=0.5)
-    _reply({"type": "ready", "model": str(checkpoint)})
+    _reply({"type": "ready", "model": str(checkpoint)}, protocol)
     for line in sys.stdin:
         request = json.loads(line)
         if request.get("type") == "close":
@@ -95,9 +106,9 @@ def main() -> int:
                 "mask_png_base64": mask_png, "score": score,
                 "inference_s": time.perf_counter() - started,
                 "cuda_peak_bytes": int(torch.cuda.max_memory_allocated()),
-            })
+            }, protocol)
         except Exception as exc:
-            _reply(_error_response(request, exc))
+            _reply(_error_response(request, exc), protocol)
     return 0
 
 

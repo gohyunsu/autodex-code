@@ -154,6 +154,13 @@ JSON without contacting a camera or robot. The worker's ordinary error reply
 now includes its camera ID, matching the client protocol: a segmentation
 error on one view can be recorded and the healthy worker can process another
 view instead of being mistaken for a stale response.
+The current SAM3 `model_builder._load_checkpoint` can print missing-key
+diagnostics to stdout. The worker now reserves stdout for JSON replies and
+redirects model/library fd-1 output to stderr before loading the checkpoint.
+A subprocess regression confirms that a diagnostic print cannot precede or
+corrupt the `ready` reply. The checkpoint and AutoDex SAM3 source are present
+on this PC, but CUDA is currently unavailable, so model loading and live
+inference were not exercised in this audit.
 The same per-view handling now covers a malformed result payload (wrong image
 size, unreadable mask, or missing inference metadata): the client retires the
 worker and reports that camera as unavailable. A mask with the wrong ROI shape

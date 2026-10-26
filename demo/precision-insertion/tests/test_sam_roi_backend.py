@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -23,6 +24,19 @@ from precision_insertion.retry_session import (  # noqa: E402
 )
 from precision_insertion.sam_roi_backend import SamRoiBackend  # noqa: E402
 from sam_roi_worker import _error_response  # noqa: E402
+
+
+def test_real_worker_keeps_model_prints_out_of_reply_pipe():
+    child = subprocess.run(
+        [sys.executable, "-c", (
+            "from sam_roi_worker import _isolate_protocol_stdout, _reply; "
+            "protocol = _isolate_protocol_stdout(); "
+            "print('model diagnostic', flush=True); "
+            "_reply({'type': 'ready'}, protocol)")],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True, text=True, check=True)
+    assert child.stdout == '{"type": "ready"}\n'
+    assert "model diagnostic" in child.stderr
 
 
 def test_worker_protocol_keeps_rgb_roi_and_binary_mask(tmp_path):
