@@ -725,6 +725,18 @@ so `run_robot_pc.sh` retains the existing `vlm` default. Select
 `PRECISION_XY_ESTIMATOR=sam_half_ellipse` only when its local CUDA worker is
 available.
 
+The recovery key capture and the next trial's key capture currently run as
+separate actions. `capture_returned_key_for_reset` saves a pose-only result
+to check the landing; `prepare_next_live_key` also starts the trial's raw
+`initial_tabletop` image evidence used by the final VLM pair. Passing the
+returned pose directly to planning would leave that pair without its bound
+initial image and would bypass the current post-outcome exposure ordering.
+In the saved `20261021_092625_546425` timing report, the recovery key capture
+took **64.015 s**. That run did not reach the later reobservation action, so
+it cannot quantify a second capture's cost. A future reuse path needs to
+preserve the initial image/frame binding and check the measured robot state;
+simply removing the freshness condition is not a valid latency fix.
+
 ## Remaining evidence needed
 
 1. Replay additional rejected-socket and failed-grasp episodes with this
