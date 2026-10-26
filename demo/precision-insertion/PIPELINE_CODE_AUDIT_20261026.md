@@ -893,6 +893,24 @@ counterfactual against `8f1b0f0`; maximum wrist-shift residuals were
 `6.85e-17 m` and `1.26e-10 m`, respectively. These are arithmetic checks,
 not measured motion or physical tip-center accuracy.
 
+## Retry preflight uses the advised wrist relation
+
+The next-trial XY audit found one planning mismatch after the saved advice
+had already been accepted: `plan_fresh_key_trial` screened the next pickup's
+insertion path with the nominal v8 wrist relation, whereas
+`nominal_postlift.py` later screened and commanded the advised wrist
+correction. The retry preflight now uses `compensated_key_hand_relation` for
+the same candidate and tabletop stem, records the correction in its report,
+and binds it to the correction consumed when that physical attempt begins.
+The first pickup and square-mode paths remain nominal. This changes which
+path is screened before pickup, without adding a clearance, timing, or
+motion threshold; the measured post-lift replan remains necessary. A
+synthetic candidate-path test and the saved tip-to-wrist arithmetic replay
+cover the software transform, not actual held-key accuracy. The complete
+non-moving suite passes **1234 passed, 5 skipped**; the 20 mm file-only
+`run_robot_pc.sh --check` also passes with the SAM estimator and still reports
+`robot_ready=false`.
+
 ## Remaining evidence needed
 
 1. Replay additional rejected-socket and failed-grasp episodes with this

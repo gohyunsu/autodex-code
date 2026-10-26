@@ -195,6 +195,45 @@ def test_xy_retry_plans_only_the_previous_grasp(tmp_path, monkeypatch):
     assert result.selected_candidate_key is None
 
 
+def test_xy_retry_preflight_uses_the_next_attempt_wrist_correction(
+    tmp_path, monkeypatch,
+):
+    fixture = _fixture(tmp_path, monkeypatch)
+    fixture = (select_mode("cylinder", 20), *fixture[1:])
+    correction = (0.003, -0.002)
+    seen = {}
+
+    def corrected_relation(**kwargs):
+        assert kwargs["wrist_correction_socket_m"] == correction
+        relation = kwargs["T_key_hand"].copy()
+        relation[:2, 3] = correction
+        return relation
+
+    def targets(**kwargs):
+        seen["relation"] = kwargs["T_key_hand"].copy()
+        return object()
+
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.compensated_key_hand_relation",
+        corrected_relation)
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.build_rigid_insertion_targets",
+        targets)
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.plan_insertion_after_pickup",
+        lambda **_: InsertionPreflight(
+            "sampled_planning_pass", None, None, None,
+            {"sampled_clear": True}, 0, np.zeros(6), "commanded_nominal", ()))
+    result = _run(
+        tmp_path, fixture, _Planner(),
+        retry_candidate=("table", "0", "2"), retry_pose_stem="000",
+        retry_wrist_correction_socket_m=correction)
+    assert result.selected_candidate_key == ("table", "0", "2")
+    assert result.wrist_correction_socket_m == correction
+    assert result.to_record()["wrist_correction_socket_m"] == list(correction)
+    assert seen["relation"][:2, 3] == pytest.approx(correction)
+
+
 def test_rejected_sampled_path_keeps_collision_cause_after_next_grasp(
     tmp_path, monkeypatch,
 ):

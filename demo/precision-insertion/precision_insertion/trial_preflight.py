@@ -27,6 +27,7 @@ from .config import TaskMode
 from .endpoint import nominal_inspire_hold_poses
 from .geometry import validate_se3
 from .key_perception import KeyPoseObservation
+from .next_trial_xy import compensated_key_hand_relation
 from .path_audit import PathAuditLimits
 from .planner_mode import cartesian_mode_from_planner
 from .pose_selection import classify_key_tabletop_pose
@@ -130,6 +131,7 @@ class TrialPreflight:
     max_candidate_attempts: int | None
     session_calibration_sha256: str
     catalog_sha256: str
+    wrist_correction_socket_m: tuple[float, float] = (0.0, 0.0)
     repose_assessment: dict | None = None
     cartesian_planner_mode: str = "default"
 
@@ -161,6 +163,7 @@ class TrialPreflight:
             "max_candidate_attempts": self.max_candidate_attempts,
             "session_calibration_sha256": self.session_calibration_sha256,
             "catalog_sha256": self.catalog_sha256,
+            "wrist_correction_socket_m": list(self.wrist_correction_socket_m),
             "cartesian_planner_mode": self.cartesian_planner_mode,
             "scope": "read_only_planning_not_camera_or_robot_execution",
             "robot_ready": False,
@@ -246,6 +249,7 @@ def plan_fresh_key_trial(
     upright_cylinder_only: bool = False,
     retry_candidate: tuple[str, str, str] | None = None,
     retry_pose_stem: str | None = None,
+    retry_wrist_correction_socket_m: tuple[float, float] = (0.0, 0.0),
 ) -> TrialPreflight:
     """Plan one scene from an explicitly fresh pose, trying grasps in order.
 
@@ -267,6 +271,11 @@ def plan_fresh_key_trial(
             not all(isinstance(part, str) and part for part in retry_candidate) or
             not isinstance(retry_pose_stem, str) or not retry_pose_stem):
         raise ValueError("retry grasp needs one v8 key and tabletop pose")
+    retry_correction = np.asarray(retry_wrist_correction_socket_m, dtype=float)
+    if (retry_correction.shape != (2,) or
+            not np.all(np.isfinite(retry_correction)) or
+            (retry_candidate is None and np.any(retry_correction))):
+        raise ValueError("retry wrist correction needs one selected v8 grasp")
     pose_world = validate_se3(key_pose_world, name="fresh key pose_world")
     if not isinstance(key_observation_id, str) or not key_observation_id:
         raise ValueError("fresh key observation ID is required")
@@ -347,6 +356,7 @@ def plan_fresh_key_trial(
 
     rows: list[dict] = []
     selected_key = None
+    selected_correction = (0.0, 0.0)
     pickup_plan = None
     insertion_plan = None
     status = ""
@@ -414,6 +424,13 @@ def plan_fresh_key_trial(
             hand_in_key = validate_se3(np.load(
                 Path(candidate["candidate_dir"]) / "wrist_se3.npy",
                 allow_pickle=False), name="v8 T_key_hand")
+            correction = (tuple(map(float, retry_correction))
+                          if key == retry_candidate and stem == retry_pose_stem
+                          else (0.0, 0.0))
+            if correction != (0.0, 0.0):
+                hand_in_key = compensated_key_hand_relation(
+                    mode=mode, shared_root=root, T_key_hand=hand_in_key,
+                    wrist_correction_socket_m=correction)
             targets = build_rigid_insertion_targets(
                 mode=mode, shared_root=root, calibration=calibration,
                 T_key_hand=hand_in_key)
@@ -434,6 +451,7 @@ def plan_fresh_key_trial(
             rows.append(row)
             if trial.sampled_planning_pass:
                 selected_key = key
+                selected_correction = correction
                 pickup_plan = pickup
                 insertion_plan = trial
                 status = "sampled_planning_pass"
@@ -486,6 +504,7 @@ def plan_fresh_key_trial(
         max_candidate_attempts=max_candidate_attempts,
         session_calibration_sha256=_canonical_sha256(calibration.record),
         catalog_sha256=_canonical_sha256(catalog),
+        wrist_correction_socket_m=selected_correction,
         repose_assessment=repose_assessment,
         cartesian_planner_mode=cartesian_mode_from_planner(planner),
     )

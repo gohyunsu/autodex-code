@@ -572,6 +572,9 @@ class SessionRunner:
             retry_candidate=(preferred if pending_xy is not None else None),
             retry_pose_stem=(pending_xy["tabletop_pose_stem"]
                              if pending_xy is not None else None),
+            retry_wrist_correction_socket_m=(
+                tuple(pending_xy["next_wrist_correction_socket_m"])
+                if pending_xy is not None else (0.0, 0.0)),
             **optional_planning_kwargs)
         # A failed insertion can leave the key lying down. Reorientation to
         # the advised tabletop class is an intermediate physical episode;
@@ -1054,7 +1057,9 @@ class SessionRunner:
                 correction = tuple(
                     pending_xy["next_wrist_correction_socket_m"])
                 applied_xy = True
-            self._pending_next_trial_xy = None
+        if (isinstance(self._preflight, TrialPreflight) and
+                self._preflight.wrist_correction_socket_m != correction):
+            raise ValueError("trial preflight used another wrist correction")
         attempt = begin_attempt(
             attempt_id=attempt_id, mode=self.mode,
             session_record=self.calibration.record, candidate_id="/".join(key),
@@ -1062,6 +1067,7 @@ class SessionRunner:
             xy_offset_socket_m=(0.0, 0.0), started_at_s=started_at_s,
             wrist_correction_socket_m=correction)
         attempt_dir = self._new_attempt_dir(attempt_id)
+        self._pending_next_trial_xy = None
         self._write_exclusive(attempt_dir / "preflight_binding.json", {
             "schema": "precision_insertion_attempt_preflight_binding_v1",
             "candidate_id": "/".join(key),

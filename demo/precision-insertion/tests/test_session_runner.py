@@ -232,7 +232,8 @@ def _plan(runner, observation):
 
 def test_xy_advice_survives_intermediate_key_reorientation(monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)
-    advice = {"candidate_id": "/".join(KEY_A), "tabletop_pose_stem": "000"}
+    advice = {"candidate_id": "/".join(KEY_A), "tabletop_pose_stem": "000",
+              "next_wrist_correction_socket_m": [0.003, -0.002]}
     runner._pending_next_trial_xy = advice
 
     def plan_lying(**kwargs):
@@ -377,9 +378,11 @@ def test_grounded_xy_is_saved_then_consumed_by_fresh_same_grasp_attempt(
     assert captured[0]["preferred_candidate"] == KEY_A
     assert captured[0]["retry_candidate"] == KEY_A
     assert captured[0]["retry_pose_stem"] == "000"
+    expected = tuple(0.5 * value for value in increment)
+    assert captured[0]["retry_wrist_correction_socket_m"] == pytest.approx(
+        expected)
     assert KEY_A not in captured[0]["attempted"]
     runner.begin_selected_attempt(attempt_id="attempt_2", started_at_s=7.2)
-    expected = tuple(0.5 * value for value in increment)
     assert runner.active_attempt.wrist_correction_socket_m == pytest.approx(
         expected)
     assert runner.active_attempt.xy_offset_socket_m == (0.0, 0.0)

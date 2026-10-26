@@ -3,16 +3,20 @@
 `run_live.py` uses AutoDex cameras and the selected full-key v8 grasp. It does
 **not** measure or substitute a post-squeeze key–hand transform. The nominal
 v8 relation is an explicit hypothesis throughout transfer and the centered
-20 mm endpoint collision preflight. Square remains an offline-only mode with
-no XY learning in the live entry point.
+20 mm endpoint collision preflight. A retry screens its pending wrist
+correction with the same selected v8 grasp before pickup, then replans from
+the measured post-lift joints. Square remains an offline-only mode with no
+XY learning in the live entry point.
 
 For attempt `n`, synchronized calibrated AutoDex views are saved while the
 held key is at the pre-insertion position. They are captured **before** the
-guarded stroke. If the later released-key label is `outside_socket`, those
-same saved raw views—not a newly lifted key and not a CAD overlay—are sent to
-local Qwen (Gemini is optional) to mark the visible insertion-tip center and
-cylinder-axis line. Camera intrinsics/extrinsics and the frozen session socket
-pose—not VLM text—produce a socket-frame metric XY estimate.
+guarded stroke. If the later released-key label is `outside_socket`, or a
+force stop completes its reverse-axis ascent and held-key return, those same
+saved raw views—not a newly lifted key and not a CAD overlay—feed the selected
+XY estimator. The Qwen landmark mode marks the visible insertion-tip center
+and cylinder-axis line; the SAM mode uses a Qwen box and a same-frame SAM3
+mask. Camera intrinsics/extrinsics and the frozen session socket pose produce
+the socket-frame metric XY estimate.
 The local Qwen path frames each native-pixel input with a lossless rectangular
 crop containing the projected commanded tip, key rear and frozen socket rim,
 plus 96 px of margin. It pads to the model's 32 px patch size without resizing
@@ -32,8 +36,10 @@ worker; clean session shutdown releases that model before the next session.
   nominal pre-insertion tip-height plane**. This supplies XY but does not
   measure tip depth.
 - No usable tip: do **not** report a fabricated measurement or abstain from
-  the trial loop. Record an explicitly named deterministic 2 mm XY search
-  step. It is exploration, not multi-view triangulation.
+  the trial loop. The Qwen landmark mode can record an explicitly named
+  deterministic 2 mm XY search step; it is exploration, not triangulation.
+  The SAM half-ellipse and temporal tracking modes instead record that XY
+  advice was unavailable and continue without a fabricated point.
 
 The diagnostic status is `diagnostic_metric_xy_correction` for a multi-view
 measurement, `diagnostic_planar_xy_hypothesis` for a single-view ray intersected
@@ -74,10 +80,12 @@ plans the same v8 grasp and tabletop class. If that combination has no path,
 the correction is not silently tested with another grasp. A changed tabletop
 class at the next insertion attempt invalidates the previous correction;
 an intermediate reorientation retains it. Each new trial rechecks the
-whole hand against the socket at the intended 20 mm endpoint and replans
-from its fresh tabletop key and measured robot joints. A candidate rejected
-by that collision/path check is not executed merely because the VLM asked
-for it. XY-only learning cannot compensate nonrepeatable slip, key tilt or
+whole hand against the socket at the intended 20 mm endpoint. The retry's
+first insertion preflight uses the pending correction; its post-lift plan
+uses the same correction with fresh measured robot joints. The selected
+preflight report records the correction that its path screened. A candidate
+rejected by that collision/path check is not executed merely because the image
+estimator asked for it. XY-only learning cannot compensate nonrepeatable slip, key tilt or
 unmodeled yaw; those are deliberately outside this experiment.
 
 Current implementation: `grounded_alignment.py`, `retry_session.py`,
