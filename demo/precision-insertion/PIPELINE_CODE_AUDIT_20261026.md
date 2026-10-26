@@ -189,6 +189,14 @@ using the five selected views for the optional SAM retry and retaining each
 per-camera residual in the report. It does **not** establish the true physical
 key face center or justify a tighter failure gate. The source-frame replay is
 `/home/robot/shared_data/hyunsu/tmp/20261026_sam_half_ellipse_live_wiring/tip_subset_sensitivity_saved_replay.json`.
+The saved mask/component review is at
+`/home/robot/shared_data/hyunsu/tmp/20261026_sam_half_ellipse_live_wiring/mask_component_association_saved_replay.json`.
+In the visually checked `24122734` and `25322638` raw frames, the largest
+mask component covers the held key while a smaller disconnected component
+covers a white hand part; choosing the largest component removes that hand
+part in these examples. Camera `25322649` shows a narrow key silhouette and
+the highest five-view residual. These checks do not establish that the largest
+component will always be the key when the socket overlaps the ROI.
 
 A centered measured tip exposed a retry seam that the nonzero saved runs could
 not exercise. The two-view fallback treated a valid socket-frame XY point near
