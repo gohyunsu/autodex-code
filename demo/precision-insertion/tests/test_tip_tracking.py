@@ -7,6 +7,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -86,7 +87,8 @@ def test_centered_multiview_tip_has_no_lateral_step():
     assert len(result["inlier_cameras"]) == 4
 
 
-def test_bad_tip_view_does_not_shift_the_multiview_xy_point():
+@pytest.mark.parametrize("outlier_px", [100., 500.])
+def test_bad_tip_view_does_not_shift_the_multiview_xy_point(outlier_px):
     key_tip = np.array([.010, -.005, 1.])
     K = np.array([[1000., 0., 1024.], [0., 1000., 768.], [0., 0., 1.]])
     views = []
@@ -97,7 +99,7 @@ def test_bad_tip_view_does_not_shift_the_multiview_xy_point():
         projected = K @ (T[:3, :3] @ key_tip + T[:3, 3])
         uv = projected[:2] / projected[2]
         if index == 4:
-            uv += [100., -100.]
+            uv += [outlier_px, -outlier_px]
         frame = CalibratedXYFrame(
             str(index), 100., Image.new("RGB", (2048, 1536)), T, K)
         views.append(GroundedLineView(frame, tuple(uv), None))
@@ -108,6 +110,28 @@ def test_bad_tip_view_does_not_shift_the_multiview_xy_point():
     assert result["status"] == "diagnostic_metric_xy_correction"
     assert result["inlier_cameras"] == ["0", "1", "2", "3"]
     np.testing.assert_allclose(result["tip_socket_m"], key_tip, atol=1e-6)
+
+
+def test_pair_seed_does_not_turn_two_good_views_and_one_bad_view_into_metric():
+    key_tip = np.array([.010, -.005, 1.])
+    K = np.array([[1000., 0., 1024.], [0., 1000., 768.], [0., 0., 1.]])
+    views = []
+    for index, (x, y) in enumerate(((-.20, 0.), (-.10, .10), (.20, -.05))):
+        T = np.eye(4)
+        T[:3, 3] = [-x, -y, 0.]
+        projected = K @ (T[:3, :3] @ key_tip + T[:3, 3])
+        uv = projected[:2] / projected[2]
+        if index == 2:
+            uv += [500., -500.]
+        frame = CalibratedXYFrame(
+            str(index), 100., Image.new("RGB", (2048, 1536)), T, K)
+        views.append(GroundedLineView(frame, tuple(uv), None))
+    result = tracked_tip_xy_alignment(
+        views, nominal_tip_z_socket_m=1., search_index=0,
+        max_reprojection_px=4., min_parallax_deg=1.,
+        max_nominal_tip_height_error_m=.01)
+    assert result["status"] != "diagnostic_metric_xy_correction"
+    assert result["inlier_cameras"] == []
 
 
 def test_nearly_parallel_tip_views_do_not_claim_metric_depth():

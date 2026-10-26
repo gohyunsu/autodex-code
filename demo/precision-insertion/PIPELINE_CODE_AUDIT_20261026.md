@@ -289,6 +289,28 @@ timestamps, calibration hash, camera depths, and replay parameters are in
 This is a physical visibility requirement already used by the existing
 two-view code, not a new insertion tolerance.
 
+There was one more outlier failure before the inlier refit: a grossly wrong
+view could spoil the **initial** all-view SVD so badly that no three inliers
+were found. In a five-camera synthetic case with four exact points, moving
+the fifth by `(500, -500) px` previously produced unmeasured exploratory
+advice. The fitter now tries deterministic two-camera seeds only if its
+ordinary all-view fit is unusable. It ranks candidates by the number of
+camera projections agreeing under the existing pixel tolerance, refits those
+views, and still requires positive depth, three inliers, sufficient parallax,
+and the existing nominal-height bound. That case recovers the exact four-view
+point. On the five real saved 10 mm observations, the ordinary path remains
+selected with all five inliers; its point changes by less than `2.2e-11 m`.
+The conditional pair search took about `8.5 ms` per warm synthetic call here,
+versus `1.7–2.5 ms` for the ordinary five-view replay, excluding image/model
+I/O. The five saved masks have long-axis agreement above `0.9989` with the
+planned direction, although that agreement alone does not prove face-center
+accuracy. No insertion tolerance or next-trial step limit changed. The source
+frame IDs, PNG and mask hashes, calibration hash, observed pixel points, and
+recomputed result are in
+`/home/robot/shared_data/hyunsu/tmp/20261026_sam_half_ellipse_live_wiring/tip_pair_seed_recovery_saved_replay.json`.
+The available saved frames still lack an independently measured physical face
+center.
+
 ## Extra criteria and their purpose
 
 The stock planner supplies IK, world/self collision, and trajectory

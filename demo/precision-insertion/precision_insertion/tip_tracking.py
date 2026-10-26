@@ -9,6 +9,7 @@ an occluded end stays unobserved. No VLM pixel response enters this estimator.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from itertools import combinations
 from typing import Sequence
 
 import cv2
@@ -212,10 +213,7 @@ def tracked_tip_xy_alignment(
                      pixel[1] * projection[2] - projection[1]))
     _u, _s, vh = np.linalg.svd(np.asarray(rows))
     seed = vh[-1]
-    if abs(seed[3]) < 1e-9:
-        return dict(fallback([]), estimator="tracked_visible_key_tip",
-                    tracker_reason="triangulation_at_infinity")
-    seed = seed[:3] / seed[3]
+    seed = None if abs(seed[3]) < 1e-9 else seed[:3] / seed[3]
 
     def residual(point):
         values = []
@@ -225,41 +223,93 @@ def tracked_tip_xy_alignment(
                           projected - pixel)
         return np.asarray(values)
 
-    fit = least_squares(residual, seed, loss="soft_l1", f_scale=7.)
-    errors = np.linalg.norm(residual(fit.x).reshape(-1, 2), axis=1)
     # A segmented cylinder end spans several pixels. The camera-consistency
     # tolerance is an observation precision, not a robot motion gate.
     pixel_tolerance = max(15., 4 * max_reprojection_px)
-    inlier_indices = np.flatnonzero(errors <= pixel_tolerance)
-    if fit.success and 3 <= len(inlier_indices) < len(views):
-        # The robust all-view fit identifies bad camera observations. Refit
-        # the reported point using only the accepted views; otherwise a large
-        # outlier still shifts the command correction by several millimetres.
-        def accepted_residual(point):
-            return residual(point).reshape(-1, 2)[inlier_indices].ravel()
+    fit = None if seed is None else least_squares(
+        residual, seed, loss="soft_l1", f_scale=7.)
 
-        refined = least_squares(accepted_residual, fit.x)
-        if refined.success and np.all(np.isfinite(refined.x)):
-            refined_errors = np.linalg.norm(
-                residual(refined.x).reshape(-1, 2), axis=1)
-            if np.all(refined_errors[inlier_indices] <= pixel_tolerance):
-                fit = refined
-                errors = refined_errors
+    def assess(candidate):
+        if candidate is None or not candidate.success or not np.all(
+                np.isfinite(candidate.x)):
+            return None
+        errors = np.linalg.norm(residual(candidate.x).reshape(-1, 2), axis=1)
+        inliers = np.flatnonzero(errors <= pixel_tolerance)
+        if len(inliers) < 3:
+            return None
+        if len(inliers) < len(views):
+            # Fit the reported point to observations we actually accepted.
+            def selected(point):
+                return residual(point).reshape(-1, 2)[inliers].ravel()
+
+            candidate = least_squares(selected, candidate.x)
+            if not candidate.success or not np.all(np.isfinite(candidate.x)):
+                return None
+            errors = np.linalg.norm(residual(candidate.x).reshape(-1, 2), axis=1)
+            if np.any(errors[inliers] > pixel_tolerance):
+                return None
+        if (abs(candidate.x[2] - nominal_tip_z_socket_m) >
+                max_nominal_tip_height_error_m):
+            return None
+        if _parallax([views[index] for index in inliers]) < min_parallax_deg:
+            return None
+        return candidate, errors, inliers
+
+    accepted = assess(fit)
+    if accepted is None:
+        # A single grossly wrong camera point can corrupt the all-view SVD
+        # seed before the robust loss has a chance to reject it. Retry only
+        # that case with deterministic two-camera seeds, ranking by how many
+        # independently projected views agree. This adds no new threshold.
+        candidates = []
+        for first, second in combinations(range(len(views)), 2):
+            pair_rows = []
+            for index in (first, second):
+                projection, pixel = projections[index], pixels[index]
+                pair_rows.extend((pixel[0] * projection[2] - projection[0],
+                                  pixel[1] * projection[2] - projection[1]))
+            _u, _s, pair_vh = np.linalg.svd(np.asarray(pair_rows))
+            homogeneous = pair_vh[-1]
+            if abs(homogeneous[3]) < 1e-9:
+                continue
+            point = homogeneous[:3] / homogeneous[3]
+            if not np.all(np.isfinite(point)):
+                continue
+            pair_errors = np.linalg.norm(residual(point).reshape(-1, 2), axis=1)
+            pair_inliers = np.flatnonzero(pair_errors <= pixel_tolerance)
+            if len(pair_inliers) < 3:
+                continue
+            def selected(xyz):
+                return residual(xyz).reshape(-1, 2)[pair_inliers].ravel()
+
+            result = assess(least_squares(selected, point))
+            if result is not None:
+                refined, refined_errors, refined_inliers = result
+                candidates.append((
+                    -len(refined_inliers),
+                    float(np.sum(refined_errors[refined_inliers] ** 2)),
+                    first, second, result))
+        if candidates:
+            accepted = min(candidates, key=lambda row: row[:4])[4]
+    if accepted is None:
+        reason = ("triangulation_at_infinity" if seed is None else
+                  "no_consistent_multiview_tip")
+        report = dict(fallback([]), estimator="tracked_visible_key_tip",
+                      tracker_reason=reason)
+        if fit is not None and fit.success and np.all(np.isfinite(fit.x)):
+            primary_errors = np.linalg.norm(
+                residual(fit.x).reshape(-1, 2), axis=1)
+            report["tracker_reprojection_px"] = {
+                view.frame.camera_id: float(error)
+                for view, error in zip(views, primary_errors)}
+            primary_inliers = np.flatnonzero(primary_errors <= pixel_tolerance)
+            if (len(primary_inliers) >= 3 and _parallax(
+                    [views[index] for index in primary_inliers]) <
+                    min_parallax_deg):
+                report["tracker_reason"] = "insufficient_inlier_camera_parallax"
+        return report
+    fit, errors, inlier_indices = accepted
     inliers = [views[index].frame.camera_id for index in inlier_indices]
-    if len(inliers) >= 3 and _parallax(
-            [views[index] for index in inlier_indices]) < min_parallax_deg:
-        return dict(fallback([views[index] for index in inlier_indices]),
-                    estimator="tracked_visible_key_tip",
-                    tracker_reason="insufficient_inlier_camera_parallax")
-    if (not fit.success or not np.all(np.isfinite(fit.x)) or
-            len(inliers) < 3 or
-            abs(fit.x[2] - nominal_tip_z_socket_m) >
-            max_nominal_tip_height_error_m):
-        return dict(fallback([]), estimator="tracked_visible_key_tip",
-                    tracker_reason="no_consistent_multiview_tip",
-                    tracker_reprojection_px={
-                        view.frame.camera_id: float(error)
-                        for view, error in zip(views, errors)})
     correction = -fit.x[:2]
     magnitude = float(np.linalg.norm(correction))
     increment = correction * min(
