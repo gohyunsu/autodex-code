@@ -178,7 +178,18 @@ For an intentional force stop, a failed stop also prevents the reverse-axis
 ascent. This uses the daemon's existing success/error result, not a new
 position, force, or timing threshold. The inert-controller regression covers
 both a rejected normal stop and a rejected force stop.
-The full non-moving demo suite passes **1231 passed, 5 skipped in 45.33 s**
+The precision wrapper then sent `stop_streaming` again immediately after the
+follower's accepted stop before checking stationary feedback. It now waits
+for that feedback directly. Explicit `stop_and_acknowledge()` calls at separate
+motion boundaries still issue their own stop. This removes one redundant
+daemon command per normal `_follow` without changing the velocity limit,
+wait window, held-hand ramp order, or force-stop ascent gate. A CPU-only
+regression executes the actual composed follower and checks exactly one stop
+command. The stationary feedback sample is now reused for the endpoint check,
+removing one more state read and its duplicate velocity comparison. No robot-PC
+round-trip time was measured, so the latency gain is two removed requests per
+normal `_follow` rather than a claimed number of seconds.
+The full non-moving demo suite passes **1231 passed, 5 skipped in 46.03 s**
 with the `planner` Python environment. The file-only robot-PC `--check`
 also passes; it reports `static_preflight_only` and `robot_ready=false`.
 The mount-frame comparison uncovered a separate correctness error: ParaDex

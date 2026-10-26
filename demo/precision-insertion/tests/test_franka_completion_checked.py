@@ -32,9 +32,11 @@ class _Arm:
         self.moves = []
         self.events = []
         self.stops = 0
+        self.reads = 0
         self.response = {"type": "success"} if response is None else response
 
     def get_data(self):
+        self.reads += 1
         return {"qpos": self.q.copy(), "qvel": self.velocity.copy()}
 
     def is_error(self):
@@ -73,8 +75,10 @@ def _wrapper(arm):
 
 
 def _stock_follow_stub(self, path, hand_traj, **kwargs):
-    # Model only the dangerous stock terminal steps: final hand ramp and
-    # blocking endpoint land after a stalled/early-ended stream.
+    # Model the derived follower's checked stop before terminal commands.
+    response = self.arm.stop_streaming()
+    if response.get("type") != "success":
+        raise RuntimeError("FR3 stream stop failed")
     if hand_traj is not None:
         self._ramp_hand(hand_traj[-1])
     assert self.follow_tol == .04
@@ -96,6 +100,8 @@ def test_completed_stream_permits_deferred_hand_ramp_without_blocking_land(
     assert executor.land_tol == .02
     assert executor.follow_tol == .04
     assert not executor._precision_follow_active
+    assert arm.stops == 1
+    assert arm.reads == 1
 
 
 def test_stock_sized_stationary_residual_completes_without_landing(monkeypatch):
@@ -122,6 +128,7 @@ def test_empty_hand_clear_view_uses_stock_landing_then_measured_completion(
     np.testing.assert_array_equal(executor.ramps[0], hand[-1])
     assert arm.events == ["land", "hand_ramp"]
     assert executor.land_tol == .02
+    assert arm.stops == 1
 
 
 def test_held_clear_view_path_does_not_make_stock_landing(monkeypatch):
@@ -170,17 +177,19 @@ def test_unacknowledged_stop_prevents_terminal_hand_ramp(monkeypatch):
     goal = np.full(7, .2)
     arm = _Arm(goal, response={"type": "error"})
     executor = _wrapper(arm)
-    with pytest.raises(RuntimeError, match="stop was not acknowledged"):
+    with pytest.raises(RuntimeError, match="stream stop failed"):
         executor._follow(np.vstack([np.zeros(7), goal]),
                          np.full((2, 6), 500.))
     assert executor.ramps == []
     assert arm.moves == []
+    assert arm.stops == 1
 
 
 def test_force_stop_is_acknowledged_before_caller_can_reverse(monkeypatch):
     def force_stop(self, _path, _hand, **kwargs):
         assert kwargs["stop_wrench_z"] == 12.
         self._last_stop_on_contact = True
+        assert self.arm.stop_streaming()["type"] == "success"
 
     monkeypatch.setattr(_Stock, "_follow", force_stop)
     arm = _Arm(np.zeros(7))
@@ -188,6 +197,7 @@ def test_force_stop_is_acknowledged_before_caller_can_reverse(monkeypatch):
     executor._follow(np.vstack((np.zeros(7), np.full(7, .2))),
                      stop_wrench_z=12., abort_on_contact=True)
     assert arm.stops == 1
+    assert arm.reads == 1
     assert executor._last_stop_on_contact is True
     assert arm.moves == []
 

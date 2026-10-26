@@ -18,6 +18,11 @@ def test_incomplete_stream_stops_without_final_hand_or_arm_command():
         planner.PlanResult = object
         sys.modules["autodex.planner"] = planner
         from src.execution import franka_executor as module
+        from precision_insertion.franka_completion_checked import (
+            CompletionCheckedFrankaMixin)
+
+        class Checked(CompletionCheckedFrankaMixin, module.FrankaExecutor):
+            pass
 
         module.time.sleep = lambda _seconds: None
 
@@ -30,6 +35,7 @@ def test_incomplete_stream_stops_without_final_hand_or_arm_command():
 
             def get_data(self):
                 return {"qpos": np.zeros(7),
+                        "qvel": np.zeros(7),
                         "wrench": np.array([0., 0., self.wrench])}
 
             def set_joint_velocity(self, velocity, **_kwargs):
@@ -46,8 +52,9 @@ def test_incomplete_stream_stops_without_final_hand_or_arm_command():
             def move(self, *_args, **_kwargs):
                 raise AssertionError("incomplete stream made a direct arm move")
 
-        def executor(arm, timeout=10., ctrl_dt=.02):
-            instance = object.__new__(module.FrankaExecutor)
+        def executor(arm, timeout=10., ctrl_dt=.02,
+                     executor_type=module.FrankaExecutor):
+            instance = object.__new__(executor_type)
             instance.arm = arm
             instance.hand = types.SimpleNamespace(move=lambda _command: None)
             instance._clip_hand = lambda command: command
@@ -78,6 +85,14 @@ def test_incomplete_stream_stops_without_final_hand_or_arm_command():
         normal._ramp_hand = lambda _target: None
         normal._follow(np.zeros((2, 7)), hand)
         assert arrived.stops == 1
+
+        # Exercise the real precision MRO: the base stop result is enough;
+        # measured rest must not send a duplicate stop command.
+        checked_arm = Arm()
+        checked = executor(checked_arm, executor_type=Checked)
+        checked._ramp_hand = lambda _target: None
+        checked._follow(np.zeros((2, 7)), hand)
+        assert checked_arm.stops == 1
 
         # A daemon refusal cannot be followed by a hand ramp or landing move.
         rejected = Arm(stop_response={"type": "error", "message": "offline"})

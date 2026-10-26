@@ -1,10 +1,11 @@
 """Demo-local completion check around the AutoDex-derived FR3 follower.
 
 The precision checkout's AutoDex-derived follower raises on a stalled or
-timed-out stream before its terminal hand ramp or endpoint move. This subclass
-also defers the final hand ramp and checks measured joint completion before
-allowing it. The blocking landing is retained for a normally completed
-empty-hand clear-view return, where exact arrival matters after release.
+timed-out stream and checks the daemon's stream-stop response before its
+terminal hand ramp or endpoint move. This subclass waits for stationary
+feedback without sending that stop command a second time, then checks measured
+joint completion before allowing its deferred final hand ramp. The blocking
+landing is retained for a normally completed empty-hand clear-view return.
 
 This is *not* a robot-side watchdog or a force servo. The installed ParaDex
 daemon has its own command-expiry watchdog; this mixin checks completion and
@@ -90,14 +91,15 @@ class CompletionCheckedFrankaMixin:
                 del self._ramp_hand
             self._precision_follow_active = False
 
-        stop = self.stop_and_acknowledge()
+        # The follower already sent stop_streaming and checked its response.
+        # Wait for measured rest without another daemon command.
+        stop, state = self._await_stationary()
         if stop.get("acknowledged") is not True:
             raise RuntimeError("FR3 stream stop was not acknowledged")
         # A deliberate force-stop is *not* endpoint completion. Its caller
         # receives the stock contact flag and must handle the partial stroke.
         if stop_wrench_z is not None and self._last_stop_on_contact:
             return result
-        state = self.arm.get_data()
         if (not isinstance(state, dict) or
                 np.asarray(state.get("qpos", [])).shape != (7,) or
                 np.asarray(state.get("qvel", [])).shape != (7,)):
@@ -109,9 +111,7 @@ class CompletionCheckedFrankaMixin:
         endpoint_error = float(np.linalg.norm(measured - path[-1, :7]))
         max_velocity = float(np.max(np.abs(velocity)))
         arm_error = bool(self.arm.is_error())
-        if (arm_error or
-                endpoint_error > self.completion_max_path_error_rad or
-                max_velocity > self.stop_max_joint_velocity_rad_s):
+        if arm_error or endpoint_error > self.completion_max_path_error_rad:
             raise RuntimeError(
                 "FR3 stream did not finish at a measured stationary endpoint "
                 f"(joint_error_l2_rad={endpoint_error:.6f}, "
@@ -132,6 +132,11 @@ class CompletionCheckedFrankaMixin:
         response = self.arm.stop_streaming()
         if not isinstance(response, dict) or response.get("type") != "success":
             return {"acknowledged": False, "reason": "stream_stop_not_accepted"}
+        stop, _state = self._await_stationary()
+        return stop
+
+    def _await_stationary(self) -> tuple[dict, dict | None]:
+        """Return the stationary acknowledgement and its measured state."""
         deadline = time.monotonic() + self.stop_wait_s
         while True:
             state = self.arm.get_data()
@@ -141,12 +146,12 @@ class CompletionCheckedFrankaMixin:
                     np.all(np.isfinite(velocity)) and
                     np.max(np.abs(velocity)) <=
                     self.stop_max_joint_velocity_rad_s):
-                return {"acknowledged": True,
-                        "max_joint_velocity_rad_s":
-                        float(np.max(np.abs(velocity)))}
+                return ({"acknowledged": True,
+                         "max_joint_velocity_rad_s":
+                         float(np.max(np.abs(velocity)))}, state)
             if time.monotonic() >= deadline:
-                return {"acknowledged": False,
-                        "reason": "stationary_feedback_not_observed"}
+                return ({"acknowledged": False,
+                         "reason": "stationary_feedback_not_observed"}, None)
             time.sleep(0.01)
 
 
