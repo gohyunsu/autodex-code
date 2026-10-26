@@ -249,6 +249,14 @@ wrist targets, place the entry key origin on the recorded socket XY axis,
 and move entry to verification by `0.020 m` along the recorded insertion
 axis (floating-point residual below `1.1e-16 m`). These records have zero
 retry XY correction, so they do not validate a physically applied correction.
+The current recipient stage's six cylinder task geometries (1, 3, 5, 10,
+15, and 20 mm gaps) were also checked independently of a camera pose.
+All keep one exact key rotation from preinsert through verification, move
+30 mm then 20 mm along the socket axis, and have zero lateral displacement
+in their CAD targets. The source hashes and per-gap results are in
+`/home/robot/shared_data/hyunsu/tmp/20261026_saved_sam_advice_pose_replay/current_stage_all_gap_axis_check.json`.
+This verifies the geometry assumption used by
+`compensated_key_hand_relation`; it is not a physical alignment measurement.
 
 A separate read-only arithmetic replay applied a synthetic socket-frame
 `(+2, -1) mm` wrist correction to all ten saved 10 mm and 20 mm post-lift
