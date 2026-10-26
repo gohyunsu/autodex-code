@@ -15,10 +15,6 @@ from .session_policy import SessionDecision
 @dataclass
 class LiveGroundedRetryHandlers:
     """Diagnose failure without moving or recapturing the released key.
-
-    Legacy adapter fields remain accepted so an existing robot-PC runtime
-    configuration can upgrade without a simultaneous configuration rewrite;
-    this action deliberately never calls them.
     """
 
     live: object
@@ -28,10 +24,6 @@ class LiveGroundedRetryHandlers:
     diagnostic_parameters: Mapping[str, object]
     xy_estimator: str = "vlm"
     sam_segmentor: object | None = None
-    state_for_capture: Callable | None = None
-    withdraw_guarded: Callable | None = None
-    capture_withdrawn: Callable | None = None
-    enable_robot_motion: bool = False
     decision_time: Callable[[], float] = time.time
 
     def _require(self, runner, decision: SessionDecision, action: str) -> None:

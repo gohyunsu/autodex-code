@@ -430,7 +430,7 @@ def test_first_party_qwen_and_fresh_checkpoint_callbacks(monkeypatch, tmp_path):
         assert stages["lift"]["capture_after_lift"]() == "after_lift"
         assert stages["task"]["capture_preinsert"]() == "preinsert"
         assert stages["task"]["capture_final"] is custom_capture
-        assert stages["retry"]["capture_withdrawn"]() == "preinsert"
+        assert "capture_withdrawn" not in stages["retry"]
         assert "capture_postshift" not in stages["retry"]
         return ()
 
@@ -448,7 +448,7 @@ def test_first_party_qwen_and_fresh_checkpoint_callbacks(monkeypatch, tmp_path):
         "max_new_tokens": 128, "require_native_pixels": True,
         "parallel_views": 1,
         "classification_image_size": (384, 288)}]
-    assert len(captures) == 3
+    assert len(captures) == 2
     assert all(timeout == 6.0 for _phase, timeout in captures)
 
 

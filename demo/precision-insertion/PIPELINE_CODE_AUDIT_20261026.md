@@ -1,7 +1,7 @@
 # Current code audit: key tip, transforms, and recovery latency
 
 This audit compares the local stock `/home/robot/AutoDex` checkout at
-`448732d` with `feat/precision-insertion` through `8af32ec` and the changes
+`448732d` with `feat/precision-insertion` through `bf3b880` and the changes
 described below. It is a source and saved-evidence review. No camera,
 controller, or robot was started.
 
@@ -11,7 +11,7 @@ controller, or robot was started.
 | --- | --- | --- |
 | Tabletop key | Capture-PC SAM3/FoundPose, admitted by `key_perception.py`, yields a fresh `T_robot_key`. | Reuses AutoDex's multi-view object processing. |
 | Candidate wrist | `candidates.planner_candidate_override` reads object-local `wrist_se3.npy` as `T_key_hand` and passes `T_robot_key @ T_key_hand` to the stock planner. | This is the convention in stock `run_auto.py`: the candidate wrist is transformed by the observed object pose before planning. |
-| Post-lift held relation | `nominal_postlift.py` uses that selected candidate relation; other explicit routes can use an independently observed or bounded relation. `compensated_key_hand_relation` maps a next-trial socket XY correction into the relation's key-frame translation. | Stock `run_auto.py` records both world `wrist_se3.npy` and `inv(T_robot_key) @ wrist_se3` for later object-local reuse. The demo's nominal relation follows the latter convention. |
+| Post-lift held relation | The current cylinder live assembly uses `nominal_postlift.py` and the selected v8 candidate relation. `compensated_key_hand_relation` maps a next-trial socket XY correction into the relation's key-frame translation. The cylinder live assembly does not select the other held-relation implementations. | Stock `run_auto.py` records both world `wrist_se3.npy` and `inv(T_robot_key) @ wrist_se3` for later object-local reuse. The demo's nominal relation follows the latter convention. |
 | Preinsert / entry / verification | `targets.build_rigid_insertion_targets` composes `T_robot_socket @ T_socket_key @ T_key_hand`. The socket-frame XY offset is applied before this composition; the insertion direction is rotated by `T_robot_socket`. | Stock's world-vertical Jacobian stroke cannot directly represent a tilted socket axis. The demo's axial path and sampled held-key audit are insertion-specific. |
 | Failed return / reorientation | `original_pose_restoration.py` measures a fresh tabletop key, classifies its v8 pose, loads the selected local wrist relation, plans pickup and a CAD rest target, then checks release and exit. `repose_transition.py` uses saved v8 reset seeds for pose changes. | The candidate-to-world wrist multiplication and wrist-to-object inversion match stock `run_auto.py` and `executor/real.py`. A planned landing is not proof of the actual landed pose; the next trial recaptures the key. |
 
@@ -248,10 +248,14 @@ On the same five real saved observations, removing any one camera changes the
 fitted socket-frame XY by at most `0.79 mm`. Across all ten three-camera
 subsets, the largest change from the five-view fit is `2.52 mm`. Camera
 `25322649` has a `6.83 px` residual in the five-view fit; it remains within
-the tip proxy's `15 px` observation tolerance. This sensitivity check supports
-using the five selected views for the optional SAM retry and retaining each
-per-camera residual in the report. It does **not** establish the true physical
-key face center or justify a tighter failure gate. The source-frame replay is
+the tip proxy's `15 px` observation tolerance. The largest difference in the
+bounded next-trial wrist step was `0.63 mm`. The distributed live path starts
+all five views and now returns after three consistent metric SAM points;
+otherwise it waits for later views. All source frames remain bound, while the
+diagnostic stores the views completed before its decision. This saved-case
+sensitivity quantifies the latency/precision tradeoff but does **not**
+establish the true physical key face center or justify a tighter failure gate.
+The source-frame replay is
 `/home/robot/shared_data/hyunsu/tmp/20261026_sam_half_ellipse_live_wiring/tip_subset_sensitivity_saved_replay.json`.
 The saved mask/component review is at
 `/home/robot/shared_data/hyunsu/tmp/20261026_sam_half_ellipse_live_wiring/mask_component_association_saved_replay.json`.
@@ -618,17 +622,27 @@ but the optional SAM mode has no live robot execution or physical tip ground
 truth in this audit. After the measured-EE mount correction and its saved
 raw-state regression, the same complete command passed again:
 **1205 passed, 5 skipped in 42.98 s**. The mount-focused tests passed
-**46/46**. A static
-`run_robot_pc.sh --check` attempt stopped before any camera or robot connection
-because `PRECISION_STAGE_ROOT` is unset and the former recipient stage is in
-`hyunsu/tmp/20261023_prev`, not an active installation.
+**46/46**. A later complete run in the `flir_env` environment passed
+**1210 tests with 4 skipped and 1 deselected**; the deselected test imports
+stock cuRobo, which is absent from that environment. In `planner` it skipped
+because this execution environment exposes no CUDA device. The current
+recipient stage at `/home/robot/precision_stage_20261026` passed the
+file-only `run_robot_pc.sh --check` without camera or robot access. Its launch
+scope is `static_preflight_only`, so it cannot start a physical trial.
+The current runtime config selects the nominal v8 held relation. The failed
+trial handler no longer accepts four unused legacy motion/capture adapter
+fields, and the integration factory no longer creates the unused withdrawn
+capture callback. Its non-moving handler, assembly and session-runner tests
+pass (56 passed, 3 skipped); the factory/stage/handler focused tests pass
+55/55 after this removal.
 
 ## Remaining evidence needed
 
 1. Replay additional rejected-socket and failed-grasp episodes with this
    optional route; distinguish bad fixture pose from key-mask error.
-2. Restore and rehydrate an active recipient stage, then run static
-   `run_robot_pc.sh --check` without connecting cameras or the robot.
+2. Commission an active live recipient stage from the checked file-only
+   stage, including a current socket scene and hardware readiness. The
+   static `--check` has passed, but it does not test physical execution.
 3. Measure actual planning and recovery times after the AABB change. Local
    unit-fixture timings cannot establish an end-to-end gain.
 4. Independently check physical mount/hand-eye and held-key motion on the

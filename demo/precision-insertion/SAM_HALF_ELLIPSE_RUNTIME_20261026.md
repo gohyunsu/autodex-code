@@ -93,6 +93,15 @@ in that diagnostic report. Remaining remote calls drain before the SAM worker
 is closed. The five-view replay above deliberately evaluates every view and
 is not a live latency measurement.
 
+The saved `20261022_103429_752726` five-view tip points were replayed through
+all ten three-view combinations in
+`/home/robot/shared_data/hyunsu/tmp/20261026_sam_half_ellipse_live_wiring/tip_subset_sensitivity_saved_replay.json`.
+All ten returned a metric fit. Relative to the five-view fit, the largest
+tip XY difference was 2.52 mm and the largest bounded next-trial step
+difference was 0.63 mm. This supports the early three-view decision as a
+latency choice for that saved case; it does not establish physical tip
+accuracy or the same spread for another camera scene.
+
 The saved comparison does not prove physical key-tip accuracy, fixture-pose
 accuracy, or insertion success. A new file-only 20 mm recipient stage at
 `/home/robot/precision_stage_20261026` passed `run_robot_pc.sh --check` with

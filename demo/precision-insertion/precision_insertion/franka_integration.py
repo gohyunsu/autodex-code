@@ -54,7 +54,6 @@ _CHECKPOINT_CAPTURES = {
     "lift": {"capture_after_lift": "after_lift"},
     "task": {"capture_preinsert": "preinsert",
              "capture_final": "final_clear_view"},
-    "retry": {"capture_withdrawn": "preinsert"},
 }
 _TIP_CAMERA_ID = "25322651"
 _TIP_CAMERA_HOST = "capture2"

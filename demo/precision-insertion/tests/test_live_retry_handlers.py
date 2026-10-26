@@ -62,7 +62,7 @@ def test_live_grounded_advice_never_moves_xy_in_same_attempt(
         retry_limits=SimpleNamespace(max_total_offset_m=0.003),
         alignment_limits=object(),
         diagnostic_parameters={},
-        enable_robot_motion=True, decision_time=lambda: 10.0)
+        decision_time=lambda: 10.0)
     handler = live_retry_handlers.LiveGroundedRetryHandlers(
         **params, xy_estimator=estimator)
     handler.assess_for_next_trial(runner, decision)
