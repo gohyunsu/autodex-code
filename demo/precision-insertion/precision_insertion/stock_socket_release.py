@@ -7,10 +7,13 @@ saved socket axis and follows a stock cuRobo joint retract to clear view.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
 import time
+
+import numpy as np
 
 from .franka_completion_checked import is_demo_completion_checked_executor
 from .insertion_checkpoint import _metric_record
@@ -25,6 +28,15 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+@dataclass(frozen=True)
+class _PreparedRelease:
+    attempt_id: str
+    report_path: Path
+    report_sha256: str
+    report: dict
+    paths: dict[str, np.ndarray]
+
+
 class StockSocketRelease:
     """One-use callback for the same FR3 executor and frozen camera session."""
 
@@ -37,7 +49,7 @@ class StockSocketRelease:
         self.planner = planner
         self.read_state = read_state
         self.path_limits = path_limits
-        self._prepared: tuple[str, Path, str] | None = None
+        self._prepared: _PreparedRelease | None = None
 
     def prepare(self, live, runner, decision, handoff_report_path: Path) -> Path:
         """Preflight opening and exit before the robot enters the socket."""
@@ -45,7 +57,7 @@ class StockSocketRelease:
                 runner.current_decision() != decision or
                 decision.action != "await_guarded_insertion_and_observation" or
                 runner.active_attempt is None or
-                self._prepared is not None and self._prepared[0] ==
+                self._prepared is not None and self._prepared.attempt_id ==
                 runner.active_attempt.attempt_id):
             raise ValueError("release preflight belongs to another live attempt")
         report = plan_socket_release_exit(
@@ -53,23 +65,28 @@ class StockSocketRelease:
             handoff_report_path=handoff_report_path,
             limits=self.path_limits,
             output_dir=Path(runner._attempt_dir) / "socket_release_plan")
-        verify_socket_release_plan(report)
-        self._prepared = (runner.active_attempt.attempt_id, report, _sha(report))
+        verified, paths = verify_socket_release_plan(report)
+        # The insertion stroke follows immediately. Keep the already verified
+        # plan in memory so release does not re-read meshes and archives while
+        # the robot is at the socket.
+        self._prepared = _PreparedRelease(
+            runner.active_attempt.attempt_id, report, _sha(report),
+            verified, paths)
         return report
 
     def __call__(self, live, runner, decision, execution: dict) -> Path:
         if (runner is not live.opened.runner or
                 runner.current_decision() != decision or
                 decision.action != "await_guarded_insertion_and_observation" or
+                runner.active_attempt is None or
                 self._prepared is None or
-                self._prepared[0] != runner.active_attempt.attempt_id or
+                self._prepared.attempt_id != runner.active_attempt.attempt_id or
                 execution.get("safety_abort") is not False or
                 execution.get("grasp_held") is not True):
             raise ValueError("socket release needs this completed held stroke")
-        report_path = self._prepared[1]
-        if _sha(report_path) != self._prepared[2]:
-            raise ValueError("socket release plan changed after preflight")
-        report, paths = verify_socket_release_plan(report_path)
+        prepared = self._prepared
+        report_path = prepared.report_path
+        report, paths = prepared.report, prepared.paths
         scene_sha = hashlib.sha256(json.dumps(
             runner.calibration.collision_scene, sort_keys=True,
             allow_nan=False).encode()).hexdigest()
@@ -103,7 +120,7 @@ class StockSocketRelease:
             json.dump({"schema": "precision_insertion_socket_release_started_v1",
                        "attempt_id": runner.active_attempt.attempt_id,
                        "release_plan": {"path": str(report_path),
-                                        "sha256": _sha(report_path)},
+                                        "sha256": prepared.report_sha256},
                        "metric_record": metric_ref,
                        "started_at_s": started_at}, stream,
                       indent=2, sort_keys=True, allow_nan=False)
@@ -140,7 +157,7 @@ class StockSocketRelease:
                 "guarded_execution": {"path": str(metric_path),
                                       "sha256": _sha(metric_path)},
                 "release_plan": {"path": str(report_path),
-                                 "sha256": _sha(report_path)},
+                                 "sha256": prepared.report_sha256},
                 "started_at_s": started_at,
                 "release_completed_at_s": release_completed,
                 "clear_view_completed_at_s": clear_completed,

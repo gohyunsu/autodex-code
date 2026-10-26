@@ -2,9 +2,9 @@
 
 AutoDex's ``src.execution.franka_executor.FrankaExecutor`` owns the initial
 free-space ``home(clear_view=True)``; ``autodex.executor.real.RealExecutor``
-is the xArm executor and must never be used for this demo. The Franka executor
-motion. After any trial, a release handler must instead execute its planned
-vertical exit and socket-aware retract before this gate admits a new image.
+is the xArm executor and must never be used for this demo. After an insertion,
+the release handler follows the planned socket-axis exit and retract before
+this gate admits a new image.
 """
 
 from __future__ import annotations

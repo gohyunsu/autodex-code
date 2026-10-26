@@ -398,6 +398,16 @@ record. `trial.release_and_clear` now has nested open-hand, socket-axis exit,
 and clear-view retract spans. These changes add diagnosis and timing without
 changing motion or admission thresholds. `test_socket_release.py` covers both
 exit failure phases and terminal error reporting without connecting a robot.
+The stock `FrankaExecutor.release()` marks `_holding_object=False` after its
+hand ramp, so the axis exit and clear-view retract use the empty-hand follower
+profile. The daemon's `stop_streaming` command also accepts a repeated stop;
+the demo's measured stop acknowledgement does not introduce a daemon error.
+The release callback now retains the verified report and joint paths from its
+pre-insertion `prepare()` call. It no longer reloads the key mesh and path
+archives after the insertion stroke while the arm is at the socket. The saved
+release record still uses the report hash calculated at preparation. This
+removes duplicate file validation from the motion path; it does not alter the
+planned geometry, stop behavior, or endpoint criterion.
 
 The saved 10 mm session `20261022_105828_126084` spent 22.99 s auditing
 498 nominal samples before pickup and 42.72 s auditing 263 new transfer/axial
@@ -428,6 +438,14 @@ mixed into these plans. These tests and algebraic checks do not establish physic
 placement accuracy. An attempted full test collection stopped while importing
 cuRobo because CUDA was unavailable to PyTorch in this environment at that
 time; no full-suite pass is claimed.
+The release, completion, clear-view, force insertion, live task, FR3 assembly,
+SAM ROI, XY transform, and session-runner regressions were rerun after caching
+the release plan: 119 passed, four skipped. One skipped test imports the stock
+executor and requires CUDA; it now imports stock only when executed, so the
+completion wrapper's CPU-only regressions still run on this PC. A static
+`run_robot_pc.sh --check` attempt stopped before any camera or robot connection
+because `PRECISION_STAGE_ROOT` is unset and the former recipient stage is in
+`hyunsu/tmp/20261023_prev`, not an active installation.
 
 ## Remaining evidence needed
 

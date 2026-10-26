@@ -152,6 +152,15 @@ def test_release_plan_rejects_axis_exit_collision_before_saving(
 def test_stock_release_executes_preplanned_axis_exit_then_clear_view(
         tmp_path, monkeypatch):
     runner, handoff, limits, planner, axial = _setup(tmp_path, monkeypatch)
+    verify_plan = stock_socket_release.verify_socket_release_plan
+    verified_paths = []
+
+    def count_verification(path):
+        verified_paths.append(path)
+        return verify_plan(path)
+
+    monkeypatch.setattr(stock_socket_release, "verify_socket_release_plan",
+                        count_verification)
     monkeypatch.setattr(socket_release, "_check_path", lambda *_: {
         "all_feasible": True, "first_invalid_index": None,
         "status": None, "backend": "fake_stock_rollout"})
@@ -213,6 +222,7 @@ def test_stock_release_executes_preplanned_axis_exit_then_clear_view(
     release_path = callback(live, runner, decision, execution)
     saved = json.loads(release_path.read_text(encoding="utf-8"))
     assert saved["status"] == "released_and_clear_view"
+    assert verified_paths == [plan_path]
     assert actions[0] == "open"
     assert actions.count("verify") == 2
     np.testing.assert_allclose(q[:7], FR3_CLEAR_VIEW)

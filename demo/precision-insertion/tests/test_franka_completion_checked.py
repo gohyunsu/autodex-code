@@ -21,7 +21,6 @@ from precision_insertion import franka_completion_checked  # noqa: E402
 from precision_insertion.pickup_execution import (  # noqa: E402
     _reject_known_stock_follower,
 )
-from src.execution.franka_executor import FrankaExecutor  # noqa: E402
 from autodex.utils.robot_config import FR3_CLEAR_VIEW  # noqa: E402
 
 
@@ -230,6 +229,13 @@ def test_held_motion_requests_reflex_abort_in_stock_follower(monkeypatch):
 
 
 def test_blocking_move_reports_daemon_reflex_instead_of_target_error():
+    try:
+        from src.execution.franka_executor import FrankaExecutor
+    except RuntimeError as exc:
+        if "No CUDA GPUs are available" not in str(exc):
+            raise
+        pytest.skip("stock FrankaExecutor import requires CUDA")
+
     class ReflexArm:
         def move(self, _target, **_kwargs):
             return {"type": "error", "message": "cartesian_reflex"}
