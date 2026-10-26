@@ -144,6 +144,29 @@ def test_dinf_v8_pose_is_invariant_to_yaw_and_end_exchange(
                 tabletop[:3, :3] @ [0., 0., 1.], atol=1e-9)
 
 
+@pytest.mark.parametrize("kind,flip", [
+    ("Cinf", np.eye(3)),
+    ("Dinf", np.diag([1., -1., -1.])),
+])
+def test_tabletop_axis_snap_preserves_observed_cad_center_with_tilt(
+        tmp_path, kind, flip):
+    tabletop = _pose(tilt_deg=90.)
+    name = _object(tmp_path, kind=kind, tabletop=tabletop)
+    center = np.array([0., 0., .04])
+    observed = tabletop.copy()
+    observed[:3, :3] = _pose(yaw_deg=25., tilt_deg=7.)[:3, :3] @ (
+        tabletop[:3, :3] @ flip)
+    observed[:3, 3] = [.35, -.12, .057]
+    physical_center = observed[:3, :3] @ center + observed[:3, 3]
+    snapped = snap_axisymmetric_tabletop_pose(
+        observed, object_root=tmp_path, object_name=name,
+        max_axis_error_deg=20.)
+    np.testing.assert_allclose(
+        snapped[:3, :3] @ center + snapped[:3, 3],
+        physical_center, atol=1e-12)
+    assert np.linalg.norm(snapped[:3, 3] - observed[:3, 3]) > .001
+
+
 def test_cinf_socket_cannot_flip_open_and_closed_ends(tmp_path):
     name = _object(tmp_path, kind="Cinf")
     upside_down = _pose()
@@ -220,6 +243,41 @@ def test_trial_scene_reuses_frozen_table_and_socket_but_refreshes_key(
     assert all(row[1] == mode.key_object and
                row[2] == str(tmp_path / "object_processing") and
                row[3] is session.board for row in seen)
+
+
+def test_cylinder_scene_preserves_observed_center_through_camera_to_robot_snap(
+        tmp_path, monkeypatch):
+    mode = select_mode("cylinder", 20)
+    session, _ = _session(tmp_path, mode)
+    _object(tmp_path / "object_processing", name=mode.key_object)
+    c2r = np.eye(4)
+    c2r[:3, 3] = [.2, -.1, .04]
+    session.record["c2r"] = c2r.tolist()
+    observed_robot = _pose(tilt_deg=7.)
+    observed_robot[:3, 3] = [.4, .1, .05]
+
+    def make_scene(pose_world, transform, _name, *, obj_root,
+                   tabletop_geometry):
+        assert obj_root == str(tmp_path / "object_processing")
+        return {
+            "mesh": {"target": {
+                "pose": se32cart(np.linalg.inv(transform) @ pose_world).tolist(),
+                "file_path": "key.obj"}},
+            "cuboid": {"table": table_cuboid(tabletop_geometry)},
+        }
+
+    monkeypatch.setattr("src.execution.scene_cfg.pose_world_to_scene_cfg",
+                        make_scene)
+    scene = build_trial_scene_from_session(
+        mode=mode, shared_root=tmp_path, calibration=session,
+        key_pose_world=c2r @ observed_robot)
+    from autodex.utils.conversion import cart2se3
+    snapped = cart2se3(np.asarray(scene["mesh"]["target"]["pose"]))
+    center = np.array([0., 0., .04])
+    np.testing.assert_allclose(
+        snapped[:3, :3] @ center + snapped[:3, 3],
+        observed_robot[:3, :3] @ center + observed_robot[:3, 3],
+        atol=1e-12)
 
 
 def test_trial_scene_rejects_wrong_socket_mode_or_changed_mesh(tmp_path, monkeypatch):

@@ -71,16 +71,19 @@ def snap_axisymmetric_tabletop_pose(
     object_name: str,
     max_axis_error_deg: float = 20.0,
 ) -> np.ndarray:
-    """Express a cylinder pose in its v8 tabletop frame.
+    """Express a cylinder pose in its v8 tabletop frame about its CAD center.
 
-    D∞ end exchange rotates about the object's symmetry center. Its local
-    origin moves when the two ends exchange, while the physical mesh stays
-    fixed. The v8 grasp candidates use the tabletop pose's end convention.
+    Both the small axis snap and a D∞ end exchange change the local origin.
+    Preserve the observed physical center while choosing the v8 orientation;
+    the stock scene builder separately raises a key that penetrates the table.
     """
+    observed = validate_se3(pose_robot, name="observed cylinder pose")
     snapped, stem, _ = match_axisymmetric_tabletop_pose(
-        pose_robot, object_root=object_root, object_name=object_name,
+        observed, object_root=object_root, object_name=object_name,
         max_axis_error_deg=max_axis_error_deg)
     symmetry = load_axial_symmetry(object_root, object_name)
+    center = symmetry.center_local
+    center_robot = observed[:3, :3] @ center + observed[:3, 3]
     tabletop = validate_se3(np.load(
         Path(object_root) / object_name / "processed_data" / "info" /
         "tabletop" / f"{stem}.npy"), name=f"tabletop {stem}")
@@ -89,10 +92,9 @@ def snap_axisymmetric_tabletop_pose(
                    tabletop[:3, :3] @ symmetry.axis_local) < 0):
         axis = symmetry.end_exchange_axis_local
         flip = 2.0 * np.outer(axis, axis) - np.eye(3)
-        center = symmetry.center_local
-        snapped[:3, 3] += snapped[:3, :3] @ (center - flip @ center)
         snapped[:3, :3] = snapped[:3, :3] @ flip
-    return snapped
+    snapped[:3, 3] = center_robot - snapped[:3, :3] @ center
+    return validate_se3(snapped, name="center-preserving v8 cylinder pose")
 
 
 def match_axisymmetric_tabletop_pose(

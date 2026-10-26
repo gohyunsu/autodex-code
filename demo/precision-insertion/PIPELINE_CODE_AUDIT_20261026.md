@@ -43,10 +43,32 @@ controller record contains the pickup, lift, transfer, supported descent,
 release, exit, and acknowledged stop, but this historical attempt has no
 `reset_landing.json` or later key image. It therefore proves the planned
 coordinate arithmetic and recorded robot waypoints, not where the key
-physically landed. The nominal midpoint has not been rechecked against the
-historical mesh because its stage was moved; the current runtime must not
-depend on that archived stage. The source hashes, matrices and calculation are
-in `/home/robot/shared_data/hyunsu/tmp/20261026_restoration_pose_replay/`.
+physically landed. The archived stage is now available under
+`hyunsu/tmp/20261023_prev`. Its raw key mesh and selected v8 wrist relation
+are byte-identical to the current 20 mm recipient stage: the mesh bounds are
+`[-15, -15, 0]` to `[15, 15, 80]` mm and its actual CAD center is
+`[0, 0, 40]` mm. Recomputing with that mesh yields the same sub-nanometer XY
+center difference between the saved original and planned rest pose. The
+hash-bound calculation is in
+`/home/robot/shared_data/hyunsu/tmp/20261026_restoration_pose_replay/current_stage_mesh_transform_check.json`.
+It verifies saved geometry and stock-equivalent wrist composition, not the
+physical landing.
+
+The same replay exposed a separate cylinder symmetry error before pickup
+planning. `snap_axisymmetric_tabletop_pose` previously replaced the measured
+rotation with the nearest v8 tabletop orientation about the **mesh origin**.
+It compensated the D∞ end flip about the CAD center, but not the smaller
+axis snap. The measured physical center therefore moved in the generated key
+scene. Among 43 saved key observations with frozen calibration, the largest
+artificial XY shift was **0.876 mm**. The snap now preserves the observed CAD
+center for both orientation operations; stock `pose_world_to_scene_cfg`
+continues to raise any resulting tabletop mesh penetration to the measured
+surface. A synthetic tilt and nonidentity camera-to-robot transform test
+exercise the live scene path. The saved-pose comparison and source hashes are
+in `/home/robot/shared_data/hyunsu/tmp/20261026_restoration_pose_replay/saved_key_snap_center_comparison.json`.
+This is a coordinate correction, not evidence that FoundPose's measured center
+or a future grasp is physically accurate. The full non-moving demo suite after
+this change passes **1226 passed, 5 skipped**.
 
 `run_auto.py`, `run_pipeline.py`, `scene_cfg.py`, and `executor/real.py` are byte-identical in the two local
 checkouts. `autodex/planner/planner.py` differs by one constructor option:

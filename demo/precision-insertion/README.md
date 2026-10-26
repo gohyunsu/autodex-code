@@ -7,6 +7,8 @@ failure thresholds is in
 [FAILURE_GATE_AUDIT_20261017.md](FAILURE_GATE_AUDIT_20261017.md).
 The post-lift code review and preinsert VLM/overlay overlap are in
 [DOWNSTREAM_AUDIT_20261021.md](DOWNSTREAM_AUDIT_20261021.md).
+The current pose-transform and saved-key center replay are in
+[PIPELINE_CODE_AUDIT_20261026.md](PIPELINE_CODE_AUDIT_20261026.md).
 The current fixed-cylinder socket localization and its saved-camera replay
 are in [RECOVERY_REVIEW_20261021.md](RECOVERY_REVIEW_20261021.md).
 
