@@ -196,7 +196,7 @@ def test_held_return_reuses_withdrawal_after_inspire_fingers_settle(
         tmp_path / "withdrawal.json")
 
 
-def test_reused_withdrawal_rejects_a_moved_arm_before_return(tmp_path):
+def test_reused_withdrawal_replans_from_fresh_moved_arm(tmp_path, monkeypatch):
     bound, runner, events = _setup(tmp_path)
     current = replace(_state(), sample_timestamp_s=21.,
                       arm_timestamp_s=21., hand_timestamp_s=21.)
@@ -204,7 +204,26 @@ def test_reused_withdrawal_rejects_a_moved_arm_before_return(tmp_path):
     bound.read_state = lambda: current
     bound.reuse_withdrawal = lambda: (
         "attempt_001", _state(), tmp_path / "withdrawal.json")
-    with pytest.raises(ValueError, match="robot moved"):
+    observation = SimpleNamespace(acquisition_interval_s=(30., 31.))
+    monkeypatch.setattr(
+        live_recovery_handlers, "verify_failed_return_execution",
+        lambda **_kwargs: {"plan_report": {
+            "path": str((tmp_path / "return_plan.json").resolve())}})
+    monkeypatch.setattr(
+        live_recovery_handlers, "capture_returned_key_for_reset",
+        lambda **kwargs: ReturnedKeyCapture(
+            observation, current, kwargs["key_evidence_dir"]))
+    bound.recover(runner, runner.current_decision())
+    assert "withdraw" not in events
+    assert runner.events[0][1]["withdrawn_state"] is current
+
+
+def test_reused_withdrawal_still_requires_newer_feedback(tmp_path):
+    bound, runner, events = _setup(tmp_path)
+    bound.read_state = _state
+    bound.reuse_withdrawal = lambda: (
+        "attempt_001", _state(), tmp_path / "withdrawal.json")
+    with pytest.raises(ValueError, match="newer measured state"):
         bound.recover(runner, runner.current_decision())
     assert "withdraw" not in events
     assert not runner.events

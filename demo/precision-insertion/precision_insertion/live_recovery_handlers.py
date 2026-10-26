@@ -50,7 +50,6 @@ _RETURN_KEYS = frozenset({
     "max_withdrawal_state_gap_s", "max_arm_hand_skew_s",
     "max_hand_command_error_raw", "max_arm_velocity_rad_s",
 })
-_RETURN_OPTIONAL = frozenset({"max_reused_withdrawal_arm_drift_rad"})
 _LANDING_KEYS = frozenset({
     "max_pose_error_deg", "max_return_center_shift_m",
     "support_tolerance_m", "minimum_rest_socket_clearance_m",
@@ -102,7 +101,7 @@ class LiveHeldReturnHandlers:
                 ("capture", self.capture_parameters, _CAPTURE_KEYS,
                  _CAPTURE_OPTIONAL),
                 ("return", self.return_parameters, _RETURN_KEYS,
-                 _RETURN_OPTIONAL),
+                 frozenset()),
                 ("landing", self.landing_parameters, _LANDING_KEYS, frozenset())):
             if not isinstance(provided, Mapping):
                 raise TypeError(f"{name} limits must be a mapping")
@@ -244,16 +243,8 @@ class LiveHeldReturnHandlers:
                 current = self.read_state()
                 if not isinstance(current, LiveRobotState):
                     raise TypeError("reused withdrawal needs measured robot state")
-                drift = self.return_parameters.get(
-                    "max_reused_withdrawal_arm_drift_rad", .02)
-                if (type(drift) not in (int, float) or drift <= 0 or
-                        not np.isfinite(drift) or
-                        current.sample_timestamp_s <=
-                        previous[1].sample_timestamp_s or
-                        np.max(np.abs(current.full_q[:7] -
-                                      previous[1].full_q[:7])) >
-                        drift):
-                    raise ValueError("robot moved after the reusable withdrawal")
+                if current.sample_timestamp_s <= previous[1].sample_timestamp_s:
+                    raise ValueError("reused withdrawal needs newer measured state")
                 withdrawal = (current, previous[2])
         if withdrawal is None:
             if not callable(self.withdraw_guarded):
@@ -263,12 +254,10 @@ class LiveHeldReturnHandlers:
                 not isinstance(withdrawal[0], LiveRobotState)):
             raise TypeError("guarded withdrawal must return measured state and log")
         withdrawn_state, withdrawal_path = withdrawal
-        return_parameters = dict(self.return_parameters)
-        return_parameters.pop("max_reused_withdrawal_arm_drift_rad", None)
         held, release, report_path = runner.prepare_failed_insertion_return(
             planner=self.planner, withdrawn_state=withdrawn_state,
             withdrawal_evidence_path=Path(withdrawal_path),
-            limits=self.limits, **return_parameters)
+            limits=self.limits, **self.return_parameters)
         invoked = False
 
         def run_planned_return(evidence_sink=None):

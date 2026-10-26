@@ -947,13 +947,21 @@ second withdrawal, then plans the key's return from fresh measured joints.
 Its extra 0.02 rad unchanged-pose check previously compared all 13 joints.
 Measured Inspire fingers can settle against the held object even when the arm
 has not moved; stock AutoDex does not use finger settling to reject a return.
-The comparison now covers the seven FR3 arm joints only. The current
-Inspire feedback still has to agree with its raw motor readings and the
-configured command-error limit, and the return planner still uses the current
-measured 13-joint state, source-bound ascent log and sampled path audit. A
-non-moving regression uses a valid 20-raw-unit finger change (over 0.02 rad)
-with a stationary arm, and the existing moved-arm test still rejects 0.1 rad.
-This is a software-path check, not evidence that a physical key remained held.
+The first revision limited that comparison to the seven FR3 arm joints. A
+further stock comparison showed that even this 0.02 rad fixed difference
+gate was redundant: `plan_repose_held_from_state` takes the newly measured
+13-joint state, computes the held key pose by wrist FK, and plans and audits
+the return path from that state. The handler now checks that the new feedback
+follows the logged ascent in time and belongs to the same attempt, then lets
+the existing measured-state validation and path planner decide whether a
+return is possible. It does not command a second withdrawal. A regression
+confirms a 0.1 rad changed arm state reaches planning as the actual start;
+another rejects feedback that did not advance after the ascent. Neither test
+proves that a physical key remains in the hand.
+After removing the fixed arm-difference gate, the full non-moving suite
+passes **1235 passed, 5 skipped**. The 20 mm file-only `--check` reports 98
+eligible candidates and `robot_ready=false`; it does not open cameras or
+command the FR3.
 
 The saved `20261021_092625_546425` recovery-key capture took 64.015 s,
 including approximately 50.08 s waiting for the first stock PNG writes.
@@ -966,9 +974,9 @@ cold read but only about 0.011 s to hash after they were cached. The XY
 diagnostic necessarily reads those selected images for inference, so removing
 its later byte-hash check would not remove that cold read and offers no
 material measured latency gain here. The source-hash check remains.
-The full non-moving suite after the arm-only comparison passes **1234
-passed, 5 skipped**. The 20 mm file-only `--check` still reports 98 eligible
-candidates, `execution_scope=static_preflight_only`, and `robot_ready=false`.
+The earlier arm-only comparison passed **1234 passed, 5 skipped** before
+the fixed arm-difference gate was removed. The current full-suite result is
+reported above.
 
 ## Remaining evidence needed
 
