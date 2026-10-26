@@ -50,6 +50,8 @@ def test_board9_binding_assembles_all_current_actions_without_hardware():
     parameters = configure(core, live, options)
     assert calls == []  # constructing the binding never opens a controller
     assert parameters["held_relation_route"] == "nominal"
+    assert "max_candidate_attempts" not in (
+        parameters["stages"]["key_planning"]["key_parameters"])
     assert parameters["stages"]["pickup"]["lift_bounds"] is None
     assert parameters["stages"]["retry"]["retry_limits"].max_total_offset_m is None
     assert parameters["stages"]["task"]["insertion_limits"].max_execution_duration_s == 90

@@ -153,7 +153,6 @@ def configure(core, live, options) -> dict:
                     **capture, **stationary,
                     "max_pose_error_deg": 10.,
                     "axial_waypoint_step_m": .005,
-                    "max_candidate_attempts": 1,
                 },
             },
             "pickup": {

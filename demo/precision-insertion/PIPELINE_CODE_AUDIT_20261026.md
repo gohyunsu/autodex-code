@@ -245,6 +245,20 @@ not removed solely because the stock pipeline lacks them. In particular,
 unknown key location after a controller abort cannot be turned into a
 measured `outside_socket` XY correction.
 
+The active board-9 FR3 stage previously limited the first key preflight to
+one v8 grasp. A failed first candidate returned `candidate_budget_exhausted`;
+`LiveKeyPlanningHandlers.continue_same_capture` then immediately planned the
+remaining candidates from the same saved key pose and measured joint state.
+Among 34 saved 20 mm preflight reports from October 20–22, 15 first reports
+ended at this artificial budget, and the continuation was needed to reach the
+next candidate. The stage now uses `prepare_next_live_key`'s existing
+unlimited default, so one preflight evaluates eligible grasps until one passes
+or the pose is exhausted, as stock AutoDex's candidate search does. The
+general same-capture continuation remains available for an explicitly
+budgeted stage. This removes an intermediate report and decision lookup, not
+the real IK or held-key checks. Historical timing cannot establish a measured
+live speedup for this configuration change.
+
 The optional `tracked_tip` retry path can use a capture-PC JPEG window around
 the exact preinsert frame. The per-camera record now distinguishes the raw
 PNG observation from the effective temporal-median pixel used for multiview
