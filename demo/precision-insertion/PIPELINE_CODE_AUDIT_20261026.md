@@ -980,6 +980,17 @@ reported above.
 
 ## Remaining evidence needed
 
+The SAM static readiness path now passes the requested estimator through
+`run_robot_pc.sh --check` to `run_live.py --preflight`. The report names the
+selected mode and the resolved SAM Python/checkpoint files and size. A missing
+checkpoint fails at this read-only stage instead of first appearing at live
+startup. With the current 20 mm recipient stage it reports 98 eligible
+candidates and `robot_ready=false`; this does not verify model loading or
+physical tip accuracy. `test_live_runtime.py` checks both present and missing
+SAM inputs without opening FR3 or importing stage code. The full non-moving
+suite passes **1235 passed, 5 skipped**; the selected SAM `--check` reports
+the model file and `robot_ready=false`.
+
 1. Replay additional rejected-socket and failed-grasp episodes with this
    optional route; distinguish bad fixture pose from key-mask error.
 2. Commission an active live recipient stage from the checked file-only

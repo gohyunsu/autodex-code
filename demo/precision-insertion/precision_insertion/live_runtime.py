@@ -88,8 +88,11 @@ def _stage_module_on_path(specification: str) -> bool:
 def inspect_live_inputs(
     *, launch_config_path: Path, endpoint_catalog_path: Path,
     robot_config_path: Path | None = None,
+    xy_estimator: str = "vlm",
 ) -> dict:
     """Check current v8 inputs without cameras, CUDA or robot construction."""
+    if xy_estimator not in {"vlm", "tracked_tip", "sam_half_ellipse"}:
+        raise ValueError("unknown failed-trial XY estimator")
     launch = load_session_launch(
         launch_config_path, allow_existing_evidence=True)
     if launch.mode.family != "cylinder":
@@ -113,9 +116,21 @@ def inspect_live_inputs(
         "eligible_candidate_count": sum(
             row.get("eligible") is True for row in catalog["candidates"]),
         "robot_config": None,
+        "xy_estimator": xy_estimator,
+        "sam_roi_inputs": None,
         "scope": "static_files_only_no_camera_cuda_or_robot_connection",
         "robot_ready": False,
     }
+    if xy_estimator == "sam_half_ellipse":
+        from .franka_integration import _sam_runtime_paths
+
+        python, checkpoint = _sam_runtime_paths()
+        result["sam_roi_inputs"] = {
+            "python": str(python),
+            "checkpoint": str(checkpoint),
+            "checkpoint_size_bytes": checkpoint.stat().st_size,
+            "scope": "file_presence_only_no_cuda_model_load",
+        }
     if robot_config_path is not None:
         from .franka_integration import load_franka_integration_config
 

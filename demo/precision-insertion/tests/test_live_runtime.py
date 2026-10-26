@@ -98,6 +98,28 @@ def test_static_preflight_reads_v8_files_without_opening_robot(
     assert report["robot_config"]["stage_factory_module_on_path"] is False
     assert report["robot_config"]["stage_factory_imported"] is False
     assert report["robot_ready"] is False
+    assert report["xy_estimator"] == "vlm"
+
+    sam_python = tmp_path / "sam_python"
+    sam_python.write_text("#!/bin/sh\n", encoding="utf-8")
+    sam_python.chmod(0o755)
+    sam_checkpoint = tmp_path / "sam.pt"
+    sam_checkpoint.write_bytes(b"saved model placeholder")
+    monkeypatch.setenv("PRECISION_SAM_PYTHON", str(sam_python))
+    monkeypatch.setenv("PRECISION_SAM_CHECKPOINT", str(sam_checkpoint))
+    sam_report = live_runtime.inspect_live_inputs(
+        launch_config_path=launch_path, endpoint_catalog_path=catalog_path,
+        robot_config_path=robot_path, xy_estimator="sam_half_ellipse")
+    assert sam_report["xy_estimator"] == "sam_half_ellipse"
+    assert sam_report["sam_roi_inputs"]["checkpoint"] == str(sam_checkpoint)
+    assert sam_report["sam_roi_inputs"]["checkpoint_size_bytes"] == len(
+        b"saved model placeholder")
+    assert sam_report["robot_ready"] is False
+    sam_checkpoint.unlink()
+    with pytest.raises(FileNotFoundError, match="SAM3 checkpoint"):
+        live_runtime.inspect_live_inputs(
+            launch_config_path=launch_path, endpoint_catalog_path=catalog_path,
+            robot_config_path=robot_path, xy_estimator="sam_half_ellipse")
 
 
 def test_stage_module_path_check_does_not_execute_package(monkeypatch, tmp_path):

@@ -11,7 +11,10 @@ def test_incomplete_stream_stops_without_final_hand_or_arm_command():
     script = textwrap.dedent("""
         import sys
         import types
+        from pathlib import Path
         import numpy as np
+
+        sys.path.insert(0, str(Path.cwd() / "demo/precision-insertion"))
 
         # Import the real follower without constructing cuRobo or an FR3 client.
         planner = types.ModuleType("autodex.planner")

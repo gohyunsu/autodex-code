@@ -33,6 +33,9 @@ using Qwen key-box grounding and a warmed local AutoDex
 SAM3 model to the **same saved preinsert frame**. The ordinary snapshot and
 lift/preinsert/final labels remain unchanged. See
 [SAM_HALF_ELLIPSE_RUNTIME_20261026.md](SAM_HALF_ELLIPSE_RUNTIME_20261026.md).
+With that setting, `run_robot_pc.sh --check` reports the selected estimator
+and confirms the SAM Python and checkpoint files exist. It does not load the
+model or connect to CUDA, cameras, or the robot.
 The operator-stopped approach and its measured timing are recorded in
 [STOPPED_TRIAL_20261017.md](STOPPED_TRIAL_20261017.md). The 2026-10-20 live
 trial reached transfer; its false positive lift label, transfer stall, and

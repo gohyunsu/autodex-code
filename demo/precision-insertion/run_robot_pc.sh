@@ -76,7 +76,7 @@ Path(sys.argv[2]).write_text(json.dumps(record), encoding="utf-8")
 PY
   "$CHECK_PY" demo/precision-insertion/run_live.py --preflight \
     --launch-config "$CHECK_LAUNCH" --endpoint-catalog "$CATALOG" \
-    --robot-config "$ROBOT"
+    --robot-config "$ROBOT" --xy-estimator "$PRECISION_XY_ESTIMATOR"
   exit
 fi
 
