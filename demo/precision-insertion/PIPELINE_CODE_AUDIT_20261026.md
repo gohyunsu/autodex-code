@@ -216,6 +216,14 @@ part in these examples. Camera `25322649` shows a narrow key silhouette and
 the highest five-view residual. These checks do not establish that the largest
 component will always be the key when the socket overlaps the ROI.
 
+An end-on camera can project the planned key's rear and distal tip to the
+same pixel. The SAM mask can be valid while its distal-edge direction is
+undefined. That view now records `key_mask_end_unavailable` with the source
+mask; other cameras still contribute to the XY estimate. A
+three-camera geometry test supplies one end-on view and verifies that the two
+remaining views yield a metric result. This avoids discarding independent
+camera observations without loosening their geometric fit.
+
 A centered measured tip exposed a retry seam that the nonzero saved runs could
 not exercise. The two-view fallback treated a valid socket-frame XY point near
 `(0, 0)` as missing and invented a 2 mm exploration step. The three-plus-view

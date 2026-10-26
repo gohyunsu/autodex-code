@@ -214,7 +214,7 @@ for line in sys.stdin:
 
 
 @pytest.mark.parametrize("failure", [
-    None, "one_qwen", "one_sam", "one_invalid_mask",
+    None, "one_qwen", "one_sam", "one_invalid_mask", "one_end_on",
     "all_qwen", "all_sam", "mixed_all"])
 def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
     tmp_path, monkeypatch, failure,
@@ -243,6 +243,11 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
             ("cam_a", -.05), ("cam_b", 0.), ("cam_c", .05)), 1):
         E = np.eye(4)
         E[0, 3] = translation
+        if failure == "one_end_on" and camera == "cam_c":
+            # Looking straight down the key axis makes its projected rear
+            # and distal tip coincide even though the mask is valid.
+            E[:3, :3] = [[1., 0., 0.], [0., 0., -1.], [0., 1., 0.]]
+            E[:3, 3] = [0., 1., 1.]
         image = Image.new("RGB", (2048, 1536), "black")
         frames.append(LabeledFrame(camera, "preinsert_hold", 100., image))
         rows[camera] = {"frame_id": index, "timestamp_s": 100.,
@@ -308,14 +313,21 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
     assert len(alignment["sam_half_ellipse_views"]) == 3
     expected = ({"cam_a", "cam_b", "cam_c"} if failure is None else
                 {"cam_a", "cam_b"})
-    assert set(masks) == expected
+    mask_expected = (expected | {"cam_c"} if failure == "one_end_on" else
+                     expected)
+    assert set(masks) == mask_expected
     for record in alignment["sam_half_ellipse_views"]:
         if record["camera_id"] not in expected:
             assert record["admitted"] is False
             assert record["reason"] == (
                 "qwen_backend_unavailable" if failure == "one_qwen" else
                 "sam_backend_unavailable" if failure == "one_sam" else
+                "key_mask_end_unavailable" if failure == "one_end_on" else
                 "sam_mask_invalid")
+            if failure == "one_end_on":
+                assert record["sam_half_ellipse"] is None
+                assert record["mask_file_sha256"] == hashlib.sha256(
+                    masks[record["camera_id"]]).hexdigest()
             continue
         assert record["admitted"] is True
         assert record["mask_file_sha256"] == hashlib.sha256(

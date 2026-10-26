@@ -329,7 +329,7 @@ def screen_grasp_endpoint(
     hand_pass = all(row["clear"] for row in hold_screens.values())
     return {
         "schema": "precision_insertion_endpoint_screen_v1",
-        "scope": "aligned_20mm_key_fit_and_whole_inspire_hand_endpoint",
+        "scope": "aligned_key_fit_and_whole_inspire_hand_endpoint",
         "candidate_dir": str(candidate),
         "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
                  "key_object": mode.key_object,

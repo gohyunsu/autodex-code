@@ -267,7 +267,9 @@ def distal_key_mask_half_ellipse(
         raise ValueError("SAM3 ellipse needs a finite end direction and origin")
     planned = tip-rear
     if np.linalg.norm(planned) <= 1e-6:
-        raise ValueError("planned key end direction is degenerate")
+        # A valid end-on view can project both ends to the same pixel. Its
+        # distal mask edge is unobservable; other views can still be fitted.
+        return None
     local = np.column_stack((xs, ys)).astype(np.float32)
     corners = cv2.boxPoints(cv2.minAreaRect(local)).astype(float)
     edge_a, edge_b = corners[1]-corners[0], corners[2]-corners[1]
