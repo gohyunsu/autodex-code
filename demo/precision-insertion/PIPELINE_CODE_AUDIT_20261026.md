@@ -413,6 +413,22 @@ from 1,052 to 38, and three warmed timings changed from 0.117/0.102/0.102 s
 to 0.058/0.052/0.053 s. This fixture is much smaller than the real Inspire
 meshes, so these timings do not predict the live session's speedup.
 
+## Current offline verification
+
+On October 26, the current worktree's non-moving regressions passed in the
+local `planner` Python environment: 44 candidate/stage/policy tests passed,
+102 SAM-tip/XY/target/restoration tests passed (three skipped), and 40
+live-assembly and retry-handler tests passed. The restoration code computes
+the observed and original key poses as `inv(c2r) @ T_world_key`, preserves
+the original CAD mesh center when choosing a new v8 rest origin, and
+composes the placement wrist as `T_robot_key_rest @ T_key_hand`. The same
+branch-local `FR3_CLEAR_VIEW` joint target is used by clear-view, release,
+restoration, and repose paths; stock's unmodified clear-view target is not
+mixed into these plans. These tests and algebraic checks do not establish physical
+placement accuracy. An attempted full test collection stopped while importing
+cuRobo because CUDA was unavailable to PyTorch in this environment at that
+time; no full-suite pass is claimed.
+
 ## Remaining evidence needed
 
 1. Replay additional rejected-socket and failed-grasp episodes with this
