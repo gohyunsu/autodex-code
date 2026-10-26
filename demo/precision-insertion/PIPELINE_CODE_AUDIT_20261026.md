@@ -96,6 +96,11 @@ URDF link8 and about 107 mm for the old hand-base estimate; see
 The planner's fixed-joint URDF did not change. This fixes the feedback pose
 used by endpoint checks and fallback proximity, without loosening a motion
 failure threshold or changing a planned target.
+The `20261022_103429_752726` socket-release exception below is a different
+check: `CompletionCheckedFrankaMixin` compares **measured joints** with the
+last joint waypoint. It does not use `O_T_EE`, so the mount correction cannot
+be claimed to resolve that historical stop. The saved failure lacks its
+terminal joint error and segment name; that failure remains undiagnosed.
 `reset_scene.py` keeps a visually missed key at its tabletop scene pose
 instead of projecting a phantom carried key from the wrist. That tabletop
 pose can be stale if the missed grasp physically moved the key; a fresh key

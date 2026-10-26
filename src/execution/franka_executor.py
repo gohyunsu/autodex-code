@@ -498,10 +498,10 @@ class FrankaExecutor:
     def _live_wrist_pose(self) -> Optional[np.ndarray]:
         """Read the current physical wrist pose in the planner's frame."""
         try:
-            link6 = np.asarray(self.arm.get_data()["position"], dtype=np.float64)
-            if link6.shape != (4, 4) or not np.isfinite(link6).all():
+            ee_pose = np.asarray(self.arm.get_data()["position"], dtype=np.float64)
+            if ee_pose.shape != (4, 4) or not np.isfinite(ee_pose).all():
                 return None
-            wrist = link6 @ self._link6_to_wrist
+            wrist = ee_pose @ self._link6_to_wrist
             return wrist if np.isfinite(wrist).all() else None
         except Exception as exc:
             print(f"[franka] live wrist pose unavailable: {exc!r}")
@@ -583,9 +583,9 @@ class FrankaExecutor:
             ref = (None if qpos is None else
                    self._trajectory_wrist_target(qpos, warn=False))
             if ref is None and state is not None:
-                link6 = np.asarray(state.get("position"), dtype=np.float64)
-                if link6.shape == (4, 4) and np.isfinite(link6).all():
-                    ref = link6 @ self._link6_to_wrist
+                ee_pose = np.asarray(state.get("position"), dtype=np.float64)
+                if ee_pose.shape == (4, 4) and np.isfinite(ee_pose).all():
+                    ref = ee_pose @ self._link6_to_wrist
             if ref is not None:
                 self._last_release_wrist_reference = np.asarray(
                     ref, dtype=np.float64).copy()
@@ -837,11 +837,11 @@ class FrankaExecutor:
                         if wrist_now is not None:
                             wrist_distance_frame = "planner_fk_wrist_fallback"
                         else:
-                            link6_pose = np.asarray(arm_state.get("position"),
-                                                    dtype=np.float64)
-                            if (link6_pose.shape == (4, 4)
-                                    and np.isfinite(link6_pose).all()):
-                                wrist_now = link6_pose @ self._link6_to_wrist
+                            ee_pose = np.asarray(arm_state.get("position"),
+                                                 dtype=np.float64)
+                            if (ee_pose.shape == (4, 4)
+                                    and np.isfinite(ee_pose).all()):
+                                wrist_now = ee_pose @ self._link6_to_wrist
                                 wrist_distance_frame = "physical_wrist_fallback"
                         if wrist_now is not None:
                             wrist_distance_reference, wrist_distance_m = min(
