@@ -18,7 +18,7 @@ from scipy.optimize import least_squares
 
 from .grounded_alignment import (
     GroundedLineView, NEXT_TRIAL_XY_MAX_STEP_M,
-    _parallax, resolve_xy_only_cylinder_alignment,
+    _parallax, _project, resolve_xy_only_cylinder_alignment,
 )
 from .xy_overlay import CalibratedXYFrame
 
@@ -219,9 +219,10 @@ def tracked_tip_xy_alignment(
 
     def residual(point):
         values = []
-        for projection, pixel in zip(projections, pixels):
-            h = projection @ np.r_[point, 1.]
-            values.extend(h[:2] / h[2] - pixel)
+        for view, pixel in zip(views, pixels):
+            projected = _project(view, point)
+            values.extend((1e6, 1e6) if projected is None else
+                          projected - pixel)
         return np.asarray(values)
 
     fit = least_squares(residual, seed, loss="soft_l1", f_scale=7.)

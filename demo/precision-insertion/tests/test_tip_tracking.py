@@ -130,6 +130,29 @@ def test_nearly_parallel_tip_views_do_not_claim_metric_depth():
     assert result["tracker_reason"] == "insufficient_camera_parallax"
 
 
+def test_behind_camera_rays_do_not_become_metric_xy_advice():
+    key_tip = np.array([.020, .005, .085])
+    K = np.array([[800., 0., 320.], [0., 800., 240.], [0., 0., 1.]])
+    views = []
+    for index, camera_x in enumerate((-.12, 0., .12)):
+        T = np.eye(4)
+        T[:3, 3] = [-camera_x, 0., -1.]
+        # Algebraic projection gives consistent pixels, but the point has
+        # negative camera depth and cannot be visible in any of these views.
+        projected = K @ (T[:3, :3] @ key_tip + T[:3, 3])
+        frame = CalibratedXYFrame(
+            str(index), 100., Image.new("RGB", (640, 480)), T, K)
+        views.append(GroundedLineView(
+            frame, tuple(projected[:2] / projected[2]), None))
+    result = tracked_tip_xy_alignment(
+        views, nominal_tip_z_socket_m=.085, search_index=0,
+        max_reprojection_px=3., min_parallax_deg=5.,
+        max_nominal_tip_height_error_m=.01)
+    assert result["status"] == "diagnostic_exploratory_xy_step"
+    assert result["inlier_cameras"] == []
+    assert result["tip_socket_m"] is None
+
+
 def test_missing_target_frame_does_not_invent_tip():
     reference = np.full((100, 100, 3), 240, dtype=np.uint8)
     mask = np.full((100, 100), 255, dtype=np.uint8)

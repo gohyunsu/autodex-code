@@ -258,6 +258,19 @@ limits gives 137.25 degrees of parallax and the unchanged point
 `[0.016843, 0.004535, 0.083036] m` in the socket frame. This checks the
 geometry and saved data only, not physical endpoint accuracy.
 
+The three-plus-view tip fitter also used algebraic projection for residuals,
+which gave a zero-error metric XY correction for a point **behind every
+camera**. The two-view fallback already rejects nonpositive camera depth.
+The multiview fitter now reuses that positive-depth projection: a synthetic
+three-camera backward-ray case produces only explicitly unmeasured search
+advice, while the saved five-view 10 mm case retains all five inliers and its
+tip changes by `2.12e-11 m`. The saved point is `0.793–1.372 m` in front of
+those cameras. The source PNG byte and decoded-pixel hashes, frame IDs,
+timestamps, calibration hash, camera depths, and replay parameters are in
+`/home/robot/shared_data/hyunsu/tmp/20261026_sam_half_ellipse_live_wiring/positive_depth_saved_replay.json`.
+This is a physical visibility requirement already used by the existing
+two-view code, not a new insertion tolerance.
+
 ## Extra criteria and their purpose
 
 The stock planner supplies IK, world/self collision, and trajectory
