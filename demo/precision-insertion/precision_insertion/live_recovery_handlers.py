@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
+import time
 from typing import Callable, Mapping
 from uuid import uuid4
 
@@ -331,15 +332,14 @@ class LiveHeldReturnHandlers:
             raise TypeError("released-key recovery needs measured robot feedback")
         measured = self.live.clear_view.verify_state(
             measured, phase="released_failure_clear_view")
-        if measured.sample_timestamp_s <= runner.active_attempt.events[-1]["timestamp_s"]:
-            raise ValueError("released-key recovery state predates XY assessment")
+        verified_at_s = time.time()
         folder = Path(runner._attempt_dir)
         recovery_path = folder / "released_failure_clear_view.json"
         record = {
             "schema": "precision_insertion_released_failure_clear_view_v1",
             "attempt_id": runner.active_attempt.attempt_id,
             "candidate_id": runner.active_attempt.candidate_id,
-            "completed_at_s": measured.sample_timestamp_s,
+            "completed_at_s": verified_at_s,
             "hand_open": True,
             "clear_view_reached": True,
             "measured_state": measured.to_record(),

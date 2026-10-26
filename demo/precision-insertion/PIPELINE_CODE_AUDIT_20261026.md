@@ -911,6 +911,34 @@ non-moving suite passes **1234 passed, 5 skipped**; the 20 mm file-only
 `run_robot_pc.sh --check` also passes with the SAM estimator and still reports
 `robot_ready=false`.
 
+## Failure recovery and XY advice after a force stop
+
+The stock 12 N force-stop follower immediately ascends its executed axis path
+with the hand closed. Precision insertion then returns the held key to the
+tabletop, observes the landing, and only after `reset_success=true` reads the
+saved pre-contact `preinsert` images for an optional next-trial XY estimate.
+The accepted estimate changes the next pickup's wrist target; neither the
+contact event nor a missing tip becomes a measured XY offset. This route was
+already connected in `session_policy`, `live_retry_handlers`, and
+`session_runner`; the operator's requested ordering needs no new robot motion
+branch. The released-key route follows the same saved-image diagnostic but
+has already opened the hand before its landing capture.
+
+One released-key recovery gate was redundant: it rejected a fresh measured
+clear-view state if its packet timestamp preceded the just-written XY advice
+event. Asynchronous state publishing can produce that order while the arm is
+stationary. The handler still verifies fresh measured feedback, open hand,
+and clear-view joints. It now records the time of that verification as the
+recovery completion, retaining the packet's own timestamp separately. The
+runner accepts a packet sampled before verification and continues to require
+the recovery confirmation and new key capture after the failed attempt.
+This removes no controller force stop, path collision check, or measured
+clear-view check. A regression exercises the packet/advice ordering through
+the live handler and another through the reset ledger; these tests do not
+establish physical recovery success. The full non-moving suite after this
+change passes **1234 passed, 5 skipped**; the 20 mm file-only `--check`
+passes with `robot_ready=false`.
+
 ## Remaining evidence needed
 
 1. Replay additional rejected-socket and failed-grasp episodes with this

@@ -264,7 +264,8 @@ def test_misplaced_return_is_restored_before_trial_reset_label(tmp_path, monkeyp
     assert runner.events[-1][1]["restoration_evidence_paths"] == (execution,)
 
 
-def test_released_failure_is_perceived_and_restored_without_withdrawal(tmp_path):
+def test_released_failure_is_perceived_and_restored_without_withdrawal(
+        tmp_path, monkeypatch):
     bound, runner, events = _setup(tmp_path)
     release = tmp_path / "poststroke_release.json"
     release.write_text('{"released":true}\n', encoding="utf-8")
@@ -277,8 +278,11 @@ def test_released_failure_is_perceived_and_restored_without_withdrawal(tmp_path)
         "stage": "insertion_success", "value": False,
         "timestamp_s": 10.5,
         "evidence_refs": {"release_execution": str(release.resolve())},
-    }]
-    state = _state()
+    }, {"stage": "next_trial_xy_advice", "timestamp_s": 20.0}]
+    state = replace(
+        _state(), sample_timestamp_s=19.95,
+        arm_timestamp_s=19.95, hand_timestamp_s=19.95)
+    monkeypatch.setattr(live_recovery_handlers.time, "time", lambda: 20.1)
     bound.read_state = lambda: state
     bound.live.clear_view.before_key_capture = lambda: (
         events.append("clear_view") or state)
@@ -298,6 +302,8 @@ def test_released_failure_is_perceived_and_restored_without_withdrawal(tmp_path)
                          "released_failure_clear_view.json").read_text())
     assert record["hand_open"] is True
     assert record["clear_view_reached"] is True
+    assert record["measured_state"]["sample_timestamp_s"] == 19.95
+    assert record["completed_at_s"] == 20.1
     assert record["poststroke_release"]["path"] == str(release.resolve())
     assert runner.events[-1][0] == "landing"
     assert runner.events[-1][1]["key_observation"] is observation

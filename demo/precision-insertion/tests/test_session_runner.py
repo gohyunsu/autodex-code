@@ -1391,7 +1391,7 @@ def test_missed_grasp_retries_from_fresh_supported_pose_without_restoration(
 def test_failed_insertion_auto_return_observation_restarts_with_fresh_key(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)
-    runner.max_xy_retries = 0
+    runner.max_xy_retries = 1
     monkeypatch.setattr(
         session_runner, "plan_admitted_key_trial",
         lambda **kwargs: _report(runner, kwargs["key_observation"]))
@@ -1414,11 +1414,18 @@ def test_failed_insertion_auto_return_observation_restarts_with_fresh_key(
                        "alignment": "pose/axis.json",
                        "force_trace": "wrench/trace.json",
                        "release_execution": str(release.resolve())}))
+    assert runner.current_decision().action == "assess_saved_preinsert_xy"
+    unavailable = runner._attempt_dir / "xy_retry_assessments/000/report.json"
+    unavailable.parent.mkdir(parents=True)
+    unavailable.write_text('{"status":"abstain"}', encoding="utf-8")
+    runner.record_xy_retry_unavailable(
+        reason="sam_half_ellipse_unavailable",
+        retry_assessment_path=unavailable, timestamp_s=10.6)
     assert runner.current_decision().action == (
         "recover_released_key_then_reobserve")
     raw = np.full(6, 500.)
     q = np.r_[np.zeros(7), convert_inspire_raw(raw[None])[0]]
-    state = LiveRobotState(q, np.zeros(7), 10.7, 10.7, 100., 10.7,
+    state = LiveRobotState(q, np.zeros(7), 10.59, 10.59, 100., 10.59,
                            raw, raw.copy(), 0., np.zeros(6))
     execution = tmp_path / "released_recovery.json"
     execution.write_text(json.dumps({

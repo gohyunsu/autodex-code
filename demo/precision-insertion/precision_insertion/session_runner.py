@@ -2209,7 +2209,11 @@ class SessionRunner:
                     not isinstance(recovery.get("measured_state"), dict) or
                     recovery["measured_state"].get("schema") !=
                     "precision_insertion_live_robot_state_v1" or
-                    recovery["measured_state"].get("sample_timestamp_s") !=
+                    not isinstance(recovery["measured_state"].get(
+                        "sample_timestamp_s"), (int, float)) or
+                    not math.isfinite(recovery["measured_state"][
+                        "sample_timestamp_s"]) or
+                    recovery["measured_state"]["sample_timestamp_s"] >
                     completed or not math.isfinite(completed) or
                     not isinstance(release_ref, dict) or
                     set(release_ref) != {"path", "sha256"} or
