@@ -1,11 +1,9 @@
 """Demo-local completion check around the AutoDex-derived FR3 follower.
 
-The stock follower may exit on a stall/timeout, ramp the hand to its final
-configuration, and make a blocking endpoint ``arm.move``. For precision
-pickup that combination can close the fingers or cross an obstacle after the
-planned stream was not followed. This subclass reuses the stock streaming
-algorithm but defers its final hand ramp and checks measured joint completion
-before allowing the ramp. The stock blocking landing is retained for an
+The precision checkout's AutoDex-derived follower raises on a stalled or
+timed-out stream before its terminal hand ramp or endpoint move. This subclass
+also defers the final hand ramp and checks measured joint completion before
+allowing it. The blocking landing is retained for a normally completed
 empty-hand clear-view return, where exact arrival matters after release.
 
 This is *not* a robot-side watchdog or a force servo. The installed ParaDex

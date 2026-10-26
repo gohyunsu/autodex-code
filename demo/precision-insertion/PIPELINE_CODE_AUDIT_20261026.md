@@ -160,6 +160,20 @@ remainder of each 20 ms tick, whereas stock sleeps a full 20 ms *after* state,
 FK, and command work; actual command rate still depends on robot-PC load.
 This source comparison finds no second executor-side near/held slowdown to
 remove. It does not measure the achieved joint speed or smoothness.
+One stock-inherited terminal fall-through was unsafe for this task: when a
+stream exhausted its timeout, stopped advancing for the existing 2.5 s stall
+window, or exhausted its existing tick budget, `_follow` still ran its final
+hand ramp and optional direct `arm.move` to the last joint target. A stalled
+stream has not traversed the planned collision-checked path. The precision
+checkout now stops/ends the stream as before, then reports that existing
+incomplete condition before either terminal command. No timing, speed, force,
+or endpoint threshold was added. A CPU-only test executes the actual follower
+with inert arm/hand objects and covers normal arrival, deliberate 12 N force
+stop, timeout, stall, and tick-budget exhaustion. The original AutoDex checkout
+was not changed.
+The full non-moving demo suite passes **1231 passed, 5 skipped in 43.61 s**
+with the `planner` Python environment. The file-only robot-PC `--check`
+also passes; it reports `static_preflight_only` and `robot_ready=false`.
 The mount-frame comparison uncovered a separate correctness error: ParaDex
 `position` is libfranka `O_T_EE`, which matches recovered-URDF `fr3_link8` in
 three saved v8 episodes. The previous precision factory passed a

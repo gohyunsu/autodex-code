@@ -731,13 +731,13 @@ class FrankaExecutor:
 
         Safety: velocities clipped to ``joint_vmax``; on a reflex (is_error) we
         zero-velocity + recover (+ abort if requested); a target that stops
-        advancing for ``STALL_TICKS`` breaks the loop. The daemon's stream
-        watchdog expires each setpoint after ``duration_ms`` (up to its configured
-        maximum) and ramps velocity to zero if no new command arrives. At the end
-        we decelerate to zero and land on the final config with a blocking
-        ``move()`` ONLY when the residual exceeds
-        ``land_tol`` (skipping it avoids a stream→position mode switch, which is
-        what makes the clunk between segments)."""
+        advancing for ``STALL_TICKS`` ends the stream as incomplete. The
+        daemon's stream watchdog expires each setpoint after ``duration_ms``
+        (up to its configured maximum) and ramps velocity to zero if no new
+        command arrives. At the end we decelerate to zero; only a normally
+        completed path may land on the final config with a blocking ``move()``
+        when the residual exceeds ``land_tol`` (skipping it avoids a
+        stream→position mode switch, which makes the clunk between segments)."""
         traj = np.atleast_2d(np.asarray(arm_traj, dtype=np.float64))[:, :7]
         self._last_stop_on_contact = False
         n = len(traj)
@@ -798,6 +798,7 @@ class FrankaExecutor:
         wrist_distance_reference = None
         profile_scale = 1.0
         effective_speed = speed
+        incomplete_reason = None
         if held_cap is not None:
             print(f"[franka] held-object speed cap: {held_cap:.2f}x", flush=True)
         try:
@@ -813,6 +814,7 @@ class FrankaExecutor:
                 if now > deadline:
                     print(f"[franka] follow TIMEOUT after {self.follow_timeout_s:.0f}s "
                           f"at waypoint {int(idx)}/{n} — stopping")
+                    incomplete_reason = "timeout"
                     break
                 arm_state = self.arm.get_data()
                 cur = np.asarray(arm_state["qpos"][:7], dtype=np.float64)
@@ -904,6 +906,7 @@ class FrankaExecutor:
                 elif ticks - last_prog_tick > STALL_TICKS:
                     print(f"[franka] follow stalled at waypoint {k}/{n} "
                           f"(err={np.linalg.norm(err):.3f}) — stopping")
+                    incomplete_reason = "stalled reference"
                     break
                 # Feedforward = the planned trajectory's own joint velocity at
                 # the reference; P term only corrects the tracking error.
@@ -953,6 +956,8 @@ class FrankaExecutor:
                 # silently slows both near-object and held-object motion.
                 time.sleep(max(0.0, self.ctrl_dt -
                                (time.monotonic() - tick_started)))
+            else:
+                incomplete_reason = "tick budget exhausted"
         finally:
             print(f"  [follow] loop exit at ref {int(idx)}/{n} "
                   f"({time.time() - t_start:.1f}s) — decelerating", flush=True)
@@ -969,6 +974,13 @@ class FrankaExecutor:
                 print("  [follow] stop_streaming done", flush=True)
             except Exception as e:
                 print(f"[franka] stop_streaming failed: {e!r}", flush=True)
+        # A timeout or stalled reference did not traverse the planned path.
+        # The old fall-through ramped the hand and made a direct blocking move
+        # to the final joint target, potentially cutting across that path.
+        if incomplete_reason is not None:
+            raise RuntimeError(
+                f"FR3 stream incomplete ({incomplete_reason}) at "
+                f"waypoint {int(idx)}/{n}")
         # Finish the hand on the trajectory's LAST config. The loop exits on the
         # reference index but the hand follows the arm's measured index, so a
         # normal exit can leave k_arm short of the end — without this the fingers
