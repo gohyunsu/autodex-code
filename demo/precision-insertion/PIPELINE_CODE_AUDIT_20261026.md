@@ -469,6 +469,10 @@ mixed into these plans. These tests and algebraic checks do not establish physic
 placement accuracy. An attempted full test collection stopped while importing
 cuRobo because CUDA was unavailable to PyTorch in this environment at that
 time; no full-suite pass is claimed.
+The October 26 retry confirmed the boundary: `nvidia-smi` lists an RTX 3090,
+but this execution environment exposes no `/dev/nvidia*` device nodes and
+both `autodex` and `planner` PyTorch environments report zero CUDA devices.
+This does not establish that the host GPU or deployed robot runtime is down.
 The release, completion, clear-view, force insertion, live task, FR3 assembly,
 SAM ROI, XY transform, and session-runner regressions were rerun after caching
 the release plan: 119 passed, four skipped. One skipped test imports the stock
