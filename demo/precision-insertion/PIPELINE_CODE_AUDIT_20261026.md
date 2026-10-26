@@ -302,6 +302,14 @@ and checks its selected undistorted frames. The reuse is timed as
 `evidence.live_preinsert_report_reuse`. A fixture test confirms that a changed
 report invalidates the cache and that it does not survive the session scope.
 No live-session speedup is claimed because the active stage is absent.
+In the saved `20261022_103429_752726` timing trace, 35
+`evidence.live_manifest_reuse` calls took `0.002 s` in total; no
+`evidence.png_read_verify` or `evidence.undistort_replay` span was recorded.
+The failed-trial XY diagnosis in `20261022_105828_126084` took `2.105 s`,
+while its two `audit.geometry_samples` calls took `65.716 s` cumulatively.
+These are historical timings before the current geometry-pruning changes.
+They do not support removing more frame provenance to address the measured
+planning bottleneck.
 
 `repose_path_audit.py` previously recomputed a fixed-pose inverse and called
 the exact Coal mesh-pair report at every FK sample. It now uses the same
@@ -336,9 +344,11 @@ timeout or runtime error discarded every completed view. Those two retry
 paths now record that camera as unavailable and fit from the remaining valid
 views. A total model outage remains distinct from a visual abstention: it
 records unavailable and cannot generate a synthetic exploratory XY step.
-Malformed response identity or mask geometry still raises normally. Synthetic
-three-camera tests retain a metric two-view result after one failed Qwen or
-SAM worker, and test complete Qwen, SAM, and mixed outages. The saved
+Malformed SAM response identity or payload now retires the worker and marks
+that view unavailable; an invalid ROI mask is also omitted as one view.
+Neither becomes a measured pixel. Synthetic three-camera tests retain a
+metric two-view result after one failed Qwen or SAM worker, and test complete
+Qwen, SAM, and mixed outages. The saved
 `20261021_111900_186891` grounding run reported CUDA OOM on all five Qwen
 views, so this change would not have supplied a metric result for that run.
 No live latency or insertion outcome is claimed from these offline tests.
