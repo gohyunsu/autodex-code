@@ -427,6 +427,19 @@ release record still uses the report hash calculated at preparation. This
 removes duplicate file validation from the motion path; it does not alter the
 planned geometry, stop behavior, or endpoint criterion.
 
+A read-only inventory of root-level saved execution failure records found two
+lift, four transfer, and one socket-release failures. The October 17 lift
+traces reported an Inspire hold-change gate and a force-norm gate; current
+`franka_measured_lift.py` records those measurements without using either as
+a hard failure. Two later transfer records with saved post-state joints had
+target residuals of 0.0183 and 0.0279 rad L2 (0.0134 and 0.0233 rad maximum
+per joint), both within the stock follower's 0.04 rad L2 convergence limit.
+Current `transfer_execution.py` no longer applies its separate tighter
+Python endpoint threshold to the first-party `FrankaMeasuredLiftAdapter`.
+The remaining saved transfer trace records a stopped-short stream; the
+release trace lacks a segment and terminal error. Neither can be dismissed
+as a false software stop from the saved evidence alone.
+
 The saved 10 mm session `20261022_105828_126084` spent 22.99 s auditing
 498 nominal samples before pickup and 42.72 s auditing 263 new transfer/axial
 samples after lift. The second audit checks a newly planned path from the
