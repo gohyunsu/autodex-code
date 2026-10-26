@@ -4,9 +4,11 @@ The current insertion-failure route stores XY advice for a **new physical
 attempt**, never a same-held-key reinsert. See
 [`NEXT_TRIAL_XY.md`](NEXT_TRIAL_XY.md).
 The active handler contract does not require the historical
-`await_retry_execution_and_observation` same-held-key action. The cylinder
-runner opens the hand after the 20 mm stroke, observes the released key, and
-starts a new pickup only after restoring the key to the trial-start pose.
+`await_retry_execution_and_observation` same-held-key action. After a completed
+20 mm stroke, the cylinder runner opens the hand and observes the released key.
+After a force stop, it reverses the socket-axis path with the key held and
+returns the key to the trial-start pose before diagnosing saved XY images.
+A new pickup starts only after the tabletop return is observed.
 
 `run_live_precision_session()` joins the already implemented AutoDex-camera
 ChArUco→socket startup to `SessionRunner`'s existing trial policy. It keeps
@@ -28,7 +30,8 @@ using the existing demo functions before returning. For example:
 | `held_relation_evidence_required` | In the active cylinder live route, [`LiveNominalRelationHandlers`](precision_insertion/live_nominal_relation_handlers.py) uses the selected v8 key–hand hypothesis plus fresh robot joints. There is no post-grasp key–hand measurement. Historical physical/observed routes are not allowed for cylinder live execution. |
 | `transfer_execution_gate_required` | [`LiveTaskHandlers`](precision_insertion/live_task_handlers.py) runs the bound held transfer and saves the synchronized raw multi-view pre-insertion snapshot. The Qwen arrival check receives each raw image only; separately saved CAD renders remain audit/presentation artifacts, never VLM inputs. |
 | `await_guarded_insertion_and_observation` | The same handler runs the commissioned 20 mm stroke, requires the robot-PC `release_and_clear` adapter to fully open Inspire and exit to clear view, then captures final raw views. Qwen receives one **initial tabletop raw + final clear-view raw** pair per camera and votes `inside_socket`, `outside_socket`, or `unobservable`. Success ends the session. |
-| `assess_saved_preinsert_xy` | Cylinder only: [`LiveGroundedRetryHandlers`](precision_insertion/live_retry_handlers.py) reopens the immutable raw snapshot captured before the failed stroke. Qwen grounds the visible tip/axis and calibrated geometry converts it to at most 10 mm socket-XY advice for the **next** attempt. This action performs no robot motion and takes no post-failure picture. |
+| `recover_held_key_then_reobserve` | After a stock force stop and recorded reverse-axis ascent, [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py) returns the still-held key to its original tabletop pose, opens the hand, captures the landing and records `reset_success`. A failed return does not advance to XY diagnosis. |
+| `assess_saved_preinsert_xy` | Cylinder only: [`LiveGroundedRetryHandlers`](precision_insertion/live_retry_handlers.py) reads the pre-contact raw snapshot after a released-key failure or a **successfully recovered** force stop. The configured `vlm`, `tracked_tip`, or `sam_half_ellipse` estimator proposes at most 10 mm of socket-XY wrist correction for the **next** pickup. Missing tip evidence records an unavailable diagnostic rather than a measured correction. This action performs no robot motion or post-failure capture. |
 | `recover_released_key_then_reobserve` | [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py) perceives the already released key from measured clear view. If it differs from the trial-start tabletop pose/CAD-center XY, [`plan_original_pose_restoration()`](precision_insertion/original_pose_restoration.py) reuses v8 pickup and socket-aware placement; a commissioned `execute_restoration` callback runs it and the key is recaptured. The attempt ends only after `runner.observe_reset_landing()` verifies the restored state. |
 | `recover_key_then_reobserve` | [`LiveTransferRecoveryHandlers`](precision_insertion/live_transfer_recovery.py) uses stock AutoDex release/reset for a judged `grasp_miss`, then recaptures the key and restores its original tabletop pose/position if disturbed **within the same attempt**. A completed, still-held transfer with an off-target measured hand **or visible gross XY misalignment** may instead use a planned held return. Stopped pickup/lift/transfer, visible slip/miss and unknown VLM verdicts require supervised tabletop recovery. Every route recaptures from clear view and verifies original-pose landing before a new trial. |
 | `preflight_repose`, `continue_repose_seed_preflight`, `preflight_repose_release`, `preflight_alternative_repose_cell` | [`LiveReposePlanningHandlers`](precision_insertion/live_repose_handlers.py) reuses the exhausted pose's saved key capture and measured joints, selects a target pose/release cell, and invokes `runner.preflight_repose()` with directed v8 reset seeds. |
@@ -94,10 +97,11 @@ controller's depth/alignment/force record plus final images to the insertion
 checkpoint. Its robot adapters, raw-frame producers and numeric limits are
 injected on the AutoDex PC. The separate
 [`LiveGroundedRetryHandlers`](precision_insertion/live_retry_handlers.py)
-only composes guarded withdrawal, a fresh raw multi-view diagnostic, and a
-candidate/pose-specific next-attempt advice record. The held-return handler
-then releases the key; a fresh SAM/FoundPose key capture and v8 pickup plan
-are mandatory before that candidate is tried again. The next physical
+reads the saved pre-contact raw multi-view snapshot and records
+candidate/pose-specific next-attempt advice. A force stop first takes the
+stock reverse-axis ascent and held-key return; a normal failed stroke releases
+the key before this diagnostic. A fresh SAM/FoundPose key capture and v8
+pickup plan are mandatory before that candidate is tried again. The next physical
 attempt adjusts its calibrated wrist command, while the CAD key insertion
 goal remains socket-centered and endpoint/path checks are rerun. Square
 tip/shoulder grounding supplies XY and tilt but **not yaw**; a yaw error

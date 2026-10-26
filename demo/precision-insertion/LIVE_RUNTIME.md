@@ -88,10 +88,11 @@ socket capture and must return these ten components, all bound to that same
    hypothesis** for cylinder live execution; no post-grasp key pose estimate.
 5. `LiveTaskHandlers` — transfer, arrival label, stock force-stop insertion.
 6. `LiveGroundedRetryHandlers` — read the **saved pre-insertion** raw views
-   after a released-key failure and calculate continuous multi-view cylinder
-   XY advice; an at-most-10 mm update is saved for a **new pickup**, with no
-   same-attempt movement or new failure-time capture. Square live execution
-   is disabled.
+   after a released-key failure or a force stop followed by observed
+   original-pose return. The configured estimator calculates continuous
+   multi-view cylinder XY advice; an at-most-10 mm update is saved for a
+   **new pickup**, with no same-attempt movement or new failure-time capture.
+   Square live execution is disabled.
 7. `LiveHeldReturnHandlers` — after a released-key failure, clear-view
    recapture and, if misplaced, original-pose pick/place restoration in the
    same attempt; separate held-key recovery paths remain for earlier failures.
