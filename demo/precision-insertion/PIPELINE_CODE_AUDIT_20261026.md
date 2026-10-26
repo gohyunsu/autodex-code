@@ -249,15 +249,20 @@ The active board-9 FR3 stage previously limited the first key preflight to
 one v8 grasp. A failed first candidate returned `candidate_budget_exhausted`;
 `LiveKeyPlanningHandlers.continue_same_capture` then immediately planned the
 remaining candidates from the same saved key pose and measured joint state.
-Among 34 saved 20 mm preflight reports from October 20–22, 15 first reports
-ended at this artificial budget, and the continuation was needed to reach the
-next candidate. The stage now uses `prepare_next_live_key`'s existing
-unlimited default, so one preflight evaluates eligible grasps until one passes
+Among 34 saved cylinder preflight reports from October 20–22 (24 with a
+20 mm gap and 10 with a 10 mm gap), 15 first reports ended at this artificial
+budget (10 with a 20 mm gap and five with a 10 mm gap). The stage now uses
+`prepare_next_live_key`'s existing unlimited default, so one preflight
+evaluates eligible grasps until one passes
 or the pose is exhausted, as stock AutoDex's candidate search does. The
 general same-capture continuation remains available for an explicitly
 budgeted stage. This removes an intermediate report and decision lookup, not
 the real IK or held-key checks. Historical timing cannot establish a measured
 live speedup for this configuration change.
+
+The five sampled-path rejections in this set were all nominal held-key mesh
+collisions with the table during transfer, rather than an added clearance
+margin or path-sampling threshold. Those collision checks remain in place.
 
 The optional `tracked_tip` retry path can use a capture-PC JPEG window around
 the exact preinsert frame. The per-camera record now distinguishes the raw
