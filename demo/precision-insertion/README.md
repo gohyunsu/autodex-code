@@ -565,10 +565,12 @@ that session and catalogue. For each new key observation:
    conflict or abstention leaves the label unknown. If the hand occludes
    FoundPose, save a raw `after_lift` bundle with `write_raw_camera_capture`
    and call `prepare_raw_lift_label` instead. The distributed live route
-   retains the saved before/after frames and uses the initial key mask to
-   crop the after-lift image in two close cameras. Two agreeing, orientation
-   independent visible-grip answers label held or miss; disagreement is
-   unknown. The local/API comparison route still uses before/after pairs.
+   retains the saved before/after frames and projects the measured hand pose
+   through the right-angle adapter URDF and undistorted session cameras to
+   crop the after-lift image in two close cameras. One clear `YES` labels
+   `held`; two `NO` answers label `miss`; any other pair is unobservable.
+   The independent per-camera answers and crop coordinates are recorded.
+   The local/API comparison route still uses before/after pairs.
    This raw route supplies **no**
    key–hand transform and cannot authorize transfer by itself. A raw positive
    leads to `held_relation_evidence_required`, not a transfer command. If a

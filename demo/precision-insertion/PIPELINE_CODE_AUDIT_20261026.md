@@ -1015,9 +1015,10 @@ the model file and `robot_ready=false`.
    unit-fixture timings cannot establish an end-to-end gain.
 4. Independently check physical mount/hand-eye and held-key motion on the
    robot before treating planned pose transforms as measured accuracy.
-5. Resolve the saved lift-label ambiguity below, then compare preinsert and
-   final labels before considering a capture2 worker swap from `25305463`
-   to `25322651` for live SAM XY coverage.
+5. Keep the current live lift crop on capture1/capture3; the saved replay
+   below resolved the older lift-label ambiguity. Separately compare
+   preinsert/final labels before considering a capture2 worker swap from
+   `25305463` to `25322651` for live SAM XY coverage.
 
 ## Saved capture2 lift-view comparison (read-only, 2026-10-26)
 
@@ -1026,11 +1027,16 @@ alternative `25322651` shows the held white peg more clearly in the saved
 `20261022_103429_752726` lift image and is available in the same 20-camera
 capture bundles. We replayed both cameras on that visually confirmed held
 attempt and the visibly missed `20261020_090836_567804` attempt using the
-unchanged current observer prompt, Qwen3-VL-2B capture2 weights, and the
+generic `observer.observe_lift` prompt, Qwen3-VL-2B capture2 weights, and the
 actual 384×288 classification transform. Original paths, frame/capture IDs,
 timestamps, PNG hashes, prompts, replies, CUDA peaks and call durations are
 preserved in
 `/home/robot/shared_data/hyunsu/tmp/20261026_capture2_view_swap_eval/result.json`.
+**This generic paired-image observer is not the current distributed live lift
+route.** `assess_raw_lift_checkpoint` dispatches a
+`DistributedQwenBackend` to `lift_visible_grip.observe_visible_grip`, which
+uses measured FR3/Inspire FK, the right-angle adapter URDF and undistorted
+session calibration to crop the hand on cameras `24122734` and `25322638`.
 
 | Saved lift scene | Reference from raw image | Current 25305463 | Alternative 25322651 |
 |---|---|---|---|
@@ -1045,10 +1051,53 @@ checkerboard. A diagnostic prompt that distinguished the solid peg from the
 hollow flanged socket returned `held` for *both* saved cases at 384×288 and
 768×576; the current prompt returned `miss` for both at both sizes. Exact
 replies and measurements are in `variants.json` beside `result.json`. Thus a
-camera swap, prompt wording, or larger input alone has not solved the
-observed false decision. The live camera mapping and prompt remain unchanged;
-more saved positive and negative cases, including preinsert/final labels,
-are needed before modifying them.
+camera swap, prompt wording, or larger input alone did not solve this
+**generic-observer** false decision. A five-worker replay of
+`observer.observe_lift` also returned `miss` on the visually held case, but
+it is not the live lift route and must not be reported as a live false stop.
+The live camera mapping and prompt remain unchanged.
+
+## Actual distributed live lift route: saved replay
+
+We replayed `lift_visible_grip.observe_visible_grip` on all 16 archived
+board-9 cylinder lift checkpoints with the current five-worker distributed
+backend, current right-angle Inspire URDF, each frozen session calibration,
+recorded 13-joint feedback, original undistorted before/after PNGs, and the
+unchanged hand-crop prompt. The crop sends one 640×640 after-lift image to
+each of capture1 (`24122734`) and capture3 (`25322638`) in parallel. The
+other three warmed workers serve other task stages, not this lift vote.
+The reference here is a visual audit of the saved full-resolution
+`25322651` frames: 12 visibly held and 4 visibly on the board. It is not a
+physical ground-truth measurement of grip force or a live run.
+The visual reference, exact source PNG and frame identity for each episode
+are in `visual_reference_audit.json` beside the replay.
+
+| Group | Saved images | Current live crop replay | Historical report |
+| --- | ---: | ---: | --- |
+| Visibly held | 12 | 12 `held` | 9 `held`, 3 `miss` |
+| Visibly on board | 4 | 4 `miss` | 3 `miss`, 1 `held` |
+
+The three historical false misses (`47444d94`, `62f250bd`, `f8cb41a1`)
+used older `visible_grip_v1` or generic paired-image observers; the old
+false held (`974ad7ad`) used the generic observer. Current crop replay
+classified all four correctly. A four-case repeat gave the same labels.
+Across the 16-case warm replay, per-call median remote inference was
+0.450 s on `24122734` and 0.559 s on `25322638` (parallel calls, excluding
+model load and saved-PNG reads). The individual answers, prompt, projected
+hand pixels, crop boxes, source frame IDs/timestamps/PNG hashes, model and
+inference timing are saved in
+`/home/robot/shared_data/hyunsu/tmp/20261026_capture2_view_swap_eval/visible_grip_v2_replay.json`.
+This supports keeping the current live lift classifier. It does not prove
+future grasp accuracy on new placements or replace actual robot observation.
+
+We also replayed stock `auto_label_charuco`'s board-visibility idea against
+the session's socket-present board-9 corner baseline and all 20 saved
+after-lift views. This cannot replace the live crop: in several cases the
+key is on the board **before** grasp yet all baseline corners are already
+visible. A full after-lift corner set therefore does not prove the key left
+the board. The board replay remains a read-only diagnostic, not a new
+failure gate or success override. Its per-camera corner IDs and frame
+provenance are in `charuco_lift_coverage.json` beside the lift replay.
 
 The user-approved force-stop path is already represented in the live policy:
 an axial force stop with recorded withdrawal goes through stock-style held-key
