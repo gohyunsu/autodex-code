@@ -737,6 +737,14 @@ it cannot quantify a second capture's cost. A future reuse path needs to
 preserve the initial image/frame binding and check the measured robot state;
 simply removing the freshness condition is not a valid latency fix.
 
+The held and released return handlers also read clear-view feedback immediately
+before calling `capture_returned_key_for_reset`, which reads and validates the
+same state again before capture. The duplicate outer read has been removed;
+the capture function now owns the single timed `recovery.clear_view` feedback
+check. Released-key recovery still records its separate post-release measured
+state before the fresh key capture. This removes only a redundant feedback
+read, with no change to robot motion or the force-stop recovery order.
+
 An additional saved-image trace found that the shared VLM fallback can emit an
 explicitly exploratory 2 mm step when no tip is visible. The optional
 SAM/tracked-tip path had inherited that branch, so an empty SAM mask could

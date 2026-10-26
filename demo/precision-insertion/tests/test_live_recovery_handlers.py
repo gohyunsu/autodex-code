@@ -134,10 +134,11 @@ def test_held_return_clears_view_then_recaptures_same_session(
         return {"plan_report": {"path": str((tmp_path / "return_plan.json").resolve())}}
 
     def capture(**kwargs):
-        events.append("capture")
         assert kwargs["runner"] is runner
         assert kwargs["capture_id"] == "reset_001"
         assert kwargs["key_prompt"] == bound.key_prompt
+        kwargs["clear_view"].before_key_capture()
+        events.append("capture")
         return ReturnedKeyCapture(observation, _state(),
                                   kwargs["key_evidence_dir"])
 
@@ -291,7 +292,7 @@ def test_released_failure_is_perceived_and_restored_without_withdrawal(tmp_path)
 
     bound.recover_released(runner, runner.current_decision())
 
-    assert events == ["clear_view", "capture_released", "restore_original"]
+    assert events == ["capture_released", "restore_original"]
     assert "withdraw" not in events
     record = json.loads((runner._attempt_dir /
                          "released_failure_clear_view.json").read_text())

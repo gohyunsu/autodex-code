@@ -240,7 +240,8 @@ def capture_returned_key_for_reset(
             not math.isfinite(max_key_state_skew_s) or
             max_key_state_skew_s <= 0):
         raise ValueError("reset key capture needs active held recovery and feedback")
-    clear_view.before_key_capture()
+    with timed("recovery.clear_view", phase="recovery", kind="io"):
+        clear_view.before_key_capture()
     output = Path(key_evidence_dir).expanduser().resolve()
     observation = _capture_admitted_key(
         runner=runner, init_orchestrator=init_orchestrator,

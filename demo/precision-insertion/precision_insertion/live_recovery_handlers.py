@@ -113,8 +113,6 @@ class LiveHeldReturnHandlers:
                     f"{sorted(unknown)}")
 
     def _capture_landing(self, runner, launch, decision):
-        with timed("recovery.clear_view", phase="recovery", kind="motion"):
-            self.live.clear_view.before_key_capture()
         capture_id = self.capture_id_factory()
         with timed("recovery.key_capture", phase="recovery", kind="camera",
                    capture_id=capture_id):
@@ -328,10 +326,8 @@ class LiveHeldReturnHandlers:
         release_path = Path(refs.get("release_execution", "")).expanduser().resolve()
         if not release_path.is_file():
             raise ValueError("released-key recovery lacks the post-stroke release log")
-        clear_state = self.live.clear_view.before_key_capture()
         measured = self.read_state()
-        if not isinstance(clear_state, LiveRobotState) or not isinstance(
-                measured, LiveRobotState):
+        if not isinstance(measured, LiveRobotState):
             raise TypeError("released-key recovery needs measured robot feedback")
         measured = self.live.clear_view.verify_state(
             measured, phase="released_failure_clear_view")
