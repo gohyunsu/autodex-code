@@ -179,3 +179,32 @@ def test_camera_only_launcher_keeps_default_output_with_other_options(
     output = args[args.index("--output-dir") + 1]
     assert output == (str(tmp_path / "chosen") if explicit_output else
                       str(stage / "runs" / Path(output).name))
+
+
+def test_key_already_placed_reuses_socket_without_operator_wait(
+        tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(camera_only, "run_camera_only", lambda **kwargs: (
+        seen.append(kwargs) or {"robot_ready": False}))
+    monkeypatch.setattr("builtins.input", lambda _prompt: pytest.fail(
+        "already-placed key must not prompt for placement"))
+    assert camera_only.main([
+        "--launch-config", str(tmp_path / "launch.json"),
+        "--endpoint-catalog", str(tmp_path / "catalog.json"),
+        "--output-dir", str(tmp_path / "run"),
+        "--reuse-session-evidence", str(tmp_path / "saved"),
+        "--key-already-placed",
+    ]) == 0
+    assert len(seen) == 1
+    assert seen[0]["reuse_session_evidence"] == tmp_path / "saved"
+    assert seen[0]["wait_for_key"]() is None
+
+
+def test_key_already_placed_requires_prior_socket_session(tmp_path):
+    with pytest.raises(SystemExit, match="2"):
+        camera_only.main([
+            "--launch-config", str(tmp_path / "launch.json"),
+            "--endpoint-catalog", str(tmp_path / "catalog.json"),
+            "--output-dir", str(tmp_path / "run"),
+            "--key-already-placed",
+        ])

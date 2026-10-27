@@ -101,6 +101,9 @@ def fit_board_socket_body(
         xy = np.column_stack(((points - board[:3, 3]) @ x_axis,
                               (points - board[:3, 3]) @ y_axis))
         median_xy = np.median(xy, axis=0)
+        residual_mm = np.linalg.norm(xy - median_xy, axis=1) * 1000.0
+        pairwise_mm = np.linalg.norm(
+            xy[:, None, :] - xy[None, :, :], axis=2) * 1000.0
         pose_robot = np.eye(4)
         pose_robot[:3, :3] = rotation
         pose_robot[:3, 3] = (board[:3, 3] + median_xy[0] * x_axis
@@ -133,6 +136,10 @@ def fit_board_socket_body(
         "mean_body_iou": float(np.mean(list(per_view.values()))),
         "per_view_board_xy_m": {
             camera: xy[index].tolist() for index, camera in enumerate(sorted(masks))},
+        "per_view_center_residual_mm": {
+            camera: float(residual_mm[index])
+            for index, camera in enumerate(sorted(masks))},
+        "maximum_pairwise_center_disagreement_mm": float(np.max(pairwise_mm)),
         "board_xy_m": median_xy.tolist(),
     }
     return validate_se3(world_robot @ pose_robot,

@@ -86,6 +86,9 @@ def test_board_socket_fit_keeps_axis_upright_with_one_flange_mask(
     assert row.stock_selection["sil_skipped"] is True
     assert row.per_view_iou["cam_3"] < min(
         row.per_view_iou[camera] for camera in ("cam_0", "cam_1", "cam_2"))
+    diagnostic = row.stock_selection["body_fit"]
+    assert diagnostic["maximum_pairwise_center_disagreement_mm"] > 0
+    assert set(diagnostic["per_view_center_residual_mm"]) == set(cameras)
 
 
 def test_board_socket_fit_rejects_noncanonical_intrinsics(tmp_path):

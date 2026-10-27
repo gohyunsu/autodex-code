@@ -627,3 +627,36 @@ semantics, not just a changed robot IP. The alternative is a local ParaDex
 daemon for the ZeroDex FR3, but its matching libfranka 0.18 runtime and
 exclusive FCI ownership are not yet established. Neither backend was
 started or sent a robot command during this audit.
+
+### 2026-10-28 current lying-key camera and socket-pose review
+
+The project-only capture4 camera/snapshot/precision services were started
+without an exposure override and all eight ports became ready. A fresh
+four-view key request completed in 2.06 s, but the source frames' grayscale
+p99 was 6, 8, 9 and 19/255; SAM3 returned zero key pixels in all four views.
+The evidence is under `zerodex_capture4/runs/inline_key_20261028_pipeline_review_escalated/`.
+The services were then stopped, and a read-only port/process check confirmed
+that none remained. Thus the current lying-key scene has **not** been admitted
+to FoundPose or current-scene planning. This is an illumination/camera-input
+finding, not a grasp-planner failure. No camera setting was changed.
+
+The saved *lit* lying-key socket probe exposed a separate pose-accuracy risk:
+its two per-view board-XY centers differed by about 25 mm. The current
+`board_constrained_body` estimator backprojects every SAM-mask centroid at
+the cylindrical wall's mid-height, although the mask can also contain the
+wide base flange. With only two contributing views their coordinate-wise
+median is the midpoint; this is not evidence of millimetric socket-center
+accuracy even when mean body IoU is accepted. The fitter now records each
+view's residual from the median and the maximum pairwise disagreement in
+`body_fit` diagnostics, without adding a pose veto or changing the estimate.
+The next lit, socket-only capture should inspect these numbers and overlays
+before using the pose as an insertion target. A new mask/geometry fit should
+be benchmarked against that capture rather than silently changing the live
+estimator from old ambiguous masks.
+
+The camera-only CLI also gained `--key-already-placed` for verified fixed-
+socket reuse, so a key that is already lying on the board can be captured
+without an unnecessary operator prompt. It does not bypass socket-evidence
+verification, key perception or the catalog. The current scene has no
+ZeroDex fixed-socket session evidence to reuse, so a first session still
+needs a lit socket-only measurement before this option can be used.

@@ -169,19 +169,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--reuse-session-evidence", type=Path,
                         help="verified fixed-socket session; skips board/socket recapture")
+    parser.add_argument("--key-already-placed", action="store_true",
+                        help="reuse an unchanged socket session and capture the key immediately")
     args = parser.parse_args(argv)
+    if args.key_already_placed and args.reuse_session_evidence is None:
+        parser.error("--key-already-placed needs --reuse-session-evidence")
     if args.reuse_session_evidence is None:
         print("Leave the fixed socket on board 9 and REMOVE the key before starting.")
         input("Press Enter to measure board and socket... ")
     else:
         print("Reusing the saved fixed-socket session; leave the socket unmoved.")
+    def wait_for_key() -> None:
+        if not args.key_already_placed:
+            input("Place or confirm the key on the board, then press Enter to recognize it... ")
+
     report = run_camera_only(
         launch_config=args.launch_config,
         endpoint_catalog=args.endpoint_catalog,
         output_dir=args.output_dir,
         reuse_session_evidence=args.reuse_session_evidence,
-        wait_for_key=lambda: input(
-            "Place or confirm the key on the board, then press Enter to recognize it... "))
+        wait_for_key=wait_for_key)
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0
 

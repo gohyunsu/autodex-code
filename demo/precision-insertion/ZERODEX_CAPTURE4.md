@@ -163,8 +163,9 @@ preflight, not a camera or robot acceptance test. Its
 `candidates_by_tabletop_pose` counts distinguish the 106 eligible upright
 `000` grasps from the four eligible lying `001` grasps in the current gap-20
 catalog. These are endpoint-screen results, not executable arm plans. The
-live cylindrical policy requires upright `000` for direct insertion and
-routes `001` through reorientation first. Do **not** use `--run` while
+ZeroDex profile tries pose-matched grasps for both upright `000` and lying
+`001` first. A lying key enters reorientation only when its direct
+current-scene plans are exhausted. Do **not** use `--run` while
 the robot/hand are off or before the local robot adapter is commissioned.
 The ZeroDex launcher now refuses `--run` and `--plan-only` outright: both
 would instantiate the inherited AutoDex ZMQ executor, while this PC's ParaDex
@@ -230,8 +231,14 @@ present.
 
 ```bash
 bash demo/precision-insertion/run_zerodex_capture4.sh --camera-only \
-  --reuse-session-evidence /absolute/previous/socket_evidence
+  --reuse-session-evidence /absolute/previous/socket_evidence \
+  --key-already-placed
 ```
+
+`--key-already-placed` skips only the operator placement prompt. It requires
+verified fixed-socket evidence and does not skip key capture, pose admission,
+or any planning filter. Without it, the prompt remains available for a key
+that will be placed after camera startup.
 
 For a chosen output directory, pass `--output-dir /absolute/new/path` after
 `--camera-only`. Keep the capture4 services isolated; this launcher does not
