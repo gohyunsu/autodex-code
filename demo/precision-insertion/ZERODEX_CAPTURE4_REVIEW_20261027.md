@@ -936,3 +936,35 @@ but was not restored or run on this host. The robot and hand are currently
 powered off, so neither backend can be physically checked. The next code
 integration depends on which controller will own the ZeroDex FR3; the camera
 and planning paths do not depend on that choice.
+
+### 2026-10-28 current-scene capture and exposure comparison
+
+The dedicated capture4 services were started without modifying the shared
+ParaDex checkout or camera.json, probed once at their normal exposure, then
+stopped. A second isolated run used the existing process-local 20,000 us
+exposure override, then was also stopped. Both runs returned four source
+images and four SAM replies. The normal request took 2.124 s, and the 20 ms
+request took 2.385 s. In both, all four key masks had zero pixels and all
+four FoundPose results were unsuccessful. Grayscale p99 values were
+8/6/9/19 at normal exposure and 39/29/46/52 at 20 ms (camera IDs
+25305462/25322639/25322642/26053248). The latter is brighter but still
+does not recover key perception; a longer exposure is not justified as a default
+latency cost from these results.
+
+The actual 20 ms source frames show a board containing other objects
+(including a brush- and banana-like item) rather than an unmistakable white
+cylindrical key/socket-only arrangement. This is an observation of the
+current scene, not a claim that the saved camera calibration is invalid. The
+camera-only and full planning path should be rerun after the intended key
+and fixed socket are visibly present under adequate illumination. No robot
+connection or motion was attempted. Evidence:
+`zerodex_capture4/runs/inline_key_review_20261028_continuation_1/report.json`
+and `zerodex_capture4/runs/inline_key_review_20261028_exposure20ms_1/report.json`.
+
+Static CAD preparation was profiled before considering another cache:
+after initial import, reloading the key and socket meshes, constructing the
+socket Coal BVH, and constructing analytic cylinder occupancy cost about
+0.012 s per endpoint candidate together. The existing URDF/FK reuse targets
+the substantially larger repeated work; caching these static pieces would
+invalidate every implementation-bound catalog for only a small expected
+gain, so no further endpoint-cache change was made.
