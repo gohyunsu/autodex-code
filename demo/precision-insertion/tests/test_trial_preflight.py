@@ -338,6 +338,50 @@ def test_live_cylinder_routes_lying_key_to_upright_reset_before_insertion(
     assert planner.pickups == []
 
 
+def test_zerodex_lying_key_tries_direct_grasp_before_reorientation(
+        tmp_path, monkeypatch):
+    mode, calibration, catalog, limits = _fixture(tmp_path, monkeypatch)
+    mode = select_mode("cylinder", 20)
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.classify_key_tabletop_pose",
+        lambda **_: {"stem": "001", "rotation_error_deg": 0.0})
+    lying = {**catalog["candidates"][1], "key": ["table", "1", "2"],
+             "tabletop_pose_stem": "001"}
+    catalog["candidates"].append(lying)
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.plan_insertion_after_pickup",
+        lambda **_: InsertionPreflight(
+            "sampled_planning_pass", None, None, None,
+            {"sampled_clear": True}, 0, np.zeros(6),
+            "commanded_nominal", ()))
+    planner = _Planner()
+    result = _run(
+        tmp_path, (mode, calibration, catalog, limits), planner,
+        upright_cylinder_only=False)
+    assert result.status == "sampled_planning_pass"
+    assert result.selected_candidate_key == ("table", "1", "2")
+    assert planner.pickups == [("table", "1", "2")]
+
+
+def test_zerodex_lying_key_reorients_only_after_direct_plans_fail(
+        tmp_path, monkeypatch):
+    mode, calibration, catalog, limits = _fixture(tmp_path, monkeypatch)
+    mode = select_mode("cylinder", 20)
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.classify_key_tabletop_pose",
+        lambda **_: {"stem": "001", "rotation_error_deg": 0.0})
+    catalog["candidates"].append({
+        **catalog["candidates"][0], "key": ["table", "1", "1"],
+        "tabletop_pose_stem": "001"})
+    planner = _Planner()
+    result = _run(
+        tmp_path, (mode, calibration, catalog, limits), planner,
+        upright_cylinder_only=False)
+    assert result.status == "repose_required_unplanned"
+    assert result.repose_target_stems == ("000",)
+    assert planner.pickups == [("table", "1", "1")]
+
+
 def test_trial_records_reset_seed_assessment_without_authorizing_repose(
     tmp_path, monkeypatch,
 ):

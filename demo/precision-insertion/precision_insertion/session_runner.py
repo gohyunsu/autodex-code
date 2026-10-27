@@ -152,6 +152,7 @@ class SessionRunner:
         catalog: dict, shared_root: Path, output_dir: Path,
         max_xy_retries: int | None, xy_update_weight: float = 1.0,
         initial_preferred_candidate: tuple[str, str, str] | None = None,
+        upright_cylinder_only: bool = True,
     ) -> None:
         if max_xy_retries is not None and (
                 type(max_xy_retries) is not int or max_xy_retries < 0):
@@ -162,6 +163,8 @@ class SessionRunner:
             raise ValueError("XY update weight must be positive for cylinder; square uses effective 0")
         if not isinstance(calibration, SessionCalibration):
             raise TypeError("session needs a frozen SessionCalibration")
+        if type(upright_cylinder_only) is not bool:
+            raise TypeError("upright_cylinder_only must be a boolean")
         validate_catalog_session(catalog, mode=mode,
                                  session_record=calibration.record)
         root = Path(shared_root).expanduser().resolve()
@@ -197,6 +200,7 @@ class SessionRunner:
         self.max_xy_retries = max_xy_retries if mode.family == "cylinder" else 0
         self.xy_update_weight = (float(xy_update_weight)
                                  if mode.family == "cylinder" else 0.0)
+        self.upright_cylinder_only = upright_cylinder_only
         self.session_sha256 = _digest(calibration.record)
         self.catalog_sha256 = _digest(catalog)
         self._preflight: TrialPreflight | None = None
@@ -284,6 +288,7 @@ class SessionRunner:
             "catalog_sha256": self.catalog_sha256,
             "max_xy_retries": self.max_xy_retries,
             "xy_update_weight": self.xy_update_weight,
+            "upright_cylinder_only": self.upright_cylinder_only,
             "initial_preferred_candidate": (None if initial_preferred_candidate is None
                                             else list(initial_preferred_candidate)),
             "scope": "evidence_and_preflight_only_not_robot_motion_authorization",
@@ -568,7 +573,7 @@ class SessionRunner:
             max_candidate_attempts=max_candidate_attempts,
             attempted=tuple(sorted(exclusions)), covered_scenes=(),
             preferred_candidate=preferred,
-            upright_cylinder_only=(self.mode.family == "cylinder"),
+            upright_cylinder_only=self.upright_cylinder_only,
             retry_candidate=(preferred if pending_xy is not None else None),
             retry_pose_stem=(pending_xy["tabletop_pose_stem"]
                              if pending_xy is not None else None),

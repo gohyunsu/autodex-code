@@ -93,7 +93,8 @@ def run_camera_only(
                         output_dir=output / "ledger", max_xy_retries=None,
                         catalog_snapshot=catalog,
                         producer_manifest=started.producer_manifest,
-                        calibration_snapshot=started.calibration)
+                        calibration_snapshot=started.calibration,
+                        upright_cylinder_only=launch.upright_cylinder_only)
                 with timed("startup.key_placement_wait", phase="startup",
                            kind="operator"):
                     wait_for_key()
@@ -134,8 +135,11 @@ def run_camera_only(
             selected = select_pose_candidates(
                 catalog, expected_mode=launch.mode,
                 tabletop_pose_stem=pose_class["stem"])
+        direct_preflight = (
+            selected["status"] == "candidates_available" and
+            (not launch.upright_cylinder_only or pose_class["stem"] == "000"))
         report = {
-            "schema": "precision_insertion_zerodex_camera_only_session_v1",
+            "schema": "precision_insertion_zerodex_camera_only_session_v2",
             "scope": "real_camera_perception_and_catalog_not_robot_plan_or_motion",
             "socket_evidence_dir": str(started.evidence_dir),
             "socket_evidence_reused": saved_session is not None,
@@ -145,10 +149,10 @@ def run_camera_only(
             "tabletop_pose": pose_class,
             "candidate_status": selected["status"],
             "endpoint_eligible_candidate_count": len(selected["candidates"]),
-            "direct_insertion_pose": pose_class["stem"] == "000",
+            "direct_candidate_preflight_available": direct_preflight,
             "live_pose_route": (
-                "direct_candidate_preflight" if pose_class["stem"] == "000" else
-                "upright_reorientation_preflight"),
+                "direct_candidate_preflight" if direct_preflight else
+                "reorientation_preflight_if_alternative_pose_available"),
             "robot_ready": False,
         }
         with (output / "report.json").open("x", encoding="utf-8") as stream:

@@ -48,6 +48,7 @@ def build(*, source_stage: Path, shared_root: Path, calibration_dir: Path,
         camera_ids=list(CAMERAS),
         camera_acquisition_mode="stream",
         init_frame_transport="inline_png",
+        upright_cylinder_only=False,
         minimum_socket_refined_iou=0.0,
         socket_prompt="large hollow white cylindrical socket with a wide flat circular base",
     )

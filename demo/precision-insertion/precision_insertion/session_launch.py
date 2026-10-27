@@ -76,6 +76,7 @@ class SessionLaunch:
     fixture_contract_validated: bool = False
     scene_mode: str = "charuco_board"
     table_surface_z_m: float | None = None
+    upright_cylinder_only: bool = True
 
     def readiness(self) -> dict:
         result = {
@@ -97,6 +98,7 @@ class SessionLaunch:
             "minimum_socket_refined_iou": self.minimum_socket_refined_iou,
             "socket_perception_mode": self.socket_perception_mode,
             "socket_capture_count": self.socket_capture_count,
+            "upright_cylinder_only": self.upright_cylinder_only,
             "scope": "file_preflight_not_live_camera_or_pose_accuracy",
             "robot_ready": False,
         }
@@ -375,6 +377,9 @@ def load_session_launch(
              socket_perception_mode != "board_constrained_body")):
         raise ValueError("socket IoU limit must be in (0,1], or 0 for body-fit logging only")
     values["minimum_socket_refined_iou"] = float(score_limit)
+    upright_cylinder_only = record.get("upright_cylinder_only", True)
+    if type(upright_cylinder_only) is not bool:
+        raise ValueError("upright_cylinder_only must be a boolean")
     return SessionLaunch(
         mode, root, capture_root, evidence, tuple(pcs), tuple(ips), camera_ids,
         intrinsics, extrinsics, image_hw, c2r, base_scene, camera_times,
@@ -386,6 +391,7 @@ def load_session_launch(
         camera_time_mode=time_mode, execution_scope=execution_scope,
         camera_acquisition_mode=acquisition_mode,
         init_frame_transport=init_frame_transport,
+        upright_cylinder_only=upright_cylinder_only,
         fixture_contract_validated=mode.family == "cylinder")
 
 

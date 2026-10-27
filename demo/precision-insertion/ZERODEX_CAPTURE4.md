@@ -208,8 +208,11 @@ tabletop classification and matching screened catalog, and writes a unique
 `zerodex_capture4/runs/camera_only_*/report.json`, `socket_evidence/`,
 `key_capture/`, `ledger/` and a sibling `.timing/` directory. This is the
 current 20 mm launch/catalog profile. The report includes
-`direct_insertion_pose` and `live_pose_route`, so a lying-key detection is
-not mistaken for a direct insertion plan. Key admission is pose-only, as in the
+`direct_candidate_preflight_available` and `live_pose_route`. A lying key
+with matching endpoint-screened grasps now enters current-scene candidate
+planning first; if those plans fail, the existing tabletop reorientation
+route remains available. These fields do not claim a passing arm plan.
+Key admission is pose-only, as in the
 live planning path: it does not wait for a second set of same-request PNGs.
 Use `probe_zerodex_inline_frames.py` above if raw key frames and masks are
 needed for visual QA; do not compare its PNG-inclusive duration to the

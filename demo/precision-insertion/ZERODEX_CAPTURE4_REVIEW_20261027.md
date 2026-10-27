@@ -553,3 +553,45 @@ check. The AutoDex `acquire` path is unchanged. This is a startup-latency
 optimization, not a new camera failure gate. A unit test covers early return;
 the real capture4 time saving remains unmeasured until a camera session is
 approved and run.
+
+### 2026-10-28 lying-key direct-first planning review
+
+The gap-20 straight-mount catalogue contains four pose-`001` grasps that pass
+the stock v8 MuJoCo grasp filter and nominal 20 mm hand/socket CAD endpoint
+screen (`table/1/20721`, `20777`, `20873`, `339`). The previous live
+`SessionRunner` nevertheless set `upright_cylinder_only=True` for **every**
+cylinder session, so a freshly observed lying key skipped all four pickup and
+held-path plans and immediately entered `001→000` tabletop reorientation.
+This was a policy restriction, not a collision or grasp-filter result.
+
+The ZeroDex launch now explicitly sets `upright_cylinder_only=false`; the
+AutoDex profile retains its default `true`. For a lying ZeroDex key the live
+runner first tries the matching endpoint-eligible grasps in the measured
+scene, using the unchanged v8 pickup planner and full held transfer/20 mm
+insertion preflight. It stops at the first full-chain plan. If all candidates
+fail, the existing reorientation decision remains available; a static
+endpoint pass is never promoted to a robot trajectory by this change. The
+selected policy is saved in `session_run.json` and shown by `--check`.
+
+`run_zerodex_capture4.sh --check` now reports direct-preflight pose stems
+`000` and `001`, 110/124 eligible endpoint rows, and four eligible lying rows.
+All six gap profiles passed the same static check: gaps 1/3 mm each had 109
+eligible rows, 5/10/15 mm each had 112, and 20 mm had 110; each included
+both pose stems as direct planning inputs under this ZeroDex policy.
+The camera-only report separately says only whether pose-matched candidate
+preflight is available; it does not claim that an arm plan exists. The
+historical synthetic lying scene still had zero full-chain passes out of four,
+and no measured current-scene joints/socket pose were supplied for those
+plans. The live lying-key frames most recently saved were nearly black and
+produced zero SAM3 masks, so this code change has not established a current
+lying-key grasp or physical insertion. All 1,289 precision tests passed
+(5 skipped), including direct-first and exhausted-to-reorient routing.
+
+The remaining end-to-end blockers are external to the grasp ordering: restore
+usable illumination for key and socket observations, measure the socket once
+without the key on the board (or reuse an unchanged fixed-socket session),
+and identify/commission the ZeroDex robot-control backend. `--run` remains
+blocked because the current ParaDex ZMQ executor addresses the old AutoDex
+daemon while this rig's documented controller is ROS2; the robot/hand were
+off and no motion or contact was attempted here. No collision, force, VLM,
+or task-success acceptance threshold was added or relaxed by this change.

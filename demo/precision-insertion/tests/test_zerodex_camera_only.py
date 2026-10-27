@@ -18,8 +18,9 @@ from precision_insertion.config import select_mode  # noqa: E402
 
 @pytest.mark.parametrize("reuse", (False, True))
 @pytest.mark.parametrize("stem", ("000", "001"))
+@pytest.mark.parametrize("upright_only", (False, True))
 def test_camera_only_reuses_socket_key_and_catalog_without_robot(
-        tmp_path, monkeypatch, reuse, stem):
+        tmp_path, monkeypatch, reuse, stem, upright_only):
     events = []
     mode = select_mode("cylinder", 20)
     shared = tmp_path / "shared"
@@ -36,6 +37,7 @@ def test_camera_only_reuses_socket_key_and_catalog_without_robot(
         intrinsics_full={"a": {}, "b": {}},
         extrinsics_full={"a": {}, "b": {}},
         image_hw=(1536, 2048), view_limits=SimpleNamespace(),
+        upright_cylinder_only=upright_only,
     )
 
     def load(_path, *, evidence_dir_override):
@@ -93,6 +95,9 @@ def test_camera_only_reuses_socket_key_and_catalog_without_robot(
                         lambda **_kwargs: events.append("prewarm"))
     monkeypatch.setattr(camera_only, "open_verified_session",
                         lambda **_kwargs: (
+                            events.append("direct_lie" if
+                                          _kwargs["upright_cylinder_only"] is False
+                                          else "legacy_policy") or
                             events.append("ledger") or SimpleNamespace(runner=object())))
     monkeypatch.setattr(camera_only, "_capture_admitted_key", capture_key)
     monkeypatch.setattr(camera_only, "build_trial_scene_from_session",
@@ -126,13 +131,16 @@ def test_camera_only_reuses_socket_key_and_catalog_without_robot(
         ["launch", "catalog"] + (["saved_socket"] if reuse else []) +
         ["camera_open", "prewarm", "stream_open"] +
         ([] if reuse else ["socket"]) +
-        ["ledger", "key_placed", "key", "stream_close", "camera_close",
+        ["legacy_policy" if upright_only else "direct_lie",
+         "ledger", "key_placed", "key", "stream_close", "camera_close",
          "scene", "classify", "select"])
     assert report["endpoint_eligible_candidate_count"] == 1
-    assert report["direct_insertion_pose"] is (stem == "000")
+    assert report["schema"] == "precision_insertion_zerodex_camera_only_session_v2"
+    direct_preflight = not upright_only or stem == "000"
+    assert report["direct_candidate_preflight_available"] is direct_preflight
     assert report["live_pose_route"] == (
-        "direct_candidate_preflight" if stem == "000" else
-        "upright_reorientation_preflight")
+        "direct_candidate_preflight" if direct_preflight else
+        "reorientation_preflight_if_alternative_pose_available")
     assert report["socket_evidence_reused"] is reuse
     assert report["robot_ready"] is False
     assert (tmp_path / "run" / "report.json").is_file()

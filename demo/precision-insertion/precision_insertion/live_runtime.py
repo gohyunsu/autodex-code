@@ -110,7 +110,7 @@ def inspect_live_inputs(
         counts["catalogued"] += 1
         counts["eligible"] += row.get("eligible") is True
     result = {
-        "schema": "precision_insertion_static_live_preflight_v1",
+        "schema": "precision_insertion_static_live_preflight_v2",
         "launch": launch.readiness(),
         "launch_config_path": str(Path(launch_config_path).expanduser().resolve()),
         "launch_config_sha256": hashlib.sha256(
@@ -124,8 +124,12 @@ def inspect_live_inputs(
         "eligible_candidate_count": sum(
             row.get("eligible") is True for row in catalog["candidates"]),
         "candidates_by_tabletop_pose": dict(sorted(pose_counts.items())),
-        "live_cylinder_direct_insertion_pose": (
-            "000" if launch.mode.family == "cylinder" else None),
+        "direct_preflight_pose_stems": [
+            stem for stem, counts in sorted(pose_counts.items())
+            if launch.mode.family == "cylinder" and
+            counts["eligible"] > 0 and (
+                not getattr(launch, "upright_cylinder_only", True) or
+                stem == "000")],
         "robot_config": None,
         "xy_estimator": xy_estimator,
         "sam_roi_inputs": None,

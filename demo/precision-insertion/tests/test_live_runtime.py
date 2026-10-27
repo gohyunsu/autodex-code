@@ -97,7 +97,7 @@ def test_static_preflight_reads_v8_files_without_opening_robot(
         "000": {"catalogued": 1, "eligible": 1},
         "001": {"catalogued": 1, "eligible": 0},
     }
-    assert report["live_cylinder_direct_insertion_pose"] == "000"
+    assert report["direct_preflight_pose_stems"] == ["000"]
     assert report["launch"]["board_id"] == "9"
     assert report["launch_evidence_dir_exists"] is False
     assert report["robot_config"]["stage_factory_syntax_valid"] is True

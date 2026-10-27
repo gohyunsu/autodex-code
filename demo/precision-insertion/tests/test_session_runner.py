@@ -111,7 +111,8 @@ def _report(runner, observation, *, status="sampled_planning_pass",
         catalog_sha256=runner.catalog_sha256)
 
 
-def _runner(monkeypatch, tmp_path, *, xy_update_weight=1.0):
+def _runner(monkeypatch, tmp_path, *, xy_update_weight=1.0,
+            upright_cylinder_only=True):
     monkeypatch.setattr(session_runner, "validate_catalog_session",
                         lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
@@ -136,7 +137,8 @@ def _runner(monkeypatch, tmp_path, *, xy_update_weight=1.0):
     return session_runner.SessionRunner(
         mode=MODE, calibration=calibration, catalog=catalog,
         shared_root=tmp_path / "shared", output_dir=tmp_path / "session",
-        max_xy_retries=1, xy_update_weight=xy_update_weight)
+        max_xy_retries=1, xy_update_weight=xy_update_weight,
+        upright_cylinder_only=upright_cylinder_only)
 
 
 def test_cylinder_xy_weight_above_one_is_retained(monkeypatch, tmp_path):
@@ -255,6 +257,24 @@ def test_xy_advice_survives_intermediate_key_reorientation(monkeypatch, tmp_path
     _plan(runner, _observation("lying_key", 7.0))
     assert runner.current_decision().action == "preflight_repose"
     assert runner._pending_next_trial_xy is advice
+
+
+def test_zerodex_session_forwards_direct_lying_planning_policy(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path, upright_cylinder_only=False)
+    saved = json.loads((runner.output_dir / "session_run.json").read_text())
+    assert saved["upright_cylinder_only"] is False
+    def plan_lying(**kwargs):
+        assert kwargs["upright_cylinder_only"] is False
+        report = _report(
+            runner, kwargs["key_observation"],
+            status="repose_required_unplanned", repose_targets=("000",))
+        report.pose_class = {"stem": "001"}
+        return report
+
+    monkeypatch.setattr(session_runner, "plan_admitted_key_trial", plan_lying)
+    _plan(runner, _observation("lying_key", 7.0))
+    assert runner.current_decision().action == "preflight_repose"
 
 
 @pytest.mark.parametrize("xy_source", [

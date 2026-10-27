@@ -105,6 +105,22 @@ def test_check_only_loads_stock_calibration_and_does_not_connect(
     np.testing.assert_allclose(loaded.extrinsics_full["cam_a"], np.eye(4))
 
 
+def test_lie_planning_profile_is_explicit_and_defaults_to_legacy_policy(
+        tmp_path, monkeypatch):
+    config, record = _config(tmp_path)
+    _stub_time(monkeypatch)
+    assert launch.load_session_launch(config).upright_cylinder_only is True
+    record["upright_cylinder_only"] = False
+    config.write_text(json.dumps(record), encoding="utf-8")
+    loaded = launch.load_session_launch(config)
+    assert loaded.upright_cylinder_only is False
+    assert loaded.readiness()["upright_cylinder_only"] is False
+    record["upright_cylinder_only"] = "false"
+    config.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match="upright_cylinder_only"):
+        launch.load_session_launch(config)
+
+
 def test_camera_only_cli_forwards_capture4_init_ports(tmp_path, monkeypatch, capsys):
     config, record = _config(tmp_path)
     _stub_time(monkeypatch)

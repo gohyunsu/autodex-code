@@ -2627,13 +2627,18 @@ plan. The copied collision world retains the fixed socket and original
 tabletop key; after measured clear-view feedback it recaptures the key at
 its actual supported pose and excludes the missed grasp. It does not pick up
 and drop the key simply to restore its former XY. In the live 20 mm cylinder
-mode, a lying `001` key first enters the directed v8 `001→000` reorientation
-route. That route and held-key failure returns now plan release at the board
+mode on the AutoDex profile, a lying `001` key first enters the directed v8
+`001→000` reorientation route. The separate ZeroDex capture4 profile instead
+tries the pose-`001` endpoint-eligible grasps in the measured current scene;
+only if none passes the full pickup/transfer/insertion preflight does it use
+the same `001→000` reorientation route. That route and held-key failure
+returns now plan release at the board
 support pose (`release_height_m=0`), using the stock force-aware vertical
 descent before opening. The v8 `reset_12` name still identifies the candidate
 seed family; it is not the physical drop height. A freshly observed supported
 reset within 30 mm of the original CAD center is accepted for the next trial.
-For a saved preinsert XY correction, the next `000` trial plans only the same
+For a saved preinsert XY correction, the next trial of the same tabletop pose
+plans only the same
 v8 grasp. If that grasp cannot be planned, it reports
 `repeat_grasp_unavailable` instead of trying a different grasp under the
 same correction. The saved preinsert diagnostic decodes only the configured

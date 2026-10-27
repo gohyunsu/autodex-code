@@ -109,6 +109,7 @@ def test_live_session_keeps_same_camera_transport_for_next_key(
             "xy_update_weight": 1.0, "catalog_snapshot": None,
             "producer_manifest": None, "calibration_snapshot": None,
             "initial_preferred_candidate": None,
+            "upright_cylinder_only": True,
         }
         return opened
 

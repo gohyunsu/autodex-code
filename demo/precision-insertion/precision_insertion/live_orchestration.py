@@ -242,7 +242,9 @@ def open_live_precision_session(
                 catalog_snapshot=catalog_snapshot,
                 producer_manifest=getattr(started, "producer_manifest", None),
                 calibration_snapshot=getattr(started, "calibration", None),
-                initial_preferred_candidate=initial_preferred_candidate)
+                initial_preferred_candidate=initial_preferred_candidate,
+                upright_cylinder_only=getattr(
+                    launch, "upright_cylinder_only", True))
         yield LivePrecisionSession(started, opened, cameras, clear_view)
     finally:
         with timed("cleanup.camera_resources", phase="cleanup", kind="io"):
