@@ -101,6 +101,7 @@ def test_capture_then_continue_uses_same_key_and_measured_state(
     assert capture_calls[0]["runner"] is runner
     assert capture_calls[0]["capture_root"] == live.cameras.launch.capture_root
     assert capture_calls[0]["max_candidate_attempts"] == 1
+    assert capture_calls[0]["before_preflight"] is None
     assert len(runner.continuation_calls) == 1
     continued = runner.continuation_calls[0]
     assert continued["key_observation"] is observation

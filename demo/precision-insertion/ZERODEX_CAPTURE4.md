@@ -40,8 +40,10 @@ start the adapter if another experiment owns the cameras.
   will be placed after the fixed-socket measurement. Once a live
   session has measured the fixed socket and loaded Qwen, the planner initializes
   its table/socket cuRobo world in a background thread while the operator
-  places the key. The first action joins that thread before key capture or
-  planner use; later trials reuse the initialized planner. Set the variable to
+  places the key. Fresh key capture can also overlap the warmup; the key
+  handler joins it immediately before candidate planning. Other planner
+  actions join before entry. Later trials reuse the initialized planner.
+  Set the variable to
   `0` to use the original first-candidate initialization. When
   `PRECISION_KEY_ALREADY_PLACED=1`, the default is `0`: key perception runs
   first because there is no placement wait to hide the GPU work. An explicit
@@ -49,6 +51,9 @@ start the adapter if another experiment owns the cameras.
   change any grasp, collision or task-success criterion. It is not exercised
   by `--check` or `--camera-only`; live use requires the ZeroDex FR3 daemon
   and robot/hand commissioning described below.
+  The capture4 and main GPUs are separate, although local silhouette fitting
+  can contend with cuRobo on the main RTX 3090. A live speedup has not yet
+  been measured.
 - The ZeroDex launcher sets `PRECISION_VISIBLE_GRIP_CAMERA_IDS` to the same
   three selected views. Its lift checkpoint uses measured Franka/Inspire FK,
   the straight-mount URDF and calibrated projections to crop the hand in each
@@ -211,6 +216,12 @@ override applies only in our namespaced daemon process; it does not relax a
 SAM, FoundPose, board or planning threshold. A running service must be
 stopped before selecting a different exposure. The override's effect on the
 current lying-key scene has **not** yet been measured.
+
+A fresh default-exposure four-view request on 2026-10-28 again returned zero
+key-mask pixels in every view; grayscale p99 was 6, 8, 9 and 19/255. Its
+evidence is in `zerodex_capture4/runs/inline_key_20261028_current_pipeline_audit_1/`.
+Capture4 services were stopped after this probe. This image-input issue must
+be resolved before interpreting any live lying-key planning result.
 
 The probe saves original-frame SAM mask overlays, a four-view grid and
 `report.json`; it saves board JPEGs even if ChArUco detection fails. It never

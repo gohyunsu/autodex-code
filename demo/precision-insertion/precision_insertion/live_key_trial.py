@@ -299,6 +299,7 @@ def prepare_next_live_key(
     request_id_factory: Callable[[], int] | None = None,
     registered_key_assistance: RegisteredKeyAssistance | None = None,
     capture_initial_visual: Callable[[], object] | None = None,
+    before_preflight: Callable[[], None] | None = None,
 ) -> PreparedLiveKeyTrial:
     """Capture, admit, save, and preflight one fresh tabletop key.
 
@@ -328,6 +329,8 @@ def prepare_next_live_key(
     if not callable(acquisition_metadata_for_request) or not callable(
             state_for_observation):
         raise TypeError("camera evidence and exposure-time state providers are required")
+    if before_preflight is not None and not callable(before_preflight):
+        raise TypeError("before_preflight must be callable")
     capture_source = Path(capture_root).expanduser()
     if not capture_source.is_absolute() or not capture_source.is_dir():
         raise ValueError("key capture root must be an existing absolute shared directory")
@@ -449,6 +452,8 @@ def prepare_next_live_key(
         observation.require_state_alignment(
             state_timestamp_s=state.sample_timestamp_s,
             maximum_skew_s=max_key_state_skew_s)
+        if before_preflight is not None:
+            before_preflight()
         with timed("key.candidate_preflight", phase="planning", kind="planning"):
             preflight = runner.preflight_next_key(
                 planner=planner, key_observation=observation,

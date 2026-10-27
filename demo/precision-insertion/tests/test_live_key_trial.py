@@ -163,13 +163,30 @@ def _setup(tmp_path, monkeypatch, *, state_timestamp=100.005):
 
 def test_live_key_capture_state_and_preflight_order(tmp_path, monkeypatch):
     arguments, events, _repre = _setup(tmp_path, monkeypatch)
-    result = trial.prepare_next_live_key(**arguments)
+    result = trial.prepare_next_live_key(
+        **arguments, before_preflight=lambda: events.append("planner_ready"))
     assert events == ["compatible_renderer", "init_key", "verify_frozen_camera",
                       "capture", "admit", "save_key_evidence",
                       "measured_state_at_exposure",
+                      "planner_ready",
                       "preflight"]
     assert result.observation.capture_id == "key_001"
     assert result.preflight.status == "sampled_planning_pass"
+
+
+def test_planner_warmup_error_is_seen_after_capture_before_preflight(
+        tmp_path, monkeypatch):
+    arguments, events, _repre = _setup(tmp_path, monkeypatch)
+
+    def failed_warmup():
+        events.append("planner_ready")
+        raise RuntimeError("fixed world warmup failed")
+
+    with pytest.raises(RuntimeError, match="fixed world warmup failed"):
+        trial.prepare_next_live_key(
+            **arguments, before_preflight=failed_warmup)
+    assert events[-2:] == ["measured_state_at_exposure", "planner_ready"]
+    assert "preflight" not in events
 
 
 def test_initial_visual_capture_overlaps_key_candidate_planning(

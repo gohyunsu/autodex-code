@@ -56,12 +56,20 @@ class LiveRuntimeIntegration:
     build_components: Callable[[LivePrecisionSession], Sequence[object]]
     close: Callable[[], None]
     begin_fixed_world_warmup: Callable[[LivePrecisionSession], Future] | None = None
+    key_capture_overlaps_warmup: bool = False
 
 
-def _wait_for_fixed_world_warmup(handlers: dict, future: Future) -> dict:
-    """Let key placement overlap planner startup, then serialize planner use."""
+def _wait_for_fixed_world_warmup(
+    handlers: dict, future: Future, *, key_capture_overlaps_warmup: bool = False,
+) -> dict:
+    """Join planner warmup before use; optionally overlap fresh key capture."""
     result = dict(handlers)
     for action in result:
+        if (key_capture_overlaps_warmup and action in
+                {"capture_fresh_key", "reobserve_key_and_preflight"}):
+            # These handlers join the future at their own capture→planning
+            # boundary, allowing capture4 perception to overlap cuRobo warmup.
+            continue
         original = result[action]
 
         def after_warmup(runner, decision, *, _original=original):
@@ -251,7 +259,10 @@ def run_integrated_live_session(
                 joined = compose_live_handlers(live, *components)
             if integration.begin_fixed_world_warmup is not None:
                 future = integration.begin_fixed_world_warmup(live)
-                joined = _wait_for_fixed_world_warmup(joined, future)
+                joined = _wait_for_fixed_world_warmup(
+                    joined, future,
+                    key_capture_overlaps_warmup=(
+                        integration.key_capture_overlaps_warmup))
             return joined
 
         with timed("live.orchestration", phase="session"):

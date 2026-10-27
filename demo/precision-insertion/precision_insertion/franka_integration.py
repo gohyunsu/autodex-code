@@ -259,6 +259,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                  if options.xy_estimator == "sam_half_ellipse" else None)
     backend = None
     warmup_pool = None
+    warmup_future = None
     sam_segmentor = None
     sam_log = (options.run_output_dir.parent /
                f".{options.run_output_dir.name}.sam_roi_worker.{uuid4().hex}.stderr.log"
@@ -390,6 +391,16 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 if stage_name in stages:
                     stages[stage_name].setdefault(
                         "key_prompt", "white plastic cylindrical key")
+        if (os.environ.get("PRECISION_PREWARM_FIXED_WORLD") == "1" and
+                "key_planning" in stages):
+            def join_world_before_planning():
+                if warmup_future is not None:
+                    with timed("startup.planner_fixed_world_warmup_wait",
+                               phase="startup", kind="wait"):
+                        warmup_future.result()
+
+            stages["key_planning"]["before_preflight"] = (
+                join_world_before_planning)
         if "pickup" in stages and "executor" not in stages["pickup"]:
             # Use the same FR3 connection as clear-view and measured state.
             # This is the demo's completion-checked stock subclass; the
@@ -507,7 +518,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                     core.close()
 
     def begin_fixed_world_warmup(live):
-        nonlocal warmup_pool
+        nonlocal warmup_pool, warmup_future
         if warmup_pool is not None:
             raise RuntimeError("fixed-world planner warmup already started")
         scene = copy.deepcopy(live.started.calibration.collision_scene)
@@ -521,11 +532,14 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 install_curobo_planner_compat()
                 core.planner._set_motion_world(scene)
 
-        return warmup_pool.submit(context.run, prewarm)
+        warmup_future = warmup_pool.submit(context.run, prewarm)
+        return warmup_future
 
     return LiveRuntimeIntegration(
         core.clear_view, components, close,
         begin_fixed_world_warmup=(
             begin_fixed_world_warmup
             if os.environ.get("PRECISION_PREWARM_FIXED_WORLD") == "1"
-            else None))
+            else None),
+        key_capture_overlaps_warmup=(
+            os.environ.get("PRECISION_PREWARM_FIXED_WORLD") == "1"))

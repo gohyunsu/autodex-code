@@ -864,3 +864,34 @@ be resolved before launching a local ParaDex daemon. `--plan-only` still
 requires robot motion for clear view and measured-state observation. With
 these caveats, the full precision-demo suite passes 1,310 tests with 5
 skipped, and gap-20 static preflight remains 110/124 endpoint-eligible.
+
+### 2026-10-28 fresh input and warmup overlap follow-up
+
+Another default-exposure capture4 request completed four source PNG/mask
+replies in 2.040 s. The exact source frames' grayscale p99 was 6, 8, 9 and
+19/255, with zero key-mask pixels and no FoundPose pose in all views. The
+namespaced services were stopped after the request. The capture-side log
+measured a 0.282 s four-frame snapshot, followed by the normal per-view
+inference/publication sequence. The scene remains underexposed; changing a
+SAM acceptance threshold would not create a usable pose.
+
+The live prewarm wrapper previously waited on the cuRobo fixed-world future
+**before** entering the combined `capture_fresh_key` handler, so it could not
+overlap key perception even though capture4 and the main PC have separate
+GPUs. The key handler now joins that same future immediately before its
+candidate preflight, after frame-bound observation and measured-state checks.
+Other planner actions still join before entry. `PRECISION_PREWARM_FIXED_WORLD=1`
+selects this path; the default stays `0` for an already-placed key because an
+empty mask currently causes the otherwise-unused ~20 s warmup to delay
+diagnostic exit. On a lit scene, explicitly enabling prewarm permits the
+capture/plan overlap without changing acceptance criteria. The full suite
+passes 1,312 tests with 5 skipped. This is a control-flow verification, not
+a measured live GPU speedup.
+
+The NAS restic snapshot contains the old robot PC's 206,616-byte ParaDex
+`franka_daemon`; a temporary restore showed that this binary needs
+`libfranka.so.0.18`, which is absent on the kds-Z790 host. The backed-up
+Docker image contains the original runtime, but loading it is not a small
+file-copy step. The local kernel is `6.8.0-138-generic` with
+`PREEMPT_DYNAMIC`; daemon deployment and exclusive FCI ownership are still
+unverified. No daemon or robot command was started.

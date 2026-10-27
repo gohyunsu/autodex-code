@@ -43,6 +43,25 @@ def test_fixed_world_warmup_is_joined_before_fresh_key_capture():
     assert calls == ["continue", "fresh", "reobserve"]
 
 
+def test_fixed_world_warmup_can_overlap_capture_but_not_other_actions():
+    future = Future()
+    calls = []
+    handlers = {
+        "capture_fresh_key": lambda *_: calls.append("fresh"),
+        "reobserve_key_and_preflight": lambda *_: calls.append("reobserve"),
+        "continue_candidate_preflight": lambda *_: calls.append("continue"),
+    }
+    wrapped = live_runtime._wait_for_fixed_world_warmup(
+        handlers, future, key_capture_overlaps_warmup=True)
+    wrapped["capture_fresh_key"](None, None)
+    wrapped["reobserve_key_and_preflight"](None, None)
+    assert calls == ["fresh", "reobserve"]
+    future.set_exception(RuntimeError("warmup failed"))
+    with pytest.raises(RuntimeError, match="warmup failed"):
+        wrapped["continue_candidate_preflight"](None, None)
+    assert calls == ["fresh", "reobserve"]
+
+
 def test_live_cli_imports_stock_and_demo_packages_from_another_cwd(tmp_path):
     script = Path(__file__).resolve().parents[1] / "run_live.py"
     env = os.environ.copy()
