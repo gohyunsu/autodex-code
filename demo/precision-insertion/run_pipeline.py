@@ -18,6 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from precision_insertion.assets import audit_assets
 from precision_insertion.config import select_mode
+from precision_insertion.planner_factory import new_offline_fr3_planner
 from precision_insertion.planner_mode import require_declared_cartesian_mode
 
 
@@ -513,9 +514,8 @@ def main(argv: list[str] | None = None) -> int:
             if any(len(item) != 3 or not all(item) for item in attempted_reset):
                 raise ValueError(
                     "attempted reset keys must be HEIGHT/TARGET_STEM/SEED_ID")
-            from autodex.planner import GraspPlanner
-
-            planner = GraspPlanner(hand="fr3_inspire")
+            planner = new_offline_fr3_planner(
+                shared_root=args.shared_root, mode=mode)
             if planner._native_pose_constraints_enabled != native_enabled:
                 raise ValueError("AutoDex Cartesian planner mode changed unexpectedly")
             result = plan_fresh_key_trial(
@@ -596,9 +596,8 @@ def main(argv: list[str] | None = None) -> int:
             trial_scene = build_trial_scene_from_session(
                 mode=mode, shared_root=args.shared_root,
                 calibration=session, key_pose_world=key_pose)
-            from autodex.planner import GraspPlanner
-
-            planner = GraspPlanner(hand="fr3_inspire")
+            planner = new_offline_fr3_planner(
+                shared_root=args.shared_root, mode=mode)
             result = preflight_v8_repose_transition(
                 planner=planner, shared_root=args.shared_root,
                 mode=mode, calibration=session, trial_scene=trial_scene,

@@ -31,6 +31,7 @@ from precision_insertion.calibration import SessionCalibration  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.path_audit import PathAuditLimits  # noqa: E402
 from precision_insertion.planner_mode import require_declared_cartesian_mode  # noqa: E402
+from precision_insertion.planner_factory import new_offline_fr3_planner  # noqa: E402
 from precision_insertion.repose_artifacts import (  # noqa: E402
     write_repose_preflight_artifacts,
 )
@@ -257,8 +258,8 @@ def main(argv: list[str] | None = None) -> int:
         goal_rotation_tolerance_deg=5., axial_lateral_tolerance_m=.003,
         axial_rotation_tolerance_deg=5., minimum_hand_clearance_m=.0002)
 
-    from autodex.planner.planner import GraspPlanner
-    planner = GraspPlanner(hand="fr3_inspire", use_cuda_graph=False)
+    planner = new_offline_fr3_planner(
+        shared_root=root, mode=mode, use_cuda_graph=False)
     if planner._native_pose_constraints_enabled != native_enabled:
         raise RuntimeError("AutoDex planner mode differs from declared mode")
     start = planner._init_state.copy()  # hypothetical stock home, not measured
@@ -358,6 +359,8 @@ def main(argv: list[str] | None = None) -> int:
         "schema": "precision_insertion_synthetic_repose_diagnostic_v1",
         "synthetic": True, "robot_ready": False,
         "planner_mode": args.planner_mode,
+        "robot_urdf_path": str(paths.robot_urdf),
+        "robot_urdf_sha256": _sha(paths.robot_urdf),
         "reset_candidate_dir": str(reset_root),
         "source_catalog_sha256": _sha(catalog_path),
         "source_tabletop_pose_sha256": _sha(tabletop_path),

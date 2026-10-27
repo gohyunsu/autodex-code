@@ -482,3 +482,20 @@ introduce a new task-success or geometric rejection threshold. Timing is
 recorded as `vlm.grounding_batch`; per-view observation latency divides the
 shared batch wall time rather than counting it three times. Real lit-scene
 end-to-end latency still needs measurement.
+
+### 2026-10-28 offline planner mount consistency
+
+Review found that `run_pipeline.py`'s offline trial/repose commands and both
+synthetic diagnostics constructed `GraspPlanner(hand="fr3_inspire")` without a
+URDF override. cuRobo's default robot YAML points to the **straight** mount.
+That happened to match the ZeroDex profile, but it disagreed with the
+AutoDex right-angle mount and with the selected mount used by live planning
+and held-path collision auditing. The four offline call sites now share one
+demo-local planner factory that passes `AssetPaths.robot_urdf` explicitly.
+The local GPU instantiated a planner with the straight ZeroDex override and
+with the right-angle AutoDex default; in each case its loaded URDF path
+matched the selected path. No live executor, collision threshold, or
+candidate-admission rule changed. Older **right-angle** offline planning
+reports from the implicit-URDF code should not be treated as mount-consistent
+until rerun; the previous straight-mount synthetic probes were incidentally
+using the correct default geometry.

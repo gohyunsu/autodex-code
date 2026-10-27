@@ -26,6 +26,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from autodex.utils.tabletop_geometry import table_cuboid  # noqa: E402
 from precision_insertion.assets import AssetPaths  # noqa: E402
+from precision_insertion.planner_factory import new_offline_fr3_planner  # noqa: E402
 from precision_insertion.calibration import SessionCalibration  # noqa: E402
 from precision_insertion.candidates import select_pose_candidates  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
@@ -150,9 +151,8 @@ def main(argv: list[str] | None = None) -> int:
         root=root, mode=mode, table_z_m=args.table_z_m,
         socket_xy_m=(args.socket_x_m, args.socket_y_m))
 
-    from autodex.planner.planner import GraspPlanner
-    planner = GraspPlanner(hand="fr3_inspire",
-                           use_cuda_graph=args.use_cuda_graph)
+    planner = new_offline_fr3_planner(
+        shared_root=root, mode=mode, use_cuda_graph=args.use_cuda_graph)
     if planner._native_pose_constraints_enabled != native_enabled:
         raise RuntimeError("AutoDex planner mode differs from declared mode")
     start = planner._init_state.copy()  # stock FR3/Inspire diagnostic home
@@ -206,6 +206,8 @@ def main(argv: list[str] | None = None) -> int:
         "schema": "precision_insertion_synthetic_full_chain_diagnostic_v1",
         "synthetic": True, "robot_ready": False,
         "planner_mode": args.planner_mode,
+        "robot_urdf_path": str(paths.robot_urdf),
+        "robot_urdf_sha256": _sha(paths.robot_urdf),
         "use_cuda_graph": args.use_cuda_graph,
         "source_catalog": str(catalog_path),
         "source_catalog_sha256": _sha(catalog_path),
