@@ -291,28 +291,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 core.close()
         raise
 
-    def local_backend(image_hw, shared_root):
-        height, width = image_hw
-        native_ceiling = (
-            ((width + 31) // 32) * 32,
-            ((height + 31) // 32) * 32)
-        model_id = (vlm["model_id"] or str(
-            shared_root / "AutoDex/models/Qwen3-VL-2B-Instruct"))
-        image_size = (tuple(vlm["classification_image_size"])
-                      if vlm["classification_image_size"] is not None
-                      else None)
-        return load_vlm_backend(
-            mode="local", model_id=model_id,
-            max_input_size=native_ceiling,
-            max_new_tokens=vlm["max_new_tokens"],
-            require_native_pixels=vlm["require_native_pixels"],
-            parallel_views=vlm["parallel_views"],
-            **({"classification_image_size": image_size}
-               if image_size is not None else {}))
-
     def configured_backend(launch):
-        if vlm["mode"] == "local":
-            return local_backend(launch.image_hw, launch.shared_root)
         height, width = launch.image_hw
         native_ceiling = (
             ((width + 31) // 32) * 32,
@@ -353,7 +332,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
 
         def preload_local_backend():
             with timed("startup.vlm_model_load", phase="startup"):
-                return local_backend(launch.image_hw, launch.shared_root)
+                return configured_backend(launch)
 
         vlm_load_future = vlm_load_pool.submit(
             context.run, preload_local_backend)
