@@ -60,14 +60,18 @@ def check_scene_pair(shared_root: Path, scene_id: str) -> dict:
     }
 
 
-def stage(raw_root: Path, stage_root: Path, shared_root: Path, expected: int) -> dict:
+def stage(raw_root: Path, stage_root: Path, shared_root: Path, expected: int,
+          scene_ids: tuple[str, ...] = SCENES) -> dict:
     if stage_root.exists():
         raise FileExistsError(f"refusing to overwrite an existing run: {stage_root}")
     if expected < 1:
         raise ValueError("expected seed count must be positive")
-    scenes = [check_scene_pair(shared_root, scene_id) for scene_id in SCENES]
+    if (not scene_ids or len(set(scene_ids)) != len(scene_ids) or
+            not set(scene_ids) <= set(SCENES)):
+        raise ValueError("scene IDs must be distinct tabletop scenes 0 and/or 1")
+    scenes = [check_scene_pair(shared_root, scene_id) for scene_id in scene_ids]
     sources = []
-    for scene_id in SCENES:
+    for scene_id in scene_ids:
         source = raw_root / PROXY / "table" / scene_id
         actual = sorted(path.name for path in source.iterdir() if path.is_dir())
         wanted = sorted(str(i) for i in range(expected))
@@ -109,9 +113,12 @@ def main() -> None:
     parser.add_argument("--stage-root", type=Path, required=True)
     parser.add_argument("--shared-root", type=Path, required=True)
     parser.add_argument("--expected-per-scene", type=int, default=1000)
+    parser.add_argument("--scenes", nargs="+", choices=SCENES,
+                        default=list(SCENES))
     args = parser.parse_args()
     report = stage(args.raw_root.resolve(), args.stage_root.resolve(),
-                   args.shared_root.resolve(), args.expected_per_scene)
+                   args.shared_root.resolve(), args.expected_per_scene,
+                   tuple(args.scenes))
     print(json.dumps(report, indent=2))
 
 

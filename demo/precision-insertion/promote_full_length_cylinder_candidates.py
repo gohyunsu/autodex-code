@@ -54,11 +54,16 @@ def prepare(*, shared_root: Path, screen_root: Path,
     stage = Path(summary["stage_root"]).resolve()
     stable_root = Path(summary["original_autodex_sim_candidate_root"]).resolve()
     stage_manifest = _load(stage / "stage_manifest.json")
+    scene_ids = tuple(row["scene_id"] for row in stage_manifest["scenes"])
     expected_gaps = {f"{int(gap):02d}mm" for gap in CYLINDER_RADIAL_GAPS_MM}
     if (summary.get("schema") !=
             "precision_insertion_cylinder_1000_per_scene_screen_v1" or
             summary.get("physical_key_object") != KEY or
-            summary.get("total_raw_proposals") != 2000 or
+            not scene_ids or len(set(scene_ids)) != len(scene_ids) or
+            not set(scene_ids) <= {"0", "1"} or
+            set(summary.get("scene_counts", {})) != set(scene_ids) or
+            summary.get("total_raw_proposals") != 1000 * len(scene_ids) or
+            summary.get("scene_ids", list(scene_ids)) != list(scene_ids) or
             summary.get("minimum_hand_clearance_m") != 0 or
             set(summary.get("socket_gaps", {})) != expected_gaps or
             stage_manifest.get("schema") !=
@@ -67,19 +72,17 @@ def prepare(*, shared_root: Path, screen_root: Path,
             stage_manifest.get("proposal_contact_z_range_m") != [0.0, 0.08] or
             stage_manifest.get("proposal_contact_region_restricted") is not False or
             stage_manifest.get("seed_count_per_scene") != 1000 or
-            stage_manifest.get("seed_count_total") != 2000 or
+            stage_manifest.get("seed_count_total") != 1000 * len(scene_ids) or
             Path(stage_manifest.get("stage_root", "")).resolve() != stage or
             Path(summary.get("stage_root", "")).resolve() != stage or
             Path(summary.get("raw_proxy_object", "")) != Path(PROPOSAL)):
         raise ValueError("screen is not the complete unrestricted 1000/scene run")
     if any(row.get("errors") for row in summary["socket_gaps"].values()):
         raise ValueError("endpoint screen contains an error")
-    if set(summary.get("scene_counts", {})) != {"0", "1"}:
-        raise ValueError("both cylinder tabletop scenes must be present")
     paths = AssetPaths(root, select_mode("cylinder", 20))
     key_mesh_hash = _sha(paths.key_planning_mesh)
     rows = []
-    for scene_id in ("0", "1"):
+    for scene_id in scene_ids:
         scene = (root / "AutoDex" / "scene" / "inspire" / KEY /
                  "table" / f"{scene_id}.json")
         matched = [item for item in stage_manifest["scenes"]
@@ -165,6 +168,7 @@ def prepare(*, shared_root: Path, screen_root: Path,
         "screen_summary_sha256": _sha(screen / "summary.json"),
         "stage_manifest_sha256": _sha(stage / "stage_manifest.json"),
         "candidate_id_offset": candidate_id_offset,
+        "scene_ids": list(scene_ids),
         "selected_count": len(rows),
         "selected": [{
             "source_id": row["source_id"],

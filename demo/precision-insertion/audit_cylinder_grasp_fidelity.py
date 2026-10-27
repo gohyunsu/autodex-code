@@ -36,12 +36,17 @@ def run(*, summary_path: Path, shared_root: Path, output_root: Path,
     if (summary.get("schema") != "precision_insertion_cylinder_1000_per_scene_screen_v1"
             or summary.get("physical_key_object") != KEY):
         raise ValueError("expected complete full-key cylinder screen")
+    scene_ids = tuple(summary.get("scene_ids", ("0", "1")))
+    if (not scene_ids or len(set(scene_ids)) != len(scene_ids) or
+            not set(scene_ids) <= {"0", "1"} or
+            set(summary["scene_counts"]) != set(scene_ids)):
+        raise ValueError("screen scene IDs and scene counts disagree")
     stage = Path(summary["stage_root"]).resolve()
     pool = Path(summary["original_autodex_sim_candidate_root"]).resolve()
     mode = select_mode("cylinder", 20.0)
     paths = AssetPaths(root, mode)
     candidates = []
-    for scene_id in ("0", "1"):
+    for scene_id in scene_ids:
         directory = pool / KEY / "table" / scene_id
         rows = sorted((p for p in directory.iterdir() if p.is_dir()),
                       key=lambda p: int(p.name))
@@ -86,6 +91,7 @@ def run(*, summary_path: Path, shared_root: Path, output_root: Path,
         "robot_urdf_sha256": hashlib.sha256(paths.robot_urdf.read_bytes()).hexdigest(),
         "status": "diagnostic_only_no_robot_authorization",
         "candidate_count": len(reports),
+        "scene_ids": list(scene_ids),
         "key_height_m": 0.08,
         "symmetry": "axial yaw and end-for-end flip quotient; center and axis are measured",
         "visual_sample_points_per_link": points_per_link,
