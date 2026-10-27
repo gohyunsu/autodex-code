@@ -231,3 +231,15 @@ report verification, and a three-image 640×640 saved-frame GPU smoke took
 **0.711 s**, peaking at **4.23 GiB**. That image was not an actual held-key
 crop; real capture4 hand visibility and classification accuracy remain
 unmeasured. No additional success/failure threshold was introduced.
+
+### 2026-10-28 00:50 current-scene camera check
+
+The isolated capture4 camera/SAM3/FoundPose services were started only for a
+four-view key transport probe and then stopped. All four source frames arrived
+locally in **2.138 s** after init (**0.010 s**) with matching mask/pose
+messages. SAM3 produced **0/4 nonempty key masks**. Grayscale 99th-percentile
+intensities were **5, 8, 9, 19/255** across the cameras; the current scene
+remains effectively unlit. The report is
+`shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/inline_key_20261028_continuation_1/report.json`.
+This is a fresh transport/illumination result, not a key-pose or robot-plan
+result. No camera settings or shared capture4 source were changed.
