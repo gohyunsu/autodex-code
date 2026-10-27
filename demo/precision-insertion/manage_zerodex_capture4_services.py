@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 from pathlib import Path
 import re
 import shlex
@@ -30,6 +31,7 @@ FILES = (
     "demo/precision-insertion/capture4_exposure_daemon.py",
     "demo/precision-insertion/precision_insertion/__init__.py",
     "demo/precision-insertion/precision_insertion/camera_transport.py",
+    "demo/precision-insertion/precision_insertion/sam3_batch.py",
     "demo/precision-insertion/precision_insertion/frame_provenance.py",
 )
 PORTS = {"camera": 5480, "snapshot": 6894, "precision": 16893}
@@ -89,10 +91,14 @@ def _command(kind: str, *, exposure_us: float | None = None) -> str:
                 f"{REMOTE}/src/execution/daemon/snapshot_daemon.py")
     stage = (REMOTE_HOME / "shared_data/hyunsu/tmp/20261023_prev/"
              "precision_insertion_recipient_stage_20261013_b7e2392")
+    sam3_batch = os.environ.get("PRECISION_SAM3_BATCH", "auto")
+    if sam3_batch not in ("auto", "0", "1"):
+        raise ValueError("PRECISION_SAM3_BATCH must be auto, 0, or 1")
     # This capture4 GPU cannot execute FoundPose's DINOv2 float32 xFormers
     # attention kernel. The vendored DINOv2 uses PyTorch SDPA when disabled;
     # keep this setting local to the ZeroDex precision service, not stock.
-    return (f"exec env HF_HUB_OFFLINE=1 XFORMERS_DISABLED=1 AUTODEX_STOCK_ROOT={REMOTE} "
+    return (f"exec env HF_HUB_OFFLINE=1 XFORMERS_DISABLED=1 "
+            f"PRECISION_SAM3_BATCH={sam3_batch} AUTODEX_STOCK_ROOT={REMOTE} "
             f"PRECISION_CAPTURE_ASSET_ROOT={stage} PYTHONPATH={pythonpath} "
             f"{python} {module_root}/precision_init_daemon.py "
             "--port-mask 15006 --port-pose 15007 --port-cmd 16893")

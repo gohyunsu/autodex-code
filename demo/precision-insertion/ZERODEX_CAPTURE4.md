@@ -157,6 +157,18 @@ Start the isolated services first, and stop them after the probe. This captures
 four raw source frames but does not measure a board/object pose or authorize
 robot motion.
 
+The capture4 precision daemon uses `PRECISION_SAM3_BATCH=auto` by default:
+source-PNG requests stay serial because that path was faster end to end;
+normal pose-only key requests use a four-view SAM3 batch. To time the latter,
+repeat the inline-frame probe with `--pose-only` and a new evidence directory.
+It records four mask/pose messages but intentionally saves no source PNGs or
+brightness measurements. To force serial SAM3 for a comparison, stop our
+namespaced services and restart them with
+`PRECISION_SAM3_BATCH=0 python3 demo/precision-insertion/manage_zerodex_capture4_services.py start`.
+The flag affects only this namespace and does not change AutoDex's stock
+camera daemon. Measured A/B timings and limits are in
+`ZERODEX_CAPTURE4_REVIEW_20261027.md`.
+
 If the original raw frames are underexposed, the capture4-specific camera
 server can use an **explicit, temporary** exposure override without editing
 capture4's shared ParaDex source or `system/current/camera.json`. Run only

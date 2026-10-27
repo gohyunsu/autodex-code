@@ -11,9 +11,13 @@ It does not supply or invent hardware exposure timestamps.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from pathlib import Path
 import sys
+import time
+
+import cv2
 
 _stock_root_env = os.environ.get("AUTODEX_STOCK_ROOT")
 REPO_ROOT = (Path(_stock_root_env).expanduser().resolve()
@@ -29,6 +33,7 @@ from src.execution.daemon.init_daemon import InitDaemon  # noqa: E402
 from precision_insertion.camera_transport import (  # noqa: E402
     RecordingReader, install_init_provenance,
 )
+from precision_insertion.sam3_batch import segment_batch  # noqa: E402
 
 
 class _MaskOnlyEstimator:
@@ -91,6 +96,34 @@ class PrecisionInitDaemon(InitDaemon):
             self.fp = original_estimator
             self._precision_active_request_id = None
             self._precision_send_source_frames = False
+            self._precision_undistorted.clear()
+
+    def _undistort_live_image(self, serial, _image_bgr):
+        # RecordingReader has already undistorted these exact pixels to bind
+        # the published image hash and optional source PNG to this frame ID.
+        return self._precision_undistorted[serial]
+
+    def _segment_snapshot_batch(self, frames, serials, prompt):
+        batch_mode = os.environ.get("PRECISION_SAM3_BATCH", "auto")
+        if batch_mode == "0" or (batch_mode == "auto" and
+                                  self._precision_send_source_frames):
+            return None
+        valid = [serial for serial in serials
+                 if serial in self.K_undist and serial in frames and
+                 frames[serial][0] is not None]
+        if not valid:
+            return {}
+        images = [cv2.cvtColor(self._precision_undistorted[serial],
+                              cv2.COLOR_BGR2RGB) for serial in valid]
+        started = time.perf_counter()
+        masks = segment_batch(self.sam3, images, prompt)
+        elapsed = time.perf_counter() - started
+        logger = logging.getLogger("precision_init_daemon")
+        logger.info("[run] SAM3 %d-view batch %.3fs", len(valid), elapsed)
+        # The stock per-camera timing field is retained as amortized GPU time;
+        # the batch wall time above is the latency measurement.
+        return {serial: (mask, elapsed / len(valid))
+                for serial, mask in zip(valid, masks)}
 
     def close(self) -> None:
         self._precision_frame_encoder.shutdown(wait=True)

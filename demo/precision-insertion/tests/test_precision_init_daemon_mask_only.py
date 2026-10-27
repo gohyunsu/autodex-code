@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -18,6 +19,7 @@ def test_mask_only_estimator_is_request_scoped(monkeypatch):
     daemon = adapter.PrecisionInitDaemon.__new__(adapter.PrecisionInitDaemon)
     daemon.fp = original
     daemon._precision_active_request_id = None
+    daemon._precision_undistorted = {}
     daemon.cmd_receiver = SimpleNamespace(event_info={
         "run": {"request_id": 42, "skip_foundpose": True}})
     seen = []
@@ -96,3 +98,43 @@ def test_capture4_maps_main_pc_asset_paths_without_changing_inference(monkeypatc
         "/nas/staged/object_processing/key/raw_mesh/key.obj")
     assert seen[0]["assets_root"] == (
         "/nas/staged/AutoDex/foundpose_assets/key")
+
+
+def test_capture4_batch_preserves_serial_order_and_reuses_hash_pixels(monkeypatch):
+    monkeypatch.setenv("PRECISION_SAM3_BATCH", "1")
+    daemon = adapter.PrecisionInitDaemon.__new__(adapter.PrecisionInitDaemon)
+    daemon.K_undist = {"b": np.eye(3), "a": np.eye(3)}
+    daemon._precision_undistorted = {
+        "b": np.full((4, 5, 3), 23, dtype=np.uint8),
+        "a": np.full((4, 5, 3), 42, dtype=np.uint8),
+    }
+    daemon.sam3 = object()
+    seen = []
+
+    def batch(model, images, prompt):
+        seen.append((model, [int(image[0, 0, 0]) for image in images], prompt))
+        return [np.full((4, 5), index, dtype=np.uint8)
+                for index in range(1, len(images) + 1)]
+
+    monkeypatch.setattr(adapter, "segment_batch", batch)
+    frames = {serial: (np.zeros((4, 5, 3), dtype=np.uint8), index)
+              for index, serial in enumerate(("b", "a"), 1)}
+    masks = daemon._segment_snapshot_batch(frames, ["b", "a"], "socket")
+    assert seen == [(daemon.sam3, [23, 42], "socket")]
+    assert list(masks) == ["b", "a"]
+    assert int(masks["b"][0][0, 0]) == 1
+    assert int(masks["a"][0][0, 0]) == 2
+    assert daemon._undistort_live_image("b", frames["b"][0]) is (
+        daemon._precision_undistorted["b"])
+
+
+def test_capture4_auto_uses_serial_masks_when_source_pngs_are_sent(monkeypatch):
+    monkeypatch.delenv("PRECISION_SAM3_BATCH", raising=False)
+    daemon = adapter.PrecisionInitDaemon.__new__(adapter.PrecisionInitDaemon)
+    daemon._precision_send_source_frames = True
+    assert daemon._segment_snapshot_batch({}, [], "socket") is None
+
+
+def test_stock_auto_dex_daemon_keeps_serial_route():
+    daemon = adapter.InitDaemon.__new__(adapter.InitDaemon)
+    assert daemon._segment_snapshot_batch({}, [], "key") is None

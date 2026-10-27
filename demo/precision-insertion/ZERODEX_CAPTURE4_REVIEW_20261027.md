@@ -800,3 +800,48 @@ backend has not been commissioned. The synthetic evidence is under
 `shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/
 synthetic_latency_20261028_pose000_prewarm_thread/` and its sibling
 `.timing/` directory.
+
+### 2026-10-28 four-view SAM3 and transport audit
+
+The vendored `Sam3ImageSegmentor.segment_batch()` runs a batch backbone and
+then discards it, repeating all per-image inference. The ZeroDex-only
+`precision_insertion/sam3_batch.py` instead preserves the batch dimension
+through grounding and per-view mask selection. On capture4's RTX 5060 Ti,
+four saved lit socket views took 0.935 s serial versus 0.869 s batched; the
+corresponding lit lying-key views took 0.939 s versus 0.871 s. Every batched
+mask had IoU >= 0.9994 against its serial result, and four-view peak GPU
+allocation was 5.12 GiB. These are warm SAM3-only timings, not whole-request
+or segmentation-ground-truth measurements.
+
+Whole-request A/B tests exposed a different bottleneck. When source PNGs
+were requested, a forced batch completed in 2.740 s while the serial route
+completed in 2.113 s: four nearly simultaneous mask messages contend for
+one multipart PUB socket and must be published sequentially. The demo-only
+publisher now serializes each metadata/blob transaction; without that lock,
+one of four source PNGs failed its frame-pixel hash check. The default
+`PRECISION_SAM3_BATCH=auto` therefore uses **serial SAM3 for source-PNG
+requests** and **four-view batch SAM3 for pose-only requests**. A warm
+pose-only request measured 1.252 s in batch mode and 1.294 s in serial
+mode. This 42 ms difference is one paired observation, not a statistically
+established speedup. The same source frame's already-undistorted BGR pixels
+are also reused by SAM3/FoundPose rather than remapped a second time.
+
+The reproducible, camera-free GPU comparison is
+`probe_zerodex_sam3_batch.py --images <four saved images> --prompt "white plastic cylindrical key"`.
+For a live transport-only measurement, use
+`probe_zerodex_inline_frames.py --launch-config <capture4 launch.json> --evidence-dir <new directory> --target key`;
+add `--pose-only` to time the normal no-PNG mask/FoundPose request. Set
+`PRECISION_SAM3_BATCH=0` when **starting** our namespaced capture4 service
+to force serial processing for an A/B run; an already-running service must
+be stopped before changing this environment variable. AutoDex's ordinary
+init daemon still defaults to its original per-camera serial order. The
+shared capture4 AutoDex checkout and camera settings were not changed.
+
+The live A/B images were still nearly black: all four key masks were empty
+in each run. The successful transport/hash checks do not establish a fresh
+key pose, a lying-key trajectory or physical insertion. The robot backend
+and powered-off hardware remain outside this camera-only test.
+The current precision-demo suite passes 1,306 tests with 5 skipped;
+`run_zerodex_capture4.sh --check` passes with 110/124 endpoint-eligible
+gap-20 candidates. Our namespaced capture4 services were stopped after the
+comparison.

@@ -2,6 +2,8 @@
 
 from pathlib import Path
 import sys
+import threading
+import time
 from types import SimpleNamespace
 
 import cv2
@@ -60,6 +62,7 @@ def test_recording_reader_binds_pixels_across_camera_stream_restart():
     assert frames["cam"][1] == 11
     assert owner._precision_frames[(42, "cam")]["image_sha256"] == (
         image_sha256(image))
+    assert np.array_equal(owner._precision_undistorted["cam"], image)
     owner.pub_mask.send_data([{"req_id": 42, "serial": "cam"}], [b"png"])
     owner.pub_pose.send_data([{"req_id": 42, "serial": "cam"}], [b"pose"])
     mask_meta = owner.pub_mask._publisher.published[0][0][0]
@@ -119,6 +122,39 @@ def test_publisher_rejects_unbound_or_preexisting_precision_metadata():
         pub.send_data([{"req_id": 8, "serial": "cam"}], [b"x"])
     with pytest.raises(ValueError, match="unexpectedly set"):
         pub.send_data([{"req_id": 7, "serial": "cam", "fid": 9}], [b"x"])
+
+
+def test_batched_mask_threads_publish_complete_multipart_messages():
+    class _SlowPublisher:
+        def __init__(self):
+            self.active = 0
+            self.max_active = 0
+            self.messages = []
+
+        def send_data(self, metadata, blobs):
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            time.sleep(0.01)
+            self.messages.append((metadata, blobs))
+            self.active -= 1
+
+    rows = {(7, str(index)): {
+        "frame_id": index + 1,
+        "image_sha256": f"{index:064x}",
+        "image_space": "autodex_undistorted_full_frame",
+    } for index in range(4)}
+    publisher = _SlowPublisher()
+    wrapped = ProvenancePublisher(publisher, SimpleNamespace(_precision_frames=rows))
+    threads = [threading.Thread(
+        target=wrapped.send_data,
+        args=([{"req_id": 7, "serial": str(index)}], [bytes([index])]),
+    ) for index in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert publisher.max_active == 1
+    assert len(publisher.messages) == 4
 
 
 def test_robot_side_mask_pose_callbacks_preserve_same_image_identity():

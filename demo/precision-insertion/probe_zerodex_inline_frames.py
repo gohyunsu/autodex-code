@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Measure capture4's lossless same-request frame path without board or robot.
+"""Measure capture4's same-request inference path without board or robot.
 
-This checks camera transport only, not key pose, socket pose, or task success.
-The four raw source PNGs are saved locally for inspection.
+The default checks lossless source PNG transport; ``--pose-only`` measures the
+normal per-trial mask/FoundPose request without shipping source PNGs. This is
+not a key/socket-pose or task-success validation.
 """
 
 from __future__ import annotations
@@ -34,6 +35,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--launch-config", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     parser.add_argument("--target", choices=("key", "socket"), default="key")
+    parser.add_argument("--pose-only", action="store_true",
+                        help="request masks/FoundPose without source PNGs")
     args = parser.parse_args(argv)
     output = args.evidence_dir.expanduser().resolve()
     if output.exists():
@@ -60,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
                 intrinsics_full=launch.intrinsics_full,
                 extrinsics_full=launch.extrinsics_full,
                 image_hw=launch.image_hw, mode="live",
-                load_silhouette=False, mask_only=True)
+                load_silhouette=False, mask_only=not args.pose_only)
             init_s = time.perf_counter() - start
             start = time.perf_counter()
             capture = collect_socket_capture(
@@ -73,24 +76,28 @@ def main(argv: list[str] | None = None) -> int:
                     cameras.acquisition_metadata_for_request),
                 timeout_s=launch.socket_timeout_s,
                 image_write_timeout_s=launch.image_write_timeout_s,
-                mask_only=True)
+                pose_only=args.pose_only, mask_only=not args.pose_only)
             capture_s = time.perf_counter() - start
     report = {
-        "scope": "camera_transport_only_no_board_no_robot",
+        "scope": ("pose_only_camera_request_no_board_no_robot" if args.pose_only
+                  else "camera_transport_only_no_board_no_robot"),
         "request_id": capture.request_id,
         "target": args.target,
         "init_s": init_s,
-        "capture_and_local_png_s": capture_s,
-        "camera_count": len(capture.images_bgr),
-        "raw_png_dir": str(launch.capture_root /
-                           f"{capture.capture_id}_request_{capture.request_id}" /
-                           "images"),
+        "capture_request_s": capture_s,
+        "capture_and_local_png_s": None if args.pose_only else capture_s,
+        "camera_count": len(capture.masks),
+        "raw_png_dir": (None if args.pose_only else str(
+            launch.capture_root /
+            f"{capture.capture_id}_request_{capture.request_id}" / "images")),
         "frames": {serial: {
             "frame_id": capture.masks[serial]["frame_id"],
             "image_sha256": capture.masks[serial]["image_sha256"],
             "mask_pixels": int(capture.masks[serial]["mask"].sum()),
-            **_frame_brightness(capture.images_bgr[serial]),
-        } for serial in sorted(capture.images_bgr)},
+            "pose_ok": bool(capture.poses[serial].get("ok", False)),
+            **({} if args.pose_only else
+               _frame_brightness(capture.images_bgr[serial])),
+        } for serial in sorted(capture.masks)},
     }
     (output / "report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")

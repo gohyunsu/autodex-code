@@ -33,6 +33,14 @@ def test_foundpose_attention_fallback_is_capture4_only():
     assert "HF_HUB_OFFLINE" not in services._command("camera")
 
 
+def test_sam3_auto_mode_only_changes_namespaced_precision_service(monkeypatch):
+    monkeypatch.delenv("PRECISION_SAM3_BATCH", raising=False)
+    assert "PRECISION_SAM3_BATCH=auto" in services._command("precision")
+    assert "PRECISION_SAM3_BATCH" not in services._command("camera")
+    monkeypatch.setenv("PRECISION_SAM3_BATCH", "0")
+    assert "PRECISION_SAM3_BATCH=0" in services._command("precision")
+
+
 def test_start_waits_until_all_ports_listen(monkeypatch):
     commands = []
     observations = iter((set(), services.READY_PORTS, services.READY_PORTS))

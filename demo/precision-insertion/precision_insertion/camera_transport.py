@@ -60,6 +60,7 @@ class RecordingReader:
             if maps is None:
                 raise ValueError("precision inference must use live camera frames")
             undistorted = cv2.remap(image, maps[0], maps[1], cv2.INTER_LINEAR)
+            self._owner._precision_undistorted[serial] = undistorted
             row = {
                 "frame_id": frame_id,
                 "image_sha256": image_sha256(undistorted),
@@ -80,11 +81,19 @@ class ProvenancePublisher:
         self._publisher = publisher
         self._owner = owner
         self._attach_source_frames = attach_source_frames
+        self._send_lock = threading.Lock()
 
     def __getattr__(self, name):
         return getattr(self._publisher, name)
 
     def send_data(self, metadata, blobs):
+        # A SAM batch finishes all views together, so the stock async mask
+        # threads can call this PUB socket concurrently. Keep each multipart
+        # metadata/blob publication atomic on its single ZMQ socket.
+        with self._send_lock:
+            return self._send_data(metadata, blobs)
+
+    def _send_data(self, metadata, blobs):
         if (not isinstance(metadata, list) or not metadata or
                 not all(isinstance(item, dict) for item in metadata)):
             raise ValueError("precision publisher needs per-camera metadata")
@@ -123,6 +132,7 @@ def install_init_provenance(daemon) -> None:
             daemon.pub_pose, ProvenancePublisher):
         raise ValueError("precision provenance is already installed")
     daemon._precision_frames = {}
+    daemon._precision_undistorted = {}
     daemon._precision_active_request_id = None
     daemon._precision_send_source_frames = False
     daemon._precision_frame_encoder = ThreadPoolExecutor(
