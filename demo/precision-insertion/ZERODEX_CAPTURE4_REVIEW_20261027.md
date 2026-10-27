@@ -68,6 +68,16 @@ manager now waits for all eight camera/snapshot/perception sockets before
 returning from `start`; the previous immediate return could race model startup.
 This was confirmed by starting and stopping only the namespaced services.
 
+An Oct 28 02:02 camera-only repeat against the current untouched key scene
+also returned four same-request frames in 2.16 s, with **zero key-mask pixels
+in all four views**. Grayscale p99 values were again 8, 6, 9 and 19/255.
+The report and source PNG paths are in
+`shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/inline_key_20261028_current/report.json`.
+Thus the present camera observation still cannot establish a fresh key pose
+or a current-scene grasp plan. The probe did not initialize a new socket
+session with the key present; it made no robot call, and the namespaced
+capture4 services were stopped afterward.
+
 Robot control is a separate unresolved integration decision. This profile
 currently reuses AutoDex's ParaDex ZMQ `FrankaExecutor`, whose shared
 `network_info["franka"]` is `172.16.0.2`. On this PC, the interface has
