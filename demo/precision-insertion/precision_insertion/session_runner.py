@@ -157,9 +157,9 @@ class SessionRunner:
                 type(max_xy_retries) is not int or max_xy_retries < 0):
             raise ValueError("max_xy_retries must be a nonnegative integer or None")
         if (not math.isfinite(float(xy_update_weight)) or
-                not (0 < xy_update_weight <= 1 if mode.family == "cylinder"
-                     else 0 <= xy_update_weight <= 1)):
-            raise ValueError("XY update weight must be in (0, 1] for cylinder; square uses effective 0")
+                not (xy_update_weight > 0 if mode.family == "cylinder"
+                     else xy_update_weight >= 0)):
+            raise ValueError("XY update weight must be positive for cylinder; square uses effective 0")
         if not isinstance(calibration, SessionCalibration):
             raise TypeError("session needs a frozen SessionCalibration")
         validate_catalog_session(catalog, mode=mode,

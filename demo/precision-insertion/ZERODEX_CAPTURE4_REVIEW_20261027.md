@@ -499,3 +499,30 @@ candidate-admission rule changed. Older **right-angle** offline planning
 reports from the implicit-URDF code should not be treated as mount-consistent
 until rerun; the previous straight-mount synthetic probes were incidentally
 using the correct default geometry.
+
+### 2026-10-28 follow-up: dark camera and XY gain
+
+Read-only inspection of capture4's shared
+`/home/capture4/paradex/system/current/camera.json` found its modification
+time was **2026-10-01 19:38 KST**, before both the earlier usable capture and
+the current dark captures. All four cameras retain fixed 2,500 µs exposure;
+the configured gains are 16, 18 or 25 depending on serial. The current
+camera-only source PNGs, not merely their JPEG previews, have grayscale p99
+of 6–19/255 and produce zero SAM3 key pixels. Thus the camera-only inability
+to classify the newly lying key is an observed imaging limitation, not evidence
+that the lying-key planner or FoundPose failed on that scene. Restore/check
+illumination, then repeat a fresh camera-only key capture; a new socket session
+still requires the key to be absent during the one-time socket capture. The
+shared capture4 camera configuration and camera settings were not changed.
+
+The trial update was also audited end-to-end: a saved pre-insertion diagnostic
+produces `d_n`; `SessionRunner` computes `w*d_n` and records the cumulative
+`p_(n+1)=p_n+w*d_n` for the **next** physical attempt, while the current
+attempt remains unchanged. An older `w <= 1` validation was not required by
+this update rule and prevented gain tuning above unity, so it was removed in
+the live entry, session and event-record boundaries. The default is still
+`w=1.0`; the user-requested **10 mm weighted step cap** remains, and no
+cumulative cap was added. The static ZeroDex `--check` still reports 110/124
+20 mm-gap endpoint-eligible candidates (106 upright, 4 lying). The full demo
+unit suite passed **1280 tests, 5 skipped**. No current-scene Franka path or
+physical insertion has been validated.

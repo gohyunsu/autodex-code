@@ -272,7 +272,7 @@ def test_cylinder_live_rejects_legacy_label_route_before_robot_integration(
             options, integration_spec="ignored:factory")
 
 
-@pytest.mark.parametrize("weight", [0.0, -0.1, 1.1, float("nan")])
+@pytest.mark.parametrize("weight", [0.0, -0.1, float("nan")])
 def test_invalid_xy_weight_is_rejected_before_robot_integration(
         monkeypatch, tmp_path, weight):
     monkeypatch.setattr(live_runtime, "load_runtime_integration", lambda *_a:

@@ -274,8 +274,8 @@ class AttemptRecord:
         if (not math.isfinite(dx) or not math.isfinite(dy) or
                 math.hypot(dx, dy) > NEXT_TRIAL_XY_MAX_STEP_M + 1e-12):
             raise ValueError("next-trial XY step must be at most 10 mm")
-        if not math.isfinite(update_weight) or not 0 < update_weight <= 1:
-            raise ValueError("XY update weight must be in (0, 1]")
+        if not math.isfinite(update_weight) or update_weight <= 0:
+            raise ValueError("XY update weight must be finite and positive")
         applied = tuple(float(v) for v in applied_step_socket_xy_m)
         next_value = tuple(float(v) for v in next_wrist_correction_socket_m)
         if (len(applied) != 2 or len(next_value) != 2 or

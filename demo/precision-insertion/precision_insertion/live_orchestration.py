@@ -167,8 +167,8 @@ def open_live_precision_session(
     if max_xy_retries is not None and (
             type(max_xy_retries) is not int or max_xy_retries < 0):
         raise ValueError("max_xy_retries must be a nonnegative integer or None")
-    if not math.isfinite(float(xy_update_weight)) or not 0 < xy_update_weight <= 1:
-        raise ValueError("XY update weight must be in (0, 1]")
+    if not math.isfinite(float(xy_update_weight)) or xy_update_weight <= 0:
+        raise ValueError("XY update weight must be finite and positive")
     if not isinstance(clear_view, ClearViewForPerception):
         raise TypeError("live perception needs a measured clear-view controller")
     if init_ports is not None and (

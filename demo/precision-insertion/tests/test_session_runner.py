@@ -111,7 +111,7 @@ def _report(runner, observation, *, status="sampled_planning_pass",
         catalog_sha256=runner.catalog_sha256)
 
 
-def _runner(monkeypatch, tmp_path):
+def _runner(monkeypatch, tmp_path, *, xy_update_weight=1.0):
     monkeypatch.setattr(session_runner, "validate_catalog_session",
                         lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
@@ -136,7 +136,14 @@ def _runner(monkeypatch, tmp_path):
     return session_runner.SessionRunner(
         mode=MODE, calibration=calibration, catalog=catalog,
         shared_root=tmp_path / "shared", output_dir=tmp_path / "session",
-        max_xy_retries=1)
+        max_xy_retries=1, xy_update_weight=xy_update_weight)
+
+
+def test_cylinder_xy_weight_above_one_is_retained(monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path, xy_update_weight=1.5)
+    assert runner.xy_update_weight == 1.5
+    saved = json.loads((runner.output_dir / "session_run.json").read_text())
+    assert saved["xy_update_weight"] == 1.5
 
 
 def test_square_session_effective_xy_weight_and_budget_are_zero(

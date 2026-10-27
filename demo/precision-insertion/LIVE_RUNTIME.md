@@ -652,8 +652,9 @@ occurs before camera capture. `--max-xy-retries 0` disables next-trial XY
 advice; `1` permits one candidate-specific corrected **new physical attempt**
 per session. By default there is no retry-count cap: eligible failures can
 continue to contribute cumulative updates
-`p_(n+1)=p_n+w*d_n`; the weight defaults to `1.0` and must lie in `(0,1]`.
-There is no separate cumulative XY bound. The live CLI currently accepts only
+`p_(n+1)=p_n+w*d_n`; the weight defaults to `1.0` and must be finite and
+positive. The weighted step remains limited to 10 mm; there is no separate
+cumulative XY bound. The live CLI currently accepts only
 `cylinder` launch mode; `square` remains an offline/planning mode.
 `action_loop_result.json` is saved in the run directory. Exit code 0 means
 the session reached its task-success label; 2 means a normal non-success

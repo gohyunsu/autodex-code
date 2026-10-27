@@ -200,8 +200,8 @@ def run_integrated_live_session(
             options.max_xy_retries < 0):
         raise ValueError("max_xy_retries must be a nonnegative integer or None")
     if (not math.isfinite(float(options.xy_update_weight)) or
-            not 0 < options.xy_update_weight <= 1):
-        raise ValueError("XY update weight must be in (0, 1]")
+            options.xy_update_weight <= 0):
+        raise ValueError("XY update weight must be finite and positive")
     if options.max_steps is not None and (
             type(options.max_steps) is not int or options.max_steps < 1):
         raise ValueError("max_steps must be positive or None")

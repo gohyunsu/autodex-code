@@ -177,6 +177,25 @@ def test_failed_insertion_advice_returns_key_before_next_physical_attempt():
             "recover_released_key_then_reobserve")
 
 
+def test_xy_advice_can_use_gain_above_one_within_ten_mm_step():
+    record = _attempt()
+    _grasp(record)
+    _hold(record)
+    _insert(record)
+    record.record_next_trial_xy_advice(
+        increment_socket_xy_m=(0.004, -0.002),
+        update_weight=1.5,
+        applied_step_socket_xy_m=(0.006, -0.003),
+        next_wrist_correction_socket_m=(0.006, -0.003),
+        supporting_cameras=("cam0", "cam1"), timestamp_s=5.0,
+        evidence_refs={"preinsert_snapshot": "camera/preinsert.json",
+                       "grounded_xy": "vlm/tip_axis.json"})
+    advice = record.events[-1]
+    assert advice["stage"] == "next_trial_xy_advice"
+    assert advice["applied_step_socket_xy_m"] == [0.006, -0.003]
+    assert advice["next_wrist_correction_socket_m"] == [0.006, -0.003]
+
+
 def test_stock_force_stop_returns_held_key_only_after_logged_ascent():
     record = _attempt()
     _grasp(record)
