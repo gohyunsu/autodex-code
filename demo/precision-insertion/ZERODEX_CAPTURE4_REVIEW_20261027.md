@@ -723,3 +723,43 @@ usable illumination. Model load from the NAS checkpoint took 82.73 s in
 this cold diagnostic process; the namespaced capture4 service instead keeps
 its SAM3 model loaded across camera requests. No pipeline image, prompt,
 camera setting, or acceptance rule was changed.
+
+### 2026-10-28 planner launch and CUDA-graph audit
+
+An offline straight-mount, lying-key (`001`) synthetic full-chain run exposed
+two execution bugs before its grasp plan could be interpreted:
+
+1. The ZeroDex launcher did not include this demo's existing
+   `compat/rsslib` package on `PYTHONPATH`, although the vendored cuRobo
+   mesh-collision module imports it. The ZeroDex launcher now supplies that
+   path via `PRECISION_EXTRA_PYTHONPATH`; the shared `run_robot_pc.sh` uses
+   this prefix only when explicitly set, preserving the AutoDex default.
+2. The vendored mesh-collision code printed live CUDA tensors inside a
+   CUDA-graph capture. Tensor formatting performs CUDA work that is not
+   permitted during capture, aborting planner warmup. Three diagnostic
+   `print` calls were removed; collision values, equations and limits were
+   not changed.
+
+With both fixes, `--use-cuda-graph` ran to a normal preflight result on the
+local RTX 3090. The first candidate's world setup/warmup took 24.093 s;
+subsequent world setup calls in the same process took 0.001–0.016 s. The four
+endpoint-eligible lying-pose candidates then produced these **synthetic**
+results at a hypothetical key XY `(0.4, 0.0)` m, socket XY `(0.6, 0.0)` m,
+40 mm table surface and stock diagnostic home joints:
+
+| Candidate | Pickup preflight | Full-chain outcome |
+| --- | --- | --- |
+| `table/1/20721` | Pass | Transfer unreachable |
+| `table/1/20777` | Fail (pickup IK) | Not attempted |
+| `table/1/20873` | Pass | Axial waypoint unreachable |
+| `table/1/339` | Pass | Axial waypoint unreachable |
+
+The resulting status was `repose_required_unplanned`; **none is an
+executable plan for the present physical scene**. The diagnostic artifacts
+are under `shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/
+synthetic_latency_20261028_pose001_all4_fixed/`. This test confirms the
+planner can execute through candidate evaluation, not that the four grasps
+work at measured key/socket poses. The current camera scene still lacks
+usable key masks, and the actual robot state was not queried. Static
+`run_zerodex_capture4.sh --check` and all precision-demo tests pass
+(1,300 passed, 5 skipped). No new failure threshold was introduced.

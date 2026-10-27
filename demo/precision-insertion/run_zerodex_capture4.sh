@@ -6,6 +6,7 @@ set -Eeuo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)
 export PRECISION_REPO_ROOT=${PRECISION_REPO_ROOT:-$ROOT}
+export PRECISION_EXTRA_PYTHONPATH=${PRECISION_EXTRA_PYTHONPATH:-$ROOT/demo/precision-insertion/compat}
 export PRECISION_STAGE_ROOT=${PRECISION_STAGE_ROOT:-/home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4}
 export PRECISION_PLANNER_PY=${PRECISION_PLANNER_PY:-/home/hyunsu/.venvs/precision-vlm/bin/python}
 export PRECISION_CHECK_PY=${PRECISION_CHECK_PY:-$PRECISION_PLANNER_PY}
@@ -33,7 +34,7 @@ done
 
 if [[ ${1:-} == --camera-only ]]; then
   shift
-  export PYTHONPATH="$ROOT:$ROOT/demo/precision-insertion:$ROOT/src"
+  export PYTHONPATH="$PRECISION_EXTRA_PYTHONPATH:$ROOT:$ROOT/demo/precision-insertion:$ROOT/src"
   export PRECISION_TIMING_LOCAL_ROOT=${PRECISION_TIMING_LOCAL_ROOT:-/tmp/precision-insertion-timing}
   camera_only_args=(
     --launch-config "${PRECISION_LAUNCH_TEMPLATE:-$PRECISION_STAGE_ROOT/launch.json}"

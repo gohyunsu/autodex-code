@@ -29,3 +29,26 @@ def test_run_launcher_forwards_xy_update_weight(tmp_path):
         env=env, capture_output=True, text=True, check=True)
     lines = completed.stdout.splitlines()
     assert lines[lines.index("--xy-update-weight") + 1] == "0.4"
+
+
+def test_zerodex_launcher_provides_demo_collision_compat(tmp_path):
+    demo = Path(__file__).resolve().parents[1]
+    root = demo.parents[1]
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    for name in ("launch.json", "recipient_gap20_endpoint_catalog_straight.json",
+                 "franka_runtime.json"):
+        (stage / name).write_text("{}\n", encoding="utf-8")
+    fake_check = tmp_path / "fake_check"
+    fake_check.write_text(
+        "#!/bin/sh\nprintf 'PYTHONPATH=%s\\n' \"$PYTHONPATH\"\n",
+        encoding="utf-8")
+    fake_check.chmod(0o755)
+    env = dict(os.environ, PRECISION_STAGE_ROOT=str(stage),
+               PRECISION_CHECK_PY=str(fake_check),
+               PRECISION_EXTRA_PYTHONPATH=str(demo / "compat"))
+    completed = subprocess.run(
+        ["bash", str(demo / "run_zerodex_capture4.sh"), "--check"],
+        env=env, capture_output=True, text=True, check=True)
+    expected = f"PYTHONPATH={demo / 'compat'}:{root}:"
+    assert expected in completed.stdout

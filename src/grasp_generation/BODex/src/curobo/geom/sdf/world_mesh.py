@@ -888,7 +888,6 @@ class WorldMeshCollision(WorldPrimitiveCollision):
             env_query_idx=env_query_idx,
             return_loss=return_loss,
         )
-        print("Primitive Collision D:", d_prim)
         d_val = d.view(d_prim.shape) + d_prim
 
         return d_val
@@ -1039,7 +1038,6 @@ class WorldMeshCollision(WorldPrimitiveCollision):
             enable_speed_metric=enable_speed_metric,
             return_loss=return_loss,
         )
-        print(d, "mesh collision")
         if "primitive" not in self.collision_types or not self.collision_types["primitive"]:
             return d
 
@@ -1054,7 +1052,6 @@ class WorldMeshCollision(WorldPrimitiveCollision):
             enable_speed_metric=enable_speed_metric,
             return_loss=return_loss,
         )
-        print(d_prim, "prim collision")
         d_val = d.view(d_prim.shape) + d_prim
 
         return d_val
