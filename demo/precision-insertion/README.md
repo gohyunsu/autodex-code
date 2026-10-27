@@ -137,6 +137,9 @@ including the report command and optimization experiments, see
 [TIMING_PROFILE.md](TIMING_PROFILE.md).
 For the operation-by-operation latency comparison against AutoDex v8 and
 remaining avoidable costs, see [LATENCY_COMPARISON.md](LATENCY_COMPARISON.md).
+For the latest ZeroDex lying-cylinder `table/1` candidate expansion, its
+straight-mount provenance, and the remaining live-planning limitation, see
+[SIDE_DOWN_CYLINDER_20261028.md](SIDE_DOWN_CYLINDER_20261028.md).
 
 For a concise distinction between **offline-usable**, staging-only and
 missing assets, see [OFFLINE_ASSET_STATUS.md](OFFLINE_ASSET_STATUS.md). It

@@ -39,6 +39,17 @@ IDs. Even a refreshed catalog only enables pose-matched **planning attempts**;
 the current fixed socket/key/joints must still yield a full pickup and held
 transfer/insertion plan at runtime.
 
+The 20 mm-gap ZeroDex default catalog was refreshed with the explicit straight
+mount: 126 directories, 111 eligible, zero errors, including five eligible
+side-down candidates. The launch's `--check` and a full source-verified
+`select_pose_candidates(..., tabletop_pose_stem="001")` both pass. The default
+profile path is
+`~/shared_data/AutoDex/precision_insertion/zerodex_capture4/recipient_gap20_endpoint_catalog_straight.json`;
+its previous version was moved into the archive below. The other five gap
+catalogs still contain the original pool and have not been rescanned with the
+two added IDs. They remain valid records of their prior candidates but are
+not current complete scans of the expanded pool.
+
 Run-specific evidence is under `~/shared_data/AutoDex/precision_insertion/`:
 
 - `cylinder_side_down_sim_pass_1000_seed456_20261028/`
@@ -59,6 +70,16 @@ all four key masks and FoundPose initial poses, and current silhouette
 refinement classified stem `001` at 2.38 degrees residual; that is a replay,
 not a fresh same-session socket/key/robot-state observation. The robot and
 hand are off. No live Franka preflight or physical insertion is claimed.
+
+The unchanged full-chain planner was also rerun in the *same hypothetical*
+lying-key layout used for the earlier four-candidate diagnostic (key XY
+`(0.4, 0.0)` m, socket XY `(0.6, 0.0)` m, 40 mm table, stock home joints).
+All five endpoint-eligible candidates were attempted; the new `30699` was
+scene-clear but had no pickup IK at that hypothetical location. Overall
+status remained `repose_required_unplanned`. The report is under
+`zerodex_capture4/runs/synthetic_latency_20261028_pose001_seed456_all5/`.
+This does not rule out a plan at the **measured** key/socket poses and robot
+joints; those measurements are presently unavailable.
 
 The offline scripts now accept a selected scene (`--scenes 1` for staging),
 and the endpoint screen, fidelity audit, and append-only promotion derive
