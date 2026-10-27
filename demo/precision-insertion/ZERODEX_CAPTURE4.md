@@ -22,7 +22,9 @@ start the adapter if another experiment owns the cameras.
 - Straight-mount cylinder catalogs: `recipient_gap{1,3,5,10,15,20}_endpoint_catalog_straight.json`
 - Franka/Inspire mount: `autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf`
 - Local Qwen weights: `/home/hyunsu/shared_data/AutoDex/models/Qwen3-VL-2B-Instruct`
-- Same-frame full-resolution capture exchange: `/mnt/paradex2/hyunsu/zerodex_capture4_runtime`
+- Same-frame full-resolution capture exchange: the existing SAM mask PUB message
+  now also carries one lossless PNG of its source frame. The main PC writes it
+  under local `zerodex_capture4/<capture_id>_request_<id>/images/`.
 
 The launch uses all four serials `26053248`, `25322639`, `25305462`,
 `25322642`. VLM inference defaults to the first three; this is separate from
@@ -30,6 +32,14 @@ socket/key SAM3 perception. Board 9 is registered from this profile inside
 the local Python process, not in ParaDex's global configuration. Capture4's
 older camera server requires `camera_acquisition_mode: stream` in the launch
 profile; the AutoDex profile still defaults to `acquire`.
+`init_frame_transport: inline_png` is specific to this ZeroDex launch. The
+unchanged AutoDex profile still uses `shared_png`. No extra capture4 port or
+stock daemon edit is required. The PNG shares the mask's request ID, serial,
+sensor frame ID and decoded-pixel SHA256; the main PC compares that identity
+with the FoundPose payload before using the image. Raw capture files are
+written on this PC, not through NAS, so the old 20–40 s NAS wait is removed
+from this camera path. Camera-only measurements must still establish the new
+end-to-end latency.
 
 The profile can be rebuilt with `prepare_zerodex_capture4.py --source-stage
 <commissioned-stage> --calibration-dir <capture4-calibration> --c2r-npy
@@ -66,6 +76,22 @@ PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" \
   --evidence-dir /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/socket_probe_NEW
 python3 demo/precision-insertion/manage_zerodex_capture4_services.py stop
 ```
+
+If the board is unlit, measure only the new transport without relaxing board
+pose criteria:
+
+```bash
+PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" \
+/home/hyunsu/.venvs/precision-vlm/bin/python \
+  demo/precision-insertion/probe_zerodex_inline_frames.py \
+  --launch-config /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/launch.json \
+  --evidence-dir /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/inline_probe_NEW \
+  --target key
+```
+
+Start the isolated services first, and stop them after the probe. This captures
+four raw source frames but does not measure a board/object pose or authorize
+robot motion.
 
 The probe saves original-frame SAM mask overlays, a four-view grid and
 `report.json`; it saves board JPEGs even if ChArUco detection fails. It never
@@ -119,9 +145,8 @@ FoundPose or physical path is claimed.
 The four-camera JPEG snapshot returned in about 0.5–0.8 s; remote SAM masks
 were published in about 1.3–1.6 s after the request. Waiting for four
 full-resolution same-frame PNGs through NAS took substantially longer and is
-the current camera-only latency bottleneck. A faster lossless frame transfer
-can be implemented in this namespaced adapter without changing capture4's
-stock ParaDex files.
+the recorded camera-only latency bottleneck. The inline PNG transport above
+was added afterward; its live latency has not yet been measured.
 
 Robot/hand power and a local Franka daemon are still required for execution.
 No robot movement, insertion or real-world task success is claimed here.

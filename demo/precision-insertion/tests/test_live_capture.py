@@ -86,6 +86,38 @@ class FoundPoseStub:
         )
 
 
+class InlineFoundPoseStub(FoundPoseStub):
+    inline_frames = True
+
+    def collect_payloads(self, **kwargs):
+        assert kwargs["save_capture_dir"] is None
+        assert kwargs["run_info_extra"] == {"return_source_frames": True}
+        return super().collect_payloads(**kwargs)
+
+    def take_source_frames(self, request_id, serials, timeout_s):
+        assert request_id == 42 and serials == CAMERAS and timeout_s > 0
+        ok, payload = cv2.imencode(".png", IMAGE)
+        assert ok
+        return {serial: {"image": IMAGE.copy(), "png": payload.tobytes()}
+                for serial in serials}
+
+
+def test_socket_inline_frames_are_saved_locally_without_remote_png(tmp_path):
+    capture = collect_socket_capture(
+        init_orchestrator=InlineFoundPoseStub(write_images=False),
+        socket_object="socket_model", capture_id="socket_inline",
+        socket_prompt="white socket", capture_root=tmp_path,
+        calibrated_camera_ids=CAMERAS,
+        acquisition_metadata_for_request=_provider,
+        timeout_s=2.0, image_write_timeout_s=1.0,
+        request_id_factory=lambda: 42)
+    assert set(capture.images_bgr) == CAMERAS
+    for serial in CAMERAS:
+        path = tmp_path / "socket_inline_request_42" / "images" / f"{serial}.png"
+        assert path.is_file()
+        assert image_sha256(cv2.imread(str(path))) == image_sha256(IMAGE)
+
+
 def test_board_uses_original_distorted_jpegs_and_independent_times():
     result = collect_board_snapshot(
         snapshot_orchestrator=SnapshotStub(),

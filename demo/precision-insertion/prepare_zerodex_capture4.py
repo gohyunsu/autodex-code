@@ -43,7 +43,7 @@ def build(*, source_stage: Path, shared_root: Path, calibration_dir: Path,
     launch = json.loads((source_stage / "live_board9_gap20_20261013" /
                          "launch.json").read_text(encoding="utf-8"))
     launch.update(
-        shared_root=str(shared_root), capture_root=str(capture_exchange_dir),
+        shared_root=str(shared_root), capture_root=str(output_dir),
         evidence_dir=str(output_dir / "runs" / "session_evidence"),
         base_scene_json=str(output_dir / "base_scene.json"),
         calib_dir=str(output_dir / "calibration"),
@@ -51,6 +51,7 @@ def build(*, source_stage: Path, shared_root: Path, calibration_dir: Path,
         pc_list=["capture4"], capture_ips=["147.46.219.136"],
         camera_ids=list(CAMERAS),
         camera_acquisition_mode="stream",
+        init_frame_transport="inline_png",
         minimum_socket_refined_iou=0.0,
         socket_prompt="large hollow white cylindrical socket with a wide flat circular base",
     )

@@ -181,12 +181,10 @@ def collect_socket_capture(
 ) -> SocketCaptureInput:
     """Collect same-request undistorted frames, SAM masks and FoundPose poses.
 
-    The stock init daemon writes the frames asynchronously to an exclusive
-    request directory on shared storage. This function waits for those exact
-    files, rejecting missing images instead of combining a later snapshot
-    with the earlier pose. Both SAM and FoundPose payloads must expose the
-    same sensor frame ID. Stock init_daemon discards that ID, so a demo-local
-    capture producer is needed; its hardware timing must be commissioned.
+    The stock-compatible path reads the init daemon's same-request PNGs from
+    shared storage. The ZeroDex adapter instead piggybacks lossless PNGs on
+    each mask message and persists them locally; neither path combines a
+    later snapshot with an earlier pose.
     """
     if pose_only and mask_only:
         raise ValueError("mask-only socket capture still needs its saved images")
@@ -222,6 +220,12 @@ def collect_socket_capture(
         f"{capture_id}_request_{request_id}")
     if capture_dir.exists():
         raise FileExistsError(f"socket capture path already exists: {capture_dir}")
+    inline_frames = getattr(init_orchestrator, "inline_frames", False)
+    run_info_extra = {}
+    if mask_only:
+        run_info_extra["skip_foundpose"] = True
+    if inline_frames and not pose_only:
+        run_info_extra["return_source_frames"] = True
     with timed(("camera.socket_mask_request" if mask_only else
                 "camera.foundpose_request"), phase="camera", kind="network",
                capture_id=capture_id, object_name=socket_object,
@@ -229,8 +233,8 @@ def collect_socket_capture(
         masks, poses, timing = init_orchestrator.collect_payloads(
             prompt=socket_prompt, request_id=request_id,
             n_expected_serials=len(calibrated_camera_ids), timeout_s=timeout_s,
-            save_capture_dir=(None if pose_only else str(capture_dir)),
-            **({"run_info_extra": {"skip_foundpose": True}} if mask_only else {}))
+            save_capture_dir=(None if pose_only or inline_frames else str(capture_dir)),
+            **({"run_info_extra": run_info_extra} if run_info_extra else {}))
     if (not isinstance(timing, Mapping) or
             timing.get("request_id") != request_id):
         raise ValueError("FoundPose request ID mismatch")
@@ -241,10 +245,23 @@ def collect_socket_capture(
         raise ValueError("FoundPose has no calibrated camera payloads")
     images = {}
     if not pose_only:
-        with timed("camera.saved_frame_wait", phase="camera", kind="io",
-                   capture_id=capture_id, camera_count=len(payload_ids)):
-            images = _load_saved_frames(
-                capture_dir, payload_ids, image_write_timeout_s)
+        if inline_frames:
+            with timed("camera.inline_frame_receive", phase="camera", kind="network",
+                       capture_id=capture_id, camera_count=len(payload_ids)):
+                source_frames = init_orchestrator.take_source_frames(
+                    request_id, payload_ids, image_write_timeout_s)
+            image_dir = capture_dir / "images"
+            image_dir.mkdir(parents=True)
+            with timed("camera.inline_frame_local_write", phase="camera", kind="io",
+                       capture_id=capture_id, camera_count=len(payload_ids)):
+                for serial, source in source_frames.items():
+                    (image_dir / f"{serial}.png").write_bytes(source["png"])
+                    images[serial] = source["image"]
+        else:
+            with timed("camera.saved_frame_wait", phase="camera", kind="io",
+                       capture_id=capture_id, camera_count=len(payload_ids)):
+                images = _load_saved_frames(
+                    capture_dir, payload_ids, image_write_timeout_s)
     frame_ids = {}
     with timed("camera.frame_binding_verify", phase="camera", kind="io",
                capture_id=capture_id, camera_count=len(payload_ids)):

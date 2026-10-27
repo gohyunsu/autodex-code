@@ -13,8 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.camera_transport import (  # noqa: E402
     FrameIdentityRegistry, PrecisionInitOrchestrator, ProvenancePublisher,
     ProvenanceSnapshotAdapter, RecordingReader,
-    SnapshotMetadataBuffer, decode_precision_mask, decode_precision_pose,
-    install_init_provenance,
+    SnapshotMetadataBuffer, SourceFrameBuffer, decode_precision_mask,
+    decode_precision_pose,
+    decode_precision_source_frame, install_init_provenance,
 )
 from precision_insertion.camera_time import RequestWindowRegistry  # noqa: E402
 from precision_insertion.frame_provenance import image_sha256  # noqa: E402
@@ -72,6 +73,41 @@ def test_recording_reader_binds_pixels_across_camera_stream_restart():
     stock_reader.fid = 0
     with pytest.raises(ValueError, match="positive sensor frame ID"):
         reader.wait_for_new_frames()
+    owner._precision_frame_encoder.shutdown(wait=True)
+
+
+def test_inline_source_frame_shares_mask_request_and_exact_pixels():
+    image = np.arange(24 * 32 * 3, dtype=np.uint8).reshape(24, 32, 3)
+    owner = _owner(image)
+    install_init_provenance(owner)
+    owner._precision_active_request_id = 91
+    owner._precision_send_source_frames = True
+    RecordingReader(_Reader(image), owner).wait_for_new_frames()
+    mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    ok, mask_png = cv2.imencode(".png", mask)
+    assert ok
+    owner.pub_mask.send_data(
+        [{"req_id": 91, "serial": "cam", "h": 24, "w": 32}],
+        [mask_png.tobytes()])
+    metadata, blobs = owner.pub_mask._publisher.published[0]
+    assert len(metadata) == len(blobs) == 2
+    assert metadata[1]["precision_payload"] == "source_frame"
+    req_id, serial, source = decode_precision_source_frame(metadata[1], blobs[1])
+    assert (req_id, serial, source["frame_id"]) == (91, "cam", 11)
+    assert np.array_equal(source["image"], image)
+    assert "frame_future" not in owner._precision_frames[(91, "cam")]
+    with pytest.raises(ValueError, match="differs from its sensor pixels"):
+        decode_precision_source_frame(
+            {**metadata[1], "image_sha256": "0" * 64}, blobs[1])
+    owner._precision_frame_encoder.shutdown(wait=True)
+
+
+def test_inline_frame_buffer_returns_all_views_of_one_request():
+    buffer = SourceFrameBuffer()
+    buffer.put(7, "a", {"frame_id": 3})
+    buffer.put(7, "b", {"frame_id": 4})
+    assert buffer.take(7, {"a", "b"}, 0.1) == {
+        "a": {"frame_id": 3}, "b": {"frame_id": 4}}
 
 
 def test_publisher_rejects_unbound_or_preexisting_precision_metadata():

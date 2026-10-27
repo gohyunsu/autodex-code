@@ -12,12 +12,21 @@ import hashlib
 import math
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Mapping
 
 import cv2
 import numpy as np
 
 from .frame_provenance import image_sha256
+
+
+def _encode_source_png(image: np.ndarray) -> bytes:
+    ok, payload = cv2.imencode(
+        ".png", image, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+    if not ok:
+        raise OSError("could not encode the FoundPose source frame")
+    return payload.tobytes()
 
 
 class RecordingReader:
@@ -51,20 +60,26 @@ class RecordingReader:
             if maps is None:
                 raise ValueError("precision inference must use live camera frames")
             undistorted = cv2.remap(image, maps[0], maps[1], cv2.INTER_LINEAR)
-            self._owner._precision_frames[(request_id, serial)] = {
+            row = {
                 "frame_id": frame_id,
                 "image_sha256": image_sha256(undistorted),
                 "image_space": "autodex_undistorted_full_frame",
             }
+            if getattr(self._owner, "_precision_send_source_frames", False):
+                row["frame_future"] = self._owner._precision_frame_encoder.submit(
+                    _encode_source_png, undistorted)
+                row["height"], row["width"] = undistorted.shape[:2]
+            self._owner._precision_frames[(request_id, serial)] = row
         return frames
 
 
 class ProvenancePublisher:
-    """Augment existing SAM/FoundPose PUB metadata without changing blobs."""
+    """Augment PUB provenance; optionally add source PNG beside each mask."""
 
-    def __init__(self, publisher, owner):
+    def __init__(self, publisher, owner, *, attach_source_frames=False):
         self._publisher = publisher
         self._owner = owner
+        self._attach_source_frames = attach_source_frames
 
     def __getattr__(self, name):
         return getattr(self._publisher, name)
@@ -73,8 +88,10 @@ class ProvenancePublisher:
         if (not isinstance(metadata, list) or not metadata or
                 not all(isinstance(item, dict) for item in metadata)):
             raise ValueError("precision publisher needs per-camera metadata")
-        enriched = []
-        for item in metadata:
+        if len(metadata) != len(blobs):
+            raise ValueError("precision publisher needs one blob per camera")
+        enriched, output_blobs = [], []
+        for item, blob in zip(metadata, blobs):
             req_id = item.get("req_id")
             serial = item.get("serial")
             row = self._owner._precision_frames.get((req_id, serial))
@@ -86,7 +103,18 @@ class ProvenancePublisher:
             enriched.append({**item, "fid": row["frame_id"],
                              "image_sha256": row["image_sha256"],
                              "image_space": row["image_space"]})
-        return self._publisher.send_data(enriched, blobs)
+            output_blobs.append(blob)
+            if self._attach_source_frames and "frame_future" in row:
+                source_png = row.pop("frame_future").result()
+                enriched.append({
+                    "req_id": req_id, "serial": serial,
+                    "precision_payload": "source_frame", "fid": row["frame_id"],
+                    "image_sha256": row["image_sha256"],
+                    "image_space": row["image_space"],
+                    "h": row["height"], "w": row["width"],
+                })
+                output_blobs.append(source_png)
+        return self._publisher.send_data(enriched, output_blobs)
 
 
 def install_init_provenance(daemon) -> None:
@@ -96,8 +124,55 @@ def install_init_provenance(daemon) -> None:
         raise ValueError("precision provenance is already installed")
     daemon._precision_frames = {}
     daemon._precision_active_request_id = None
-    daemon.pub_mask = ProvenancePublisher(daemon.pub_mask, daemon)
+    daemon._precision_send_source_frames = False
+    daemon._precision_frame_encoder = ThreadPoolExecutor(
+        max_workers=4, thread_name_prefix="precision-source-png")
+    daemon.pub_mask = ProvenancePublisher(
+        daemon.pub_mask, daemon, attach_source_frames=True)
     daemon.pub_pose = ProvenancePublisher(daemon.pub_pose, daemon)
+
+
+def decode_precision_source_frame(item: Mapping, blob: bytes) -> tuple[int, str, dict]:
+    """Decode an exact, losslessly transmitted FoundPose/SAM source image."""
+    request_id, serial, fid, digest = _metadata_identity(item)
+    if item.get("precision_payload") != "source_frame":
+        raise ValueError("precision source frame has the wrong payload type")
+    image = cv2.imdecode(np.frombuffer(blob, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if (image is None or image.shape != (item.get("h"), item.get("w"), 3)
+            or image_sha256(image) != digest):
+        raise ValueError("precision source frame differs from its sensor pixels")
+    return request_id, serial, {
+        "image": image, "png": blob, "frame_id": fid,
+        "image_sha256": digest,
+    }
+
+
+class SourceFrameBuffer:
+    """Request-scoped PNGs piggybacked on the existing mask PUB stream."""
+
+    def __init__(self):
+        self._ready = threading.Condition()
+        self._rows: dict[int, dict[str, dict]] = {}
+
+    def put(self, request_id: int, serial: str, row: dict) -> None:
+        with self._ready:
+            self._rows.setdefault(request_id, {})[serial] = row
+            self._ready.notify_all()
+
+    def take(self, request_id: int, serials: set[str], timeout_s: float,
+             ) -> dict[str, dict]:
+        deadline = time.monotonic() + timeout_s
+        with self._ready:
+            while not serials <= self._rows.get(request_id, {}).keys():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("inline FoundPose source frames did not arrive")
+                self._ready.wait(remaining)
+            rows = {serial: self._rows[request_id].pop(serial)
+                    for serial in serials}
+            if not self._rows[request_id]:
+                self._rows.pop(request_id)
+            return rows
 
 
 def decode_precision_mask(item: Mapping, blob: bytes) -> tuple[int, str, dict]:
@@ -316,10 +391,12 @@ class PrecisionInitOrchestrator:
 
     def __init__(self, stock_orchestrator,
                  identity_registry: FrameIdentityRegistry | None = None,
-                 request_windows=None):
+                 request_windows=None, *, inline_frames: bool = False):
         self.stock = stock_orchestrator
         self.identity_registry = identity_registry
         self.request_windows = request_windows
+        self.inline_frames = inline_frames
+        self.source_frames = SourceFrameBuffer()
         mask_thread = getattr(stock_orchestrator, "_mask_thread", None)
         pose_thread = getattr(stock_orchestrator, "_pose_thread", None)
         if (mask_thread is None or pose_thread is None or
@@ -333,8 +410,16 @@ class PrecisionInitOrchestrator:
         return getattr(self.stock, name)
 
     def _on_mask(self, item, blob):
+        if item.get("precision_payload") == "source_frame":
+            request_id, serial, row = decode_precision_source_frame(item, blob)
+            self.source_frames.put(request_id, serial, row)
+            return
         request_id, serial, row = decode_precision_mask(item, blob)
         self.stock.mask_buf.put(request_id, serial, row)
+
+    def take_source_frames(self, request_id: int, serials: set[str],
+                           timeout_s: float) -> dict[str, dict]:
+        return self.source_frames.take(request_id, serials, timeout_s)
 
     def _on_pose(self, item, blob):
         request_id, serial, row = decode_precision_pose(item, blob)

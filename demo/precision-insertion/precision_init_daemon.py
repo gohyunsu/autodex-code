@@ -81,6 +81,7 @@ class PrecisionInitDaemon(InitDaemon):
         if self._precision_active_request_id is not None:
             raise RuntimeError("overlapping precision FoundPose runs")
         self._precision_active_request_id = request_id
+        self._precision_send_source_frames = info.get("return_source_frames") is True
         original_estimator = self.fp
         try:
             if info.get("skip_foundpose") is True:
@@ -89,6 +90,11 @@ class PrecisionInitDaemon(InitDaemon):
         finally:
             self.fp = original_estimator
             self._precision_active_request_id = None
+            self._precision_send_source_frames = False
+
+    def close(self) -> None:
+        self._precision_frame_encoder.shutdown(wait=True)
+        super().close()
 
 
 def main(argv: list[str] | None = None) -> int:

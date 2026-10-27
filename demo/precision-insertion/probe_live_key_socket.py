@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--socket-timeout-s", type=float,
                         help="camera-only FoundPose wait, including a cold object load")
     parser.add_argument("--image-write-timeout-s", type=float,
-                        help="camera-only wait for asynchronous complete NFS PNG files")
+                        help="camera-only wait for same-frame PNG delivery")
     args = parser.parse_args(argv)
     ports = (args.init_port_mask, args.init_port_pose, args.init_port_cmd)
     if any(port is not None for port in ports) and any(

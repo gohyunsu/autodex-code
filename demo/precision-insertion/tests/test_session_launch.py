@@ -137,13 +137,21 @@ def test_profile_declares_capture4_stream_mode(tmp_path, monkeypatch):
     config, record = _config(tmp_path)
     _stub_time(monkeypatch)
     record["camera_acquisition_mode"] = "stream"
+    record["init_frame_transport"] = "inline_png"
     config.write_text(json.dumps(record), encoding="utf-8")
     loaded = launch.load_session_launch(config)
     assert loaded.camera_acquisition_mode == "stream"
     assert loaded.readiness()["camera_acquisition_mode"] == "stream"
+    assert loaded.init_frame_transport == "inline_png"
+    assert loaded.readiness()["init_frame_transport"] == "inline_png"
     record["camera_acquisition_mode"] = "invalid"
     config.write_text(json.dumps(record), encoding="utf-8")
     with pytest.raises(ValueError, match="camera acquisition mode"):
+        launch.load_session_launch(config)
+    record["camera_acquisition_mode"] = "stream"
+    record["init_frame_transport"] = "invalid"
+    config.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match="init frame transport"):
         launch.load_session_launch(config)
 
 

@@ -71,6 +71,7 @@ class SessionLaunch:
     board_capture_phase: str | None = "empty_before_socket"
     camera_time_mode: str = "calibrated_frame_id"
     camera_acquisition_mode: str = "acquire"
+    init_frame_transport: str = "shared_png"
     execution_scope: str = "live"
     fixture_contract_validated: bool = False
     scene_mode: str = "charuco_board"
@@ -89,6 +90,7 @@ class SessionLaunch:
                 for serial, row in sorted(self.camera_times.items())},
             "camera_time_mode": self.camera_time_mode,
             "camera_acquisition_mode": self.camera_acquisition_mode,
+            "init_frame_transport": self.init_frame_transport,
             "execution_scope": self.execution_scope,
             "scene_mode": self.scene_mode,
             "table_surface_z_m": self.table_surface_z_m,
@@ -296,6 +298,9 @@ def load_session_launch(
     acquisition_mode = record.get("camera_acquisition_mode", "acquire")
     if acquisition_mode not in ("acquire", "stream"):
         raise ValueError("unknown camera acquisition mode")
+    init_frame_transport = record.get("init_frame_transport", "shared_png")
+    if init_frame_transport not in ("shared_png", "inline_png"):
+        raise ValueError("unknown init frame transport")
     timing_paths = record.get("camera_time_calibrations")
     if time_mode == "calibrated_frame_id":
         if not isinstance(timing_paths, dict) or set(timing_paths) != camera_ids:
@@ -380,6 +385,7 @@ def load_session_launch(
         scene_mode=scene_mode, table_surface_z_m=table_surface_z_m,
         camera_time_mode=time_mode, execution_scope=execution_scope,
         camera_acquisition_mode=acquisition_mode,
+        init_frame_transport=init_frame_transport,
         fixture_contract_validated=mode.family == "cylinder")
 
 
@@ -454,7 +460,8 @@ def open_session_cameras(
             sender_module.get_pc_ip = original_get_pc_ip
         stack.callback(stock_init.close)
         init = PrecisionInitOrchestrator(
-            stock_init, registry, request_windows=windows)
+            stock_init, registry, request_windows=windows,
+            inline_frames=launch.init_frame_transport == "inline_png")
         provider = (BoundedRequestTimeProvider(registry, windows)
                     if launch.camera_time_mode == "bounded_request_interval" else
                     AcquisitionTimeProvider(
