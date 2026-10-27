@@ -146,6 +146,9 @@ ZeroDex controller. This is target-routing correctness, not a new grasp,
 perception or insertion acceptance threshold. `--check` and `--camera-only`
 remain available. A ZeroDex-specific FR3/Inspire backend and measured-state
 binding are required before motion or live planning can be enabled.
+When that backend is commissioned, `PRECISION_XY_UPDATE_WEIGHT` can set the
+next-trial residual gain (default `1.0`); the launcher forwards it to
+`run_live.py` instead of fixing the value in its command line.
 
 To test a complete camera-only fixed-socket session with a lit board and the
 key absent, start the isolated services, then run:

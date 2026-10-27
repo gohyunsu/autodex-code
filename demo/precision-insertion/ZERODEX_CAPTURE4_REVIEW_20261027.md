@@ -360,3 +360,26 @@ key is constructed first. This change eliminates an unused object-specific
 load and shifts the key initialization out of the first trial; **it does not
 establish a 12-second total-session speedup**. The board-constrained routing
 is covered by a focused unit test. No new gating threshold was added.
+
+### 2026-10-28 control-backend and launch-parameter audit
+
+Read-only inspection of this kds-Z790 host found `enp4s0` at
+`172.16.1.10/24` with a direct route to `172.16.1.11`. That establishes a
+network path, **not** a running controller: the robot and hand were off and
+no connection or command was attempted. The local ParaDex
+`system/current/network.json` still selects `172.16.0.2`; its
+`FrankaController` is a ZMQ client. In contrast, ZeroDex's
+`docs/ros_setup.md` documents ROS2 Humble and a controller on another PC for
+`172.16.1.11`, and its `run/components/robot_exec.py` uses ROS2
+`FollowJointTrajectory`/servo primitives. This host has no `ros2` executable
+or `/opt/ros`. Changing only ParaDex's robot IP cannot make the existing
+AutoDex velocity-stream executor speak the ROS2 API. The ZeroDex robot owner
+and intended backend remain an integration decision, not a camera or grasp
+failure.
+
+The live CLI already accepts `--xy-update-weight`, but `run_robot_pc.sh`
+previously passed a literal `1.0`, making the parameter impossible to tune
+through either profile launcher. It now forwards
+`PRECISION_XY_UPDATE_WEIGHT` with the same `1.0` default. This is an opt-in
+parameter fix; the retry update equation, per-attempt cap and outcome rules
+are unchanged.

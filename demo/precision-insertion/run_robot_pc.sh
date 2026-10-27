@@ -43,6 +43,7 @@ export PRECISION_TIMING_LOCAL_ROOT=${PRECISION_TIMING_LOCAL_ROOT:-/tmp/precision
 export PRECISION_FR3_INSPIRE_URDF=${PRECISION_FR3_INSPIRE_URDF:-$ROOT/autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire_oct12_mount.urdf}
 export PRECISION_VLM_CAMERA_IDS=${PRECISION_VLM_CAMERA_IDS:-24122734,25305463,25322638,25322649,25305461}
 PRECISION_XY_ESTIMATOR=${PRECISION_XY_ESTIMATOR:-vlm}
+XY_UPDATE_WEIGHT=${PRECISION_XY_UPDATE_WEIGHT:-1.0}
 
 LAUNCH_TEMPLATE=${PRECISION_LAUNCH_TEMPLATE:-$STAGE/launch.json}
 CATALOG=${PRECISION_ENDPOINT_CATALOG:-$STAGE/recipient_gap${GAP_MM}_endpoint_catalog.json}
@@ -122,6 +123,7 @@ PY
 echo "[pipeline] using existing camera, perception and Franka services"
 echo "[pipeline] VLM camera IDs: $PRECISION_VLM_CAMERA_IDS"
 echo "[pipeline] failed-trial XY estimator: $PRECISION_XY_ESTIMATOR"
+echo "[pipeline] next-trial XY update weight: $XY_UPDATE_WEIGHT"
 if [[ "$MODE" == --run && "$PRECISION_XY_ESTIMATOR" == tracked_tip ]]; then
   bash demo/precision-insertion/manage_robot_pc_services.sh check-tracker
 fi
@@ -143,5 +145,5 @@ exec "$PY" demo/precision-insertion/run_live.py \
   --integration precision_insertion.franka_integration:factory \
   --robot-config "$ROBOT" \
   --init-port-mask 15006 --init-port-pose 15007 --init-port-cmd 16893 \
-  --xy-update-weight 1.0 --xy-estimator "$PRECISION_XY_ESTIMATOR" \
+  --xy-update-weight "$XY_UPDATE_WEIGHT" --xy-estimator "$PRECISION_XY_ESTIMATOR" \
   --enable-robot-motion "${EXTRA_ARGS[@]}"
