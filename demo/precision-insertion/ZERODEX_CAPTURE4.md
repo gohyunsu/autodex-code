@@ -141,7 +141,12 @@ The probe saves original-frame SAM mask overlays, a four-view grid and
 `report.json`; it saves board JPEGs even if ChArUco detection fails. It never
 connects to Franka or Inspire. Use a new evidence
 directory for each run. `run_zerodex_capture4.sh --check` is a static asset
-preflight, not a camera or robot acceptance test. Do **not** use `--run` while
+preflight, not a camera or robot acceptance test. Its
+`candidates_by_tabletop_pose` counts distinguish the 106 eligible upright
+`000` grasps from the four eligible lying `001` grasps in the current gap-20
+catalog. These are endpoint-screen results, not executable arm plans. The
+live cylindrical policy requires upright `000` for direct insertion and
+routes `001` through reorientation first. Do **not** use `--run` while
 the robot/hand are off or before the local robot adapter is commissioned.
 The ZeroDex launcher now refuses `--run` and `--plan-only` outright: both
 would instantiate the inherited AutoDex ZMQ executor, while this PC's ParaDex
@@ -184,7 +189,9 @@ the key. It reuses the live board/socket session, key SAM3/FoundPose admission,
 tabletop classification and matching screened catalog, and writes a unique
 `zerodex_capture4/runs/camera_only_*/report.json`, `socket_evidence/`,
 `key_capture/`, `ledger/` and a sibling `.timing/` directory. This is the
-current 20 mm launch/catalog profile. Key admission is pose-only, as in the
+current 20 mm launch/catalog profile. The report includes
+`direct_insertion_pose` and `live_pose_route`, so a lying-key detection is
+not mistaken for a direct insertion plan. Key admission is pose-only, as in the
 live planning path: it does not wait for a second set of same-request PNGs.
 Use `probe_zerodex_inline_frames.py` above if raw key frames and masks are
 needed for visual QA; do not compare its PNG-inclusive duration to the

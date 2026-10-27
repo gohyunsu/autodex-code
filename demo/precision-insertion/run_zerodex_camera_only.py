@@ -145,6 +145,10 @@ def run_camera_only(
             "tabletop_pose": pose_class,
             "candidate_status": selected["status"],
             "endpoint_eligible_candidate_count": len(selected["candidates"]),
+            "direct_insertion_pose": pose_class["stem"] == "000",
+            "live_pose_route": (
+                "direct_candidate_preflight" if pose_class["stem"] == "000" else
+                "upright_reorientation_preflight"),
             "robot_ready": False,
         }
         with (output / "report.json").open("x", encoding="utf-8") as stream:

@@ -73,7 +73,8 @@ def test_static_preflight_reads_v8_files_without_opening_robot(
                                         readiness=lambda: {"board_id": "9"}))
     monkeypatch.setattr(live_runtime, "preflight_endpoint_catalog_file",
                         lambda **_kwargs: {"candidates": [
-                            {"eligible": True}, {"eligible": False}]})
+                            {"tabletop_pose_stem": "000", "eligible": True},
+                            {"tabletop_pose_stem": "001", "eligible": False}]})
     monkeypatch.setattr(franka_integration, "open_franka_core", lambda *_args:
                         pytest.fail("static preflight opened the robot"))
     monkeypatch.setattr(franka_integration, "import_module", lambda *_args:
@@ -92,6 +93,11 @@ def test_static_preflight_reads_v8_files_without_opening_robot(
         launch_config_path=launch_path, endpoint_catalog_path=catalog_path,
         robot_config_path=robot_path)
     assert report["eligible_candidate_count"] == 1
+    assert report["candidates_by_tabletop_pose"] == {
+        "000": {"catalogued": 1, "eligible": 1},
+        "001": {"catalogued": 1, "eligible": 0},
+    }
+    assert report["live_cylinder_direct_insertion_pose"] == "000"
     assert report["launch"]["board_id"] == "9"
     assert report["launch_evidence_dir_exists"] is False
     assert report["robot_config"]["stage_factory_syntax_valid"] is True

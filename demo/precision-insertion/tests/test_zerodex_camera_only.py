@@ -17,8 +17,9 @@ from precision_insertion.config import select_mode  # noqa: E402
 
 
 @pytest.mark.parametrize("reuse", (False, True))
+@pytest.mark.parametrize("stem", ("000", "001"))
 def test_camera_only_reuses_socket_key_and_catalog_without_robot(
-        tmp_path, monkeypatch, reuse):
+        tmp_path, monkeypatch, reuse, stem):
     events = []
     mode = select_mode("cylinder", 20)
     shared = tmp_path / "shared"
@@ -100,7 +101,7 @@ def test_camera_only_reuses_socket_key_and_catalog_without_robot(
                                 "mesh": {"target": {"pose": [0, 0, 0, 1, 0, 0, 0]}}}))
     monkeypatch.setattr(camera_only, "classify_key_tabletop_pose",
                         lambda **_kwargs: (
-                            events.append("classify") or {"stem": "001"}))
+                            events.append("classify") or {"stem": stem}))
     monkeypatch.setattr(camera_only, "select_pose_candidates",
                         lambda *_args, **_kwargs: (
                             events.append("select") or {
@@ -128,6 +129,10 @@ def test_camera_only_reuses_socket_key_and_catalog_without_robot(
         ["ledger", "key_placed", "key", "stream_close", "camera_close",
          "scene", "classify", "select"])
     assert report["endpoint_eligible_candidate_count"] == 1
+    assert report["direct_insertion_pose"] is (stem == "000")
+    assert report["live_pose_route"] == (
+        "direct_candidate_preflight" if stem == "000" else
+        "upright_reorientation_preflight")
     assert report["socket_evidence_reused"] is reuse
     assert report["robot_ready"] is False
     assert (tmp_path / "run" / "report.json").is_file()

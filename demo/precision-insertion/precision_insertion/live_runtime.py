@@ -101,6 +101,14 @@ def inspect_live_inputs(
     catalog = preflight_endpoint_catalog_file(
         mode=launch.mode, shared_root=launch.shared_root,
         catalog_path=catalog_path)
+    pose_counts: dict[str, dict[str, int]] = {}
+    for row in catalog["candidates"]:
+        stem = row.get("tabletop_pose_stem")
+        if not isinstance(stem, str):
+            continue
+        counts = pose_counts.setdefault(stem, {"catalogued": 0, "eligible": 0})
+        counts["catalogued"] += 1
+        counts["eligible"] += row.get("eligible") is True
     result = {
         "schema": "precision_insertion_static_live_preflight_v1",
         "launch": launch.readiness(),
@@ -115,6 +123,9 @@ def inspect_live_inputs(
         "candidate_count": len(catalog["candidates"]),
         "eligible_candidate_count": sum(
             row.get("eligible") is True for row in catalog["candidates"]),
+        "candidates_by_tabletop_pose": dict(sorted(pose_counts.items())),
+        "live_cylinder_direct_insertion_pose": (
+            "000" if launch.mode.family == "cylinder" else None),
         "robot_config": None,
         "xy_estimator": xy_estimator,
         "sam_roi_inputs": None,
