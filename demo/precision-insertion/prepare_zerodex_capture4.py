@@ -21,21 +21,17 @@ def _write_json(path: Path, record) -> None:
 
 
 def build(*, source_stage: Path, shared_root: Path, calibration_dir: Path,
-          c2r_npy: Path, output_dir: Path, qwen_model_dir: Path,
-          capture_exchange_dir: Path) -> dict:
+          c2r_npy: Path, output_dir: Path, qwen_model_dir: Path) -> dict:
     source_stage = source_stage.expanduser().resolve()
     shared_root = shared_root.expanduser().resolve()
     output_dir = output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    capture_exchange_dir = capture_exchange_dir.expanduser().resolve()
-    capture_exchange_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "calibration").mkdir(exist_ok=True)
     (output_dir / "runs").mkdir(exist_ok=True)
     for name in ("intrinsics.json", "extrinsics.json"):
         shutil.copy2(calibration_dir / name, output_dir / "calibration" / name)
     board_info = Path(__file__).resolve().parent / "config" / "zerodex_board9.json"
     shutil.copy2(board_info, output_dir / "charuco_board9.json")
-    shutil.copy2(board_info, capture_exchange_dir / "charuco_board9.json")
     shutil.copy2(c2r_npy, output_dir / "calibration" / "C2R.npy")
     shutil.copy2(source_stage / "static_preflight_board9_gap20_20261013" /
                  "base_scene.json", output_dir / "base_scene.json")
@@ -97,8 +93,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--qwen-model-dir", type=Path,
                         default=Path.home() / "shared_data" / "AutoDex" /
                                 "models" / "Qwen3-VL-2B-Instruct")
-    parser.add_argument("--capture-exchange-dir", type=Path,
-                        default=Path("/mnt/paradex2/hyunsu/zerodex_capture4_runtime"))
     args = parser.parse_args(argv)
     print(json.dumps(build(**vars(args)), indent=2))
     return 0
