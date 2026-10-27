@@ -202,6 +202,7 @@ def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path)
 
     def factory(options):
         assert options.enable_robot_motion is True
+        assert options.launch_snapshot.mode.family == "cylinder"
 
         def components(live):
             return [SimpleNamespace(

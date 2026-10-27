@@ -36,6 +36,17 @@ start the adapter if another experiment owns the cameras.
 - Local Qwen batches the three selected classification-camera pairs on one
   GPU. Prompts, replies and votes remain per camera. Metric key-point
   grounding still uses its separate native-pixel path.
+- The ZeroDex launcher sets `PRECISION_PRELOAD_VLM=1`: after the cuRobo
+  planner core is constructed, local Qwen starts loading in a background
+  thread while the arm moves to clear view and the fixed socket is captured.
+  Handler assembly joins that one model-load future; it never loads a second
+  copy. The already parsed launch supplies its camera image size, so this
+  overlap does not re-read calibration or change the original pixel geometry.
+  The AutoDex launcher has no preload default. Set
+  `PRECISION_PRELOAD_VLM=0` to compare the original serial startup. The
+  2026-10-22 AutoDex episode recorded 3.924 s for Qwen load and 5.687 s for
+  clear-view motion; this is an overlap opportunity, **not** a measured
+  ZeroDex live-session saving.
 - The ZeroDex launcher sets `PRECISION_PREWARM_FIXED_WORLD=1` when the key
   will be placed after the fixed-socket measurement. Once a live
   session has measured the fixed socket and loaded Qwen, the planner initializes

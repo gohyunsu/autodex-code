@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import Future
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib import import_module
 from importlib.machinery import PathFinder
 import math
@@ -40,6 +40,7 @@ class RunLiveOptions:
     reuse_session_evidence_dir: Path | None = None
     key_already_placed: bool = False
     initial_preferred_candidate: tuple[str, str, str] | None = None
+    launch_snapshot: object | None = None
 
 
 @dataclass(frozen=True)
@@ -251,7 +252,8 @@ def run_integrated_live_session(
     if getattr(launch, "execution_scope", "live") != "live":
         raise PermissionError("static preflight launch cannot start robot motion")
     with timed("startup.integration_factory", phase="startup"):
-        integration = load_runtime_integration(integration_spec, options)
+        integration = load_runtime_integration(
+            integration_spec, replace(options, launch_snapshot=launch))
     try:
         def handlers(live: LivePrecisionSession):
             with timed("startup.build_handlers", phase="startup"):

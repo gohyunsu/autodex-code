@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 import sys
+from threading import Event
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -89,6 +90,50 @@ def test_franka_integration_reuses_core_and_existing_stage_assembly(
     assert integration.build_components(session) == ("assembled",)
     integration.close()
     assert events[-1] == "close"
+
+
+def test_zerodex_local_qwen_load_overlaps_startup_and_is_reused(
+        monkeypatch, tmp_path):
+    monkeypatch.setenv("PRECISION_PRELOAD_VLM", "1")
+    monkeypatch.delenv("PRECISION_VISIBLE_GRIP_CAMERA_IDS", raising=False)
+    events = []
+    loaded = Event()
+    release = Event()
+    backend = object()
+    core = SimpleNamespace(
+        clear_view=object(), planner=object(), read_state=lambda: None,
+        sampler=None, close=lambda: events.append("core_closed"))
+    monkeypatch.setattr(franka_integration, "open_franka_core", lambda _: core)
+    module = ModuleType("robot_pc_stages")
+    module.configure = lambda *_: {"shared": {}, "stages": {}}
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+
+    def load_backend(**kwargs):
+        events.append("qwen_load_started")
+        assert kwargs["max_input_size"] == (2048, 1536)
+        loaded.set()
+        assert release.wait(2)
+        events.append("qwen_load_finished")
+        return backend
+
+    monkeypatch.setattr(franka_integration, "load_vlm_backend", load_backend)
+    monkeypatch.setattr(franka_integration, "assemble_live_components",
+                        lambda _live, **kwargs: (
+                            events.append("assembled") or
+                            (kwargs["shared"]["backend"],)))
+    launch = SimpleNamespace(
+        image_hw=(1536, 2048), shared_root=tmp_path,
+        camera_ids={"camera_a"})
+    options = replace(_options(tmp_path, _config()), launch_snapshot=launch)
+    integration = franka_integration.factory(options)
+    assert loaded.wait(2)
+    events.append("clear_view_could_run")
+    release.set()
+    live = SimpleNamespace(cameras=SimpleNamespace(launch=launch))
+    assert integration.build_components(live) == (backend,)
+    integration.close()
+    assert events == ["qwen_load_started", "clear_view_could_run",
+                      "qwen_load_finished", "assembled", "core_closed"]
 
 
 @pytest.mark.parametrize("override", [False, True])

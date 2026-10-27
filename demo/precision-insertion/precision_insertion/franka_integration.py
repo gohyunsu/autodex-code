@@ -260,6 +260,8 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     backend = None
     warmup_pool = None
     warmup_future = None
+    vlm_load_pool = None
+    vlm_load_future = None
     sam_segmentor = None
     sam_log = (options.run_output_dir.parent /
                f".{options.run_output_dir.name}.sam_roi_worker.{uuid4().hex}.stderr.log"
@@ -289,6 +291,73 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 core.close()
         raise
 
+    def local_backend(image_hw, shared_root):
+        height, width = image_hw
+        native_ceiling = (
+            ((width + 31) // 32) * 32,
+            ((height + 31) // 32) * 32)
+        model_id = (vlm["model_id"] or str(
+            shared_root / "AutoDex/models/Qwen3-VL-2B-Instruct"))
+        image_size = (tuple(vlm["classification_image_size"])
+                      if vlm["classification_image_size"] is not None
+                      else None)
+        return load_vlm_backend(
+            mode="local", model_id=model_id,
+            max_input_size=native_ceiling,
+            max_new_tokens=vlm["max_new_tokens"],
+            require_native_pixels=vlm["require_native_pixels"],
+            parallel_views=vlm["parallel_views"],
+            **({"classification_image_size": image_size}
+               if image_size is not None else {}))
+
+    def configured_backend(launch):
+        if vlm["mode"] == "local":
+            return local_backend(launch.image_hw, launch.shared_root)
+        height, width = launch.image_hw
+        native_ceiling = (
+            ((width + 31) // 32) * 32,
+            ((height + 31) // 32) * 32)
+        model_id = (vlm["model_id"] or str(
+            launch.shared_root / "AutoDex/models/Qwen3-VL-2B-Instruct"))
+        image_size = (tuple(vlm["classification_image_size"])
+                      if vlm["classification_image_size"] is not None
+                      else None)
+        if vlm["mode"] == "distributed":
+            if set(assessment_cameras(launch.camera_ids)) != set(vlm["workers"]):
+                raise ValueError(
+                    "selected VLM cameras differ from distributed workers")
+            return DistributedQwenBackend(
+                model_id=model_id,
+                worker_root=Path(vlm["worker_root"]),
+                workers=vlm["workers"],
+                max_input_size=native_ceiling,
+                max_new_tokens=vlm["max_new_tokens"],
+                classification_image_size=image_size,
+                log_path=options.run_output_dir / "distributed_qwen.jsonl")
+        return load_vlm_backend(
+            mode=vlm["mode"], model_id=model_id,
+            max_input_size=native_ceiling,
+            max_new_tokens=vlm["max_new_tokens"],
+            require_native_pixels=vlm["require_native_pixels"],
+            parallel_views=vlm["parallel_views"],
+            **({"classification_image_size": image_size}
+               if image_size is not None else {}))
+
+    if (os.environ.get("PRECISION_PRELOAD_VLM") == "1" and
+            vlm["mode"] == "local" and
+            options.launch_snapshot is not None):
+        launch = options.launch_snapshot
+        vlm_load_pool = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="precision-qwen-load")
+        context = copy_context()
+
+        def preload_local_backend():
+            with timed("startup.vlm_model_load", phase="startup"):
+                return local_backend(launch.image_hw, launch.shared_root)
+
+        vlm_load_future = vlm_load_pool.submit(
+            context.run, preload_local_backend)
+
     def components(live):
         with timed("startup.robot_pc_stage_factory", phase="startup"):
             parameters = build_stages(core, live, options)
@@ -306,41 +375,13 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
         if owned & shared.keys():
             raise ValueError("FR3 planner and measured readers belong to core")
         if "backend" not in shared:
-            height, width = live.cameras.launch.image_hw
-            # Qwen's processor rounds to a patch/merge factor. A slightly
-            # larger ceiling lets the backend append lossless right/bottom
-            # padding while keeping the original pixel coordinate origin.
-            native_ceiling = (
-                ((width + 31) // 32) * 32,
-                ((height + 31) // 32) * 32)
-            model_id = (vlm["model_id"] or str(
-                live.cameras.launch.shared_root /
-                "AutoDex/models/Qwen3-VL-2B-Instruct"))
-            with timed("startup.vlm_model_load", phase="startup"):
-                image_size = (tuple(vlm["classification_image_size"])
-                              if vlm["classification_image_size"] is not None
-                              else None)
-                if vlm["mode"] == "distributed":
-                    if set(assessment_cameras(live.cameras.launch.camera_ids)) != set(vlm["workers"]):
-                        raise ValueError(
-                            "selected VLM cameras differ from distributed workers")
-                    shared["backend"] = DistributedQwenBackend(
-                        model_id=model_id,
-                        worker_root=Path(vlm["worker_root"]),
-                        workers=vlm["workers"],
-                        max_input_size=native_ceiling,
-                        max_new_tokens=vlm["max_new_tokens"],
-                        classification_image_size=image_size,
-                        log_path=options.run_output_dir / "distributed_qwen.jsonl")
-                else:
-                    shared["backend"] = load_vlm_backend(
-                        mode=vlm["mode"], model_id=model_id,
-                        max_input_size=native_ceiling,
-                        max_new_tokens=vlm["max_new_tokens"],
-                        require_native_pixels=vlm["require_native_pixels"],
-                        parallel_views=vlm["parallel_views"],
-                        **({"classification_image_size": image_size}
-                           if image_size is not None else {}))
+            if vlm_load_future is not None:
+                with timed("startup.vlm_model_load_join", phase="startup",
+                           kind="wait"):
+                    shared["backend"] = vlm_load_future.result()
+            else:
+                with timed("startup.vlm_model_load", phase="startup"):
+                    shared["backend"] = configured_backend(live.cameras.launch)
         nonlocal backend
         backend = shared["backend"]
         grip_cameras = os.environ.get("PRECISION_VISIBLE_GRIP_CAMERA_IDS", "").strip()
@@ -496,7 +537,11 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             if warmup_pool is not None:
                 warmup_pool.shutdown(wait=True)
         finally:
-            close_backend_and_core()
+            try:
+                if vlm_load_pool is not None:
+                    vlm_load_pool.shutdown(wait=True)
+            finally:
+                close_backend_and_core()
 
     def close_backend_and_core() -> None:
         try:

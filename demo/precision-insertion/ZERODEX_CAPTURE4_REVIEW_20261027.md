@@ -895,3 +895,20 @@ Docker image contains the original runtime, but loading it is not a small
 file-copy step. The local kernel is `6.8.0-138-generic` with
 `PREEMPT_DYNAMIC`; daemon deployment and exclusive FCI ownership are still
 unverified. No daemon or robot command was started.
+
+### 2026-10-28 Qwen startup overlap
+
+The saved AutoDex episode `20261022_103429_752726` records 3.924 s to load
+local Qwen and 5.687 s for initial clear-view arm motion; those startup
+stages were serial. The ZeroDex profile now starts the existing local Qwen
+loader on a background thread after the cuRobo core is constructed. The
+clear-view motion and fixed-socket camera startup can proceed while it loads.
+Handler assembly joins the same future, so there is no second model copy or
+change to per-view prompts, inference, or task labels. The already parsed
+launch supplies the image dimensions; AutoDex keeps the original serial path.
+`PRECISION_PRELOAD_VLM=0` disables this ZeroDex-only overlap for comparison.
+An isolated background-thread load of the same local Qwen weights on this
+RTX 3090 succeeded in 5.013 s; it did not open cameras or robot connections.
+The full demo suite passes 1,313 tests with 5 skipped and static gap-20
+preflight remains 110/124 endpoint-eligible. No powered-robot ZeroDex timing
+has yet established the realized saving.
