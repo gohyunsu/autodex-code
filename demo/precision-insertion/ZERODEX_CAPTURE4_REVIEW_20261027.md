@@ -214,15 +214,20 @@ On the same three saved camera images, production-sized 384×288 inputs and
 versus **0.706 s** batched inference. Both returned `miss` from all three
 views; this is a deliberately identical before/after-image smoke test, not a
 grasp-success evaluation. Model load was **4.934 s** separately on the same
-PC. The full suite passed **1,258 tests, 5 skipped**; static `--check` reports
+PC. The full suite passed **1,261 tests, 5 skipped** after the capture4 lift
+crop change; static `--check` reports
 124 candidates, 110 endpoint-eligible. No current-scene arm plan or live
 robot/camera integration was exercised in this benchmark.
 
-The local Qwen lift route still uses the generic full-frame temporal pair,
-not the older distributed AutoDex hand-centered crop (`supports_visible_grip_lift`
-is not set on this backend). A saved AutoDex held-key example was previously
-misclassified by that generic observer, whereas the old system's hand crop
-replayed correctly on its own cameras. That old result does not validate a
-crop on capture4: the straight mount, four camera projections and measured
-Franka joints must be checked together on actual ZeroDex held-key frames.
-No new lift-classification gate or unverified crop selection was added here.
+The initial ZeroDex local Qwen lift route used the generic full-frame temporal
+pair. A saved AutoDex held-key example was previously misclassified by that
+generic observer, whereas the old system's measured-hand crop replayed
+correctly on its own cameras. The ZeroDex launch now reuses that crop method
+with its straight URDF, measured Franka/Inspire joints and three configured
+capture4 views. Unlike the old distributed 2-view route, its three close-ups
+are batched on the local RTX 3090. The old 2-view schema and saved reports
+remain readable. Unit tests cover straight-mount projection, batch wiring and
+report verification, and a three-image 640×640 saved-frame GPU smoke took
+**0.711 s**, peaking at **4.23 GiB**. That image was not an actual held-key
+crop; real capture4 hand visibility and classification accuracy remain
+unmeasured. No additional success/failure threshold was introduced.

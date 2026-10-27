@@ -32,6 +32,13 @@ start the adapter if another experiment owns the cameras.
 - Local Qwen batches the three selected classification-camera pairs on one
   GPU. Prompts, replies and votes remain per camera. Metric key-point
   grounding still uses its separate native-pixel path.
+- The ZeroDex launcher sets `PRECISION_VISIBLE_GRIP_CAMERA_IDS` to the same
+  three selected views. Its lift checkpoint uses measured Franka/Inspire FK,
+  the straight-mount URDF and calibrated projections to crop the hand in each
+  raw after-lift frame; three single-image YES/NO prompts share one GPU batch.
+  The original AutoDex fixed two-camera crop and its saved report schema are
+  unchanged. A real capture4 held-key example is still needed to audit crop
+  placement and classification accuracy.
 - Same-frame full-resolution capture exchange: the existing SAM mask PUB message
   now also carries one lossless PNG of its source frame. The main PC writes it
   under local `zerodex_capture4/<capture_id>_request_<id>/images/`.

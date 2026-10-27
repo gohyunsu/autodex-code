@@ -337,6 +337,14 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                            if image_size is not None else {}))
         nonlocal backend
         backend = shared["backend"]
+        grip_cameras = os.environ.get("PRECISION_VISIBLE_GRIP_CAMERA_IDS", "").strip()
+        if vlm["mode"] == "local" and grip_cameras:
+            selected = tuple(camera.strip() for camera in grip_cameras.split(","))
+            if (len(selected) < 2 or len(set(selected)) != len(selected) or
+                    not set(selected) <= set(live.cameras.launch.camera_ids)):
+                raise ValueError("visible-grip cameras differ from the active rig")
+            backend.visible_grip_camera_ids = selected
+            backend.supports_visible_grip_lift = True
         shared.update(planner=core.planner, read_state=core.read_state)
         if core.sampler is not None:
             shared.update(

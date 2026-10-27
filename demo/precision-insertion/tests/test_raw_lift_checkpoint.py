@@ -98,6 +98,26 @@ def test_raw_visible_held_report_is_not_a_key_pose(tmp_path):
     assert saved["visual"]["raw_answer"]
 
 
+def test_capture4_visible_grip_schema_uses_crop_report_verifier(
+        monkeypatch, tmp_path):
+    args, _backend = _raw_case(tmp_path)
+    result = assess_raw_lift_checkpoint(**args)
+    path = write_lift_checkpoint(result, tmp_path / "capture4_lift") / "report.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["visual"]["aggregation"] = {
+        "schema": "precision_insertion_visible_grip_v3"}
+    path.write_text(json.dumps(report), encoding="utf-8")
+    from precision_insertion import lift_checkpoint
+    called = []
+    monkeypatch.setattr(lift_checkpoint, "verify_visible_grip",
+                        lambda *_args, **_kwargs: called.append(True))
+    monkeypatch.setattr(lift_checkpoint, "verify_per_view_consensus",
+                        lambda *_args, **_kwargs:
+                        pytest.fail("capture4 lift must use the crop verifier"))
+    assert verify_lift_checkpoint(path)["grasp_success"] is True
+    assert called == [True]
+
+
 def test_raw_lift_reads_independent_initial_visual_snapshot(tmp_path):
     args, _backend = _raw_case(tmp_path)
     source = _capture({camera: np.eye(4) for camera in CAMERAS}, tmp_path)

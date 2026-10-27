@@ -1,4 +1,4 @@
-"""Judge a lifted key in two measured-hand close-ups of real camera pixels."""
+"""Judge a lifted key in measured-hand close-ups of real camera pixels."""
 
 from __future__ import annotations
 
@@ -31,6 +31,7 @@ LEGACY_QUESTIONS = {
 LEGACY_IMAGE_SIZE = {"24122734": 384, "25322638": 512}
 LEGACY_SCHEMA = "precision_insertion_visible_grip_v1"
 SCHEMA = "precision_insertion_visible_grip_v2"
+CAPTURE4_SCHEMA = "precision_insertion_visible_grip_v3"
 HAND_PROMPT = (
     "Is the small solid white cylindrical peg visibly held by the robot's "
     "black fingers in this image? The robot also has white finger shells. "
@@ -126,11 +127,8 @@ def _hand_roi(*, image_size: tuple[int, int], camera: str,
 
 def _hand_answer(backend: ImageVLM, camera: str, frame: LabeledFrame,
                  calibration: Mapping, hand_transform: np.ndarray) -> dict:
-    roi, pixel = _hand_roi(image_size=frame.image.size, camera=camera,
-                           calibration=calibration,
-                           T_robot_hand=hand_transform)
-    prepared, transform = resize_classification_images(
-        [frame.image.crop(roi)], (HAND_IMAGE_SIZE, HAND_IMAGE_SIZE))
+    prepared, transform, roi, pixel = _hand_input(
+        camera, frame, calibration, hand_transform)
     infer_for_camera = getattr(backend, "infer_for_camera", None)
     start = time.perf_counter()
     with timed("vlm.infer", phase="vlm", kind="inference",
@@ -140,6 +138,23 @@ def _hand_answer(backend: ImageVLM, camera: str, frame: LabeledFrame,
         raw = (infer_for_camera(camera, prepared, HAND_PROMPT)
                if callable(infer_for_camera) else backend.infer(
                    prepared, HAND_PROMPT))
+    return _hand_row(camera, frame, raw, transform, roi, pixel,
+                     time.perf_counter() - start)
+
+
+def _hand_input(camera: str, frame: LabeledFrame, calibration: Mapping,
+                hand_transform: np.ndarray):
+    roi, pixel = _hand_roi(image_size=frame.image.size, camera=camera,
+                           calibration=calibration,
+                           T_robot_hand=hand_transform)
+    prepared, transform = resize_classification_images(
+        [frame.image.crop(roi)], (HAND_IMAGE_SIZE, HAND_IMAGE_SIZE))
+    return prepared, transform, roi, pixel
+
+
+def _hand_row(camera: str, frame: LabeledFrame, raw: str, transform: dict,
+              roi: tuple[int, int, int, int], pixel: list[float],
+              latency_s: float) -> dict:
     if not isinstance(raw, str):
         raise TypeError("lift VLM response must be text")
     return {
@@ -147,7 +162,7 @@ def _hand_answer(backend: ImageVLM, camera: str, frame: LabeledFrame,
         "image_order": [f"after_lift/{camera}@{frame.timestamp_s:.6f}"],
         "prompt": HAND_PROMPT, "raw_answer": raw,
         "yes": _vote(raw),
-        "latency_s": time.perf_counter() - start,
+        "latency_s": latency_s,
         "input_transform": transform,
         "crop": {"source_roi_xyxy": list(roi),
                  "original_image_size_wh": list(frame.image.size),
@@ -164,12 +179,15 @@ def _hand_result(rows: list[dict]) -> dict:
         evidence = "A close hand view shows the gripped key"
     elif all(row["yes"] is False for row in rows):
         label = "miss"
-        evidence = "Neither close hand view shows a gripped key"
+        evidence = ("Neither close hand view shows a gripped key"
+                    if len(rows) == 2 else
+                    "No close hand view shows a gripped key")
     else:
         label = "unobservable"
         evidence = "Close hand views do not resolve the key"
     return {"class": label, "evidence": evidence,
-            "evidence_views": list(CAMERAS) if label != "unobservable" else [],
+            "evidence_views": [row["camera_id"] for row in rows]
+            if label != "unobservable" else [],
             "confirming_views": confirmed}
 
 
@@ -179,22 +197,48 @@ def observe_visible_grip(
 ) -> VLMObservation:
     paired = {(frame.phase, frame.camera_id): frame for frame in frames}
     cameras = {frame.camera_id for frame in frames}
+    selected = tuple(getattr(backend, "visible_grip_camera_ids", CAMERAS))
     if (len(paired) != len(frames) or
             len(frames) != 2 * len(cameras) or
             any((phase, camera) not in paired
                 for phase in ("before_grasp", "after_lift")
                 for camera in cameras) or
-            not set(CAMERAS) <= cameras):
+            len(selected) < 2 or len(set(selected)) != len(selected) or
+            not set(selected) <= cameras):
         raise ValueError("visible grip needs both saved phases and close cameras")
     source = Path(before_bundle).expanduser().resolve()
     if not source.is_dir():
         raise ValueError("visible grip needs the saved before bundle")
     robot_urdf = Path(robot_urdf).expanduser().resolve()
     hand = _hand_transform(joint_q, robot_urdf)
-    rows = map_view_calls(
-        backend, list(CAMERAS),
-        lambda camera: _hand_answer(
-            backend, camera, paired["after_lift", camera], calibration, hand))
+    batched = len(selected) > 1 and callable(getattr(backend, "infer_many", None))
+    if batched:
+        inputs = [_hand_input(
+            camera, paired["after_lift", camera], calibration, hand)
+            for camera in selected]
+        started = time.perf_counter()
+        with timed("vlm.view_batch", phase="vlm", kind="inference",
+                   view_count=len(selected), parallel_workers=1,
+                   gpu_batch_size=len(selected)):
+            with timed("vlm.infer", phase="vlm", kind="inference",
+                       stage="post_lift", camera_id="multiple",
+                       camera_ids=list(selected), image_count=len(selected),
+                       model=getattr(backend, "model", None)):
+                answers = backend.infer_many(
+                    [(prepared, HAND_PROMPT) for prepared, _, _, _ in inputs])
+        elapsed = time.perf_counter() - started
+        if len(answers) != len(selected):
+            raise RuntimeError("lift VLM batch returned the wrong number of views")
+        rows = [_hand_row(
+            camera, paired["after_lift", camera], answer, transform, roi,
+            pixel, elapsed)
+            for camera, (prepared, transform, roi, pixel), answer
+            in zip(selected, inputs, answers)]
+    else:
+        rows = map_view_calls(
+            backend, list(selected),
+            lambda camera: _hand_answer(
+                backend, camera, paired["after_lift", camera], calibration, hand))
     parsed = _hand_result(rows)
     order = tuple(
         f"{frame.phase}/{frame.camera_id}@{frame.timestamp_s:.6f}"
@@ -205,9 +249,14 @@ def observe_visible_grip(
     return VLMObservation(
         "post_lift", parsed, json.dumps(parsed, sort_keys=True), prompt,
         order, None, str(getattr(backend, "model", "local_qwen")),
-        sum(row["latency_s"] for row in rows),
+        (max(row["latency_s"] for row in rows) if batched else
+         sum(row["latency_s"] for row in rows)),
         aggregation={
-            "schema": SCHEMA, "per_view": rows,
+            "schema": SCHEMA if selected == CAMERAS else CAPTURE4_SCHEMA,
+            "per_view": rows,
+            **({"camera_ids": list(selected)} if selected != CAMERAS else {}),
+            **({"execution_mode": "single_gpu_batch",
+                "batch_latency_s": rows[0]["latency_s"]} if batched else {}),
             "calibration_sha256": _digest(calibration),
             "robot_urdf": str(robot_urdf),
             "robot_urdf_sha256": hashlib.sha256(
@@ -266,10 +315,14 @@ def verify_visible_grip(visual: dict, cameras: set[str],
         _verify_legacy_visible_grip(visual, cameras, before_bundle)
         return
     rows = aggregation.get("per_view")
-    if (aggregation.get("schema") != SCHEMA or
-            not set(CAMERAS) <= cameras or
+    schema = aggregation.get("schema")
+    selected = (list(CAMERAS) if schema == SCHEMA else
+                aggregation.get("camera_ids") if schema == CAPTURE4_SCHEMA else None)
+    if (not isinstance(selected, list) or len(selected) < 2 or
+            len(set(selected)) != len(selected) or
+            not set(selected) <= cameras or
             not isinstance(rows, list) or
-            [row.get("camera_id") for row in rows] != list(CAMERAS) or
+            [row.get("camera_id") for row in rows] != selected or
             joint_q is None):
         raise ValueError("visible grip camera evidence changed")
     if calibration is None:

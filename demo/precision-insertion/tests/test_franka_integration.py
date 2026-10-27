@@ -452,6 +452,35 @@ def test_first_party_qwen_and_fresh_checkpoint_callbacks(monkeypatch, tmp_path):
     assert all(timeout == 6.0 for _phase, timeout in captures)
 
 
+def test_zerodex_local_lift_uses_configured_visible_grip_views(monkeypatch, tmp_path):
+    selected = ("26053248", "25322639", "25305462")
+    monkeypatch.setenv("PRECISION_VISIBLE_GRIP_CAMERA_IDS", ",".join(selected))
+    core = SimpleNamespace(
+        clear_view=object(), planner=object(), read_state=lambda: None,
+        sampler=None, close=lambda: None)
+    monkeypatch.setattr(franka_integration, "open_franka_core", lambda _: core)
+    module = ModuleType("robot_pc_stages")
+    module.configure = lambda *_: {"shared": {}, "stages": {}}
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    backend = SimpleNamespace()
+    monkeypatch.setattr(franka_integration, "load_vlm_backend",
+                        lambda **_kwargs: backend)
+
+    def assemble(_live, **kwargs):
+        assert kwargs["shared"]["backend"] is backend
+        assert backend.visible_grip_camera_ids == selected
+        assert backend.supports_visible_grip_lift is True
+        return ()
+
+    monkeypatch.setattr(franka_integration, "assemble_live_components", assemble)
+    live = SimpleNamespace(cameras=SimpleNamespace(launch=SimpleNamespace(
+        camera_ids=(*selected, "25322642"), image_hw=(1536, 2048),
+        shared_root=tmp_path)))
+    integration = franka_integration.factory(_options(tmp_path, _config()))
+    integration.build_components(live)
+    integration.close()
+
+
 def test_parallel_vlm_views_require_independent_api_backend():
     assert franka_integration._vlm_settings({
         "mode": "gemini", "model_id": "test-model", "parallel_views": 3,
