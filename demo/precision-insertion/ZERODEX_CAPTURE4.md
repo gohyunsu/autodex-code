@@ -40,6 +40,10 @@ with the FoundPose payload before using the image. Raw capture files are
 written on this PC, not through NAS, so the old 20–40 s NAS wait is removed
 from this camera path. Camera-only measurements must still establish the new
 end-to-end latency.
+Normal per-trial key planning already uses a pose-only FoundPose request and
+an overlapping initial VLM snapshot; it did not wait for the NAS source PNG.
+This change mainly helps the session's socket capture and full-image QA or
+recovery requests. It is not a measured 20–40 s saving on every trial.
 
 The profile can be rebuilt with `prepare_zerodex_capture4.py --source-stage
 <commissioned-stage> --calibration-dir <capture4-calibration> --c2r-npy

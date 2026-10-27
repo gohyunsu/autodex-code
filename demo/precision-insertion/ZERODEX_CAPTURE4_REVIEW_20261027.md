@@ -28,6 +28,19 @@ SAM3 mask-only processing and local PNG persistence. This is not a measured
 full episode speedup, and these dark-scene probes do not show segmentation or
 FoundPose success. No new port or stock capture4 file was needed.
 
+**Runtime scope correction:** the normal per-trial key path calls
+`collect_key_capture(pose_only=True)` when an initial VLM snapshot is scheduled.
+It already skipped the slow NAS source-PNG wait; that snapshot runs in parallel
+with candidate preflight. Thus inline PNG principally removes the one-time
+socket-session PNG wait and accelerates full-image camera QA/recovery paths,
+not an already-absent per-trial key PNG wait. Do not add the 20–40 s historical
+probe delay to every expected episode. The old 20-camera Oct 22 trace records
+`key.model_init` at 0.005 s, key FoundPose request at 3.00 s, and initial
+candidate planning at 17.62 s followed by a 25.89 s same-capture continuation.
+Those planning timings are not measurements of the new four-camera/straight-
+mount configuration. The existing planner stops at the first full-chain pass;
+parallelizing cuRobo candidates on one GPU is not assumed safe or faster.
+
 The latest board JPEGs are in
 `shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/lying_key_foundpose_20261027_5/`.
 Their 99th-percentile intensities were 6–19/255 across four views; restore
@@ -35,6 +48,15 @@ illumination before interpreting any new SAM/FoundPose result. The current
 Franka daemon binary is also absent: local CMake configure cannot find
 `FrankaConfig.cmake` for libfranka >= 0.15. This is a future robot-integration
 dependency, not a reason to claim the camera or planner code failed.
+
+The Oct 24 NAS restic backup does contain the robot PC's 206,616-byte
+`franka_daemon` executable, but `ldd` on a selectively restored copy reports
+`libfranka.so.0.18 => not found` on kds-Z790. The backup also holds a Docker
+image with libfranka 0.18, but the current account cannot access the Docker
+daemon and the local filesystem has about 16 GB free versus a 26 GB image.
+Do not point the live runtime at the restored executable until its matching
+native library and the ZeroDex robot endpoint are commissioned. No robot
+connection was attempted during this dependency check.
 
 Verification performed: the precision demo test suite passed **1247 tests**
 with 5 skipped; the straight-URDF local cuRobo planner instantiated; 20 mm

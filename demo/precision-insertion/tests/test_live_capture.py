@@ -394,3 +394,28 @@ def test_pose_only_key_capture_does_not_wait_for_daemon_pngs(tmp_path):
     assert not (tmp_path / "key_pose_only_request_48").exists()
     assert result.frame_timestamps_s == TIMES
     assert result.frame_evidence["cam_b"]["frame_id"] == FRAME_IDS["cam_b"]
+
+
+def test_inline_profile_keeps_normal_key_capture_pose_only(tmp_path):
+    class InlineKeyFoundPose(FoundPoseStub):
+        obj_name = "key_model"
+        inline_frames = True
+
+        def collect_payloads(self, **kwargs):
+            assert kwargs["save_capture_dir"] is None
+            assert "run_info_extra" not in kwargs
+            kwargs["prompt"] = "white socket"
+            return super().collect_payloads(**kwargs)
+
+        def take_source_frames(self, *_args, **_kwargs):
+            pytest.fail("pose-only trial must not transfer source PNGs")
+
+    capture = collect_key_capture(
+        init_orchestrator=InlineKeyFoundPose(write_images=False),
+        key_object="key_model", capture_id="inline_pose_only",
+        key_prompt="white key on tabletop", capture_root=tmp_path,
+        calibrated_camera_ids=CAMERAS,
+        acquisition_metadata_for_request=_provider,
+        timeout_s=2.0, request_id_factory=lambda: 49, pose_only=True)
+    assert capture.images_bgr == {}
+    assert not (tmp_path / "inline_pose_only_request_49").exists()
