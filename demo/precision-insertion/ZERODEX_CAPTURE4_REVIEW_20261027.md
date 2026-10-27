@@ -318,6 +318,21 @@ network file points at AutoDex's `172.16.0.2`, and the configured local daemon
 binary is absent. `realtime_vlm/docs/ros_setup.md` instead documents a
 **ROS2/franka_ros2** controller on a different machine with robot IP
 `172.16.1.11`; kds-Z790 currently has no `ros2` executable or `/opt/ros`.
+
+### 2026-10-28 01:20 repeat camera probe
+
+After starting only the namespaced capture4 services, one new same-request
+four-view key probe again returned **zero SAM masks**. Grayscale p99 values
+were 8, 6, 9 and 19/255 for `25305462`, `25322639`, `25322642` and
+`26053248` respectively; capture and local PNG persistence took 2.172 s.
+The report and raw frames are in
+`shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/inline_key_20261028_continuation_2/`.
+The isolated services were stopped after the probe. This confirms the live
+scene is still too dark for a meaningful key-pose or full-session timing run;
+it does not measure a robot or planner bottleneck. The new
+`run_zerodex_capture4.sh --camera-only` path is covered by a call-order test,
+but has not completed on current live frames: the key must be removed for
+initial socket measurement and the board illuminated before that test.
 That document alone does not prove which control backend owns this physical
 ZeroDex FR3. Choosing one is required before implementing a command adapter;
 merely substituting the IP in the ZMQ client would not make ROS2's joint
