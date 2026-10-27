@@ -595,3 +595,35 @@ blocked because the current ParaDex ZMQ executor addresses the old AutoDex
 daemon while this rig's documented controller is ROS2; the robot/hand were
 off and no motion or contact was attempted here. No collision, force, VLM,
 or task-success acceptance threshold was added or relaxed by this change.
+
+### 2026-10-28 checkpoint PNG and robot-backend audit
+
+The recorded AutoDex episode `20261022_103429_752726` spent a cumulative
+19.98 s in 100 `evidence.png_write_hash` spans. The current four-camera
+ZeroDex route has fewer images, but still writes lossless full-resolution
+checkpoint PNGs at the initial, lift, pre-insertion and final views. It used
+OpenCV's default PNG compression level 3. On four saved 2048×1536 capture4
+overlay images, parallel four-thread **encode-only** medians were 228.2 ms
+at level 3 and 126.2 ms at level 1; total encoded bytes were 18.19 and
+18.75 MiB, respectively. These are decoded saved JPEG overlays used solely
+as representative image content, not raw production frames or full disk-I/O
+timings. The checkpoint writer now uses level 1, matching the already
+level-1 inline source-frame transport. PNG remains lossless and the saved
+SHA256 still binds the exact encoded bytes. A regression test decodes the
+new PNG and checks exact source pixels and file hash. No VLM, segmentation,
+or task threshold changed; the real episode saving remains to be measured.
+
+The ZeroDex ROS2 executor is not a drop-in replacement for the current
+AutoDex `FrankaExecutor`: its main command is a ROS2
+`FollowJointTrajectory` action, whereas the precision runtime's measured
+feedback reader expects ParaDex daemon `get_data()` with host-monotonic
+timestamps, joint velocities and wrench. Held transfer and guarded contact
+also use the stock executor's velocity-follow, stop/acknowledge and release
+methods. The ZeroDex guide places ROS2 Humble and `franka_ros2` on
+`jisoo-Z590-AORUS-PRO-AX`; this kds-Z790 host has no ROS2 installation and
+uses a generic kernel. A ROS2 bridge would therefore need a separately
+commissioned controller owner, feedback/time adapter and contact-stroke
+semantics, not just a changed robot IP. The alternative is a local ParaDex
+daemon for the ZeroDex FR3, but its matching libfranka 0.18 runtime and
+exclusive FCI ownership are not yet established. Neither backend was
+started or sent a robot command during this audit.

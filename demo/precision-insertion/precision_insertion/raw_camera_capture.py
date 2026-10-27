@@ -47,8 +47,13 @@ def _sha(path: Path) -> str:
 
 
 def _write_png_hash(path: Path, image: np.ndarray) -> str:
-    """Hash the encoded bytes once, without reading the new NAS file again."""
-    encoded, payload = cv2.imencode(".png", image)
+    """Write lossless evidence with fast PNG compression and one byte hash.
+
+    OpenCV's default level 3 spends CPU at every checkpoint. Level 1 keeps
+    identical decoded pixels while avoiding that repeated encode latency.
+    """
+    encoded, payload = cv2.imencode(
+        ".png", image, [cv2.IMWRITE_PNG_COMPRESSION, 1])
     if not encoded:
         raise OSError(f"could not encode raw camera frame: {path}")
     data = payload.tobytes()
