@@ -95,6 +95,11 @@ def _command(kind: str) -> str:
 
 
 def start() -> None:
+    # A warm session needs the running services, not another rsync into their
+    # namespaced checkout. Reuse them without touching shared capture4 files.
+    if READY_PORTS <= _listening_ports():
+        print("capture4 services ready: " + ", ".join(map(str, sorted(READY_PORTS))))
+        return
     deploy()
     for kind, port in PORTS.items():
         log = REMOTE / f"{kind}.log"

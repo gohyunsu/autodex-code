@@ -188,6 +188,10 @@ before using this command; an empty SAM mask cannot establish a key pose.
 For a chosen output directory, pass `--output-dir /absolute/new/path` after
 `--camera-only`. Keep the capture4 services isolated; this launcher does not
 alter the shared capture4 checkout.
+Calling the service manager's `start` again while all namespaced ports are
+already ready now reuses the running services with one readiness probe,
+without repeating deployment. This reduces warm-start SSH/rsync overhead;
+the effect on a complete episode has not been measured.
 
 ## Observed fixed socket, 2026-10-27
 
@@ -224,8 +228,9 @@ FoundPose or physical path is claimed.
 The four-camera JPEG snapshot returned in about 0.5–0.8 s; remote SAM masks
 were published in about 1.3–1.6 s after the request. Waiting for four
 full-resolution same-frame PNGs through NAS took substantially longer and is
-the recorded camera-only latency bottleneck. The inline PNG transport above
-was added afterward; its live latency has not yet been measured.
+the recorded camera-only latency bottleneck. A later dark-scene inline
+transport probe delivered four same-frame key images and masks locally in
+2.172 s. It measured transport, not a successful key pose or full episode.
 
 Robot/hand power and a local Franka daemon are still required for execution.
 No robot movement, insertion or real-world task success is claimed here.

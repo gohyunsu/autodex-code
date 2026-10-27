@@ -39,3 +39,15 @@ def test_start_waits_until_all_ports_listen(monkeypatch):
     monkeypatch.setattr(services.time, "sleep", lambda *_: None)
     services.start()
     assert len(commands) == 3
+
+
+def test_start_reuses_ready_services_without_redeploy(monkeypatch):
+    probes = []
+    monkeypatch.setattr(services, "_listening_ports",
+                        lambda: probes.append(True) or services.READY_PORTS)
+    monkeypatch.setattr(services, "deploy", lambda: pytest.fail(
+        "warm services must not be redeployed"))
+    monkeypatch.setattr(services, "_ssh", lambda _cmd: pytest.fail(
+        "warm services must not be relaunched"))
+    services.start()
+    assert len(probes) == 1
