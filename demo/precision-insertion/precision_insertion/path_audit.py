@@ -352,11 +352,49 @@ def _audit_held_geometry_samples(
 
     if stop_on_first_failure:
         # Rejected candidates need only the first definite collision. A
-        # passing candidate gets the original exact-distance scan below, so
-        # its report and admission criterion remain unchanged.
+        # passing candidate still needs the exact per-pair minima below.
         with timed("audit.collision_screen", phase="planning", kind="geometry"):
             if scan(collision_only=True):
                 return failures, minimum_distances, source_hashes
+        # The collision pass has already checked every pair whose AABB gap
+        # could violate clearance. For exact minimum distances, inspect the
+        # smallest lower bounds first, then stop once no later bound can beat
+        # the current exact distance. This changes query order, not the min.
+        with timed("audit.minimum_distance_scan", phase="planning", kind="geometry"):
+            by_pair: dict[str, list[tuple]] = {}
+            for stage, poses in wrist.items():
+                for i, hand_pose in enumerate(poses):
+                    key_pose = hand_pose @ key_in_hand
+                    for moving_name, (model, moving_mesh) in moving.items():
+                        moving_pose = key_pose if moving_name == "key" else hand_pose
+                        for fixed_name, (fixed_model, _fixed_pose, fixed_mesh,
+                                         occupancy) in fixed.items():
+                            if (allow_initial_key_table_support and
+                                    stage == "lift" and i == 0 and
+                                    moving_name == "key" and
+                                    fixed_name == "cuboid/table"):
+                                continue
+                            fixed_inverse, fixed_bounds = fixed_frames[fixed_name]
+                            relative = fixed_inverse @ moving_pose
+                            lower_bound = _aabb_distance_lower_bound(
+                                moving_corners[moving_name], fixed_bounds, relative)
+                            pair = f"{moving_name}->{fixed_name}"
+                            by_pair.setdefault(pair, []).append((
+                                lower_bound, model, moving_mesh, fixed_model,
+                                fixed_mesh, occupancy, relative))
+            for pair, samples in by_pair.items():
+                best = minimum_distances.get(pair, float("inf"))
+                for (lower_bound, model, moving_mesh, fixed_model,
+                     fixed_mesh, occupancy, relative) in sorted(
+                         samples, key=lambda row: row[0]):
+                    if lower_bound - 1e-9 >= best:
+                        break
+                    result = _held_pair_report(
+                        model, moving_mesh, fixed_model, fixed_mesh,
+                        occupancy, relative, lower_bound > 2e-9)
+                    best = min(best, result["minimum_surface_distance_m"])
+                minimum_distances[pair] = best
+        return failures, minimum_distances, source_hashes
     with timed("audit.minimum_distance_scan", phase="planning", kind="geometry"):
         scan(collision_only=False)
     return failures, minimum_distances, source_hashes

@@ -419,10 +419,30 @@ far-separated key/hand–world pairs before reaching its first collision.
 the enclosing-AABB distance is a mathematical lower bound on mesh distance,
 so a pair farther than its existing clearance requirement cannot cause a
 rejection and needs no exact Coal query in that pass. A rejected candidate
-stops at its first definite collision; a passing candidate then runs the
-original exact minimum-distance scan. No collision threshold, clearance
+stops at its first definite collision. For a passing candidate, exact distance
+queries are ordered by the pair's AABB lower bound; once that bound cannot
+beat the best exact distance, the rest of that pair's samples are skipped.
+This retains the exact per-pair minimum, while avoiding most exact queries
+for a monotonic approach to the socket. No collision threshold, clearance
 requirement, accepted path, or contact policy changed. The two passes have
 separate `audit.collision_screen` and `audit.minimum_distance_scan` timing
 spans. Unit tests compare first-failure identity, passing exact minima and
 Coal call counts. A wall-time reduction on realistic ZeroDex trajectories
 remains to be measured once a valid scene and robot state are available.
+
+A read-only local replay then reconstructed FK from the saved
+`20261022_103429_752726/trial_preflights/0001/planned_trajectories.npz`
+(489 held-path samples), using the October 12 Franka–Inspire mount, the
+corresponding local candidate and equivalent local socket CAD. It compared
+the pre-change and current audit functions on the same warmed models:
+
+| Replay case | Previous | Current | Result identity |
+| --- | ---: | ---: | --- |
+| Saved passing path | 5.589 s | 2.512 s | Same zero failures, 28 exact distance minima and input hashes |
+| Same path with one *synthetically appended* collision pose | 5.582 s | 0.270 s | Same first collision; rejected-report distance pairs become partial (28 → 1) by design |
+
+The synthetic appended pose is not a robot-feasible trajectory or an observed
+failure. These timings show that the collision-first and nearest-bound scan
+can save Coal work without changing a passing path's verdict, but do not establish
+the speedup distribution for real ZeroDex candidate pools. The current host
+GPU was used only for saved-path FK; no robot or camera was contacted.

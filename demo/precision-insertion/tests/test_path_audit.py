@@ -347,6 +347,36 @@ def test_candidate_collision_first_pass_keeps_exact_passing_minima(
     assert screened[2] == full[2]
 
 
+def test_passing_candidate_queries_nearest_aabb_samples_first(
+        tmp_path, monkeypatch):
+    calibration, targets, _ = _fixture(tmp_path, monkeypatch)
+    poses = []
+    for x in np.linspace(-.2, 0., 25):
+        pose = np.eye(4)
+        pose[:3, 3] = [x, 0., .135]
+        poses.append(pose)
+    arguments = dict(
+        shared_root=tmp_path, mode=targets.mode, calibration=calibration,
+        wrist={"transfer": poses}, T_key_hand=targets.T_key_hand,
+        held_hand_q=np.zeros(6), minimum_hand_clearance_m=0.)
+    original = path_audit_module._held_pair_report
+    calls = []
+
+    def counted(*args):
+        calls.append(None)
+        return original(*args)
+
+    monkeypatch.setattr(path_audit_module, "_held_pair_report", counted)
+    chronological = path_audit_module._audit_held_geometry_samples(**arguments)
+    chronological_calls = len(calls)
+    calls.clear()
+    screened = path_audit_module._audit_held_geometry_samples(
+        **arguments, stop_on_first_failure=True)
+    assert screened[0] == chronological[0] == []
+    assert screened[1] == pytest.approx(chronological[1], abs=1e-12)
+    assert len(calls) < chronological_calls
+
+
 def test_disjoint_aabb_skips_surface_collision_and_containment_but_not_distance(
         monkeypatch):
     moving = trimesh.creation.box(extents=(0.01, 0.01, 0.01))
