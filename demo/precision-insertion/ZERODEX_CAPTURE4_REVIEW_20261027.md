@@ -7,11 +7,11 @@ right-angle mount profile remains separate.
 
 | Runtime boundary | Current implementation | Evidence and present limit |
 | --- | --- | --- |
-| Startup | `run_zerodex_capture4.sh` selects local profile, three VLM views and the straight-mount URDF/catalog. `run_live.py --preflight` reads static files without opening hardware. | 20 mm static check passed with 110/124 eligible candidates. An explicitly selected old right-angle catalog is rejected by its URDF hash. |
+| Startup | `run_zerodex_capture4.sh` selects local profile, three VLM views and the straight-mount URDF/catalog. `run_live.py --preflight` reads static files without opening hardware. | Latest 20 mm static check passed with 111/126 eligible candidates; see the October 28 catalog follow-up below. An explicitly selected old right-angle catalog is rejected by its URDF hash. |
 | Camera ownership | `session_launch.py` / `live_orchestration.py` arm the `stream` mode declared by the capture4 profile; capture4's separate daemons provide snapshot, SAM3 and FoundPose. The ZeroDex profile now selects `inline_png`, while AutoDex retains `shared_png`. | A 4/4 JPEG snapshot returned in 0.46 s. Same-frame source PNGs now ride with mask messages and are persisted locally. The camera-only CLI arms the stream and accepts the separate init ports. |
 | Fixed socket session | Board-9 ChArUco measures the board. One SAM3 socket capture and `board_socket_fit.py` estimate board XY and board-normal axis; `session_bootstrap.py` freezes the socket collision scene. | Lit socket-only masks: 3/4 views, mean body IoU 0.618. Body IoU is now logged rather than used as an arbitrary 0.800 veto in this profile. With a key present, the refined socket prompt found 3/4 standing and 2/4 lying views. Socket identity is not guaranteed by zero IoU threshold; measure it with the key absent. |
 | Per-trial key observation | The clear-view gate precedes `collect_key_capture`; SAM3 masks and FoundPose are associated with the same camera frame. `key_perception.py` selects the key pose and tabletop class. | `white plastic cylindrical key` segmented the lit lying key in 4/4 views. No lying-key FoundPose pose was obtained in the latest scene: the new images were nearly black and board corners were 0/54. |
-| Grasp selection | `candidates.py` filters v8 MuJoCo-validated grasps by tabletop pose and 20 mm exact CAD hand/socket endpoint. `trial_preflight.py` then invokes the stock cuRobo pickup planner plus transfer/insertion audit. | Straight URDF catalog for gap 20: 106 eligible upright-pose grasps and 4 eligible lying-pose grasps. These are endpoint-eligible, **not** current-scene arm plans. Local RTX 3090 loaded the straight-URDF cuRobo planner. |
+| Grasp selection | `candidates.py` filters v8 MuJoCo-validated grasps by tabletop pose and 20 mm exact CAD hand/socket endpoint. `trial_preflight.py` then invokes the stock cuRobo pickup planner plus transfer/insertion audit. | Current straight-URDF gap-20 catalog: 106 eligible upright-pose grasps and 5 eligible lying-pose grasps. These are endpoint-eligible, **not** current-scene arm plans. Local RTX 3090 loaded the straight-URDF cuRobo planner. |
 | Execution and labels | Demo handlers call stock pickup/lift, pre-insertion transfer, guarded axial insertion, release/clear, paired-image VLM outcome and, after failure, next-trial accumulated XY correction and repose/reorient. `action_loop.py` ends on `session_success`. | Code path and unit tests pass. Hardware callbacks, force trace and actual robot motion remain untested on this PC. `--plan-only` still moves to clear view/observes the key before stopping ahead of pickup; it is not an offline/no-motion command. |
 | Repose/reorient | The demo uses directed v8 reset seeds and plans a live path from the observed key pose. It does not reuse the stock reset runner, which lacks the new key pose-index map and the fixed socket fixture. | `audit-reorient` finds one MuJoCo-stable seed at 12 cm for each direction (upright→side, side→upright), none at 0/4/8 cm. No complete current-scene Franka reset path has been tested. |
 
@@ -968,3 +968,18 @@ socket Coal BVH, and constructing analytic cylinder occupancy cost about
 the substantially larger repeated work; caching these static pieces would
 invalidate every implementation-bound catalog for only a small expected
 gain, so no further endpoint-cache change was made.
+
+### 2026-10-28 camera-only gap-mode consistency audit
+
+The ZeroDex `--camera-only` wrapper selected the endpoint catalog using
+`PRECISION_GAP_MM` but previously read the stage's unchanged 20 mm launch
+mode. A non-20 mm diagnostic therefore failed catalog/mode preflight before
+opening cameras. It now passes the same gap to the camera-only runner, which
+writes the effective per-run `launch.json` beside `report.json` without
+changing the stage template. The existing catalog/mode preflight remains the
+source of truth; no acceptance threshold was altered. New wrapper and
+per-run-launch tests pass, as do all 1,318 demo tests (5 skipped). A gap-5
+`--check` read the matching straight-mount catalog and reported 114 of 126
+endpoint-eligible candidates. This is static validation, not a live
+gap-5 camera capture or a robot plan. The dedicated capture4 services were
+not running at this audit; no camera or robot command was issued.

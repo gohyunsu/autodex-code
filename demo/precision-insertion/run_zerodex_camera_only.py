@@ -41,12 +41,23 @@ def run_camera_only(
     *, launch_config: Path, endpoint_catalog: Path, output_dir: Path,
     wait_for_key: Callable[[], object],
     reuse_session_evidence: Path | None = None,
+    gap_mm: int | None = None,
 ) -> dict:
     """Capture one key after a fresh or explicitly reused fixed-socket session."""
     output = Path(output_dir).expanduser().resolve()
     if output.exists():
         raise FileExistsError(output)
     output.mkdir(parents=True)
+    if gap_mm is not None:
+        # Mirror run_robot_pc.sh: keep the immutable stage template and save
+        # the exact per-run socket mode beside the camera-only evidence.
+        launch_record = json.loads(Path(launch_config).read_text(encoding="utf-8"))
+        launch_record["mode"] = {"family": "cylinder", "gap_mm": gap_mm}
+        launch_config = output / "launch.json"
+        with launch_config.open("x", encoding="utf-8") as stream:
+            json.dump(launch_record, stream, indent=2, sort_keys=True,
+                      allow_nan=False)
+            stream.write("\n")
     with profile_run(output):
         with timed("startup.launch_config", phase="startup", kind="io"):
             launch = load_session_launch(
@@ -166,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--launch-config", type=Path, required=True)
     parser.add_argument("--endpoint-catalog", type=Path, required=True)
+    parser.add_argument("--gap-mm", type=int, choices=(1, 3, 5, 10, 15, 20),
+                        help="socket radial gap; saves the selected mode in the run launch")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--reuse-session-evidence", type=Path,
                         help="verified fixed-socket session; skips board/socket recapture")
@@ -188,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         endpoint_catalog=args.endpoint_catalog,
         output_dir=args.output_dir,
         reuse_session_evidence=args.reuse_session_evidence,
+        gap_mm=args.gap_mm,
         wait_for_key=wait_for_key)
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0

@@ -228,8 +228,9 @@ python3 demo/precision-insertion/manage_zerodex_capture4_services.py stop
 Without `--exposure-us`, each camera retains its configured baseline. The
 override applies only in our namespaced daemon process; it does not relax a
 SAM, FoundPose, board or planning threshold. A running service must be
-stopped before selecting a different exposure. The override's effect on the
-current lying-key scene has **not** yet been measured.
+stopped before selecting a different exposure. A 20 ms test of the current
+scene brightened the images but still returned zero key masks; see the review
+document before choosing a longer-exposure default.
 
 A fresh default-exposure four-view request on 2026-10-28 again returned zero
 key-mask pixels in every view; grayscale p99 was 6, 8, 9 and 19/255. Its
@@ -249,14 +250,14 @@ ZeroDex profile tries pose-matched grasps for both upright `000` and lying
 `001` first. A lying key enters reorientation only when its direct
 current-scene plans are exhausted. Do **not** use `--run` while
 the robot/hand are off or before the local robot adapter is commissioned.
-The ZeroDex launcher now refuses `--run` and `--plan-only` outright: both
-would instantiate the inherited AutoDex ZMQ executor, while this PC's ParaDex
-`system/current/network.json` points Franka at `172.16.0.2`, not a verified
-ZeroDex controller. This is target-routing correctness, not a new grasp,
-perception or insertion acceptance threshold. `--check` and `--camera-only`
-remain available. A ZeroDex-specific FR3/Inspire backend and measured-state
-binding are required before motion or live planning can be enabled.
-When that backend is commissioned, `PRECISION_XY_UPDATE_WEIGHT` can set the
+The ZeroDex launcher accepts `--run` and `--plan-only` through its separate
+integration factory, but the factory refuses to construct an executor unless
+exactly one local ParaDex daemon targets the ZeroDex FR3 on the expected
+ports. On this PC the daemon binary/runtime and exclusive FCI ownership are
+not yet commissioned, so **neither live mode can currently run**. This is
+target-routing correctness, not a new grasp, perception or insertion
+acceptance threshold. `--check` and `--camera-only` remain robot-free.
+Once the daemon route is commissioned, `PRECISION_XY_UPDATE_WEIGHT` can set the
 next-trial residual gain (default `1.0`); the launcher forwards it to
 `run_live.py` instead of fixing the value in its command line.
 
@@ -325,6 +326,10 @@ that will be placed after camera startup.
 For a chosen output directory, pass `--output-dir /absolute/new/path` after
 `--camera-only`. Keep the capture4 services isolated; this launcher does not
 alter the shared capture4 checkout.
+`PRECISION_GAP_MM` selects both the matching straight-mount endpoint catalog
+and the per-run launch mode for `--camera-only`, just as it does for `--check`
+and the live modes. The original stage `launch.json` remains unchanged; the
+camera-only run saves the effective `launch.json` beside its report.
 Calling the service manager's `start` again while all namespaced ports are
 already ready now reuses the running services with one readiness probe,
 without repeating deployment. This reduces warm-start SSH/rsync overhead;

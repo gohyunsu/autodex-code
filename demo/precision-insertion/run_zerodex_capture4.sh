@@ -49,6 +49,7 @@ if [[ ${1:-} == --camera-only ]]; then
   camera_only_args=(
     --launch-config "${PRECISION_LAUNCH_TEMPLATE:-$PRECISION_STAGE_ROOT/launch.json}"
     --endpoint-catalog "$PRECISION_ENDPOINT_CATALOG"
+    --gap-mm "${PRECISION_GAP_MM:-20}"
   )
   camera_only_has_output=0
   for camera_only_arg in "$@"; do

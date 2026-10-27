@@ -169,6 +169,53 @@ def test_camera_only_launcher_keeps_default_output_with_other_options(
     output = args[args.index("--output-dir") + 1]
     assert output == (str(tmp_path / "chosen") if explicit_output else
                       str(stage / "runs" / Path(output).name))
+    assert args[args.index("--gap-mm") + 1] == "20"
+
+
+def test_camera_only_gap_override_keeps_catalog_and_launch_consistent(
+        tmp_path, monkeypatch):
+    template = tmp_path / "stage_launch.json"
+    template.write_text('{"mode":{"family":"cylinder","gap_mm":20}}\n',
+                        encoding="utf-8")
+    output = tmp_path / "run"
+
+    def inspect_launch(path, *, evidence_dir_override):
+        assert path == output / "launch.json"
+        assert evidence_dir_override == output / "socket_evidence"
+        assert camera_only.json.loads(path.read_text(encoding="utf-8"))["mode"] == {
+            "family": "cylinder", "gap_mm": 5}
+        raise RuntimeError("verified launch override")
+
+    monkeypatch.setattr(camera_only, "load_session_launch", inspect_launch)
+    monkeypatch.setattr(camera_only, "profile_run", lambda _path: nullcontext())
+    monkeypatch.setattr(camera_only, "timed",
+                        lambda *_args, **_kwargs: nullcontext())
+    with pytest.raises(RuntimeError, match="verified launch override"):
+        camera_only.run_camera_only(
+            launch_config=template, endpoint_catalog=tmp_path / "gap5.json",
+            output_dir=output, wait_for_key=lambda: None, gap_mm=5)
+    assert camera_only.json.loads(template.read_text(encoding="utf-8"))["mode"][
+        "gap_mm"] == 20
+
+
+def test_camera_only_launcher_forwards_gap_mm(tmp_path):
+    launcher = Path(__file__).resolve().parents[1] / "run_zerodex_capture4.sh"
+    fake_planner = tmp_path / "fake_planner"
+    fake_planner.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n",
+                            encoding="utf-8")
+    fake_planner.chmod(0o755)
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    completed = subprocess.run(
+        ["bash", str(launcher), "--camera-only"], capture_output=True,
+        text=True, check=True,
+        env={**os.environ, "PRECISION_STAGE_ROOT": str(stage),
+             "PRECISION_PLANNER_PY": str(fake_planner),
+             "PRECISION_GAP_MM": "5"})
+    args = completed.stdout.splitlines()
+    assert args[args.index("--gap-mm") + 1] == "5"
+    assert args[args.index("--endpoint-catalog") + 1] == str(
+        stage / "recipient_gap5_endpoint_catalog_straight.json")
 
 
 def test_key_already_placed_reuses_socket_without_operator_wait(
