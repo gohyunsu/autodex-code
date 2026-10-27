@@ -139,6 +139,13 @@ connects to Franka or Inspire. Use a new evidence
 directory for each run. `run_zerodex_capture4.sh --check` is a static asset
 preflight, not a camera or robot acceptance test. Do **not** use `--run` while
 the robot/hand are off or before the local robot adapter is commissioned.
+The ZeroDex launcher now refuses `--run` and `--plan-only` outright: both
+would instantiate the inherited AutoDex ZMQ executor, while this PC's ParaDex
+`system/current/network.json` points Franka at `172.16.0.2`, not a verified
+ZeroDex controller. This is target-routing correctness, not a new grasp,
+perception or insertion acceptance threshold. `--check` and `--camera-only`
+remain available. A ZeroDex-specific FR3/Inspire backend and measured-state
+binding are required before motion or live planning can be enabled.
 
 To test a complete camera-only fixed-socket session with a lit board and the
 key absent, start the isolated services, then run:
@@ -170,7 +177,11 @@ the key. It reuses the live board/socket session, key SAM3/FoundPose admission,
 tabletop classification and matching screened catalog, and writes a unique
 `zerodex_capture4/runs/camera_only_*/report.json`, `socket_evidence/`,
 `key_capture/`, `ledger/` and a sibling `.timing/` directory. This is the
-current 20 mm launch/catalog profile. It does **not** create a Franka
+current 20 mm launch/catalog profile. Key admission is pose-only, as in the
+live planning path: it does not wait for a second set of same-request PNGs.
+Use `probe_zerodex_inline_frames.py` above if raw key frames and masks are
+needed for visual QA; do not compare its PNG-inclusive duration to the
+pose-only trial capture. The camera-only command does **not** create a Franka
 executor, plan a trajectory, move the robot, or validate a physical grasp or
 insertion. If camera images are still nearly black, restore illumination
 before using this command; an empty SAM mask cannot establish a key pose.

@@ -318,6 +318,9 @@ network file points at AutoDex's `172.16.0.2`, and the configured local daemon
 binary is absent. `realtime_vlm/docs/ros_setup.md` instead documents a
 **ROS2/franka_ros2** controller on a different machine with robot IP
 `172.16.1.11`; kds-Z790 currently has no `ros2` executable or `/opt/ros`.
+The ZeroDex launcher therefore declines `--run` and `--plan-only` rather
+than silently sending the inherited AutoDex ZMQ commands to `172.16.0.2`.
+The AutoDex launcher and shared executor were not changed.
 
 ### 2026-10-28 01:20 repeat camera probe
 

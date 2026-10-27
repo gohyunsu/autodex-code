@@ -1,6 +1,7 @@
 """The capture4 diagnostic must follow the live perception path without motion."""
 
 from contextlib import contextmanager, nullcontext
+import subprocess
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -69,7 +70,7 @@ def test_camera_only_reuses_socket_key_and_catalog_without_robot(tmp_path, monke
         assert kwargs["silhouette_iterations"] == 100
         assert kwargs["silhouette_loss_threshold"] == 0.003
         assert "max_key_state_skew_s" not in kwargs
-        assert kwargs["pose_only"] is False
+        assert kwargs["pose_only"] is True
         return SimpleNamespace(
             pose_world=np.eye(4), request_id=42, selected_camera_id="a")
 
@@ -117,3 +118,13 @@ def test_camera_only_reuses_socket_key_and_catalog_without_robot(tmp_path, monke
     assert report["endpoint_eligible_candidate_count"] == 1
     assert report["robot_ready"] is False
     assert (tmp_path / "run" / "report.json").is_file()
+
+
+def test_zerodex_launcher_does_not_route_motion_to_autodex_robot():
+    launcher = Path(__file__).resolve().parents[1] / "run_zerodex_capture4.sh"
+    for mode in ("--run", "--plan-only"):
+        result = subprocess.run(
+            ["bash", str(launcher), mode],
+            capture_output=True, text=True, check=False)
+        assert result.returncode == 2
+        assert "ZeroDex FR3 control is not connected" in result.stderr

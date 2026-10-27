@@ -3,8 +3,9 @@
 
 Leave only the fixed socket on board 9 at startup. After the frozen socket
 session is saved, place the key when prompted. This diagnostic reuses the
-same session, key admission, tabletop and catalog code as the live pipeline;
-it neither builds a Franka executor nor plans or commands a trajectory.
+same session, pose-only key admission, tabletop and catalog code as the live
+pipeline; it neither builds a Franka executor nor plans or commands a
+trajectory. Use probe_zerodex_inline_frames.py for raw image/mask diagnostics.
 """
 
 from __future__ import annotations
@@ -103,7 +104,7 @@ def run_camera_only(
                         view_limits=launch.view_limits,
                         request_id_factory=None,
                         registered_key_assistance=None,
-                        pose_only=False,
+                        pose_only=True,
                         silhouette_iterations=100,
                         silhouette_loss_threshold=0.003,
                         **capture_settings)
