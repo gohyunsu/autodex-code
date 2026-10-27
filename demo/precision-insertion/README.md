@@ -119,6 +119,10 @@ For a board-9, 20 mm key-plus-socket **camera-only** check, use
 [`probe_live_key_socket.py`](probe_live_key_socket.py) as documented in
 [ROBOT_PC_STAGED_BRINGUP.md](ROBOT_PC_STAGED_BRINGUP.md). It saves every raw
 view, SAM mask and FoundPose result without opening the robot controller.
+For the separate capture4 ZeroDex profile, `run_zerodex_capture4.sh
+--camera-only` additionally runs the frozen-socket session, admitted key
+pose, tabletop classification and endpoint-catalog selection without robot
+motion; see [ZERODEX_CAPTURE4.md](ZERODEX_CAPTURE4.md).
 For an implementation-level comparison with the local stock AutoDex v8
 pipeline, source inputs/outputs, active prompts and actual validation scope,
 see [CURRENT_V8_PIPELINE_REVIEW.md](CURRENT_V8_PIPELINE_REVIEW.md).

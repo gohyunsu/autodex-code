@@ -154,6 +154,30 @@ This CLI now starts/stops the capture stream and connects to the isolated
 perception ports. It never opens the robot. Give each capture a new
 `evidence_dir` in the launch file.
 
+To check the **connected camera-only pipeline** rather than just independent
+socket/key masks, leave the fixed socket on the lit board with the key absent,
+start the isolated capture4 services, and run:
+
+```bash
+cd /home/hyunsu/autodex-code
+python3 demo/precision-insertion/manage_zerodex_capture4_services.py start
+bash demo/precision-insertion/run_zerodex_capture4.sh --camera-only
+python3 demo/precision-insertion/manage_zerodex_capture4_services.py stop
+```
+
+The command prompts once before socket measurement and once after it to place
+the key. It reuses the live board/socket session, key SAM3/FoundPose admission,
+tabletop classification and matching screened catalog, and writes a unique
+`zerodex_capture4/runs/camera_only_*/report.json`, `socket_evidence/`,
+`key_capture/`, `ledger/` and a sibling `.timing/` directory. This is the
+current 20 mm launch/catalog profile. It does **not** create a Franka
+executor, plan a trajectory, move the robot, or validate a physical grasp or
+insertion. If camera images are still nearly black, restore illumination
+before using this command; an empty SAM mask cannot establish a key pose.
+For a chosen output directory, pass `--output-dir /absolute/new/path` after
+`--camera-only`. Keep the capture4 services isolated; this launcher does not
+alter the shared capture4 checkout.
+
 ## Observed fixed socket, 2026-10-27
 
 The socket is visible in all four raw camera views. One camera-only probe

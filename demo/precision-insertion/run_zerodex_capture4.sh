@@ -31,4 +31,20 @@ for precision_header_dir in cuda_runtime cusparse cublas cusolver; do
   fi
 done
 
+if [[ ${1:-} == --camera-only ]]; then
+  shift
+  export PYTHONPATH="$ROOT:$ROOT/demo/precision-insertion:$ROOT/src"
+  export PRECISION_TIMING_LOCAL_ROOT=${PRECISION_TIMING_LOCAL_ROOT:-/tmp/precision-insertion-timing}
+  camera_only_args=(
+    --launch-config "${PRECISION_LAUNCH_TEMPLATE:-$PRECISION_STAGE_ROOT/launch.json}"
+    --endpoint-catalog "$PRECISION_ENDPOINT_CATALOG"
+  )
+  if [[ $# -eq 0 ]]; then
+    run_tag="$(date +%Y%m%d_%H%M%S_%N)_$$"
+    camera_only_args+=(--output-dir "$PRECISION_STAGE_ROOT/runs/camera_only_$run_tag")
+  fi
+  exec "$PRECISION_PLANNER_PY" "$SCRIPT_DIR/run_zerodex_camera_only.py" \
+    "${camera_only_args[@]}" "$@"
+fi
+
 exec bash "$SCRIPT_DIR/run_robot_pc.sh" "${1:---check}"
