@@ -912,3 +912,27 @@ RTX 3090 succeeded in 5.013 s; it did not open cameras or robot connections.
 The full demo suite passes 1,313 tests with 5 skipped and static gap-20
 preflight remains 110/124 endpoint-eligible. No powered-robot ZeroDex timing
 has yet established the realized saving.
+
+### 2026-10-28 robot-control backend decision
+
+The current ZeroDex integration routes the stock AutoDex `FrankaExecutor`
+through a local ParaDex ZMQ daemon. This preserves its 50 Hz joint-velocity
+follower, measured arm/hand feedback, force-stop insertion, and completion
+checks, but is **not** the controller used by the documented ZeroDex stack.
+`realtime_vlm/docs/ros_setup.md` names an ROS2 `franka_ros2` controller for
+FR3 at `172.16.1.11`; its `RobotExecutor` sends a
+`FollowJointTrajectory` action. That action interface alone cannot satisfy
+the present `FrankaExecutor`/feedback-sampler contract for velocity streaming,
+timestamped wrench, and immediate insertion stop. It would need a distinct
+robot adapter and a commissioned feedback/contact path, not a simple import
+swap. Conversely, running the ParaDex daemon requires exclusive FCI ownership
+and its matching native libfranka installation; it must not be started while
+the ROS2 controller owns the robot.
+
+The Oct 24 restic snapshot contains the ParaDex daemon executable, but a
+read-only listing of robot snapshot `d4dbcc76` found no standalone
+`libfranka.so` or libfranka package. The backup's Docker image may contain it,
+but was not restored or run on this host. The robot and hand are currently
+powered off, so neither backend can be physically checked. The next code
+integration depends on which controller will own the ZeroDex FR3; the camera
+and planning paths do not depend on that choice.
