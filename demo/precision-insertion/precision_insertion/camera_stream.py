@@ -15,6 +15,47 @@ import time
 from typing import Callable, Iterator
 
 
+def _wait_for_stream_frames(capture_ips: tuple[str, ...], timeout_s: float) -> None:
+    """Spend the existing warmup budget only until capture4 has real frames.
+
+    The older capture4 PUB exposes per-camera frame IDs under ``cameras``.
+    If it is absent, this simply consumes the old warmup duration; it adds no
+    new admission criterion or exception to the camera session.
+    """
+    import zmq
+
+    context = zmq.Context()
+    poller = zmq.Poller()
+    sockets = {}
+    try:
+        for ip in capture_ips:
+            sock = context.socket(zmq.SUB)
+            sock.setsockopt(zmq.SUBSCRIBE, b"")
+            sock.setsockopt(zmq.LINGER, 0)
+            sock.connect(f"tcp://{ip}:5481")
+            poller.register(sock, zmq.POLLIN)
+            sockets[sock] = ip
+        ready = set()
+        deadline = time.monotonic() + timeout_s
+        while len(ready) < len(capture_ips):
+            remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+            if not remaining_ms:
+                break
+            for sock, _ in poller.poll(min(remaining_ms, 100)):
+                cameras = sock.recv_json().get("cameras")
+                if (isinstance(cameras, list) and cameras and
+                        all(row.get("state") == "CAPTURING" and
+                            isinstance(row.get("frame_id"), int) and
+                            row["frame_id"] > 0
+                            for row in cameras if isinstance(row, dict)) and
+                        all(isinstance(row, dict) for row in cameras)):
+                    ready.add(sockets[sock])
+    finally:
+        for sock in sockets:
+            sock.close()
+        context.term()
+
+
 @contextmanager
 def open_autodex_camera_stream(
     pc_list: tuple[str, ...], *, name: str,
@@ -70,7 +111,10 @@ def open_autodex_camera_stream(
         else:
             raise ValueError("unknown camera acquisition mode")
         if warmup_s:
-            time.sleep(warmup_s)
+            if acquisition_mode == "stream" and capture_ips is not None:
+                _wait_for_stream_frames(capture_ips, warmup_s)
+            else:
+                time.sleep(warmup_s)
         status = controller.get_status()
         rows = status.get("pc", {}) if isinstance(status, dict) else {}
         foreign = {

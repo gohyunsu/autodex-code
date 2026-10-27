@@ -90,6 +90,63 @@ def test_capture4_probe_explicit_stream_mode_overrides_default(monkeypatch):
             ("start", "stream", {"syncMode": False, "fps": 10})]
 
 
+def test_capture4_stream_warmup_ends_at_first_real_frames(monkeypatch):
+    events = []
+    class Socket:
+        def setsockopt(self, *args): pass
+        def connect(self, address):
+            events.append(("connect", address))
+        def recv_json(self):
+            return {"cameras": [
+                {"name": "cam1", "state": "CAPTURING", "frame_id": 2},
+                {"name": "cam2", "state": "CAPTURING", "frame_id": 3}]}
+        def close(self): pass
+    class Context:
+        def socket(self, kind): return Socket()
+        def term(self): pass
+    class Poller:
+        def register(self, sock, kind): self.sock = sock
+        def poll(self, timeout):
+            events.append(("poll", timeout))
+            return [(self.sock, 2)]
+    monkeypatch.setitem(sys.modules, "zmq", SimpleNamespace(
+        Context=Context, Poller=Poller, SUB=1, POLLIN=2, SUBSCRIBE=3,
+        LINGER=4))
+    controller = Controller()
+    with open_autodex_camera_stream(
+            ("capture1",), capture_ips=("147.46.219.136",),
+            name=controller.name, warmup_s=2,
+            acquisition_mode="stream",
+            controller_factory=lambda *_args, **_kwargs: controller):
+        assert events[0] == ("connect", "tcp://147.46.219.136:5481")
+        assert events[1][0] == "poll"
+        assert controller.events[0] == (
+            "start", "stream", {"syncMode": False, "fps": 10})
+
+
+def test_capture4_missing_health_keeps_existing_warmup_behavior(monkeypatch):
+    class Socket:
+        def setsockopt(self, *args): pass
+        def connect(self, address): pass
+        def close(self): pass
+    class Context:
+        def socket(self, kind): return Socket()
+        def term(self): pass
+    class Poller:
+        def register(self, sock, kind): pass
+        def poll(self, timeout): return []
+    monkeypatch.setitem(sys.modules, "zmq", SimpleNamespace(
+        Context=Context, Poller=Poller, SUB=1, POLLIN=2, SUBSCRIBE=3,
+        LINGER=4))
+    controller = Controller()
+    with open_autodex_camera_stream(
+            ("capture1",), capture_ips=("147.46.219.136",),
+            name=controller.name, warmup_s=0.001,
+            acquisition_mode="stream",
+            controller_factory=lambda *_args, **_kwargs: controller):
+        assert controller.events[0][0] == "start"
+
+
 def test_camera_stream_rejects_foreign_owner_and_still_closes():
     controller = Controller(owner="another_run")
     with pytest.raises(RuntimeError, match="another controller"):

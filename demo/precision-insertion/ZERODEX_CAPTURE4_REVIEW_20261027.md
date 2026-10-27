@@ -542,3 +542,14 @@ and service-command tests passed, but a 20,000 µs live camera trial was
 daemon with changed exposure without the operator's explicit approval.
 No capture4 service was started by that rejected command. The current dark
 scene and SAM result therefore remain unchanged.
+
+The capture4 stream opener previously slept a fixed 2 s after the camera
+controller dispatched `start`. Its legacy health PUB at port 5481 already
+reports each camera's `CAPTURING` state and positive frame ID at 10 Hz. The
+ZeroDex stream path now uses that existing 2 s budget to wait only until all
+four cameras have produced a frame; if no usable health message arrives, it
+consumes the old duration and proceeds under the same subsequent ownership
+check. The AutoDex `acquire` path is unchanged. This is a startup-latency
+optimization, not a new camera failure gate. A unit test covers early return;
+the real capture4 time saving remains unmeasured until a camera session is
+approved and run.
