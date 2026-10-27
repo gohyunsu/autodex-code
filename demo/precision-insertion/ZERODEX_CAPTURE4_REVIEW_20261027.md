@@ -999,3 +999,24 @@ identity and timing are in
 No shared capture4 setting, robot or hand was changed. This strengthens the
 input/illumination diagnosis; another software acceptance threshold or
 perception retry would only add latency to the same unusable image.
+
+### 2026-10-28 05:24 temporary 80 ms exposure diagnosis
+
+With no other camera process running, the same namespaced capture4 service
+was started with the existing **process-local** 80,000 us exposure override.
+Four same-frame source PNGs, SAM replies and FoundPose replies arrived in
+2.599 s, about 0.435 s slower than the adjacent default-exposure request.
+Grayscale p99 rose to 118, 88, 139 and 165/255 for cameras 25305462,
+25322639, 25322642 and 26053248. Despite the improved visibility, all four
+key masks remained empty and all four FoundPose replies unsuccessful.
+
+The now-readable raw frame from 26053248 shows a gridded tabletop with a
+banana, brush and other equipment, **not** the intended ChArUco board with
+the white cylindrical key and socket. Therefore the present failure cannot
+be attributed solely to low exposure, and increasing exposure again would
+not advance this precision-insertion scene. The exact report is
+`zerodex_capture4/runs/inline_key_exposure80ms_20261028_1/report.json`;
+its source PNG directory is recorded there. The dedicated services were
+stopped after this one request; no shared setting or robot was changed.
+The next live perception test needs the intended physical scene in these
+four cameras. The 80 ms result is a diagnostic only, not a new default.
