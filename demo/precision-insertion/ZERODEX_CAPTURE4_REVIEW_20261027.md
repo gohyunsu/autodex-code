@@ -294,3 +294,32 @@ The capture4 namespaced services are currently stopped. On kds-Z790 the
 AutoDex ZMQ Franka executor still lacks a commissioned ZeroDex robot endpoint
 and its matching native libfranka runtime; do not interpret `--check` as a
 motion-ready verdict.
+
+### 2026-10-28 01:05 camera and control follow-up
+
+The namespaced capture4 services were started for one new camera-only key
+probe and stopped immediately afterward. All four same-request frames and
+mask messages arrived in **2.010 s** after a 0.005 s init. All four key
+masks were empty. The saved undistorted images had grayscale 99th percentiles
+of **8, 6, 9 and 19 / 255** (serials `25305462`, `25322639`, `25322642`,
+`26053248`). The result is in
+`shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/inline_key_20261028_followup_1/report.json`.
+This is direct evidence that the current lying-key scene remains too dark for
+SAM3; changing the prompt or lowering an acceptance threshold would not
+recover information absent from the images. The probe now records grayscale
+mean and p99 in future reports as **diagnostics only**, without a new gate.
+
+The robot integration mismatch is architectural. The selected demo runtime
+creates `src.execution.franka_executor.FrankaExecutor`, which obtains the
+ParaDex **ZMQ** `FrankaController` from `paradex.system.current` and streams
+joint velocities to a `franka_daemon`. Its held-motion adapter also checks
+the local daemon binary identity. The current `paradex.system.current`
+network file points at AutoDex's `172.16.0.2`, and the configured local daemon
+binary is absent. `realtime_vlm/docs/ros_setup.md` instead documents a
+**ROS2/franka_ros2** controller on a different machine with robot IP
+`172.16.1.11`; kds-Z790 currently has no `ros2` executable or `/opt/ros`.
+That document alone does not prove which control backend owns this physical
+ZeroDex FR3. Choosing one is required before implementing a command adapter;
+merely substituting the IP in the ZMQ client would not make ROS2's joint
+trajectory controller provide the ZMQ velocity/feedback API. No robot
+connection or motion was attempted.

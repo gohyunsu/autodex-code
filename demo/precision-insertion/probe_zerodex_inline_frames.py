@@ -13,10 +13,20 @@ from pathlib import Path
 import time
 from uuid import uuid4
 
+import cv2
+import numpy as np
+
 from precision_insertion.assets import AssetPaths
 from precision_insertion.camera_stream import open_autodex_camera_stream
 from precision_insertion.live_capture import collect_socket_capture
 from precision_insertion.session_launch import load_session_launch, open_session_cameras
+
+
+def _frame_brightness(image_bgr: np.ndarray) -> dict[str, float]:
+    """Report illumination evidence; never turn it into a capture gate."""
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    return {"gray_mean": float(gray.mean()),
+            "gray_p99": float(np.percentile(gray, 99))}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -79,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
             "frame_id": capture.masks[serial]["frame_id"],
             "image_sha256": capture.masks[serial]["image_sha256"],
             "mask_pixels": int(capture.masks[serial]["mask"].sum()),
+            **_frame_brightness(capture.images_bgr[serial]),
         } for serial in sorted(capture.images_bgr)},
     }
     (output / "report.json").write_text(
