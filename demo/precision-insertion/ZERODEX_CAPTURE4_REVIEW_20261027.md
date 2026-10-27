@@ -845,3 +845,22 @@ The current precision-demo suite passes 1,306 tests with 5 skipped;
 `run_zerodex_capture4.sh --check` passes with 110/124 endpoint-eligible
 gap-20 candidates. Our namespaced capture4 services were stopped after the
 comparison.
+
+### 2026-10-28 ZeroDex FR3 route review
+
+The ZeroDex launcher now selects a separate integration factory for live
+sessions. It reuses the AutoDex Franka/Inspire executor and trial stages,
+but routes ParaDex's Franka client to a **local** daemon only after reading
+that daemon's process arguments and confirming FCI target `172.16.1.11` and
+ports 5555/5556. The route is process-local and restored at session close;
+the shared ParaDex network file and capture4 services are untouched. The
+existing AutoDex launcher continues to select its original factory by
+default. Tests cover route selection, exact robot identity and cleanup.
+
+This is a code path, **not a robot execution result**. No matching daemon is
+currently running and its configured local binary is absent. The FR3 and
+Inspire hand remain off; the ROS2 controller's exclusive FCI ownership must
+be resolved before launching a local ParaDex daemon. `--plan-only` still
+requires robot motion for clear view and measured-state observation. With
+these caveats, the full precision-demo suite passes 1,310 tests with 5
+skipped, and gap-20 static preflight remains 110/124 endpoint-eligible.

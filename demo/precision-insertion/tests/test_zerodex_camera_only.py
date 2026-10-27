@@ -146,16 +146,6 @@ def test_camera_only_reuses_socket_key_and_catalog_without_robot(
     assert (tmp_path / "run" / "report.json").is_file()
 
 
-def test_zerodex_launcher_does_not_route_motion_to_autodex_robot():
-    launcher = Path(__file__).resolve().parents[1] / "run_zerodex_capture4.sh"
-    for mode in ("--run", "--plan-only"):
-        result = subprocess.run(
-            ["bash", str(launcher), mode],
-            capture_output=True, text=True, check=False)
-        assert result.returncode == 2
-        assert "ZeroDex FR3 control is not connected" in result.stderr
-
-
 @pytest.mark.parametrize("explicit_output", (False, True))
 def test_camera_only_launcher_keeps_default_output_with_other_options(
         tmp_path, explicit_output):

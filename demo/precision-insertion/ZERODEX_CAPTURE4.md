@@ -47,8 +47,8 @@ start the adapter if another experiment owns the cameras.
   first because there is no placement wait to hide the GPU work. An explicit
   `PRECISION_PREWARM_FIXED_WORLD=1` still overrides that choice. This does not
   change any grasp, collision or task-success criterion. It is not exercised
-  by `--check` or `--camera-only`; live ZeroDex motion remains disabled until
-  its robot backend is connected.
+  by `--check` or `--camera-only`; live use requires the ZeroDex FR3 daemon
+  and robot/hand commissioning described below.
 - The ZeroDex launcher sets `PRECISION_VISIBLE_GRIP_CAMERA_IDS` to the same
   three selected views. Its lift checkpoint uses measured Franka/Inspire FK,
   the straight-mount URDF and calibrated projections to crop the hand in each
@@ -126,6 +126,31 @@ compares its screened mount-URDF hash to the actual local URDF once; the old
 right-angle catalog is rejected without scanning every candidate. The six
 previously copied right-angle catalogs are retained, not deleted, under
 `zerodex_capture4/archive/autodex_right_angle_catalogs_20261027/`.
+
+## Franka/Inspire execution route
+
+`run_zerodex_capture4.sh --run` and `--plan-only` now select
+`precision_insertion.zerodex_franka_integration:factory`. This thin wrapper
+uses the unchanged AutoDex planner, Franka executor, measured-state reader,
+contact-insertion and trial stages. It first reads the local process table
+and requires exactly one ParaDex `franka_daemon` whose command line targets
+the ZeroDex FR3 FCI address `172.16.1.11` on command/state ports 5555/5556.
+It also checks that the daemon binary named in `franka_runtime.json` exists.
+Only then does it set the **current Python process's** ParaDex Franka client
+address to `127.0.0.1`; the previous value is restored on shutdown or
+startup failure. Shared ParaDex `network.json`, capture4 programs and the
+AutoDex launcher defaults are unchanged. No daemon is started by this script.
+
+The robot and Inspire hand are currently off; no motion or command-path test
+has been performed. The local daemon binary and matching libfranka runtime
+are currently missing, and this rig's documented ROS2 controller may already
+own FCI. Establish exclusive controller ownership and build/start the local
+ParaDex daemon for `172.16.1.11` before attempting either live mode. A
+`--plan-only` session **still moves** the arm to clear view and observes the
+key before planning; it is not an offline test. `--check` and `--camera-only`
+remain robot-free. This route check prevents an AutoDex-PC daemon targeting
+another robot from receiving ZeroDex commands; it adds no new grasp, pose,
+insertion or VLM success threshold.
 
 ## Camera-only checks (robot and hand may remain off)
 

@@ -142,7 +142,7 @@ if [[ -n ${PRECISION_INITIAL_CANDIDATE:-} ]]; then
 fi
 exec "$PY" demo/precision-insertion/run_live.py \
   --launch-config "$LAUNCH" --endpoint-catalog "$CATALOG" \
-  --integration precision_insertion.franka_integration:factory \
+  --integration "${PRECISION_INTEGRATION_FACTORY:-precision_insertion.franka_integration:factory}" \
   --robot-config "$ROBOT" \
   --init-port-mask 15006 --init-port-pose 15007 --init-port-cmd 16893 \
   --xy-update-weight "$XY_UPDATE_WEIGHT" --xy-estimator "$PRECISION_XY_ESTIMATOR" \

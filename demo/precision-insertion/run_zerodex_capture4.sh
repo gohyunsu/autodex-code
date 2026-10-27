@@ -64,8 +64,10 @@ if [[ ${1:-} == --camera-only ]]; then
 fi
 
 if [[ ${1:-} == --run || ${1:-} == --plan-only ]]; then
-  echo "ZeroDex FR3 control is not connected: the inherited AutoDex executor routes to the AutoDex ParaDex ZMQ robot. Use --check or --camera-only until the ZeroDex robot backend is configured." >&2
-  exit 2
+  # The profile-specific factory verifies that a local ParaDex daemon targets
+  # the ZeroDex FR3 before the AutoDex executor can send any setup commands.
+  # --plan-only still moves the robot to clear view and observes the key.
+  export PRECISION_INTEGRATION_FACTORY=precision_insertion.zerodex_franka_integration:factory
 fi
 
 exec bash "$SCRIPT_DIR/run_robot_pc.sh" "${1:---check}"
