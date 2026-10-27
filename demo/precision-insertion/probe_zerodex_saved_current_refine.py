@@ -48,8 +48,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--foundpose-report", type=Path, required=True)
     parser.add_argument("--mesh", type=Path, required=True)
     parser.add_argument("--object-name", required=True)
+    parser.add_argument("--sil-iters", type=int, default=100,
+                        help="Stock silhouette optimizer iterations (default: 100)")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
+    if args.sil_iters <= 0:
+        parser.error("--sil-iters must be positive")
     output = args.output.expanduser().resolve()
     if output.exists():
         raise FileExistsError(output)
@@ -63,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     bound = _bind_views(views, json.loads(source_raw), args.object_name)
     mesh = args.mesh.expanduser().resolve()
     diagnostics, pose = _replay_stock(
-        mesh, bound, iterations=100, loss_threshold=0.003)
+        mesh, bound, iterations=args.sil_iters, loss_threshold=0.003)
     record = {
         "schema": "precision_insertion_zerodex_current_stock_refine_v1",
         "scope": "saved_mask_fit_not_independent_metric_pose_or_robot_validation",
@@ -72,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
         "foundpose_report_sha256": hashlib.sha256(source_raw).hexdigest(),
         "camera_ids": list(bound),
         "mesh": str(mesh),
+        "silhouette_iterations": args.sil_iters,
         "stock_refinement": diagnostics,
         "robot_ready": False,
     }

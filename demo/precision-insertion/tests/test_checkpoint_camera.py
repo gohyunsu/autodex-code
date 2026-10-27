@@ -12,8 +12,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.checkpoint_camera import (  # noqa: E402
-    capture_checkpoint_frames, capture_snapshot_checkpoint_frames,
-    make_checkpoint_capture,
+    _undistortion_maps, capture_checkpoint_frames,
+    capture_snapshot_checkpoint_frames, make_checkpoint_capture,
 )
 from precision_insertion.frame_provenance import image_sha256  # noqa: E402
 from precision_insertion.raw_camera_capture import (  # noqa: E402
@@ -165,6 +165,26 @@ def test_snapshot_undistortion_matches_opencv_and_offline_derivation(tmp_path):
         expected = cv2.undistort(
             original[camera], K, intrinsics[camera]["dist_params"], None, K)
         np.testing.assert_array_equal(raw.images_bgr[camera], expected)
+
+    # A later checkpoint with unchanged calibration reuses the maps. A
+    # recalibrated camera necessarily gets different cache keys and maps.
+    before = _undistortion_maps.cache_info()
+    second = capture_snapshot_checkpoint_frames(
+        live, phase="after_lift", timeout_s=2., capture_id="raw_32",
+        snapshot_collector=lambda **_kwargs: source)
+    after = _undistortion_maps.cache_info()
+    assert after.hits - before.hits == len(cameras)
+    for camera in cameras:
+        np.testing.assert_array_equal(
+            second.images_bgr[camera], raw.images_bgr[camera])
+    intrinsics["cam_a"] = {**intrinsics["cam_a"],
+                           "dist_params": np.zeros(5)}
+    recalibrated = capture_snapshot_checkpoint_frames(
+        live, phase="preinsert", timeout_s=2., capture_id="raw_33",
+        snapshot_collector=lambda **_kwargs: source)
+    assert _undistortion_maps.cache_info().misses == after.misses + 1
+    np.testing.assert_array_equal(
+        recalibrated.images_bgr["cam_a"], original["cam_a"])
 
     # The live writer uses the producer's pixels. Full derivation replay
     # remains available offline and rejects a producer with altered pixels.

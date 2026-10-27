@@ -243,3 +243,54 @@ remains effectively unlit. The report is
 `shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/inline_key_20261028_continuation_1/report.json`.
 This is a fresh transport/illumination result, not a key-pose or robot-plan
 result. No camera settings or shared capture4 source were changed.
+
+### 2026-10-28 execution-path audit and measured optimizations
+
+This is the path that the current **cylindrical ZeroDex profile** would take;
+it is not a claim of a completed physical episode on kds-Z790.
+
+| Boundary | Implementation and current evidence | Latency or correctness conclusion |
+| --- | --- | --- |
+| Launch | `run_zerodex_capture4.sh` selects four capture4 cameras, three local-Qwen checkpoint views, the straight Franka–Inspire URDF and gap-specific endpoint catalog. `--check` gives 124 rows and 110 endpoint-eligible rows for 20 mm gap. | File preflight is not robot readiness. The straight-mount catalogue has only four eligible lying-pose rows. |
+| Session socket | One board-9 measurement plus socket SAM/body fit freezes the session collision scene. | One-time, not repeated per trial. Socket-with-key masks were less consistent than socket-only masks; capture the socket before placing the key. |
+| Trial key | Clear view, one same-request SAM3/FoundPose acquisition, AutoDex IoU selection and multiview silhouette fit, then tabletop pose classification. | Latest live frames were nearly black and yielded 0/4 key masks, so no fresh lying-key pose or current-scene plan is established. The saved lit lying-key replay selected stem `001`; that is not a live observation. |
+| Candidate planning | Select matching v8/MuJoCo evidence and exact 20 mm hand/socket endpoint rows; run stock cuRobo pickup and the demo's held transfer/insertion audit, stopping at the first full-chain pass. | The four lying rows are not four executable plans. In an earlier synthetic scene all four failed the full path. That scene cannot substitute for measured joints and socket/key poses. |
+| Motion and labels | Measured-state pickup/lift, three-view cropped lift label, held transfer, paired after-lift/preinsert label, guarded 20 mm insertion, release and clear view, paired initial/final three-view Qwen label. | VLM checkpoint views are batched locally. The final `inside_socket` label does not independently measure 20 mm depth; the motion/force record is separate evidence. No robot command was sent here. |
+| Failed trial | The pre-insertion frames are retained before insertion. After a released-key failure, the XY estimate from those frames is accumulated for the **next** trial; repose/reorient restores the initial tabletop state. | This path is implemented but not physically exercised with the ZeroDex mount. The robot backend/address is still unresolved. |
+
+The saved lit four-view key replay was repeated with the *current local*
+silhouette optimizer, changing only its iteration count. The diagnostic CLI
+now accepts `--sil-iters`; each run writes a separate JSON and cannot
+overwrite the 100-iteration reference.
+
+| Iterations | Mean mask IoU | Silhouette loss | Optimizer time | Symmetry-aware key-axis difference from 100 iterations |
+| ---: | ---: | ---: | ---: | ---: |
+| 25 | 0.787 | 0.000583 | 0.448 s | 10.55° |
+| 50 | 0.807 | 0.000493 | 0.579 s | 7.25° |
+| 75 | 0.837 | 0.000395 | 0.744 s | 3.62° |
+| 100 | 0.871 | 0.000273 | 0.858 s | reference |
+
+All four runs pass the existing loss threshold, but shorter runs change the
+axis enough to affect grasp selection and insertion planning. Therefore the
+live default remains **100 iterations**; a sub-second saved-frame gain is not
+worth asserting equivalent pose quality from this one scene. These are
+silhouette-fit metrics, not independent 3D ground truth. The JSON records are
+under `shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/lying_key_probe_20261027_1/`.
+
+Repeated VLM checkpoints rebuilt OpenCV's undistortion map for each camera
+even though this session's calibration and resolution are fixed. The map is
+now cached by dimensions and exact intrinsics/distortion (four entries, one
+per capture4 camera). A changed calibration gets a new map; remapping and
+image provenance are unchanged. Timing has separate
+`camera.undistort_map` and `camera.undistort_remap` spans. On this PC with the
+four real 2048×1536 calibration records, a standalone map-build measurement
+was 0.034 s for four cameras, versus about 0.001 s for a cache hit; four
+remaps took 0.059 s. This is a small repeated-checkpoint saving, **not** a
+solution to the dominant FoundPose/arm-planning or unlit-scene issues.
+
+The full precision test suite passed **1,261 tests with 5 skipped** after the
+map-cache change; the directly affected camera/probe tests also passed.
+The capture4 namespaced services are currently stopped. On kds-Z790 the
+AutoDex ZMQ Franka executor still lacks a commissioned ZeroDex robot endpoint
+and its matching native libfranka runtime; do not interpret `--check` as a
+motion-ready verdict.

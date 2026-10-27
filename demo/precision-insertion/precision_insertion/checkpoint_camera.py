@@ -9,6 +9,7 @@ robot-PC feedback buffer. The older key-init request remains opt-in.
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import lru_cache
 from uuid import uuid4
 
 import cv2
@@ -18,6 +19,19 @@ from .frame_provenance import image_sha256
 from .live_capture import collect_board_snapshot, collect_key_capture
 from .raw_camera_capture import PHASES, RawCameraCapture
 from .timing_profile import timed
+
+
+@lru_cache(maxsize=4)
+def _undistortion_maps(
+    width: int, height: int, k_orig: tuple[float, ...],
+    k_undist: tuple[float, ...], distortion: tuple[float, ...],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Reuse calibrated maps across checkpoints from the same camera rig."""
+    return cv2.initUndistortRectifyMap(
+        np.asarray(k_orig, dtype=np.float64).reshape(3, 3),
+        np.asarray(distortion, dtype=np.float64), None,
+        np.asarray(k_undist, dtype=np.float64).reshape(3, 3),
+        (width, height), cv2.CV_16SC2)
 
 
 def capture_snapshot_checkpoint_frames(
@@ -58,13 +72,19 @@ def capture_snapshot_checkpoint_frames(
         with timed("camera.undistort_generation", phase="camera",
                    kind="image", camera_id=camera,
                    capture_phase=phase):
-            # OpenCV's fixed-point map is pixel-identical to undistort() and
-            # avoids rebuilding the map in each of its internal image stripes.
+            # The fixed-point map is pixel-identical to undistort(). Camera
+            # calibration and dimensions stay fixed within a live session, so
+            # subsequent checkpoints reuse it instead of rebuilding four maps.
             height, width = original.shape[:2]
-            maps = cv2.initUndistortRectifyMap(
-                K_orig, distortion, None, K_undist, (width, height),
-                cv2.CV_16SC2)
-            image = cv2.remap(original, maps[0], maps[1], cv2.INTER_LINEAR)
+            with timed("camera.undistort_map", phase="camera", kind="image",
+                       camera_id=camera, capture_phase=phase):
+                maps = _undistortion_maps(
+                    width, height, tuple(K_orig.ravel()),
+                    tuple(K_undist.ravel()), tuple(distortion.ravel()))
+            with timed("camera.undistort_remap", phase="camera", kind="image",
+                       camera_id=camera, capture_phase=phase):
+                image = cv2.remap(
+                    original, maps[0], maps[1], cv2.INTER_LINEAR)
         undistorted[camera] = image
         calibration[camera] = {
             "K_orig": K_orig, "K_undist": K_undist,
