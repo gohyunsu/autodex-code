@@ -74,3 +74,25 @@ def test_mask_only_init_skips_socket_foundpose_and_key_init_can_load(monkeypatch
     daemon._do_init()
     assert loaded == ["key"]
     assert daemon.fp.obj_name == "key"
+
+
+def test_capture4_maps_main_pc_asset_paths_without_changing_inference(monkeypatch):
+    daemon = adapter.PrecisionInitDaemon.__new__(adapter.PrecisionInitDaemon)
+    info = {
+        "obj_name": "key",
+        "mesh_path": "~/shared_data/object_processing/key/raw_mesh/key.obj",
+        "assets_root": "~/shared_data/AutoDex/foundpose_assets/key",
+    }
+    daemon.cmd_receiver = SimpleNamespace(event_info={"init": info})
+    daemon.mode = "live"
+    daemon.reader = object()
+    daemon.fp = SimpleNamespace(obj_name="key")
+    monkeypatch.setenv("PRECISION_CAPTURE_ASSET_ROOT", "/nas/staged")
+    seen = []
+    monkeypatch.setattr(adapter.InitDaemon, "_do_init",
+                        lambda self: seen.append(dict(info)))
+    daemon._do_init()
+    assert seen[0]["mesh_path"] == (
+        "/nas/staged/object_processing/key/raw_mesh/key.obj")
+    assert seen[0]["assets_root"] == (
+        "/nas/staged/AutoDex/foundpose_assets/key")

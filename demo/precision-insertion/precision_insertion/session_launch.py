@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
+import importlib
 import ipaddress
 import json
 import math
@@ -387,6 +388,20 @@ def open_session_cameras(
         raise TypeError("camera session needs a validated launch")
     if launch.execution_scope not in {"live", "camera_only_diagnostic"}:
         raise PermissionError("static preflight launch cannot open cameras")
+    if launch.board_id == "9":
+        board_config = launch.capture_root / "charuco_board9.json"
+        if board_config.is_file():
+            # The local ParaDex system/current may describe the old 20-camera
+            # rig. Register only this profile's measured board in-process;
+            # do not edit shared ParaDex configuration or the AutoDex path.
+            from paradex.image import aruco as paradex_aruco
+
+            info = json.loads(board_config.read_text(encoding="utf-8"))
+            paradex_aruco.check_boardinfo_valid({"9": info})
+            paradex_aruco.boardinfo_dict["9"] = info
+            paradex_aruco._charuco_board_cache.pop("9", None)
+            paradex_aruco._charuco_detector_cache.pop("9", None)
+            paradex_aruco.get_charuco_detector()
     if init_ports is not None and (
             not isinstance(init_ports, tuple) or len(init_ports) != 3 or
             any(type(port) is not int or not 0 < port < 65536
@@ -400,22 +415,32 @@ def open_session_cameras(
     # produced their pixels. ParaDex may reuse frame IDs after stream restart.
     windows = RequestWindowRegistry()
     with ExitStack() as stack:
-        stock_snapshot = SnapshotOrchestrator(
-            list(launch.pc_list), list(launch.capture_ips))
-        stack.callback(stock_snapshot.close)
-        tap = SnapshotMetadataTap(list(launch.capture_ips))
-        stack.callback(tap.close)
-        board = ProvenanceSnapshotAdapter(
-            stock_snapshot, tap.buffer, registry, request_windows=windows)
-        init_kwargs = ({} if init_ports is None else dict(
-            zip(("port_mask", "port_pose", "port_cmd"), init_ports)))
-        # The stock command sender waits for a REQ/REP acknowledgement even
-        # with wait=False. Its default 60 s x 3 retries can hold the live
-        # session for three minutes when a listening daemon stops replying.
-        # A healthy receiver acknowledges before doing FoundPose work.
-        stock_init = InitOrchestrator(
-            list(launch.pc_list), list(launch.capture_ips),
-            command_timeout_ms=5000, command_retries=2, **init_kwargs)
+        # Stock orchestrators accept capture IPs for their PUB subscribers,
+        # but their CommandSender independently reads ParaDex system/current.
+        # The ZeroDex profile must route the REQ side to the same capture PC.
+        sender_module = importlib.import_module(
+            "paradex.io.capture_pc.command_sender")
+        original_get_pc_ip = sender_module.get_pc_ip
+        addresses = dict(zip(launch.pc_list, launch.capture_ips))
+        sender_module.get_pc_ip = lambda pc: (
+            addresses[pc] if pc in addresses else original_get_pc_ip(pc))
+        try:
+            stock_snapshot = SnapshotOrchestrator(
+                list(launch.pc_list), list(launch.capture_ips))
+            stack.callback(stock_snapshot.close)
+            tap = SnapshotMetadataTap(list(launch.capture_ips))
+            stack.callback(tap.close)
+            board = ProvenanceSnapshotAdapter(
+                stock_snapshot, tap.buffer, registry, request_windows=windows)
+            init_kwargs = ({} if init_ports is None else dict(
+                zip(("port_mask", "port_pose", "port_cmd"), init_ports)))
+            # A healthy receiver acknowledges before FoundPose work. Do not
+            # wait for stock CommandSender's 60 s x 3 retry default.
+            stock_init = InitOrchestrator(
+                list(launch.pc_list), list(launch.capture_ips),
+                command_timeout_ms=5000, command_retries=2, **init_kwargs)
+        finally:
+            sender_module.get_pc_ip = original_get_pc_ip
         stack.callback(stock_init.close)
         init = PrecisionInitOrchestrator(
             stock_init, registry, request_windows=windows)

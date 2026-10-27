@@ -62,7 +62,8 @@ def main(argv: list[str] | None = None) -> int:
     if not _confirm(f"{initial_scene}, keep the robot clear, then press Enter (q to cancel): "):
         return 2
     with open_autodex_camera_stream(
-            launch.pc_list, name="precision_insertion_camera_only"):
+            launch.pc_list, capture_ips=launch.capture_ips,
+            name="precision_insertion_camera_only"):
         report = run_camera_only_key_socket_qa(
             launch=launch, key_prompt=args.key_prompt,
             confirm_socket_placement=lambda: _confirm(

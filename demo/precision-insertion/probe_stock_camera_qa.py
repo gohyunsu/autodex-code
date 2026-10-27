@@ -218,7 +218,9 @@ def main(argv: list[str] | None = None) -> int:
               "timing_scope": "stationary_scene_no_exposure_alignment_claim",
               "robot_ready": False, "status": "started"}
     _write_report(output / "report.json", report)
-    with open_autodex_camera_stream(launch.pc_list, name="precision_stock_camera_qa"):
+    with open_autodex_camera_stream(
+            launch.pc_list, capture_ips=launch.capture_ips,
+            name="precision_stock_camera_qa"):
         snap = SnapshotOrchestrator(list(launch.pc_list), list(launch.capture_ips))
         init_kwargs = ({} if precision_ports is None else dict(zip(
             ("port_mask", "port_pose", "port_cmd"), precision_ports)))

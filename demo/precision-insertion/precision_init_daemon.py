@@ -50,6 +50,13 @@ class PrecisionInitDaemon(InitDaemon):
 
     def _do_init(self) -> None:
         info = self.cmd_receiver.event_info.get("init", {}) or {}
+        capture_asset_root = os.environ.get("PRECISION_CAPTURE_ASSET_ROOT")
+        if capture_asset_root:
+            for field in ("mesh_path", "assets_root"):
+                source = info.get(field)
+                if isinstance(source, str) and source.startswith("~/shared_data/"):
+                    info[field] = str(Path(capture_asset_root) /
+                                      source[len("~/shared_data/"):])
         if info.get("skip_foundpose") is True:
             # Stock initialization already skips a loaded object-specific
             # estimator. A named no-op keeps its camera/undistortion setup
@@ -63,6 +70,11 @@ class PrecisionInitDaemon(InitDaemon):
 
     def _do_run(self) -> None:
         info = self.cmd_receiver.event_info.get("run", {}) or {}
+        source = info.get("save_capture_dir")
+        if isinstance(source, str) and source.startswith("/mnt/paradex2/"):
+            info["save_capture_dir"] = str(
+                Path("/home/capture4/shared_data") /
+                source[len("/mnt/paradex2/"):])
         request_id = info.get("request_id")
         if type(request_id) is not int or request_id <= 0:
             raise ValueError("precision FoundPose run needs request ID")

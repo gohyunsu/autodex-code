@@ -9,6 +9,8 @@ controller on every exit; it never opens a robot controller.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import importlib
+import os
 import time
 from typing import Callable, Iterator
 
@@ -16,6 +18,7 @@ from typing import Callable, Iterator
 @contextmanager
 def open_autodex_camera_stream(
     pc_list: tuple[str, ...], *, name: str,
+    capture_ips: tuple[str, ...] | None = None,
     fps: int = 10, warmup_s: float = 2.0,
     controller_factory: Callable | None = None,
 ) -> Iterator[object]:
@@ -24,18 +27,46 @@ def open_autodex_camera_stream(
             or type(fps) is not int or fps < 1
             or type(warmup_s) not in (int, float) or warmup_s < 0):
         raise ValueError("camera stream needs PCs, a name and valid stock timing")
-    if controller_factory is None:
-        from paradex.io.camera_system.remote_camera_controller import (
-            remote_camera_controller,
-        )
-        controller_factory = remote_camera_controller
-    controller = controller_factory(name, pc_list=list(pc_list),
-                                    stall_timeout=15.0)
+    controller_module = None
+    original_get_pc_ip = None
+    if capture_ips is not None:
+        if len(capture_ips) != len(pc_list):
+            raise ValueError("capture IPs must match the PC list")
+        # ParaDex's global system/current can still describe the AutoDex rig.
+        # Override only this process's controller lookup for this session.
+        controller_module = importlib.import_module(
+            "paradex.io.camera_system.remote_camera_controller")
+        original_get_pc_ip = controller_module.get_pc_ip
+        addresses = dict(zip(pc_list, capture_ips))
+        controller_module.get_pc_ip = lambda pc: (
+            addresses[pc] if pc in addresses else original_get_pc_ip(pc))
+    try:
+        if controller_factory is None:
+            if controller_module is None:
+                controller_module = importlib.import_module(
+                    "paradex.io.camera_system.remote_camera_controller")
+            controller_factory = controller_module.remote_camera_controller
+        controller = controller_factory(name, pc_list=list(pc_list),
+                                        stall_timeout=15.0)
+    except BaseException:
+        if original_get_pc_ip is not None:
+            controller_module.get_pc_ip = original_get_pc_ip
+        raise
     arm_requested = False
     try:
         arm_requested = True
-        controller.arm(syncMode=False, fps=fps)
-        controller.set_stream(True)
+        acquisition_mode = os.environ.get(
+            "PRECISION_CAMERA_ACQUISITION_MODE", "acquire")
+        if acquisition_mode == "stream":
+            # capture4's ParaDex camera server predates the decoupled sink
+            # API: arm("acquire") enters single-shot mode there. Its native
+            # "stream" mode continuously fills the same SHM readers.
+            controller.start("stream", syncMode=False, fps=fps)
+        elif acquisition_mode == "acquire":
+            controller.arm(syncMode=False, fps=fps)
+            controller.set_stream(True)
+        else:
+            raise ValueError("unknown camera acquisition mode")
         if warmup_s:
             time.sleep(warmup_s)
         status = controller.get_status()
@@ -53,7 +84,11 @@ def open_autodex_camera_stream(
             if arm_requested:
                 controller.stop()
         finally:
-            controller.end()
+            try:
+                controller.end()
+            finally:
+                if original_get_pc_ip is not None:
+                    controller_module.get_pc_ip = original_get_pc_ip
 
 
 @contextmanager

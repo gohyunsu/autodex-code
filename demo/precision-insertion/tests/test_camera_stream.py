@@ -23,6 +23,9 @@ class Controller:
     def arm(self, **kwargs):
         self.events.append(("arm", kwargs))
 
+    def start(self, mode, **kwargs):
+        self.events.append(("start", mode, kwargs))
+
     def set_stream(self, value):
         self.events.append(("stream", value))
 
@@ -48,6 +51,31 @@ def test_camera_stream_uses_stock_fps_and_releases_on_exit():
         assert controller.events == [
             ("arm", {"syncMode": False, "fps": 10}),
             ("stream", True)]
+    assert controller.events[-2:] == [("stop",), ("end",)]
+
+
+def test_capture_ip_override_is_local_to_camera_context(monkeypatch):
+    import importlib
+    module = importlib.import_module(
+        "paradex.io.camera_system.remote_camera_controller")
+    original = module.get_pc_ip
+    controller = Controller()
+    with open_autodex_camera_stream(
+            ("capture4",), capture_ips=("147.46.219.136",),
+            name=controller.name, warmup_s=0,
+            controller_factory=lambda *_args, **_kwargs: controller):
+        assert module.get_pc_ip("capture4") == "147.46.219.136"
+    assert module.get_pc_ip is original
+
+
+def test_capture4_legacy_stream_mode_uses_native_start(monkeypatch):
+    monkeypatch.setenv("PRECISION_CAMERA_ACQUISITION_MODE", "stream")
+    controller = Controller()
+    with open_autodex_camera_stream(
+            ("capture1",), name=controller.name, warmup_s=0,
+            controller_factory=lambda *_args, **_kwargs: controller):
+        assert controller.events == [
+            ("start", "stream", {"syncMode": False, "fps": 10})]
     assert controller.events[-2:] == [("stop",), ("end",)]
 
 
