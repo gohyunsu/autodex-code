@@ -171,6 +171,18 @@ remain robot-free. This route check prevents an AutoDex-PC daemon targeting
 another robot from receiving ZeroDex commands; it adds no new grasp, pose,
 insertion or VLM success threshold.
 
+Read-only host inspection on 2026-10-28 confirmed a direct route to the
+configured FR3 (`172.16.1.11 dev enp4s0 src 172.16.1.10`), but neither
+controller stack is presently installed here: the configured local
+`franka_daemon` executable and `libfranka.so.0.18` are absent, as are the
+MessagePack C++ development header needed to build the daemon; `/opt/ros/humble`
+is also absent. This is an environment inventory, not a robot connection
+test. Choose either the ParaDex daemon route above or a separate ROS2
+integration before installing one stack or attempting motion. The existing
+ZeroDex `realtime_vlm/run/components/robot_exec.py` uses a ROS2
+`FrankaController`/JTC plus Inspire commands; it is not a drop-in replacement
+for this demo's stock 50 Hz ParaDex follower and measured wrench/hand trace.
+
 ## Camera-only checks (robot and hand may remain off)
 
 ```bash
