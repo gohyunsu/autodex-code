@@ -188,6 +188,19 @@ pose-only trial capture. The camera-only command does **not** create a Franka
 executor, plan a trajectory, move the robot, or validate a physical grasp or
 insertion. If camera images are still nearly black, restore illumination
 before using this command; an empty SAM mask cannot establish a key pose.
+For repeated key-pose checks with the *same unmoved socket*, pass
+`--reuse-session-evidence /absolute/previous/socket_evidence` after
+`--camera-only`. The camera-only path applies the same saved-image,
+calibration and board checks as live reuse, then skips board/socket capture;
+the key can already be on the board. The default remains a fresh socket
+measurement. A new output directory is generated even when this option is
+present.
+
+```bash
+bash demo/precision-insertion/run_zerodex_capture4.sh --camera-only \
+  --reuse-session-evidence /absolute/previous/socket_evidence
+```
+
 For a chosen output directory, pass `--output-dir /absolute/new/path` after
 `--camera-only`. Keep the capture4 services isolated; this launcher does not
 alter the shared capture4 checkout.

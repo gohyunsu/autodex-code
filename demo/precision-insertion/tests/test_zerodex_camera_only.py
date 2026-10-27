@@ -1,12 +1,14 @@
 """The capture4 diagnostic must follow the live perception path without motion."""
 
 from contextlib import contextmanager, nullcontext
+import os
 import subprocess
 from pathlib import Path
 import sys
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -14,7 +16,9 @@ import run_zerodex_camera_only as camera_only  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
 
 
-def test_camera_only_reuses_socket_key_and_catalog_without_robot(tmp_path, monkeypatch):
+@pytest.mark.parametrize("reuse", (False, True))
+def test_camera_only_reuses_socket_key_and_catalog_without_robot(
+        tmp_path, monkeypatch, reuse):
     events = []
     mode = select_mode("cylinder", 20)
     shared = tmp_path / "shared"
@@ -77,6 +81,12 @@ def test_camera_only_reuses_socket_key_and_catalog_without_robot(tmp_path, monke
     monkeypatch.setattr(camera_only, "load_session_launch", load)
     monkeypatch.setattr(camera_only, "preflight_endpoint_catalog_file", catalog)
     monkeypatch.setattr(camera_only, "open_session_cameras", open_cameras)
+    monkeypatch.setattr(camera_only, "load_reused_socket_session",
+                        lambda **_kwargs: (
+                            events.append("saved_socket") or
+                            SimpleNamespace(evidence_dir=evidence,
+                                            producer_manifest={},
+                                            calibration=calibration)))
     monkeypatch.setattr(camera_only, "open_autodex_camera_stream", open_stream)
     monkeypatch.setattr(camera_only, "prepare_precision_silhouette",
                         lambda **_kwargs: events.append("prewarm"))
@@ -109,13 +119,16 @@ def test_camera_only_reuses_socket_key_and_catalog_without_robot(tmp_path, monke
         endpoint_catalog=tmp_path / "catalog.json",
         output_dir=tmp_path / "run",
         wait_for_key=lambda: events.append("key_placed"),
+        reuse_session_evidence=(tmp_path / "saved" if reuse else None),
     )
-    assert events == [
-        "launch", "catalog", "camera_open", "prewarm", "stream_open",
-        "socket", "ledger", "key_placed", "key", "stream_close",
-        "camera_close", "scene", "classify", "select",
-    ]
+    assert events == (
+        ["launch", "catalog"] + (["saved_socket"] if reuse else []) +
+        ["camera_open", "prewarm", "stream_open"] +
+        ([] if reuse else ["socket"]) +
+        ["ledger", "key_placed", "key", "stream_close", "camera_close",
+         "scene", "classify", "select"])
     assert report["endpoint_eligible_candidate_count"] == 1
+    assert report["socket_evidence_reused"] is reuse
     assert report["robot_ready"] is False
     assert (tmp_path / "run" / "report.json").is_file()
 
@@ -128,3 +141,28 @@ def test_zerodex_launcher_does_not_route_motion_to_autodex_robot():
             capture_output=True, text=True, check=False)
         assert result.returncode == 2
         assert "ZeroDex FR3 control is not connected" in result.stderr
+
+
+@pytest.mark.parametrize("explicit_output", (False, True))
+def test_camera_only_launcher_keeps_default_output_with_other_options(
+        tmp_path, explicit_output):
+    launcher = Path(__file__).resolve().parents[1] / "run_zerodex_capture4.sh"
+    fake_planner = tmp_path / "fake_planner"
+    fake_planner.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\"\n", encoding="utf-8")
+    fake_planner.chmod(0o755)
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    command = ["bash", str(launcher), "--camera-only",
+               "--reuse-session-evidence", str(tmp_path / "saved")]
+    if explicit_output:
+        command.extend(("--output-dir", str(tmp_path / "chosen")))
+    completed = subprocess.run(
+        command, capture_output=True, text=True, check=True,
+        env={**os.environ, "PRECISION_STAGE_ROOT": str(stage),
+             "PRECISION_PLANNER_PY": str(fake_planner)})
+    args = completed.stdout.splitlines()
+    assert args.count("--output-dir") == 1
+    output = args[args.index("--output-dir") + 1]
+    assert output == (str(tmp_path / "chosen") if explicit_output else
+                      str(stage / "runs" / Path(output).name))

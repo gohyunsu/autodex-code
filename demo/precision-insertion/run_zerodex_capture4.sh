@@ -39,7 +39,13 @@ if [[ ${1:-} == --camera-only ]]; then
     --launch-config "${PRECISION_LAUNCH_TEMPLATE:-$PRECISION_STAGE_ROOT/launch.json}"
     --endpoint-catalog "$PRECISION_ENDPOINT_CATALOG"
   )
-  if [[ $# -eq 0 ]]; then
+  camera_only_has_output=0
+  for camera_only_arg in "$@"; do
+    if [[ "$camera_only_arg" == --output-dir || "$camera_only_arg" == --output-dir=* ]]; then
+      camera_only_has_output=1
+    fi
+  done
+  if [[ $camera_only_has_output -eq 0 ]]; then
     run_tag="$(date +%Y%m%d_%H%M%S_%N)_$$"
     camera_only_args+=(--output-dir "$PRECISION_STAGE_ROOT/runs/camera_only_$run_tag")
   fi

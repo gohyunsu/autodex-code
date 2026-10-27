@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Run the real capture4 socket/key perception path without a robot.
 
-Leave only the fixed socket on board 9 at startup. After the frozen socket
-session is saved, place the key when prompted. This diagnostic reuses the
+For a fresh session, leave only the fixed socket on board 9 at startup and
+place the key after socket measurement. With explicit saved-socket reuse,
+the key may already be present. This diagnostic reuses the
 same session, pose-only key admission, tabletop and catalog code as the live
 pipeline; it neither builds a Franka executor nor plans or commands a
 trajectory. Use probe_zerodex_inline_frames.py for raw image/mask diagnostics.
@@ -22,6 +23,7 @@ from precision_insertion.assets import AssetPaths
 from precision_insertion.camera_stream import open_autodex_camera_stream
 from precision_insertion.candidates import select_pose_candidates
 from precision_insertion.live_key_trial import _capture_admitted_key
+from precision_insertion.live_orchestration import load_reused_socket_session
 from precision_insertion.live_session_runner import (
     open_verified_session, preflight_endpoint_catalog_file,
 )
@@ -38,8 +40,9 @@ from robot_pc_stages import KEY_PROMPT, _key_capture
 def run_camera_only(
     *, launch_config: Path, endpoint_catalog: Path, output_dir: Path,
     wait_for_key: Callable[[], object],
+    reuse_session_evidence: Path | None = None,
 ) -> dict:
-    """Capture a frozen socket and one fresh key, with no motion resources."""
+    """Capture one key after a fresh or explicitly reused fixed-socket session."""
     output = Path(output_dir).expanduser().resolve()
     if output.exists():
         raise FileExistsError(output)
@@ -56,6 +59,12 @@ def run_camera_only(
             catalog = preflight_endpoint_catalog_file(
                 mode=launch.mode, shared_root=launch.shared_root,
                 catalog_path=endpoint_catalog)
+        saved_session = None
+        if reuse_session_evidence is not None:
+            with timed("startup.saved_session_verify", phase="startup",
+                       kind="io"):
+                saved_session = load_reused_socket_session(
+                    launch=launch, evidence_dir=reuse_session_evidence)
         paths = AssetPaths(launch.shared_root, launch.mode)
         with open_session_cameras(
                 launch, init_ports=(15006, 15007, 16893)) as cameras:
@@ -70,8 +79,11 @@ def run_camera_only(
                     launch.pc_list, capture_ips=launch.capture_ips,
                     name="precision_zerodex_camera_only",
                     acquisition_mode=launch.camera_acquisition_mode):
-                with timed("startup.board_socket_session", phase="startup"):
-                    started = cameras.start()
+                if saved_session is None:
+                    with timed("startup.board_socket_session", phase="startup"):
+                        started = cameras.start()
+                else:
+                    started = saved_session
                 with timed("startup.session_ledger_open", phase="startup",
                            kind="io"):
                     opened = open_verified_session(
@@ -126,6 +138,7 @@ def run_camera_only(
             "schema": "precision_insertion_zerodex_camera_only_session_v1",
             "scope": "real_camera_perception_and_catalog_not_robot_plan_or_motion",
             "socket_evidence_dir": str(started.evidence_dir),
+            "socket_evidence_reused": saved_session is not None,
             "key_evidence_dir": str(output / "key_capture"),
             "key_request_id": observation.request_id,
             "selected_camera_id": observation.selected_camera_id,
@@ -146,15 +159,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--launch-config", type=Path, required=True)
     parser.add_argument("--endpoint-catalog", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--reuse-session-evidence", type=Path,
+                        help="verified fixed-socket session; skips board/socket recapture")
     args = parser.parse_args(argv)
-    print("Leave the fixed socket on board 9 and REMOVE the key before starting.")
-    input("Press Enter to measure board and socket... ")
+    if args.reuse_session_evidence is None:
+        print("Leave the fixed socket on board 9 and REMOVE the key before starting.")
+        input("Press Enter to measure board and socket... ")
+    else:
+        print("Reusing the saved fixed-socket session; leave the socket unmoved.")
     report = run_camera_only(
         launch_config=args.launch_config,
         endpoint_catalog=args.endpoint_catalog,
         output_dir=args.output_dir,
+        reuse_session_evidence=args.reuse_session_evidence,
         wait_for_key=lambda: input(
-            "Place the key on the board, then press Enter to recognize it... "))
+            "Place or confirm the key on the board, then press Enter to recognize it... "))
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0
 

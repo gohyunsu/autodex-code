@@ -64,6 +64,39 @@ _LIVE_ACTIONS = frozenset({
 })
 
 
+def load_reused_socket_session(*, launch, evidence_dir: Path,
+                               ) -> StartedPrecisionSession:
+    """Reopen a fixed-socket capture against this camera/board configuration."""
+    saved_input = Path(evidence_dir).expanduser()
+    if not saved_input.is_absolute():
+        raise ValueError("reused session evidence path must be absolute")
+    saved_path = saved_input.resolve()
+    manifest = verify_session_evidence_bundle(saved_path)
+    calibration = load_session_calibration(
+        saved_path / "session_calibration.json", mode=launch.mode,
+        shared_root=launch.shared_root)
+    validate_session_camera_calibration(
+        calibration,
+        intrinsics_undist={serial: row["K_undist"] for serial, row in
+                           launch.intrinsics_full.items()},
+        extrinsics_full=launch.extrinsics_full,
+        calibrated_camera_ids=set(launch.camera_ids),
+        c2r=launch.c2r)
+    launch_scene_mode = getattr(launch, "scene_mode", "charuco_board")
+    if calibration.record.get("scene_mode", "charuco_board") != launch_scene_mode:
+        raise ValueError("saved session scene mode differs from live launch")
+    if launch_scene_mode == "charuco_board":
+        if calibration.record["board"].get("board") != launch.board_id:
+            raise ValueError("saved session board differs from live launch")
+    elif calibration.record["support_surface"]["table_surface_z_m"] != launch.table_surface_z_m:
+        raise ValueError("saved table surface differs from live launch")
+    return StartedPrecisionSession(
+        calibration=calibration, evidence_dir=saved_path,
+        board_request_id=manifest.get("board_request_id"),
+        socket_request_ids=tuple(manifest["socket_request_ids"]),
+        producer_manifest=manifest)
+
+
 def compose_live_handlers(
     live: LivePrecisionSession, *components: object,
 ) -> dict[str, ActionHandler]:
@@ -152,35 +185,9 @@ def open_live_precision_session(
             catalog_path=catalog)
     saved_session = None
     if reuse_session_evidence_dir is not None:
-        saved_input = Path(reuse_session_evidence_dir).expanduser()
-        if not saved_input.is_absolute():
-            raise ValueError("reused session evidence path must be absolute")
-        saved_path = saved_input.resolve()
         with timed("startup.saved_session_verify", phase="startup", kind="io"):
-            manifest = verify_session_evidence_bundle(saved_path)
-            calibration = load_session_calibration(
-                saved_path / "session_calibration.json", mode=launch.mode,
-                shared_root=launch.shared_root)
-            validate_session_camera_calibration(
-                calibration,
-                intrinsics_undist={serial: row["K_undist"] for serial, row in
-                                   launch.intrinsics_full.items()},
-                extrinsics_full=launch.extrinsics_full,
-                calibrated_camera_ids=set(launch.camera_ids),
-                c2r=launch.c2r)
-            launch_scene_mode = getattr(launch, "scene_mode", "charuco_board")
-            if calibration.record.get("scene_mode", "charuco_board") != launch_scene_mode:
-                raise ValueError("saved session scene mode differs from live launch")
-            if launch_scene_mode == "charuco_board":
-                if calibration.record["board"].get("board") != launch.board_id:
-                    raise ValueError("saved session board differs from live launch")
-            elif calibration.record["support_surface"]["table_surface_z_m"] != launch.table_surface_z_m:
-                raise ValueError("saved table surface differs from live launch")
-            saved_session = StartedPrecisionSession(
-                calibration=calibration, evidence_dir=saved_path,
-                board_request_id=manifest.get("board_request_id"),
-                socket_request_ids=tuple(manifest["socket_request_ids"]),
-                producer_manifest=manifest)
+            saved_session = load_reused_socket_session(
+                launch=launch, evidence_dir=reuse_session_evidence_dir)
     # Stock AutoDex free-space home is appropriate only before the session's
     # first exposure, not after a failed insertion or tabletop release.
     with timed("startup.clear_view", phase="startup", kind="motion"):
