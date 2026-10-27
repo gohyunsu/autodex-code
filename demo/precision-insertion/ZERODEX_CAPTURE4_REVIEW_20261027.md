@@ -708,3 +708,18 @@ retains per-camera timing spans plus a new camera.undistort_batch span.
 This changes neither source pixels nor VLM inputs. The benchmark excludes
 camera transport, disk writes and Qwen, so it is not a measured full-episode
 speedup. No extra capture or admission criterion was added.
+
+### 2026-10-28 saved dark-frame software-gain check
+
+The four original source PNGs from request `78628084` were read without
+starting a camera or robot. Local RTX 3090 SAM3 loaded the handed-off
+`sam3.pt` with the same `white plastic cylindrical key` prompt and 0.5
+confidence threshold. On every view, both the raw 8-bit frame and a simple
+16x per-channel gain (clipped at 255) returned zero masks. The four raw
+grayscale p99 values were 8, 6, 9 and 19/255. This is one narrow offline
+preprocessing test, not proof that all low-light restoration is impossible;
+it gives no basis to deploy gain-only preprocessing as a substitute for
+usable illumination. Model load from the NAS checkpoint took 82.73 s in
+this cold diagnostic process; the namespaced capture4 service instead keeps
+its SAM3 model loaded across camera requests. No pipeline image, prompt,
+camera setting, or acceptance rule was changed.
