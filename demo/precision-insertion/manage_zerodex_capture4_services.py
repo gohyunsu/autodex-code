@@ -88,7 +88,7 @@ def _command(kind: str) -> str:
     # This capture4 GPU cannot execute FoundPose's DINOv2 float32 xFormers
     # attention kernel. The vendored DINOv2 uses PyTorch SDPA when disabled;
     # keep this setting local to the ZeroDex precision service, not stock.
-    return (f"exec env XFORMERS_DISABLED=1 AUTODEX_STOCK_ROOT={REMOTE} "
+    return (f"exec env HF_HUB_OFFLINE=1 XFORMERS_DISABLED=1 AUTODEX_STOCK_ROOT={REMOTE} "
             f"PRECISION_CAPTURE_ASSET_ROOT={stage} PYTHONPATH={pythonpath} "
             f"{python} {module_root}/precision_init_daemon.py "
             "--port-mask 15006 --port-pose 15007 --port-cmd 16893")

@@ -383,3 +383,25 @@ through either profile launcher. It now forwards
 `PRECISION_XY_UPDATE_WEIGHT` with the same `1.0` default. This is an opt-in
 parameter fix; the retry update equation, per-attempt cap and outcome rules
 are unchanged.
+
+### 2026-10-28 camera latency follow-up
+
+The capture4 precision log for the dark-scene request `1338853889` shows a
+0.408 s four-camera snapshot, then four serial SAM3 attempts ending in empty
+masks; the last attempt completed about 1.24 s after the snapshot. The local
+inline capture report measured 2.172 s including source-frame delivery and
+local PNG persistence. These figures cannot predict lit-scene FoundPose time.
+The stock `Sam3ImageSegmentor.segment_batch()` currently calls sequential
+`segment()` for every image after its batch setup, so invoking that method
+would **not** establish a four-view batch speedup. Rehashing one decoded
+1536×2048 BGR frame took about 8.6 ms in a local 20-call microbenchmark;
+removing a few hashes would not address the observed second-scale path and
+would complicate same-frame evidence. The normal key trial remains
+`pose_only=True` and does not request source PNGs.
+
+The same capture4 log showed two Hugging Face HEAD requests before the local
+SAM3 checkpoint loaded. Both SAM3 files were present in the capture4 cache;
+`HF_HUB_OFFLINE=1` resolved them and a direct SAM3 GPU load passed without
+opening cameras. The namespaced precision service now sets that variable,
+leaving shared capture4 programs unchanged. A controlled cold-start latency
+comparison has not been run.

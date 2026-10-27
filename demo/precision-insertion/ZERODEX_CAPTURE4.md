@@ -12,6 +12,10 @@ The capture-side adapter is copied only to
 processes (camera, snapshot, precision perception) on the established ports.
 `start` returns only after their eight required sockets are listening, so the
 following capture command does not race the perception model's startup.
+The namespaced precision process uses its existing cached SAM3 checkpoint
+offline, avoiding Hugging Face HEAD requests on each cold start; a direct
+offline model-load test passed on capture4. This does not change the shared
+camera or snapshot processes.
 Use `manage_zerodex_capture4_services.py stop` when a camera-only session
 finishes; it checks its PID files before signaling those processes. Do not
 start the adapter if another experiment owns the cameras.

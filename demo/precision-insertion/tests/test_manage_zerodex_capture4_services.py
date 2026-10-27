@@ -27,6 +27,9 @@ def test_foundpose_attention_fallback_is_capture4_only():
     assert "XFORMERS_DISABLED=1" in services._command("precision")
     assert "XFORMERS_DISABLED" not in services._command("snapshot")
     assert "XFORMERS_DISABLED" not in services._command("camera")
+    assert "HF_HUB_OFFLINE=1" in services._command("precision")
+    assert "HF_HUB_OFFLINE" not in services._command("snapshot")
+    assert "HF_HUB_OFFLINE" not in services._command("camera")
 
 
 def test_start_waits_until_all_ports_listen(monkeypatch):
