@@ -58,6 +58,26 @@ Do not point the live runtime at the restored executable until its matching
 native library and the ZeroDex robot endpoint are commissioned. No robot
 connection was attempted during this dependency check.
 
+An Oct 28 00:00 camera-only retry confirmed that the dark scene had not
+changed: four same-frame key PNGs arrived in 2.02 s, but SAM returned zero
+mask pixels in all four views. Their grayscale 99th-percentile intensities
+were 8, 6, 9 and 19/255. The report is
+`shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/inline_key_20261027_2359/report.json`.
+The namespaced capture4 services were stopped after the probe. The service
+manager now waits for all eight camera/snapshot/perception sockets before
+returning from `start`; the previous immediate return could race model startup.
+This was confirmed by starting and stopping only the namespaced services.
+
+Robot control is a separate unresolved integration decision. This profile
+currently reuses AutoDex's ParaDex ZMQ `FrankaExecutor`, whose shared
+`network_info["franka"]` is `172.16.0.2`. On this PC, the interface has
+`172.16.1.10/24`; `ip route get 172.16.0.2` goes via the campus gateway,
+not a direct robot subnet. ZeroDex's `realtime_vlm` code instead references a
+ROS2 `FrankaController`. Neither observation proves the correct endpoint for
+the presently powered-off robot. The intended ZeroDex control backend and
+address must be identified before connecting; the shared ParaDex
+`system/current/network.json` was not edited.
+
 ### Lying-key synthetic planning check (not the camera scene)
 
 With the straight URDF, current 20 mm-gap catalogue and native locked-hand
@@ -80,7 +100,7 @@ trajectories still receive the full sampled audit. The synthetic diagnostic
 uses `use_cuda_graph=False`, unlike the normal live planner default, so its
 cold pickup duration must not be presented as a live latency estimate.
 
-Verification performed: the precision demo test suite passed **1249 tests**
+Verification performed: the precision demo test suite passed **1252 tests**
 with 5 skipped; the straight-URDF local cuRobo planner instantiated; 20 mm
 static preflight passed; the old mount catalog was rejected; camera-only
 services were stopped after probes. No current-scene full trajectory or

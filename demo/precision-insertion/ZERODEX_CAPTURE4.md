@@ -10,6 +10,8 @@ configuration, calibration and Python environments are **not edited**.
 The capture-side adapter is copied only to
 `/home/capture4/precision_insertion_capture4_20261027`. It starts three
 processes (camera, snapshot, precision perception) on the established ports.
+`start` returns only after their eight required sockets are listening, so the
+following capture command does not race the perception model's startup.
 Use `manage_zerodex_capture4_services.py stop` when a camera-only session
 finishes; it checks its PID files before signaling those processes. Do not
 start the adapter if another experiment owns the cameras.

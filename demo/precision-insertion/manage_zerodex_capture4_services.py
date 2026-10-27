@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import re
 import shlex
 import subprocess
+import time
 
 
 HOST = "capture4@147.46.219.136"
@@ -29,6 +31,8 @@ FILES = (
     "demo/precision-insertion/precision_insertion/frame_provenance.py",
 )
 PORTS = {"camera": 5480, "snapshot": 6894, "precision": 16893}
+READY_PORTS = frozenset((5480, 5481, 5482, 5009, 6894, 15006, 15007, 16893))
+_PORT_RE = re.compile(r":(\d+)$")
 
 
 def _ssh(script: str) -> None:
@@ -37,6 +41,23 @@ def _ssh(script: str) -> None:
          "bash -lc " + shlex.quote(script)],
         check=True,
     )
+
+
+def _listening_ports() -> set[int]:
+    result = subprocess.run(
+        ["ssh", "-p", "77", "-o", "BatchMode=yes", HOST,
+         "bash -lc " + shlex.quote("ss -lntH")],
+        check=True, capture_output=True, text=True,
+    )
+    ports = set()
+    for line in result.stdout.splitlines():
+        columns = line.split()
+        if len(columns) < 4:
+            continue
+        match = _PORT_RE.search(columns[3])
+        if match:
+            ports.add(int(match.group(1)))
+    return ports
 
 
 def deploy() -> None:
@@ -85,11 +106,25 @@ def start() -> None:
             f"2>&1 < /dev/null & echo $! > {shlex.quote(str(pid))}; "
             f"echo '{kind}: started'; fi"
         )
+    # The camera and perception processes bind their sockets after Python and
+    # model startup. Return only once the immediate caller can connect; polling
+    # avoids a fixed sleep on warm starts.
+    deadline = time.monotonic() + 120.0
+    while True:
+        missing = READY_PORTS - _listening_ports()
+        if not missing:
+            break
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"capture4 services did not bind ports: {sorted(missing)}")
+        time.sleep(0.25)
     check()
 
 
 def check() -> None:
-    _ssh("ss -lnt | grep -E ':(5480|5481|5482|5009|6894|15006|15007|16893) ' || true")
+    missing = READY_PORTS - _listening_ports()
+    if missing:
+        raise RuntimeError(f"capture4 services are not ready: {sorted(missing)}")
+    print("capture4 services ready: " + ", ".join(map(str, sorted(READY_PORTS))))
 
 
 def stop() -> None:
