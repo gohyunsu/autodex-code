@@ -1,5 +1,6 @@
 """The runnable entry point composes one complete camera-session pipeline."""
 
+from concurrent.futures import Future
 import os
 import json
 from pathlib import Path
@@ -15,6 +16,31 @@ from precision_insertion import live_runtime  # noqa: E402
 from precision_insertion.live_orchestration import _LIVE_ACTIONS  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
 import run_live  # noqa: E402
+
+
+def test_fixed_world_warmup_is_joined_before_fresh_key_capture():
+    future = Future()
+    calls = []
+    handlers = {
+        "capture_fresh_key": lambda *_: calls.append("fresh"),
+        "reobserve_key_and_preflight": lambda *_: calls.append("reobserve"),
+        "continue_candidate_preflight": lambda *_: calls.append("continue"),
+    }
+    wrapped = live_runtime._wait_for_fixed_world_warmup(handlers, future)
+    future.set_exception(RuntimeError("warmup failed"))
+    with pytest.raises(RuntimeError, match="warmup failed"):
+        wrapped["capture_fresh_key"](None, None)
+    with pytest.raises(RuntimeError, match="warmup failed"):
+        wrapped["continue_candidate_preflight"](None, None)
+    assert calls == []
+
+    completed = Future()
+    completed.set_result(None)
+    wrapped = live_runtime._wait_for_fixed_world_warmup(handlers, completed)
+    wrapped["continue_candidate_preflight"](None, None)
+    wrapped["capture_fresh_key"](None, None)
+    wrapped["reobserve_key_and_preflight"](None, None)
+    assert calls == ["continue", "fresh", "reobserve"]
 
 
 def test_live_cli_imports_stock_and_demo_packages_from_another_cwd(tmp_path):
@@ -152,6 +178,7 @@ def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path)
 
     monkeypatch.setattr(live_runtime, "ClearViewForPerception", ClearView)
     closed = []
+    warmup_started = []
     module = ModuleType("test_robot_integration")
 
     def factory(options):
@@ -162,8 +189,15 @@ def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path)
                 live=live,
                 handlers=lambda: {name: lambda *_: None for name in _LIVE_ACTIONS})]
 
+        def begin_warmup(live):
+            warmup_started.append(live)
+            future = Future()
+            future.set_result(None)
+            return future
+
         return live_runtime.LiveRuntimeIntegration(
-            ClearView(), components, lambda: closed.append(True))
+            ClearView(), components, lambda: closed.append(True),
+            begin_warmup)
 
     module.factory = factory
     monkeypatch.setitem(sys.modules, module.__name__, module)
@@ -171,7 +205,10 @@ def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path)
     result = SimpleNamespace(status="success")
 
     def run(**kwargs):
-        assert set(kwargs["build_handlers"](live)) == _LIVE_ACTIONS
+        handlers = kwargs["build_handlers"](live)
+        assert set(handlers) == _LIVE_ACTIONS
+        assert warmup_started == [live]
+        handlers["capture_fresh_key"](None, None)
         assert kwargs["init_ports"] == (15006, 15007, 16893)
         return result
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import Future
 import hashlib
 from dataclasses import dataclass
 from importlib import import_module
@@ -54,6 +55,23 @@ class LiveRuntimeIntegration:
     clear_view: ClearViewForPerception
     build_components: Callable[[LivePrecisionSession], Sequence[object]]
     close: Callable[[], None]
+    begin_fixed_world_warmup: Callable[[LivePrecisionSession], Future] | None = None
+
+
+def _wait_for_fixed_world_warmup(handlers: dict, future: Future) -> dict:
+    """Let key placement overlap planner startup, then serialize planner use."""
+    result = dict(handlers)
+    for action in result:
+        original = result[action]
+
+        def after_warmup(runner, decision, *, _original=original):
+            with timed("startup.planner_fixed_world_warmup_wait",
+                       phase="startup", kind="wait"):
+                future.result()
+            return _original(runner, decision)
+
+        result[action] = after_warmup
+    return result
 
 
 def _confirm_initial_key_placement() -> bool:
@@ -186,7 +204,9 @@ def load_runtime_integration(
     if (not isinstance(integration, LiveRuntimeIntegration) or
             not isinstance(integration.clear_view, ClearViewForPerception) or
             not callable(integration.build_components) or
-            not callable(integration.close)):
+            not callable(integration.close) or
+            (integration.begin_fixed_world_warmup is not None and
+             not callable(integration.begin_fixed_world_warmup))):
         raise TypeError("factory must return LiveRuntimeIntegration")
     return integration
 
@@ -228,7 +248,11 @@ def run_integrated_live_session(
         def handlers(live: LivePrecisionSession):
             with timed("startup.build_handlers", phase="startup"):
                 components = tuple(integration.build_components(live))
-                return compose_live_handlers(live, *components)
+                joined = compose_live_handlers(live, *components)
+            if integration.begin_fixed_world_warmup is not None:
+                future = integration.begin_fixed_world_warmup(live)
+                joined = _wait_for_fixed_world_warmup(joined, future)
+            return joined
 
         with timed("live.orchestration", phase="session"):
             return run_live_precision_session(

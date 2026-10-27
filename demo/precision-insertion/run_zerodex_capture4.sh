@@ -13,6 +13,15 @@ export PRECISION_CHECK_PY=${PRECISION_CHECK_PY:-$PRECISION_PLANNER_PY}
 export PRECISION_VLM_CAMERA_IDS=${PRECISION_VLM_CAMERA_IDS:-26053248,25322639,25305462}
 export PRECISION_VISIBLE_GRIP_CAMERA_IDS=${PRECISION_VISIBLE_GRIP_CAMERA_IDS:-$PRECISION_VLM_CAMERA_IDS}
 export PRECISION_XY_ESTIMATOR=${PRECISION_XY_ESTIMATOR:-vlm}
+if [[ -z ${PRECISION_PREWARM_FIXED_WORLD+x} ]]; then
+  # With the key already in place there is no operator wait to hide warmup;
+  # observe it first rather than spending GPU time on a potentially bad image.
+  if [[ ${PRECISION_KEY_ALREADY_PLACED:-0} == 1 ]]; then
+    export PRECISION_PREWARM_FIXED_WORLD=0
+  else
+    export PRECISION_PREWARM_FIXED_WORLD=1
+  fi
+fi
 # ZeroDex uses the original straight flange-to-Inspire mount, not the
 # October 12 right-angle mount selected by run_robot_pc.sh for AutoDex.
 export PRECISION_FR3_INSPIRE_URDF=${PRECISION_FR3_INSPIRE_URDF:-$ROOT/autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf}

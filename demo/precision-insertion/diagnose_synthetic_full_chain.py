@@ -9,7 +9,9 @@ The socket/base, board, key pose and joint start here are hypothetical.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr, redirect_stdout
+from contextvars import copy_context
 import hashlib
 import json
 from pathlib import Path
@@ -30,6 +32,7 @@ from precision_insertion.planner_factory import new_offline_fr3_planner  # noqa:
 from precision_insertion.calibration import SessionCalibration  # noqa: E402
 from precision_insertion.candidates import select_pose_candidates  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
+from precision_insertion.curobo_compat import install_curobo_planner_compat  # noqa: E402
 from precision_insertion.path_audit import PathAuditLimits  # noqa: E402
 from precision_insertion.planner_mode import (  # noqa: E402
     require_declared_cartesian_mode,
@@ -37,7 +40,7 @@ from precision_insertion.planner_mode import (  # noqa: E402
 from precision_insertion.trial_preflight import (  # noqa: E402
     plan_fresh_key_trial, write_trial_preflight_artifacts,
 )
-from precision_insertion.timing_profile import profile_run  # noqa: E402
+from precision_insertion.timing_profile import profile_run, timed  # noqa: E402
 from precision_insertion.world import add_fixed_mesh_fixtures  # noqa: E402
 
 
@@ -115,6 +118,10 @@ def main(argv: list[str] | None = None) -> int:
         "--use-cuda-graph", action="store_true",
         help="match the live GraspPlanner CUDA-graph default for timing probes",
     )
+    parser.add_argument(
+        "--prewarm-fixed-world", action="store_true",
+        help="initialize cuRobo on the frozen table/socket scene before key planning",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
@@ -169,6 +176,16 @@ def main(argv: list[str] | None = None) -> int:
             with log.open("w", encoding="utf-8") as stream:
                 with redirect_stdout(stream), redirect_stderr(stream):
                     with profile_run(output):
+                        if args.prewarm_fixed_world:
+                            def prewarm():
+                                with timed("startup.planner_fixed_world_warmup",
+                                           phase="startup", kind="planning"):
+                                    install_curobo_planner_compat()
+                                    planner._set_motion_world(
+                                        calibration.collision_scene)
+
+                            with ThreadPoolExecutor(max_workers=1) as pool:
+                                pool.submit(copy_context().run, prewarm).result()
                         result = plan_fresh_key_trial(
                             planner=planner, mode=mode, shared_root=root,
                             calibration=calibration, catalog=catalog,
@@ -188,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
                 "synthetic": True, "robot_ready": False,
                 "planner_mode": args.planner_mode,
                 "use_cuda_graph": args.use_cuda_graph,
+                "prewarm_fixed_world": args.prewarm_fixed_world,
                 "error_type": type(exc).__name__, "error": str(exc),
                 "traceback": traceback.format_exc(),
                 "planner_log_sha256": _sha(output / log.name),
@@ -209,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
         "robot_urdf_path": str(paths.robot_urdf),
         "robot_urdf_sha256": _sha(paths.robot_urdf),
         "use_cuda_graph": args.use_cuda_graph,
+        "prewarm_fixed_world": args.prewarm_fixed_world,
         "source_catalog": str(catalog_path),
         "source_catalog_sha256": _sha(catalog_path),
         "key_tabletop_pose": str(tabletop_path),

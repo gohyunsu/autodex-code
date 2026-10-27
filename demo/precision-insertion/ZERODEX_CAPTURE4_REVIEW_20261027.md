@@ -775,3 +775,28 @@ synthetic_latency_20261028_pose000_first5_fixed/`. Thus the repaired planner
 can complete one sampled full chain in a hypothetical upright scene; the
 four-row lying catalogue has narrower coverage at this hypothetical layout.
 It does **not** prove that the currently placed key is observed or executable.
+
+### 2026-10-28 fixed-world planner prewarm experiment
+
+At the same synthetic upright placement, a no-prewarm repeat spent 25.381 s
+in the first candidate's cuRobo `world_setup`. Initializing cuRobo first on
+the frozen table/socket world took 21.292 s and reduced that first candidate
+setup to 0.145 s; a separate-thread repeat reduced it to 0.164 s. All runs
+selected the same fourth candidate `table/0/20096` and reached the same
+`sampled_planning_pass` status. This moves a substantial cold initialization
+out of first-candidate planning but does not remove its computation, and the
+small total-runtime difference across separate GPU processes is not a
+controlled speedup claim.
+
+The ZeroDex live profile now opts into starting this one-time work after
+fixed-socket measurement and Qwen model loading, concurrently with the
+initial human key-placement wait. Every action joins the completed future
+before using the planner; the integration closes the worker before releasing
+the robot core. AutoDex defaults to no prewarm. The local RTX 3090
+separate-thread synthetic run exercised the actual cuRobo warmup and retained
+the same planning result. The live overlap benefit remains unmeasured because
+the current scene cannot produce a usable key mask and the ZeroDex robot
+backend has not been commissioned. The synthetic evidence is under
+`shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/
+synthetic_latency_20261028_pose000_prewarm_thread/` and its sibling
+`.timing/` directory.

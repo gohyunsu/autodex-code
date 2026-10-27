@@ -36,6 +36,19 @@ start the adapter if another experiment owns the cameras.
 - Local Qwen batches the three selected classification-camera pairs on one
   GPU. Prompts, replies and votes remain per camera. Metric key-point
   grounding still uses its separate native-pixel path.
+- The ZeroDex launcher sets `PRECISION_PREWARM_FIXED_WORLD=1` when the key
+  will be placed after the fixed-socket measurement. Once a live
+  session has measured the fixed socket and loaded Qwen, the planner initializes
+  its table/socket cuRobo world in a background thread while the operator
+  places the key. The first action joins that thread before key capture or
+  planner use; later trials reuse the initialized planner. Set the variable to
+  `0` to use the original first-candidate initialization. When
+  `PRECISION_KEY_ALREADY_PLACED=1`, the default is `0`: key perception runs
+  first because there is no placement wait to hide the GPU work. An explicit
+  `PRECISION_PREWARM_FIXED_WORLD=1` still overrides that choice. This does not
+  change any grasp, collision or task-success criterion. It is not exercised
+  by `--check` or `--camera-only`; live ZeroDex motion remains disabled until
+  its robot backend is connected.
 - The ZeroDex launcher sets `PRECISION_VISIBLE_GRIP_CAMERA_IDS` to the same
   three selected views. Its lift checkpoint uses measured Franka/Inspire FK,
   the straight-mount URDF and calibrated projections to crop the hand in each

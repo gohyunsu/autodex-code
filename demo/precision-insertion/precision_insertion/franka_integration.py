@@ -8,6 +8,9 @@ continue to own all task decisions and execution checkpoints.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
+import copy
 from dataclasses import replace
 from importlib import import_module
 import json
@@ -18,6 +21,7 @@ from typing import Mapping
 from uuid import uuid4
 
 from .checkpoint_camera import make_checkpoint_capture
+from .curobo_compat import install_curobo_planner_compat
 from .franka_core import (
     FrankaFeedbackSettings, FrankaSamplingSettings, open_franka_core,
 )
@@ -254,6 +258,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     sam_paths = (_sam_runtime_paths()
                  if options.xy_estimator == "sam_half_ellipse" else None)
     backend = None
+    warmup_pool = None
     sam_segmentor = None
     sam_log = (options.run_output_dir.parent /
                f".{options.run_output_dir.name}.sam_roi_worker.{uuid4().hex}.stderr.log"
@@ -477,6 +482,13 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
 
     def close() -> None:
         try:
+            if warmup_pool is not None:
+                warmup_pool.shutdown(wait=True)
+        finally:
+            close_backend_and_core()
+
+    def close_backend_and_core() -> None:
+        try:
             # A three-view XY quorum can leave remote Qwen requests draining.
             # Their view threads may still be entering the shared SAM worker.
             if callable(getattr(backend, "close", None)):
@@ -494,4 +506,26 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 finally:
                     core.close()
 
-    return LiveRuntimeIntegration(core.clear_view, components, close)
+    def begin_fixed_world_warmup(live):
+        nonlocal warmup_pool
+        if warmup_pool is not None:
+            raise RuntimeError("fixed-world planner warmup already started")
+        scene = copy.deepcopy(live.started.calibration.collision_scene)
+        warmup_pool = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="precision-curobo-warmup")
+        context = copy_context()
+
+        def prewarm():
+            with timed("startup.planner_fixed_world_warmup",
+                       phase="startup", kind="planning"):
+                install_curobo_planner_compat()
+                core.planner._set_motion_world(scene)
+
+        return warmup_pool.submit(context.run, prewarm)
+
+    return LiveRuntimeIntegration(
+        core.clear_view, components, close,
+        begin_fixed_world_warmup=(
+            begin_fixed_world_warmup
+            if os.environ.get("PRECISION_PREWARM_FIXED_WORLD") == "1"
+            else None))

@@ -41,14 +41,29 @@ def test_zerodex_launcher_provides_demo_collision_compat(tmp_path):
         (stage / name).write_text("{}\n", encoding="utf-8")
     fake_check = tmp_path / "fake_check"
     fake_check.write_text(
-        "#!/bin/sh\nprintf 'PYTHONPATH=%s\\n' \"$PYTHONPATH\"\n",
+        "#!/bin/sh\nprintf 'PYTHONPATH=%s\\nPREWARM=%s\\n' "
+        "\"$PYTHONPATH\" \"$PRECISION_PREWARM_FIXED_WORLD\"\n",
         encoding="utf-8")
     fake_check.chmod(0o755)
     env = dict(os.environ, PRECISION_STAGE_ROOT=str(stage),
                PRECISION_CHECK_PY=str(fake_check),
                PRECISION_EXTRA_PYTHONPATH=str(demo / "compat"))
+    env.pop("PRECISION_PREWARM_FIXED_WORLD", None)
     completed = subprocess.run(
         ["bash", str(demo / "run_zerodex_capture4.sh"), "--check"],
         env=env, capture_output=True, text=True, check=True)
     expected = f"PYTHONPATH={demo / 'compat'}:{root}:"
     assert expected in completed.stdout
+    assert "PREWARM=1" in completed.stdout
+
+    env["PRECISION_KEY_ALREADY_PLACED"] = "1"
+    already_placed = subprocess.run(
+        ["bash", str(demo / "run_zerodex_capture4.sh"), "--check"],
+        env=env, capture_output=True, text=True, check=True)
+    assert "PREWARM=0" in already_placed.stdout
+
+    env["PRECISION_PREWARM_FIXED_WORLD"] = "1"
+    overridden = subprocess.run(
+        ["bash", str(demo / "run_zerodex_capture4.sh"), "--check"],
+        env=env, capture_output=True, text=True, check=True)
+    assert "PREWARM=1" in overridden.stdout
