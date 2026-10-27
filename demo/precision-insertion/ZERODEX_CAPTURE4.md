@@ -137,7 +137,10 @@ export PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src"
   --output /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/recipient_gap20_endpoint_catalog_straight.json
 ```
 
-The ZeroDex launcher selects `_straight.json` by default. Static preflight
+As of 2026-10-28, all six default `_straight.json` catalogs have been
+rescanned against the expanded 126-candidate v8 pool; the per-gap upright
+and side-down counts are in `SIDE_DOWN_CYLINDER_20261028.md`. The ZeroDex
+launcher selects `_straight.json` by default. Static preflight
 compares its screened mount-URDF hash to the actual local URDF once; the old
 right-angle catalog is rejected without scanning every candidate. The six
 previously copied right-angle catalogs are retained, not deleted, under
@@ -240,7 +243,7 @@ connects to Franka or Inspire. Use a new evidence
 directory for each run. `run_zerodex_capture4.sh --check` is a static asset
 preflight, not a camera or robot acceptance test. Its
 `candidates_by_tabletop_pose` counts distinguish the 106 eligible upright
-`000` grasps from the four eligible lying `001` grasps in the current gap-20
+`000` grasps from the five eligible lying `001` grasps in the current gap-20
 catalog. These are endpoint-screen results, not executable arm plans. The
 ZeroDex profile tries pose-matched grasps for both upright `000` and lying
 `001` first. A lying key enters reorientation only when its direct

@@ -46,9 +46,7 @@ side-down candidates. The launch's `--check` and a full source-verified
 profile path is
 `~/shared_data/AutoDex/precision_insertion/zerodex_capture4/recipient_gap20_endpoint_catalog_straight.json`;
 its previous version was moved into the archive below. The other five gap
-catalogs still contain the original pool and have not been rescanned with the
-two added IDs. They remain valid records of their prior candidates but are
-not current complete scans of the expanded pool.
+catalogs were subsequently refreshed as described at the end of this note.
 
 Run-specific evidence is under `~/shared_data/AutoDex/precision_insertion/`:
 
@@ -117,6 +115,25 @@ preserved at
 `zerodex_capture4/archive/catalog_before_endpoint_urdf_cache_20261028/`;
 the refreshed catalog is the default
 `zerodex_capture4/recipient_gap20_endpoint_catalog_straight.json`.
-The other five gap catalogs predate both the side-down pool expansion and
-this implementation hash; regenerate them before using those gaps as a
-complete current candidate pool.
+The other five straight-mount catalogs have now also been rescanned against
+the same 126-directory pool and current endpoint implementation. Their old
+124-directory versions are preserved at
+`zerodex_capture4/archive/catalogs_before_20261028_pool_refresh/`.
+None of the existing 124 candidates changed eligibility. New candidates
+`table/1/30699` and `30795` passed for gaps 1/3/5/10 mm; only `30699`
+passed for gaps 15/20 mm. Full source verification and the ZeroDex launcher
+`--check` pass for all six gaps:
+
+| Radial gap (mm) | Eligible upright `000` | Eligible side-down `001` | Total |
+| ---: | ---: | ---: | ---: |
+| 1 | 105 | 6 | 111 |
+| 3 | 105 | 6 | 111 |
+| 5 | 108 | 6 | 114 |
+| 10 | 108 | 6 | 114 |
+| 15 | 108 | 5 | 113 |
+| 20 | 106 | 5 | 111 |
+
+The five new scans ran concurrently on this 32-core host and took
+189.30-194.21 s each in wall time. They are offline endpoint results, not
+Franka trajectory or physical insertion passes. The default catalogs are
+`zerodex_capture4/recipient_gap{1,3,5,10,15,20}_endpoint_catalog_straight.json`.
