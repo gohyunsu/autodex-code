@@ -38,7 +38,11 @@ class _Planner:
         key = tuple(kwargs["candidate_override"][3][0])
         self.pickups.append(key)
         if key[-1] == "1":
-            return SimpleNamespace(success=False)
+            return SimpleNamespace(success=False, timing={
+                "world_setup_s": 0.15, "filter_s": 0.03,
+                "n_world_collision": 1, "n_valid": 0,
+                "jacobian_lift_failures": {},
+                "irrelevant_nested_data": {"large": "omitted"}})
         return SimpleNamespace(
             success=True, scene_info=key,
             pregrasp_pose=np.zeros(6), grasp_pose=np.ones(6) * 0.2,
@@ -180,6 +184,10 @@ def test_fresh_trial_tries_next_grasp_after_pickup_or_insertion_preflight_failur
     assert [row["insertion_preflight_status"]
             for row in result.attempted_candidates] == [
                 None, "transfer_unreachable", "sampled_planning_pass"]
+    assert result.attempted_candidates[0]["pickup_timing"] == {
+        "world_setup_s": 0.15, "filter_s": 0.03,
+        "n_world_collision": 1, "n_valid": 0,
+        "jacobian_lift_failures": {}}
     assert result.to_record()["robot_ready"] is False
 
 

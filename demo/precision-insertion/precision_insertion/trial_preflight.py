@@ -44,6 +44,28 @@ def _canonical_sha256(value: dict) -> str:
     ).encode("utf-8")).hexdigest()
 
 
+def _pickup_timing_summary(pickup: Any) -> dict:
+    """Keep stock planner timing with each attempted grasp, without new work."""
+    timing = getattr(pickup, "timing", None)
+    if not isinstance(timing, dict):
+        return {}
+    keys = (
+        "load_candidates_s", "world_setup_s", "filter_s", "ik_s",
+        "candidate_preflight_s", "approach_preflight_s",
+        "lift_preflight_s", "candidate_preflight_overhead_s",
+        "n_total", "n_collision", "n_world_collision", "n_self_collision",
+        "n_valid", "n_ik_success", "n_plan_attempts",
+        "n_lift_preflight_attempts", "n_lift_preflight_success",
+    )
+    result = {key: timing[key] for key in keys
+              if type(timing.get(key)) in (int, float) and
+              math.isfinite(timing[key])}
+    failures = timing.get("jacobian_lift_failures")
+    if isinstance(failures, dict):
+        result["jacobian_lift_failures"] = dict(failures)
+    return result
+
+
 def _rejected_path_summary(trial: InsertionPreflight, *, planner,
                            targets) -> dict:
     """Retain why a failed sampled candidate was skipped, without dense paths.
@@ -416,7 +438,8 @@ def plan_fresh_key_trial(
                     skip_done=False, success_only=False,
                     candidate_override=override)
             row = {"key": list(key), "pickup_preflight_pass": bool(pickup.success),
-                   "insertion_preflight_status": None}
+                   "insertion_preflight_status": None,
+                   "pickup_timing": _pickup_timing_summary(pickup)}
             if not pickup.success:
                 rows.append(row)
                 continue

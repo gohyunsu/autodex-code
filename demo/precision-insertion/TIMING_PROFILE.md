@@ -177,6 +177,10 @@ run is justified yet.
 
 `report_timing.py` ranks mutually exclusive `self_s` by operation and phase,
 and prints per-candidate operation costs plus `vlm.infer` by stage/camera.
+Each attempted grasp in the trial-preflight report also carries the stock
+planner's bounded `pickup_timing` breakdown (world/filter/IK/approach/lift
+times and candidate counts). This records why planning a pose took time
+without rerunning collision or IK checks; it adds no acceptance criterion.
 Important nested stages include:
 
 - `planning.candidate_load`, `planning.v8_pickup`, `planning.held_lift`,
