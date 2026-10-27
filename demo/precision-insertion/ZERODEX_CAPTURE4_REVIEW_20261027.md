@@ -983,3 +983,19 @@ per-run-launch tests pass, as do all 1,318 demo tests (5 skipped). A gap-5
 endpoint-eligible candidates. This is static validation, not a live
 gap-5 camera capture or a robot plan. The dedicated capture4 services were
 not running at this audit; no camera or robot command was issued.
+
+### 2026-10-28 05:21 fresh four-camera input check
+
+After confirming no capture4 camera process was running, the namespaced
+services were started for one default-exposure key request and stopped
+immediately afterward. All four same-request source frames, SAM replies and
+FoundPose replies arrived in 2.163 s after a 0.010 s init. Every SAM mask was
+empty and every FoundPose reply unsuccessful. Grayscale p99 was 8, 6, 9 and
+19/255 for cameras 25305462, 25322639, 25322642 and 26053248 respectively.
+The source PNGs remain nearly black, so this request cannot establish the
+lying key's tabletop pose or a current-scene Franka plan. The raw-frame
+identity and timing are in
+`zerodex_capture4/runs/inline_key_goal_followup_20261028_1/report.json`.
+No shared capture4 setting, robot or hand was changed. This strengthens the
+input/illumination diagnosis; another software acceptance threshold or
+perception retry would only add latency to the same unusable image.
