@@ -547,14 +547,8 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
         try:
             # A three-view XY quorum can leave remote Qwen requests draining.
             # Their view threads may still be entering the shared SAM worker.
-            active_backend = backend
-            if (active_backend is None and vlm_load_future is not None and
-                    vlm_load_future.exception() is None):
-                # The socket session may fail before handlers consume the
-                # preloaded model. Close that same instance on early exit.
-                active_backend = vlm_load_future.result()
-            if callable(getattr(active_backend, "close", None)):
-                active_backend.close()
+            if callable(getattr(backend, "close", None)):
+                backend.close()
         finally:
             try:
                 if sam_segmentor is not None:
