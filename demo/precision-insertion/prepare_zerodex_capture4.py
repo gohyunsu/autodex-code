@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Build a local four-camera profile from the commissioned cylinder catalog.
+"""Build a local four-camera profile from commissioned camera assets.
 
-This only copies/rebinds files. It does not connect to cameras or command a
-robot, and it does not change any success or failure threshold.
+This only copies/rebinds camera and runtime files. Grasp endpoint catalogs
+must be screened separately with the ZeroDex straight-mount URDF; the old
+AutoDex right-angle catalogs are deliberately not copied into this profile.
 """
 
 from __future__ import annotations
@@ -14,19 +15,6 @@ import shutil
 
 
 CAMERAS = ("26053248", "25322639", "25305462", "25322642")
-OLD_ROOT = "/home/robot/shared_data/hyunsu/tmp/precision_insertion_recipient_stage_20261013_b7e2392"
-
-
-def _rebind(value, shared_root: Path):
-    if isinstance(value, str):
-        return str(shared_root) + value[len(OLD_ROOT):] if value.startswith(OLD_ROOT) else value
-    if isinstance(value, list):
-        return [_rebind(item, shared_root) for item in value]
-    if isinstance(value, dict):
-        return {key: _rebind(item, shared_root) for key, item in value.items()}
-    return value
-
-
 def _write_json(path: Path, record) -> None:
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n",
                     encoding="utf-8")
@@ -62,6 +50,9 @@ def build(*, source_stage: Path, shared_root: Path, calibration_dir: Path,
         c2r_npy=str(output_dir / "calibration" / "C2R.npy"),
         pc_list=["capture4"], capture_ips=["147.46.219.136"],
         camera_ids=list(CAMERAS),
+        camera_acquisition_mode="stream",
+        minimum_socket_refined_iou=0.0,
+        socket_prompt="large hollow white cylindrical socket with a wide flat circular base",
     )
     _write_json(output_dir / "launch.json", launch)
 
@@ -79,16 +70,17 @@ def build(*, source_stage: Path, shared_root: Path, calibration_dir: Path,
     _write_json(output_dir / "franka_runtime.json", runtime)
 
     catalogs = []
+    missing_catalogs = []
     for gap in (1, 3, 5, 10, 15, 20):
-        source = source_stage / f"recipient_gap{gap}_endpoint_catalog_20261022.json"
-        catalog = _rebind(json.loads(source.read_text(encoding="utf-8")),
-                          shared_root)
-        target = output_dir / f"recipient_gap{gap}_endpoint_catalog.json"
-        _write_json(target, catalog)
-        catalogs.append(str(target))
+        target = output_dir / f"recipient_gap{gap}_endpoint_catalog_straight.json"
+        if target.is_file():
+            catalogs.append(str(target))
+        else:
+            missing_catalogs.append(str(target))
     return {"launch": str(output_dir / "launch.json"),
             "robot_config": str(output_dir / "franka_runtime.json"),
-            "catalogs": catalogs, "camera_ids": list(CAMERAS)}
+            "catalogs": catalogs, "missing_straight_mount_catalogs": missing_catalogs,
+            "camera_ids": list(CAMERAS)}
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -49,6 +49,9 @@ def main(argv: list[str] | None = None) -> int:
         "--capture", action="store_true",
         help="explicitly connect to AutoDex camera daemons and acquire frames; "
              "never commands the robot")
+    start_session.add_argument("--init-port-mask", type=int)
+    start_session.add_argument("--init-port-pose", type=int)
+    start_session.add_argument("--init-port-cmd", type=int)
     reorient_audit = command.add_parser(
         "audit-reorient", help="read-only v8 reset scene/seed readiness report",
     )
@@ -255,7 +258,13 @@ def main(argv: list[str] | None = None) -> int:
         if not args.capture:
             print(json.dumps(launch.readiness(), indent=2, sort_keys=True))
             return 0
-        started = capture_session(launch)
+        ports = (args.init_port_mask, args.init_port_pose,
+                 args.init_port_cmd)
+        if any(port is not None for port in ports) and any(
+                port is None for port in ports):
+            parser.error("supply all three precision init daemon ports")
+        started = capture_session(
+            launch, init_ports=None if ports == (None, None, None) else ports)
         print(json.dumps({
             **launch.readiness(), "session_evidence_dir": str(started.evidence_dir),
             "board_request_id": started.board_request_id,

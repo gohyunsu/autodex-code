@@ -422,7 +422,7 @@ def _verify_saved_socket_refinements(
             raise ValueError("saved socket refinement quality is invalid") from exc
         perception_mode = ("board_constrained_body" if board_body else
                            _stock_socket_perception_mode(selection))
-        if (not 0 < threshold <= 1 or
+        if (not 0 <= threshold <= 1 or (threshold == 0 and not board_body) or
                 gate not in ("all_view_iou", "stock_silhouette",
                              "stock_ignore_sil_loss", "board_constrained_body") or
                 (gate == "stock_silhouette" and perception_mode != "iou") or
@@ -582,7 +582,8 @@ def calibrate_session(
                 raise ValueError("socket refinement cameras differ from admitted views")
             threshold = float(refinement.minimum_refined_iou)
             board_body = refinement.refinement_gate == "board_constrained_body"
-            if (not math.isfinite(threshold) or not 0 < threshold <= 1 or
+            if (not math.isfinite(threshold) or not 0 <= threshold <= 1 or
+                    (threshold == 0 and not board_body) or
                     refinement.refinement_gate not in
                     ("all_view_iou", "stock_silhouette",
                      "stock_ignore_sil_loss", "board_constrained_body") or

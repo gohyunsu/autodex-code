@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 import sys
@@ -104,6 +105,25 @@ def test_check_only_loads_stock_calibration_and_does_not_connect(
     np.testing.assert_allclose(loaded.extrinsics_full["cam_a"], np.eye(4))
 
 
+def test_camera_only_cli_forwards_capture4_init_ports(tmp_path, monkeypatch, capsys):
+    config, record = _config(tmp_path)
+    _stub_time(monkeypatch)
+    called = []
+    def fake_capture(_launch, *, init_ports):
+        called.append(init_ports)
+        return SimpleNamespace(
+            evidence_dir=Path(record["evidence_dir"]), board_request_id=1,
+            socket_request_ids=(2,), calibration=SimpleNamespace(
+                record={"socket_pose_source": "test"}))
+    monkeypatch.setattr(launch, "capture_session", fake_capture)
+    assert run_pipeline.main([
+        "start-session", "--config", str(config), "--capture",
+        "--init-port-mask", "15006", "--init-port-pose", "15007",
+        "--init-port-cmd", "16893"]) == 0
+    assert called == [(15006, 15007, 16893)]
+    assert json.loads(capsys.readouterr().out)["socket_request_ids"] == [2]
+
+
 def test_single_socket_capture_launch_is_valid_in_static_check(tmp_path, monkeypatch):
     config, record = _config(tmp_path)
     _stub_time(monkeypatch)
@@ -111,6 +131,20 @@ def test_single_socket_capture_launch_is_valid_in_static_check(tmp_path, monkeyp
     config.write_text(json.dumps(record), encoding="utf-8")
     loaded = launch.load_session_launch(config)
     assert loaded.socket_capture_count == 1
+
+
+def test_profile_declares_capture4_stream_mode(tmp_path, monkeypatch):
+    config, record = _config(tmp_path)
+    _stub_time(monkeypatch)
+    record["camera_acquisition_mode"] = "stream"
+    config.write_text(json.dumps(record), encoding="utf-8")
+    loaded = launch.load_session_launch(config)
+    assert loaded.camera_acquisition_mode == "stream"
+    assert loaded.readiness()["camera_acquisition_mode"] == "stream"
+    record["camera_acquisition_mode"] = "invalid"
+    config.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match="camera acquisition mode"):
+        launch.load_session_launch(config)
 
 
 def test_board_body_launch_does_not_require_unused_socket_foundpose(
@@ -126,6 +160,7 @@ def test_board_body_launch_does_not_require_unused_socket_foundpose(
                         lambda **_kwargs: {"paths_bound_to_shared_root": True})
     record.update(mode={"family": "cylinder", "gap_mm": 20},
                   socket_perception_mode="board_constrained_body",
+                  minimum_socket_refined_iou=0.0,
                   camera_time_mode="bounded_request_interval",
                   board_id="9", minimum_board_corners=36,
                   board_capture_phase="socket_present_partial")
@@ -134,6 +169,16 @@ def test_board_body_launch_does_not_require_unused_socket_foundpose(
     assert not paths.foundpose_repre(mode.socket_object).exists()
     loaded = launch.load_session_launch(config)
     assert loaded.socket_perception_mode == "board_constrained_body"
+    assert loaded.minimum_socket_refined_iou == 0.0
+
+
+def test_stock_socket_keeps_positive_iou_limit(tmp_path, monkeypatch):
+    config, record = _config(tmp_path)
+    _stub_time(monkeypatch)
+    record["minimum_socket_refined_iou"] = 0.0
+    config.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match="socket IoU limit"):
+        launch.load_session_launch(config)
 
 
 def test_static_preflight_launch_cannot_open_camera_capture(tmp_path, monkeypatch):
@@ -306,6 +351,9 @@ def test_capture_closes_all_camera_connections_even_on_failure(
     monkeypatch.setattr(launch, "start_precision_session",
                         lambda **_kwargs: (_ for _ in ()).throw(
                             RuntimeError("camera capture failed")))
+    from precision_insertion import camera_stream
+    monkeypatch.setattr(camera_stream, "open_autodex_camera_stream",
+                        lambda *_args, **_kwargs: nullcontext())
     with pytest.raises(RuntimeError, match="camera capture failed"):
         launch.capture_session(loaded)
     assert events == ["snapshot_open", "tap_open", "init_open",

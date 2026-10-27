@@ -51,9 +51,10 @@ def _patch_camera_lifetime(monkeypatch, events):
                         lambda **_kwargs: events.append("catalog_preflight"))
 
     @contextmanager
-    def stream(pc_list, *, name):
+    def stream(pc_list, *, name, acquisition_mode):
         assert pc_list == launch.pc_list
         assert name == "precision_insertion_live"
+        assert acquisition_mode == "acquire"
         events.append("stream_open")
         try:
             yield object()

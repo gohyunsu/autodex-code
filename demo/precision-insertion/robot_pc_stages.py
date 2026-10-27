@@ -20,7 +20,7 @@ from precision_insertion.pickup_execution import PickupExecutionLimits
 from precision_insertion.retry_session import RetrySessionLimits
 
 
-KEY_PROMPT = "white plastic cylindrical peg"
+KEY_PROMPT = "white plastic cylindrical key"
 
 
 def _path_limits() -> PathAuditLimits:

@@ -70,6 +70,7 @@ class SessionLaunch:
     minimum_board_corners: int | None = 54
     board_capture_phase: str | None = "empty_before_socket"
     camera_time_mode: str = "calibrated_frame_id"
+    camera_acquisition_mode: str = "acquire"
     execution_scope: str = "live"
     fixture_contract_validated: bool = False
     scene_mode: str = "charuco_board"
@@ -87,6 +88,7 @@ class SessionLaunch:
                 serial: row.calibration_id
                 for serial, row in sorted(self.camera_times.items())},
             "camera_time_mode": self.camera_time_mode,
+            "camera_acquisition_mode": self.camera_acquisition_mode,
             "execution_scope": self.execution_scope,
             "scene_mode": self.scene_mode,
             "table_surface_z_m": self.table_surface_z_m,
@@ -291,6 +293,9 @@ def load_session_launch(
     intrinsics, extrinsics, image_hw = _load_stock_camera_calibration(
         calib_dir, camera_ids)
     time_mode = record.get("camera_time_mode", "calibrated_frame_id")
+    acquisition_mode = record.get("camera_acquisition_mode", "acquire")
+    if acquisition_mode not in ("acquire", "stream"):
+        raise ValueError("unknown camera acquisition mode")
     timing_paths = record.get("camera_time_calibrations")
     if time_mode == "calibrated_frame_id":
         if not isinstance(timing_paths, dict) or set(timing_paths) != camera_ids:
@@ -356,10 +361,15 @@ def load_session_launch(
             "board-constrained body fit is only for the fixed cylinder socket")
     values = {name: _positive(record.get(name), name=name) for name in (
         "board_timeout_s", "socket_timeout_s", "image_write_timeout_s",
-        "max_socket_translation_mm", "max_socket_angle_deg",
-        "minimum_socket_refined_iou")}
-    if values["minimum_socket_refined_iou"] > 1:
-        raise ValueError("socket per-view IoU threshold cannot exceed one")
+        "max_socket_translation_mm", "max_socket_angle_deg")}
+    score_limit = record.get("minimum_socket_refined_iou")
+    if (type(score_limit) not in (int, float) or
+            not math.isfinite(score_limit) or
+            not 0 <= score_limit <= 1 or
+            (score_limit == 0 and
+             socket_perception_mode != "board_constrained_body")):
+        raise ValueError("socket IoU limit must be in (0,1], or 0 for body-fit logging only")
+    values["minimum_socket_refined_iou"] = float(score_limit)
     return SessionLaunch(
         mode, root, capture_root, evidence, tuple(pcs), tuple(ips), camera_ids,
         intrinsics, extrinsics, image_hw, c2r, base_scene, camera_times,
@@ -369,6 +379,7 @@ def load_session_launch(
         board_capture_phase=board_capture_phase,
         scene_mode=scene_mode, table_surface_z_m=table_surface_z_m,
         camera_time_mode=time_mode, execution_scope=execution_scope,
+        camera_acquisition_mode=acquisition_mode,
         fixture_contract_validated=mode.family == "cylinder")
 
 
@@ -451,7 +462,9 @@ def open_session_cameras(
         yield OpenSessionCameras(launch, board, init, provider)
 
 
-def capture_session(launch: SessionLaunch) -> StartedPrecisionSession:
+def capture_session(
+    launch: SessionLaunch, *, init_ports: tuple[int, int, int] | None = None,
+) -> StartedPrecisionSession:
     """One-shot board/socket CLI capture; explicitly no robot connection."""
     if launch.execution_scope != "live":
         raise PermissionError("static preflight launch cannot capture cameras")
@@ -464,5 +477,11 @@ def capture_session(launch: SessionLaunch) -> StartedPrecisionSession:
             return False
         return response == ""
 
-    with open_session_cameras(launch) as cameras:
-        return cameras.start(confirm_socket_placement=confirm_socket_placement)
+    from .camera_stream import open_autodex_camera_stream
+
+    with open_autodex_camera_stream(
+            launch.pc_list, capture_ips=launch.capture_ips,
+            name="precision_insertion_camera_only",
+            acquisition_mode=launch.camera_acquisition_mode):
+        with open_session_cameras(launch, init_ports=init_ports) as cameras:
+            return cameras.start(confirm_socket_placement=confirm_socket_placement)

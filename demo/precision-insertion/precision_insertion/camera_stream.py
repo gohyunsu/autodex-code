@@ -20,6 +20,7 @@ def open_autodex_camera_stream(
     pc_list: tuple[str, ...], *, name: str,
     capture_ips: tuple[str, ...] | None = None,
     fps: int = 10, warmup_s: float = 2.0,
+    acquisition_mode: str | None = None,
     controller_factory: Callable | None = None,
 ) -> Iterator[object]:
     if (not pc_list or not all(isinstance(pc, str) and pc for pc in pc_list)
@@ -55,8 +56,9 @@ def open_autodex_camera_stream(
     arm_requested = False
     try:
         arm_requested = True
-        acquisition_mode = os.environ.get(
-            "PRECISION_CAMERA_ACQUISITION_MODE", "acquire")
+        acquisition_mode = (acquisition_mode if acquisition_mode is not None
+                            else os.environ.get(
+                                "PRECISION_CAMERA_ACQUISITION_MODE", "acquire"))
         if acquisition_mode == "stream":
             # capture4's ParaDex camera server predates the decoupled sink
             # API: arm("acquire") enters single-shot mode there. Its native

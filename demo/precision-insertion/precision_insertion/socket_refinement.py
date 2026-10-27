@@ -32,8 +32,9 @@ def refine_socket_capture(
 ) -> SocketCaptureRefinement:
     """Localize one socket from admitted AutoDex camera evidence.
 
-    Board-constrained body mode fits the fixed upright cylinder on CPU and
-    applies the configured threshold to its mean body IoU.  The legacy stock
+    Board-constrained body mode fits the fixed upright cylinder on CPU. An
+    IoU limit of zero records the score without vetoing its estimated pose.
+    The legacy stock
     modes retain their existing record format for saved-session replay.
     In those modes, the IoU threshold labels supporting views. A low-scoring
     view uses the stock silhouette result without an extra all-view veto.
@@ -47,7 +48,8 @@ def refine_socket_capture(
             admission.capture_id != capture.capture_id):
         raise ValueError("refinement needs matching captured/admitted evidence")
     threshold = float(minimum_refined_iou)
-    if not math.isfinite(threshold) or not 0 < threshold <= 1:
+    if (not math.isfinite(threshold) or not 0 <= threshold <= 1 or
+            (threshold == 0 and perception_mode != "board_constrained_body")):
         raise ValueError("socket refinement needs a valid body/mesh IoU limit")
     if (not isinstance(perception_mode, str) or
             perception_mode not in ("iou", "ignore_sil_loss",

@@ -43,7 +43,9 @@ def _disk_mask(E: np.ndarray, K: np.ndarray, radius: float,
     return mask.astype(bool)
 
 
-def test_board_socket_fit_keeps_axis_upright_with_one_flange_mask(tmp_path):
+@pytest.mark.parametrize("limit", [0.8, 0.0])
+def test_board_socket_fit_keeps_axis_upright_with_one_flange_mask(
+        tmp_path, limit):
     mesh = tmp_path / "socket.obj"
     mesh.write_text("\n".join(
         f"v {r * np.cos(a)} {r * np.sin(a)} {z}"
@@ -74,7 +76,7 @@ def test_board_socket_fit_keeps_axis_upright_with_one_flange_mask(tmp_path):
         extrinsics=cameras, _sil=None)
     row = refine_socket_capture(
         capture=capture, admission=admission, init_orchestrator=stock,
-        socket_object="socket", raw_mesh=mesh, minimum_refined_iou=.8,
+        socket_object="socket", raw_mesh=mesh, minimum_refined_iou=limit,
         perception_mode="board_constrained_body",
         board_pose_robot=board, c2r=np.eye(4))
     assert row.refinement_gate == "board_constrained_body"

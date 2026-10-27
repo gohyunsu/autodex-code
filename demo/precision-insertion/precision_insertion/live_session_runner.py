@@ -63,6 +63,18 @@ def preflight_endpoint_catalog_file(
                 not isinstance(row.get("tabletop_pose_stem"), str) or
                 not row["tabletop_pose_stem"] for row in rows)):
         raise ValueError("complete v8 catalog needs pose-indexed candidate rows")
+    # A grasp endpoint was screened with a particular flange-to-hand URDF.
+    # Hash that one small local file once, not every NAS candidate, so a
+    # right-angle AutoDex catalog cannot be replayed with ZeroDex's straight
+    # mount even when its socket/key identity and gap happen to match.
+    eligible = [row for row in rows if row.get("eligible") is True]
+    if eligible:
+        urdf = AssetPaths(root, mode).robot_urdf
+        screened_hashes = {
+            (row.get("endpoint_report") or {}).get("input_sha256", {}).get(
+                "robot_urdf") for row in eligible}
+        if screened_hashes != {_sha(urdf)}:
+            raise ValueError("v8 catalog was screened with another Franka/Inspire mount URDF")
     if verify_sources:
         for stem in sorted({row["tabletop_pose_stem"] for row in rows}):
             with timed("catalog.pose_source_validation", phase="catalog", kind="io",

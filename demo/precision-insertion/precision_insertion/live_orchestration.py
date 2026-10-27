@@ -208,7 +208,11 @@ def open_live_precision_session(
                 resources.enter_context(attach_running_autodex_camera_stream(
                     launch.pc_list, launch.capture_ips))
             else:
-                stream_kwargs = {"name": "precision_insertion_live"}
+                stream_kwargs = {
+                    "name": "precision_insertion_live",
+                    "acquisition_mode": getattr(
+                        launch, "camera_acquisition_mode", "acquire"),
+                }
                 if hasattr(launch, "capture_ips"):
                     stream_kwargs["capture_ips"] = launch.capture_ips
                 resources.enter_context(open_autodex_camera_stream(

@@ -136,6 +136,21 @@ def test_wrong_root_catalog_fails_before_session_ledger(tmp_path, monkeypatch):
     assert not args["output_dir"].exists()
 
 
+def test_catalog_rejects_a_different_franka_inspire_mount(tmp_path, monkeypatch):
+    args, _events = _setup(tmp_path, monkeypatch)
+    args["catalog_path"].write_text(json.dumps({
+        "shared_root": str(args["shared_root"]), "complete_scan": True,
+        "candidates": [{
+            "tabletop_pose_stem": "004", "eligible": True,
+            "endpoint_report": {"input_sha256": {"robot_urdf": "wrong"}},
+        }],
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="another Franka/Inspire mount"):
+        opening.preflight_endpoint_catalog_file(
+            mode=args["mode"], shared_root=args["shared_root"],
+            catalog_path=args["catalog_path"])
+
+
 def test_explicit_offline_catalog_audit_still_detects_stale_sources(tmp_path, monkeypatch):
     args, _events = _setup(tmp_path, monkeypatch)
     monkeypatch.setattr(opening, "select_pose_candidates",

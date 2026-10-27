@@ -79,6 +79,17 @@ def test_capture4_legacy_stream_mode_uses_native_start(monkeypatch):
     assert controller.events[-2:] == [("stop",), ("end",)]
 
 
+def test_capture4_probe_explicit_stream_mode_overrides_default(monkeypatch):
+    monkeypatch.delenv("PRECISION_CAMERA_ACQUISITION_MODE", raising=False)
+    controller = Controller()
+    with open_autodex_camera_stream(
+            ("capture1",), name=controller.name, warmup_s=0,
+            acquisition_mode="stream",
+            controller_factory=lambda *_args, **_kwargs: controller):
+        assert controller.events == [
+            ("start", "stream", {"syncMode": False, "fps": 10})]
+
+
 def test_camera_stream_rejects_foreign_owner_and_still_closes():
     controller = Controller(owner="another_run")
     with pytest.raises(RuntimeError, match="another controller"):
