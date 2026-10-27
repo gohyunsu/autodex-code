@@ -14,7 +14,7 @@ from precision_insertion.grounding_crop import (  # noqa: E402
     verify_native_crop_observation,
 )
 from precision_insertion.grounded_alignment import (  # noqa: E402
-    observe_grounded_cylinder_axis_cropped,
+    observe_grounded_cylinder_axis, observe_grounded_cylinder_axis_cropped,
 )
 from precision_insertion.xy_overlay import CalibratedXYFrame  # noqa: E402
 
@@ -125,6 +125,104 @@ def test_invalid_crop_canvas_mark_stays_rejected_without_aborting_other_views():
         assert verify_native_crop_observation(
             observations[index].to_record(),
             full_image_size_px=image.size)["tip_px"] == [130., 120.]
+
+
+def test_three_cropped_views_use_one_independent_qwen_batch():
+    class Backend:
+        native_pixel_coordinates = True
+        preferred_grounding_batch_size = 3
+        max_parallel_views = 1
+
+        def __init__(self):
+            self.requests = []
+
+        def infer_many(self, requests):
+            self.requests.append(requests)
+            return [(f'{{"tip_px":[{30 + index},20],"axis_line_px":'
+                     '[[40,30],[50,40]],"evidence":"visible shaft"}')
+                    for index in range(len(requests))]
+
+        def infer(self, _images, _prompt):
+            raise AssertionError("batched camera must not be called serially")
+
+    image = Image.new("RGB", (1280, 720))
+    intrinsic = np.array([[1000., 0., 640.], [0., 1000., 360.],
+                          [0., 0., 1.]])
+    cameras = ("view1", "view2", "view3")
+    frames = [CalibratedXYFrame(camera, 1., image, np.eye(4), intrinsic)
+              for camera in cameras]
+    backend = Backend()
+    views, observations = observe_grounded_cylinder_axis_cropped(
+        backend, frames,
+        roi_xyxy_by_camera={camera: (100, 100, 356, 356)
+                            for camera in cameras})
+    assert len(backend.requests) == 1
+    assert len(backend.requests[0]) == 3
+    assert [view.tip_uv_px for view in views] == [
+        (130., 120.), (131., 120.), (132., 120.)]
+    assert all(row.parse_error is None for row in observations)
+    assert all(row.latency_s >= 0 for row in observations)
+
+
+def test_cropped_grounding_batch_failure_preserves_serial_view_results():
+    class Backend:
+        native_pixel_coordinates = True
+        preferred_grounding_batch_size = 3
+        max_parallel_views = 1
+
+        def __init__(self):
+            self.serial_cameras = []
+
+        def infer_many(self, _requests):
+            raise RuntimeError("batch unavailable")
+
+        def infer(self, _images, prompt):
+            camera = prompt.split(".", 1)[0].split(" ", 1)[1]
+            self.serial_cameras.append(camera)
+            return ('{"tip_px":[30,20],"axis_line_px":'
+                    '[[40,30],[50,40]],"evidence":"visible shaft"}')
+
+    image = Image.new("RGB", (1280, 720))
+    intrinsic = np.array([[1000., 0., 640.], [0., 1000., 360.],
+                          [0., 0., 1.]])
+    cameras = ("view1", "view2", "view3")
+    frames = [CalibratedXYFrame(camera, 1., image, np.eye(4), intrinsic)
+              for camera in cameras]
+    backend = Backend()
+    views, observations = observe_grounded_cylinder_axis_cropped(
+        backend, frames,
+        roi_xyxy_by_camera={camera: (100, 100, 356, 356)
+                            for camera in cameras})
+    assert backend.serial_cameras == list(cameras)
+    assert [view.tip_uv_px for view in views] == [(130., 120.)] * 3
+    assert all(row.parse_error is None for row in observations)
+
+
+def test_uncropped_grounding_remains_per_view_with_batch_capable_backend():
+    class Backend:
+        native_pixel_coordinates = True
+        preferred_grounding_batch_size = 3
+        max_parallel_views = 1
+
+        def __init__(self):
+            self.serial_calls = 0
+
+        def infer_many(self, _requests):
+            raise AssertionError("full-frame grounding must not batch")
+
+        def infer(self, _images, _prompt):
+            self.serial_calls += 1
+            return ('{"tip_px":[30,20],"axis_line_px":'
+                    '[[40,30],[50,40]],"evidence":"visible shaft"}')
+
+    image = Image.new("RGB", (1280, 720))
+    intrinsic = np.eye(3)
+    frames = [CalibratedXYFrame(camera, 1., image, np.eye(4), intrinsic)
+              for camera in ("view1", "view2", "view3")]
+    backend = Backend()
+    views, _records = observe_grounded_cylinder_axis(backend, frames)
+    assert backend.serial_calls == 3
+    assert [view.tip_uv_px for view in views] == [(30, 20)] * 3
 
 
 def test_saved_crop_mapping_replays_and_detects_tampering():

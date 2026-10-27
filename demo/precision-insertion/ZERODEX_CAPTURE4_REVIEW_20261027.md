@@ -456,3 +456,29 @@ failure. These timings show that the collision-first and nearest-bound scan
 can save Coal work without changing a passing path's verdict, but do not establish
 the speedup distribution for real ZeroDex candidate pools. The current host
 GPU was used only for saved-path FK; no robot or camera was contacted.
+
+### 2026-10-28 cropped XY-grounding Qwen batch
+
+The local-Qwen lift/final classification path already batches independent
+camera conversations. The cropped insertion-tip/axis grounding path still
+decoded the selected three views serially. A warmed RTX 3090 microbenchmark
+using three saved 320 px capture4 crops and the same three independent
+grounding-style prompts gave 1.379 s serial, 1.092 s in 2+1 batches, and
+0.789 s in one three-view batch (median of two runs). All three decoded
+answer strings matched between these modes on this saved dark-frame input;
+this is a latency measurement, not evidence of correct landmark detection.
+The actual cropped-grounding function was also exercised with this loaded
+Qwen backend: one three-view batch took 1.35 s versus 2.07 s for its serial
+route, with the same three answers and no JSON parse errors. This single
+dark-frame replay is not a lit-scene accuracy or episode-latency result.
+
+The local backend now opts into one three-view batch **only for
+pixel-preserving cropped grounding**. It retains separate camera prompts,
+ordered answers, original-pixel crop mapping and the same JSON parsing.
+Uncropped high-resolution grounding and other backends retain their earlier
+per-view route. A failed local batch falls back to the existing per-view
+calls under the checkpoint's original strict/tolerant error policy; it does not
+introduce a new task-success or geometric rejection threshold. Timing is
+recorded as `vlm.grounding_batch`; per-view observation latency divides the
+shared batch wall time rather than counting it three times. Real lit-scene
+end-to-end latency still needs measurement.

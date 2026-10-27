@@ -820,7 +820,7 @@ def _observe_grounded_axis_line(
             "metric grounding requires verified native-pixel backend geometry")
     if len({frame.camera_id for frame in frames}) != len(frames):
         raise ValueError("line grounding needs unique camera IDs")
-    def observe_frame(frame: CalibratedXYFrame):
+    def prompt_for_frame(frame: CalibratedXYFrame) -> str:
         if not isinstance(frame.raw, Image.Image) or frame.raw.mode != "RGB":
             raise ValueError("line grounding needs original undistorted RGB")
         width, height = frame.raw.size
@@ -835,7 +835,7 @@ def _observe_grounded_axis_line(
             "Coordinates are displayed CROP-CANVAS pixels, origin top-left; "
             "never report a mark in the gray padded region or add the "
             "crop origin yourself.")
-        prompt = (
+        return (
             f"Camera {frame.camera_id}. {image_description}"
             "Key and socket are both white; distinguish by shape and "
             "location. From visible raw key pixels only, "
@@ -851,12 +851,54 @@ def _observe_grounded_axis_line(
             '"evidence":"visible image features only"}. '
             f"{coordinate_description}"
         )
+
+    batched_answers: dict[str, tuple[str, float]] = {}
+    batch_size = getattr(backend, "preferred_grounding_batch_size", 1)
+    if (crop_context_by_camera is not None and
+            type(batch_size) is int and batch_size > 1 and
+            callable(getattr(backend, "infer_many", None))):
+        # The live crop path retains each camera's independent prompt and
+        # pixel coordinates. If a batch cannot run, the ordinary per-camera
+        # path below still admits any views that do respond.
+        for offset in range(0, len(frames), batch_size):
+            group = frames[offset:offset + batch_size]
+            if len(group) < 2:
+                continue
+            requests = [([frame.raw], prompt_for_frame(frame))
+                        for frame in group]
+            started = time.perf_counter()
+            try:
+                with timed("vlm.grounding_batch", phase="vlm",
+                           kind="inference", view_count=len(group),
+                           model=_backend_model(backend)):
+                    answers = backend.infer_many(requests)
+                if (len(answers) != len(group) or
+                        any(not isinstance(answer, str)
+                            for answer in answers)):
+                    raise RuntimeError("grounding batch returned wrong answers")
+            except (RuntimeError, TimeoutError, ValueError):
+                # Batching is an optimization, not a new failure path. Let
+                # the existing per-view calls decide strict/tolerant errors.
+                continue
+            per_view_latency = (time.perf_counter() - started) / len(group)
+            batched_answers.update({
+                frame.camera_id: (answer, per_view_latency)
+                for frame, answer in zip(group, answers)})
+
+    def observe_frame(frame: CalibratedXYFrame):
+        width, height = frame.raw.size
+        prompt = prompt_for_frame(frame)
         started = time.perf_counter()
         try:
-            with timed("vlm.infer", phase="vlm", kind="inference",
-                       stage="grounded_axis", camera_id=frame.camera_id,
-                       model=_backend_model(backend), image_count=1):
-                answer = backend.infer([frame.raw], prompt)
+            cached = batched_answers.get(frame.camera_id)
+            if cached is None:
+                with timed("vlm.infer", phase="vlm", kind="inference",
+                           stage="grounded_axis", camera_id=frame.camera_id,
+                           model=_backend_model(backend), image_count=1):
+                    answer = backend.infer([frame.raw], prompt)
+                latency = time.perf_counter() - started
+            else:
+                answer, latency = cached
         except (RuntimeError, TimeoutError) as exc:
             if not tolerate_backend_failure:
                 raise
@@ -867,7 +909,6 @@ def _observe_grounded_axis_line(
                         (f"{phase}/{frame.camera_id}@{frame.timestamp_s:.6f}",),
                         f"backend_unavailable: {exc}", _backend_model(backend),
                         time.perf_counter() - started))
-        latency = time.perf_counter() - started
         if not isinstance(answer, str):
             raise TypeError("VLM backend must return text")
         try:
@@ -906,7 +947,9 @@ def _observe_grounded_axis_line(
             error, _backend_model(backend), latency)
         return view, record
 
-    results = map_view_calls(backend, frames, observe_frame)
+    results = ([observe_frame(frame) for frame in frames]
+               if len(batched_answers) == len(frames) else
+               map_view_calls(backend, frames, observe_frame))
     return [view for view, _ in results], [record for _, record in results]
 
 

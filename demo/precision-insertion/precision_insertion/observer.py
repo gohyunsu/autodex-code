@@ -241,6 +241,9 @@ class LocalQwenBackend:
         # may batch those separate conversations on one GPU; it never sees a
         # single mixed-camera conversation.
         self.preferred_image_batch_size = 2
+        # The three small, pixel-preserving grounding crops can share one
+        # Qwen decode. Full-resolution grounding remains one view at a time.
+        self.preferred_grounding_batch_size = 3
 
     @classmethod
     def from_transformers(
