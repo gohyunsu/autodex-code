@@ -49,7 +49,9 @@ export PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src"
 
 The ZeroDex launcher selects `_straight.json` by default. Static preflight
 compares its screened mount-URDF hash to the actual local URDF once; the old
-right-angle catalog is rejected without scanning every candidate.
+right-angle catalog is rejected without scanning every candidate. The six
+previously copied right-angle catalogs are retained, not deleted, under
+`zerodex_capture4/archive/autodex_right_angle_catalogs_20261027/`.
 
 ## Camera-only checks (robot and hand may remain off)
 
