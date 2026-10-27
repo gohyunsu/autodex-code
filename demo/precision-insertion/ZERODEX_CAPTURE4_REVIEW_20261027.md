@@ -526,3 +526,19 @@ cumulative cap was added. The static ZeroDex `--check` still reports 110/124
 20 mm-gap endpoint-eligible candidates (106 upright, 4 lying). The full demo
 unit suite passed **1280 tests, 5 skipped**. No current-scene Franka path or
 physical insertion has been validated.
+
+The capture4 checkout's `remote_camera_controller.start()` and
+`CameraLoader.start()` do not accept per-session gain/exposure arguments,
+although the PySpin camera object internally supports exposure at startup.
+A demo-local `capture4_exposure_daemon.py` now runs the **same stock camera
+server** after copying its in-memory per-serial camera metadata and replacing
+only the requested exposure. It executes the stock server script, including
+its single-instance lock; no shared `camera.json` or ParaDex source is edited.
+The namespaced service manager accepts an explicit `start --exposure-us VALUE`
+and otherwise retains the old baseline. Its three service processes remain
+separate, so this override is confined to the camera daemon. The code path
+and service-command tests passed, but a 20,000 µs live camera trial was
+**not** run: automated permission review rejected starting a shared camera
+daemon with changed exposure without the operator's explicit approval.
+No capture4 service was started by that rejected command. The current dark
+scene and SAM result therefore remain unchanged.

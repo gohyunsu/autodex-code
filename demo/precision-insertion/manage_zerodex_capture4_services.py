@@ -9,6 +9,7 @@ opened. A persistent perception process avoids cold SAM3 load on every trial.
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 import re
 import shlex
@@ -26,6 +27,7 @@ FILES = (
     "src/execution/daemon/init_daemon.py",
     "src/execution/daemon/snapshot_daemon.py",
     "demo/precision-insertion/precision_init_daemon.py",
+    "demo/precision-insertion/capture4_exposure_daemon.py",
     "demo/precision-insertion/precision_insertion/__init__.py",
     "demo/precision-insertion/precision_insertion/camera_transport.py",
     "demo/precision-insertion/precision_insertion/frame_provenance.py",
@@ -69,12 +71,14 @@ def deploy() -> None:
     )
 
 
-def _command(kind: str) -> str:
+def _command(kind: str, *, exposure_us: float | None = None) -> str:
     if kind == "camera":
         root = REMOTE_HOME / "paradex"
         python = REMOTE_HOME / "anaconda3/envs/flir_env/bin/python"
-        return (f"cd {root} && exec env PYTHONPATH={root} "
-                f"{python} src/camera/server_daemon.py")
+        setting = ("" if exposure_us is None else
+                   f"PRECISION_CAPTURE_EXPOSURE_US={exposure_us:g} ")
+        return (f"cd {root} && exec env PYTHONPATH={root} {setting}"
+                f"{python} {REMOTE}/demo/precision-insertion/capture4_exposure_daemon.py")
     python = REMOTE_HOME / "anaconda3/envs/gotrack_cu128/bin/python"
     module_root = REMOTE / "demo/precision-insertion"
     pythonpath = ":".join((str(module_root), str(REMOTE),
@@ -94,17 +98,25 @@ def _command(kind: str) -> str:
             "--port-mask 15006 --port-pose 15007 --port-cmd 16893")
 
 
-def start() -> None:
+def start(*, exposure_us: float | None = None) -> None:
+    if exposure_us is not None and (not math.isfinite(exposure_us) or
+                                    exposure_us <= 0):
+        raise ValueError("exposure override must be finite positive microseconds")
     # A warm session needs the running services, not another rsync into their
     # namespaced checkout. Reuse them without touching shared capture4 files.
-    if READY_PORTS <= _listening_ports():
+    listening = _listening_ports()
+    if READY_PORTS <= listening:
+        if exposure_us is not None:
+            raise RuntimeError("camera services are already running; stop our stack before changing exposure")
         print("capture4 services ready: " + ", ".join(map(str, sorted(READY_PORTS))))
         return
+    if exposure_us is not None and PORTS["camera"] in listening:
+        raise RuntimeError("camera daemon is already running; exposure override cannot be applied")
     deploy()
     for kind, port in PORTS.items():
         log = REMOTE / f"{kind}.log"
         pid = REMOTE / f"{kind}.pid"
-        command = _command(kind)
+        command = _command(kind, exposure_us=exposure_us if kind == "camera" else None)
         # Reuse an already listening service; never replace another owner.
         _ssh(
             f"if ss -lnt | grep -q ':{port} '; then "
@@ -139,10 +151,15 @@ def stop() -> None:
     for kind in reversed(tuple(PORTS)):
         pid = REMOTE / f"{kind}.pid"
         expected = {
-            "camera": "src/camera/server_daemon.py",
+            "camera": str(REMOTE / "demo/precision-insertion/capture4_exposure_daemon.py"),
             "snapshot": str(REMOTE / "src/execution/daemon/snapshot_daemon.py"),
             "precision": str(REMOTE / "demo/precision-insertion/precision_init_daemon.py"),
         }[kind]
+        # Older namespaced runs started the stock camera script directly.
+        # Their PID file remains ours; accept that one previous command too.
+        command_pattern = ("*capture4_exposure_daemon.py*|*src/camera/server_daemon.py*"
+                           if kind == "camera" else
+                           f"*{shlex.quote(expected)}*")
         _ssh(
             f"if test -f {shlex.quote(str(pid))}; then "
             f"p=$(cat {shlex.quote(str(pid))}); "
@@ -151,7 +168,7 @@ def stop() -> None:
             f"echo '{kind}: already stopped'; "
             "else "
             "cmd=$(tr '\\000' ' ' < /proc/$p/cmdline); "
-            f"case \"$cmd\" in *{shlex.quote(expected)}*) kill -TERM \"$p\";; "
+            f"case \"$cmd\" in {command_pattern}) kill -TERM \"$p\";; "
             "*) echo 'PID no longer belongs to our service' >&2; exit 1;; "
             "esac; fi; "
             f"rm {shlex.quote(str(pid))}; echo '{kind}: stopped'; fi"
@@ -161,8 +178,15 @@ def stop() -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("deploy", "start", "check", "stop"))
+    parser.add_argument("--exposure-us", type=float,
+                        help="capture4-only process-local exposure override; start action only")
     args = parser.parse_args()
-    {"deploy": deploy, "start": start, "check": check, "stop": stop}[args.action]()
+    if args.exposure_us is not None and args.action != "start":
+        parser.error("--exposure-us is valid only with start")
+    if args.action == "start":
+        start(exposure_us=args.exposure_us)
+    else:
+        {"deploy": deploy, "check": check, "stop": stop}[args.action]()
     return 0
 
 

@@ -137,6 +137,24 @@ Start the isolated services first, and stop them after the probe. This captures
 four raw source frames but does not measure a board/object pose or authorize
 robot motion.
 
+If the original raw frames are underexposed, the capture4-specific camera
+server can use an **explicit, temporary** exposure override without editing
+capture4's shared ParaDex source or `system/current/camera.json`. Run only
+when the four cameras are free and the shared-rig operator agrees to the
+temporary camera setting:
+
+```bash
+python3 demo/precision-insertion/manage_zerodex_capture4_services.py start --exposure-us 20000
+# Run the inline-frame probe above with a new evidence directory.
+python3 demo/precision-insertion/manage_zerodex_capture4_services.py stop
+```
+
+Without `--exposure-us`, each camera retains its configured baseline. The
+override applies only in our namespaced daemon process; it does not relax a
+SAM, FoundPose, board or planning threshold. A running service must be
+stopped before selecting a different exposure. The override's effect on the
+current lying-key scene has **not** yet been measured.
+
 The probe saves original-frame SAM mask overlays, a four-view grid and
 `report.json`; it saves board JPEGs even if ChArUco detection fails. It never
 connects to Franka or Inspire. Use a new evidence
