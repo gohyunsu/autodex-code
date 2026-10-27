@@ -23,6 +23,12 @@ def test_check_reports_missing_port(monkeypatch):
         services.check()
 
 
+def test_foundpose_attention_fallback_is_capture4_only():
+    assert "XFORMERS_DISABLED=1" in services._command("precision")
+    assert "XFORMERS_DISABLED" not in services._command("snapshot")
+    assert "XFORMERS_DISABLED" not in services._command("camera")
+
+
 def test_start_waits_until_all_ports_listen(monkeypatch):
     commands = []
     observations = iter((set(), services.READY_PORTS, services.READY_PORTS))

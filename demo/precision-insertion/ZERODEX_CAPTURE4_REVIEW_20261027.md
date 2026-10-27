@@ -128,3 +128,50 @@ This table counts MuJoCo-evidenced, nominal 20 mm CAD endpoint-eligible
 grasps, not completed Franka motions. The lying pose's four-candidate pool
 is a coverage limitation worth addressing after a lit FoundPose and real
 joint state make current-scene planning possible.
+
+### 2026-10-28 saved lying-key replay and pipeline review
+
+The earlier lit capture, request `2107810824`, has four same-request
+undistorted PNGs and SAM3 key masks. The read-only
+`probe_zerodex_saved_foundpose.py` replay uses the existing key representation
+and capture4's FoundPose environment without opening a camera or robot.
+Capture4's xFormers build has no float32 attention kernel for its GPU, so
+FoundPose initially threw `NotImplementedError` at DINOv2 attention. The
+ZeroDex precision service now sets DINOv2's supported `XFORMERS_DISABLED=1`
+environment variable before import, selecting PyTorch SDPA. This is scoped
+to the namespaced capture4 precision daemon and saved replay; the shared
+capture4 checkout and AutoDex robot-PC launch are unchanged. A direct GPU
+attention test and the four-view saved replay succeeded.
+
+All four views returned initial poses, but symmetry-aware physical key-centre
+spread was **92.3 mm** maximum and unoriented-axis spread **19.1°** maximum.
+Therefore per-view FoundPose success alone cannot authorize a grasp. The
+live cylinder tabletop path already treats raw disagreement as evidence and
+uses AutoDex IoU selection plus silhouette refinement. Capture4's older
+`InitOrchestrator` lacks the local `refine_from_payloads` wrapper; an optional
+saved diagnostic instead calls its identical-hash `pose_select.py` IoU method
+and capture4's silhouette optimizer directly. It selected view `25305462`
+at mean IoU **0.481**, then fit the four masks to mean IoU **0.866**
+(per-view **0.812–0.950**) and loss **0.000281**, below the existing
+`0.003` stock loss threshold. This is mask agreement, not independently
+measured 3D ground truth, and the capture4 optimizer version is not identical
+to the live local optimizer. The saved result is
+`shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/lying_key_probe_20261027_1/foundpose_core_refined_20261028.json`.
+
+Applying the current `C2R.npy` and demo symmetry classifier to that fitted
+pose selects lying tabletop stem `001` with **2.82°** axis residual. The
+20 mm-gap straight-mount catalog contains four endpoint-eligible grasps for
+that stem, but no actual-scene arm plan was run: this saved key probe contains
+no measured robot joints or same-session frozen socket/board calibration.
+Earlier synthetic planning failures must not be applied to this observed
+key. Current live imagery is still almost black (the later probe had 0/4
+key masks), and robot/hand remained powered off.
+
+The principal remaining end-to-end integration gap is robot ownership, not
+these four candidate files. The current precision FR3 core instantiates the
+AutoDex ParaDex ZMQ executor, whereas ZeroDex documentation identifies a
+ROS2 controller and robot IP `172.16.1.11`; the configured local daemon
+binary is unavailable with its required libfranka version. Choose and
+commission the intended ZeroDex robot backend before any motion. Static
+`run_zerodex_capture4.sh --check` passes with 124 catalog rows and 110
+endpoint-eligible rows, but deliberately does not establish live readiness.
