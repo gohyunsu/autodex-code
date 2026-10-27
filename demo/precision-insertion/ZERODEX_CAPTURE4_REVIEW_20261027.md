@@ -405,3 +405,24 @@ SAM3 checkpoint loaded. Both SAM3 files were present in the capture4 cache;
 opening cameras. The namespaced precision service now sets that variable,
 leaving shared capture4 programs unchanged. A controlled cold-start latency
 comparison has not been run.
+
+### 2026-10-28 candidate geometry-screen scheduling
+
+The recorded AutoDex episode `20261022_103429_752726` spent 54.1 s across
+two `audit.geometry_samples` spans (489 and 220 planned FK samples), versus
+6.8 s of cumulative VLM inference. That older robot-PC trace does not measure
+the current ZeroDex host or prove a current speedup. Inspection found that a
+candidate rejected by geometry still paid for exact Coal distance queries on
+far-separated key/hand–world pairs before reaching its first collision.
+
+`path_audit.py` now does a collision-first pass for candidate screening:
+the enclosing-AABB distance is a mathematical lower bound on mesh distance,
+so a pair farther than its existing clearance requirement cannot cause a
+rejection and needs no exact Coal query in that pass. A rejected candidate
+stops at its first definite collision; a passing candidate then runs the
+original exact minimum-distance scan. No collision threshold, clearance
+requirement, accepted path, or contact policy changed. The two passes have
+separate `audit.collision_screen` and `audit.minimum_distance_scan` timing
+spans. Unit tests compare first-failure identity, passing exact minima and
+Coal call counts. A wall-time reduction on realistic ZeroDex trajectories
+remains to be measured once a valid scene and robot state are available.

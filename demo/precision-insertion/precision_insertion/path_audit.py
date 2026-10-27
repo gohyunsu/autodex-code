@@ -299,53 +299,66 @@ def _audit_held_geometry_samples(
         "robot_urdf": _immutable_file_sha256(str(robot_path)),
         **world_hashes,
     }
-    for stage, poses in wrist.items():
-        for i, hand_pose in enumerate(poses):
-            key_pose = hand_pose @ key_in_hand
-            for moving_name, (model, moving_mesh) in moving.items():
-                moving_pose = key_pose if moving_name == "key" else hand_pose
-                for fixed_name, (fixed_model, fixed_pose, fixed_mesh,
-                                 occupancy) in fixed.items():
-                    if (allow_initial_key_table_support and stage == "lift" and
-                            i == 0 and moving_name == "key" and
-                            fixed_name == "cuboid/table"):
-                        continue
-                    fixed_inverse, fixed_bounds = fixed_frames[fixed_name]
-                    relative = fixed_inverse @ moving_pose
-                    pair = f"{moving_name}->{fixed_name}"
-                    required = (minimum_hand_clearance_m
-                                if moving_name != "key" else 0.0)
-                    # Coal's mesh distance dominates this loop. A disjoint
-                    # AABB cannot collide, and its gap is a lower bound on
-                    # the exact mesh distance. Once that bound exceeds both
-                    # the required clearance and the best exact distance for
-                    # this pair, this sample cannot change either result.
-                    lower_bound = _aabb_distance_lower_bound(
-                        moving_corners[moving_name], fixed_bounds, relative)
-                    if (lower_bound > required + 1e-9 and
-                            lower_bound - 1e-9 >=
-                            minimum_distances.get(pair, float("inf"))):
-                        continue
-                    # More than 2 nm of AABB separation also excludes the
-                    # 1 nm padded occupancy box, so only exact distance is
-                    # needed. Keep collision queries for touching boxes:
-                    # Coal can report contact with a tiny positive distance.
-                    result = _held_pair_report(
-                        model, moving_mesh, fixed_model, fixed_mesh,
-                        occupancy, relative, lower_bound > 2e-9)
-                    distance = result["minimum_surface_distance_m"]
-                    minimum_distances[pair] = min(
-                        distance, minimum_distances.get(pair, float("inf")))
-                    if result["colliding"] or distance < required:
-                        failures.append({"stage": stage, "sample": i,
-                                         "reason": "held_geometry_collision_or_clearance",
-                                         "moving": moving_name,
-                                         "obstacle": fixed_name,
-                                         "colliding": result["colliding"],
-                                         "distance_m": distance,
-                                         "required_clearance_m": required})
-                        if stop_on_first_failure:
-                            return failures, minimum_distances, source_hashes
+    def scan(*, collision_only: bool) -> bool:
+        for stage, poses in wrist.items():
+            for i, hand_pose in enumerate(poses):
+                key_pose = hand_pose @ key_in_hand
+                for moving_name, (model, moving_mesh) in moving.items():
+                    moving_pose = key_pose if moving_name == "key" else hand_pose
+                    for fixed_name, (fixed_model, _fixed_pose, fixed_mesh,
+                                     occupancy) in fixed.items():
+                        if (allow_initial_key_table_support and stage == "lift" and
+                                i == 0 and moving_name == "key" and
+                                fixed_name == "cuboid/table"):
+                            continue
+                        fixed_inverse, fixed_bounds = fixed_frames[fixed_name]
+                        relative = fixed_inverse @ moving_pose
+                        pair = f"{moving_name}->{fixed_name}"
+                        required = (minimum_hand_clearance_m
+                                    if moving_name != "key" else 0.0)
+                        lower_bound = _aabb_distance_lower_bound(
+                            moving_corners[moving_name], fixed_bounds, relative)
+                        # An enclosing AABB gap is a lower bound on the mesh
+                        # distance. The first pass only needs to find a
+                        # rejection; far pairs cannot violate clearance.
+                        if collision_only and lower_bound > required + 1e-9:
+                            continue
+                        # Passing candidates still need exact per-pair minima.
+                        # Skip only when the lower bound cannot improve one.
+                        if (not collision_only and
+                                lower_bound > required + 1e-9 and
+                                lower_bound - 1e-9 >=
+                                minimum_distances.get(pair, float("inf"))):
+                            continue
+                        # Disjoint AABBs also exclude surface collision and
+                        # occupancy; Coal only needs an exact distance query.
+                        result = _held_pair_report(
+                            model, moving_mesh, fixed_model, fixed_mesh,
+                            occupancy, relative, lower_bound > 2e-9)
+                        distance = result["minimum_surface_distance_m"]
+                        minimum_distances[pair] = min(
+                            distance, minimum_distances.get(pair, float("inf")))
+                        if result["colliding"] or distance < required:
+                            failures.append({
+                                "stage": stage, "sample": i,
+                                "reason": "held_geometry_collision_or_clearance",
+                                "moving": moving_name, "obstacle": fixed_name,
+                                "colliding": result["colliding"],
+                                "distance_m": distance,
+                                "required_clearance_m": required})
+                            if stop_on_first_failure:
+                                return True
+        return False
+
+    if stop_on_first_failure:
+        # Rejected candidates need only the first definite collision. A
+        # passing candidate gets the original exact-distance scan below, so
+        # its report and admission criterion remain unchanged.
+        with timed("audit.collision_screen", phase="planning", kind="geometry"):
+            if scan(collision_only=True):
+                return failures, minimum_distances, source_hashes
+    with timed("audit.minimum_distance_scan", phase="planning", kind="geometry"):
+        scan(collision_only=False)
     return failures, minimum_distances, source_hashes
 
 
@@ -364,8 +377,9 @@ def audit_held_joint_paths(
     A tilted socket is supported *only for checking a supplied axis-aligned
     path*; this function does not create such a path or contact controller.
     Candidate screening may stop after the first decisive geometry failure;
-    then minimum distances are only over inspected samples, as indicated by
-    ``geometry_scan_complete=False``. A passing audit always scans all samples.
+    then minimum distances include only exactly queried pairs before the
+    first failure, as indicated by ``geometry_scan_complete=False``. A
+    passing audit still reports exact minima over all samples.
     """
     limits.validate()
     root = Path(shared_root).expanduser().resolve()

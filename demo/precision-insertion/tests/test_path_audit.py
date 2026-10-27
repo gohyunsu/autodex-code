@@ -295,6 +295,58 @@ def test_candidate_geometry_scan_stops_after_first_collision(
                for row in report["failures"])
 
 
+def test_candidate_collision_first_scan_skips_far_exact_distances(
+        tmp_path, monkeypatch):
+    calibration, targets, _ = _fixture(tmp_path, monkeypatch)
+    far = np.eye(4)
+    far[:3, 3] = [-0.2, 0., .135]
+    touching = np.eye(4)
+    touching[:3, 3] = [.05, 0., .11]
+    arguments = dict(
+        shared_root=tmp_path, mode=targets.mode, calibration=calibration,
+        wrist={"transfer": [far] * 12 + [touching]},
+        T_key_hand=targets.T_key_hand, held_hand_q=np.zeros(6),
+        minimum_hand_clearance_m=0., stop_on_first_failure=True)
+    original = path_audit_module._held_pair_report
+    calls = []
+
+    def counted(*args):
+        calls.append(None)
+        return original(*args)
+
+    monkeypatch.setattr(path_audit_module, "_held_pair_report", counted)
+    with monkeypatch.context() as no_aabb_skip:
+        no_aabb_skip.setattr(
+            path_audit_module, "_aabb_distance_lower_bound", lambda *_: 0.)
+        baseline = path_audit_module._audit_held_geometry_samples(**arguments)
+    baseline_calls = len(calls)
+    calls.clear()
+    optimized = path_audit_module._audit_held_geometry_samples(**arguments)
+    assert optimized[0] == baseline[0]
+    assert optimized[0][0]["sample"] == 12
+    assert len(calls) < baseline_calls
+
+
+def test_candidate_collision_first_pass_keeps_exact_passing_minima(
+        tmp_path, monkeypatch):
+    calibration, targets, _ = _fixture(tmp_path, monkeypatch)
+    near = np.eye(4)
+    near[:3, 3] = [0., 0., .135]
+    far = near.copy()
+    far[0, 3] = -.2
+    arguments = dict(
+        shared_root=tmp_path, mode=targets.mode, calibration=calibration,
+        wrist={"transfer": [near, far] * 5},
+        T_key_hand=targets.T_key_hand, held_hand_q=np.zeros(6),
+        minimum_hand_clearance_m=0.)
+    full = path_audit_module._audit_held_geometry_samples(**arguments)
+    screened = path_audit_module._audit_held_geometry_samples(
+        **arguments, stop_on_first_failure=True)
+    assert screened[0] == full[0] == []
+    assert screened[1] == pytest.approx(full[1], abs=1e-12)
+    assert screened[2] == full[2]
+
+
 def test_disjoint_aabb_skips_surface_collision_and_containment_but_not_distance(
         monkeypatch):
     moving = trimesh.creation.box(extents=(0.01, 0.01, 0.01))
