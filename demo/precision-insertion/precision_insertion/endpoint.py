@@ -11,7 +11,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from functools import lru_cache
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 import numpy as np
@@ -42,6 +44,17 @@ def _load_mesh(path: Path):
     return mesh
 
 
+_HAND_URDF_LOCK = RLock()
+
+
+@lru_cache(maxsize=4)
+def _loaded_hand_urdf(path: str, signature: tuple[int, int]):
+    """Parse immutable robot geometry once; joint transforms remain per grasp."""
+    from yourdfpy import URDF
+
+    return URDF.load(path, build_scene_graph=True, load_meshes=True)
+
+
 def _hand_link_meshes(robot_urdf: Path, grasp_q: np.ndarray) -> dict:
     """Evaluate Inspire visual links in the URDF's `base_link` hand frame.
 
@@ -50,27 +63,29 @@ def _hand_link_meshes(robot_urdf: Path, grasp_q: np.ndarray) -> dict:
     helper, without importing that script's unrelated contact-policy and
     Open3D dependencies. `wrist_se3.npy` must therefore be T_key_hand.
     """
-    from yourdfpy import URDF
-
     hand_q = np.asarray(grasp_q, dtype=np.float64).reshape(-1)
     if hand_q.shape != (6,) or not np.all(np.isfinite(hand_q)):
         raise ValueError("Inspire grasp_pose.npy must contain six finite joints")
-    robot = URDF.load(str(robot_urdf), build_scene_graph=True, load_meshes=True)
-    joints = [joint.name for joint in robot.actuated_joints]
-    if len(joints) != 13 or not all(name.startswith("fr3_") for name in joints[:7]):
-        raise ValueError("unexpected Franka/Inspire URDF joint contract")
-    robot.update_cfg(dict(zip(joints, np.concatenate([np.zeros(7), hand_q]))))
-    hand_base = np.asarray(robot.get_transform("base_link", robot.base_link),
-                           dtype=np.float64)
-    hand_base_inverse = np.linalg.inv(hand_base)
-    result = {}
-    for name, mesh in robot.scene.geometry.items():
-        if not (name.startswith("base_link") or name.startswith("right_")):
-            continue
-        geometry_world, _ = robot.scene.graph.get(name)
-        local = mesh.copy()
-        local.apply_transform(hand_base_inverse @ geometry_world)
-        result[name] = local
+    path = Path(robot_urdf).expanduser().resolve()
+    stat = path.stat()
+    with _HAND_URDF_LOCK:
+        robot = _loaded_hand_urdf(
+            str(path), (stat.st_mtime_ns, stat.st_size))
+        joints = [joint.name for joint in robot.actuated_joints]
+        if len(joints) != 13 or not all(name.startswith("fr3_") for name in joints[:7]):
+            raise ValueError("unexpected Franka/Inspire URDF joint contract")
+        robot.update_cfg(dict(zip(joints, np.concatenate([np.zeros(7), hand_q]))))
+        hand_base = np.asarray(robot.get_transform("base_link", robot.base_link),
+                               dtype=np.float64)
+        hand_base_inverse = np.linalg.inv(hand_base)
+        result = {}
+        for name, mesh in robot.scene.geometry.items():
+            if not (name.startswith("base_link") or name.startswith("right_")):
+                continue
+            geometry_world, _ = robot.scene.graph.get(name)
+            local = mesh.copy()
+            local.apply_transform(hand_base_inverse @ geometry_world)
+            result[name] = local
     if not result or not any(name.startswith("right_") for name in result):
         raise ValueError("Inspire hand visual links are missing from the URDF")
     return result

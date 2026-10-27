@@ -92,3 +92,31 @@ reports, audit, manifest, and two installed candidate copies were moved to
 `.../precision_insertion/archive/20261028_side_down_wrong_mount/`. No old
 candidate was removed. The correct straight-mount report binds URDF SHA256
 `e5ecd9466883d15c5691895db3e5126dbd76844d02ff7972c8d8996c8492f5f3`.
+
+## Endpoint screening reuse and current catalog
+
+`endpoint._hand_link_meshes` previously parsed the complete Franka/Inspire
+URDF for every hand configuration. It now reuses the parsed model by resolved
+URDF path and file signature, while holding a lock across `update_cfg` and
+copying each transformed link mesh before releasing the lock. This changes
+neither the hand pose nor the collision/clearance criterion. A two-pose
+comparison with fresh URDF loads verifies every returned mesh vertex and
+triangle; the full precision-insertion suite reports 1,316 passed and 5
+skipped. A local microbenchmark measured roughly 0.40 s per repeated fresh
+parse versus 0.008-0.009 s per repeated cached hand configuration. This is a
+component measurement, not a claimed live-episode speedup; exact Coal
+screening still dominates the full catalog pass.
+
+Because catalogs bind the `endpoint.py` implementation hash, the complete
+straight-mount gap-20 catalog was rebuilt after this change. The scan took
+188.63 s and again returned 126 directories, 111 eligible, zero errors,
+with unchanged eligibility for every candidate. Full source verification
+returns 106 candidates for tabletop stem `000` and 5 for `001`, and
+`run_zerodex_capture4.sh --check` passes. The previous default catalog is
+preserved at
+`zerodex_capture4/archive/catalog_before_endpoint_urdf_cache_20261028/`;
+the refreshed catalog is the default
+`zerodex_capture4/recipient_gap20_endpoint_catalog_straight.json`.
+The other five gap catalogs predate both the side-down pool expansion and
+this implementation hash; regenerate them before using those gaps as a
+complete current candidate pool.

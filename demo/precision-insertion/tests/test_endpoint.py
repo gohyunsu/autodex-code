@@ -16,12 +16,46 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.assets import AssetPaths  # noqa: E402
 from precision_insertion.endpoint import (  # noqa: E402
+    _hand_link_meshes,
+    _loaded_hand_urdf,
     _mesh_pair_report,
     _nominal_inspire_hold_poses,
     _validate_geometry,
     screen_grasp_endpoint,
 )
 from precision_insertion.solid_occupancy import OccupancyResult  # noqa: E402
+
+
+def test_cached_hand_urdf_preserves_per_grasp_link_meshes():
+    from yourdfpy import URDF
+
+    robot_path = (Path(__file__).resolve().parents[3] / "autodex" / "planner" /
+                  "src" / "curobo" / "content" / "assets" / "robot" /
+                  "fr3_inspire_description" / "fr3_inspire.urdf")
+    _loaded_hand_urdf.cache_clear()
+    for hand_q in (np.zeros(6), np.array([.3, .2, .4, .5, .1, .2])):
+        cached = _hand_link_meshes(robot_path, hand_q)
+        fresh_robot = URDF.load(str(robot_path), build_scene_graph=True,
+                                load_meshes=True)
+        joints = [joint.name for joint in fresh_robot.actuated_joints]
+        fresh_robot.update_cfg(dict(zip(
+            joints, np.concatenate([np.zeros(7), hand_q]))))
+        hand_inverse = np.linalg.inv(np.asarray(fresh_robot.get_transform(
+            "base_link", fresh_robot.base_link), dtype=np.float64))
+        assert set(cached) == {name for name in fresh_robot.scene.geometry
+                               if name.startswith(("base_link", "right_"))}
+        for name, expected_mesh in fresh_robot.scene.geometry.items():
+            if name not in cached:
+                continue
+            transform, _ = fresh_robot.scene.graph.get(name)
+            expected = expected_mesh.copy()
+            expected.apply_transform(hand_inverse @ transform)
+            np.testing.assert_allclose(cached[name].vertices,
+                                       expected.vertices, rtol=0, atol=1e-12)
+            np.testing.assert_array_equal(cached[name].faces, expected.faces)
+    assert _loaded_hand_urdf.cache_info().misses == 1
+    assert _loaded_hand_urdf.cache_info().hits >= 1
+    _loaded_hand_urdf.cache_clear()
 
 
 def _geometry():
