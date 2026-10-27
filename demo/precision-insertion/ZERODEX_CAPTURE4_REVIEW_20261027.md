@@ -763,3 +763,15 @@ work at measured key/socket poses. The current camera scene still lacks
 usable key masks, and the actual robot state was not queried. Static
 `run_zerodex_capture4.sh --check` and all precision-demo tests pass
 (1,300 passed, 5 skipped). No new failure threshold was introduced.
+
+For a control comparison with the same straight URDF, gap-20 socket, table,
+hypothetical key/socket XY and stock diagnostic start joints, an upright-key
+(`000`) run reached `sampled_planning_pass` on its fourth candidate,
+`table/0/20096`. The first two pickup IKs failed and the third candidate's
+held transfer was unreachable. First-candidate world setup took 26.232 s;
+the later three world updates took 0.002–0.016 s. See
+`shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/
+synthetic_latency_20261028_pose000_first5_fixed/`. Thus the repaired planner
+can complete one sampled full chain in a hypothetical upright scene; the
+four-row lying catalogue has narrower coverage at this hypothetical layout.
+It does **not** prove that the currently placed key is observed or executable.
