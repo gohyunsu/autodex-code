@@ -1,6 +1,7 @@
 """Same-session raw VLM frames reuse AutoDex's open key transport."""
 
 from dataclasses import replace
+import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -22,6 +23,7 @@ from precision_insertion.raw_camera_capture import (  # noqa: E402
 from precision_insertion.tip_frame_window import (  # noqa: E402
     TipFrame, TipFrameWindow, load_tip_frame_window,
 )
+from precision_insertion.timing_profile import profile_run, timing_directory  # noqa: E402
 
 
 def test_checkpoint_capture_reuses_session_and_exact_frame_metadata():
@@ -138,7 +140,7 @@ def test_raw_snapshot_checkpoint_does_not_depend_on_key_pose(tmp_path):
 
 
 def test_snapshot_undistortion_matches_opencv_and_offline_derivation(tmp_path):
-    cameras = ("cam_a", "cam_b")
+    cameras = ("cam_a", "cam_b", "cam_c", "cam_d")
     original = {camera: np.random.default_rng(index).integers(
         0, 256, size=(48, 64, 3), dtype=np.uint8)
         for index, camera in enumerate(cameras)}
@@ -201,3 +203,45 @@ def test_snapshot_undistortion_matches_opencv_and_offline_derivation(tmp_path):
         tmp_path / "altered", phase="preinsert")
     with pytest.raises(ValueError, match="original undistortion"):
         verify_raw_camera_capture(bundle, phase="preinsert")
+
+
+def test_four_camera_undistortion_keeps_source_order_hashes_and_timing(tmp_path):
+    cameras = ("cam_a", "cam_b", "cam_c", "cam_d")
+    original = {camera: np.random.default_rng(index).integers(
+        0, 256, size=(48, 64, 3), dtype=np.uint8)
+        for index, camera in enumerate(cameras)}
+    K = np.array([[55., 0., 32.], [0., 56., 24.], [0., 0., 1.]])
+    distortion = np.array([.11, -.03, .002, -.001, 0.])
+    intrinsics = {camera: {
+        "K_orig": K, "K_undist": K, "dist_params": distortion}
+        for camera in cameras}
+    source = SimpleNamespace(
+        request_id=31, images_bgr=original,
+        frame_evidence={camera: {"frame_id": index + 1}
+                        for index, camera in enumerate(cameras)})
+    live = SimpleNamespace(cameras=SimpleNamespace(
+        snapshot_orchestrator=object(),
+        acquisition_metadata_for_request=lambda _request: None,
+        launch=SimpleNamespace(camera_ids=cameras,
+                               intrinsics_full=intrinsics)))
+    run_dir = tmp_path / "four_camera_run"
+    with profile_run(run_dir):
+        raw = capture_snapshot_checkpoint_frames(
+            live, phase="preinsert", timeout_s=2.,
+            snapshot_collector=lambda **_kwargs: source)
+    assert tuple(raw.images_bgr) == cameras
+    for camera in cameras:
+        expected = cv2.undistort(original[camera], K, distortion, None, K)
+        np.testing.assert_array_equal(raw.images_bgr[camera], expected)
+        assert raw.acquisition_metadata["frames"][camera][
+            "image_sha256"] == image_sha256(expected)
+    events = [json.loads(line) for line in (
+        timing_directory(run_dir) / "events.jsonl").read_text().splitlines()]
+    starts = [event for event in events if event.get("edge") == "start"]
+    batch = next(event for event in starts
+                 if event["name"] == "camera.undistort_batch")
+    children = [event for event in starts
+                if event["name"] == "camera.undistort_generation"]
+    assert batch["attributes"]["workers"] == 2
+    assert len(children) == len(cameras)
+    assert {child["parent_id"] for child in children} == {batch["span_id"]}

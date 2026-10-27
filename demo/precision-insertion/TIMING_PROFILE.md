@@ -186,7 +186,8 @@ Important nested stages include:
   `audit.key_model_lookup`, `audit.hand_urdf_fk`, `audit.wrist_fk_rollout`;
 - `camera.socket_mask_request` (or stock `camera.foundpose_request`),
   `camera.saved_frame_wait`,
-  `camera.frame_binding_verify`, `camera.undistort_generation` and
+  `camera.frame_binding_verify`, `camera.undistort_batch`,
+  `camera.undistort_generation` and
   `socket.body_fit` (or stock `socket.refine_capture`);
 - Live tabletop key `key.initial_visual_acquire` and
   `key.initial_visual_save` overlap `key.candidate_preflight`;

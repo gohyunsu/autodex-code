@@ -646,7 +646,8 @@ its two per-view board-XY centers differed by about 25 mm. The current
 the cylindrical wall's mid-height, although the mask can also contain the
 wide base flange. With only two contributing views their coordinate-wise
 median is the midpoint; this is not evidence of millimetric socket-center
-accuracy even when mean body IoU is accepted. The fitter now records each
+accuracy even when mean body IoU is accepted. At this diagnostic-only revision,
+the fitter recorded each
 view's residual from the median and the maximum pairwise disagreement in
 `body_fit` diagnostics, without adding a pose veto or changing the estimate.
 The next lit, socket-only capture should inspect these numbers and overlays
@@ -662,6 +663,8 @@ ZeroDex fixed-socket session evidence to reuse, so a first session still
 needs a lit socket-only measurement before this option can be used.
 
 ### 2026-10-28 flange-aware socket-center replay
+
+This revision supersedes the diagnostic-only estimator described above.
 
 The saved lit lying-key socket masks were revisited without a live camera.
 Both contributing masks resemble the 60 mm-radius base flange, not only the
@@ -691,3 +694,17 @@ review script now renders the selected region for each held-out mask rather
 than always rendering the wall. The new method improves consistency on this
 saved sample but does not establish submillimetre accuracy or current-scene
 insertability; the next lit socket-only session must verify its projections.
+
+### 2026-10-28 checkpoint undistortion latency
+
+Four saved capture4 inline source frames (2048 x 1536) were used as
+representative full-resolution content for the calibrated OpenCV remap and
+decoded-pixel SHA256 on kds-Z790. They are not raw snapshot JPEG pixels.
+Across 12 warm repetitions using the production image_sha256 function, the
+four-view serial median was 39.2 ms, while two CPU workers took 22.0 ms and
+four took 22.1 ms. All three modes produced
+the same four image hashes. Checkpoint undistortion now uses two workers and
+retains per-camera timing spans plus a new camera.undistort_batch span.
+This changes neither source pixels nor VLM inputs. The benchmark excludes
+camera transport, disk writes and Qwen, so it is not a measured full-episode
+speedup. No extra capture or admission criterion was added.

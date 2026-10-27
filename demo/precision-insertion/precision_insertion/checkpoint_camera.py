@@ -9,6 +9,8 @@ robot-PC feedback buffer. The older key-init request remains opt-in.
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from functools import lru_cache
 from uuid import uuid4
 
@@ -61,10 +63,8 @@ def capture_snapshot_checkpoint_frames(
     if (set(source.images_bgr) != set(launch.camera_ids) or
             set(source.frame_evidence) != set(launch.camera_ids)):
         raise ValueError("snapshot differs from the open AutoDex cameras")
-    undistorted = {}
-    calibration = {}
-    derived_evidence = {}
-    for camera, original in source.images_bgr.items():
+    def derive_camera(item):
+        camera, original = item
         row = launch.intrinsics_full[camera]
         K_orig = np.asarray(row["K_orig"], dtype=np.float64)
         K_undist = np.asarray(row["K_undist"], dtype=np.float64)
@@ -85,13 +85,29 @@ def capture_snapshot_checkpoint_frames(
                        camera_id=camera, capture_phase=phase):
                 image = cv2.remap(
                     original, maps[0], maps[1], cv2.INTER_LINEAR)
-        undistorted[camera] = image
-        calibration[camera] = {
+        calibration = {
             "K_orig": K_orig, "K_undist": K_undist,
             "dist_params": distortion}
-        derived_evidence[camera] = {
+        evidence = {
             **source.frame_evidence[camera],
             "image_sha256": image_sha256(image)}
+        return camera, image, calibration, evidence
+
+    items = list(source.images_bgr.items())
+    workers = min(2, len(items))
+    with timed("camera.undistort_batch", phase="camera", kind="image",
+               capture_phase=phase, image_count=len(items), workers=workers):
+        if workers == 1:
+            derived = [derive_camera(item) for item in items]
+        else:
+            with ThreadPoolExecutor(max_workers=workers,
+                                    thread_name_prefix="precision-undistort") as pool:
+                futures = [pool.submit(copy_context().run, derive_camera, item)
+                           for item in items]
+                derived = [future.result() for future in futures]
+    undistorted = {camera: image for camera, image, _, _ in derived}
+    calibration = {camera: row for camera, _, row, _ in derived}
+    derived_evidence = {camera: row for camera, _, _, row in derived}
     source_metadata = ({
         "request_id": source.request_id, "source": "camera_acquisition",
         "frames": source.frame_evidence} if retain_original else None)
