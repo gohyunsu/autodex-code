@@ -323,3 +323,22 @@ ZeroDex FR3. Choosing one is required before implementing a command adapter;
 merely substituting the IP in the ZMQ client would not make ROS2's joint
 trajectory controller provide the ZMQ velocity/feedback API. No robot
 connection or motion was attempted.
+
+### 2026-10-28 renderer scheduling correction
+
+The live session previously prewarmed a socket silhouette renderer before
+camera streaming even when `socket_perception_mode=board_constrained_body`.
+That socket path uses SAM masks and board-constrained body geometry; it never
+uses the local socket silhouette optimizer. The session now prewarms the
+**key** renderer in this mode, before the camera stream's heartbeat starts.
+The unchanged `start_precision_session()` mask-only socket initialization
+does not replace the already loaded key renderer, so the first key trial can
+reuse it. FoundPose's source frames, masks and acceptance rules are unchanged.
+
+An offline RTX 3090 constructor timing measured 12.663 s for the first
+renderer (socket in that order) and 0.003 s for the second renderer (key).
+Most of the 12.663 s is cold CUDA/JIT warmup and will still be paid when the
+key is constructed first. This change eliminates an unused object-specific
+load and shifts the key initialization out of the first trial; **it does not
+establish a 12-second total-session speedup**. The board-constrained routing
+is covered by a focused unit test. No new gating threshold was added.

@@ -191,18 +191,22 @@ def open_live_precision_session(
             cameras = resources.enter_context(open_session_cameras(
                 launch, **({} if init_ports is None else
                            {"init_ports": init_ports})))
-        # CUDA renderer warmup can occupy the Python process longer than the
-        # capture daemon's 5 s heartbeat lease. Prepare the object needed by
-        # this session before acquisition starts.
-        with timed(("startup.socket_renderer_warmup" if saved_session is None
-                    else "startup.key_renderer_warmup"), phase="startup"):
+        # CUDA renderer warmup can outlast the capture daemon's heartbeat
+        # lease, so do it before arming the camera stream. The board-constrained
+        # cylinder socket uses masks/body geometry, never a socket silhouette;
+        # prewarm the key renderer that its first trial will actually use.
+        warm_key = (saved_session is not None or
+                    getattr(launch, "socket_perception_mode", "iou") ==
+                    "board_constrained_body")
+        warm_object = (launch.mode.key_object if warm_key else
+                       launch.mode.socket_object)
+        with timed(("startup.key_renderer_warmup" if warm_key else
+                    "startup.socket_renderer_warmup"), phase="startup"):
             prepare_precision_silhouette(
                 init_orchestrator=cameras.init_orchestrator,
-                object_name=(launch.mode.socket_object if saved_session is None
-                             else launch.mode.key_object),
+                object_name=warm_object,
                 raw_mesh=AssetPaths(launch.shared_root, launch.mode).raw_mesh(
-                    launch.mode.socket_object if saved_session is None
-                    else launch.mode.key_object))
+                    warm_object))
         with timed("startup.camera_stream_open", phase="startup", kind="io"):
             if os.environ.get("PRECISION_ATTACH_CAMERAS") == "1":
                 resources.enter_context(attach_running_autodex_camera_stream(

@@ -126,6 +126,35 @@ def test_live_session_keeps_same_camera_transport_for_next_key(
     assert events[-2:] == ["stream_close", "camera_close"]
 
 
+def test_board_constrained_socket_prewarms_key_not_unused_socket_renderer(
+        tmp_path, monkeypatch):
+    events = []
+    launch = _patch_camera_lifetime(monkeypatch, events)
+    launch.mode.key_object = "precision_key_cylinder_r15_h80"
+    launch.socket_perception_mode = "board_constrained_body"
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text("{}", encoding="utf-8")
+
+    def warm_key(*, init_orchestrator, object_name, raw_mesh):
+        assert init_orchestrator == "same_init"
+        assert object_name == launch.mode.key_object
+        assert raw_mesh == (Path("/shared/object_processing") / object_name /
+                            "raw_mesh" / f"{object_name}.obj")
+        events.append("key_renderer_warmup")
+
+    monkeypatch.setattr(orchestration, "prepare_precision_silhouette", warm_key)
+    monkeypatch.setattr(
+        orchestration, "open_verified_session",
+        lambda **_kwargs: SimpleNamespace(runner="same_runner"))
+    with orchestration.open_live_precision_session(
+            launch_config_path=tmp_path / "launch.json",
+            endpoint_catalog_path=catalog, run_output_dir=tmp_path / "new_run",
+            max_xy_retries=None, clear_view=_clear_view(events)):
+        pass
+    assert events.index("key_renderer_warmup") < events.index("stream_open")
+    assert "socket_renderer_warmup" not in events
+
+
 def test_live_session_reuses_already_validated_launch(
         tmp_path, monkeypatch):
     events = []
