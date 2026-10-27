@@ -69,3 +69,41 @@ class LocalQwenModel:
             output[:, prompt_tokens:], skip_special_tokens=True,
             clean_up_tokenization_spaces=False)[0]
         return LocalQwenReply(answer=answer)
+
+    def infer_batch_images_prompt(
+        self, requests: list[tuple[list[Image.Image], str]], *,
+        max_new_tokens: int,
+    ) -> list[LocalQwenReply]:
+        """Decode independent camera pairs in one GPU pass, preserving order."""
+        if (not requests or
+                any(not images or any(not isinstance(image, Image.Image)
+                                      for image in images) or
+                    not isinstance(prompt, str) or not prompt.strip()
+                    for images, prompt in requests) or
+                type(max_new_tokens) is not int or max_new_tokens <= 0):
+            raise ValueError("Qwen batch needs ordered image/prompt pairs")
+        import torch
+        conversations = [
+            [{"role": "user", "content":
+              [{"type": "image", "image": image} for image in images] +
+              [{"type": "text", "text": prompt}]}]
+            for images, prompt in requests
+        ]
+        # Decoder-only generation reads the final prompt token of every row.
+        # Left padding therefore matters when camera IDs have different lengths.
+        self.processor.tokenizer.padding_side = "left"
+        encoded = self.processor.apply_chat_template(
+            conversations, tokenize=True, add_generation_prompt=True,
+            return_dict=True, return_tensors="pt", padding=True)
+        inputs = {name: value.to(self.device) if hasattr(value, "to") else value
+                  for name, value in encoded.items()}
+        with torch.inference_mode():
+            output = self.model.generate(
+                **inputs, max_new_tokens=max_new_tokens, do_sample=False)
+        prompt_tokens = inputs["input_ids"].shape[1]
+        answers = self.processor.batch_decode(
+            output[:, prompt_tokens:], skip_special_tokens=True,
+            clean_up_tokenization_spaces=False)
+        if len(answers) != len(requests):
+            raise RuntimeError("Qwen returned the wrong number of camera replies")
+        return [LocalQwenReply(answer=answer) for answer in answers]

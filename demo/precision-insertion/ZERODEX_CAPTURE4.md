@@ -24,6 +24,14 @@ start the adapter if another experiment owns the cameras.
 - Straight-mount cylinder catalogs: `recipient_gap{1,3,5,10,15,20}_endpoint_catalog_straight.json`
 - Franka/Inspire mount: `autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf`
 - Local Qwen weights: `/home/hyunsu/shared_data/AutoDex/models/Qwen3-VL-2B-Instruct`
+- Local silhouette renderer: `nvdiffrast v0.3.3` and FoundationPose imports
+  in `/home/hyunsu/.venvs/precision-vlm`. The ZeroDex launcher exports the
+  existing CUDA 12.1 toolkit and PyTorch-bundled header paths for first-use
+  RTX 3090 JIT compilation. `--check` is file-only; the saved-view GPU replay
+  below tests this renderer without a robot.
+- Local Qwen batches the three selected classification-camera pairs on one
+  GPU. Prompts, replies and votes remain per camera. Metric key-point
+  grounding still uses its separate native-pixel path.
 - Same-frame full-resolution capture exchange: the existing SAM mask PUB message
   now also carries one lossless PNG of its source frame. The main PC writes it
   under local `zerodex_capture4/<capture_id>_request_<id>/images/`.
@@ -46,6 +54,25 @@ Normal per-trial key planning already uses a pose-only FoundPose request and
 an overlapping initial VLM snapshot; it did not wait for the NAS source PNG.
 This change mainly helps the session's socket capture and full-image QA or
 recovery requests. It is not a measured 20–40 s saving on every trial.
+
+`requirements-local-vlm.txt` does not install the renderer. The working
+`nvdiffrast v0.3.3` source is already at
+`/home/hyunsu/shared_data/nvdiffrast`; install a copy into `precision-vlm`
+without editing that NAS source. The same environment needs the FoundationPose
+imports, including Open3D, ruamel.yaml, transformations and scikit-learn.
+The ZeroDex launcher sets the existing local CUDA toolkit/header paths for
+the renderer's first-use JIT. The saved-view replay in the review document
+checks the full local refinement path without opening cameras or the robot.
+
+```bash
+renderer_build=$(mktemp -d /tmp/precision-nvdiffrast.XXXXXX)
+cp -a /home/hyunsu/shared_data/nvdiffrast "$renderer_build/source"
+/home/hyunsu/.venvs/precision-vlm/bin/python -m pip install \
+  --no-build-isolation --no-deps "$renderer_build/source"
+```
+
+The current local `precision-vlm` environment already has this renderer and
+the required Python imports; these commands are for rebuilding it.
 
 The profile can be rebuilt with `prepare_zerodex_capture4.py --source-stage
 <commissioned-stage> --calibration-dir <capture4-calibration> --c2r-npy
@@ -140,7 +167,11 @@ cylindrical socket with a wide flat circular base`, segmented the socket in
 identity guarantee. The fixed session should measure the socket with the key
 absent, then add the key. The production key prompt is now `white plastic
 cylindrical key`; it segmented the lying key in 4/4 lit views, but this was
-SAM only, not a confirmed FoundPose pose.
+SAM only at the time of that probe. The later read-only replay did obtain
+FoundPose candidates in 4/4 views and passed the current local AutoDex
+IoU/silhouette refinement on those saved masks; see
+`ZERODEX_CAPTURE4_REVIEW_20261027.md`. This does not establish metric pose
+truth or live robot readiness.
 
 In the latest retry, all four board frames arrived in 0.46 s but ChArUco
 found 0/54 corners. The saved views were effectively unlit: their 99th

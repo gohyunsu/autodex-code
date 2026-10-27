@@ -16,4 +16,18 @@ export PRECISION_XY_ESTIMATOR=${PRECISION_XY_ESTIMATOR:-vlm}
 export PRECISION_FR3_INSPIRE_URDF=${PRECISION_FR3_INSPIRE_URDF:-$ROOT/autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf}
 export PRECISION_ENDPOINT_CATALOG=${PRECISION_ENDPOINT_CATALOG:-$PRECISION_STAGE_ROOT/recipient_gap${PRECISION_GAP_MM:-20}_endpoint_catalog_straight.json}
 
+# The main PC performs the current AutoDex silhouette refinement on its own
+# RTX 3090. nvdiffrast compiles its CUDA extension on first use and needs the
+# CUDA 12.1 headers bundled with this PC's existing PyTorch environment.
+export CUDA_HOME=${CUDA_HOME:-/home/hyunsu/miniconda3/envs/autodex_bodex}
+export TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST:-8.6}
+export MAX_JOBS=${MAX_JOBS:-4}
+PRECISION_CUDA_HEADERS="$CUDA_HOME/lib/python3.10/site-packages/nvidia"
+for precision_header_dir in cuda_runtime cusparse cublas cusolver; do
+  precision_include="$PRECISION_CUDA_HEADERS/$precision_header_dir/include"
+  if [[ -d "$precision_include" ]]; then
+    export CPATH="$precision_include${CPATH:+:$CPATH}"
+  fi
+done
+
 exec bash "$SCRIPT_DIR/run_robot_pc.sh" "${1:---check}"

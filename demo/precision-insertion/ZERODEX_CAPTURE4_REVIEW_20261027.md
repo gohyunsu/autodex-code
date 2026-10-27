@@ -16,9 +16,9 @@ right-angle mount profile remains separate.
 | Repose/reorient | The demo uses directed v8 reset seeds and plans a live path from the observed key pose. It does not reuse the stock reset runner, which lacks the new key pose-index map and the fixed socket fixture. | `audit-reorient` finds one MuJoCo-stable seed at 12 cm for each direction (upright→side, side→upright), none at 0/4/8 cm. No complete current-scene Franka reset path has been tested. |
 
 The GPU split is capture4 SAM3/FoundPose, local RTX 3090 Qwen/cuRobo. This
-avoids shipping intermediate model activations. The existing local Qwen
-backend processes the three selected VLM views sequentially; measured warm
-three-pair inference was about 0.84 s. Four same-frame full-resolution PNGs
+avoids shipping intermediate model activations. Before the latest GPU batch
+change, local Qwen processed the three selected VLM views sequentially.
+Four same-frame full-resolution PNGs
 crossing NAS took about 20–40 s in earlier lit probes. The new inline-PNG
 transport piggybacks the lossless source frame on the existing mask message,
 checks its request/frame ID and decoded-pixel SHA256 against FoundPose, and
@@ -175,3 +175,54 @@ binary is unavailable with its required libfranka version. Choose and
 commission the intended ZeroDex robot backend before any motion. Static
 `run_zerodex_capture4.sh --check` passes with 124 catalog rows and 110
 endpoint-eligible rows, but deliberately does not establish live readiness.
+
+The main-PC runtime environment had a separate missing dependency: its
+`precision-vlm` Python did not contain `nvdiffrast` or the FoundationPose
+renderer imports, although the capture4 environment did. The exact
+`nvdiffrast v0.3.3` source already on the NAS was installed into that local
+environment, with the required Python imports. The ZeroDex launcher now
+exposes the existing local CUDA 12.1 toolkit/header directories to
+`nvdiffrast`'s first-use JIT; it does not alter the AutoDex launcher. A real
+RTX 3090 initialization of the current solid-MTL cylinder-key renderer
+passed with 514 vertices and 1,024 faces.
+
+`probe_zerodex_saved_current_refine.py` then fed the saved same-frame
+FoundPose candidates and masks into the **current local**
+`InitOrchestrator.refine_from_payloads`, not capture4's older implementation.
+The same source view `25305462` was selected. Mean four-view IoU improved
+from **0.481** to **0.871**, and current silhouette loss was **0.000273**;
+the existing `0.003` stock gate accepted it. IoU selection took **0.064 s**
+and the 100-iteration silhouette step **0.858 s** after renderer startup.
+With the same `C2R.npy`, the current fitted pose classifies as lying stem
+`001` at **2.38°** axis residual (the older capture4 optimizer gave 2.82°).
+These times exclude capture, SAM, FoundPose, JIT/cold model load and arm
+planning; they are not an episode latency claim. The exact local result is
+`shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/lying_key_probe_20261027_1/current_stock_refined_20261028.json`.
+
+### 2026-10-28 pipeline improvement: batched classification views
+
+The active local Qwen path now batches the three independent same-camera
+temporal pairs for lift, pre-insertion transfer and final released-key labels.
+Each view retains its own prompt, raw answer, parse result and vote; only the
+single RTX 3090 model invocation is shared. Metric key-point grounding is
+unchanged. The run ledger records `vlm.view_batch` and `vlm.infer` with
+`gpu_batch_size=3`; the aggregate observation records wall-clock batch latency
+instead of adding three simultaneous view durations.
+
+On the same three saved camera images, production-sized 384×288 inputs and
+128-token maximum, a warm comparison gave **1.506 s** sequential inference
+versus **0.706 s** batched inference. Both returned `miss` from all three
+views; this is a deliberately identical before/after-image smoke test, not a
+grasp-success evaluation. Model load was **4.934 s** separately on the same
+PC. The full suite passed **1,258 tests, 5 skipped**; static `--check` reports
+124 candidates, 110 endpoint-eligible. No current-scene arm plan or live
+robot/camera integration was exercised in this benchmark.
+
+The local Qwen lift route still uses the generic full-frame temporal pair,
+not the older distributed AutoDex hand-centered crop (`supports_visible_grip_lift`
+is not set on this backend). A saved AutoDex held-key example was previously
+misclassified by that generic observer, whereas the old system's hand crop
+replayed correctly on its own cameras. That old result does not validate a
+crop on capture4: the straight mount, four camera projections and measured
+Franka joints must be checked together on actual ZeroDex held-key frames.
+No new lift-classification gate or unverified crop selection was added here.

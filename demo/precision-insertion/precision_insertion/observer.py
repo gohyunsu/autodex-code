@@ -237,9 +237,9 @@ class LocalQwenBackend:
         self.max_new_tokens = max_new_tokens
         self.native_pixel_coordinates = bool(require_native_pixels)
         self.classification_image_size = classification_image_size
-        # A physical 20-camera checkpoint must not become one 40-image Qwen
-        # request. The observer asks for one same-camera before/after pair at
-        # a time and conservatively combines independent labels.
+        # Each camera keeps its own temporal pair and answer. The local model
+        # may batch those separate conversations on one GPU; it never sees a
+        # single mixed-camera conversation.
         self.preferred_image_batch_size = 2
 
     @classmethod
@@ -343,6 +343,17 @@ class LocalQwenBackend:
             images, prompt, max_new_tokens=self.max_new_tokens)
         return result.answer
 
+    def infer_many(
+        self, requests: list[tuple[list[Image.Image], str]],
+    ) -> list[str]:
+        prepared = [
+            (self._native_images(images) if self.native_pixel_coordinates
+             else images, prompt)
+            for images, prompt in requests
+        ]
+        return [reply.answer for reply in self.vlm.infer_batch_images_prompt(
+            prepared, max_new_tokens=self.max_new_tokens)]
+
 
 # Older demo imports can still construct the same image adapter; the active
 # loader never imports or instantiates a ZeroDex module.
@@ -440,7 +451,7 @@ def _backend_model(backend: ImageVLM) -> str:
     return str(model) if model is not None else type(backend).__name__
 
 
-def _infer_closed_set(
+def _closed_set_request(
     backend: ImageVLM,
     *,
     stage: str,
@@ -449,7 +460,7 @@ def _infer_closed_set(
     field: str,
     allowed: frozenset[str],
     fallback: str,
-) -> VLMObservation:
+) -> tuple[tuple[str, ...], str, list[Image.Image], dict | None]:
     order = _frame_order(frames)
     prompt = (
         "Images are supplied in this exact order:\n"
@@ -474,15 +485,15 @@ def _infer_closed_set(
     images = [frame.image for frame in frames]
     prepare = getattr(backend, "prepare_classification_images", None)
     images, input_transform = prepare(images) if callable(prepare) else (images, None)
-    started = time.perf_counter()
-    camera_ids = sorted({frame.camera_id for frame in frames})
-    with timed("vlm.infer", phase="vlm", kind="inference",
-               stage=stage, camera_id=(camera_ids[0] if len(camera_ids) == 1
-                                      else "multiple"), camera_ids=camera_ids,
-               image_count=len(frames), image_sizes=[list(image.size) for image in images],
-               model=_backend_model(backend)):
-        answer = backend.infer(images, prompt)
-    latency = time.perf_counter() - started
+    return order, prompt, images, input_transform
+
+
+def _closed_set_result(
+    backend: ImageVLM, *, stage: str, frames: Sequence[LabeledFrame],
+    field: str, allowed: frozenset[str], fallback: str, answer: str,
+    prompt: str, order: tuple[str, ...], input_transform: dict | None,
+    latency_s: float,
+) -> VLMObservation:
     if not isinstance(answer, str):
         raise TypeError("VLM backend must return text")
     try:
@@ -505,7 +516,69 @@ def _infer_closed_set(
         error = str(exc)
     return VLMObservation(
         stage, parsed, answer, prompt, order, error,
-        _backend_model(backend), latency, input_transform=input_transform)
+        _backend_model(backend), latency_s, input_transform=input_transform)
+
+
+def _infer_closed_set(
+    backend: ImageVLM,
+    *,
+    stage: str,
+    frames: Sequence[LabeledFrame],
+    prompt_body: str,
+    field: str,
+    allowed: frozenset[str],
+    fallback: str,
+) -> VLMObservation:
+    order, prompt, images, input_transform = _closed_set_request(
+        backend, stage=stage, frames=frames, prompt_body=prompt_body,
+        field=field, allowed=allowed, fallback=fallback)
+    started = time.perf_counter()
+    camera_ids = sorted({frame.camera_id for frame in frames})
+    with timed("vlm.infer", phase="vlm", kind="inference",
+               stage=stage, camera_id=(camera_ids[0] if len(camera_ids) == 1
+                                      else "multiple"), camera_ids=camera_ids,
+               image_count=len(frames), image_sizes=[list(image.size) for image in images],
+               model=_backend_model(backend)):
+        answer = backend.infer(images, prompt)
+    latency = time.perf_counter() - started
+    return _closed_set_result(
+        backend, stage=stage, frames=frames, field=field, allowed=allowed,
+        fallback=fallback, answer=answer, prompt=prompt, order=order,
+        input_transform=input_transform, latency_s=latency)
+
+
+def _batch_closed_set(
+    backend: ImageVLM, *, stage: str,
+    requests: Sequence[tuple[Sequence[LabeledFrame], str]],
+    field: str, allowed: frozenset[str], fallback: str,
+) -> list[VLMObservation]:
+    prepared = [_closed_set_request(
+        backend, stage=stage, frames=frames, prompt_body=body,
+        field=field, allowed=allowed, fallback=fallback)
+        for frames, body in requests]
+    payloads = [(images, prompt) for _, prompt, images, _ in prepared]
+    cameras = [frames[0].camera_id for frames, _ in requests]
+    started = time.perf_counter()
+    with timed("vlm.view_batch", phase="vlm", kind="inference",
+               view_count=len(cameras), parallel_workers=1,
+               gpu_batch_size=len(cameras)):
+        with timed("vlm.infer", phase="vlm", kind="inference",
+                   stage=stage, camera_id="multiple", camera_ids=cameras,
+                   image_count=sum(len(images) for images, _ in payloads),
+                   model=_backend_model(backend)):
+            answers = backend.infer_many(payloads)
+    elapsed = time.perf_counter() - started
+    if len(answers) != len(requests):
+        raise RuntimeError("VLM batch returned the wrong number of views")
+    return [
+        _closed_set_result(
+            backend, stage=stage, frames=frames, field=field,
+            allowed=allowed, fallback=fallback, answer=answer,
+            prompt=prompt, order=pair_order,
+            input_transform=transform, latency_s=elapsed)
+        for (frames, _), (pair_order, prompt, _, transform), answer
+        in zip(requests, prepared, answers)
+    ]
 
 
 def _per_view_consensus(
@@ -513,7 +586,7 @@ def _per_view_consensus(
     prompt_body: str, field: str, allowed: frozenset[str], fallback: str,
     before: str, after: str, majority: bool = False,
 ) -> VLMObservation:
-    """Bound local VLM memory to a temporal pair, then require agreement.
+    """Keep camera conversations separate, then require agreement.
 
     Abstaining/invalid views do not vote. Most stages abstain on conflicting
     decisive cameras. The released-key stage uses a majority of configured
@@ -532,6 +605,7 @@ def _per_view_consensus(
         return _infer_closed_set(
             backend, stage=stage, frames=pair, prompt_body=prompt_body,
             field=field, allowed=allowed, fallback=fallback)
+    batched = False
     early = getattr(backend, "early_quorum_views", None)
     replay_cameras = getattr(backend, "replay_completed_camera_ids", None)
     if replay_cameras is not None:
@@ -556,6 +630,16 @@ def _per_view_consensus(
             backend, cameras, observe_camera, sufficient)
         voted_cameras = sorted(completed)
         observations = [completed[camera] for camera in voted_cameras]
+    elif len(cameras) > 1 and callable(getattr(backend, "infer_many", None)):
+        voted_cameras = cameras
+        pairs = [[next(frame for frame in frames
+                       if frame.camera_id == camera and frame.phase == phase)
+                  for phase in (before, after)] for camera in cameras]
+        observations = _batch_closed_set(
+            backend, stage=stage,
+            requests=[(pair, prompt_body) for pair in pairs],
+            field=field, allowed=allowed, fallback=fallback)
+        batched = True
     else:
         voted_cameras = cameras
         observations = map_view_calls(backend, cameras, observe_camera)
@@ -567,15 +651,19 @@ def _per_view_consensus(
         "Images are supplied in this exact order:\n" +
         "\n".join(f"{index + 1}: {label}" for index, label in
                   enumerate(order)) +
-        "\n\nEach camera's temporal pair was sent in a separate local VLM "
-        "request. The aggregate below is a deterministic consensus, not "
-        "an additional model reply.")
+        "\n\nEach camera's temporal pair was processed independently "
+        + ("within one GPU batch. " if batched else "as a separate VLM request. ")
+        + "The aggregate below is a deterministic consensus, not an additional "
+        "model reply.")
     return VLMObservation(
         stage, parsed, json.dumps(parsed, sort_keys=True), prompt, order,
         None, _backend_model(backend),
-        sum(row.latency_s for row in observations), aggregation={
+        (max(row.latency_s for row in observations) if batched else
+         sum(row.latency_s for row in observations)), aggregation={
             "schema": "precision_insertion_per_camera_vlm_consensus_v1",
             "per_view": [row.to_record() for row in observations],
+            **({"execution_mode": "single_gpu_batch",
+                "batch_latency_s": observations[0].latency_s} if batched else {}),
             **({"vote_rule": "configured_camera_majority"} if majority else {}),
             **({"completed_camera_ids": voted_cameras,
                 "requested_camera_ids": cameras} if early is not None else {}),
@@ -948,28 +1036,31 @@ def observe_preinsert_temporal_views(
         times = [frame.timestamp_s for frame in grouped[phase].values()]
         if max(times) - min(times) > max_capture_skew_s:
             raise ValueError("preinsert pair has asynchronous camera views")
-    def observe_camera(camera: str) -> VLMObservation:
+    allowed = frozenset({
+        "coarse_match", "gross_misalignment", "slip_or_miss", "unobservable",
+    })
+    def camera_request(camera: str) -> tuple[tuple[LabeledFrame, LabeledFrame], str]:
         before = grouped["after_lift"][camera]
         after = grouped["preinsert"][camera]
+        return (before, after), (
+            "Image 1 is the RAW after-lift view; image 2 is the RAW "
+            "preinsert view from the same camera. Both peg and socket "
+            "are white; use shape and location. Is the same white peg "
+            "still visibly held after transfer and roughly aligned "
+            "above the socket? Choose coarse_match only from visible "
+            "key pixels in both images. Choose gross_misalignment for "
+            "a visibly displaced or incompatible arrival, slip_or_miss "
+            "when the key is visibly no longer held, and unobservable "
+            "when occlusion prevents a comparison. Do not infer metric "
+            "XY, contact, insertion success or depth. "
+            f"Use only camera ID {camera}."
+        )
+    def observe_camera(camera: str) -> VLMObservation:
+        pair, prompt_body = camera_request(camera)
         return _infer_closed_set(
-            backend, stage="preinsert_visual", frames=(before, after),
-            prompt_body=(
-                "Image 1 is the RAW after-lift view; image 2 is the RAW "
-                "preinsert view from the same camera. Both peg and socket "
-                "are white; use shape and location. Is the same white peg "
-                "still visibly held after transfer and roughly aligned "
-                "above the socket? Choose coarse_match only from visible "
-                "key pixels in both images. Choose gross_misalignment for "
-                "a visibly displaced or incompatible arrival, slip_or_miss "
-                "when the key is visibly no longer held, and unobservable "
-                "when occlusion prevents a comparison. Do not infer metric "
-                "XY, contact, insertion success or depth. "
-                f"Use only camera ID {camera}."
-            ),
-            field="class", allowed=frozenset({
-                "coarse_match", "gross_misalignment", "slip_or_miss",
-                "unobservable",
-            }), fallback="unobservable",
+            backend, stage="preinsert_visual", frames=pair,
+            prompt_body=prompt_body, field="class", allowed=allowed,
+            fallback="unobservable",
         )
     early = getattr(backend, "early_quorum_views", None)
     if early is not None:
@@ -990,6 +1081,12 @@ def observe_preinsert_temporal_views(
             backend, cameras, observe_camera, sufficient)
         observed_cameras = sorted(completed)
         observations = [completed[camera] for camera in observed_cameras]
+    elif len(cameras) > 1 and callable(getattr(backend, "infer_many", None)):
+        observed_cameras = cameras
+        observations = _batch_closed_set(
+            backend, stage="preinsert_visual",
+            requests=[camera_request(camera) for camera in cameras],
+            field="class", allowed=allowed, fallback="unobservable")
     else:
         observed_cameras = cameras
         observations = map_view_calls(backend, cameras, observe_camera)

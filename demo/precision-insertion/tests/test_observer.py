@@ -82,6 +82,75 @@ def test_local_classification_resizes_only_model_inputs_and_records_mapping():
     assert row["parsed"]["class"] == "held"
 
 
+def test_local_qwen_batches_per_camera_pairs_but_keeps_independent_votes():
+    class StubQwen:
+        model_id = "local-batch-test"
+
+        def __init__(self):
+            self.requests = None
+
+        def infer_images_prompt(self, *_args, **_kwargs):
+            raise AssertionError("independent calls must use the batch")
+
+        def infer_batch_images_prompt(self, requests, *, max_new_tokens):
+            self.requests = requests
+            assert max_new_tokens == 128
+            return [SimpleNamespace(answer=json.dumps({
+                "class": "miss", "evidence_views": [camera],
+                "evidence": "key remains on board"}))
+                for camera in ("a", "b", "c")]
+
+    model = StubQwen()
+    backend = LocalQwenBackend(
+        model, max_new_tokens=128, require_native_pixels=False,
+        classification_image_size=(12, 12))
+    frames = [
+        LabeledFrame(camera, phase, float(stamp),
+                     Image.new("RGB", (24, 24), (stamp * 20, 0, 0)))
+        for camera in ("a", "b", "c")
+        for phase, stamp in (("before_grasp", 1), ("after_lift", 2))
+    ]
+    observed = observe_lift(backend, frames)
+    assert observed.parsed["class"] == "miss"
+    assert len(model.requests) == 3
+    assert [[image.size for image in images]
+            for images, _ in model.requests] == [[(12, 12)] * 2] * 3
+    assert [row["parsed"]["evidence_views"] for row in
+            observed.aggregation["per_view"]] == [["a"], ["b"], ["c"]]
+    assert observed.aggregation["execution_mode"] == "single_gpu_batch"
+    assert observed.latency_s == observed.aggregation["batch_latency_s"]
+
+
+def test_preinsert_temporal_local_batch_preserves_independent_camera_labels():
+    class StubQwen:
+        model_id = "local-batch-test"
+
+        def infer_images_prompt(self, *_args, **_kwargs):
+            raise AssertionError("camera pairs should be batched")
+
+        def infer_batch_images_prompt(self, requests, *, max_new_tokens):
+            assert len(requests) == 3 and max_new_tokens == 128
+            assert all(len(images) == 2 and "RAW after-lift" in prompt
+                       for images, prompt in requests)
+            return [SimpleNamespace(answer=json.dumps({
+                "class": "coarse_match", "evidence_views": [camera],
+                "evidence": "key held above socket"}))
+                for camera in ("a", "b", "c")]
+
+    backend = LocalQwenBackend(
+        StubQwen(), max_new_tokens=128, require_native_pixels=False,
+        classification_image_size=(12, 12))
+    frames = [
+        LabeledFrame(camera, phase, float(stamp), _image())
+        for camera in ("a", "b", "c")
+        for phase, stamp in (("after_lift", 1), ("preinsert", 2))
+    ]
+    observed = observe_preinsert_temporal_views(
+        backend, frames, max_capture_skew_s=.01)
+    assert observed.status == "coarse_match"
+    assert observed.supporting_cameras == ("a", "b", "c")
+
+
 def test_preinsert_temporal_uses_raw_same_camera_pairs_only():
     answer = lambda camera: json.dumps({
         "class": "coarse_match", "evidence_views": [camera],
