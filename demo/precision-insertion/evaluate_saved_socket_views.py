@@ -28,19 +28,30 @@ def _digest(path: Path) -> str:
 
 
 def _projection(pose: np.ndarray, extrinsic: np.ndarray, intrinsic: np.ndarray,
-                dimensions: tuple[float, float, float], shape: tuple[int, int]
+                dimensions: tuple[float, float, float], shape: tuple[int, int],
+                *, region: str = "wall",
+                flange_dimensions: tuple[float, float, float] | None = None,
                 ) -> tuple[np.ndarray, list[np.ndarray]]:
-    radius, bottom, top = dimensions
+    selected = []
+    if region in {"wall", "whole_body"}:
+        selected.append(dimensions)
+    if region in {"flange", "whole_body"}:
+        if flange_dimensions is None:
+            raise ValueError("flange projection needs its mesh dimensions")
+        selected.append(flange_dimensions)
+    if not selected:
+        raise ValueError(f"unknown socket mask region: {region}")
     angles = np.linspace(0, 2 * np.pi, 72, endpoint=False)
     rings = []
-    for z in (bottom, top):
-        points = np.stack((radius * np.cos(angles), radius * np.sin(angles),
-                           np.full_like(angles, z), np.ones_like(angles)))
-        camera = (extrinsic @ pose @ points)[:3]
-        if np.any(camera[2] <= 0):
-            raise ValueError("projected socket is behind camera")
-        pixels = intrinsic @ camera
-        rings.append(np.rint((pixels[:2] / pixels[2]).T).astype(np.int32))
+    for radius, bottom, top in selected:
+        for z in (bottom, top):
+            points = np.stack((radius * np.cos(angles), radius * np.sin(angles),
+                               np.full_like(angles, z), np.ones_like(angles)))
+            camera = (extrinsic @ pose @ points)[:3]
+            if np.any(camera[2] <= 0):
+                raise ValueError("projected socket is behind camera")
+            pixels = intrinsic @ camera
+            rings.append(np.rint((pixels[:2] / pixels[2]).T).astype(np.int32))
     silhouette = np.zeros(shape, dtype=np.uint8)
     cv2.fillConvexPoly(silhouette, cv2.convexHull(np.vstack(rings)), 1)
     return silhouette, rings
@@ -102,6 +113,9 @@ def evaluate(run_dir: Path, output: Path) -> dict:
     # full-resolution silhouette passes per held-out camera.
     points = full["per_view_board_xy_m"]
     dimensions = _barrel_dimensions(mesh)
+    flange_dimensions = (full["flange_radius_m"],
+                         full["flange_bottom_z_m"],
+                         full["flange_top_z_m"])
     rows = {}
     fig, axes = plt.subplots((len(admitted) + 4) // 5, 5,
                              figsize=(20, 4 * ((len(admitted) + 4) // 5)))
@@ -114,7 +128,9 @@ def evaluate(run_dir: Path, output: Path) -> dict:
         heldout_pose = c2r @ robot_pose
         model, rings = _projection(heldout_pose, extrinsic[serial],
                                    intrinsic[serial], dimensions,
-                                   masks[serial].shape)
+                                   masks[serial].shape,
+                                   region=full["per_view_selected_region"][serial],
+                                   flange_dimensions=flange_dimensions)
         intersection = np.count_nonzero(model & masks[serial])
         union = np.count_nonzero(model | masks[serial])
         score = float(intersection / union) if union else 0.0
@@ -124,6 +140,7 @@ def evaluate(run_dir: Path, output: Path) -> dict:
         rows[serial] = {
             "heldout_body_iou": score,
             "in_sample_body_iou": full["per_view_iou"][serial],
+            "selected_mask_region": full["per_view_selected_region"][serial],
             "heldout_fit_shift_from_full_mm": shift_mm,
             "heldout_board_xy_m": xy.tolist(),
             "frame_id": payload["frame_evidence"][serial]["frame_id"],

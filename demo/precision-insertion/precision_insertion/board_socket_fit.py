@@ -18,7 +18,7 @@ from .geometry import validate_se3
 from .timing_profile import timed
 
 
-def _barrel_dimensions(raw_mesh: Path) -> tuple[float, float, float]:
+def _mesh_vertices(raw_mesh: Path) -> np.ndarray:
     vertices = []
     with Path(raw_mesh).open(encoding="utf-8") as stream:
         for line in stream:
@@ -27,6 +27,10 @@ def _barrel_dimensions(raw_mesh: Path) -> tuple[float, float, float]:
     xyz = np.asarray(vertices, dtype=np.float64)
     if xyz.ndim != 2 or xyz.shape[1] != 3 or not np.all(np.isfinite(xyz)):
         raise ValueError("socket raw mesh has no finite vertices")
+    return xyz
+
+
+def _barrel_dimensions_from_vertices(xyz: np.ndarray) -> tuple[float, float, float]:
     z_top = float(xyz[:, 2].max())
     z_bottom = float(xyz[:, 2].min())
     top = xyz[np.isclose(xyz[:, 2], z_top, atol=1e-6)]
@@ -41,6 +45,52 @@ def _barrel_dimensions(raw_mesh: Path) -> tuple[float, float, float]:
     return radius, wall_bottom, z_top
 
 
+def _barrel_dimensions(raw_mesh: Path) -> tuple[float, float, float]:
+    return _barrel_dimensions_from_vertices(_mesh_vertices(raw_mesh))
+
+
+def _region_rings(radius: float, bottom: float, top: float) -> np.ndarray:
+    angles = np.linspace(0, 2 * np.pi, 72, endpoint=False)
+    return np.asarray([
+        [radius * np.cos(angle), radius * np.sin(angle), z, 1.0]
+        for z in (bottom, top) for angle in angles], dtype=np.float64)
+
+
+def _project_hull(points: np.ndarray, pose_robot: np.ndarray,
+                  robot_camera: np.ndarray, intrinsic: np.ndarray) -> np.ndarray:
+    camera = (robot_camera @ pose_robot @ points.T)[:3].T
+    if np.any(camera[:, 2] <= 0):
+        raise ValueError("socket region is behind camera")
+    projected = (intrinsic @ camera.T).T
+    pixels = (projected[:, :2] / projected[:, 2, None]).astype(np.float32)
+    return cv2.convexHull(pixels)
+
+
+def _hull_center(hull: np.ndarray) -> np.ndarray:
+    moments = cv2.moments(hull)
+    if moments["m00"] <= 0:
+        raise ValueError("socket region has no projected area")
+    return np.asarray([moments["m10"], moments["m01"]]) / moments["m00"]
+
+
+def _region_iou(hull: np.ndarray, mask: np.ndarray,
+                mask_bounds: tuple[int, int, int, int]) -> float:
+    """Compare only the union ROI, not a full-resolution frame per hypothesis."""
+    pixels = np.rint(hull).astype(np.int32)
+    x, y, width, height = cv2.boundingRect(pixels)
+    left = max(0, min(x, mask_bounds[0]))
+    top = max(0, min(y, mask_bounds[1]))
+    right = min(mask.shape[1], max(x + width, mask_bounds[2]))
+    bottom = min(mask.shape[0], max(y + height, mask_bounds[3]))
+    silhouette = np.zeros((bottom - top, right - left), dtype=np.uint8)
+    cv2.fillConvexPoly(
+        silhouette, pixels - np.array([[[left, top]]], dtype=np.int32), 1)
+    observed = mask[top:bottom, left:right]
+    intersection = np.count_nonzero(silhouette & observed)
+    union = np.count_nonzero(silhouette | observed)
+    return float(intersection / union) if union else 0.0
+
+
 def fit_board_socket_body(
     *, masks: Mapping[str, np.ndarray],
     intrinsics_undist: Mapping[str, np.ndarray],
@@ -51,9 +101,10 @@ def fit_board_socket_body(
 
     The rigid fixture sits on the measured board and has its open axis along
     the board normal.  Each mask centroid supplies a board-plane intersection
-    at the wall's mid-height.  A coordinate-wise median rejects views whose
-    SAM mask contains the flange instead of the wall.  Only the two board XY
-    coordinates are inferred; axial yaw is unobservable for this cylinder.
+    at the height of the mask region (wall, flange or their union). Region
+    choice uses the known mesh silhouette and the acquired mask, not another
+    learned model or a new pass/fail threshold. The median combines the
+    resulting board XY points; axial yaw is unobservable for this cylinder.
     """
     if (not masks or set(masks) != set(intrinsics_undist) or
             set(masks) != set(extrinsics_camera_world)):
@@ -65,10 +116,25 @@ def fit_board_socket_body(
     y_axis = np.cross(up, x_axis)
     rotation = np.column_stack((x_axis, y_axis, up))
     with timed("socket.body_mesh_dimensions", phase="socket", kind="geometry"):
-        radius, bottom, top = _barrel_dimensions(raw_mesh)
-    mid_height = (bottom + top) / 2.0
+        xyz = _mesh_vertices(raw_mesh)
+        radius, bottom, top = _barrel_dimensions_from_vertices(xyz)
+        radii = np.linalg.norm(xyz[:, :2], axis=1)
+        flange_radius = float(radii.max())
+        flange_vertices = xyz[np.isclose(radii, flange_radius, atol=1e-6)]
+        flange_bottom = float(flange_vertices[:, 2].min())
+        flange_top = float(flange_vertices[:, 2].max())
+        models = {"wall": (_region_rings(radius, bottom, top),
+                           (bottom + top) / 2.0)}
+        if flange_radius > radius and flange_top > flange_bottom:
+            flange = _region_rings(flange_radius, flange_bottom, flange_top)
+            models["flange"] = (flange, (flange_bottom + flange_top) / 2.0)
+            models["whole_body"] = (
+                np.vstack((models["wall"][0], flange)),
+                (flange_bottom + top) / 2.0)
     board_points: list[np.ndarray] = []
     views = []
+    selected_regions: dict[str, str] = {}
+    hypothesis_iou: dict[str, dict[str, float]] = {}
     for camera in sorted(masks):
         with timed("socket.body_centroid_ray", phase="socket",
                    kind="geometry", camera_id=camera):
@@ -82,18 +148,51 @@ def fit_board_socket_body(
                 raise ValueError(f"invalid socket wall image or intrinsics: {camera}")
             yy, xx = np.nonzero(mask)
             pixel = np.array([float(xx.mean()), float(yy.mean()), 1.0])
+            mask_bounds = (int(xx.min()), int(yy.min()),
+                           int(xx.max()) + 1, int(yy.max()) + 1)
             robot_camera = np.linalg.inv(E)
             origin = robot_camera[:3, 3]
             ray = robot_camera[:3, :3] @ np.linalg.solve(K, pixel)
             denominator = float(np.dot(ray, up))
             if abs(denominator) < 1e-8:
                 raise ValueError(f"socket ray is parallel to the board: {camera}")
-            distance = float(np.dot(board[:3, 3] + mid_height * up - origin, up)
-                             / denominator)
-            if distance <= 0:
-                raise ValueError(f"socket mask ray points behind camera: {camera}")
-            board_points.append(origin + distance * ray - mid_height * up)
-            views.append((camera, mask, K, E))
+            scores = {}
+            estimates = {}
+            for region, (rings, height) in models.items():
+                distance = float(np.dot(
+                    board[:3, 3] + height * up - origin, up) / denominator)
+                if distance <= 0:
+                    raise ValueError(f"socket mask ray points behind camera: {camera}")
+                guess = origin + distance * ray - height * up
+                xy_guess = np.asarray([
+                    (guess - board[:3, 3]) @ x_axis,
+                    (guess - board[:3, 3]) @ y_axis])
+
+                def hull_at(xy: np.ndarray) -> np.ndarray:
+                    pose = np.eye(4)
+                    pose[:3, :3] = rotation
+                    pose[:3, 3] = (board[:3, 3] + xy[0] * x_axis
+                                   + xy[1] * y_axis)
+                    return _project_hull(rings, pose, E, K)
+
+                center = _hull_center(hull_at(xy_guess))
+                jacobian = np.column_stack([
+                    (_hull_center(hull_at(xy_guess + direction)) - center)
+                    / 0.001
+                    for direction in (np.array([0.001, 0.0]),
+                                      np.array([0.0, 0.001]))])
+                aligned_xy = xy_guess + np.linalg.solve(
+                    jacobian, pixel[:2] - center)
+                estimates[region] = aligned_xy
+                scores[region] = _region_iou(
+                    hull_at(aligned_xy), mask, mask_bounds)
+            selected = max(scores, key=scores.__getitem__)
+            chosen_xy = estimates[selected]
+            board_points.append(board[:3, 3] + chosen_xy[0] * x_axis
+                                + chosen_xy[1] * y_axis)
+            views.append((camera, mask, K, E, mask_bounds))
+            selected_regions[camera] = selected
+            hypothesis_iou[camera] = scores
 
     with timed("socket.body_multiview_median", phase="socket",
                kind="geometry", camera_count=len(views)):
@@ -109,30 +208,22 @@ def fit_board_socket_body(
         pose_robot[:3, 3] = (board[:3, 3] + median_xy[0] * x_axis
                              + median_xy[1] * y_axis)
 
-    angles = np.linspace(0, 2 * np.pi, 72, endpoint=False)
-    rings = np.asarray([
-        [radius * np.cos(angle), radius * np.sin(angle), z, 1.0]
-        for z in (bottom, top) for angle in angles], dtype=np.float64)
-    vertices_robot = pose_robot @ rings.T
     per_view = {}
-    for camera, mask, K, E in views:
+    for camera, mask, K, E, mask_bounds in views:
         with timed("socket.body_wall_iou", phase="socket", kind="geometry",
                    camera_id=camera):
-            vertices_camera = (E @ vertices_robot)[:3].T
-            if np.any(vertices_camera[:, 2] <= 0):
-                raise ValueError(f"socket wall is behind camera: {camera}")
-            projected = (K @ vertices_camera.T).T
-            pixels = np.rint(projected[:, :2] /
-                             projected[:, 2, None]).astype(np.int32)
-            silhouette = np.zeros(mask.shape, dtype=np.uint8)
-            cv2.fillConvexPoly(silhouette, cv2.convexHull(pixels), 1)
-            intersection = np.count_nonzero(silhouette & mask)
-            union = np.count_nonzero(silhouette | mask)
-            per_view[camera] = float(intersection / union) if union else 0.0
+            rings = models[selected_regions[camera]][0]
+            per_view[camera] = _region_iou(
+                _project_hull(rings, pose_robot, E, K), mask, mask_bounds)
     diagnostics = {
-        "method": "board_normal_wall_mask_centroid_median",
+        "method": "board_normal_mesh_region_mask_median",
         "body_radius_m": radius, "body_bottom_z_m": bottom,
         "body_top_z_m": top, "per_view_iou": per_view,
+        "flange_radius_m": flange_radius,
+        "flange_bottom_z_m": flange_bottom,
+        "flange_top_z_m": flange_top,
+        "per_view_selected_region": selected_regions,
+        "per_view_region_iou": hypothesis_iou,
         "mean_body_iou": float(np.mean(list(per_view.values()))),
         "per_view_board_xy_m": {
             camera: xy[index].tolist() for index, camera in enumerate(sorted(masks))},

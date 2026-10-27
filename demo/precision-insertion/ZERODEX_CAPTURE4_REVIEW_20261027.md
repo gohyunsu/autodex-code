@@ -660,3 +660,34 @@ without an unnecessary operator prompt. It does not bypass socket-evidence
 verification, key perception or the catalog. The current scene has no
 ZeroDex fixed-socket session evidence to reuse, so a first session still
 needs a lit socket-only measurement before this option can be used.
+
+### 2026-10-28 flange-aware socket-center replay
+
+The saved lit lying-key socket masks were revisited without a live camera.
+Both contributing masks resemble the 60 mm-radius base flange, not only the
+40 mm-radius upright wall. To reconstruct the board for this replay, ChArUco
+was detected on the overlay JPEGs with a temporarily relaxed reprojection
+limit **only in the analysis process** (median 2.93 px, maximum 5.56 px).
+The ordinary 3 px runtime limit and calibration files were not changed.
+Consequently these numbers compare two methods on the same approximate
+board pose; they are not a surveyed socket-center error.
+
+| Same two saved views | Wall-mid-height estimator | CAD-region estimator |
+| --- | ---: | ---: |
+| Mask region selected | Wall assumed in both | Flange in both |
+| Pairwise board-XY disagreement | 21.33 mm | 6.99 mm |
+| Mean projected-region IoU | 0.634 | 0.930 |
+
+The revised board_socket_fit.py aligns each CAD wall, flange and union
+silhouette to the mask centroid in each calibrated view, selects the
+highest-IoU region, and takes the existing coordinate-wise median of its
+board-plane XY estimates. It changes the geometric estimate but adds **no**
+new perception or motion veto. Synthetic tests include three wall views plus
+one flange view and an oblique two-flange-view case; both recover the known
+center and region assignments. On the two saved full-resolution masks the
+new fit's median CPU time was 12.6 ms over 12 local repetitions, excluding
+Python startup, camera transfer and SAM inference. The independent-camera
+review script now renders the selected region for each held-out mask rather
+than always rendering the wall. The new method improves consistency on this
+saved sample but does not establish submillimetre accuracy or current-scene
+insertability; the next lit socket-only session must verify its projections.

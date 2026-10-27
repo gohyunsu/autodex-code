@@ -84,11 +84,65 @@ def test_board_socket_fit_keeps_axis_upright_with_one_flange_mask(
     assert np.linalg.norm(row.pose_world[:3, 3]) < .003
     assert np.mean(list(row.per_view_iou.values())) > .8
     assert row.stock_selection["sil_skipped"] is True
-    assert row.per_view_iou["cam_3"] < min(
-        row.per_view_iou[camera] for camera in ("cam_0", "cam_1", "cam_2"))
+    assert row.per_view_iou["cam_3"] > .98
     diagnostic = row.stock_selection["body_fit"]
+    assert diagnostic["per_view_selected_region"] == {
+        "cam_0": "wall", "cam_1": "wall", "cam_2": "wall",
+        "cam_3": "flange"}
     assert diagnostic["maximum_pairwise_center_disagreement_mm"] > 0
     assert set(diagnostic["per_view_center_residual_mm"]) == set(cameras)
+
+
+def test_two_flange_only_views_use_flange_height_not_wall_midpoint(tmp_path):
+    mesh = tmp_path / "socket.obj"
+    mesh.write_text("\n".join(
+        f"v {r * np.cos(a)} {r * np.sin(a)} {z}"
+        for r, z in ((.06, 0), (.06, .005), (.04, .005), (.04, .055))
+        for a in np.linspace(0, 2 * np.pi, 36, endpoint=False)) + "\n")
+    K = np.array([[850, 0, 400], [0, 850, 300], [0, 0, 1.0]])
+    cameras = {
+        "left": _camera(np.array([.24, -.28, .42])),
+        "right": _camera(np.array([-.30, -.20, .40])),
+    }
+    masks = {name: _disk_mask(E, K, .06, 0, .005)
+             for name, E in cameras.items()}
+    pose, diagnostic = fit_board_socket_body(
+        masks=masks, intrinsics_undist={name: K for name in cameras},
+        extrinsics_camera_world=cameras, c2r=np.eye(4),
+        board_pose_robot=np.diag([1.0, -1.0, -1.0, 1.0]),
+        raw_mesh=mesh)
+    assert np.linalg.norm(pose[:3, 3]) < .002
+    assert diagnostic["per_view_selected_region"] == {
+        "left": "flange", "right": "flange"}
+    assert diagnostic["maximum_pairwise_center_disagreement_mm"] < 2
+    assert min(diagnostic["per_view_iou"].values()) > .98
+
+
+def test_whole_body_masks_select_both_socket_regions(tmp_path):
+    mesh = tmp_path / "socket.obj"
+    mesh.write_text("\n".join(
+        f"v {r * np.cos(a)} {r * np.sin(a)} {z}"
+        for r, z in ((.06, 0), (.06, .005), (.04, .005), (.04, .055))
+        for a in np.linspace(0, 2 * np.pi, 36, endpoint=False)) + "\n")
+    K = np.array([[850, 0, 400], [0, 850, 300], [0, 0, 1.0]])
+    cameras = {
+        "left": _camera(np.array([.24, -.28, .42])),
+        "right": _camera(np.array([-.30, -.20, .40])),
+    }
+    masks = {}
+    for name, E in cameras.items():
+        wall = _disk_mask(E, K, .04, .005, .055)
+        flange = _disk_mask(E, K, .06, 0, .005)
+        masks[name] = wall | flange
+    pose, diagnostic = fit_board_socket_body(
+        masks=masks, intrinsics_undist={name: K for name in cameras},
+        extrinsics_camera_world=cameras, c2r=np.eye(4),
+        board_pose_robot=np.diag([1.0, -1.0, -1.0, 1.0]),
+        raw_mesh=mesh)
+    assert np.linalg.norm(pose[:3, 3]) < .002
+    assert diagnostic["per_view_selected_region"] == {
+        "left": "whole_body", "right": "whole_body"}
+    assert min(diagnostic["per_view_iou"].values()) > .9
 
 
 def test_board_socket_fit_rejects_noncanonical_intrinsics(tmp_path):

@@ -47,6 +47,13 @@ start the adapter if another experiment owns the cameras.
   now also carries one lossless PNG of its source frame. The main PC writes it
   under local `zerodex_capture4/<capture_id>_request_<id>/images/`.
 
+Fixed-socket board/body localization now compares each admitted SAM mask with
+the CAD wall, base flange, and whole-body silhouettes. It backprojects at
+the selected region's height rather than assuming every mask depicts the
+wall. Per-view region choice, IoUs and board-XY disagreement are saved as
+diagnostics; no additional acceptance threshold was introduced. The
+current-scene pose still needs a new lit socket-only capture.
+
 The launch uses all four serials `26053248`, `25322639`, `25305462`,
 `25322642`. VLM inference defaults to the first three; this is separate from
 socket/key SAM3 perception. Board 9 is registered from this profile inside
