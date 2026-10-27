@@ -266,6 +266,7 @@ def _audit_held_geometry_samples(
     T_key_hand: np.ndarray, held_hand_q: np.ndarray,
     minimum_hand_clearance_m: float,
     allow_initial_key_table_support: bool = False,
+    stop_on_first_failure: bool = False,
 ) -> tuple[list[dict], dict[str, float], dict[str, str]]:
     """One collision implementation for held transfer and lateral-shift paths.
 
@@ -293,6 +294,11 @@ def _audit_held_geometry_samples(
         T_key_hand, name="sampled held T_key_hand"))
     failures: list[dict] = []
     minimum_distances: dict[str, float] = {}
+    source_hashes = {
+        "key_mesh": _immutable_file_sha256(str(key_path)),
+        "robot_urdf": _immutable_file_sha256(str(robot_path)),
+        **world_hashes,
+    }
     for stage, poses in wrist.items():
         for i, hand_pose in enumerate(poses):
             key_pose = hand_pose @ key_in_hand
@@ -338,11 +344,9 @@ def _audit_held_geometry_samples(
                                          "colliding": result["colliding"],
                                          "distance_m": distance,
                                          "required_clearance_m": required})
-    return failures, minimum_distances, {
-        "key_mesh": _immutable_file_sha256(str(key_path)),
-        "robot_urdf": _immutable_file_sha256(str(robot_path)),
-        **world_hashes,
-    }
+                        if stop_on_first_failure:
+                            return failures, minimum_distances, source_hashes
+    return failures, minimum_distances, source_hashes
 
 
 def audit_held_joint_paths(
@@ -350,6 +354,7 @@ def audit_held_joint_paths(
     planner, transfer_trajectory: np.ndarray, descent_trajectory: np.ndarray,
     held_hand_q: np.ndarray, limits: PathAuditLimits,
     lift_trajectory: np.ndarray | None = None,
+    stop_on_first_geometry_failure: bool = False,
 ) -> dict[str, Any]:
     """Audit FK samples of lift, transfer and axial approach.
 
@@ -358,6 +363,9 @@ def audit_held_joint_paths(
     The hand-to-key transform and six Inspire joints are fixed at all samples.
     A tilted socket is supported *only for checking a supplied axis-aligned
     path*; this function does not create such a path or contact controller.
+    Candidate screening may stop after the first decisive geometry failure;
+    then minimum distances are only over inspected samples, as indicated by
+    ``geometry_scan_complete=False``. A passing audit always scans all samples.
     """
     limits.validate()
     root = Path(shared_root).expanduser().resolve()
@@ -499,8 +507,11 @@ def audit_held_joint_paths(
                 wrist=wrist, T_key_hand=targets.T_key_hand,
                 held_hand_q=hand_q,
                 minimum_hand_clearance_m=limits.minimum_hand_clearance_m,
-                allow_initial_key_table_support=lift is not None))
+                allow_initial_key_table_support=lift is not None,
+                stop_on_first_failure=stop_on_first_geometry_failure))
     failures.extend(geometry_failures)
+    geometry_scan_complete = not (stop_on_first_geometry_failure and
+                                  geometry_failures)
 
     return {
         "schema": "precision_insertion_sampled_held_path_audit_v1",
@@ -512,6 +523,7 @@ def audit_held_joint_paths(
         "sampled_clear": not failures,
         "failures": failures,
         "minimum_surface_distances_m": minimum_distances,
+        "geometry_scan_complete": geometry_scan_complete,
         "input_sha256": {
             "key_mesh": geometry_hashes["key_mesh"],
             "robot_urdf": geometry_hashes["robot_urdf"],

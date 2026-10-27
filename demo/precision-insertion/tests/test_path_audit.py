@@ -264,6 +264,37 @@ def test_aabb_skip_preserves_exact_minimum_distances_and_collision_result(
     assert len(calls) < baseline_calls
 
 
+def test_candidate_geometry_scan_stops_after_first_collision(
+        tmp_path, monkeypatch):
+    calibration, targets, _ = _fixture(tmp_path, monkeypatch)
+    touching = np.eye(4)
+    touching[:3, 3] = [0.05, 0.0, 0.11]
+    arguments = dict(
+        shared_root=tmp_path, mode=targets.mode, calibration=calibration,
+        wrist={"transfer": [touching] * 8},
+        T_key_hand=targets.T_key_hand, held_hand_q=np.zeros(6),
+        minimum_hand_clearance_m=0.)
+    full = path_audit_module._audit_held_geometry_samples(**arguments)
+    short = path_audit_module._audit_held_geometry_samples(
+        **arguments, stop_on_first_failure=True)
+    assert len(full[0]) > 1
+    assert short[0] == full[0][:1]
+    assert short[2] == full[2]
+    assert short[1]["key->mesh/fixture_socket"] == 0.0
+
+    transfer, descent = _paths()
+    transfer[5, :3] = [0.05, 0.0, 0.11]
+    report = audit_held_joint_paths(
+        shared_root=tmp_path, calibration=calibration, targets=targets,
+        planner=_FakePlanner(), transfer_trajectory=transfer,
+        descent_trajectory=descent, held_hand_q=np.zeros(6),
+        limits=_limits(), stop_on_first_geometry_failure=True)
+    assert report["sampled_clear"] is False
+    assert report["geometry_scan_complete"] is False
+    assert any(row["reason"] == "held_geometry_collision_or_clearance"
+               for row in report["failures"])
+
+
 def test_disjoint_aabb_skips_surface_collision_and_containment_but_not_distance(
         monkeypatch):
     moving = trimesh.creation.box(extents=(0.01, 0.01, 0.01))

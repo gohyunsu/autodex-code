@@ -2896,7 +2896,12 @@ AUTODEX_ENABLE_NATIVE_POSE_CONSTRAINTS=1 \
 Use a **new** output directory each time. The report records source hashes,
 the hypothetical transforms, planner output, candidate status or a preserved
 code-failure traceback, and `robot_ready=false`; it must never be replayed on
-hardware. The demo installs two narrowly guarded, process-local compatibility
+hardware. The sibling `<output-dir>.timing/timing_summary.json` records the
+same per-candidate pickup, insertion and held-path audit spans as a live run;
+planner construction occurs before this trace and is not included. The demo
+defaults to `use_cuda_graph=False` for historical diagnostic compatibility;
+add `--use-cuda-graph` when comparing with the live planner default. The demo
+installs two narrowly guarded, process-local compatibility
 adapters for this checkout: vendored cuRobo's default sample-count typo and
 the existing AutoDex singleton-world call to cuRobo's batch IK updater. It
 does not change either source tree. In the initial square 1.5 mm synthetic

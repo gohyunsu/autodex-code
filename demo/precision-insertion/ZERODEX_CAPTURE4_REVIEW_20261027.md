@@ -58,7 +58,29 @@ Do not point the live runtime at the restored executable until its matching
 native library and the ZeroDex robot endpoint are commissioned. No robot
 connection was attempted during this dependency check.
 
-Verification performed: the precision demo test suite passed **1247 tests**
+### Lying-key synthetic planning check (not the camera scene)
+
+With the straight URDF, current 20 mm-gap catalogue and native locked-hand
+planner mode, a hypothetical tabletop at robot Z=0.04 m, key XY=(0.4, 0) m,
+and socket XY=(0.6, 0) m produced pickup plans for all four eligible lying-key
+grasps. None passed the full synthetic chain: two transfer-unreachable, one
+axial-waypoint-unreachable, and one held-key/table collision during transfer.
+This does **not** classify the actual lying key: its measured pose, current
+robot joints and socket pose were unavailable in the dark camera scene. The
+diagnostic outputs are under `/tmp/precision_synthetic_lie_20261027_all`.
+
+The synthetic diagnostic now writes the normal nested timing trace beside its
+report. For the collision candidate `table/1/20777`, one run measured 39.44 s
+in stock v8 pickup, 12.20 s in held transfer, and 5.13 s in geometry sampling.
+Candidate selection now stops the geometry loop at its first definite
+collision; a repeat measured 41.12 s, 9.65 s, and 3.59 s, respectively. These
+are separate stochastic planning runs, not a controlled end-to-end speedup
+estimate. Rejected reports mark the partial geometry scan, while passing
+trajectories still receive the full sampled audit. The synthetic diagnostic
+uses `use_cuda_graph=False`, unlike the normal live planner default, so its
+cold pickup duration must not be presented as a live latency estimate.
+
+Verification performed: the precision demo test suite passed **1249 tests**
 with 5 skipped; the straight-URDF local cuRobo planner instantiated; 20 mm
 static preflight passed; the old mount catalog was rejected; camera-only
 services were stopped after probes. No current-scene full trajectory or

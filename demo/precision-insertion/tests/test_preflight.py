@@ -178,6 +178,7 @@ def test_preflight_replans_held_lift_and_all_axial_waypoints(monkeypatch):
     assert captured["transfer_trajectory"].shape == (5, 13)
     assert captured["descent_trajectory"].shape == (41, 13)
     assert captured["lift_trajectory"].shape == (11, 13)
+    assert captured["stop_on_first_geometry_failure"] is True
     assert result.to_record()["robot_ready"] is False
     assert result.to_record()["held_hand_source"] == "commanded_nominal"
     assert len(result.to_record()["planner_query_records"]) == 12

@@ -36,6 +36,7 @@ from precision_insertion.planner_mode import (  # noqa: E402
 from precision_insertion.trial_preflight import (  # noqa: E402
     plan_fresh_key_trial, write_trial_preflight_artifacts,
 )
+from precision_insertion.timing_profile import profile_run  # noqa: E402
 from precision_insertion.world import add_fixed_mesh_fixtures  # noqa: E402
 
 
@@ -109,6 +110,10 @@ def main(argv: list[str] | None = None) -> int:
         default="default",
         help="declare the exact AutoDex Cartesian planner mode for this offline run",
     )
+    parser.add_argument(
+        "--use-cuda-graph", action="store_true",
+        help="match the live GraspPlanner CUDA-graph default for timing probes",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
@@ -146,7 +151,8 @@ def main(argv: list[str] | None = None) -> int:
         socket_xy_m=(args.socket_x_m, args.socket_y_m))
 
     from autodex.planner.planner import GraspPlanner
-    planner = GraspPlanner(hand="fr3_inspire", use_cuda_graph=False)
+    planner = GraspPlanner(hand="fr3_inspire",
+                           use_cuda_graph=args.use_cuda_graph)
     if planner._native_pose_constraints_enabled != native_enabled:
         raise RuntimeError("AutoDex planner mode differs from declared mode")
     start = planner._init_state.copy()  # stock FR3/Inspire diagnostic home
@@ -162,17 +168,18 @@ def main(argv: list[str] | None = None) -> int:
         try:
             with log.open("w", encoding="utf-8") as stream:
                 with redirect_stdout(stream), redirect_stderr(stream):
-                    result = plan_fresh_key_trial(
-                        planner=planner, mode=mode, shared_root=root,
-                        calibration=calibration, catalog=catalog,
-                        key_pose_world=key_pose,
-                        key_observation_id="synthetic_pose_" + args.pose_stem,
-                        key_capture_timestamp_s=2.0, live_start_q=start,
-                        start_q_acquisition_timestamp_s=2.0,
-                        max_key_state_skew_s=.1, limits=limits,
-                        max_pose_error_deg=10., axial_waypoint_step_m=.005,
-                        attempted=tuple(args.exclude_candidate),
-                        max_candidate_attempts=args.max_candidates)
+                    with profile_run(output):
+                        result = plan_fresh_key_trial(
+                            planner=planner, mode=mode, shared_root=root,
+                            calibration=calibration, catalog=catalog,
+                            key_pose_world=key_pose,
+                            key_observation_id="synthetic_pose_" + args.pose_stem,
+                            key_capture_timestamp_s=2.0, live_start_q=start,
+                            start_q_acquisition_timestamp_s=2.0,
+                            max_key_state_skew_s=.1, limits=limits,
+                            max_pose_error_deg=10., axial_waypoint_step_m=.005,
+                            attempted=tuple(args.exclude_candidate),
+                            max_candidate_attempts=args.max_candidates)
         except Exception as exc:
             output.mkdir(parents=True, exist_ok=False)
             shutil.copy2(log, output / log.name)
@@ -180,6 +187,7 @@ def main(argv: list[str] | None = None) -> int:
                 "schema": "precision_insertion_synthetic_planner_failure_v1",
                 "synthetic": True, "robot_ready": False,
                 "planner_mode": args.planner_mode,
+                "use_cuda_graph": args.use_cuda_graph,
                 "error_type": type(exc).__name__, "error": str(exc),
                 "traceback": traceback.format_exc(),
                 "planner_log_sha256": _sha(output / log.name),
@@ -198,6 +206,7 @@ def main(argv: list[str] | None = None) -> int:
         "schema": "precision_insertion_synthetic_full_chain_diagnostic_v1",
         "synthetic": True, "robot_ready": False,
         "planner_mode": args.planner_mode,
+        "use_cuda_graph": args.use_cuda_graph,
         "source_catalog": str(catalog_path),
         "source_catalog_sha256": _sha(catalog_path),
         "key_tabletop_pose": str(tabletop_path),

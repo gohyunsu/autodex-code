@@ -74,6 +74,7 @@ def _rejected_path_summary(trial: InsertionPreflight, *, planner,
         ],
         "first_failure": failures[0],
         "minimum_surface_distances_m": audit["minimum_surface_distances_m"],
+        "geometry_scan_complete": audit.get("geometry_scan_complete", True),
         "sample_counts": {
             "lift": None if trial.lift_trajectory is None else
             len(trial.lift_trajectory),
