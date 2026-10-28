@@ -275,6 +275,14 @@ start the adapter if another experiment owns the cameras.
   The runtime performs no extra full-file hash pass. The local copy avoids
   NAS reads at model startup; its actual effect on warm Qwen/SAM/cuRobo
   startup latency still needs a measured run.
+- For the 5 mm socket, the capture4 launcher prefers `table/0/20096` on the
+  first upright-key capture. All five saved 5 mm attempts selected this grasp
+  after a multi-candidate preflight; four recorded lift and pre-insertion
+  arrival. This is only an ordering hint: fresh-scene v8 pickup, held-path
+  and endpoint checks still run, and the normal catalog order is tried if
+  the hint is infeasible. Set `PRECISION_INITIAL_CANDIDATE=` to disable it.
+  The saved label record does not establish that this grasp achieved a
+  physically verified 20 mm insertion.
 - The ZeroDex launcher sets `PRECISION_PREWARM_FIXED_WORLD=1` for both newly
   placed and already placed keys. After the fixed socket is available, the
   planner initializes its table/socket cuRobo world in a background thread

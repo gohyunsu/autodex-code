@@ -21,13 +21,15 @@ export PRECISION_POST_LIFT_SETTLE_S=${PRECISION_POST_LIFT_SETTLE_S:-2.0}
 # cuRobo world. Start that work while capture4 acquires/refines the next key.
 # A caller can set 0 for a measured serial-latency comparison.
 export PRECISION_PREWARM_FIXED_WORLD=${PRECISION_PREWARM_FIXED_WORLD:-1}
-# For the current 10 mm socket, try the saved-scene grasp whose pickup,
-# insertion, opening, and return plans passed before spending time on the
-# other v8 candidates. Fresh-scene planning still decides eligibility and
-# falls back to the normal order. An explicitly empty value disables this
-# preference without introducing a candidate filter.
-if [[ $PRECISION_GAP_MM == 10 && -z ${PRECISION_INITIAL_CANDIDATE+x} ]]; then
-  export PRECISION_INITIAL_CANDIDATE=table/0/20267
+# Previously selected upright grasps are only ordering hints. Every new
+# tabletop observation still runs the normal v8 pickup and insertion checks;
+# an infeasible preferred grasp falls through to the remaining candidates.
+# An explicitly empty override disables the hint.
+if [[ -z ${PRECISION_INITIAL_CANDIDATE+x} ]]; then
+  case $PRECISION_GAP_MM in
+    5) export PRECISION_INITIAL_CANDIDATE=table/0/20096 ;;
+    10) export PRECISION_INITIAL_CANDIDATE=table/0/20267 ;;
+  esac
 fi
 export PRECISION_ENDPOINT_CATALOG=${PRECISION_ENDPOINT_CATALOG:-$PRECISION_STAGE_ROOT/recipient_gap${PRECISION_GAP_MM}_endpoint_catalog_straight.json}
 
