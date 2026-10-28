@@ -63,6 +63,11 @@ packed locally and transferred as one file per socket. Hardlinks remain readable
 from the project root even if the older handoff pathname is removed. The
 manifest hashes the resulting files. The builder does not move source files or
 start the robot.
+It sources the capture4 perception snapshot from local
+`~/precision_insertion_project/restore/` and ParaDex system settings from
+`~/precision_insertion_project/vendor/paradex/system/current`. Use
+`--capture4-source-archive` or `--paradex-system` to override those locations
+when rebuilding on another machine.
 
 ## Restore on a comparable PC
 

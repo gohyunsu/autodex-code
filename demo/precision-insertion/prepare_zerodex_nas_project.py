@@ -170,7 +170,9 @@ def _package_socket_representations(shared: Path, nas_root: Path) -> list[dict]:
 
 def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
           source_stage: Path | None, capture4_host: str | None = None,
-          ssh_port: int = 77) -> dict:
+          ssh_port: int = 77,
+          capture4_source_archive: Path | None = None,
+          paradex_system: Path | None = None) -> dict:
     assets = nas_root / "assets" / "shared_data"
     code = nas_root / "code"
     envs = nas_root / "environments"
@@ -178,6 +180,12 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
         path.mkdir(parents=True, exist_ok=True)
     rig = nas_root / "rigs" / "zerodex_capture4"
     rig.mkdir(parents=True, exist_ok=True)
+    archive = (capture4_source_archive or
+               Path.home() / "precision_insertion_project/restore/capture4_source_20261028.tar.gz")
+    system = (paradex_system or
+              Path.home() / "precision_insertion_project/vendor/paradex/system/current")
+    _copy_file(archive, rig / "capture4_source_20261028.tar.gz")
+    _copy_tree(system, rig / "main_pc_system/current")
     runtime_link = rig / "runtime"
     if not runtime_link.is_symlink() and not runtime_link.exists():
         runtime_link.symlink_to(
@@ -320,6 +328,10 @@ def main() -> None:
                                                "capture4@147.46.219.136"))
     parser.add_argument("--ssh-port", type=int,
                         default=int(os.environ.get("PRECISION_CAPTURE4_SSH_PORT", "77")))
+    parser.add_argument("--capture4-source-archive", type=Path,
+                        help="local captured source snapshot for the namespaced capture4 adapter")
+    parser.add_argument("--paradex-system", type=Path,
+                        help="local project-owned ParaDex system/current directory")
     parser.add_argument("--refresh-code-only", action="store_true",
                         help="update committed source archives and README without recopying assets")
     args = parser.parse_args()
@@ -331,7 +343,9 @@ def main() -> None:
     print(json.dumps(build(
         source_shared=args.source_shared, nas_root=args.nas_root,
         paradex_repo=args.paradex_repo, source_stage=args.source_stage,
-        capture4_host=args.capture4_host, ssh_port=args.ssh_port), indent=2))
+        capture4_host=args.capture4_host, ssh_port=args.ssh_port,
+        capture4_source_archive=args.capture4_source_archive,
+        paradex_system=args.paradex_system), indent=2))
 
 
 if __name__ == "__main__":
