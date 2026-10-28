@@ -113,15 +113,17 @@ same loop. It never treats a one-view planar estimate as a new measurement;
 that route produced a false 35.7 mm correction in a physically inserted
 10 mm episode.
 
-Example with an operator-selected 2.5 mm centering target. This target is an
-example, not a new fixed acceptance rule. Start with the socket alone on the
-board; the launcher prompts for key placement after socket measurement:
+ZeroDex runs now enable the same-episode XY loop by default with a 2.5 mm
+centering target. This is a pre-insertion correction target, not the final
+insertion-success label. Set `PRECISION_SAME_TRIAL_XY_TOLERANCE_MM=''` to run
+the earlier open-loop baseline, or set another value for a different target.
+Start with the socket alone on the board; the launcher prompts for key
+placement after socket measurement:
 
 ```bash
 cd /home/hyunsu/autodex-code
 export PRECISION_GAP_MM=5
 export PRECISION_XY_ESTIMATOR=sam_half_ellipse
-export PRECISION_SAME_TRIAL_XY_TOLERANCE_MM=2.5
 unset PRECISION_REUSE_SESSION_EVIDENCE
 bash demo/precision-insertion/run_zerodex_capture4.sh --check
 # With capture4, Franka and Inspire services ready, socket alone on the board:
@@ -132,8 +134,18 @@ bash demo/precision-insertion/run_zerodex_capture4.sh --run
 read-only preparation. Same-episode records
 are under each attempt's `same_trial_xy/observations` and
 `same_trial_xy/shifts`; the final stroke is under
-`guarded_axial_handoffs`. The 5 mm same-episode path has not yet been tested
-with live robot motion.
+`guarded_axial_handoffs`. In the first two live 5 mm trials after enabling
+this loop (`attempt_c6141471138e4e18843c41ed565f7615` with `vlm`, then
+`attempt_dc5958a92bce4d709fb43eef1279adf9` with `sam_half_ellipse`),
+the pre-insertion observation ran but no held XY shift executed. The first
+trial had only one parsed point, visibly on the socket rim; the other two
+VLM coordinates were outside their input crops. The second trial found
+three mask-based image points, but they did not form a consistent multiview
+tip. Both continued on the nominal insertion path. These trials verify the
+measurement callback runs, not the held-shift motion or convergence. The
+final clear-view photographs show the key outside the socket in both trials,
+despite their `inside_socket` Qwen labels; treat those recorded labels as
+false positives when analyzing this data.
 
 System-specific runtime defaults are in the ZeroDex machine profile and can be
 overridden without editing the shared AutoDex executor:

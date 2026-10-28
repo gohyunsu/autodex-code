@@ -11,6 +11,9 @@ export PRECISION_PARADEX_ROOT=${PRECISION_PARADEX_ROOT:-$HOME/precision_insertio
 export PRECISION_DEV_ROOT=${PRECISION_DEV_ROOT:-$HOME/precision_insertion_project/development/zerodex_capture4}
 export PRECISION_TIMING_LOCAL_ROOT=${PRECISION_TIMING_LOCAL_ROOT:-$PRECISION_DEV_ROOT/timing}
 export PRECISION_NAS_PROJECT_ROOT=${PRECISION_NAS_PROJECT_ROOT:-/mnt/paradex2/hyunsu/precision_insertion}
+# ZeroDex runs reobserve and correct XY at pre-insertion by default. An
+# explicitly empty value disables this mode for a baseline run.
+export PRECISION_SAME_TRIAL_XY_TOLERANCE_MM=${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM-2.5}
 export PRECISION_EXTRA_PYTHONPATH=${PRECISION_EXTRA_PYTHONPATH:-$precision_profile_root/demo/precision-insertion/compat}
 export PRECISION_PLANNER_PY=${PRECISION_PLANNER_PY:-$HOME/.venvs/precision-vlm/bin/python}
 export PRECISION_CHECK_PY=${PRECISION_CHECK_PY:-$PRECISION_PLANNER_PY}
