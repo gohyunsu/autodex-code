@@ -895,13 +895,20 @@ def observe_released_insertion_visual(
         })
 
 
-def _released_socket_token_prompt() -> str:
+def _released_socket_token_prompt(version: str = "v2") -> str:
+    if version not in {"v1", "v2"}:
+        raise ValueError("unknown released socket prompt version")
+    empty = ("If the rim opening is empty and the key is elsewhere, answer "
+             "OUTSIDE. " if version == "v1" else
+             "If the rim opening is empty, answer OUTSIDE, whether or not "
+             "the key is visible elsewhere. ")
     return (
         "Inspect this final image only. The socket is "
         "the wide white cup. The key is a separate narrow solid white cylinder "
         "with a closed flat end. If the solid key protrudes from inside the "
-        "circular socket rim, answer INSIDE. If the rim opening is empty and "
-        "the key is elsewhere, answer OUTSIDE. If the opening is hidden, "
+        "circular socket rim, answer INSIDE. "
+        f"{empty}"
+        "If the opening is hidden, "
         "answer UNCLEAR. Answer one word."
     )
 
@@ -920,7 +927,9 @@ def _released_socket_token_result(answer: str, camera: str) -> tuple[dict, str |
              visual_class != "unobservable" else []}, error)
 
 
-def verify_released_socket_token_consensus(visual: dict, cameras: set[str]) -> None:
+def verify_released_socket_token_consensus(
+    visual: dict, cameras: set[str], *, prompt_version: str = "v2",
+) -> None:
     """Replay each saved raw token and the deterministic camera majority."""
     aggregation = visual.get("aggregation", {})
     ordered = sorted(cameras)
@@ -939,7 +948,7 @@ def verify_released_socket_token_consensus(visual: dict, cameras: set[str]) -> N
         if (expected_order is None or row.get("stage") !=
                 "released_insertion_visual" or
                 row.get("image_order") != [expected_order] or
-                row.get("prompt") != _released_socket_token_prompt() or
+                row.get("prompt") != _released_socket_token_prompt(prompt_version) or
                 row.get("parsed") != parsed or row.get("parse_error") != error):
             raise ValueError("released socket token or source frame changed")
     expected = _consensus_parsed(

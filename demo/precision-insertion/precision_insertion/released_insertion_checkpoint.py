@@ -280,7 +280,7 @@ def assess_released_insertion_checkpoint(
         "release_record_path": str(release_path),
         "release_record_sha256": _sha(release_path),
         "frames": inputs, "visual": visual.to_record(),
-        "visual_input_policy": "final_socket_crop_token_v3",
+        "visual_input_policy": "final_socket_crop_token_v4",
         "final_visual_crops": final_visual_crops,
         "minimum_visual_views": minimum_visual_views,
         "max_phase_skew_s": max_phase_skew_s,
@@ -359,10 +359,12 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
     policy = report.get("visual_input_policy")
     new_policy = policy in ("final_socket_crop_token_v1",
                             "final_socket_crop_token_v2",
-                            "final_socket_crop_token_v3")
+                            "final_socket_crop_token_v3",
+                            "final_socket_crop_token_v4")
     if policy not in (None, "final_socket_crop_token_v1",
                        "final_socket_crop_token_v2",
-                       "final_socket_crop_token_v3"):
+                       "final_socket_crop_token_v3",
+                       "final_socket_crop_token_v4"):
         raise ValueError("unknown released-insertion visual input policy")
     if new_policy and "final_visual_crops" not in report:
         raise ValueError("released-insertion final socket crops are missing")
@@ -389,7 +391,8 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
             "final_clear_view")
         focused_frames, expected_crops = _focus_final_frames(
             replay_frames, initial,
-            allow_partial_projection=policy == "final_socket_crop_token_v3")
+            allow_partial_projection=policy in (
+                "final_socket_crop_token_v3", "final_socket_crop_token_v4"))
         if report["final_visual_crops"] != expected_crops:
             raise ValueError("released-insertion socket crops changed")
         aggregation = report["visual"].get("aggregation") or {}
@@ -403,7 +406,8 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
                     RELEASED_SOCKET_IMAGE_SIZE,
                     min_long_side_px=(FINAL_MIN_LONG_SIDE_PX if policy in (
                         "final_socket_crop_token_v2",
-                        "final_socket_crop_token_v3") else None))
+                        "final_socket_crop_token_v3",
+                        "final_socket_crop_token_v4") else None))
                 if row.get("input_transform") != expected_transform:
                     raise ValueError("released-insertion final VLM input changed")
             if camera in expected_crops:
@@ -416,7 +420,9 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
                     raise ValueError("released-insertion VLM crop input changed")
     if new_policy:
         verify_released_socket_token_consensus(
-            report["visual"], grouped["initial_tabletop"])
+            report["visual"], grouped["initial_tabletop"],
+            prompt_version=("v2" if policy == "final_socket_crop_token_v4"
+                            else "v1"))
     else:
         verify_per_view_consensus(
             report["visual"], field="visual_class", fallback="unobservable",

@@ -307,7 +307,7 @@ def test_released_label_pairs_initial_and_clear_view_raw_per_camera(
     assert report["effective_vlm_class"] == "inside_socket"
     assert len(backend.calls) == 2
     assert all(len(images) == 1 for images, _prompt in backend.calls)
-    assert report["visual_input_policy"] == "final_socket_crop_token_v3"
+    assert report["visual_input_policy"] == "final_socket_crop_token_v4"
     saved = write_released_insertion_checkpoint(
         report, tmp_path / "released_assessment")
     assert verify_released_insertion_checkpoint(saved)["outcome"][

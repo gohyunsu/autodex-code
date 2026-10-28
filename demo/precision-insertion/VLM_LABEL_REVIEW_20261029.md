@@ -204,3 +204,17 @@ fully absent projection still uses the full raw frame. This changes neither
 camera selection nor the one-word Qwen prompt. All 26 focused checkpoint tests
 pass, and the four saved v2 reports verify unchanged. The older v1/v2 crop
 algorithm remains selected by their recorded policy during replay.
+
+The current input policy is `final_socket_crop_token_v4`. It keeps the v3
+crop and selected three cameras. Its prompt clarifies that an empty opening
+is `OUTSIDE` even if the fallen key lies beyond the socket crop. Two shorter
+occupancy prompts were tested on all 12 saved camera images but returned
+`OUTSIDE` for the visibly inserted episode in **every** view. They were not
+adopted. The minimally changed prompt retained the visual labels on all
+four reviewed episodes: three empty sockets `OUTSIDE`, one inserted key
+`INSIDE` by two of three cameras. The exact probe inputs, prompts, tokens,
+and crop rectangles are saved as
+`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_final_occupancy_prompt.py`
+and `.json`. Legacy v1–v3 reports verify with their recorded original prompt;
+the new prompt applies only to new v4 reports. These four examples do not
+establish performance at a new socket position or under changed lighting.
