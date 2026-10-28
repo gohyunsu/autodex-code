@@ -47,6 +47,13 @@ PROJECT = Path(os.environ.get("PRECISION_NAS_PROJECT_ROOT",
                               "/mnt/paradex2/hyunsu/precision_insertion"))
 VENDOR = REMOTE / "vendor"
 CACHE = REMOTE / "cache"
+PERCEPTION_ASSETS = (
+    "AutoDex/foundpose_assets/precision_key_cylinder_r15_h80",
+    "object_processing/precision_key_cylinder_r15_h80",
+    "object_processing/precision_key_cylinder_r15_h80_grip_proxy",
+    *(f"object_processing/precision_socket_cylinder_gap_{gap:02d}mm"
+      for gap in (1, 3, 5, 10, 15, 20)),
+)
 
 
 def _ssh(script: str) -> None:
@@ -124,6 +131,25 @@ def prepare_assets() -> None:
              f"rsync -a {shlex.quote(str(source / 'assets/capture4_cache' / name))}/ "
              f"{shlex.quote(str(CACHE / name))}/ && "
              f"printf '%s' {shlex.quote(cache_digest)} > {shlex.quote(str(marker))}; fi")
+    asset_prefixes = tuple(f"assets/shared_data/{relative}/"
+                           for relative in PERCEPTION_ASSETS)
+    perception_rows = [row for row in manifest["assets"]
+                       if row["path"].startswith(asset_prefixes)]
+    perception_digest = hashlib.sha256(json.dumps(
+        perception_rows, sort_keys=True).encode("utf-8")).hexdigest()
+    marker = CACHE / ".perception_assets_sha256"
+    copy_commands = []
+    for relative in PERCEPTION_ASSETS:
+        origin = source / "assets/shared_data" / relative
+        destination = CACHE / "shared_data" / relative
+        copy_commands.append(
+            f"mkdir -p {shlex.quote(str(destination))} && "
+            f"rsync -a {shlex.quote(str(origin))}/ {shlex.quote(str(destination))}/")
+    _ssh(f"if test \"$(cat {shlex.quote(str(marker))} 2>/dev/null)\" != "
+         f"{shlex.quote(perception_digest)}; then "
+         + " && ".join(copy_commands) + " && "
+         f"printf '%s' {shlex.quote(perception_digest)} > "
+         f"{shlex.quote(str(marker))}; fi")
 
 
 def _command(kind: str, *, exposure_us: float | None = None) -> str:
@@ -145,7 +171,7 @@ def _command(kind: str, *, exposure_us: float | None = None) -> str:
                 f"{REMOTE}/src/execution/daemon/snapshot_daemon.py")
     stage = Path(os.environ.get(
         "PRECISION_CAPTURE4_ASSET_ROOT",
-        str(REMOTE_HOME / "shared_data/hyunsu/precision_insertion/assets/shared_data")))
+        str(CACHE / "shared_data")))
     sam3_batch = os.environ.get("PRECISION_SAM3_BATCH", "auto")
     if sam3_batch not in ("auto", "0", "1"):
         raise ValueError("PRECISION_SAM3_BATCH must be auto, 0, or 1")

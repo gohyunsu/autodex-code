@@ -72,7 +72,7 @@ def install(bundle: Path, destination: Path,
         f"export PRECISION_PARADEX_ROOT={destination / 'paradex'}\n"
         f"export PRECISION_SAM_CHECKPOINT={shared / 'AutoDex/weights/sam3/sam3.pt'}\n"
         f"export PRECISION_FR3_INSPIRE_URDF={repo / 'autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf'}\n"
-        f"export PRECISION_CAPTURE4_ASSET_ROOT={capture4_nas_root.rstrip('/')}/assets/shared_data\n"
+        "export PRECISION_CAPTURE4_ASSET_ROOT=/home/capture4/precision_insertion_capture4_20261027/cache/shared_data\n"
         f"export PRECISION_CAPTURE4_PROJECT_ROOT={capture4_nas_root.rstrip('/')}\n"
         f"export PRECISION_NAS_PROJECT_ROOT={bundle}\n"
         "export PRECISION_GAP_MM=5\n",

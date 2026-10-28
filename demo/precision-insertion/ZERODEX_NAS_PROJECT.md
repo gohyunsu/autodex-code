@@ -90,12 +90,13 @@ python3 demo/precision-insertion/manage_zerodex_capture4_services.py deploy
 python3 demo/precision-insertion/manage_zerodex_capture4_services.py prepare-assets
 ```
 
-Preparation copies source and model weights from NAS `hyunsu/precision_insertion`
+Preparation copies source, model weights, the key FoundPose representation,
+and key/socket perception meshes from NAS `hyunsu/precision_insertion`
 to capture4 local storage. The resulting source and caches are reused on
 later starts. `manage_zerodex_capture4_services.py start` launches the
 namespaced services; there is no source or model transfer per episode. The
-launch profile points capture4 at this project's `assets/shared_data` path
-on its NAS mount.
+launch profile points capture4 FoundPose at its local cached copy of these
+project assets. The NAS copy is read only during one-time preparation.
 
 ## Record each pipeline run without NAS I/O
 
