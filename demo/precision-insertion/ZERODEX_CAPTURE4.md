@@ -177,24 +177,24 @@ another robot from receiving ZeroDex commands; it adds no new grasp, pose,
 insertion or VLM success threshold.
 
 The read-only FCI route is `172.16.1.11 dev enp4s0 src 172.16.1.10`.
-The daemon has **not** reached its ready state: starting it as an ordinary
-user failed with `unable to set realtime scheduling`, and starting it with
-`sudo` failed with `Running kernel does not have realtime capabilities`.
-The host currently boots Ubuntu 22.04's `6.8.0-138-generic` kernel, not a
-PREEMPT_RT kernel. Do not silently change the daemon to libfranka's
-`RealtimeConfig::kIgnore`; the operator chose a real-time kernel first.
+The daemon has **not yet** reached its ready state. Before the kernel change,
+starting it as an ordinary user failed with `unable to set realtime
+scheduling`, and starting it with `sudo` failed with `Running kernel does not
+have realtime capabilities`. The operator installed Ubuntu 22.04's
+`6.8.1-1061-realtime` HWE kernel; `/sys/kernel/realtime` now reads `1`.
+NVIDIA 535.309.01 was built for that kernel with DKMS, and the host's
+`nvidia-smi` reports an RTX 3090. Do not silently change the daemon to
+libfranka's `RealtimeConfig::kIgnore`; the RT kernel is now available.
 Franka's [FCI real-time kernel instructions](https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html)
 recommend Ubuntu Pro's real-time kernel for Ubuntu 22.04. Canonical's
 [enablement guide](https://documentation.ubuntu.com/pro-client/en/latest/howtoguides/enable_realtime_kernel/)
-documents the 22.04 HWE RT kernel. This host has an older
-`ubuntu-advantage-tools` but no `ubuntu-pro-client` command yet; the
-repository currently offers an older 5.15 `linux-image-realtime` package,
-whereas the Pro HWE variant tracks 6.8. Installing a kernel and rebooting
-are operator-level system changes. After reboot, verify `/sys/kernel/realtime`
-contains `1`, then grant the robot user real-time scheduling/memlock as in the
-FCI guide before starting the unchanged daemon. Check the NVIDIA driver on
-the new kernel too; Franka notes that NVIDIA support on PREEMPT_RT is not
-officially guaranteed. Only then try the measured clear-view command.
+documents the 22.04 HWE RT kernel. The required host kernel and GPU driver
+are now present. A post-reboot read-only FCI state sample succeeded, with all
+seven joints still within 0.00004 rad of the recorded clear-view target.
+The remaining command-path step is to start the unchanged daemon with RT
+permission, then exercise the measured clear-view command. NVIDIA support on
+PREEMPT_RT is not officially guaranteed by Franka even though this build
+loaded and reported the GPU.
 
 Operator-side RT setup on this Ubuntu 22.04 host (Ubuntu Pro subscription is
 needed for the HWE package; attach interactively and do not put its token in
@@ -474,6 +474,6 @@ the recorded camera-only latency bottleneck. A later dark-scene inline
 transport probe delivered four same-frame key images and masks locally in
 2.172 s. It measured transport, not a successful key pose or full episode.
 
-The robot and hand are connected, but a PREEMPT_RT kernel and a ready local
-Franka daemon are still required for this selected controller route. No robot
-movement, insertion or real-world task success is claimed here.
+The robot and hand are connected and the PREEMPT_RT kernel is active, but a
+ready local Franka daemon is still required for this selected controller
+route. No robot movement, insertion or real-world task success is claimed here.
