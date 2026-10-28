@@ -22,6 +22,7 @@ from precision_insertion.observer import (  # noqa: E402
     observe_preinsert_raw_views, observe_preinsert_temporal_views,
     observe_released_insertion_visual,
     observe_xy_views, verify_per_view_consensus,
+    verify_released_socket_token_consensus,
 )
 from precision_insertion.outcome import InsertionEvidence, judge_insertion  # noqa: E402
 from precision_insertion.xy_voting import (  # noqa: E402
@@ -473,14 +474,8 @@ def test_current_preinsert_vlm_receives_raw_image_only():
     assert all("Image 2" not in prompt for _images, prompt in backend.calls)
 
 
-def test_released_insertion_pairs_each_camera_without_overlay():
-    answer = lambda category, camera: json.dumps({
-        "visual_class": category, "evidence_views": [camera],
-        "evidence": "key visibly occupies socket opening",
-    })
-    backend = FakeBackend(
-        answer("inside_socket", "front"),
-        answer("inside_socket", "side"))
+def test_released_insertion_classifies_final_camera_images_without_overlay():
+    backend = FakeBackend("INSIDE", "INSIDE")
     frames = [
         LabeledFrame("front", "initial_tabletop", 1.0, _image()),
         LabeledFrame("side", "initial_tabletop", 1.01, _image()),
@@ -491,8 +486,9 @@ def test_released_insertion_pairs_each_camera_without_overlay():
     assert result.parsed["visual_class"] == "inside_socket"
     assert result.parsed["evidence_views"] == ["front", "side"]
     assert len(backend.calls) == 2
-    assert all(len(images) == 2 for images, _prompt in backend.calls)
+    assert all(len(images) == 1 for images, _prompt in backend.calls)
     assert all("CAD" not in prompt for _images, prompt in backend.calls)
+    verify_released_socket_token_consensus(result.to_record(), {"front", "side"})
 
 
 def test_released_insertion_two_views_can_outvote_one_false_negative():
@@ -506,19 +502,12 @@ def test_released_insertion_two_views_can_outvote_one_false_negative():
         for phase, timestamp in (("initial_tabletop", 1.0),
                                  ("final_clear_view", 2.0))
     ]
-    answers = [json.dumps({
-        "visual_class": label, "evidence_views": [camera],
-        "evidence": "visible socket relation",
-    }) for camera, label in zip(
-        cameras, ("inside_socket", "inside_socket", "outside_socket"))]
+    answers = ["INSIDE", "INSIDE", "OUTSIDE"]
     result = observe_released_insertion_visual(
         PairBackend(*answers), frames)
     assert result.parsed["visual_class"] == "inside_socket"
     assert result.parsed["evidence_views"] == ["front", "side"]
-    verify_per_view_consensus(
-        result.to_record(), field="visual_class", fallback="unobservable",
-        cameras=set(cameras), before="initial_tabletop",
-        after="final_clear_view")
+    verify_released_socket_token_consensus(result.to_record(), set(cameras))
 
 
 def test_five_camera_final_vote_waits_for_third_agreeing_view():

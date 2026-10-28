@@ -29,6 +29,7 @@ class ImageVLM(Protocol):
 
 
 DEFAULT_LOCAL_VLM_MODEL_ID = "Qwen/Qwen3-VL-2B-Instruct"
+RELEASED_SOCKET_IMAGE_SIZE = (768, 576)
 
 
 _CAMERA_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
@@ -821,12 +822,13 @@ def observe_insertion_visual(
 def observe_released_insertion_visual(
     backend: ImageVLM, frames: Sequence[LabeledFrame],
 ) -> VLMObservation:
-    """Judge a released key from paired initial/final clear-view images.
+    """Judge the final socket crop; retain the initial image as trial evidence.
 
-    The first image identifies the loose key before pickup.  The second image
-    is acquired only after the 20 mm stroke, full hand opening and robot
-    clear-view exit.  A missing/occluded key is deliberately not positive
-    evidence that it is inside the socket.
+    Paired source captures still bind identity and chronology. On the saved
+    cylinder trials, Qwen3-VL-2B confused the two-image temporal question in
+    both directions. A short, final-image-only answer distinguished the four
+    visually reviewed outcomes. Each camera is asked independently and the
+    original model token is saved without inventing a visual explanation.
     """
     phases = {frame.phase for frame in frames}
     if not {"initial_tabletop", "final_clear_view"} <= phases:
@@ -834,32 +836,106 @@ def observe_released_insertion_visual(
             "released insertion needs initial_tabletop and final_clear_view")
     _require_temporal_camera_pairs(
         frames, before="initial_tabletop", after="final_clear_view")
-    return _per_view_consensus(
-        backend, stage="released_insertion_visual", frames=frames,
-        prompt_body=(
-            "The key and socket are both white; distinguish them by shape "
-            "and location. Image 1 shows the loose target key during the initial tabletop "
-            "perception step. Image 2 shows the same workspace after the "
-            "20 mm insertion attempt, after the hand has fully opened and "
-            "the robot has moved to clear view. Decide from visible pixels "
-            "whether the narrow cylinder enters the opening of the wider "
-            "socket. A key can be inside the socket while most of it still "
-            "protrudes above the rim; full seating is not required. Classify "
-            "inside_socket when the narrow cylinder passes through the rim "
-            "into the socket opening. Classify outside_socket when the key "
-            "is visibly separate from the opening. Occlusion, disappearance, the empty hand, or the "
-            "commanded motion is not evidence of insertion; use unobservable "
-            "when the final relation cannot be established. Do not infer a "
-            "numerical insertion depth from pixels."
-        ),
-        field="visual_class",
-        allowed=frozenset({
-            "inside_socket", "outside_socket", "unobservable",
-        }),
-        fallback="unobservable",
-        before="initial_tabletop", after="final_clear_view",
-        majority=True,
+    order = _frame_order(frames)
+    cameras = sorted({frame.camera_id for frame in frames})
+
+    def observe_camera(camera: str) -> VLMObservation:
+        final = next(frame for frame in frames if
+                     frame.camera_id == camera and
+                     frame.phase == "final_clear_view")
+        images, transform = resize_classification_images(
+            [final.image], RELEASED_SOCKET_IMAGE_SIZE)
+        prompt = _released_socket_token_prompt()
+        started = time.perf_counter()
+        with timed("vlm.infer", phase="vlm", kind="inference",
+                   stage="released_insertion_visual", camera_id=camera,
+                   image_count=1, image_sizes=[list(images[0].size)],
+                   model=_backend_model(backend)):
+            infer_for_camera = getattr(backend, "infer_for_camera", None)
+            answer = (infer_for_camera(camera, images, prompt)
+                      if callable(infer_for_camera) else
+                      backend.infer(images, prompt))
+        parsed, error = _released_socket_token_result(answer, camera)
+        return VLMObservation(
+            "released_insertion_visual", parsed, answer, prompt,
+            (f"final_clear_view/{camera}@{final.timestamp_s:.6f}",),
+            error, _backend_model(backend), time.perf_counter() - started,
+            input_transform=transform)
+
+    observations = map_view_calls(backend, cameras, observe_camera)
+    parsed = _consensus_parsed(
+        [row.to_record() for row in observations], field="visual_class",
+        fallback="unobservable", cameras=cameras, majority=True,
+        minimum_support=len(cameras) // 2 + 1)
+    return VLMObservation(
+        "released_insertion_visual", parsed,
+        json.dumps(parsed, sort_keys=True),
+        "Only the final raw socket crop is classified per camera; paired "
+        "initial/final captures remain bound to this checkpoint.",
+        order, None, _backend_model(backend),
+        sum(row.latency_s for row in observations), aggregation={
+            "schema": "precision_insertion_released_socket_token_consensus_v1",
+            "per_view": [row.to_record() for row in observations],
+            "completed_camera_ids": cameras,
+            "vote_rule": "configured_camera_majority",
+        })
+
+
+def _released_socket_token_prompt() -> str:
+    return (
+        "Inspect this final image only. The socket is "
+        "the wide white cup. The key is a separate narrow solid white cylinder "
+        "with a closed flat end. If the solid key protrudes from inside the "
+        "circular socket rim, answer INSIDE. If the rim opening is empty and "
+        "the key is elsewhere, answer OUTSIDE. If the opening is hidden, "
+        "answer UNCLEAR. Answer one word."
     )
+
+
+def _released_socket_token_result(answer: str, camera: str) -> tuple[dict, str | None]:
+    if not isinstance(answer, str):
+        raise TypeError("released socket VLM answer must be text")
+    token = answer.strip().rstrip(".").upper()
+    classes = {"INSIDE": "inside_socket", "OUTSIDE": "outside_socket",
+               "UNCLEAR": "unobservable"}
+    visual_class = classes.get(token, "unobservable")
+    error = None if token in classes else "released socket VLM did not answer one class token"
+    return ({"visual_class": visual_class,
+             "evidence": f"model token {token}" if error is None else "",
+             "evidence_views": [camera] if error is None and
+             visual_class != "unobservable" else []}, error)
+
+
+def verify_released_socket_token_consensus(visual: dict, cameras: set[str]) -> None:
+    """Replay each saved raw token and the deterministic camera majority."""
+    aggregation = visual.get("aggregation", {})
+    ordered = sorted(cameras)
+    rows = aggregation.get("per_view")
+    if (aggregation.get("schema") !=
+            "precision_insertion_released_socket_token_consensus_v1" or
+            aggregation.get("completed_camera_ids") != ordered or
+            aggregation.get("vote_rule") != "configured_camera_majority" or
+            not isinstance(rows, list) or len(rows) != len(ordered) or
+            len(visual.get("image_order", [])) != 2 * len(ordered)):
+        raise ValueError("invalid released socket token consensus")
+    for camera, row in zip(ordered, rows):
+        expected_order = next((label for label in visual["image_order"]
+                               if label.startswith(f"final_clear_view/{camera}@")), None)
+        parsed, error = _released_socket_token_result(row.get("raw_answer"), camera)
+        if (expected_order is None or row.get("stage") !=
+                "released_insertion_visual" or
+                row.get("image_order") != [expected_order] or
+                row.get("prompt") != _released_socket_token_prompt() or
+                row.get("parsed") != parsed or row.get("parse_error") != error):
+            raise ValueError("released socket token or source frame changed")
+    expected = _consensus_parsed(
+        rows, field="visual_class", fallback="unobservable",
+        cameras=ordered, majority=True,
+        minimum_support=len(ordered) // 2 + 1)
+    if (visual.get("parsed") != expected or
+            visual.get("raw_answer") != json.dumps(expected, sort_keys=True) or
+            visual.get("parse_error") is not None):
+        raise ValueError("released socket token consensus changed")
 
 
 def observe_preinsert_hold_views(

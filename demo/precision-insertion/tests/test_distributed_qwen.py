@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.observer import (  # noqa: E402
     LabeledFrame, XYView, observe_insertion_visual, observe_lift,
     observe_preinsert_temporal_views, observe_released_insertion_visual,
+    verify_released_socket_token_consensus,
     observe_xy_views,
     verify_per_view_consensus,
 )
@@ -337,11 +338,14 @@ def test_final_and_released_visuals_use_early_per_camera_consensus():
         def infer(self, _images, prompt):
             camera = re.search(r"Valid camera IDs: (\d+)\.", prompt).group(1)
             time.sleep(.01 if camera in {"1", "2", "3"} else .2)
-            label = ("inside_socket" if "initial tabletop" in prompt
-                     else "normal_appearance")
-            return json.dumps({"visual_class": label,
+            return json.dumps({"visual_class": "normal_appearance",
                                "evidence_views": [camera],
                                "evidence": "visible white key"})
+
+        def infer_for_camera(self, camera, images, _prompt):
+            assert len(images) == 1
+            time.sleep(.01 if camera in {"1", "2", "3"} else .2)
+            return "INSIDE"
 
     backend = FiveWorkers()
     image = Image.new("RGB", (32, 32), "white")
@@ -356,11 +360,17 @@ def test_final_and_released_visuals_use_early_per_camera_consensus():
                   for phase, stamp in ((before, 1.0), (after, 2.0))]
         saved = observer(backend, frames).to_record()
         assert saved["parsed"]["visual_class"] == label
-        assert saved["aggregation"]["completed_camera_ids"] == ["1", "2", "3"]
-        verify_per_view_consensus(
-            saved, field="visual_class", fallback="unobservable",
-            cameras={"1", "2", "3", "4", "5"},
-            before=before, after=after)
+        if observer is observe_released_insertion_visual:
+            assert saved["aggregation"]["completed_camera_ids"] == [
+                "1", "2", "3", "4", "5"]
+            verify_released_socket_token_consensus(
+                saved, {"1", "2", "3", "4", "5"})
+        else:
+            assert saved["aggregation"]["completed_camera_ids"] == ["1", "2", "3"]
+            verify_per_view_consensus(
+                saved, field="visual_class", fallback="unobservable",
+                cameras={"1", "2", "3", "4", "5"},
+                before=before, after=after)
     for pool in backend.pools:
         pool.shutdown(wait=True)
 

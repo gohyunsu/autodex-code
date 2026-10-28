@@ -2730,10 +2730,11 @@ class SessionRunner:
         minimum_visual_views: int = 2, label_mode: str = "vlm_only",
         manual_annotation: dict | None = None,
     ) -> dict:
-        """Label the released key from initial/final clear-view image pairs.
+        """Label the released key from final socket views.
 
-        The saved held pre-insertion bundle is retained for a later failed-
-        trial XY diagnostic but is never shown to this success classifier.
+        Initial/final captures stay paired as checkpoint evidence. The saved
+        held pre-insertion bundle remains available for failed-trial XY and is
+        never shown to this success classifier.
         """
         if (self._attempt is None or self._attempt_dir is None or
                 self._attempt.candidate_id is None or

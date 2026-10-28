@@ -291,16 +291,8 @@ def test_released_label_pairs_initial_and_clear_view_raw_per_camera(
             "sha256": hashlib.sha256(metric.read_bytes()).hexdigest()},
         "measurement": {"hand_open": True, "clear_view_reached": True},
     }), encoding="utf-8")
-    backend = FakeBackend({
-        "visual_class": "inside_socket",
-        "evidence_views": ["cam_a"],
-        "evidence": "key visibly occupies socket"})
-    # Per-camera inference must name its own view.
-    answers = iter((
-        json.dumps({"visual_class": "inside_socket",
-                    "evidence_views": ["cam_a"], "evidence": "inside"}),
-        json.dumps({"visual_class": "inside_socket",
-                    "evidence_views": ["cam_b"], "evidence": "inside"})))
+    backend = FakeBackend({})
+    answers = iter(("INSIDE", "INSIDE"))
     backend.infer = lambda images, prompt: (
         backend.calls.append((images, prompt)) or next(answers))
     report = assess_released_insertion_checkpoint(
@@ -314,7 +306,8 @@ def test_released_label_pairs_initial_and_clear_view_raw_per_camera(
     assert report["outcome"]["insertion_success"] is True
     assert report["effective_vlm_class"] == "inside_socket"
     assert len(backend.calls) == 2
-    assert all(len(images) == 2 for images, _prompt in backend.calls)
+    assert all(len(images) == 1 for images, _prompt in backend.calls)
+    assert report["visual_input_policy"] == "final_socket_crop_token_v1"
     saved = write_released_insertion_checkpoint(
         report, tmp_path / "released_assessment")
     assert verify_released_insertion_checkpoint(saved)["outcome"][

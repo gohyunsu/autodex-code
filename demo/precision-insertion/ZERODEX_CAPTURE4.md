@@ -147,6 +147,12 @@ final clear-view photographs show the key outside the socket in both trials,
 despite their `inside_socket` Qwen labels; treat those recorded labels as
 false positives when analyzing this data.
 
+The 2026-10-29 saved-frame review of all four released-key episodes, the
+session-dependent VLM crops, and the revised final-only socket classifier
+are documented in [VLM_LABEL_REVIEW_20261029.md](VLM_LABEL_REVIEW_20261029.md).
+The initial and final raw captures remain paired in the saved checkpoint;
+only the final socket crop is sent to Qwen for this specific label.
+
 System-specific runtime defaults are in the ZeroDex machine profile and can be
 overridden without editing the shared AutoDex executor:
 `PRECISION_STAGE_ROOT`, `PRECISION_PLANNER_PY`, `PRECISION_SAM_PYTHON`,
@@ -253,8 +259,11 @@ diagnostics; no additional acceptance threshold was introduced. The
 current-scene pose still needs a new lit socket-only capture.
 
 The launch uses all four serials `26053248`, `25322639`, `25305462`,
-`25322642`. VLM inference defaults to the first three; this is separate from
-socket/key SAM3 perception. Board 9 is registered from this profile inside
+`25322642`. General VLM and same-trial XY observations use four views;
+the released-key final label selects `26053248`, `25322639`, `25305462`
+through `PRECISION_FINAL_VLM_CAMERA_IDS`, based on the saved-frame review.
+Socket/key SAM3 perception still uses the four available views. Board 9 is
+registered from this profile inside
 the local Python process, not in ParaDex's global configuration. Capture4's
 older camera server requires `camera_acquisition_mode: stream` in the launch
 profile; the AutoDex profile still defaults to `acquire`.
