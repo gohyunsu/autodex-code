@@ -241,6 +241,19 @@ start the adapter if another experiment owns the cameras.
   2026-10-22 AutoDex episode recorded 3.924 s for Qwen load and 5.687 s for
   clear-view motion; this is an overlap opportunity, **not** a measured
   ZeroDex live-session saving.
+- For `sam_half_ellipse`, the main-PC SAM3 ROI worker now begins loading in
+  the background while the camera session and key perception proceed. Its
+  checkpoint and Python path are still checked before the FR3 core opens;
+  candidate preflight joins the worker before any pickup. `--plan-only`
+  skips this worker because it never reaches pre-insertion XY. The saved
+  `20261028_233043_399147` trace loaded SAM3 serially for 23.71 s before
+  opening the FR3 core. Inspect `startup.sam3_roi_model_load_join` in the
+  next live timing summary to measure the remaining critical-path wait.
+  An offline main-PC GPU load of SAM3 and Qwen in parallel took 9.38 s wall
+  (9.38 s SAM3, 5.15 s Qwen; warm local/NAS caches); its record is
+  `~/precision_insertion_project/development/zerodex_capture4/reviews/sam_qwen_concurrent_load_20261029.json`.
+  Concurrency with cuRobo and the actual camera session has not yet been
+  measured live.
 - The ZeroDex launcher sets `PRECISION_PREWARM_FIXED_WORLD=1` for both newly
   placed and already placed keys. After the fixed socket is available, the
   planner initializes its table/socket cuRobo world in a background thread

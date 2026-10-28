@@ -39,7 +39,7 @@ from .observer import load_vlm_backend
 from .runtime_assembly import assemble_live_components
 from .timing_profile import timed
 from .raw_camera_capture import RawCameraCapture
-from .sam_roi_backend import SamRoiBackend
+from .sam_roi_backend import DeferredSamRoiBackend, SamRoiBackend
 from .tip_frame_window import fetch_tip_frame_window
 from .visual_views import assessment_cameras
 
@@ -266,25 +266,34 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     hand_force_set_raw = parsed["hand_force_set_raw"]
     build_stages = parsed["build_stages"]
     sam_paths = (_sam_runtime_paths()
-                 if options.xy_estimator == "sam_half_ellipse" else None)
+                 if options.xy_estimator == "sam_half_ellipse" and
+                 not options.stop_after_planning else None)
     backend = None
     warmup_pool = None
     warmup_future = None
     vlm_load_pool = None
     vlm_load_future = None
+    sam_load_pool = None
     sam_segmentor = None
     sam_log = (options.run_output_dir.parent /
                f".{options.run_output_dir.name}.sam_roi_worker.{uuid4().hex}.stderr.log"
                if sam_paths is not None else None)
     if sam_paths is not None:
         python, model = sam_paths
-        # Loading the CUDA model can fail even when its files exist. Finish
-        # that work before opening the command-capable FR3 connection or
-        # asking the robot to move to clear view.
-        with timed("startup.sam3_roi_model_load", phase="startup"):
-            sam_segmentor = SamRoiBackend(
-                python_path=python, checkpoint=model,
-                stderr_path=sam_log)
+        # This worker is first needed at pre-insertion. Load it while the
+        # socket/key cameras and planner initialize, then join before pickup.
+        sam_load_pool = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="precision-sam3-load")
+        context = copy_context()
+
+        def load_sam():
+            with timed("startup.sam3_roi_model_load", phase="startup"):
+                return SamRoiBackend(
+                    python_path=python, checkpoint=model,
+                    stderr_path=sam_log)
+
+        sam_segmentor = DeferredSamRoiBackend(
+            sam_load_pool.submit(context.run, load_sam), model)
     core = None
     try:
         with timed("startup.franka_planner_core", phase="startup"):
@@ -301,6 +310,8 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             if sam_segmentor is not None:
                 sam_segmentor.close()
         finally:
+            if sam_load_pool is not None:
+                sam_load_pool.shutdown(wait=True)
             if core is not None:
                 core.close()
         raise
@@ -429,16 +440,26 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 if stage_name in stages:
                     stages[stage_name].setdefault(
                         "key_prompt", "white plastic cylindrical key")
-        if (os.environ.get("PRECISION_PREWARM_FIXED_WORLD") == "1" and
-                "key_planning" in stages):
-            def join_world_before_planning():
+        if "key_planning" in stages and (
+                os.environ.get("PRECISION_PREWARM_FIXED_WORLD") == "1" or
+                sam_segmentor is not None):
+            prior_before_preflight = stages["key_planning"].get(
+                "before_preflight")
+
+            def join_models_before_planning():
+                if sam_segmentor is not None:
+                    with timed("startup.sam3_roi_model_load_join",
+                               phase="startup", kind="wait"):
+                        sam_segmentor.ready()
                 if warmup_future is not None:
                     with timed("startup.planner_fixed_world_warmup_wait",
                                phase="startup", kind="wait"):
                         warmup_future.result()
+                if prior_before_preflight is not None:
+                    prior_before_preflight()
 
             stages["key_planning"]["before_preflight"] = (
-                join_world_before_planning)
+                join_models_before_planning)
         if "pickup" in stages and "executor" not in stages["pickup"]:
             # Use the same FR3 connection as clear-view and measured state.
             # This is the demo's completion-checked stock subclass; the
@@ -552,6 +573,8 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                     sam_segmentor.close()
             finally:
                 try:
+                    if sam_load_pool is not None:
+                        sam_load_pool.shutdown(wait=True)
                     if (sam_log is not None and sam_log.is_file() and
                             options.run_output_dir.is_dir()):
                         sam_log.replace(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from concurrent.futures import Future
 import io
 import json
 from pathlib import Path
@@ -14,6 +15,30 @@ from uuid import uuid4
 
 import numpy as np
 from PIL import Image
+
+
+class DeferredSamRoiBackend:
+    """Expose one asynchronously loaded worker to the existing XY stages."""
+
+    def __init__(self, future: Future, model: Path) -> None:
+        self._future = future
+        self.model = str(model)
+
+    def ready(self) -> "SamRoiBackend":
+        return self._future.result()
+
+    def segment(self, image: Image.Image, *, camera_id: str,
+                prompt: str) -> tuple[np.ndarray | None, dict]:
+        return self.ready().segment(image, camera_id=camera_id, prompt=prompt)
+
+    def close(self) -> None:
+        try:
+            worker = self._future.result()
+        except Exception:
+            # Construction already tears down a failed subprocess. Preserve
+            # the original exception at its first-use boundary.
+            return
+        worker.close()
 
 
 class SamRoiBackend:
