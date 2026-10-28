@@ -289,14 +289,22 @@ start the adapter if another experiment owns the cameras.
   complete candidate preflight was 12.98 s. This is a trace-derived estimate
   of avoidable prefix work, not a measured runtime saving from the new order.
 - The ZeroDex launcher sets `PRECISION_PREWARM_FIXED_WORLD=1` for both newly
-  placed and already placed keys. After the fixed socket is available, the
-  planner initializes its table/socket cuRobo world in a background thread
-  while capture4 acquires and refines the next key. Candidate planning joins
-  that work; later trials reuse the initialized planner. The 2026-10-28 live
+  placed and already placed keys. After the initial clear-view motion, the
+  planner initializes a **provisional** table/socket cuRobo world in a
+  background thread while capture4 opens and measures the socket. This world
+  is used only to initialize cuRobo; it is never used for a motion plan. Once
+  the measured session world exists, the same single-worker queue replaces
+  the provisional poses with the measured table/socket poses. Candidate
+  planning joins that measured-world update; later trials reuse the planner.
+  An offline GPU probe initialized the provisional world in 23.68 s and
+  updated it to the saved measured world in 0.014 s. Its record is
+  `~/precision_insertion_project/development/zerodex_capture4/reviews/probe_early_curobo_warmup_20261029.json`.
+  The 2026-10-28 live
   attempt spent 21.97 s in the first v8 pickup's cuRobo world setup while
-  the camera request took 2.26 s. This change aims to overlap those stages;
-  its net saving still needs a live measurement because local silhouette
-  fitting can contend with cuRobo on the main RTX 3090. Set
+  the camera request took 2.26 s. The net live saving still needs measurement
+  because SAM3, Qwen and cuRobo share the main RTX 3090. Compare
+  `startup.planner_provisional_world_warmup`,
+  `startup.planner_fixed_world_warmup` and its `_wait` span in a later run. Set
   `PRECISION_PREWARM_FIXED_WORLD=0` for the former serial timing. No grasp,
   collision, or task-success criterion changes. `--check` and `--camera-only`
   do not perform this live planner warmup.

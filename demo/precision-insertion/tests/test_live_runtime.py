@@ -198,6 +198,7 @@ def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path)
     monkeypatch.setattr(live_runtime, "ClearViewForPerception", ClearView)
     closed = []
     warmup_started = []
+    early_warmup = []
     module = ModuleType("test_robot_integration")
 
     def factory(options):
@@ -217,7 +218,8 @@ def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path)
 
         return live_runtime.LiveRuntimeIntegration(
             ClearView(), components, lambda: closed.append(True),
-            begin_warmup)
+            begin_warmup, begin_pre_socket_warmup=lambda:
+            early_warmup.append(True))
 
     module.factory = factory
     monkeypatch.setitem(sys.modules, module.__name__, module)
@@ -225,9 +227,11 @@ def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path)
     result = SimpleNamespace(status="success")
 
     def run(**kwargs):
+        kwargs["begin_pre_socket_warmup"]()
         handlers = kwargs["build_handlers"](live)
         assert set(handlers) == _LIVE_ACTIONS
         assert warmup_started == [live]
+        assert early_warmup == [True]
         handlers["capture_fresh_key"](None, None)
         assert kwargs["init_ports"] == (15006, 15007, 16893)
         return result

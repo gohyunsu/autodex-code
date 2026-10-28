@@ -117,8 +117,10 @@ def test_live_session_keeps_same_camera_transport_for_next_key(
     with orchestration.open_live_precision_session(
             launch_config_path=tmp_path / "launch.json",
             endpoint_catalog_path=catalog, run_output_dir=tmp_path / "new_run",
-            max_xy_retries=2, clear_view=_clear_view(events)) as live:
-        assert events == ["catalog_preflight", "home_clear_view", "camera_open",
+            max_xy_retries=2, clear_view=_clear_view(events),
+            begin_pre_socket_warmup=lambda: events.append("planner_prewarm")) as live:
+        assert events == ["catalog_preflight", "home_clear_view",
+                          "planner_prewarm", "camera_open",
                           "socket_renderer_warmup", "stream_open",
                           "socket_frozen", "ledger_open"]
         assert live.opened is opened

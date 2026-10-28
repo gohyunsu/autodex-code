@@ -20,6 +20,9 @@ from pathlib import Path
 from typing import Mapping
 from uuid import uuid4
 
+from autodex.utils.tabletop_geometry import table_cuboid
+
+from .assets import AssetPaths
 from .checkpoint_camera import make_checkpoint_capture
 from .curobo_compat import install_curobo_planner_compat
 from .franka_core import (
@@ -600,13 +603,39 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 finally:
                     core.close()
 
-    def begin_fixed_world_warmup(live):
-        nonlocal warmup_pool, warmup_future
+    def begin_pre_socket_warmup():
+        nonlocal warmup_pool
         if warmup_pool is not None:
-            raise RuntimeError("fixed-world planner warmup already started")
-        scene = copy.deepcopy(live.started.calibration.collision_scene)
+            raise RuntimeError("planner warmup already started")
+        launch = options.launch_snapshot
+        mesh = AssetPaths(launch.shared_root, launch.mode).socket_collision_mesh
+        provisional = {
+            "cuboid": {"table": table_cuboid(None)},
+            "mesh": {"fixture_socket": {
+                "file_path": str(mesh.resolve()),
+                "pose": [0.55, 0.0, 0.08, 1.0, 0.0, 0.0, 0.0],
+            }},
+        }
         warmup_pool = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="precision-curobo-warmup")
+        context = copy_context()
+
+        def prewarm():
+            with timed("startup.planner_provisional_world_warmup",
+                       phase="startup", kind="planning"):
+                install_curobo_planner_compat()
+                core.planner._set_motion_world(provisional)
+
+        warmup_pool.submit(context.run, prewarm)
+
+    def begin_fixed_world_warmup(live):
+        nonlocal warmup_pool, warmup_future
+        if warmup_future is not None:
+            raise RuntimeError("fixed-world planner warmup already started")
+        scene = copy.deepcopy(live.started.calibration.collision_scene)
+        if warmup_pool is None:
+            warmup_pool = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="precision-curobo-warmup")
         context = copy_context()
 
         def prewarm():
@@ -624,5 +653,9 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             begin_fixed_world_warmup
             if os.environ.get("PRECISION_PREWARM_FIXED_WORLD") == "1"
             else None),
+        begin_pre_socket_warmup=(
+            begin_pre_socket_warmup
+            if (os.environ.get("PRECISION_PREWARM_FIXED_WORLD") == "1" and
+                options.launch_snapshot is not None) else None),
         key_capture_overlaps_warmup=(
             os.environ.get("PRECISION_PREWARM_FIXED_WORLD") == "1"))

@@ -59,6 +59,7 @@ class LiveRuntimeIntegration:
     close: Callable[[], None]
     begin_fixed_world_warmup: Callable[[LivePrecisionSession], Future] | None = None
     key_capture_overlaps_warmup: bool = False
+    begin_pre_socket_warmup: Callable[[], None] | None = None
 
 
 def _wait_for_fixed_world_warmup(
@@ -293,6 +294,7 @@ def run_integrated_live_session(
                     None if options.key_already_placed else
                     _confirm_initial_key_placement),
                 init_ports=options.init_ports, launch_snapshot=launch,
+                begin_pre_socket_warmup=integration.begin_pre_socket_warmup,
                 initial_preferred_candidate=options.initial_preferred_candidate)
     finally:
         with timed("cleanup.integration_close", phase="cleanup", kind="io"):

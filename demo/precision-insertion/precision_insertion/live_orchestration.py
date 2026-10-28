@@ -136,6 +136,7 @@ def open_live_precision_session(
     launch_snapshot=None,
     reuse_session_evidence_dir: Path | None = None,
     initial_preferred_candidate: tuple[str, str, str] | None = None,
+    begin_pre_socket_warmup: Callable[[], None] | None = None,
 ) -> Iterator[LivePrecisionSession]:
     """Capture once, open the bound ledger, and retain camera connections.
 
@@ -193,6 +194,8 @@ def open_live_precision_session(
     # first exposure, not after a failed insertion or tabletop release.
     with timed("startup.clear_view", phase="startup", kind="motion"):
         clear_view.prepare_initial()
+    if begin_pre_socket_warmup is not None:
+        begin_pre_socket_warmup()
     resources = ExitStack()
     try:
         with timed("startup.camera_transport_open", phase="startup", kind="io"):
@@ -264,6 +267,7 @@ def run_live_precision_session(
     init_ports: tuple[int, int, int] | None = None,
     launch_snapshot=None,
     initial_preferred_candidate: tuple[str, str, str] | None = None,
+    begin_pre_socket_warmup: Callable[[], None] | None = None,
 ) -> ActionLoopResult:
     """Keep the one ChArUco/socket camera session open across trial actions.
 
@@ -287,7 +291,8 @@ def run_live_precision_session(
             clear_view=clear_view, init_ports=init_ports,
             launch_snapshot=launch_snapshot,
             reuse_session_evidence_dir=reuse_session_evidence_dir,
-            initial_preferred_candidate=initial_preferred_candidate) as live:
+            initial_preferred_candidate=initial_preferred_candidate,
+            begin_pre_socket_warmup=begin_pre_socket_warmup) as live:
         # Stage adapters and load the VLM while the key is still absent.
         # The operator placement gate remains the last step before perception.
         handlers = build_handlers(live)
