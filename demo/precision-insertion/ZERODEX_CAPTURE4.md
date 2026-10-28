@@ -598,3 +598,23 @@ sampler failure if one occurs. It reuses the candidate's offline 20 mm
 hand/socket endpoint screen after squeeze; measured finger joints are used
 for the lift/transfer planner, not treated as a measured key-in-hand pose.
 These code changes do not make the missed physical grasp a success.
+
+## 2026-10-28 live latency baseline
+
+The two failed physical attempts retained structured timing records under
+`_pipeline_runs/20261028_141454_188235.timing` and
+`_pipeline_runs/20261028_142201_394786.timing`. Their full session spans
+were 52.59 s and 93.22 s, respectively; these end at different failure
+points and are **not** complete-episode latency measurements. Fresh key
+FoundPose requests were 2.19 s and 2.37 s. The first cuRobo pickup plan was
+27.55 s and 26.08 s. In the second run, preferred candidate `table/0/20620`
+did not pass the transfer preflight, so planning tried 14 pickup candidates:
+33.38 s total for pickup planning and 8.37 s for eight nominal insertion
+plans. The physical pickup/squeeze segment was 8.39 s and 8.30 s; only the
+second run reached the 5.61 s lift motion. Local Qwen load was 5.71 s and
+5.19 s, partially overlapped with other startup work. A one-time 25.4 s
+unattributed integration import/setup interval appeared in the second run;
+its first-run counterpart was only about 0.04 s. It should be profiled
+separately before treating it as a stable bottleneck. The first pickup plan
+and repeated candidate planning dominate the observed critical path; the
+four-camera key request is not the main delay in these two traces.
