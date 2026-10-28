@@ -6,7 +6,10 @@ This review uses saved capture4 frames only. It did not move the Franka or Inspi
 
 The old final checkpoint sent each camera a two-image question: a crop of the loose tabletop key and a crop of the final socket. On the four available released-key episodes, the saved Qwen label disagreed with the visible final state every time. Varying resolution or placing the two images side by side did not resolve the observed inside case. The new checkpoint keeps the initial and final raw frames, timestamps and hashes paired for provenance, but sends **one final socket crop per camera** to Qwen. Its English question has three one-word answers: `INSIDE`, `OUTSIDE`, `UNCLEAR`. Camera votes are combined deterministically; the original tokens and input transforms are saved. Existing two-image reports still replay through their original verifier.
 
-The exact prompt is in `precision_insertion/observer.py`. It is the same `flat_top_final` prompt used in the saved offline probe. No CAD overlay is added to VLM pixels.
+The exact, versioned prompt is in `precision_insertion/observer.py`. The
+original `flat_top_final` wording was used for v1–v3 reports; v4 adds only
+the offscreen-key clarification described below. No CAD overlay is added to
+VLM pixels.
 
 | Saved attempt prefix | Final frame, visually reviewed | Saved two-image Qwen label | Final-only Qwen, `25322639` / `26053248` |
 | --- | --- | --- | --- |
