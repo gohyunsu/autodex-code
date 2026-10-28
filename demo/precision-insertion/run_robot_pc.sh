@@ -44,6 +44,7 @@ export PRECISION_FR3_INSPIRE_URDF=${PRECISION_FR3_INSPIRE_URDF:-$ROOT/autodex/pl
 export PRECISION_VLM_CAMERA_IDS=${PRECISION_VLM_CAMERA_IDS:-24122734,25305463,25322638,25322649,25305461}
 PRECISION_XY_ESTIMATOR=${PRECISION_XY_ESTIMATOR:-vlm}
 XY_UPDATE_WEIGHT=${PRECISION_XY_UPDATE_WEIGHT:-1.0}
+LABEL_MODE=${PRECISION_LABEL_MODE:-vlm_only}
 
 LAUNCH_TEMPLATE=${PRECISION_LAUNCH_TEMPLATE:-$STAGE/launch.json}
 CATALOG=${PRECISION_ENDPOINT_CATALOG:-$STAGE/recipient_gap${GAP_MM}_endpoint_catalog.json}
@@ -128,6 +129,10 @@ if [[ "$MODE" == --run && "$PRECISION_XY_ESTIMATOR" == tracked_tip ]]; then
   bash demo/precision-insertion/manage_robot_pc_services.sh check-tracker
 fi
 EXTRA_ARGS=()
+EXTRA_ARGS+=(--label-mode "$LABEL_MODE")
+if [[ "$LABEL_MODE" == manual ]]; then
+  EXTRA_ARGS+=(--annotator "${PRECISION_ANNOTATOR:-Hyunsu Go}")
+fi
 if [[ "$MODE" == --plan-only ]]; then
   EXTRA_ARGS+=(--stop-after-planning)
 fi
