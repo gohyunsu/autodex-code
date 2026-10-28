@@ -267,6 +267,7 @@ def _audit_held_geometry_samples(
     minimum_hand_clearance_m: float,
     allow_initial_key_table_support: bool = False,
     stop_on_first_failure: bool = False,
+    collision_only_if_clear: bool = False,
 ) -> tuple[list[dict], dict[str, float], dict[str, str]]:
     """One collision implementation for held transfer and lateral-shift paths.
 
@@ -356,6 +357,11 @@ def _audit_held_geometry_samples(
         with timed("audit.collision_screen", phase="planning", kind="geometry"):
             if scan(collision_only=True):
                 return failures, minimum_distances, source_hashes
+        if collision_only_if_clear:
+            # The lateral shift needs a collision decision, not exact
+            # minima for every distant pair. Full path preflights retain
+            # their exact diagnostic scan.
+            return failures, minimum_distances, source_hashes
         # The collision pass has already checked every pair whose AABB gap
         # could violate clearance. For exact minimum distances, inspect the
         # smallest lower bounds first, then stop once no later bound can beat

@@ -20,7 +20,8 @@ from precision_insertion.assets import AssetPaths  # noqa: E402
 from precision_insertion.calibration import SessionCalibration  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.path_audit import (  # noqa: E402
-    PathAuditLimits, audit_held_joint_paths, audit_held_lateral_path,
+    PathAuditLimits, _audit_held_geometry_samples, audit_held_joint_paths,
+    audit_held_lateral_path,
 )
 from precision_insertion import path_audit as path_audit_module  # noqa: E402
 from precision_insertion import repose_path_audit as repose_audit_module  # noqa: E402
@@ -642,6 +643,35 @@ def test_repose_aabb_skip_preserves_exact_audit_and_reduces_pair_queries(
     optimized = _repose_audit(tmp_path, calibration, paths)
     assert optimized == baseline
     assert len(calls) < baseline_calls
+
+
+def test_lateral_collision_screen_skips_unused_exact_distance_scan(
+    tmp_path, monkeypatch,
+):
+    calibration, _, _ = _fixture(tmp_path, monkeypatch)
+    pose = np.eye(4)
+    pose[:3, 3] = (-0.10, 0.0, 0.15)
+    wrist = {"lateral": [pose.copy() for _ in range(11)]}
+    calls = []
+    original = path_audit_module._held_pair_report
+
+    def counted(*args):
+        calls.append(None)
+        return original(*args)
+
+    monkeypatch.setattr(path_audit_module, "_held_pair_report", counted)
+    common = dict(
+        shared_root=tmp_path, mode=select_mode("square", 1.5),
+        calibration=calibration, wrist=wrist, T_key_hand=np.eye(4),
+        held_hand_q=np.zeros(6), minimum_hand_clearance_m=0.0,
+        stop_on_first_failure=True)
+    full = _audit_held_geometry_samples(**common)
+    full_calls = len(calls)
+    calls.clear()
+    screened = _audit_held_geometry_samples(
+        **common, collision_only_if_clear=True)
+    assert full[0] == screened[0] == []
+    assert len(calls) < full_calls
 
 
 def test_repose_rejects_changed_socket_or_held_path_collision(

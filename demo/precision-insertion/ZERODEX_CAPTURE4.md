@@ -283,6 +283,14 @@ start the adapter if another experiment owns the cameras.
   at the current level 1 (warm median, local temporary disk). The smaller
   encoding remains the default because level 0 adds about 2.36× storage for
   a small fraction of this recorded episode's total time.
+- The same saved trace spent 1.82, 1.84 and 1.90 s on exact minimum-distance
+  diagnostics after three held XY shifts. The shift path still gets the
+  existing sampled key/hand/socket collision screen, but now skips the
+  subsequent exact all-pair minimum-distance report. Its shift record uses
+  `precision_insertion_same_trial_xy_shift_v2` and explicitly names the
+  distances from the collision screen. Nominal grasp and full held-path
+  preflights retain their exact minimum-distance reports. The 5.56 s sum is
+  historical work removed from this route, not a measured live speedup.
 - The ZeroDex launcher sets `PRECISION_VISIBLE_GRIP_CAMERA_IDS` to the same
   four selected views. Its lift checkpoint uses measured Franka/Inspire FK,
   the straight-mount URDF and calibrated projections to crop the hand in each

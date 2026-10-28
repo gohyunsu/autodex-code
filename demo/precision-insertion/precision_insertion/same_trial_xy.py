@@ -234,7 +234,7 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
         calibration=runner.calibration, wrist=wrist,
         T_key_hand=held_relation, held_hand_q=start.full_q[7:],
         minimum_hand_clearance_m=path_limits.minimum_hand_clearance_m,
-        stop_on_first_failure=True)
+        stop_on_first_failure=True, collision_only_if_clear=True)
     if geometry_failures:
         raise RuntimeError("held XY path intersects the frozen collision world")
     folder = (Path(runner._attempt_dir) / "same_trial_xy" / "shifts" /
@@ -270,7 +270,7 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
     measured_increment = (socket[:3, :2].T @
                           (end_wrist[:3, 3] - start_wrist[:3, 3]))
     return _write(folder / "report.json", {
-        "schema": "precision_insertion_same_trial_xy_shift_v1",
+        "schema": "precision_insertion_same_trial_xy_shift_v2",
         "attempt_id": runner.active_attempt.attempt_id,
         "candidate_id": runner.active_attempt.candidate_id,
         "increment_socket_m": increment.tolist(),
@@ -278,7 +278,7 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
         "key_xy_socket_m": residual.tolist(),
         "residual_source": residual_source,
         "sampled_geometry_clear": True,
-        "minimum_surface_distances_m": distances,
+        "collision_screen_distances_m": distances,
         "trajectory_path": str(path),
         "trajectory_sha256": _sha(path),
         "start_state": start.to_record(), "end_state": end.to_record(),
