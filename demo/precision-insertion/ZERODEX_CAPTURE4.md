@@ -349,6 +349,41 @@ already ready now reuses the running services with one readiness probe,
 without repeating deployment. This reduces warm-start SSH/rsync overhead;
 the effect on a complete episode has not been measured.
 
+## Current board/socket capture and FR3 pose, 2026-10-28
+
+With the socket on board 9, the camera-only `start-session --capture` path
+completed without moving the FR3 or Inspire. Evidence is under
+`/home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/session_evidence/`.
+The four cameras triangulated 41/54 board corners (plane RMS 0.288 mm,
+median reprojection 0.926 px). Socket SAM3 masks were nonempty in
+`26053248` and `25322639`; their board-constrained body fits had IoU
+0.941 and 0.948. The other two camera masks were empty and did not
+contribute to socket localization. The two fitted socket centers differed
+by 4.73 mm. These are diagnostics from one capture, not a repeatability test
+or independently verified socket-pose accuracy. The launch currently selects
+the 20 mm radial-gap socket asset; confirm the physical socket variant before
+reusing this session for key planning.
+
+The operator-designated *current* FR3 pose has not yet been recorded as the
+ZeroDex clear-view joint target. A read-only libfranka probe is in
+`read_fr3_state_once.cpp`; its local built binary is at
+`zerodex_capture4/robot_deps/read_fr3_state_once`. On this host, the probe
+connects to `172.16.1.11:1337` over TCP, but `readOnce()` times out waiting
+for a robot-state UDP datagram. The local `ufw` service is active; its rules
+could not be inspected without sudo. No firewall setting was changed. A
+read-only Modbus check of Inspire `angleAct` returned
+`[800, 802, 800, 800, 1000, 787]` in controller order. The stock pipeline's
+`INSPIRE_INIT` means all raw angles near 1000 (fully open), so the measured
+hand is not yet at that software target.
+
+Do **not** run `--run` or `--plan-only` assuming this is already the clear
+view: the current ZeroDex factory still inherits AutoDex's hard-coded
+October-12 `FR3_CLEAR_VIEW` target, and initial `home(clear_view=True)` would
+command a move to it. First resolve the FCI UDP receive path, record the
+seven measured joints, and bind that target in the ZeroDex-only factory and
+planner before enabling motion. Neither the camera-only probe nor the saved
+socket calibration requires that robot-side step.
+
 ## Observed fixed socket, 2026-10-27
 
 The socket is visible in all four raw camera views. One camera-only probe
