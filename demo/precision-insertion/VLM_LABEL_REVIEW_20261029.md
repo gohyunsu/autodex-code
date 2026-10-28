@@ -380,14 +380,30 @@ not become more reliable merely by adding that image.
 ### Current label and crop boundary
 
 The final label's three-camera subset is configured separately from the
-four-view metric XY observer. Its **pixel ROIs are recalculated for every
-key-capture session** from the session-measured socket pose. A fixed padding
-formula is applied to each projected socket hull; the rectangle itself is
-not fixed. A new socket position requires a fresh socket measurement and
-fresh key capture before another attempt. Moving the socket inside a frozen
-session invalidates the crop, collision scene and target together. The
-saved final frames and ROIs allow the exact visual input to be reviewed
-without rerunning a camera.
+four-view metric XY observer. Its **pixel ROIs are recalculated at each
+attempt's key capture** from the socket pose measured once at the beginning
+of that socket session. A fixed padding formula is applied to each projected
+socket hull; the rectangle itself is not fixed. A new socket position
+requires a fresh socket measurement and fresh key capture before another
+attempt. Moving the socket inside a frozen session invalidates the crop,
+collision scene and target together. The saved final frames and ROIs allow
+the exact visual input to be reviewed without rerunning a camera.
+
+| Input | Spatial selection | Temporal selection | Model output and use |
+| --- | --- | --- | --- |
+| Socket and key perception | Socket-only ChArUco/body measurement opens the session. Each key capture uses the registered socket-only background and the projected socket exclusion; SAM's key text is `white plastic cylindrical key`. | One socket measurement per session; a new key image every attempt and after recovery. | Segmentation and FoundPose geometry, not a VLM success label. |
+| Lift VLM | A 650×650 raw-pixel crop follows measured FR3/Inspire FK projected into each undistorted camera; resized to at most 640×640. | After a 2 s held dwell, the model receives the after-lift crop; the initial raw frame remains bound to the checkpoint. | Independent YES/NO in four configured views. One visible YES gives the experimental `held` visual class; `confirming_views` records which cameras actually said YES. |
+| Transfer VLM | For each camera, an after-lift hand crop and a preinsert crop enclosing the projected hand and session socket. The hand crop moves with measured joints; the socket box moves with the session pose. | Same-camera after-lift/preinsert pair; no CAD overlay. | Coarse visual class. It cannot currently establish continued grip reliably because archived positive pairs and empty-hand controls both received `coarse_match`. Four-view SAM/Qwen tip grounding separately measures the XY residual. |
+| Released-key VLM | Project the frozen socket hull into each undistorted final frame. The crop adds half a socket width on each side, 1.2 socket heights above and 0.3 below; clips at image edges; enlarges a crop whose long side is below 384 px, then fits within 768×576. | After the 20 mm motion, hand opening and clear-view exit, classify **only** the final socket crop. The initial tabletop and preinsert images are retained as trial evidence, not model input. | One-word INSIDE/OUTSIDE/UNCLEAR independently in the reviewed three-camera subset; majority gives the visual `inside_socket` label. It does not measure insertion depth. |
+
+The socket is therefore allowed to be placed elsewhere on the board at the
+**next session**. In the saved benchmark, camera `25322639` had socket hull
+`[669,705,899,922]` in session `30cbe1f3` and
+`[489,690,722,905]` in session `30e9cd0b`; the final VLM crop followed
+those different projections. The crop padding constants are fixed; the
+measured pose and resulting pixels are session dependent. The default launch
+does not reuse an old socket session. Explicit `--reuse-session-evidence`
+must only refer to an unchanged board/socket placement.
 
 The remaining VLM limitation is at transfer arrival: archived positive
 transfer frames and synthetic empty-hand controls received the same
