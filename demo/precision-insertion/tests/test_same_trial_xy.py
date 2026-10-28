@@ -14,8 +14,9 @@ from precision_insertion.guarded_axial_handoff import (  # noqa: E402
     verify_guarded_axial_handoff,
 )
 from precision_insertion.same_trial_xy import (  # noqa: E402
-    _shifted_targets, choose_xy_move,
+    _alignment_frame_inputs, _shifted_targets, choose_xy_move,
 )
+from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
 from precision_insertion.targets import InsertionTargets  # noqa: E402
 
 
@@ -37,6 +38,28 @@ def test_same_trial_move_requires_metric_multiview_and_caps_one_motion():
     assert choose_xy_move({**metric,
                            "xy_correction_socket_m": [.001, -.001]},
                           tolerance_m=.0025)["status"] == "aligned"
+
+
+def test_live_xy_measurement_reuses_just_saved_pixels(tmp_path, monkeypatch):
+    import precision_insertion.same_trial_xy as same_trial
+
+    frames = {"100": np.zeros((3, 4, 3), dtype=np.uint8),
+              "200": np.ones((3, 4, 3), dtype=np.uint8)}
+    raw = RawCameraCapture(
+        capture_id="current", request_id=17, images_bgr=frames,
+        frame_ids={"100": 1, "200": 2}, acquisition_metadata={})
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "phase": "preinsert", "capture_id": "current", "request_id": 17,
+        "frame_evidence": {"100": {"timestamp_s": 1.0},
+                           "200": {"timestamp_s": 1.0}},
+    }), encoding="utf-8")
+    monkeypatch.setattr(same_trial, "verify_raw_camera_capture",
+                        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                            AssertionError("live path reread saved PNGs")))
+    rows, images = _alignment_frame_inputs(tmp_path, raw)
+    assert set(rows) == set(images) == {"100", "200"}
+    assert images["100"] is frames["100"]
+    assert images["200"] is frames["200"]
 
 
 def test_corrected_axial_keeps_key_at_observed_residual_and_moves_wrist():

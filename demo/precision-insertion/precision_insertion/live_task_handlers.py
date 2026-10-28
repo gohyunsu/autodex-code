@@ -197,9 +197,11 @@ class LiveTaskHandlers:
             self._preinsert_bundle = raw
             self._preinsert_attempt_id = attempt.attempt_id
             if self.same_trial_xy_tolerance_m is not None:
-                self._refine_current_hold(runner)
+                self._refine_current_hold(runner, capture=capture)
 
-    def _refine_current_hold(self, runner) -> None:
+    def _refine_current_hold(
+        self, runner, *, capture: RawCameraCapture | None = None,
+    ) -> None:
         """Reobserve after each planned shift before preparing any axial path."""
         if self.planner is None or self.path_limits is None or (
                 self.alignment_limits is None or
@@ -225,7 +227,8 @@ class LiveTaskHandlers:
                     nominal_tip_height_error_m=(
                         self.same_trial_tip_height_error_m),
                     xy_estimator=self.xy_estimator,
-                    sam_segmentor=self.sam_segmentor)
+                    sam_segmentor=self.sam_segmentor,
+                    capture=capture)
             choice = choose_xy_move(
                 observed["alignment"],
                 tolerance_m=self.same_trial_xy_tolerance_m)
@@ -293,7 +296,7 @@ class LiveTaskHandlers:
             predicted_residual = [a + b for a, b in zip(
                 current_residual, step)]
             current = runner.current_decision()
-            raw, _ = self._capture(
+            raw, capture = self._capture(
                 runner=runner, decision=current,
                 callback=self.capture_preinsert, phase="preinsert")
             self._preinsert_bundle = raw

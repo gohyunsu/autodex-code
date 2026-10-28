@@ -169,7 +169,7 @@ def test_camera_only_launcher_keeps_default_output_with_other_options(
     output = args[args.index("--output-dir") + 1]
     assert output == (str(tmp_path / "chosen") if explicit_output else
                       str(stage / "runs" / Path(output).name))
-    assert args[args.index("--gap-mm") + 1] == "20"
+    assert args[args.index("--gap-mm") + 1] == "5"
 
 
 def test_camera_only_gap_override_keeps_catalog_and_launch_consistent(

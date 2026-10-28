@@ -1,5 +1,64 @@
 # ZeroDex capture4 profile (kds-Z790)
 
+## Code layout and machine settings
+
+`run_zerodex_capture4.sh` is the single entry point for `--check`,
+`--camera-only`, `--plan-only`, and `--run`. It sources
+[`config/zerodex_capture4.env.sh`](config/zerodex_capture4.env.sh), which
+contains the kds-Z790/capture4 paths, addresses, camera IDs, straight-mount
+URDF and CUDA header locations. To use another checkout or PC, export an
+individual setting before launching, or set `PRECISION_SYSTEM_PROFILE` to a
+separate shell profile. These defaults do not change the AutoDex robot-PC
+launcher or shared capture4 files.
+
+The profile also supplies the namespaced camera service manager's remote
+asset root. For service commands in this checkout, load it in the calling
+shell first:
+
+```bash
+cd /home/hyunsu/autodex-code
+source demo/precision-insertion/config/zerodex_capture4.env.sh
+python3 demo/precision-insertion/manage_zerodex_capture4_services.py check
+```
+
+Runtime responsibilities remain in the existing modules: `session_launch.py`
+opens the calibrated camera session, `live_orchestration.py` sequences the
+v8 trial, `franka_integration.py` assembles the stock FR3 planner and executor,
+`zerodex_franka_integration.py` selects this rig's daemon and measured clear
+view, and `live_task_handlers.py` runs held transfer, same-episode XY alignment,
+insertion and final observation. `same_trial_xy.py` holds the XY measurement,
+planned shift and corrected axial handoff. The many `probe_*.py` and
+`render_*.py` files are offline diagnostics/presentation tools; they are not
+imported into the live loop. Keep machine addresses and Python/asset locations
+in the profile, task choices in launch/runtime JSON or explicit environment
+options, and per-run evidence under `runs/`.
+
+The measured earlier 10 mm live run spent 26.58 s in first key
+capture/refinement, 19.20 s in first planner-world setup (partly overlapped),
+and 5.27 s loading Qwen. Persistent capture4 perception, local Qwen batching,
+Qwen preload and fixed-world planner prewarm are already active. The four-view
+socket mask diagnostic for the current 5 mm fixture is in
+`runs/socket_probe_gap5_1793181018289/`; it is camera-only and does not certify
+a robot path or final insertion. Use the per-step timing spans before changing
+the model placement or camera count; the current socket-only scene cannot
+measure key planning or same-episode motion latency.
+
+A separate full FoundPose diagnostic is saved under
+`runs/socket_foundpose_gap5_1793181018289/`. In that capture, three views
+returned socket poses and the board-constrained fit had mean body IoU
+0.956 and 1.35 mm maximum pairwise centre disagreement. Camera `25305462`
+returned no mask in that one capture; the prior mask-only capture did contain
+its socket mask. This is observation variability, not a new runtime rejection
+rule. Neither diagnostic freezes a 5 mm robot-session socket calibration;
+the live session must measure its own socket after the fixture change.
+
+For the same-episode XY loop, a fresh preinsert capture is still written as
+lossless evidence. The estimator now reads the already captured in-memory
+pixels for that same request, avoiding a second PNG read/hash and repeated
+undistortion of the original images on every held shift. Saved-scene replay
+still verifies and reads the PNGs. Each observation records `frame_source`
+so timings can distinguish the two paths.
+
 ## Same-episode XY alignment and the current 5 mm socket
 
 The physical board currently holds a **5 mm radial-gap cylinder socket** and

@@ -25,7 +25,7 @@ from .live_robot_state import LiveRobotState
 from .observer import LabeledFrame
 from .path_audit import PathAuditLimits, _audit_held_geometry_samples
 from .preflight import _path, plan_held_transfer_and_axial
-from .raw_camera_capture import verify_raw_camera_capture
+from .raw_camera_capture import RawCameraCapture, verify_raw_camera_capture
 from .retry_session import (
     _compute_grounded_alignment, _compute_sam_half_ellipse_alignment,
 )
@@ -75,22 +75,46 @@ def choose_xy_move(alignment: dict, *, tolerance_m: float,
             "increment_socket_m": step.tolist()}
 
 
+def _alignment_frame_inputs(
+    bundle: Path, capture: RawCameraCapture | None,
+) -> tuple[dict, dict[str, np.ndarray]]:
+    """Reuse the just-written live pixels; verify saved pixels for replay."""
+    if capture is None:
+        report = verify_raw_camera_capture(bundle, phase="preinsert")
+        images = {}
+        for camera in assessment_cameras(report["frame_evidence"]):
+            image = cv2.imread(str(bundle / "images" / f"{camera}.png"),
+                               cv2.IMREAD_COLOR)
+            if image is None:
+                raise ValueError("preinsert camera image is missing")
+            images[camera] = image
+        return report["frame_evidence"], images
+
+    # write_raw_camera_capture has already verified the exposure identity and
+    # persisted these exact images. Re-reading eight PNGs and replaying four
+    # undistort operations on every same-trial shift adds no new observation.
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    if (manifest.get("phase") != "preinsert" or
+            manifest.get("capture_id") != capture.capture_id or
+            manifest.get("request_id") != capture.request_id or
+            set(manifest.get("frame_evidence", {})) != set(capture.images_bgr)):
+        raise ValueError("live preinsert frames differ from saved capture")
+    return manifest["frame_evidence"], dict(capture.images_bgr)
+
+
 def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
                          alignment_limits: AlignmentLimits,
                          index: int, nominal_tip_height_error_m: float,
                          xy_estimator: str = "vlm",
-                         sam_segmentor=None) -> dict:
+                         sam_segmentor=None,
+                         capture: RawCameraCapture | None = None) -> dict:
     """Call the existing calibrated multiview tip/axis estimator on raw PNGs."""
     bundle = Path(raw_bundle).expanduser().resolve()
-    capture = verify_raw_camera_capture(bundle, phase="preinsert")
-    rows = capture["frame_evidence"]
+    rows, images = _alignment_frame_inputs(bundle, capture)
     cameras = assessment_cameras(rows)
     frames = []
     for camera in cameras:
-        image = cv2.imread(str(bundle / "images" / f"{camera}.png"),
-                           cv2.IMREAD_COLOR)
-        if image is None:
-            raise ValueError("preinsert camera image is missing")
+        image = images[camera]
         frames.append(LabeledFrame(
             camera, "preinsert_hold", rows[camera]["timestamp_s"],
             Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))))
@@ -142,6 +166,8 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
         "attempt_id": runner.active_attempt.attempt_id,
         "candidate_id": runner.active_attempt.candidate_id,
         "raw_bundle": str(bundle),
+        "frame_source": ("just_saved_live_capture" if capture is not None
+                         else "verified_saved_png"),
         "raw_manifest_sha256": _sha(bundle / "manifest.json"),
         "postlift_report_path": str(runner._postlift_report_path),
         "postlift_report_sha256": _sha(runner._postlift_report_path),

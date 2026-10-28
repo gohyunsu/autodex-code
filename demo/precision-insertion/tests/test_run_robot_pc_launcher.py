@@ -36,20 +36,23 @@ def test_zerodex_launcher_provides_demo_collision_compat(tmp_path):
     root = demo.parents[1]
     stage = tmp_path / "stage"
     stage.mkdir()
-    for name in ("launch.json", "recipient_gap20_endpoint_catalog_straight.json",
+    for name in ("launch.json", "recipient_gap5_endpoint_catalog_straight.json",
                  "franka_runtime.json"):
         (stage / name).write_text("{}\n", encoding="utf-8")
     fake_check = tmp_path / "fake_check"
     fake_check.write_text(
-        "#!/bin/sh\nprintf 'PYTHONPATH=%s\\nPREWARM=%s\\nPRELOAD=%s\\n' "
+        "#!/bin/sh\nprintf 'PYTHONPATH=%s\\nPREWARM=%s\\nPRELOAD=%s\\nHOST=%s\\nFR3=%s\\n' "
         "\"$PYTHONPATH\" \"$PRECISION_PREWARM_FIXED_WORLD\" "
-        "\"$PRECISION_PRELOAD_VLM\"\n",
+        "\"$PRECISION_PRELOAD_VLM\" \"$PRECISION_CAPTURE4_SSH_HOST\" "
+        "\"$PRECISION_ZERODEX_FR3_FCI_IP\"\n",
         encoding="utf-8")
     fake_check.chmod(0o755)
     env = dict(os.environ, PRECISION_STAGE_ROOT=str(stage),
                PRECISION_CHECK_PY=str(fake_check),
                PRECISION_EXTRA_PYTHONPATH=str(demo / "compat"))
     env.pop("PRECISION_PREWARM_FIXED_WORLD", None)
+    env.pop("PRECISION_CAPTURE4_SSH_HOST", None)
+    env.pop("PRECISION_ZERODEX_FR3_FCI_IP", None)
     completed = subprocess.run(
         ["bash", str(demo / "run_zerodex_capture4.sh"), "--check"],
         env=env, capture_output=True, text=True, check=True)
@@ -57,6 +60,14 @@ def test_zerodex_launcher_provides_demo_collision_compat(tmp_path):
     assert expected in completed.stdout
     assert "PREWARM=1" in completed.stdout
     assert "PRELOAD=1" in completed.stdout
+    assert "HOST=capture4@147.46.219.136" in completed.stdout
+    assert "FR3=172.16.1.11" in completed.stdout
+
+    env["PRECISION_CAPTURE4_SSH_HOST"] = "capture4@example.test"
+    overridden_host = subprocess.run(
+        ["bash", str(demo / "run_zerodex_capture4.sh"), "--check"],
+        env=env, capture_output=True, text=True, check=True)
+    assert "HOST=capture4@example.test" in overridden_host.stdout
 
     env["PRECISION_KEY_ALREADY_PLACED"] = "1"
     already_placed = subprocess.run(
@@ -82,7 +93,7 @@ def test_zerodex_run_selects_its_own_robot_factory(tmp_path):
     root = demo.parents[1]
     stage = tmp_path / "stage"
     stage.mkdir()
-    for name in ("launch.json", "recipient_gap20_endpoint_catalog_straight.json",
+    for name in ("launch.json", "recipient_gap5_endpoint_catalog_straight.json",
                  "franka_runtime.json"):
         (stage / name).write_text("{}\n", encoding="utf-8")
     fake_planner = tmp_path / "fake_planner"

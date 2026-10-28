@@ -33,6 +33,12 @@ def test_foundpose_attention_fallback_is_capture4_only():
     assert "HF_HUB_OFFLINE" not in services._command("camera")
 
 
+def test_namespaced_perception_asset_root_comes_from_profile(monkeypatch):
+    monkeypatch.setenv("PRECISION_CAPTURE4_ASSET_ROOT", "/tmp/test-stage")
+    assert "PRECISION_CAPTURE_ASSET_ROOT=/tmp/test-stage" in services._command(
+        "precision")
+
+
 def test_sam3_auto_mode_only_changes_namespaced_precision_service(monkeypatch):
     monkeypatch.delenv("PRECISION_SAM3_BATCH", raising=False)
     assert "PRECISION_SAM3_BATCH=auto" in services._command("precision")
