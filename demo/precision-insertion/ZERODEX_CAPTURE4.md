@@ -730,3 +730,10 @@ reconnection, power cycle, and ordinary open command. A later read-only
 Modbus check found measured raw angles `[998, 999, 1000, 998, 998, 987]`
 against commanded `[1000]*6`. This confirms current unloaded actuator
 response; it does not determine which connection caused the earlier state.
+
+The later capture4 read used the existing camera/SAM service without a robot
+command. It returned all four lit 2048×1536 source frames in 1.953 s, saved
+under `zerodex_capture4/inline_probe_25062427d2f3_request_1941213717/`.
+The key was visibly still inside the socket in those frames; no separate
+tabletop key was available for another pickup. This was a mask-only transport
+probe, so its `pose_ok: false` fields do not evaluate FoundPose accuracy.
