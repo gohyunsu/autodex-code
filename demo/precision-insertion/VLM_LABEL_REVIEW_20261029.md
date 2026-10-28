@@ -91,6 +91,12 @@ hash are unchanged; the input resize is recorded as policy
 and `.../vlm_released_v2_checkpoint_replay_20261029/summary.json`. Four cases
 from one camera layout are insufficient to estimate general accuracy.
 
+A saved-frame batch probe passed the same three final crops to one Qwen
+`infer_many` call. The four episode labels matched the independent calls, but
+warm batch inference occupied 0.19–0.20 s versus roughly 0.21 s for the three
+warm independent calls. The production per-camera calls remain in place.
+Probe: `~/precision_insertion_project/development/zerodex_capture4/reviews/vlm_final_batch_probe_20261029.json`.
+
 ## Pipeline review
 
 - Socket-only capture and board-constrained socket pose come before key perception. The measured pose is frozen for repeated attempts and projected into each camera for key exclusion and final VLM ROI. The current crop is therefore location-adaptive, not a fixed pixel rectangle.
