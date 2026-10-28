@@ -88,8 +88,9 @@ not independently determine key tilt or prove physical insertion depth.
 If the first observation has no multiview metric estimate, the original
 verified nominal path remains available. After any held shift, a new metric
 estimate is preferred. If the new snapshot is inconclusive, the runner
-propagates the last metric key-face position by the **completed** commanded
-held shift and records that the residual is predicted, then continues the
+propagates the last metric key-face position using the wrist displacement
+reconstructed from post-motion Franka joint feedback. It records that the
+residual is predicted, then continues the
 same loop. It never treats a one-view planar estimate as a new measurement;
 that route produced a false 35.7 mm correction in a physically inserted
 10 mm episode.

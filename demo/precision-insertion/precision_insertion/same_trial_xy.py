@@ -194,8 +194,9 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
     socket = validated_frozen_socket_pose(
         mode=runner.mode, shared_root=runner.shared_root,
         calibration=runner.calibration)
-    goal = validate_se3(planner.fk_wrist(start.full_q),
-                        name="current measured wrist FK").copy()
+    start_wrist = validate_se3(planner.fk_wrist(start.full_q),
+                               name="current measured wrist FK")
+    goal = start_wrist.copy()
     goal[:3, 3] += socket[:3, :2] @ increment
     scene = build_held_scene_from_trial(
         trial_scene=runner._preflight.trial_scene,
@@ -253,11 +254,16 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
             "stop_acknowledgement": stop,
         })
         raise
+    end_wrist = validate_se3(planner.fk_wrist(end.full_q),
+                             name="measured lateral end FK")
+    measured_increment = (socket[:3, :2].T @
+                          (end_wrist[:3, 3] - start_wrist[:3, 3]))
     return _write(folder / "report.json", {
         "schema": "precision_insertion_same_trial_xy_shift_v1",
         "attempt_id": runner.active_attempt.attempt_id,
         "candidate_id": runner.active_attempt.candidate_id,
         "increment_socket_m": increment.tolist(),
+        "measured_increment_socket_m": measured_increment.tolist(),
         "key_xy_socket_m": residual.tolist(),
         "residual_source": residual_source,
         "sampled_geometry_clear": True,

@@ -1,5 +1,6 @@
 """One selected grasp proceeds through observed hold and 20 mm verdict."""
 
+import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -209,7 +210,8 @@ def test_same_trial_xy_reobserves_and_replans_from_final_hold(
         seen.append(("shift", kwargs["increment_socket_m"]))
         path = runner._attempt_dir / "shift.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("{}", encoding="utf-8")
+        path.write_text(json.dumps({"measured_increment_socket_m":
+                                    [.0035, 0.]}), encoding="utf-8")
         return path
 
     def handoff(**kwargs):
@@ -226,10 +228,10 @@ def test_same_trial_xy_reobserves_and_replans_from_final_hold(
     assert [row[0] for row in seen] == [
         "measure", "shift", "measure", "handoff"]
     np.testing.assert_allclose(seen[1][1], [.004, 0.])
-    np.testing.assert_allclose(seen[-1][1]["total_xy_m"], [.004, 0.])
+    np.testing.assert_allclose(seen[-1][1]["total_xy_m"], [.0035, 0.])
     np.testing.assert_allclose(
         seen[-1][1]["residual_xy_m"],
-        [0., 0.] if predicted else [-.0005, 0.])
+        [-.0005, 0.])
     assert seen[-1][1]["residual_source"] == (
         "last_metric_plus_completed_held_motion" if predicted else
         "current_metric_multiview")
