@@ -220,15 +220,13 @@ def assess_released_insertion_checkpoint(
         initial_image_root, initial, cameras, "initial_tabletop")
     later, later_inputs = _image_frames(
         final_root, final, cameras, "final_clear_view")
+    initial_sizes = {frame.camera_id: frame.image.size for frame in frames}
+    if any(initial_sizes[frame.camera_id] != frame.image.size
+           for frame in later):
+        raise ValueError("initial/final temporal pair changed image geometry")
     later, final_visual_crops = _focus_final_frames(later, initial)
     frames.extend(later)
     inputs.extend(later_inputs)
-    for camera in cameras:
-        name = _safe_id(camera, "camera ID")
-        before = cv2.imread(str(initial_image_root / "images" / f"{name}.png"))
-        after = cv2.imread(str(final_root / "images" / f"{name}.png"))
-        if before is None or after is None or before.shape != after.shape:
-            raise ValueError("initial/final temporal pair changed image geometry")
     visual = observe_released_insertion_visual(backend, frames)
     supported = (visual.parse_error is None and
                  len(set(visual.parsed["evidence_views"]) & set(cameras)) >=

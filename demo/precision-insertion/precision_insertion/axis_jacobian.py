@@ -146,13 +146,22 @@ def plan_jacobian_axis_stroke(
         if converged and np.linalg.norm(q[:n_arm] - previous[:n_arm]) > opts.max_waypoint_delta_rad:
             converged, reason = False, "axis_jacobian_branch_jump"
         segment = None
+        collision_detail = None
         if converged:
             segment = _segment_samples(
                 previous, q, n_arm=n_arm, hand=hand,
                 max_joint_delta=opts.max_segment_joint_delta_rad)
-            valid, status, _ = _check_states_batch(planner, segment[1:])
+            valid, status, collision_batch = _check_states_batch(
+                planner, segment[1:])
             if not np.all(valid):
                 converged, reason = False, "axis_segment_robot_collision"
+                first = int(np.flatnonzero(~valid)[0])
+                collision_detail = {
+                    "curobo_status": status,
+                    "first_invalid_segment_sample": first + 1,
+                    "first_invalid_full_q": segment[first + 1].tolist(),
+                    "collision_batch": collision_batch,
+                }
             else:
                 poses = _fk_batch(planner, segment[1:])
                 metrics = _axis_metrics(poses, reference, axis)
@@ -162,13 +171,16 @@ def plan_jacobian_axis_stroke(
                         np.max(metrics["progress_m"]) >
                         distance + opts.position_tolerance_m):
                     converged, reason = False, "axis_segment_geometric_deviation"
-        records.append({
+        record = {
             "stage": "axial_waypoint", "index": index,
             "target_progress_m": distance, "T_robot_hand_goal": goal.tolist(),
             "success": converged, "failure_code": None if converged else reason,
             "iterations": iteration, "joint_limit_hit": joint_limit_hit,
             "segment_samples": 0 if segment is None else len(segment) - 1,
-        })
+        }
+        if collision_detail is not None:
+            record["collision_detail"] = collision_detail
+        records.append(record)
         if not converged:
             return failure(reason, status if reason == "axis_segment_robot_collision"
                            else None, geometric=np.stack(geometric),

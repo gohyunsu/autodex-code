@@ -44,3 +44,36 @@ For example, camera `25322639` used final ROIs `[554,444,1014,987]` in attempt `
 ## Verification and next camera session
 
 Focused tests for the checkpoint, observer and distributed Qwen route passed. Four old checkpoint reports replay with their original labels. The exact new prompt and 768×576 crop were exercised through the revised runtime observer on the saved three-camera frames, with all four aggregate labels matching visual review. The complete `assess_released_insertion_checkpoint → write → verify` path also replayed all four saved episodes; its new reports are under `precision_insertion_project/development/zerodex_capture4/reviews/vlm_released_checkpoint_replay_20261029/<attempt-id>/report.json`. Their visual labels were `outside`, `inside`, `outside`, `outside`, respectively; only the visually inside case produced `vlm_only` task success. Old reports were not edited. GPU inference required an unrestricted read-only process because the default sandbox hid CUDA; the host RTX 3090 was available. A **new** live capture with the current socket location, lighting and three selected final views still needs evaluation. Record the per-camera token, aggregate label, final crop and manual visual label for each new episode. Keep raw frames and the observed physical outcome separate from the model label.
+
+The released-key checkpoint now compares the sizes of the already decoded
+initial/final frames. It no longer decodes the same six PNGs again solely for
+this comparison. On one saved episode, reading three full-resolution PNGs
+took 0.18–0.19 s, so removing six redundant reads should save roughly twice
+that amount; this is a file-I/O estimate, not a measured live speedup. The
+original frame hashes and replay verifier are unchanged.
+
+## Corrected axial handoff found in the saved four-view attempt
+
+The saved state of attempt `9542c1bd` reproduced its ninth-waypoint cuRobo
+failure with the straight-mount FR3/Inspire URDF. Moving only the virtual
+socket away made that state feasible; moving only the table away left it in
+world collision. At the failed state, the nearest cuRobo hand sphere had about
+1.1 mm socket-surface penetration. An independent exact hand-mesh check found
+`right_thumb_4.STL` intersecting the socket. Reconstructing the corrected
+held relation from the saved three XY shifts and last multiview residual made
+the existing exact 20 mm key/hand/socket endpoint screen return
+`endpoint_pass=false`: the key itself fit, but the measured hand pose did not.
+The original post-lift endpoint report had passed with 8.0 mm minimum hand
+clearance, so the corrected held relation changed this specific geometric
+conclusion.
+
+The same-trial corrected handoff now runs that **existing intended endpoint
+screen** before its axial Jacobian plan. A rejected endpoint saves the
+measured state, corrected targets, and hand/socket result as
+`guarded_axial_handoffs/NNN/plan_failure.json`; no insertion command is sent.
+This avoids spending planner time on a grasp whose corrected 20 mm goal is
+already incompatible with the socket. The axial solver also records the
+first invalid joint sample and cuRobo status when a later collision occurs.
+Neither collision condition was disabled or relaxed. This saved grasp cannot
+establish a successful corrected insertion; another grasp or a changed
+physical key-in-hand relation is needed for that episode.

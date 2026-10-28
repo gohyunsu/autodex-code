@@ -4,8 +4,10 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -133,3 +135,49 @@ def test_corrected_handoff_dispatch_binds_latest_snapshot(tmp_path):
     import pytest
     with pytest.raises(ValueError, match="capture changed"):
         verify_guarded_axial_handoff(report)
+
+
+def test_corrected_axial_screens_measured_hand_endpoint_before_planning(
+    tmp_path, monkeypatch,
+):
+    import precision_insertion.same_trial_xy as same_trial
+
+    mode = select_mode("cylinder", 5)
+    pose = np.eye(4)
+    original = InsertionTargets(
+        mode, "a" * 64, "b" * 64, pose, pose, pose, pose,
+        pose, pose, pose, np.array([0., 0., -1.]), (0., 0.), .03)
+    state = SimpleNamespace(
+        full_q=np.zeros(13), to_record=lambda: {"full_q": [0.] * 13})
+    runner = SimpleNamespace(
+        mode=mode, shared_root=tmp_path, calibration=None,
+        _attempt_dir=tmp_path / "attempt", _guarded_axial_index=0,
+        _postlift_preflight=SimpleNamespace(targets=original),
+        _preflight=SimpleNamespace(selected_candidate_key=("table", "0", "42")),
+        active_attempt=SimpleNamespace(attempt_id="attempt_1", candidate_id="table/0/42"),
+    )
+    (tmp_path / "attempt").mkdir()
+    monkeypatch.setattr(same_trial, "validated_frozen_socket_pose",
+                        lambda **_kwargs: pose)
+    monkeypatch.setattr(same_trial, "build_rigid_insertion_targets",
+                        lambda **_kwargs: original)
+    monkeypatch.setattr(same_trial, "screen_grasp_endpoint",
+                        lambda **_kwargs: {
+                            "endpoint_pass": False,
+                            "T_socket_key_tested": pose.tolist(),
+                            "hand_socket_clear_at_20mm": False,
+                        })
+    monkeypatch.setattr(same_trial, "plan_held_transfer_and_axial",
+                        lambda **_kwargs: (_ for _ in ()).throw(
+                            AssertionError("collision endpoint reached axial planner")))
+    with pytest.raises(RuntimeError, match="endpoint intersects"):
+        same_trial.plan_corrected_axial_handoff(
+            runner=runner,
+            planner=SimpleNamespace(fk_wrist=lambda _q: pose),
+            path_limits=SimpleNamespace(minimum_hand_clearance_m=0.),
+            read_state=lambda: state, total_xy_m=(0., 0.),
+            residual_xy_m=(0., 0.), residual_source="test",
+            observations=[], shifts=[], final_preinsert_bundle=tmp_path)
+    failure = json.loads((tmp_path / "attempt/guarded_axial_handoffs/000/plan_failure.json").read_text())
+    assert failure["status"] == "corrected_20mm_endpoint_rejected"
+    assert failure["endpoint"]["hand_socket_clear_at_20mm"] is False

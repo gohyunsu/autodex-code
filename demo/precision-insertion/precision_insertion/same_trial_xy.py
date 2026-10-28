@@ -19,6 +19,8 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from .assets import AssetPaths
+from .endpoint import screen_grasp_endpoint
 from .geometry import validate_se3
 from .grounded_alignment import AlignmentLimits
 from .live_robot_state import LiveRobotState
@@ -338,6 +340,40 @@ def plan_corrected_axial_handoff(*, runner, planner,
         calibration=runner.calibration, T_key_hand=relation,
         xy_offset_socket_m=provisional.xy_offset_socket_m,
         cylinder_yaw_gauge_socket_rad=original.cylinder_yaw_gauge_socket_rad)
+    folder = (Path(runner._attempt_dir) / "guarded_axial_handoffs" /
+              f"{runner._guarded_axial_index:03d}")
+    folder.mkdir(parents=True, exist_ok=False)
+    candidate_dir = (AssetPaths(runner.shared_root, runner.mode).candidate_dir /
+                     Path(*runner._preflight.selected_candidate_key))
+    endpoint = screen_grasp_endpoint(
+        shared_root=runner.shared_root, mode=runner.mode,
+        candidate_dir=candidate_dir,
+        minimum_hand_clearance_m=path_limits.minimum_hand_clearance_m,
+        xy_offset_socket_m=targets.xy_offset_socket_m,
+        T_key_hand_override=relation,
+        hand_poses_override={"measured_hold": state.full_q[7:]},
+        override_source="same_trial_corrected_XY_measured_wrist",
+        cylinder_yaw_gauge_socket_rad=targets.cylinder_yaw_gauge_socket_rad)
+    if not np.allclose(endpoint["T_socket_key_tested"],
+                       np.linalg.inv(socket) @ targets.T_robot_key_verification,
+                       atol=1e-8, rtol=0):
+        raise ValueError("corrected endpoint and axial goal differ")
+    if endpoint["endpoint_pass"] is not True:
+        _write(folder / "plan_failure.json", {
+            "schema": "precision_insertion_same_trial_axial_plan_failure_v1",
+            "attempt_id": runner.active_attempt.attempt_id,
+            "candidate_id": runner.active_attempt.candidate_id,
+            "status": "corrected_20mm_endpoint_rejected",
+            "measured_start": state.to_record(),
+            "total_xy_correction_socket_m": total.tolist(),
+            "final_residual_socket_xy_m": residual.tolist(),
+            "residual_source": residual_source,
+            "targets": targets.to_record(),
+            "endpoint": endpoint,
+            "planning": None,
+            "scope": "failed_plan_no_insertion_command",
+        })
+        raise RuntimeError("corrected 20 mm endpoint intersects the socket")
     planned = plan_held_transfer_and_axial(
         planner=planner, trial_scene=runner._preflight.trial_scene,
         shared_root=runner.shared_root, calibration=runner.calibration,
@@ -345,9 +381,6 @@ def plan_corrected_axial_handoff(*, runner, planner,
         held_hand_q=state.full_q[7:], held_hand_source="measured",
         limits=path_limits, axial_waypoint_step_m=.005,
         start_at_preinsert=True)
-    folder = (Path(runner._attempt_dir) / "guarded_axial_handoffs" /
-              f"{runner._guarded_axial_index:03d}")
-    folder.mkdir(parents=True, exist_ok=False)
     if not planned.sampled_planning_pass or planned.axial_trajectory is None:
         _write(folder / "plan_failure.json", {
             "schema": "precision_insertion_same_trial_axial_plan_failure_v1",
@@ -359,6 +392,7 @@ def plan_corrected_axial_handoff(*, runner, planner,
             "final_residual_socket_xy_m": residual.tolist(),
             "residual_source": residual_source,
             "targets": targets.to_record(),
+            "endpoint": endpoint,
             "planning": planned.to_record(),
             "scope": "failed_plan_no_insertion_command",
         })
@@ -392,6 +426,7 @@ def plan_corrected_axial_handoff(*, runner, planner,
         "held_relation_scope": "observed_key_XY_and_measured_wrist_with_nominal_key_orientation",
         "inserted_key_pose_robot": targets.T_robot_key_verification.tolist(),
         "targets": targets.to_record(),
+        "endpoint": endpoint,
         "planning": planned.to_record(),
         "observations": [{"path": str(path), "sha256": _sha(path)}
                          for path in observations],

@@ -980,6 +980,13 @@ failure, not evidence that the key reached 20 mm or that a physical collision
 occurred. Future failures at this handoff now save `plan_failure.json` with
 the measured start, corrected targets, and underlying cuRobo failure detail
 before raising. No collision check was disabled or relaxed.
+An offline obstacle-attribution and exact-hand-mesh replay is saved under
+`~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/collision_attribution_20261029.json`.
+The corrected key still fits the 5 mm socket, but the measured thumb tip
+intersects the socket at the intended 20 mm endpoint. The same-trial handoff
+now reuses the project's exact endpoint screen on the corrected held relation
+and measured finger joints before asking cuRobo for the axial path. This
+reports the incompatible grasp sooner and avoids a wasted axial plan.
 
 The separate post-run uploader saved the 26053248 recording to
 `/mnt/paradex2/hyunsu/precision_insertion/runs/zerodex_capture4/2026/10/28/20261028_233041_868585_236445/video/26053248.avi`.
