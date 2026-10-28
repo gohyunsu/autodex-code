@@ -335,6 +335,29 @@ def test_final_classifier_crops_around_frozen_socket_projection():
         frames[0].image.tobytes()).hexdigest()
 
 
+def test_final_classifier_crop_follows_socket_remeasurement():
+    from PIL import Image
+    from precision_insertion.observer import LabeledFrame
+    from precision_insertion.released_insertion_checkpoint import (
+        _focus_final_frames,
+    )
+
+    frame = LabeledFrame(
+        "cam_a", "final_clear_view", 123.,
+        Image.new("RGB", (2048, 1536), "black"))
+    def crop_for(bbox):
+        initial = {"consistency": {"socket_exclusion": {"per_camera": {
+            "cam_a": {"projected_hull_bbox_px": bbox},
+        }}}}
+        _, records = _focus_final_frames([frame], initial)
+        return records["cam_a"]["roi_xyxy_full_px"]
+
+    first = crop_for([947, 955, 1343, 1244])
+    moved = crop_for([450, 650, 846, 939])
+    assert [moved[0] - first[0], moved[1] - first[1]] == [-497, -305]
+    assert [moved[2] - first[2], moved[3] - first[3]] == [-497, -305]
+
+
 def test_final_classifier_crops_initial_key_from_saved_mask(tmp_path):
     from PIL import Image
     from precision_insertion.observer import LabeledFrame

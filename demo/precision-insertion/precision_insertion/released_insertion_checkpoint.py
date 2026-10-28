@@ -160,6 +160,7 @@ def assess_released_insertion_checkpoint(
     decision_timestamp_s: float, backend: ImageVLM,
     max_phase_skew_s: float, minimum_visual_views: int = 2,
     label_mode: str = "vlm_only", manual_annotation: dict | None = None,
+    final_camera_ids: list[str] | None = None,
 ) -> dict:
     """Create the released-key task label while retaining controller metrics."""
     _safe_id(attempt_id, "attempt ID")
@@ -190,7 +191,8 @@ def assess_released_insertion_checkpoint(
     # FoundPose pose-admission views do not limit the independent raw visual
     # comparison.  Both captures retain their own frame provenance below.
     cameras = final_assessment_cameras(
-        set(initial["frame_evidence"]) & set(final["frame_evidence"]))
+        set(initial["frame_evidence"]) & set(final["frame_evidence"]),
+        selected=final_camera_ids)
     if len(cameras) < minimum_visual_views:
         raise ValueError("released insertion lacks paired initial/final cameras")
     initial_rows = {camera: initial["frame_evidence"][camera]

@@ -47,6 +47,15 @@ def test_final_label_defaults_to_existing_views(monkeypatch):
         "100", "200", "300"]
 
 
+def test_saved_replay_uses_recorded_final_views_even_with_other_profile(monkeypatch):
+    monkeypatch.setenv(
+        "PRECISION_FINAL_VLM_CAMERA_IDS", "25305462,25322639,25322642")
+    available = {"25305462", "25322639", "25322642", "26053248"}
+    assert final_assessment_cameras(
+        available, selected=["25322639", "26053248", "25305462"]
+    ) == ["25305462", "25322639", "26053248"]
+
+
 def test_one_view_per_capture_pc_is_selected(monkeypatch):
     selected = "24122734,25305463,25322638,25322649,25305461"
     monkeypatch.setenv("PRECISION_VLM_CAMERA_IDS", selected)

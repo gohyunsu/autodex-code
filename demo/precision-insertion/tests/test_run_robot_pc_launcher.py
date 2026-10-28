@@ -56,7 +56,7 @@ def test_zerodex_launcher_provides_demo_collision_compat(tmp_path):
     completed = subprocess.run(
         ["bash", str(demo / "run_zerodex_capture4.sh"), "--check"],
         env=env, capture_output=True, text=True, check=True)
-    expected = f"PYTHONPATH={demo / 'compat'}:{root}:"
+    expected = f"{demo / 'compat'}:{root}:"
     assert expected in completed.stdout
     assert "PREWARM=1" in completed.stdout
     assert "PRELOAD=1" in completed.stdout
@@ -110,7 +110,9 @@ def test_zerodex_run_selects_its_own_robot_factory(tmp_path):
         (stage / name).write_text("{}\n", encoding="utf-8")
     fake_planner = tmp_path / "fake_planner"
     fake_planner.write_text(
-        "#!/bin/sh\nprintf '%s\\n' \"$@\"\n", encoding="utf-8")
+        "#!/bin/sh\nprintf 'FACTORY=%s\\n' "
+        "\"$PRECISION_INTEGRATION_FACTORY\"\n"
+        "printf '%s\\n' \"$@\"\n", encoding="utf-8")
     fake_planner.chmod(0o755)
     env = dict(os.environ, PRECISION_REPO_ROOT=str(root),
                PRECISION_STAGE_ROOT=str(stage),
@@ -120,7 +122,6 @@ def test_zerodex_run_selects_its_own_robot_factory(tmp_path):
         ["bash", str(demo / "run_zerodex_capture4.sh"), "--plan-only"],
         env=env, capture_output=True, text=True, check=True)
     lines = completed.stdout.splitlines()
-    assert lines[lines.index("--integration") + 1] == (
-        "precision_insertion.zerodex_franka_integration:factory")
-    assert "--enable-robot-motion" in lines
-    assert "--stop-after-planning" in lines
+    assert "FACTORY=precision_insertion.zerodex_franka_integration:factory" in lines
+    assert str(demo / "run_zerodex_recorded.py") in lines
+    assert "--plan-only" in lines

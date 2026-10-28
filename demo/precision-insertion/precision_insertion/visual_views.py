@@ -22,24 +22,28 @@ def assessment_cameras(available: Iterable[str]) -> list[str]:
     return sorted(selected)
 
 
-def final_assessment_cameras(available: Iterable[str]) -> list[str]:
+def final_assessment_cameras(
+    available: Iterable[str], *, selected: Iterable[str] | None = None,
+) -> list[str]:
     """Allow the released-socket label to use a reviewed camera subset.
 
     The XY estimator and earlier VLM stages keep their own view selection.
     Without a dedicated final subset, retain the existing assessment views.
     """
     configured = os.environ.get("PRECISION_FINAL_VLM_CAMERA_IDS", "").strip()
-    if not configured:
+    if selected is None and not configured:
         return assessment_cameras(available)
     cameras = set(available)
-    selected = [item.strip() for item in configured.split(",")]
-    if (len(selected) < 2 or len(selected) > 5 or
-            len(set(selected)) != len(selected) or
-            any(not item.isdecimal() for item in selected)):
+    chosen = (list(selected) if selected is not None else
+              [item.strip() for item in configured.split(",")])
+    if (len(chosen) < 2 or len(chosen) > 5 or
+            len(set(chosen)) != len(chosen) or
+            any(not isinstance(item, str) or not item.isdecimal()
+                for item in chosen)):
         raise ValueError(
             "PRECISION_FINAL_VLM_CAMERA_IDS needs two to five distinct camera IDs")
-    missing = set(selected) - cameras
+    missing = set(chosen) - cameras
     if missing:
         raise ValueError(
             f"selected final VLM cameras lack paired evidence: {sorted(missing)}")
-    return sorted(selected)
+    return sorted(chosen)

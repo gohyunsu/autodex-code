@@ -20,6 +20,14 @@ These are four visually reviewed episodes, not a measured generalization rate. T
 The three final input crops and Qwen tokens for all four saved episodes are
 collected in `~/precision_insertion_project/development/zerodex_capture4/reviews/vlm_final_crop_grid_20261029.png`.
 
+An offline camera-selection probe ranked the four views by projected socket
+area and chose the largest three. On the reviewed inside case, Qwen returned
+`INSIDE` for `25322639` but `OUTSIDE` for both `25322642` and `26053248`;
+the aggregate was therefore wrong. The probe matched three of four reviewed
+episodes (`vlm_auto_view_replay_20261029.json`). Projected size alone is not
+a valid view-quality score for this classifier, so the live profile retains
+its original reviewed three-camera subset.
+
 Saved old three-view VLM decode times were 0.85–1.02 s per episode. The new replay reported 0.24–0.84 s; its first call included model warmup. This is an offline comparison, not a measured live-pipeline speedup.
 
 ## Image geometry and when it changes
@@ -60,6 +68,14 @@ three; the **crop coordinates are not fixed**. If the socket moves to another
 part of the board, a new socket-only session measurement updates its projected
 hull in each camera. The three-view selection should be reviewed again if the
 new physical layout changes occlusion substantially.
+
+The read-only `replay_saved_live_vlm.py` now passes the report's recorded
+camera IDs to the checkpoint. Without the capture4 profile, the old replay
+silently used all four views and turned the reviewed inside case into a 2:2
+`unobservable` vote. The corrected replay returned `inside_socket` on four
+repeated inferences and logged each camera ID and inference stage in
+`vlm_replay_instrumented_20261029/replay_summary.json` under the development
+review folder. This fix does not change the live camera selection.
 
 ## Pipeline review
 

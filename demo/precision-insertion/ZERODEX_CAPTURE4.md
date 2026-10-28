@@ -215,6 +215,13 @@ start the adapter if another experiment owns the cameras.
 - Straight-mount cylinder catalogs: `recipient_gap{1,3,5,10,15,20}_endpoint_catalog_straight.json`
 - Franka/Inspire mount: `autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf`
 - Local Qwen weights: `/home/hyunsu/shared_data/AutoDex/models/Qwen3-VL-2B-Instruct`
+- SAM3 for main-PC XY masks: the machine profile resolves
+  `PRECISION_SAM_CHECKPOINT` to
+  `/mnt/paradex2/hyunsu/precision_insertion/assets/shared_data/AutoDex/weights/sam3/sam3.pt`.
+  This is a standalone project copy with the manifest SHA-256, not the
+  `/home/hyunsu/shared_data/AutoDex/weights` symlink into the shared NAS
+  AutoDex tree. An explicit `PRECISION_SAM_CHECKPOINT` can still select a
+  faster local copy when disk space is available.
 - Local silhouette renderer: `nvdiffrast v0.3.3` and FoundationPose imports
   in `/home/hyunsu/.venvs/precision-vlm`. The ZeroDex launcher exports the
   existing CUDA 12.1 toolkit and PyTorch-bundled header paths for first-use
@@ -256,6 +263,13 @@ start the adapter if another experiment owns the cameras.
   across 22 VLM calls and 7.44 s cumulative across 44 PNG writes; cumulative
   parallel times are not additional wall-clock time. Use the saved timing
   summary before changing image or planning work that is already overlapped.
+  The six `evidence.png_batch_write` spans occupied 1.20 s of wall time;
+  their 44 worker durations summed to 7.44 s because the four-camera writes
+  ran concurrently. On 12 saved 2048×1536 frames, four-worker lossless PNG
+  level 0 took 0.20 s to write and occupied 113 MB, versus 0.40 s and 48 MB
+  at the current level 1 (warm median, local temporary disk). The smaller
+  encoding remains the default because level 0 adds about 2.36× storage for
+  a small fraction of this recorded episode's total time.
 - The ZeroDex launcher sets `PRECISION_VISIBLE_GRIP_CAMERA_IDS` to the same
   four selected views. Its lift checkpoint uses measured Franka/Inspire FK,
   the straight-mount URDF and calibrated projections to crop the hand in each
@@ -278,6 +292,13 @@ The launch uses all four serials `26053248`, `25322639`, `25305462`,
 `25322642`. General VLM and same-trial XY observations use four views;
 the released-key final label selects `26053248`, `25322639`, `25305462`
 through `PRECISION_FINAL_VLM_CAMERA_IDS`, based on the saved-frame review.
+Those IDs stay fixed within the profile, while each camera's final VLM crop
+follows the socket pose measured at the start of that session. A saved-frame
+probe that selected views by projected socket area misclassified the observed
+inside case, so size-based automatic view selection is not used. After moving
+the socket, start a new socket measurement and inspect the new three-view
+final crop; set `PRECISION_FINAL_VLM_CAMERA_IDS` explicitly if those views
+are occluded in the new layout. See [VLM_LABEL_REVIEW_20261029.md](VLM_LABEL_REVIEW_20261029.md).
 Socket/key SAM3 perception still uses the four available views. Board 9 is
 registered from this profile inside
 the local Python process, not in ParaDex's global configuration. Capture4's

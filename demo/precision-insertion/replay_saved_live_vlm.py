@@ -116,12 +116,9 @@ class MeasuredBackend:
         self.iteration = iteration
         self.calls: list[dict] = []
 
-    def infer(self, images: list[Image.Image], prompt: str) -> str:
+    def _infer(self, images: list[Image.Image], prompt: str, *,
+               camera: str | None, stage: str) -> str:
         import torch
-        match = re.search(r"(?:initial_tabletop|preinsert_hold)/([^@\s]+)@", prompt)
-        if match is None:
-            match = re.search(r"Camera ([A-Za-z0-9_.-]+)\.", prompt)
-        camera = match.group(1) if match else None
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
         before = torch.cuda.memory_allocated()
@@ -132,8 +129,7 @@ class MeasuredBackend:
             "iteration": self.iteration,
             "camera_id": camera,
             "camera_count": 1,
-            "stage": ("grounded_axis" if len(images) == 1 else
-                      "released_insertion_visual"),
+            "stage": stage,
             "image_count": len(images),
             "image_sizes_px": [list(image.size) for image in images],
             "model": self.vlm.model_id,
@@ -145,6 +141,20 @@ class MeasuredBackend:
         })
         return answer
 
+    def infer_for_camera(
+        self, camera: str, images: list[Image.Image], prompt: str,
+    ) -> str:
+        return self._infer(images, prompt, camera=camera,
+                           stage="released_insertion_visual")
+
+    def infer(self, images: list[Image.Image], prompt: str) -> str:
+        match = re.search(r"(?:initial_tabletop|preinsert_hold)/([^@\s]+)@", prompt)
+        if match is None:
+            match = re.search(r"Camera ([A-Za-z0-9_.-]+)\.", prompt)
+        camera = match.group(1) if match else None
+        return self._infer(images, prompt, camera=camera,
+                           stage="grounded_axis")
+
 
 def run(args: argparse.Namespace) -> dict:
     output = args.output_root.expanduser().resolve()
@@ -152,6 +162,9 @@ def run(args: argparse.Namespace) -> dict:
         raise FileExistsError("replay output already exists")
     released_path = args.released_report.expanduser().resolve()
     released = verify_released_insertion_checkpoint(released_path)
+    final_cameras = sorted({
+        row["camera_id"] for row in released["frames"]
+        if row["phase"] == "final_clear_view"})
     xy = _xy_input(args.xy_input.resolve(), released) if args.xy_input else None
     protected = (released_path.parent, Path(released["initial_key_bundle"]),
                  Path(released["final_bundle"]),
@@ -202,12 +215,10 @@ def run(args: argparse.Namespace) -> dict:
                     decision_timestamp_s=released["decision_timestamp_s"],
                     backend=measured,
                     max_phase_skew_s=released["max_phase_skew_s"],
-                    max_preinsert_age_s=released["max_preinsert_age_s"],
-                    max_final_observation_gap_s=released[
-                        "max_final_observation_gap_s"],
                     minimum_visual_views=released["minimum_visual_views"],
                     label_mode=released["label_mode"],
-                    manual_annotation=released["manual_annotation"])
+                    manual_annotation=released["manual_annotation"],
+                    final_camera_ids=final_cameras)
             row["released_visual_class"] = result["effective_vlm_class"]
             if xy is not None:
                 with timed("replay.saved_preinsert_xy_core", phase="xy"):
