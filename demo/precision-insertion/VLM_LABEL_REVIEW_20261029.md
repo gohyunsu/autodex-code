@@ -238,6 +238,18 @@ the live prompt or adding a success/failure gate on these few examples would
 substitute an unvalidated rule for the current label; retain the raw paired
 frames and obtain real slip-after-lift examples before making that change.
 
+A further per-camera probe on the same 4 saved transfer pairs and 2 duplicated
+empty-hand controls used the production hand/socket crop and two short
+`PEG`/`NO_PEG`/`UNCLEAR` prompts. For the 12 transfer camera pairs, the
+final-image question returned 11 `UNCLEAR` and 1 `NO_PEG`; the temporal
+question returned 12 `NO_PEG`. The six duplicate controls returned 4
+`UNCLEAR`/2 `NO_PEG` and 5 `NO_PEG`/1 noncanonical response, respectively.
+The exact inputs, crop rectangles, hashes, prompts, and replies are in
+`~/precision_insertion_project/development/zerodex_capture4/reviews/transfer_per_view_probe_20261029.{py,json}`.
+Neither short prompt can replace the live label on this evidence. The
+controls are not real transfer failures, and the recorded positive transfers
+do not provide independent ground truth for key retention at every exposure.
+
 ## Verification and next camera session
 
 Focused tests for the checkpoint, observer and distributed Qwen route passed. Four old checkpoint reports replay with their original labels. The exact new prompt and 768×576 crop were exercised through the revised runtime observer on the saved three-camera frames, with all four aggregate labels matching visual review. The complete `assess_released_insertion_checkpoint → write → verify` path also replayed all four saved episodes; its new reports are under `precision_insertion_project/development/zerodex_capture4/reviews/vlm_released_checkpoint_replay_20261029/<attempt-id>/report.json`. Their visual labels were `outside`, `inside`, `outside`, `outside`, respectively; only the visually inside case produced `vlm_only` task success. Old reports were not edited. GPU inference required an unrestricted read-only process because the default sandbox hid CUDA; the host RTX 3090 was available. A **new** live capture with the current socket location, lighting and three selected final views still needs evaluation. Record the per-camera token, aggregate label, final crop and manual visual label for each new episode. Keep raw frames and the observed physical outcome separate from the model label.
