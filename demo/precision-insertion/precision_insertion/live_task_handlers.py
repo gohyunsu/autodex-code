@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from itertools import count
 import json
+import numpy as np
 from pathlib import Path
 import time
 from typing import Callable, Mapping
@@ -212,6 +213,8 @@ class LiveTaskHandlers:
         shifts: list[Path] = []
         total = [0., 0.]
         final_residual = None
+        predicted_residual = None
+        residual_source = None
         for index in count():
             with timed("trial.same_trial_xy_measure", phase="trial",
                        kind="vlm", attempt_id=attempt.attempt_id):
@@ -226,6 +229,21 @@ class LiveTaskHandlers:
             choice = choose_xy_move(
                 observed["alignment"],
                 tolerance_m=self.same_trial_xy_tolerance_m)
+            if (choice["status"] == "not_metric_multiview" and
+                    predicted_residual is not None):
+                predicted_error = float(np.linalg.norm(predicted_residual))
+                step_fraction = min(1., .010 / max(predicted_error, 1e-12))
+                choice = {
+                    "status": ("aligned" if predicted_error <=
+                               self.same_trial_xy_tolerance_m else "shift"),
+                    "xy_error_m": predicted_error,
+                    "increment_socket_m": (
+                        [0., 0.] if predicted_error <=
+                        self.same_trial_xy_tolerance_m else
+                        (-np.asarray(predicted_residual) *
+                         step_fraction).tolist()),
+                    "source": "last_metric_plus_completed_held_motion",
+                }
             report = folder / "observations" / f"{index:03d}.json"
             report.parent.mkdir(parents=True, exist_ok=True)
             with report.open("x", encoding="utf-8") as stream:
@@ -234,13 +252,15 @@ class LiveTaskHandlers:
                 stream.write("\n")
             observations.append(report)
             if choice["status"] == "aligned":
-                final_residual = [-value for value in observed[
-                    "alignment"]["xy_correction_socket_m"]]
+                if choice.get("source") == "last_metric_plus_completed_held_motion":
+                    final_residual = predicted_residual
+                    residual_source = choice["source"]
+                else:
+                    final_residual = [-value for value in observed[
+                        "alignment"]["xy_correction_socket_m"]]
+                    residual_source = "current_metric_multiview"
                 break
             if choice["status"] == "not_metric_multiview":
-                if shifts:
-                    raise RuntimeError(
-                        "shifted hold needs a new multiview XY observation")
                 # No invented 3D point: retain the already verified nominal
                 # insertion path when alignment could not be measured.
                 break
@@ -249,6 +269,11 @@ class LiveTaskHandlers:
                 raise RuntimeError(
                     "same-trial XY did not reach its configured target")
             step = choice["increment_socket_m"]
+            current_residual = (
+                predicted_residual if choice.get("source") ==
+                "last_metric_plus_completed_held_motion" else
+                [-value for value in observed["alignment"][
+                    "xy_correction_socket_m"]])
             with timed("trial.same_trial_xy_motion", phase="trial",
                        kind="motion", attempt_id=attempt.attempt_id):
                 shift = plan_and_execute_shift(
@@ -259,11 +284,14 @@ class LiveTaskHandlers:
                     limits=self.transfer_limits,
                     path_limits=self.path_limits,
                     increment_socket_m=step,
-                    residual_socket_m=[-value for value in observed[
-                        "alignment"]["xy_correction_socket_m"]],
+                    residual_socket_m=current_residual,
+                    residual_source=(choice.get("source") or
+                                     "current_metric_multiview"),
                     index=index)
             shifts.append(shift)
             total = [a + b for a, b in zip(total, step)]
+            predicted_residual = [a + b for a, b in zip(
+                current_residual, step)]
             current = runner.current_decision()
             raw, _ = self._capture(
                 runner=runner, decision=current,
@@ -277,6 +305,7 @@ class LiveTaskHandlers:
                     path_limits=self.path_limits,
                     read_state=self.read_state,
                     total_xy_m=total, residual_xy_m=final_residual,
+                    residual_source=residual_source,
                     observations=observations,
                     shifts=shifts,
                     final_preinsert_bundle=self._preinsert_bundle)

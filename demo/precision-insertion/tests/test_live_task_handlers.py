@@ -177,8 +177,12 @@ def test_preinsert_refs_use_canonical_episode_paths(tmp_path, monkeypatch):
     assert label_refs["preinsert_image"] == str(canonical_raw / "manifest.json")
 
 
-def test_same_trial_xy_reobserves_and_replans_from_final_hold(tmp_path,
-                                                              monkeypatch):
+@pytest.mark.parametrize("second,predicted", [
+    ([.0005, 0.], False),
+    (None, True),
+])
+def test_same_trial_xy_reobserves_and_replans_from_final_hold(
+        tmp_path, monkeypatch, second, predicted):
     bound, runner, *_ = _handler(tmp_path)
     runner._attempt_dir = tmp_path / "attempts" / runner.active_attempt.attempt_id
     bound._preinsert_bundle = tmp_path / "first_preinsert"
@@ -187,15 +191,18 @@ def test_same_trial_xy_reobserves_and_replans_from_final_hold(tmp_path,
     bound.alignment_limits = object()
     bound.same_trial_tip_height_error_m = .01
     bound.same_trial_xy_tolerance_m = .001
-    observations = iter(([.004, 0.], [.0005, 0.]))
+    observations = iter(([.004, 0.], second))
     seen = []
 
     def measure(**kwargs):
         seen.append(("measure", kwargs["raw_bundle"]))
+        correction = next(observations)
         return {"alignment": {
-            "status": "diagnostic_metric_xy_correction",
-            "inlier_cameras": ["front", "side"],
-            "xy_correction_socket_m": next(observations),
+            "status": ("diagnostic_metric_xy_correction" if correction
+                       is not None else "abstain"),
+            "inlier_cameras": (["front", "side"] if correction is not None
+                               else []),
+            "xy_correction_socket_m": correction,
         }}
 
     def shift(**kwargs):
@@ -220,7 +227,12 @@ def test_same_trial_xy_reobserves_and_replans_from_final_hold(tmp_path,
         "measure", "shift", "measure", "handoff"]
     np.testing.assert_allclose(seen[1][1], [.004, 0.])
     np.testing.assert_allclose(seen[-1][1]["total_xy_m"], [.004, 0.])
-    np.testing.assert_allclose(seen[-1][1]["residual_xy_m"], [-.0005, 0.])
+    np.testing.assert_allclose(
+        seen[-1][1]["residual_xy_m"],
+        [0., 0.] if predicted else [-.0005, 0.])
+    assert seen[-1][1]["residual_source"] == (
+        "last_metric_plus_completed_held_motion" if predicted else
+        "current_metric_multiview")
     assert bound._same_trial_handoff == tmp_path / "corrected_handoff.json"
 
 
