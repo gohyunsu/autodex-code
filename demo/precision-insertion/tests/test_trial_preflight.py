@@ -191,6 +191,35 @@ def test_fresh_trial_tries_next_grasp_after_pickup_or_insertion_preflight_failur
     assert result.to_record()["robot_ready"] is False
 
 
+def test_cylinder_tries_next_grasp_when_socket_opening_plan_fails(
+    tmp_path, monkeypatch,
+):
+    _, calibration, catalog, limits = _fixture(tmp_path, monkeypatch)
+    mode = select_mode("cylinder", 10)
+    axial = np.zeros((2, 13))
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.plan_insertion_after_pickup",
+        lambda **_: InsertionPreflight(
+            "sampled_planning_pass", axial, axial, axial,
+            {"sampled_clear": True}, 1, np.zeros(6),
+            "commanded_nominal", ()))
+    calls = []
+
+    def opening(_planner, _scene, _held, _limits):
+        calls.append(len(calls))
+        return axial, {"all_feasible": len(calls) > 1,
+                       "first_invalid_index": 1 if len(calls) == 1 else None}
+
+    monkeypatch.setattr(
+        "precision_insertion.socket_release.check_socket_opening", opening)
+    result = _run(tmp_path, (mode, calibration, catalog, limits), _Planner())
+    assert result.selected_candidate_key == ("table", "0", "3")
+    assert [row["insertion_preflight_status"]
+            for row in result.attempted_candidates] == [
+                None, "socket_opening_collision", "sampled_planning_pass"]
+    assert len(calls) == 2
+
+
 def test_xy_retry_plans_only_the_previous_grasp(tmp_path, monkeypatch):
     fixture = _fixture(tmp_path, monkeypatch)
     planner = _Planner()
@@ -230,8 +259,11 @@ def test_xy_retry_preflight_uses_the_next_attempt_wrist_correction(
     monkeypatch.setattr(
         "precision_insertion.trial_preflight.plan_insertion_after_pickup",
         lambda **_: InsertionPreflight(
-            "sampled_planning_pass", None, None, None,
+            "sampled_planning_pass", None, None, np.zeros((2, 13)),
             {"sampled_clear": True}, 0, np.zeros(6), "commanded_nominal", ()))
+    monkeypatch.setattr(
+        "precision_insertion.socket_release.check_socket_opening",
+        lambda *_args: (np.zeros((2, 13)), {"all_feasible": True}))
     result = _run(
         tmp_path, fixture, _Planner(),
         retry_candidate=("table", "0", "2"), retry_pose_stem="000",
@@ -359,9 +391,12 @@ def test_zerodex_lying_key_tries_direct_grasp_before_reorientation(
     monkeypatch.setattr(
         "precision_insertion.trial_preflight.plan_insertion_after_pickup",
         lambda **_: InsertionPreflight(
-            "sampled_planning_pass", None, None, None,
+            "sampled_planning_pass", None, None, np.zeros((2, 13)),
             {"sampled_clear": True}, 0, np.zeros(6),
             "commanded_nominal", ()))
+    monkeypatch.setattr(
+        "precision_insertion.socket_release.check_socket_opening",
+        lambda *_args: (np.zeros((2, 13)), {"all_feasible": True}))
     planner = _Planner()
     result = _run(
         tmp_path, (mode, calibration, catalog, limits), planner,

@@ -472,6 +472,19 @@ def plan_fresh_key_trial(
             if trial.status == "sampled_held_path_rejected":
                 row["sampled_audit_rejection"] = _rejected_path_summary(
                     trial, planner=planner, targets=targets)
+            if trial.sampled_planning_pass and mode.family == "cylinder":
+                from .socket_release import check_socket_opening
+                with timed("planning.nominal_socket_opening", phase="planning",
+                           kind="planning", candidate_id=candidate_id):
+                    _, opening_check = check_socket_opening(
+                        planner, calibration.collision_scene,
+                        trial.axial_trajectory[-1], limits)
+                row["socket_opening_preflight"] = opening_check
+                if not opening_check["all_feasible"]:
+                    row["insertion_preflight_status"] = (
+                        "socket_opening_collision")
+                    rows.append(row)
+                    continue
             rows.append(row)
             if trial.sampled_planning_pass:
                 selected_key = key

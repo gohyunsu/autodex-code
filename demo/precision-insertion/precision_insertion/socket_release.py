@@ -55,6 +55,25 @@ def _path(value, name: str, *, hand: np.ndarray,
     return path
 
 
+def check_socket_opening(
+    planner, fixed_scene: dict, held_at_depth: np.ndarray,
+    limits: PathAuditLimits,
+) -> tuple[np.ndarray, dict]:
+    """Check the same held-to-open hand ramp used by the live release plan."""
+    held = np.asarray(held_at_depth, dtype=np.float64)
+    release_hand = np.asarray(INSPIRE_INIT, dtype=np.float64)
+    if held.shape != (13,) or not np.all(np.isfinite(held)):
+        raise ValueError("socket opening needs a finite 13-DOF endpoint")
+    opening_count = max(10, int(math.ceil(float(np.max(np.abs(
+        held[7:] - release_hand))) / limits.max_joint_step_rad)))
+    if opening_count > 1000:
+        raise ValueError("socket opening ramp is too long")
+    opening = np.repeat(held[None], opening_count + 1, axis=0)
+    for index, fraction in enumerate(np.linspace(0., 1., len(opening))):
+        opening[index, 7:] = (1. - fraction) * held[7:] + fraction * release_hand
+    return opening, _check_path(planner, fixed_scene, opening)
+
+
 def plan_socket_release_exit(
     *, runner, planner, handoff_report_path: Path,
     limits: PathAuditLimits, output_dir: Path,
@@ -103,16 +122,9 @@ def plan_socket_release_exit(
     axial_exit[:, 7:] = release_hand
     axial_exit = _path(axial_exit, "socket-axis exit", hand=release_hand,
                        limits=limits)
-    held = axial[-1].copy()
-    opening_count = max(10, int(math.ceil(float(np.max(np.abs(
-        held[7:] - release_hand))) / limits.max_joint_step_rad)))
-    if opening_count > 1000:
-        raise ValueError("socket opening ramp is too long")
-    opening = np.repeat(held[None], opening_count + 1, axis=0)
-    for index, fraction in enumerate(np.linspace(0., 1., len(opening))):
-        opening[index, 7:] = (1. - fraction) * held[7:] + fraction * release_hand
     fixed_scene = copy.deepcopy(runner.calibration.collision_scene)
-    opening_check = _check_path(planner, fixed_scene, opening)
+    opening, opening_check = check_socket_opening(
+        planner, fixed_scene, axial[-1], limits)
     if not opening_check["all_feasible"]:
         raise ValueError("opening fingers intersect the fixed socket/table world")
     key_spec = runner._preflight.trial_scene["mesh"]["target"]

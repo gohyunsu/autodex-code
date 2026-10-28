@@ -753,6 +753,14 @@ preference, and an explicit candidate value replaces it. Other socket gaps
 retain the original candidate order. This changes only planning order and
 adds no candidate rejection or robot-motion criterion.
 
+The fresh-key trial planner now also checks the existing socket release
+opening ramp at each cylinder candidate's nominal 20 mm endpoint. If that
+cuRobo check finds a collision, it records `socket_opening_collision` for the
+candidate and tries the next eligible grasp in the same planning call. This
+would reject `table/0/20232` before pickup in this fixture. It uses the same
+opening trajectory and fixed socket world as the later live release plan;
+the check is still a nominal preflight, not a physical release result.
+
 The prior all-channel hand `65535` reading disappeared after the hand cable
 reconnection, power cycle, and ordinary open command. A later read-only
 Modbus check found measured raw angles `[998, 999, 1000, 998, 998, 987]`
