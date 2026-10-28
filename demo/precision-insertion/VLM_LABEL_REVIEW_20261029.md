@@ -38,7 +38,7 @@ Saved old three-view VLM decode times were 0.85–1.02 s per episode. The new re
 | Lift visual check | 650 px square around the **measured** Franka/Inspire hand projection, resized to at most 640 px. | Recomputed from current joints and calibration at each lift capture. |
 | Transfer/arrival VLM | Per-camera raw `after_lift` + `preinsert` pair. The after-lift crop follows the measured thumb/index/middle contact region. The preinsert crop includes that region and the projected socket hull, with at least a 650 px side where the image permits. The normal capture4 384×288 classification ceiling then applies. | Recomputed for each pair from the two measured joint samples and this session's frozen socket projection. The uncropped raw frames and crop coordinates/hashes are retained. This is a coarse visual diagnostic, not metric XY. |
 | Preinsert XY grounding | Lossless crop containing projected nominal key tip, rear and measured socket rim, with 96 px image margin and at least 256 px width/height; crop origin is recorded and Qwen/SAM pixel marks map back exactly. | Recomputed for each preinsert snapshot and correction from the current frozen socket pose and commanded held-key pose. |
-| Final released-key VLM | Final raw RGB crop around the projected socket collision-mesh hull. Padding is 0.5× hull width on each side, 1.2× hull height above and 0.3× below, clipped to the image. The crop is resized to fit 768×576 for classification. If there is no valid projection, the full frame is used. | Socket projection is computed from **this session's measured socket pose** and calibration during key perception; final frames use that frozen position. A new socket location needs a new socket measurement/session. Pixel coordinates are not fixed across sessions. |
+| Final released-key VLM | Final raw RGB crop around the projected socket collision-mesh hull. Padding is 0.5× hull width on each side, 1.2× hull height above and 0.3× below, clipped to the image. For the classifier, crops with a long side below 384 px are enlarged with Lanczos, then all crops are fitted within 768×576. The raw crop is retained and hashed separately. If there is no valid projection, the full frame is used. | Socket projection is computed from **this session's measured socket pose** and calibration during key perception; final frames use that frozen position. A new socket location needs a new socket measurement/session. Pixel coordinates are not fixed across sessions. |
 
 The final crop locates the socket but does not tell the model that a key is present. A fallen key may be outside the crop; the model can still see that the opening is empty. The full final frame is retained in the checkpoint for inspection. The frozen socket position is a session assumption: moving the socket without remeasurement makes the crop, collision world and XY target stale.
 
@@ -76,6 +76,20 @@ silently used all four views and turned the reviewed inside case into a 2:2
 repeated inferences and logged each camera ID and inference stage in
 `vlm_replay_instrumented_20261029/replay_summary.json` under the development
 review folder. This fix does not change the live camera selection.
+
+The small third-view final crop was also tested at its original size and at
+1.5×/2× on all four reviewed episodes. At native 248×255 px, camera `25305462`
+answered `OUTSIDE` for the visibly inserted key; at 1.5× and 2× it answered
+`INSIDE`. Its three empty-socket answers stayed `OUTSIDE` at every tested
+scale. The production final classifier now enlarges only crops whose long
+side is below 384 px. A fresh end-to-end Qwen replay with the existing three
+cameras returned the visually reviewed class on all four episodes, and all
+four new reports passed the checkpoint verifier. The source frames, ROI and
+hash are unchanged; the input resize is recorded as policy
+`final_socket_crop_token_v2`. Saved v1 reports remain verifiable. Review data:
+`~/precision_insertion_project/development/zerodex_capture4/reviews/vlm_final_small_view_scale_20261029.json`
+and `.../vlm_released_v2_checkpoint_replay_20261029/summary.json`. Four cases
+from one camera layout are insufficient to estimate general accuracy.
 
 ## Pipeline review
 

@@ -491,6 +491,18 @@ def test_released_insertion_classifies_final_camera_images_without_overlay():
     verify_released_socket_token_consensus(result.to_record(), {"front", "side"})
 
 
+def test_small_final_socket_crop_is_enlarged_without_changing_source_pixels():
+    from precision_insertion.observer import resize_classification_images
+
+    source = Image.new("RGB", (248, 255), (125, 130, 135))
+    prepared, transform = resize_classification_images(
+        [source], (768, 576), min_long_side_px=384)
+    assert prepared[0].size == (373, 384)
+    assert transform["images"][0]["source_size"] == [248, 255]
+    assert transform["min_long_side_px"] == 384
+    assert source.size == (248, 255)
+
+
 def test_released_insertion_two_views_can_outvote_one_false_negative():
     class PairBackend(FakeBackend):
         preferred_image_batch_size = 2

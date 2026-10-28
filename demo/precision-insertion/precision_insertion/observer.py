@@ -102,18 +102,24 @@ class VLMObservation:
 
 
 def resize_classification_images(
-    images: list[Image.Image], max_size: tuple[int, int],
+    images: list[Image.Image], max_size: tuple[int, int], *,
+    min_long_side_px: int | None = None,
 ) -> tuple[list[Image.Image], dict]:
     """Derive small VLM classification inputs and bind them to raw pixels."""
     if (len(max_size) != 2 or
             any(type(side) is not int or side <= 0 for side in max_size)):
         raise ValueError("classification image size must be positive width and height")
+    if (min_long_side_px is not None and
+            (type(min_long_side_px) is not int or min_long_side_px <= 0)):
+        raise ValueError("classification minimum long side must be positive")
     prepared, rows = [], []
     for image in images:
         if image.mode != "RGB":
             raise ValueError("classification resize needs RGB source images")
         width, height = image.size
-        scale = min(1.0, max_size[0] / width, max_size[1] / height)
+        requested = (1.0 if min_long_side_px is None else
+                     max(1.0, min_long_side_px / max(width, height)))
+        scale = min(requested, max_size[0] / width, max_size[1] / height)
         target = (max(1, round(width * scale)), max(1, round(height * scale)))
         result = (image if target == image.size else
                   image.resize(target, Image.Resampling.LANCZOS))
@@ -123,11 +129,14 @@ def resize_classification_images(
             "source_rgb_sha256": hashlib.sha256(image.tobytes()).hexdigest(),
             "input_rgb_sha256": hashlib.sha256(result.tobytes()).hexdigest(),
         })
-    return prepared, {
+    transform = {
         "schema": "precision_insertion_vlm_resize_fit_v1",
         "max_size": list(max_size), "resampling": "PIL_LANCZOS",
         "images": rows,
     }
+    if min_long_side_px is not None:
+        transform["min_long_side_px"] = min_long_side_px
+    return prepared, transform
 
 
 @dataclass(frozen=True)
@@ -823,7 +832,8 @@ def observe_insertion_visual(
 
 
 def observe_released_insertion_visual(
-    backend: ImageVLM, frames: Sequence[LabeledFrame],
+    backend: ImageVLM, frames: Sequence[LabeledFrame], *,
+    min_long_side_px: int | None = None,
 ) -> VLMObservation:
     """Judge the final socket crop; retain the initial image as trial evidence.
 
@@ -847,7 +857,8 @@ def observe_released_insertion_visual(
                      frame.camera_id == camera and
                      frame.phase == "final_clear_view")
         images, transform = resize_classification_images(
-            [final.image], RELEASED_SOCKET_IMAGE_SIZE)
+            [final.image], RELEASED_SOCKET_IMAGE_SIZE,
+            min_long_side_px=min_long_side_px)
         prompt = _released_socket_token_prompt()
         started = time.perf_counter()
         with timed("vlm.infer", phase="vlm", kind="inference",

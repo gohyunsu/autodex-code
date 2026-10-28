@@ -36,6 +36,7 @@ from .visual_views import final_assessment_cameras
 
 
 SCHEMA = "precision_insertion_released_checkpoint_v1"
+FINAL_MIN_LONG_SIDE_PX = 384
 
 
 def _sha(path: Path) -> str:
@@ -229,7 +230,8 @@ def assess_released_insertion_checkpoint(
     later, final_visual_crops = _focus_final_frames(later, initial)
     frames.extend(later)
     inputs.extend(later_inputs)
-    visual = observe_released_insertion_visual(backend, frames)
+    visual = observe_released_insertion_visual(
+        backend, frames, min_long_side_px=FINAL_MIN_LONG_SIDE_PX)
     supported = (visual.parse_error is None and
                  len(set(visual.parsed["evidence_views"]) & set(cameras)) >=
                  minimum_visual_views)
@@ -263,7 +265,7 @@ def assess_released_insertion_checkpoint(
         "release_record_path": str(release_path),
         "release_record_sha256": _sha(release_path),
         "frames": inputs, "visual": visual.to_record(),
-        "visual_input_policy": "final_socket_crop_token_v1",
+        "visual_input_policy": "final_socket_crop_token_v2",
         "final_visual_crops": final_visual_crops,
         "minimum_visual_views": minimum_visual_views,
         "max_phase_skew_s": max_phase_skew_s,
@@ -339,8 +341,11 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
             len(grouped["initial_tabletop"]) < report["minimum_visual_views"] or
             report["visual"].get("image_order") != expected_order):
         raise ValueError("released-insertion camera pairs changed")
-    new_policy = report.get("visual_input_policy") == "final_socket_crop_token_v1"
-    if report.get("visual_input_policy") not in (None, "final_socket_crop_token_v1"):
+    policy = report.get("visual_input_policy")
+    new_policy = policy in ("final_socket_crop_token_v1",
+                            "final_socket_crop_token_v2")
+    if policy not in (None, "final_socket_crop_token_v1",
+                       "final_socket_crop_token_v2"):
         raise ValueError("unknown released-insertion visual input policy")
     if new_policy and "final_visual_crops" not in report:
         raise ValueError("released-insertion final socket crops are missing")
@@ -377,7 +382,9 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
             if new_policy:
                 _, expected_transform = resize_classification_images(
                     [focused_by_camera[camera].image],
-                    RELEASED_SOCKET_IMAGE_SIZE)
+                    RELEASED_SOCKET_IMAGE_SIZE,
+                    min_long_side_px=(FINAL_MIN_LONG_SIDE_PX if policy ==
+                                      "final_socket_crop_token_v2" else None))
                 if row.get("input_transform") != expected_transform:
                     raise ValueError("released-insertion final VLM input changed")
             if camera in expected_crops:
