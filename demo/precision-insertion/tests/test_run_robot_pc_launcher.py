@@ -69,6 +69,18 @@ def test_zerodex_launcher_provides_demo_collision_compat(tmp_path):
         env=env, capture_output=True, text=True, check=True)
     assert "HOST=capture4@example.test" in overridden_host.stdout
 
+    env.pop("PRECISION_CAPTURE4_SSH_HOST")
+    profile = tmp_path / "alternate_profile.sh"
+    profile.write_text(
+        "export PRECISION_CAPTURE4_SSH_HOST=capture4@alternate.test\n",
+        encoding="utf-8")
+    env["PRECISION_SYSTEM_PROFILE"] = str(profile)
+    alternate = subprocess.run(
+        ["bash", str(demo / "run_zerodex_capture4.sh"), "--check"],
+        env=env, capture_output=True, text=True, check=True)
+    assert "HOST=capture4@alternate.test" in alternate.stdout
+    env.pop("PRECISION_SYSTEM_PROFILE")
+
     env["PRECISION_KEY_ALREADY_PLACED"] = "1"
     already_placed = subprocess.run(
         ["bash", str(demo / "run_zerodex_capture4.sh"), "--check"],

@@ -69,7 +69,10 @@ def _board_from_undistorted_pngs(images_dir: Path, launch) -> tuple[dict, dict]:
 
 
 def replay(args: argparse.Namespace) -> dict:
-    launch = load_session_launch(args.launch_config)
+    # Replay reads commissioned files only. A previous live session's
+    # evidence directory may already exist beside the launch template.
+    launch = load_session_launch(
+        args.launch_config, allow_existing_evidence=True)
     if launch.board_id != "9" or launch.mode.family != "cylinder":
         raise ValueError("saved capture4 replay needs cylindrical board-9 mode")
     register_profile_charuco_board(launch)

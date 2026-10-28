@@ -5,7 +5,12 @@ set -Eeuo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)
-source "${PRECISION_SYSTEM_PROFILE:-$SCRIPT_DIR/config/zerodex_capture4.env.sh}"
+# Apply local overrides first; the versioned profile fills missing values and
+# derives CUDA include paths from the selected toolkit.
+if [[ -n ${PRECISION_SYSTEM_PROFILE:-} ]]; then
+  source "$PRECISION_SYSTEM_PROFILE"
+fi
+source "$SCRIPT_DIR/config/zerodex_capture4.env.sh"
 export PRECISION_GAP_MM=${PRECISION_GAP_MM:-5}
 export PRECISION_XY_ESTIMATOR=${PRECISION_XY_ESTIMATOR:-vlm}
 export PRECISION_TABLETOP_POSE_ERROR_DEG=${PRECISION_TABLETOP_POSE_ERROR_DEG:-20}

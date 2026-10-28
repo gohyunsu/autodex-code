@@ -8,8 +8,11 @@
 contains the kds-Z790/capture4 paths, addresses, camera IDs, straight-mount
 URDF and CUDA header locations. To use another checkout or PC, export an
 individual setting before launching, or set `PRECISION_SYSTEM_PROFILE` to a
-separate shell profile. These defaults do not change the AutoDex robot-PC
+separate shell profile that overrides only the changed settings. These
+defaults do not change the AutoDex robot-PC
 launcher or shared capture4 files.
+`prepare_zerodex_capture4.py` also accepts the profile's capture IP and
+four-camera/board-fit ID lists when rebuilding the local stage.
 
 The profile also supplies the namespaced camera service manager's remote
 asset root. For service commands in this checkout, load it in the calling
@@ -164,7 +167,9 @@ start the adapter if another experiment owns the cameras.
 ## Local profile and assets
 
 - Profile: `/home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4`
-- Launch: `launch.json` (board 9, one fixed socket capture, four cameras)
+- Launch: `launch.json` (current 5 mm socket, board 9, one fixed socket
+  capture, four cameras). `launch_gap20_saved_replay.json` preserves the old
+  20 mm scene for its recorded-image replay.
 - Runtime: `franka_runtime.json` (local Qwen and planning)
 - Measured ZeroDex clear view: `clear_view_arm_q.json` beside the runtime file;
   loaded only by the ZeroDex integration factory, never by stock AutoDex

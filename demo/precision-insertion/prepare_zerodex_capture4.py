@@ -10,22 +10,32 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import shutil
 
 
-CAMERAS = ("26053248", "25322639", "25305462", "25322642")
 # On the current board, 25305462 contributes a repeatable ~4 px corner-8
 # mismatch. Use the other three only for board triangulation; retain all four
 # for socket/key perception and three selected views for VLM.
+CAMERAS = ("26053248", "25322639", "25305462", "25322642")
 BOARD_FIT_CAMERAS = ("26053248", "25322639", "25322642")
+
+
+def _serials(value: str) -> tuple[str, ...]:
+    return tuple(part.strip() for part in value.split(",") if part.strip())
+
+
 def _write_json(path: Path, record) -> None:
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n",
                     encoding="utf-8")
 
 
 def build(*, source_stage: Path, shared_root: Path, calibration_dir: Path,
-          c2r_npy: Path, output_dir: Path, qwen_model_dir: Path) -> dict:
+          c2r_npy: Path, output_dir: Path, qwen_model_dir: Path,
+          capture_ip: str, camera_ids: tuple[str, ...],
+          board_fit_camera_ids: tuple[str, ...],
+          default_gap_mm: int = 5) -> dict:
     source_stage = source_stage.expanduser().resolve()
     shared_root = shared_root.expanduser().resolve()
     output_dir = output_dir.expanduser().resolve()
@@ -43,14 +53,15 @@ def build(*, source_stage: Path, shared_root: Path, calibration_dir: Path,
     launch = json.loads((source_stage / "live_board9_gap20_20261013" /
                          "launch.json").read_text(encoding="utf-8"))
     launch.update(
+        mode={"family": "cylinder", "gap_mm": default_gap_mm},
         shared_root=str(shared_root), capture_root=str(output_dir),
         evidence_dir=str(output_dir / "runs" / "session_evidence"),
         base_scene_json=str(output_dir / "base_scene.json"),
         calib_dir=str(output_dir / "calibration"),
         c2r_npy=str(output_dir / "calibration" / "C2R.npy"),
-        pc_list=["capture4"], capture_ips=["147.46.219.136"],
-        camera_ids=list(CAMERAS),
-        board_fit_camera_ids=list(BOARD_FIT_CAMERAS),
+        pc_list=["capture4"], capture_ips=[capture_ip],
+        camera_ids=list(camera_ids),
+        board_fit_camera_ids=list(board_fit_camera_ids),
         camera_acquisition_mode="stream",
         init_frame_transport="inline_png",
         upright_cylinder_only=False,
@@ -83,8 +94,8 @@ def build(*, source_stage: Path, shared_root: Path, calibration_dir: Path,
     return {"launch": str(output_dir / "launch.json"),
             "robot_config": str(output_dir / "franka_runtime.json"),
             "catalogs": catalogs, "missing_straight_mount_catalogs": missing_catalogs,
-            "camera_ids": list(CAMERAS),
-            "board_fit_camera_ids": list(BOARD_FIT_CAMERAS)}
+            "camera_ids": list(camera_ids),
+            "board_fit_camera_ids": list(board_fit_camera_ids)}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -100,6 +111,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--qwen-model-dir", type=Path,
                         default=Path.home() / "shared_data" / "AutoDex" /
                                 "models" / "Qwen3-VL-2B-Instruct")
+    parser.add_argument("--capture-ip", default=os.environ.get(
+        "PRECISION_CAPTURE4_IP", "147.46.219.136"))
+    parser.add_argument("--camera-ids", type=_serials, default=_serials(
+        os.environ.get("PRECISION_CAPTURE4_CAMERA_IDS", ",".join(CAMERAS))))
+    parser.add_argument("--board-fit-camera-ids", type=_serials,
+                        default=_serials(os.environ.get(
+                            "PRECISION_BOARD_FIT_CAMERA_IDS",
+                            ",".join(BOARD_FIT_CAMERAS))))
+    parser.add_argument("--default-gap-mm", type=int, default=5,
+                        help="gap in the generated launch template; the runner may override it")
     args = parser.parse_args(argv)
     print(json.dumps(build(**vars(args)), indent=2))
     return 0

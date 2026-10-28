@@ -17,7 +17,7 @@ cd /home/hyunsu/autodex-code
 PYTHONPATH="$PWD:/home/hyunsu/paradex:$PWD/demo/precision-insertion:$PWD/src" \
   /home/hyunsu/.venvs/precision-vlm/bin/python \
   demo/precision-insertion/replay_zerodex_saved_scene.py \
-  --launch-config /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/launch.json \
+  --launch-config /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/launch_gap20_saved_replay.json \
   --socket-images-dir /mnt/paradex2/hyunsu/zerodex_capture4_runtime/socket_probe_1cb67be54180_request_727786403/images \
   --socket-mask-dir /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/socket_lying_key_probe_hollow_20261027_1 \
   --key-images-dir /mnt/paradex2/hyunsu/zerodex_capture4_runtime/key_probe_227a659f8b9b_request_2107810824/images \
@@ -27,6 +27,10 @@ PYTHONPATH="$PWD:/home/hyunsu/paradex:$PWD/demo/precision-insertion:$PWD/src" \
 ```
 
 Choose a new `--output` path each time; the tool never overwrites a report.
+An existing launch-template evidence directory is allowed because replay
+reads that configuration and the saved images without writing a new session.
+The historical launch file fixes the 20 mm socket geometry used by these
+photographs; the current `launch.json` names the physical 5 mm socket.
 The saved images are already undistorted, so the board routine is given their
 undistorted intrinsic matrix and zero distortion. The live camera path still
 uses original JPEGs with the original intrinsic/distortion calibration. Both
