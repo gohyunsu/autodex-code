@@ -47,3 +47,36 @@ def final_assessment_cameras(
         raise ValueError(
             f"selected final VLM cameras lack paired evidence: {sorted(missing)}")
     return sorted(chosen)
+
+
+def final_cameras_with_visible_socket(
+    preferred: Iterable[str], available: Iterable[str],
+    socket_projections: dict,
+) -> tuple[list[str], dict[str, bool]]:
+    """Replace a view with no projected socket by an available visible view.
+
+    The reviewed camera order remains the default. This only handles a socket
+    moved outside one camera's frame; projection area does not rank views.
+    If no replacement is visible, keep the original camera and its existing
+    full-frame VLM fallback.
+    """
+    chosen = sorted(set(preferred))
+    cameras = sorted(set(available))
+    visible = {}
+    for camera in cameras:
+        row = socket_projections.get(camera) or {}
+        bbox, size = row.get("projected_hull_bbox_px"), row.get("image_size_wh")
+        visible[camera] = bool(
+            isinstance(bbox, list) and len(bbox) == 4 and
+            isinstance(size, list) and len(size) == 2 and
+            all(type(v) is int for v in bbox + size) and
+            size[0] > 0 and size[1] > 0 and
+            max(0, bbox[0]) < min(size[0], bbox[2]) and
+            max(0, bbox[1]) < min(size[1], bbox[3]))
+    replacements = [camera for camera in cameras
+                    if camera not in chosen and visible[camera]]
+    for camera in list(chosen):
+        if not visible.get(camera, False) and replacements:
+            chosen.remove(camera)
+            chosen.append(replacements.pop(0))
+    return sorted(chosen), visible

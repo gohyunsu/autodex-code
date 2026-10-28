@@ -45,6 +45,19 @@ Saved old three-view VLM decode times were 0.85–1.02 s per episode. The new re
 
 The final crop locates the socket but does not tell the model that a key is present. A fallen key may be outside the crop; the model can still see that the opening is empty. The full final frame is retained in the checkpoint for inspection. The frozen socket position is a session assumption: moving the socket without remeasurement makes the crop, collision world and XY target stale.
 
+The final-label profile prefers the three saved-frame-reviewed cameras
+`26053248`, `25322639`, and `25305462`. A session-specific projection check
+now substitutes another available camera only when a preferred camera's socket
+hull is wholly outside that image. It does not rank cameras by projected socket
+area: that ranking mislabeled the saved inserted-key example. If there is no
+visible substitute, the existing full-frame input remains. The chosen cameras
+and per-camera projected visibility are saved with each new final checkpoint;
+the four saved final episodes retained their original three cameras in an
+offline selection replay. This handles a socket moved across the cameras'
+fields of view after a new session measurement. It cannot prove that the VLM
+will classify a new view correctly without a labeled final image from that
+position.
+
 The transfer-pair crop is also location-adaptive. It uses measured hand joints
 at the two exposures and the socket hull projected from the *current* frozen
 session pose. The crop is only a way to present raw pixels at useful scale;

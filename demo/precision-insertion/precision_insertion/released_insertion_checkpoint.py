@@ -33,7 +33,9 @@ from .post_insertion_release import verify_post_insertion_release
 from .raw_camera_capture import verify_raw_camera_capture
 from .raw_camera_capture import RawCameraCapture
 from .session_bootstrap import _safe_id
-from .visual_views import final_assessment_cameras
+from .visual_views import (
+    final_assessment_cameras, final_cameras_with_visible_socket,
+)
 
 
 SCHEMA = "precision_insertion_released_checkpoint_v1"
@@ -217,9 +219,14 @@ def assess_released_insertion_checkpoint(
         guarded_execution_path=metric_path)
     # FoundPose pose-admission views do not limit the independent raw visual
     # comparison.  Both captures retain their own frame provenance below.
-    cameras = final_assessment_cameras(
-        set(initial["frame_evidence"]) & set(final["frame_evidence"]),
-        selected=final_camera_ids)
+    available_cameras = (set(initial["frame_evidence"]) &
+                         set(final["frame_evidence"]))
+    preferred_cameras = final_assessment_cameras(
+        available_cameras, selected=final_camera_ids)
+    cameras, socket_visible = final_cameras_with_visible_socket(
+        preferred_cameras, available_cameras,
+        ((initial.get("consistency", {}).get("socket_exclusion") or {})
+         .get("per_camera", {})))
     if len(cameras) < minimum_visual_views:
         raise ValueError("released insertion lacks paired initial/final cameras")
     initial_rows = {camera: initial["frame_evidence"][camera]
@@ -295,6 +302,11 @@ def assess_released_insertion_checkpoint(
         "frames": inputs, "visual": visual.to_record(),
         "visual_input_policy": "final_socket_crop_token_v4",
         "final_visual_crops": final_visual_crops,
+        "final_camera_selection": {
+            "preferred": preferred_cameras,
+            "selected": cameras,
+            "socket_projected_visible": socket_visible,
+        },
         "minimum_visual_views": minimum_visual_views,
         "max_phase_skew_s": max_phase_skew_s,
         "effective_vlm_class": visual_class,
@@ -369,6 +381,18 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
             len(grouped["initial_tabletop"]) < report["minimum_visual_views"] or
             report["visual"].get("image_order") != expected_order):
         raise ValueError("released-insertion camera pairs changed")
+    if "final_camera_selection" in report:
+        selection = report["final_camera_selection"]
+        preferred = selection["preferred"]
+        expected, visibility = final_cameras_with_visible_socket(
+            preferred, set(initial["frame_evidence"]) &
+            set(final["frame_evidence"]),
+            ((initial.get("consistency", {}).get("socket_exclusion") or {})
+             .get("per_camera", {})))
+        if (selection != {"preferred": preferred, "selected": expected,
+                          "socket_projected_visible": visibility} or
+                set(expected) != grouped["final_clear_view"]):
+            raise ValueError("released-insertion socket view selection changed")
     policy = report.get("visual_input_policy")
     new_policy = policy in ("final_socket_crop_token_v1",
                             "final_socket_crop_token_v2",

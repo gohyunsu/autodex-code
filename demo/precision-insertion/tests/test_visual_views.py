@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.visual_views import (  # noqa: E402
     assessment_cameras, final_assessment_cameras,
+    final_cameras_with_visible_socket,
 )
 
 
@@ -61,6 +62,29 @@ def test_one_view_per_capture_pc_is_selected(monkeypatch):
     monkeypatch.setenv("PRECISION_VLM_CAMERA_IDS", selected)
     assert assessment_cameras(set(selected.split(",")) | {"25322651"}) == (
         sorted(selected.split(",")))
+
+
+def test_moved_socket_replaces_only_an_offscreen_final_view():
+    preferred = ["100", "200", "300"]
+    available = preferred + ["400"]
+    projections = {
+        camera: {"image_size_wh": [2048, 1536],
+                 "projected_hull_bbox_px": bbox}
+        for camera, bbox in {
+            "100": [100, 100, 200, 200],
+            "200": [2100, 100, 2200, 200],
+            "300": [-20, 100, 20, 200],
+            "400": [500, 500, 650, 650],
+        }.items()
+    }
+    selected, visible = final_cameras_with_visible_socket(
+        preferred, available, projections)
+    assert selected == ["100", "300", "400"]
+    assert visible == {"100": True, "200": False,
+                       "300": True, "400": True}
+    projections["200"]["projected_hull_bbox_px"] = [110, 110, 210, 210]
+    assert final_cameras_with_visible_socket(
+        preferred, available, projections)[0] == preferred
 
 
 @pytest.mark.parametrize("selection", [

@@ -347,6 +347,13 @@ The launch uses all four serials `26053248`, `25322639`, `25305462`,
 `25322642`. General VLM and same-trial XY observations use four views;
 the released-key final label selects `26053248`, `25322639`, `25305462`
 through `PRECISION_FINAL_VLM_CAMERA_IDS`, based on the saved-frame review.
+For a newly measured socket position, the final checkpoint keeps this subset
+when its socket projects into all three images. If a preferred camera cannot
+see the projected socket at all, it substitutes another available capture4
+camera with a visible socket projection and records that choice. The crop
+itself follows the measured socket position; no final VLM pixel rectangle is
+fixed across sessions. This view substitution does not affect four-camera XY
+grounding or change any robot motion threshold.
 Those IDs stay fixed within the profile, while each camera's final VLM crop
 follows the socket pose measured at the start of that session. A saved-frame
 probe that selected views by projected socket area misclassified the observed
