@@ -34,7 +34,7 @@ from precision_insertion.session_launch import (
 from precision_insertion.silhouette_compat import prepare_precision_silhouette
 from precision_insertion.timing_profile import profile_run, timed
 from precision_insertion.world import build_trial_scene_from_session
-from robot_pc_stages import KEY_PROMPT, _key_capture
+from robot_pc_stages import KEY_PROMPT, _key_capture, _tabletop_pose_error_deg
 
 
 def run_camera_only(
@@ -133,16 +133,18 @@ def run_camera_only(
                         silhouette_loss_threshold=0.003,
                         **capture_settings)
         with timed("key.scene_and_classification", phase="key"):
+            tabletop_pose_error_deg = _tabletop_pose_error_deg()
             scene = build_trial_scene_from_session(
                 mode=launch.mode, shared_root=launch.shared_root,
                 calibration=started.calibration,
                 key_pose_world=observation.pose_world,
-                max_axis_error_deg=10.0)
+                max_axis_error_deg=tabletop_pose_error_deg)
             pose_robot = cart2se3(np.asarray(
                 scene["mesh"]["target"]["pose"], dtype=float))
             pose_class = classify_key_tabletop_pose(
                 mode=launch.mode, shared_root=launch.shared_root,
-                pose_robot_key=pose_robot, max_rotation_error_deg=10.0)
+                pose_robot_key=pose_robot,
+                max_rotation_error_deg=tabletop_pose_error_deg)
             selected = select_pose_candidates(
                 catalog, expected_mode=launch.mode,
                 tabletop_pose_stem=pose_class["stem"])

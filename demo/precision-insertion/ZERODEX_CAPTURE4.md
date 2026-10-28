@@ -656,3 +656,47 @@ and TCP connected. This makes a transient restart state less likely, but
 does not identify whether the connector, cable, supply or hand internals
 are responsible. The demo must not resume finger calibration or pickup from
 this current all-channel state.
+
+## 2026-10-28 follow-up: hand restored, held transfer, release collision
+
+The preceding all-channel reading was taken before a valid post-restart angle
+command. Sending the ordinary all-open `ANGLE_SET=[1000]*6` changed all six
+status bytes from `7` to `2`. The unloaded thumb-bend channel moved from
+raw 1000 to 900 and back, then through 1000 to about 29 and back. This
+establishes actuator response after reconnecting and restarting the same
+hand; it does not isolate which connection caused the earlier fault.
+
+The ZeroDex profile now uses `PRECISION_TABLETOP_POSE_ERROR_DEG=20` for
+tabletop classification. This affects the ZeroDex launcher only; AutoDex
+retains 10 degrees. The fresh upright-key observation had a raw axis error
+of 10.84 degrees and was admitted as tabletop pose `000`. Its camera-only
+record is `zerodex_capture4/runs/camera_only_20261028_150428_504892744_53121`.
+
+With the fixed 10 mm radial-gap socket and candidate `table/0/20232`, live
+attempt `attempt_7ea3e85e9a734c88b18065b34eca713d` completed pickup,
+grasp, lift, and transfer to the pre-insertion hold. Qwen labeled grasp and
+pre-insertion arrival positive. No guarded insertion command was sent.
+`StockSocketRelease.prepare()` found that the opening fingers intersected
+the fixed socket world at the nominal 20 mm endpoint. An independent
+triangle-mesh sweep found the index-finger link intersects the rim for
+approximately 10–30% of the opening motion, although the held and fully
+open endpoints are each clear. The offline catalog checks the held endpoint
+only, so it had correctly admitted this candidate under its stated scope.
+
+The hand was opened at the pre-insertion hold, where the opening path was
+clear. The key fell into the socket; its insertion depth was not measured
+and this is not a successful controlled insertion. The arm was returned to
+the saved clear-view joints along a 108-sample cuRobo checked path. A
+subsequent read-only arm check found maximum joint error 0.0098 rad.
+The one-shot tool `recover_released_preinsert.py` reproduces that planned
+clear-view recovery when supplied the attempt, frozen calibration, trial
+scene, and ZeroDex robot config. Its first post-motion hand read timed out,
+but a separate read-only Modbus check subsequently found all six angle
+targets at 1000, actual angles near 1000, status 2, and error 0. The tool
+now retries that observed transient hand read before reporting completion.
+
+Candidates `table/0/741`, `350`, `216`, `208`, `184`, `20268`, and `20313`
+passed a nominal 20 mm opening sweep at sampled fractions 0, 0.1, 0.2,
+0.3, 0.5, and 1.0. These are offline release-geometry checks, not full
+Franka paths or physical successes. The next live trial should plan a
+candidate with an opening path before moving the held key to the socket.

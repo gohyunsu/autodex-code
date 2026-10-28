@@ -12,6 +12,8 @@ trial settings, not calibration or physical performance measurements.
 
 from __future__ import annotations
 
+import os
+
 from precision_insertion.grounded_alignment import AlignmentLimits
 from precision_insertion.config import CYLINDER_RADIAL_GAPS_MM
 from precision_insertion.lift_execution import LiftExecutionLimits
@@ -21,6 +23,11 @@ from precision_insertion.retry_session import RetrySessionLimits
 
 
 KEY_PROMPT = "white plastic cylindrical key"
+
+
+def _tabletop_pose_error_deg() -> float:
+    """Keep AutoDex's 10-degree setting unless a profile selects another one."""
+    return float(os.environ.get("PRECISION_TABLETOP_POSE_ERROR_DEG", "10"))
 
 
 def _path_limits() -> PathAuditLimits:
@@ -100,6 +107,7 @@ def configure(core, live, options) -> dict:
     path = _path_limits()
     motion = _motion_limits()
     capture = _key_capture()
+    tabletop_pose_error_deg = _tabletop_pose_error_deg()
     stationary = {
         "max_arm_hand_skew_s": .10,
         "max_hand_command_error_raw": 30.,
@@ -110,7 +118,7 @@ def configure(core, live, options) -> dict:
         "minimum_board_edge_clearance_m": .005,
     }
     landing = {
-        "max_pose_error_deg": 10.,
+        "max_pose_error_deg": tabletop_pose_error_deg,
         "max_return_center_shift_m": .03,
         "support_tolerance_m": .005,
         **reset_geometry,
@@ -151,7 +159,7 @@ def configure(core, live, options) -> dict:
                 "limits": path,
                 "key_parameters": {
                     **capture, **stationary,
-                    "max_pose_error_deg": 10.,
+                    "max_pose_error_deg": tabletop_pose_error_deg,
                     "axial_waypoint_step_m": .005,
                 },
             },
@@ -222,7 +230,7 @@ def configure(core, live, options) -> dict:
                 "path_limits": path,
                 "parameters": {
                     "max_state_skew_s": 5.,
-                    "max_pose_error_deg": 10.,
+                    "max_pose_error_deg": tabletop_pose_error_deg,
                     **reset_geometry,
                 },
             },
@@ -230,7 +238,7 @@ def configure(core, live, options) -> dict:
                 "key_prompt": KEY_PROMPT,
                 "capture_parameters": capture,
                 "landing_parameters": {
-                    "max_pose_error_deg": 10.,
+                    "max_pose_error_deg": tabletop_pose_error_deg,
                     "support_tolerance_m": .005,
                     **reset_geometry,
                 },
