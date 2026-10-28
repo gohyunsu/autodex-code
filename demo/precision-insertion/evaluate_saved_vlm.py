@@ -201,6 +201,36 @@ def _summarize(rows: list[dict]) -> dict:
                 for (truth, prediction), count in sorted(confusion.items())
             ],
         }
+        if task == "released_insertion_visual":
+            per_camera: dict[str, list[tuple[str, str, bool]]] = {}
+            for row in subset:
+                for view in (row["observation"].get("aggregation") or {}).get(
+                        "per_view", []):
+                    order = view.get("image_order") or []
+                    if not order or not order[0].startswith("final_clear_view/"):
+                        continue
+                    camera = order[0].split("/", 1)[1].split("@", 1)[0]
+                    predicted = view.get("parsed", {}).get("visual_class")
+                    if predicted in _LABELS[task][1]:
+                        per_camera.setdefault(camera, []).append(
+                            (row["truth"], predicted,
+                             view.get("parse_error") is None))
+            by_task[task]["per_camera"] = {
+                camera: {
+                    "count": len(pairs),
+                    "correct": sum(truth == predicted and valid
+                                   for truth, predicted, valid in pairs),
+                    "parse_failures": sum(not valid for _, _, valid in pairs),
+                    "inside_false_positives": sum(
+                        valid and predicted == "inside_socket" and
+                        truth != "inside_socket"
+                        for truth, predicted, valid in pairs),
+                    "inside_false_negatives": sum(
+                        truth == "inside_socket" and
+                        (not valid or predicted != "inside_socket")
+                        for truth, predicted, valid in pairs),
+                }
+                for camera, pairs in sorted(per_camera.items())}
     return by_task
 
 

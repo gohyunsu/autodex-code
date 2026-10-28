@@ -99,7 +99,12 @@ Local `Qwen/Qwen3-VL-2B-Instruct` is the default; `--backend` and
 Gemini SDK.
 The report retains exact prompts/responses, parse errors, source hashes,
 per-task confusion counts and target-class false-positive counts. The
-reported target classes are `held` and `normal_appearance`, respectively;
+released-key section also lists each camera's inside false positives and
+false negatives, so view selection can be reviewed from labeled data rather
+than projected socket size alone. These counts do not change the runtime
+camera selection automatically. The
+reported target classes are `held`, `normal_appearance`, and `inside_socket`
+for lift, insertion appearance, and released-key tasks, respectively;
 they do **not** grant insertion motion or certify final task success.
 
 This tool checks only that the manifest *claims* independent review and

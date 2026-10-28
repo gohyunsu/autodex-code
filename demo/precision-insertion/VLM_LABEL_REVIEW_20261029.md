@@ -2,6 +2,14 @@
 
 This review uses saved capture4 frames only. It did not move the Franka or Inspire hand. The final label means **the key visibly occupies the socket opening after release and clear view**. It does not independently measure 20 mm depth.
 
+The final classifier intentionally receives only the session-located socket
+crop. The earlier initial-key/final-socket pair was wrong on all four reviewed
+episodes with this Qwen model; both full frames remain linked for human audit.
+For same-trial XY, a single visible key-face view remains a recorded planar
+hypothesis, not an executed measured shift: an archived inserted 10 mm case
+produced a false 35.7 mm single-view correction. The multiview criterion is
+grounded in this observed error, not an additional arbitrary threshold.
+
 ## Repeatable local Qwen evaluation
 
 `evaluate_saved_vlm.py` now accepts `released_insertion_visual` cases. It
@@ -27,6 +35,19 @@ Run from the repository root with the local model already installed:
 
 The local Qwen replay on 2026-10-29 classified all four reviewed final
 frames as visually annotated: one `inside_socket` and three `outside_socket`.
+The new per-camera breakdown of that saved report is 4/4 for `25322639`,
+4/4 for `26053248`, and 3/4 for `25305462`: the last camera missed the
+single visible insertion. The configured three-view vote still gives the
+correct aggregate label on all four. These are four examples from one camera
+layout, not a camera reliability estimate for every socket placement.
+The source-hash-bound count table is saved as
+`released_vlm_dataset_20261029/per_camera_summary_20261029.json` under the
+development review directory.
+An independent rerun with the current evaluation code and local Qwen model
+saved `released_vlm_dataset_20261029/evaluation_camera_summary_20261029.json`;
+it reproduced the same four aggregate labels and per-camera counts. The
+paired initial images were retained and hashed, while Qwen again received
+only the final session-socket crop.
 An additional **socket-only negative control** used the production prompt,
 session-projected socket crop, 384 px minimum long side, and 768×576 fit on
 eight archived views: four from a 5 mm socket session and four from a 10 mm

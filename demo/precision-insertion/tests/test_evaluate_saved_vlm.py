@@ -224,6 +224,17 @@ def test_released_benchmark_reuses_production_socket_crop_and_vote(tmp_path,
         "--manifest", str(manifest), "--output", str(output)])
     result = json.loads(output.read_text())
     assert result["summary"]["released_insertion_visual"]["correct"] == 1
+    assert result["summary"]["released_insertion_visual"]["per_camera"] == {
+        "front": {"count": 1, "correct": 1,
+                  "parse_failures": 0,
+                  "inside_false_positives": 0, "inside_false_negatives": 0},
+        "side": {"count": 1, "correct": 1,
+                 "parse_failures": 0,
+                 "inside_false_positives": 0, "inside_false_negatives": 0},
+        "top": {"count": 1, "correct": 0,
+                "parse_failures": 0,
+                "inside_false_positives": 0, "inside_false_negatives": 1},
+    }
     assert result["cases"][0]["prediction"] == "inside_socket"
     assert len(backend.calls) == 3
     assert all(size[0] >= 384 or size[1] >= 384 for size, _ in backend.calls)
