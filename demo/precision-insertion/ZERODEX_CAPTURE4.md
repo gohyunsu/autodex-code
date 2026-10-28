@@ -308,6 +308,13 @@ start the adapter if another experiment owns the cameras.
   `PRECISION_PREWARM_FIXED_WORLD=0` for the former serial timing. No grasp,
   collision, or task-success criterion changes. `--check` and `--camera-only`
   do not perform this live planner warmup.
+- A separate offline concurrent-load probe on this RTX 3090 initialized the
+  exact 5 mm provisional table/socket world and local Qwen3-VL-2B in parallel:
+  cuRobo took 24.72 s, Qwen took 4.73 s, combined wall time was 24.72 s, and
+  PyTorch reserved 9.24 GiB after both were resident. It opened no robot or
+  camera connection. This supports overlapping those two initializations on
+  this PC; it does not include SAM3 or establish live end-to-end latency.
+  Reproducer and JSON: `~/precision_insertion_project/development/zerodex_capture4/reviews/probe_concurrent_qwen_curobo_20261029.{py,json}`.
 - In the saved `20261028_233043_399147` live timing trace, the first
   `capture_fresh_key` action took 31.66 s. This included 2.57 s for camera/key
   capture, 11.31 s for candidate preflight, and a **17.62 s wait for the
