@@ -72,6 +72,16 @@ For insertion-appearance cases, use task `insertion_visual`, phases
 `miss`, `slip`, `unobservable`. The insertion `normal_appearance` class is
 **not** a measured 20 mm insertion-success label.
 
+For the active post-release task label, use task `released_insertion_visual`,
+phases `initial_tabletop` and `final_clear_view`, and one of `inside_socket`,
+`outside_socket`, `unobservable`. Each view also supplies the
+`socket_bbox_px` projected from that session's frozen socket pose. The
+evaluator retains both raw captures and their hashes but gives Qwen only the
+final socket crop, matching the live capture4 checkpoint. Its label means
+visible occupancy of the socket opening, not measured 20 mm depth. See
+[`VLM_LABEL_REVIEW_20261029.md`](VLM_LABEL_REVIEW_20261029.md) for the reviewed
+capture4 cases and the separate socket-only negative controls.
+
 From the repository root after the [local-VLM setup](README.md):
 
 ```bash

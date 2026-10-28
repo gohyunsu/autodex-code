@@ -1,7 +1,11 @@
 # One-session action loop
 
-The current insertion-failure route stores XY advice for a **new physical
-attempt**, never a same-held-key reinsert. See
+The active capture4 profile also measures and corrects XY **at the current
+pre-insertion hold**, recapturing all four views after each completed shift.
+That loop finishes before the first insertion stroke. If insertion is later
+visually labeled outside the socket, the saved pre-contact snapshot supplies
+XY advice for a **new physical attempt**; it does not trigger a same-held-key
+reinsert. See [`ZERODEX_CAPTURE4.md`](ZERODEX_CAPTURE4.md) and
 [`NEXT_TRIAL_XY.md`](NEXT_TRIAL_XY.md).
 The active handler contract does not require the historical
 `await_retry_execution_and_observation` same-held-key action. After a completed

@@ -27,7 +27,18 @@ Run from the repository root with the local model already installed:
 
 The local Qwen replay on 2026-10-29 classified all four reviewed final
 frames as visually annotated: one `inside_socket` and three `outside_socket`.
-The 24 raw PNGs are copied into the dataset folder and referenced by relative
+An additional **socket-only negative control** used the production prompt,
+session-projected socket crop, 384 px minimum long side, and 768×576 fit on
+eight archived views: four from a 5 mm socket session and four from a 10 mm
+session. Qwen answered `OUTSIDE` in all eight. The source frames, projection
+paths, crop rectangles, exact input crops, answers, contact sheet, and replay
+script are in
+`~/precision_insertion_project/development/zerodex_capture4/reviews/socket_only_negative_probe_20261029/`.
+These are setup photographs, not eight additional released-key episodes.
+The 10 mm side views `25305462` and `25322642` are overexposed; their empty
+socket answers do not show that an inserted key would be visible there.
+The positive-class evidence is still only one reviewed 5 mm episode.
+The four-case benchmark's 24 raw PNGs are copied into its dataset folder and referenced by relative
 path, so the evaluation does not depend on the old experiment tree. The
 report is `evaluation_local_bundle.json` in that folder. This checks crop/prompt
 replay on one camera layout and four recorded outcomes; it does not estimate
@@ -83,6 +94,16 @@ Saved old three-view VLM decode times were 0.85–1.02 s per episode. The new re
 | Final released-key VLM | Final raw RGB crop around the projected socket collision-mesh hull. Padding is 0.5× hull width on each side, 1.2× hull height above and 0.3× below, clipped to the image. For the classifier, crops with a long side below 384 px are enlarged with Lanczos, then all crops are fitted within 768×576. The raw crop is retained and hashed separately. If there is no valid projection, the full frame is used. | Socket projection is computed from **this session's measured socket pose** and calibration during key perception; final frames use that frozen position. A new socket location needs a new socket measurement/session. Pixel coordinates are not fixed across sessions. |
 
 The final crop locates the socket but does not tell the model that a key is present. A fallen key may be outside the crop; the model can still see that the opening is empty. The full final frame is retained in the checkpoint for inspection. The frozen socket position is a session assumption: moving the socket without remeasurement makes the crop, collision world and XY target stale.
+
+The tabletop key mask uses a separate, projected socket exclusion. This is
+not a final-label crop or a motion-safety margin: it prevents a white socket
+wall segmented by SAM3 from being admitted as the white key. In 29 archived
+key captures (116 per-view proposals), four masks were rejected for socket
+overlap; all four had overlap 1.0 in camera `25322642`. A saved overlay in
+`socket_only_negative_probe_20261029/socket_mask_veto_example.png` visibly
+shows SAM3 selected the socket wall. The configured 0.2 fraction is therefore
+serving an observed object-identity problem in these captures. No new
+overlap threshold or additional abort condition was added in this review.
 
 The final-label profile prefers the three saved-frame-reviewed cameras
 `26053248`, `25322639`, and `25305462`. A session-specific projection check
@@ -171,6 +192,30 @@ are saved in
 - A fingertip-centered crop was also tried for the *lift* classifier on seven saved lift episodes. It changed one known miss view from `NO` to `YES`, so the lift classifier and its established wrist-centered crop were left unchanged. The fingertip projection is used only to frame the transfer-pair images; it is not a new grasp-success label.
 - The final checkpoint occurs after the guarded stroke, hand opening and clear-view exit. The VLM reads final pixels only; initial and preinsert captures still establish provenance and chronological order. `vlm_only` uses this visual `inside_socket` label for task success; a physical depth claim requires separate evidence.
 - The saved four-view XY attempt `9542c1bd` executed three lateral corrections but its corrected axial preflight stopped at the ninth waypoint with `axis_segment_robot_collision` / `INVALID_START_STATE_WORLD_COLLISION`. No corrected insertion command was sent. This is a remaining motion-planning issue, independent of the final VLM change. Do not count that episode as a successful insertion.
+
+The current execution order was checked against
+`run_robot_pc.sh`, `live_task_handlers.py`, and the session action map:
+session socket measurement and frozen collision world → each attempt's
+undistorted key capture → v8 pickup and measured lift → 2 s held lift image →
+held transfer and raw `after_lift`/`preinsert` VLM pair → four-view Qwen-box,
+SAM3-mask, half-ellipse XY measurement and repeated same-trial shifts →
+corrected 20 mm axial planning → stroke → open hand and clear view → final
+socket crop/VLM vote → session success or failed-trial recovery. Every
+runtime launch created by `run_robot_pc.sh` has a unique evidence directory;
+the fixed `evidence_dir` printed by file-only `--check` is the template path,
+not the path used by `--run`. The 5 mm and 10 mm file-only checks each found
+four cameras and 114 eligible endpoint catalog entries. They do not certify
+camera, robot, physical success, or a new socket position.
+
+The saved images do **not** establish dependable transfer-loss detection:
+Qwen labeled all 12 original and all 12 focused positive transfer pairs,
+plus all six original and six focused duplicated empty-hand controls, as
+`coarse_match` in the earlier probe.
+That result is the main unresolved visual-label issue. The duplicated frames
+are diagnostic controls, not a measured physical transfer failure. Changing
+the live prompt or adding a success/failure gate on these few examples would
+substitute an unvalidated rule for the current label; retain the raw paired
+frames and obtain real slip-after-lift examples before making that change.
 
 ## Verification and next camera session
 
