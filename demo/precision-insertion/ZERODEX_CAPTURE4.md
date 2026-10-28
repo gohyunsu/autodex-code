@@ -647,3 +647,12 @@ ten seconds, and repeat read-only checks still showed the same abnormal
 values. No further hand/arm motion commands were sent. This calibration
 attempt must **not** be treated as completed or as evidence that the
 original thumb-force offset was corrected.
+
+The operator then verified the hand indicator was lit, checked the connector,
+and performed a full hand power restart. A fresh **read-only** Modbus check
+still returned `VLTAGE=65535`, `ANGLE_SET=[65535]*6`,
+`FORCE_SET=[2000]*6`, and `STATUS=[7]*6`. The controller ID remained `1`
+and TCP connected. This makes a transient restart state less likely, but
+does not identify whether the connector, cable, supply or hand internals
+are responsible. The demo must not resume finger calibration or pickup from
+this current all-channel state.
