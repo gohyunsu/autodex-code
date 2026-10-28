@@ -85,6 +85,8 @@ def refresh_code(*, nas_root: Path, paradex_repo: Path) -> dict:
     _copy_file(HERE / "install_zerodex_nas_project.py",
                nas_root / "install_project.py")
     _copy_file(HERE / "ZERODEX_NAS_PROJECT.md", nas_root / "README.md")
+    _copy_file(HERE / "DEVELOPMENT_ARTIFACTS.md",
+               nas_root / "development" / "README.md")
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8")
@@ -203,6 +205,8 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
     _copy_file(HERE / "install_zerodex_nas_project.py",
                nas_root / "install_project.py")
     _copy_file(HERE / "ZERODEX_NAS_PROJECT.md", nas_root / "README.md")
+    _copy_file(HERE / "DEVELOPMENT_ARTIFACTS.md",
+               nas_root / "development" / "README.md")
     records = []
     for path in sorted((nas_root / "assets").rglob("*")):
         if path.is_file():

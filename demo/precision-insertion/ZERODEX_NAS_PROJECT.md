@@ -13,6 +13,7 @@ code; the old AutoDex experiment directory is not this project's archive.
 | `rigs/zerodex_capture4/runtime` | Project-local link to the capture4 calibration, robot profile and launch/catalog templates in `assets/shared_data` |
 | `environments/` | Local planner and capture4 Python package lists |
 | `runs/zerodex_capture4/YYYY/MM/DD/RUN_ID/` | Post-run uploaded full-resolution camera recording, frame ID index, log and run receipt |
+| `development/zerodex_capture4/` | Camera, planning, timing and implementation diagnostics collected after development work; never read by the live pipeline |
 | `PROJECT_MANIFEST.json` | Code commits, asset paths, sizes and SHA256 hashes |
 
 The asset tree uses the existing `AssetPaths` layout. One project bundle covers
@@ -20,6 +21,8 @@ gap sizes 1, 3, 5, 10, 15 and 20 mm for the cylindrical key. The current
 launcher selects 5 mm by default. The archived square-mode code remains in
 the source snapshot; square hardware assets are outside this ZeroDex run
 profile.
+Development output rules and the migration of earlier scattered diagnostics
+are described in `development/README.md`.
 
 ## Build or refresh the project bundle
 

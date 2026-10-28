@@ -34,7 +34,7 @@ export PRECISION_ENDPOINT_CATALOG=${PRECISION_ENDPOINT_CATALOG:-$PRECISION_STAGE
 if [[ ${1:-} == --camera-only ]]; then
   shift
   export PYTHONPATH="$PRECISION_EXTRA_PYTHONPATH:$ROOT:$ROOT/demo/precision-insertion:$ROOT/src"
-  export PRECISION_TIMING_LOCAL_ROOT=${PRECISION_TIMING_LOCAL_ROOT:-/tmp/precision-insertion-timing}
+  mkdir -p "$PRECISION_DEV_ROOT/camera_only" "$PRECISION_TIMING_LOCAL_ROOT"
   camera_only_args=(
     --launch-config "${PRECISION_LAUNCH_TEMPLATE:-$PRECISION_STAGE_ROOT/launch.json}"
     --endpoint-catalog "$PRECISION_ENDPOINT_CATALOG"
@@ -48,7 +48,7 @@ if [[ ${1:-} == --camera-only ]]; then
   done
   if [[ $camera_only_has_output -eq 0 ]]; then
     run_tag="$(date +%Y%m%d_%H%M%S_%N)_$$"
-    camera_only_args+=(--output-dir "$PRECISION_STAGE_ROOT/runs/camera_only_$run_tag")
+    camera_only_args+=(--output-dir "$PRECISION_DEV_ROOT/camera_only/$run_tag")
   fi
   exec "$PRECISION_PLANNER_PY" "$SCRIPT_DIR/run_zerodex_camera_only.py" \
     "${camera_only_args[@]}" "$@"

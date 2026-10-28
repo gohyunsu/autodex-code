@@ -95,8 +95,7 @@ def _command(kind: str, *, exposure_us: float | None = None) -> str:
                 f"{REMOTE}/src/execution/daemon/snapshot_daemon.py")
     stage = Path(os.environ.get(
         "PRECISION_CAPTURE4_ASSET_ROOT",
-        str(REMOTE_HOME / "shared_data/hyunsu/tmp/20261023_prev/"
-            "precision_insertion_recipient_stage_20261013_b7e2392")))
+        str(REMOTE_HOME / "shared_data/hyunsu/precision_insertion/assets/shared_data")))
     sam3_batch = os.environ.get("PRECISION_SAM3_BATCH", "auto")
     if sam3_batch not in ("auto", "0", "1"):
         raise ValueError("PRECISION_SAM3_BATCH must be auto, 0, or 1")
