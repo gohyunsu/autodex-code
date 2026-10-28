@@ -11,6 +11,7 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -27,6 +28,29 @@ ZERODEX_FR3_FCI_IP = os.environ.get(
 LOCAL_DAEMON_HOST = os.environ.get(
     "PRECISION_ZERODEX_DAEMON_HOST", "127.0.0.1")
 _CLEAR_VIEW_SCHEMA = "precision_insertion_zerodex_clear_view_v1"
+
+
+def _quiet_curobo_world_mesh_debug(world_mesh=None) -> Callable[[], None]:
+    """Keep stock tensor debug prints out of cuRobo CUDA graph capture.
+
+    The vendored world_mesh module has three unconditional tensor prints.
+    Formatting those tensors launches CUDA work during graph capture, so this
+    process-local override replaces only that module's ``print`` lookup.
+    """
+    if world_mesh is None:
+        from curobo.geom.sdf import world_mesh
+
+    missing = object()
+    previous = world_mesh.__dict__.get("print", missing)
+    world_mesh.print = lambda *_args, **_kwargs: None
+
+    def restore() -> None:
+        if previous is missing:
+            world_mesh.__dict__.pop("print", None)
+        else:
+            world_mesh.print = previous
+
+    return restore
 
 
 def install_zerodex_modbus_compat() -> None:
@@ -115,6 +139,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     from paradex.utils.system import network_info
 
     install_zerodex_modbus_compat()
+    restore_curobo_print = _quiet_curobo_world_mesh_debug()
     previous_clear_view = FR3_CLEAR_VIEW.copy()
     FR3_CLEAR_VIEW[:] = clear_view_q
     previous_host = network_info["franka"]
@@ -122,6 +147,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     try:
         integration = stock_factory(options)
     except BaseException:
+        restore_curobo_print()
         network_info["franka"] = previous_host
         FR3_CLEAR_VIEW[:] = previous_clear_view
         raise
@@ -130,6 +156,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
         try:
             integration.close()
         finally:
+            restore_curobo_print()
             network_info["franka"] = previous_host
             FR3_CLEAR_VIEW[:] = previous_clear_view
 

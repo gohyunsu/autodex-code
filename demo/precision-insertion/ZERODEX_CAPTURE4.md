@@ -44,6 +44,13 @@ imported into the live loop. Keep machine addresses and Python/asset locations
 in the profile, task choices in launch/runtime JSON or explicit environment
 options, and per-run evidence under `runs/`.
 
+The vendored cuRobo `world_mesh.py` contains three unconditional tensor
+debug prints. Tensor formatting aborts CUDA graph capture during planner
+warmup. The ZeroDex integration shadows `print` only in that imported module
+for its one-session process and restores it on close; the shared cuRobo source
+remains unchanged. A 5 mm `--plan-only` run then reached
+`sampled_planning_pass` with candidate `table/0/20096` on 2026-10-28.
+
 The measured earlier 10 mm live run spent 26.58 s in first key
 capture/refinement, 19.20 s in first planner-world setup (partly overlapped),
 and 5.27 s loading Qwen. Persistent capture4 perception, local Qwen batching,

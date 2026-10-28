@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -9,6 +10,19 @@ import pytest
 from autodex.utils.robot_config import FR3_CLEAR_VIEW
 from precision_insertion import zerodex_franka_integration as route
 from precision_insertion.live_runtime import LiveRuntimeIntegration, RunLiveOptions
+
+
+def test_curobo_collision_debug_print_is_process_local():
+    world_mesh = SimpleNamespace()
+
+    sentinel = object()
+    previous = world_mesh.__dict__.get("print", sentinel)
+    restore = route._quiet_curobo_world_mesh_debug(world_mesh)
+    try:
+        assert world_mesh.print("tensor value") is None
+    finally:
+        restore()
+    assert world_mesh.__dict__.get("print", sentinel) is previous
 
 
 def test_local_pymodbus_client_import_matches_paradex():
@@ -70,6 +84,7 @@ def test_factory_routes_process_only_and_restores_after_close(tmp_path, monkeypa
                             "held_motion_monitor": (binary, object()),
                             "lift_monitor": None})
     monkeypatch.setattr(route, "inspect_zerodex_daemon", lambda: {})
+    monkeypatch.setattr(route, "_quiet_curobo_world_mesh_debug", lambda: lambda: None)
     original = network_info["franka"]
     original_clear_view = FR3_CLEAR_VIEW.copy()
     observed = []
@@ -97,6 +112,7 @@ def test_factory_restores_process_route_if_stock_factory_fails(tmp_path, monkeyp
                         lambda *args, **kwargs: {
                             "held_motion_monitor": None, "lift_monitor": None})
     monkeypatch.setattr(route, "inspect_zerodex_daemon", lambda: {})
+    monkeypatch.setattr(route, "_quiet_curobo_world_mesh_debug", lambda: lambda: None)
     original = network_info["franka"]
     original_clear_view = FR3_CLEAR_VIEW.copy()
 
