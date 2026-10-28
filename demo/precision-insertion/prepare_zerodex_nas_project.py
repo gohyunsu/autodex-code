@@ -73,6 +73,27 @@ def _source_archive(repo: Path, destination: Path) -> dict:
             "archive": archive.name, "sha256": _sha256(archive)}
 
 
+def refresh_code(*, nas_root: Path, paradex_repo: Path) -> dict:
+    """Update tracked code without retransferring large runtime assets."""
+    manifest_path = nas_root / "PROJECT_MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    old_archives = {row["archive"] for row in manifest["code"]}
+    code = nas_root / "code"
+    snapshots = [_source_archive(REPO, code),
+                 _source_archive(paradex_repo.expanduser().resolve(), code)]
+    manifest["code"] = snapshots
+    _copy_file(HERE / "install_zerodex_nas_project.py",
+               nas_root / "install_project.py")
+    _copy_file(HERE / "ZERODEX_NAS_PROJECT.md", nas_root / "README.md")
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8")
+    for name in old_archives - {row["archive"] for row in snapshots}:
+        (code / name).unlink()
+    return {"root": str(nas_root), "code": snapshots,
+            "asset_file_count": manifest["asset_file_count"]}
+
+
 def _package_socket_representations(shared: Path, nas_root: Path) -> list[dict]:
     """Send many small representation files as one file per socket."""
     packages = []
@@ -225,7 +246,14 @@ def main() -> None:
                                                "capture4@147.46.219.136"))
     parser.add_argument("--ssh-port", type=int,
                         default=int(os.environ.get("PRECISION_CAPTURE4_SSH_PORT", "77")))
+    parser.add_argument("--refresh-code-only", action="store_true",
+                        help="update committed source archives and README without recopying assets")
     args = parser.parse_args()
+    if args.refresh_code_only:
+        print(json.dumps(refresh_code(
+            nas_root=args.nas_root,
+            paradex_repo=args.paradex_repo), indent=2))
+        return
     if args.source_stage is None:
         parser.error("source stage needs --source-stage or PRECISION_NAS_LINK_STAGE")
     print(json.dumps(build(

@@ -31,6 +31,13 @@ source demo/precision-insertion/config/zerodex_capture4.env.sh
 python demo/precision-insertion/prepare_zerodex_nas_project.py
 ```
 
+After a source-only commit, refresh the tracked code snapshots without
+recopying runtime assets:
+
+```bash
+python demo/precision-insertion/prepare_zerodex_nas_project.py --refresh-code-only
+```
+
 Large unchanged NAS source files are hardlinked where available, and local
 runtime files are copied into the project tree. Socket representations are
 packed locally and transferred as one file per socket. Hardlinks remain readable
