@@ -164,25 +164,70 @@ address to `127.0.0.1`; the previous value is restored on shutdown or
 startup failure. Shared ParaDex `network.json`, capture4 programs and the
 AutoDex launcher defaults are unchanged. No daemon is started by this script.
 
-The robot and Inspire hand are currently off; no motion or command-path test
-has been performed. The local daemon binary and matching libfranka runtime
-are currently missing, and this rig's documented ROS2 controller may already
-own FCI. Establish exclusive controller ownership and build/start the local
-ParaDex daemon for `172.16.1.11` before attempting either live mode. A
+The FR3 and Inspire hand were connected on 2026-10-28. The AutoDex-PC
+`franka_daemon` binary was restored into the local `zerodex_capture4/robot_deps`
+tree without editing the shared ParaDex checkout, and its matching libfranka
+0.18 runtime dependencies resolve locally. The configured daemon path is in
+`franka_runtime.json`. The command route still needs a running daemon with
+exclusive FCI ownership before either live mode. A
 `--plan-only` session **still moves** the arm to clear view and observes the
 key before planning; it is not an offline test. `--check` and `--camera-only`
 remain robot-free. This route check prevents an AutoDex-PC daemon targeting
 another robot from receiving ZeroDex commands; it adds no new grasp, pose,
 insertion or VLM success threshold.
 
-Read-only host inspection on 2026-10-28 confirmed a direct route to the
-configured FR3 (`172.16.1.11 dev enp4s0 src 172.16.1.10`), but neither
-controller stack is presently installed here: the configured local
-`franka_daemon` executable and `libfranka.so.0.18` are absent, as are the
-MessagePack C++ development header needed to build the daemon; `/opt/ros/humble`
-is also absent. This is an environment inventory, not a robot connection
-test. Choose either the ParaDex daemon route above or a separate ROS2
-integration before installing one stack or attempting motion. The existing
+The read-only FCI route is `172.16.1.11 dev enp4s0 src 172.16.1.10`.
+The daemon has **not** reached its ready state: starting it as an ordinary
+user failed with `unable to set realtime scheduling`, and starting it with
+`sudo` failed with `Running kernel does not have realtime capabilities`.
+The host currently boots Ubuntu 22.04's `6.8.0-138-generic` kernel, not a
+PREEMPT_RT kernel. Do not silently change the daemon to libfranka's
+`RealtimeConfig::kIgnore`; the operator chose a real-time kernel first.
+Franka's [FCI real-time kernel instructions](https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html)
+recommend Ubuntu Pro's real-time kernel for Ubuntu 22.04. Canonical's
+[enablement guide](https://documentation.ubuntu.com/pro-client/en/latest/howtoguides/enable_realtime_kernel/)
+documents the 22.04 HWE RT kernel. This host has an older
+`ubuntu-advantage-tools` but no `ubuntu-pro-client` command yet; the
+repository currently offers an older 5.15 `linux-image-realtime` package,
+whereas the Pro HWE variant tracks 6.8. Installing a kernel and rebooting
+are operator-level system changes. After reboot, verify `/sys/kernel/realtime`
+contains `1`, then grant the robot user real-time scheduling/memlock as in the
+FCI guide before starting the unchanged daemon. Check the NVIDIA driver on
+the new kernel too; Franka notes that NVIDIA support on PREEMPT_RT is not
+officially guaranteed. Only then try the measured clear-view command.
+
+Operator-side RT setup on this Ubuntu 22.04 host (Ubuntu Pro subscription is
+needed for the HWE package; attach interactively and do not put its token in
+the repository):
+
+```bash
+sudo apt update
+sudo apt install ubuntu-pro-client
+sudo pro attach
+sudo pro enable realtime-kernel --access-only
+sudo apt install linux-realtime-hwe-22.04
+# Reboot at an operator-selected time, then:
+uname -a
+cat /sys/kernel/realtime  # expected: 1
+nvidia-smi
+```
+
+The unchanged daemon can then be started from a dedicated terminal; leave it
+open until the pipeline session finishes:
+
+```bash
+sudo env LD_LIBRARY_PATH=/home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/robot_deps/prefix/usr/lib/x86_64-linux-gnu:/home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/robot_deps/prefix/usr/lib \
+  /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/robot_deps/restored/home/robot/paradex/cpp/franka_daemon/build/franka_daemon \
+  172.16.1.11 --command_port 5555 --state_port 5556
+```
+
+Wait for `[READY] Daemon ready, waiting for commands...`. The socket session
+already captured with camera-only mode must be recaptured if the fixture has
+moved during the reboot. Without a key on the board, do not start a pick or
+insertion trial; the first motion check is only clear-view with the measured
+joint target.
+
+The existing
 ZeroDex `realtime_vlm/run/components/robot_exec.py` uses a ROS2
 `FrankaController`/JTC plus Inspire commands; it is not a drop-in replacement
 for this demo's stock 50 Hz ParaDex follower and measured wrench/hand trace.
@@ -383,7 +428,8 @@ read-only Modbus check of Inspire `angleAct` returned
 hand is not yet at that software target.
 
 `--run` and `--plan-only` still need the local ParaDex daemon and an explicit
-motion opt-in; neither was started in this capture. Initial
+motion opt-in; the daemon did not reach ready state on the generic kernel.
+Initial
 `home(clear_view=True)` will open Inspire and command the *measured* FR3
 target, even if the arm is already near it. This is a command-capable action,
 not what the read-only pose probe or socket capture did. Keep the board/socket
@@ -428,5 +474,6 @@ the recorded camera-only latency bottleneck. A later dark-scene inline
 transport probe delivered four same-frame key images and masks locally in
 2.172 s. It measured transport, not a successful key pose or full episode.
 
-Robot/hand power and a local Franka daemon are still required for execution.
-No robot movement, insertion or real-world task success is claimed here.
+The robot and hand are connected, but a PREEMPT_RT kernel and a ready local
+Franka daemon are still required for this selected controller route. No robot
+movement, insertion or real-world task success is claimed here.
