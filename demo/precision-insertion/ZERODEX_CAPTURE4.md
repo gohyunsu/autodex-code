@@ -260,11 +260,20 @@ start the adapter if another experiment owns the cameras.
   `20261028_233043_399147` trace loaded SAM3 serially for 23.71 s before
   opening the FR3 core. Inspect `startup.sam3_roi_model_load_join` in the
   next live timing summary to measure the remaining critical-path wait.
+  The current asynchronous worker was checked separately without hardware:
+  thread submission returned in 0.003 s while SAM3 became ready in 8.76 s.
+  Reproducer and result are together in
+  `~/precision_insertion_project/development/zerodex_capture4/reviews/probe_sam_submit_20261029.{py,json}`.
   An offline main-PC GPU load of SAM3 and Qwen in parallel took 9.38 s wall
   (9.38 s SAM3, 5.15 s Qwen; warm local/NAS caches); its record is
   `~/precision_insertion_project/development/zerodex_capture4/reviews/sam_qwen_concurrent_load_20261029.json`.
-  Concurrency with cuRobo and the actual camera session has not yet been
-  measured live.
+  A separate offline stress test initialized SAM3, Qwen and the 5 mm cuRobo
+  world concurrently. All three became resident without an out-of-memory
+  error: 25.12 s wall, 14,441 MiB total GPU memory used at completion.
+  Reproducer and result:
+  `~/precision_insertion_project/development/zerodex_capture4/reviews/probe_concurrent_models_20261029.{py,json}`.
+  Startup overlap with the actual camera session has not yet been measured
+  live.
 - The capture4 profile uses
   `~/precision_insertion_project/cache/models/sam3.pt` when present and the
   canonical NAS project copy otherwise. On kds-Z790, the local 3.45 GB copy
