@@ -265,6 +265,16 @@ start the adapter if another experiment owns the cameras.
   `~/precision_insertion_project/development/zerodex_capture4/reviews/sam_qwen_concurrent_load_20261029.json`.
   Concurrency with cuRobo and the actual camera session has not yet been
   measured live.
+- The capture4 profile uses
+  `~/precision_insertion_project/cache/models/sam3.pt` when present and the
+  canonical NAS project copy otherwise. On kds-Z790, the local 3.45 GB copy
+  was made from
+  `/mnt/paradex2/hyunsu/precision_insertion/assets/shared_data/AutoDex/weights/sam3/sam3.pt`;
+  both SHA256 values were
+  `9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e`.
+  The runtime performs no extra full-file hash pass. The local copy avoids
+  NAS reads at model startup; its actual effect on warm Qwen/SAM/cuRobo
+  startup latency still needs a measured run.
 - The ZeroDex launcher sets `PRECISION_PREWARM_FIXED_WORLD=1` for both newly
   placed and already placed keys. After the fixed socket is available, the
   planner initializes its table/socket cuRobo world in a background thread

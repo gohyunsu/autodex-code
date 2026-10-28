@@ -18,7 +18,12 @@ export PRECISION_EXTRA_PYTHONPATH=${PRECISION_EXTRA_PYTHONPATH:-$precision_profi
 export PRECISION_PLANNER_PY=${PRECISION_PLANNER_PY:-$HOME/.venvs/precision-vlm/bin/python}
 export PRECISION_CHECK_PY=${PRECISION_CHECK_PY:-$PRECISION_PLANNER_PY}
 export PRECISION_SAM_PYTHON=${PRECISION_SAM_PYTHON:-$PRECISION_PLANNER_PY}
-export PRECISION_SAM_CHECKPOINT=${PRECISION_SAM_CHECKPOINT:-$PRECISION_NAS_PROJECT_ROOT/assets/shared_data/AutoDex/weights/sam3/sam3.pt}
+precision_local_sam="$HOME/precision_insertion_project/cache/models/sam3.pt"
+precision_default_sam="$PRECISION_NAS_PROJECT_ROOT/assets/shared_data/AutoDex/weights/sam3/sam3.pt"
+if [[ -f $precision_local_sam ]]; then
+  precision_default_sam=$precision_local_sam
+fi
+export PRECISION_SAM_CHECKPOINT=${PRECISION_SAM_CHECKPOINT:-$precision_default_sam}
 export PRECISION_FR3_INSPIRE_URDF=${PRECISION_FR3_INSPIRE_URDF:-$precision_profile_root/autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf}
 
 export PRECISION_CAPTURE4_SSH_HOST=${PRECISION_CAPTURE4_SSH_HOST:-capture4@147.46.219.136}
@@ -50,4 +55,4 @@ for precision_header_dir in cuda_runtime cusparse cublas cusolver; do
     export CPATH="$precision_include${CPATH:+:$CPATH}"
   fi
 done
-unset precision_profile_dir precision_profile_root precision_cuda_headers precision_header_dir precision_include
+unset precision_profile_dir precision_profile_root precision_cuda_headers precision_header_dir precision_include precision_local_sam precision_default_sam
