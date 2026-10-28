@@ -139,3 +139,12 @@ endpoint-eligible catalog candidates. These are perception/catalog results,
 not Franka path or physical insertion results. The earlier one-off
 `camera_only_gap5_key_present_20261028` run has a key in its socket baseline;
 its report records this and it should not be reused as the key-free baseline.
+
+After switching the namespaced capture4 service from the NAS asset root to
+its local perception cache, the same saved 5 mm socket session and upright-key
+camera-only route completed again. `camera.foundpose_request` took **69.81 s**
+in `20261028_212003_949258273_183682` with the NAS asset root, versus
+**4.21 s** in `20261028_212831_958031007_186856` with the local cache. Both
+reports selected pose `000` and found 108 eligible catalog candidates. This
+is an observed end-to-end request-time comparison; it does not isolate file I/O
+from model initialization or GPU cache effects. No robot motion was involved.
