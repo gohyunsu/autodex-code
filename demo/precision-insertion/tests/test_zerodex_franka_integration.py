@@ -11,6 +11,14 @@ from precision_insertion import zerodex_franka_integration as route
 from precision_insertion.live_runtime import LiveRuntimeIntegration, RunLiveOptions
 
 
+def test_local_pymodbus_client_import_matches_paradex():
+    route.install_zerodex_modbus_compat()
+    from pymodbus.client import ModbusTcpClient
+
+    assert callable(ModbusTcpClient)
+    route.install_zerodex_modbus_compat()
+
+
 def _process(root: Path, pid: int, *, fci_ip: str, command_port: int = 5555):
     process = root / str(pid)
     process.mkdir()

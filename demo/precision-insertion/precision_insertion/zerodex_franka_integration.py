@@ -26,6 +26,22 @@ LOCAL_DAEMON_HOST = "127.0.0.1"
 _CLEAR_VIEW_SCHEMA = "precision_insertion_zerodex_clear_view_v1"
 
 
+def install_zerodex_modbus_compat() -> None:
+    """Expose the installed pymodbus 2.x client to ParaDex's 3.x import.
+
+    The local ParaDex Inspire driver imports ``pymodbus.client.ModbusTcpClient``
+    although this host has pymodbus 2.5.3, where that class lives in
+    ``pymodbus.client.sync``. Keep the alias inside this process instead of
+    editing the shared ParaDex checkout or capture4 environment.
+    """
+    import pymodbus.client as client
+
+    if not hasattr(client, "ModbusTcpClient"):
+        from pymodbus.client.sync import ModbusTcpClient
+
+        client.ModbusTcpClient = ModbusTcpClient
+
+
 def load_zerodex_clear_view(config_path: Path) -> np.ndarray:
     """Read the measured clear-view joints beside the ZeroDex robot profile."""
     source = Path(config_path).expanduser().resolve().parent / "clear_view_arm_q.json"
@@ -95,6 +111,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     # this single-session process avoids editing the shared network.json.
     from paradex.utils.system import network_info
 
+    install_zerodex_modbus_compat()
     previous_clear_view = FR3_CLEAR_VIEW.copy()
     FR3_CLEAR_VIEW[:] = clear_view_q
     previous_host = network_info["franka"]

@@ -177,8 +177,8 @@ another robot from receiving ZeroDex commands; it adds no new grasp, pose,
 insertion or VLM success threshold.
 
 The read-only FCI route is `172.16.1.11 dev enp4s0 src 172.16.1.10`.
-The daemon has **not yet** reached its ready state. Before the kernel change,
-starting it as an ordinary user failed with `unable to set realtime
+Before the kernel change, starting the daemon as an ordinary user failed
+with `unable to set realtime
 scheduling`, and starting it with `sudo` failed with `Running kernel does not
 have realtime capabilities`. The operator installed Ubuntu 22.04's
 `6.8.1-1061-realtime` HWE kernel; `/sys/kernel/realtime` now reads `1`.
@@ -191,12 +191,12 @@ recommend Ubuntu Pro's real-time kernel for Ubuntu 22.04. Canonical's
 documents the 22.04 HWE RT kernel. The required host kernel and GPU driver
 are now present. A post-reboot read-only FCI state sample succeeded, with all
 seven joints still within 0.00004 rad of the recorded clear-view target.
-The remaining command-path step is to start the unchanged daemon with RT
-permission, then exercise the measured clear-view command. NVIDIA support on
-PREEMPT_RT is not officially guaranteed by Franka even though this build
-loaded and reported the GPU.
+The unchanged daemon subsequently reached ready state with RT permission,
+and the measured clear-view command completed as recorded below. NVIDIA
+support on PREEMPT_RT is not officially guaranteed by Franka even though
+this build loaded and reported the GPU.
 
-Operator-side RT setup on this Ubuntu 22.04 host (Ubuntu Pro subscription is
+Operator-side RT setup used on this Ubuntu 22.04 host (Ubuntu Pro subscription is
 needed for the HWE package; attach interactively and do not put its token in
 the repository):
 
@@ -424,16 +424,16 @@ restores the stock value when the session closes. It does not edit the stock
 AutoDex clear-view constant or ParaDex calibration on disk. A
 read-only Modbus check of Inspire `angleAct` returned
 `[800, 802, 800, 800, 1000, 787]` in controller order. The stock pipeline's
-`INSPIRE_INIT` means all raw angles near 1000 (fully open), so the measured
-hand is not yet at that software target.
+`INSPIRE_INIT` means all raw angles near 1000 (fully open); this first sample
+predates the actual clear-view/open-hand command documented below.
 
-`--run` and `--plan-only` still need the local ParaDex daemon and an explicit
-motion opt-in; the daemon did not reach ready state on the generic kernel.
+`--run` and `--plan-only` need the local ParaDex daemon and an explicit
+motion opt-in. The daemon reached ready state after the RT kernel boot.
 Initial
 `home(clear_view=True)` will open Inspire and command the *measured* FR3
 target, even if the arm is already near it. This is a command-capable action,
-not what the read-only pose probe or socket capture did. Keep the board/socket
-fixed if reusing this one-capture calibration.
+not what the earlier read-only pose probe or socket capture did. Keep the
+board/socket fixed if reusing this one-capture calibration.
 
 ## Observed fixed socket, 2026-10-27
 
@@ -474,6 +474,30 @@ the recorded camera-only latency bottleneck. A later dark-scene inline
 transport probe delivered four same-frame key images and masks locally in
 2.172 s. It measured transport, not a successful key pose or full episode.
 
-The robot and hand are connected and the PREEMPT_RT kernel is active, but a
-ready local Franka daemon is still required for this selected controller
-route. No robot movement, insertion or real-world task success is claimed here.
+## 2026-10-28 RT robot bring-up and clear-view socket probe
+
+The local daemon reached `[READY]` on the RT kernel, targeting
+`172.16.1.11` with ZMQ command/state ports 5555/5556. The missing Franka
+gripper is expected: this rig uses Inspire on Modbus TCP, not the stock
+Franka gripper. The first stock `FrankaExecutor` startup exposed a local
+dependency mismatch: ParaDex imports `pymodbus.client.ModbusTcpClient` while
+the installed 2.5.3 package exposes it from `pymodbus.client.sync`. The
+ZeroDex integration now installs that class alias **in its own Python
+process** before stock executor construction; neither shared ParaDex code
+nor capture4 files were edited.
+
+With the operator-designated arm target, the stock `home(clear_view=True)`
+completed. The arm's measured final max joint error was 0.000785 rad and the
+Inspire measured raw angles were `[1000, 998, 1000, 998, 1000, 988]` versus
+all-1000 open command. The result record is in
+`zerodex_capture4/runs/clear_view_probe_20261028.json`. This proves the
+clear-view arm and open-hand command path, not pickup or insertion.
+
+After clear view, a fresh four-view socket SAM3 probe saved
+`zerodex_capture4/runs/socket_probe_20261028_rt_clear_view/overlays_4view.jpg`.
+Masks were nonempty in two views (`26053248`, `25322639`) with body IoU
+0.940 and 0.946; the other two returned empty masks. Mean IoU among the two
+contributing views was 0.943. This is a camera-only mask/body-fit probe, not
+a new frozen socket pose or key trial. The camera-only full session still
+needs the physical key after its socket phase. No physical insertion or task
+success is claimed here.
