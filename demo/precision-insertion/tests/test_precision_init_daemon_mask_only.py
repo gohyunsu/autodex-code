@@ -78,6 +78,31 @@ def test_mask_only_init_skips_socket_foundpose_and_key_init_can_load(monkeypatch
     assert daemon.fp.obj_name == "key"
 
 
+def test_full_pose_init_replaces_same_object_mask_only_estimator(monkeypatch):
+    daemon = adapter.PrecisionInitDaemon.__new__(adapter.PrecisionInitDaemon)
+    daemon.cmd_receiver = SimpleNamespace(event_info={
+        "init": {"obj_name": "key", "skip_foundpose": True}})
+    daemon.fp = None
+    daemon.mode = "live"
+    daemon.reader = object()
+    loaded = []
+
+    def stock_init(self):
+        obj_name = self.cmd_receiver.event_info["init"]["obj_name"]
+        if self.fp is None or self.fp.obj_name != obj_name:
+            loaded.append(obj_name)
+            self.fp = SimpleNamespace(obj_name=obj_name)
+
+    monkeypatch.setattr(adapter.InitDaemon, "_do_init", stock_init)
+    daemon._do_init()
+    assert isinstance(daemon.fp, adapter._MaskOnlyEstimator)
+
+    daemon.cmd_receiver.event_info["init"] = {"obj_name": "key"}
+    daemon._do_init()
+    assert loaded == ["key"]
+    assert not isinstance(daemon.fp, adapter._MaskOnlyEstimator)
+
+
 def test_capture4_maps_main_pc_asset_paths_without_changing_inference(monkeypatch):
     daemon = adapter.PrecisionInitDaemon.__new__(adapter.PrecisionInitDaemon)
     info = {

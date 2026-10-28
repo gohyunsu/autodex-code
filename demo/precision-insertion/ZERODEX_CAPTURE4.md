@@ -353,6 +353,18 @@ planning first; if those plans fail, the existing tabletop reorientation
 route remains available. These fields do not claim a passing arm plan.
 Key admission is pose-only, as in the
 live planning path: it does not wait for a second set of same-request PNGs.
+For an upright cylindrical key, key admission compares the stock FoundPose
+initial mesh IoU with a board-normal CAD-body fit to the **same** admitted SAM
+masks. The higher-IoU hypothesis supplies the tabletop pose; a lying key can
+still use the stock FoundPose/silhouette route. This adds no absolute IoU
+cutoff. On the live 10 mm socket scene on 2026-10-28, only cameras `25305462`
+and `26053248` segmented the white key; the board fit obtained mean body IoU
+0.810 and robot-frame origin approximately `(0.692, 0.026, 0.063) m`.
+The other two camera masks were empty. The 10 mm `--plan-only` run selected
+`table/0/20267` and ended `planning_ready`; this is not physical success.
+The dedicated capture4 init adapter also replaces a same-object mask-only
+placeholder before a subsequent full FoundPose request. Without that fix the
+daemon silently returned no pose for every view.
 Use `probe_zerodex_inline_frames.py` above if raw key frames and masks are
 needed for visual QA; do not compare its PNG-inclusive duration to the
 pose-only trial capture. The camera-only command does **not** create a Franka

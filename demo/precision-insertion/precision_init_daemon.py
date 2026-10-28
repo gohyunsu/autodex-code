@@ -67,6 +67,11 @@ class PrecisionInitDaemon(InitDaemon):
             # estimator. A named no-op keeps its camera/undistortion setup
             # unchanged without constructing unused socket FoundPose weights.
             self.fp = _MaskOnlyEstimator(info["obj_name"])
+        elif isinstance(self.fp, _MaskOnlyEstimator):
+            # A previous mask-only request may have used this same object.
+            # Stock init reuses an estimator by obj_name, so clear the no-op
+            # before a full-pose request or FoundPose will never run.
+            self.fp = None
         super()._do_init()
         if self.mode != "live" or self.reader is None:
             raise ValueError("precision FoundPose requires live camera mode")

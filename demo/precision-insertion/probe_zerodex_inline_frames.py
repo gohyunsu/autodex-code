@@ -37,7 +37,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--target", choices=("key", "socket"), default="key")
     parser.add_argument("--pose-only", action="store_true",
                         help="request masks/FoundPose without source PNGs")
+    parser.add_argument("--with-pose-images", action="store_true",
+                        help="save same-request source frames and masks with FoundPose")
+    parser.add_argument("--board-fit-session", type=Path,
+                        help="also fit an upright key to the saved session board")
     args = parser.parse_args(argv)
+    if args.pose_only and args.with_pose_images:
+        parser.error("choose either --pose-only or --with-pose-images")
     output = args.evidence_dir.expanduser().resolve()
     if output.exists():
         parser.error("evidence directory already exists")
@@ -63,7 +69,8 @@ def main(argv: list[str] | None = None) -> int:
                 intrinsics_full=launch.intrinsics_full,
                 extrinsics_full=launch.extrinsics_full,
                 image_hw=launch.image_hw, mode="live",
-                load_silhouette=False, mask_only=not args.pose_only)
+                load_silhouette=False,
+                mask_only=not (args.pose_only or args.with_pose_images))
             init_s = time.perf_counter() - start
             start = time.perf_counter()
             capture = collect_socket_capture(
@@ -76,10 +83,38 @@ def main(argv: list[str] | None = None) -> int:
                     cameras.acquisition_metadata_for_request),
                 timeout_s=launch.socket_timeout_s,
                 image_write_timeout_s=launch.image_write_timeout_s,
-                pose_only=args.pose_only, mask_only=not args.pose_only)
+                pose_only=args.pose_only,
+                mask_only=not (args.pose_only or args.with_pose_images))
             capture_s = time.perf_counter() - start
+            board_fit = None
+            if args.board_fit_session is not None:
+                from precision_insertion.board_socket_fit import fit_board_socket_body
+                calibration = json.loads((args.board_fit_session /
+                                          "session_calibration.json").read_text())
+                fitted = {serial: row["mask"] for serial, row in
+                          capture.masks.items() if np.asarray(row["mask"]).any()}
+                pose, diagnostic = fit_board_socket_body(
+                    masks=fitted,
+                    intrinsics_undist={serial: cameras.init_orchestrator.intrinsics_undist[serial]
+                                       for serial in fitted},
+                    extrinsics_camera_world={serial: cameras.init_orchestrator.extrinsics[serial]
+                                             for serial in fitted},
+                    c2r=np.asarray(calibration["c2r"]),
+                    board_pose_robot=np.asarray(calibration["board"]["T_robot_board"]),
+                    raw_mesh=paths.raw_mesh(object_name))
+                board_fit = {"pose_world": pose.tolist(), "diagnostic": diagnostic}
+    if args.with_pose_images:
+        for serial, image in capture.images_bgr.items():
+            mask = np.asarray(capture.masks[serial]["mask"], dtype=bool)
+            overlay = image.copy()
+            overlay[mask] = (0.65 * image[mask] +
+                             0.35 * np.array([0, 255, 0])).astype(np.uint8)
+            cv2.imwrite(str(output / f"{serial}_mask.png"),
+                        (mask.astype(np.uint8) * 255))
+            cv2.imwrite(str(output / f"{serial}_overlay.png"), overlay)
     report = {
         "scope": ("pose_only_camera_request_no_board_no_robot" if args.pose_only
+                  else "pose_and_frames_camera_request_no_robot" if args.with_pose_images
                   else "camera_transport_only_no_board_no_robot"),
         "request_id": capture.request_id,
         "target": args.target,
@@ -87,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         "capture_request_s": capture_s,
         "capture_and_local_png_s": None if args.pose_only else capture_s,
         "camera_count": len(capture.masks),
+        "board_fit": board_fit,
         "raw_png_dir": (None if args.pose_only else str(
             launch.capture_root /
             f"{capture.capture_id}_request_{capture.request_id}" / "images")),
@@ -95,6 +131,7 @@ def main(argv: list[str] | None = None) -> int:
             "image_sha256": capture.masks[serial]["image_sha256"],
             "mask_pixels": int(capture.masks[serial]["mask"].sum()),
             "pose_ok": bool(capture.poses[serial].get("ok", False)),
+            "pose_error": capture.poses[serial].get("error"),
             **({} if args.pose_only else
                _frame_brightness(capture.images_bgr[serial])),
         } for serial in sorted(capture.masks)},

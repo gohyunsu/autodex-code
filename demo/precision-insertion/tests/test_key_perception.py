@@ -140,6 +140,54 @@ def _admit(capture, mode, root, selector, *, socket_x=0.4):
         minimum_refinement_iou=0.5)
 
 
+@pytest.mark.parametrize("board_iou,expected_method,expected_calls", [
+    (0.9, "board_constrained_key_body", 1),
+    (0.2, "AutoDex_refine_from_payloads_iou", 2),
+])
+def test_cylinder_tabletop_compares_board_body_with_stock_iou(
+        tmp_path, monkeypatch, board_iou, expected_method, expected_calls):
+    from precision_insertion import board_socket_fit
+
+    mode = select_mode("cylinder", 10)
+    raw_pose = np.eye(4)
+    capture = _capture({camera: raw_pose for camera in CAMERAS}, tmp_path)
+    selector = SelectorStub(mode.key_object)
+    session = _session(tmp_path, mode)
+    session = replace(session, board={"T_robot_board": np.eye(4).tolist()})
+    symmetry = (tmp_path / "object_processing" / mode.key_object /
+                "processed_data" / "info" / "symmetry.json")
+    symmetry.parent.mkdir(parents=True, exist_ok=True)
+    symmetry.write_text(json.dumps({
+        "type": "Dinf", "center": [0, 0, 0.04],
+        "axes": [{"axis": [0, 0, 1], "fold": "inf"},
+                 {"axis": [1, 0, 0], "fold": 2}]}))
+    fitted = np.eye(4)
+    fitted[0, 3] = 0.1
+
+    def board_fit(**kwargs):
+        assert set(kwargs["masks"]) == set(CAMERAS)
+        assert np.allclose(kwargs["board_pose_robot"], np.eye(4))
+        return fitted, {"mean_body_iou": board_iou,
+                        "per_view_iou": {camera: board_iou
+                                         for camera in CAMERAS}}
+
+    monkeypatch.setattr(board_socket_fit, "fit_board_socket_body", board_fit)
+    observation = admit_key_capture(
+        capture=capture, init_orchestrator=selector, mode=mode,
+        shared_root=tmp_path, calibration=session,
+        calibrated_camera_ids=set(CAMERAS),
+        view_limits=SocketViewLimits(50, 0.5, 10, 2, 0.02),
+        maximum_multiview_center_error_mm=2.0,
+        maximum_multiview_angle_error_deg=5.0,
+        maximum_socket_mask_overlap_fraction=0.1,
+        socket_projection_dilation_px=0,
+        minimum_refinement_iou=0.5)
+    assert observation.selection["method"] == expected_method
+    assert selector.calls == expected_calls
+    assert observation.pose_world[0, 3] == pytest.approx(
+        0.1 if board_iou == 0.9 else 0.0)
+
+
 def test_square_key_uses_agreeing_iou_selected_pose_and_full_capture_interval(
         tmp_path):
     mode = select_mode("square", 1.5)

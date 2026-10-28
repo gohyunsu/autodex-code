@@ -339,11 +339,58 @@ def _admit_key_capture_common(
         raise ValueError("key multiview FoundPose estimates disagree")
     if not callable(getattr(init_orchestrator, "refine_from_payloads", None)):
         raise ValueError("AutoDex IoU/silhouette key selector is unavailable")
-    pose, diagnostics = init_orchestrator.refine_from_payloads(
-        capture.masks, capture.poses, subset_serials=admitted_ids,
-        sil_iters=silhouette_iterations,
-        sil_loss_threshold=silhouette_loss_threshold,
-        selection_mode="iou")
+    board_fit = None
+    if stock_tabletop_cylinder and "T_robot_board" in calibration.board:
+        # For a tabletop cylinder, the measured board supplies the vertical
+        # axis and the exact CAD body supplies the silhouette. Compare this
+        # geometric estimate with stock FoundPose using the same mask IoU;
+        # no new absolute score threshold is introduced.
+        from .board_socket_fit import fit_board_socket_body
+        try:
+            fitted_pose, fit = fit_board_socket_body(
+                masks={serial: capture.masks[serial]["mask"]
+                       for serial in admitted_ids},
+                intrinsics_undist={serial: init_orchestrator.intrinsics_undist[serial]
+                                   for serial in admitted_ids},
+                extrinsics_camera_world={serial: init_orchestrator.extrinsics[serial]
+                                         for serial in admitted_ids},
+                c2r=np.asarray(calibration.record["c2r"], dtype=np.float64),
+                board_pose_robot=np.asarray(
+                    calibration.board["T_robot_board"], dtype=np.float64),
+                raw_mesh=Path(shared_root) / "object_processing" /
+                    mode.key_object / "raw_mesh" / f"{mode.key_object}.obj")
+            board_fit = (fitted_pose, fit)
+        except (ValueError, np.linalg.LinAlgError):
+            pass
+    if board_fit is not None:
+        _, raw_diagnostics = init_orchestrator.refine_from_payloads(
+            capture.masks, capture.poses, subset_serials=admitted_ids,
+            sil_iters=0, selection_mode="iou")
+        raw_iou = raw_diagnostics.get("best_iou")
+        raw_iou = float(raw_iou) if raw_iou is not None else float("-inf")
+        if board_fit[1]["mean_body_iou"] >= raw_iou:
+            pose = board_fit[0]
+            per_view_iou = board_fit[1]["per_view_iou"]
+            board_selected = max(per_view_iou, key=per_view_iou.__getitem__)
+            diagnostics = {
+                "best_serial": board_selected,
+                "best_iou": board_fit[1]["mean_body_iou"],
+                "sil_skipped": True,
+                "board_body_fit": board_fit[1],
+                "stock_initial_iou": raw_iou,
+            }
+        else:
+            pose, diagnostics = init_orchestrator.refine_from_payloads(
+                capture.masks, capture.poses, subset_serials=admitted_ids,
+                sil_iters=silhouette_iterations,
+                sil_loss_threshold=silhouette_loss_threshold,
+                selection_mode="iou")
+    else:
+        pose, diagnostics = init_orchestrator.refine_from_payloads(
+            capture.masks, capture.poses, subset_serials=admitted_ids,
+            sil_iters=silhouette_iterations,
+            sil_loss_threshold=silhouette_loss_threshold,
+            selection_mode="iou")
     if pose is None or not isinstance(diagnostics, dict):
         raise ValueError("AutoDex key pose refinement failed")
     selected = diagnostics.get("best_serial")
@@ -384,7 +431,8 @@ def _admit_key_capture_common(
     upper = max(verified[serial]["timestamp_s"] +
                 verified[serial]["max_error_s"] for serial in admitted_ids)
     selection = {
-        "method": "AutoDex_refine_from_payloads_iou",
+        "method": ("board_constrained_key_body" if "board_body_fit" in diagnostics
+                   else "AutoDex_refine_from_payloads_iou"),
         "perception_input": perception_input,
         "best_serial": selected,
         "best_iou": diagnostics.get("best_iou"),
@@ -392,6 +440,8 @@ def _admit_key_capture_common(
         "minimum_refinement_iou_gate_applied": held_phase,
         "sil_loss": diagnostics.get("sil_loss"),
         "sil_skipped": diagnostics.get("sil_skipped", False),
+        "board_body_fit": diagnostics.get("board_body_fit"),
+        "stock_initial_iou": diagnostics.get("stock_initial_iou"),
     }
     return KeyPoseObservation(
         capture.capture_id, capture.request_id, mode.key_object, mode.family,
