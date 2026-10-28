@@ -55,6 +55,11 @@ review folder above. Some camera views still occlude the carried key even in
 the focused crop, so a projected hand position is not visible-key evidence.
 
 For example, camera `25322639` used final ROIs `[554,444,1014,987]` in attempt `30cbe1f3` and `[372,432,838,969]` in attempt `30e9cd0b`. These saved rectangles demonstrate that the classifier is not tied to one fixed socket pixel location.
+The capture4 final-label camera IDs are currently a fixed reviewed subset of
+three; the **crop coordinates are not fixed**. If the socket moves to another
+part of the board, a new socket-only session measurement updates its projected
+hull in each camera. The three-view selection should be reviewed again if the
+new physical layout changes occlusion substantially.
 
 ## Pipeline review
 
