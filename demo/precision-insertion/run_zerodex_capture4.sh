@@ -6,6 +6,7 @@ set -Eeuo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)
 export PRECISION_REPO_ROOT=${PRECISION_REPO_ROOT:-$ROOT}
+export PRECISION_GAP_MM=${PRECISION_GAP_MM:-5}
 export PRECISION_EXTRA_PYTHONPATH=${PRECISION_EXTRA_PYTHONPATH:-$ROOT/demo/precision-insertion/compat}
 export PRECISION_STAGE_ROOT=${PRECISION_STAGE_ROOT:-$HOME/shared_data/AutoDex/precision_insertion/zerodex_capture4}
 export PRECISION_PLANNER_PY=${PRECISION_PLANNER_PY:-$HOME/.venvs/precision-vlm/bin/python}
@@ -28,13 +29,13 @@ export PRECISION_PREWARM_FIXED_WORLD=${PRECISION_PREWARM_FIXED_WORLD:-1}
 # other v8 candidates. Fresh-scene planning still decides eligibility and
 # falls back to the normal order. An explicitly empty value disables this
 # preference without introducing a candidate filter.
-if [[ ${PRECISION_GAP_MM:-20} == 10 && -z ${PRECISION_INITIAL_CANDIDATE+x} ]]; then
+if [[ $PRECISION_GAP_MM == 10 && -z ${PRECISION_INITIAL_CANDIDATE+x} ]]; then
   export PRECISION_INITIAL_CANDIDATE=table/0/20267
 fi
 # ZeroDex uses the original straight flange-to-Inspire mount, not the
 # October 12 right-angle mount selected by run_robot_pc.sh for AutoDex.
 export PRECISION_FR3_INSPIRE_URDF=${PRECISION_FR3_INSPIRE_URDF:-$ROOT/autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf}
-export PRECISION_ENDPOINT_CATALOG=${PRECISION_ENDPOINT_CATALOG:-$PRECISION_STAGE_ROOT/recipient_gap${PRECISION_GAP_MM:-20}_endpoint_catalog_straight.json}
+export PRECISION_ENDPOINT_CATALOG=${PRECISION_ENDPOINT_CATALOG:-$PRECISION_STAGE_ROOT/recipient_gap${PRECISION_GAP_MM}_endpoint_catalog_straight.json}
 
 # The main PC performs the current AutoDex silhouette refinement on its own
 # RTX 3090. nvdiffrast compiles its CUDA extension on first use and needs the
@@ -57,7 +58,7 @@ if [[ ${1:-} == --camera-only ]]; then
   camera_only_args=(
     --launch-config "${PRECISION_LAUNCH_TEMPLATE:-$PRECISION_STAGE_ROOT/launch.json}"
     --endpoint-catalog "$PRECISION_ENDPOINT_CATALOG"
-    --gap-mm "${PRECISION_GAP_MM:-20}"
+    --gap-mm "$PRECISION_GAP_MM"
   )
   camera_only_has_output=0
   for camera_only_arg in "$@"; do

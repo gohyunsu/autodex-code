@@ -5,7 +5,9 @@
 The physical board currently holds a **5 mm radial-gap cylinder socket** and
 no key. The previous 10 mm socket pose and its session evidence belong to a
 different fixture state. The next 5 mm session must use a fresh socket capture:
-set `PRECISION_GAP_MM=5` and leave `PRECISION_REUSE_SESSION_EVIDENCE` unset.
+the ZeroDex launcher now defaults to `PRECISION_GAP_MM=5`; leave
+`PRECISION_REUSE_SESSION_EVIDENCE` unset. Set `PRECISION_GAP_MM` explicitly
+when another socket replaces it.
 `--check` is file-only and already reports 114 eligible straight-mount
 candidates for this gap; it does not confirm the new physical socket pose.
 
