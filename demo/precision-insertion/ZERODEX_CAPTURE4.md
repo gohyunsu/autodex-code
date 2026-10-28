@@ -553,9 +553,35 @@ The commanded raw Inspire angles after squeeze were
 `995` rather than its commanded `32`, while the other bending channels
 tracked their commands. A separate, unloaded thumb-bend command of `600`
 also left its measured angle at `1000`; the command was then restored to
-`1000`. This localizes the observed defect to the thumb-bend channel. The
+`1000`. This localizes the observed nonresponse to the thumb-bend channel. The
 available measurements do **not** distinguish its connector/wiring, motor,
 or driver. The external Modbus link communicates with the other channels.
+
+A later read-only register check decoded `ERROR` and `STATUS` as six packed
+bytes from **three** Modbus registers each, matching ParaDex's Inspire
+controller. At the restored all-open target, every error byte was `0` and
+every status byte was `2` (target reached). The earlier raw `514` values
+were packed status bytes and must not be interpreted as an error code.
+All six `FORCE_SET` values were `400`; thumb-bending `FORCE_ACT` was about
+`386`, close to that limit. In a separate unloaded `1000 -> 900` thumb-only
+probe, `ANGLE_ACT(4)` briefly reached `988` and then returned to `1000`
+while `ANGLE_SET(4)` remained `900`; its status was `1` (grasping), not `3`
+(force-stop). The target was restored to `1000`. This shows a transient
+response and leaves the cause unresolved: the force threshold is a plausible
+factor, but the expected force-stop status was not observed. It does not
+prove a disconnected cable or a failed actuator.
+
+With only thumb `FORCE_SET(4)` temporarily raised to `600`, the small
+unloaded `1000 -> 900` command reached `ANGLE_ACT(4)=900` and the actuator
+position changed from `240` to `357`; this proves the thumb actuator can
+move and the command reaches it. The actual grasp target `32` still did not
+track: it briefly reached `843` before returning to about `956` while the
+target remained `32`. The angle and force settings were restored to `1000`
+and `400`. Thus the `400` force limit contributes to small-command failure,
+but raising it to `600` did not restore the full grasp motion. The remaining
+possibilities include channel wiring/contact, motor/driver, force sensing or
+mechanical loading; cable replacement is a useful next comparison. No
+robot motion or insertion was attempted during these unloaded hand probes.
 
 The integration now tolerates a missing hand-feedback sample and exposes a
 sampler failure if one occurs. It reuses the candidate's offline 20 mm
