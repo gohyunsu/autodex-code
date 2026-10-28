@@ -40,6 +40,7 @@ def record(camera_id: str, output_dir: Path, *, fps: int, max_seconds: float,
     skipped = 0
     first_id = None
     last_id = reader.get_frame_id()
+    last_written_id = None
     frame_period_ns = int(1_000_000_000 / fps)
     next_write_ns = time.monotonic_ns()
     started_ns = time.time_ns()
@@ -82,6 +83,7 @@ def record(camera_id: str, output_dir: Path, *, fps: int, max_seconds: float,
                 if first_id is None:
                     first_id = fid
                 last_id = fid
+                last_written_id = fid
                 count += 1
                 next_write_ns = now_ns + frame_period_ns
     except Exception:
@@ -94,7 +96,7 @@ def record(camera_id: str, output_dir: Path, *, fps: int, max_seconds: float,
         ended_ns = time.time_ns()
         manifest = {"status": status, "camera_id": camera_id, "fps": fps,
                     "frame_count": count, "first_source_frame_id": first_id,
-                    "last_source_frame_id": last_id if count else None,
+                    "last_source_frame_id": last_written_id,
                     "source_frames_skipped": skipped,
                     "started_unix_ns": started_ns, "ended_unix_ns": ended_ns,
                     "video": video_path.name if count else None,
