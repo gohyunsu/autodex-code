@@ -8,7 +8,7 @@ code; the old AutoDex experiment directory is not this project's archive.
 | --- | --- |
 | `code/` | Exact tracked AutoDex fork and ParaDex source archives, with commits and SHA256 in `PROJECT_MANIFEST.json` |
 | `assets/shared_data/` | Object meshes, all six cylindrical sockets, key FoundPose representation, v8 grasps, reset candidates, scenes, fixture geometry, Qwen, SAM3, capture4 calibration, launch/catalog templates, robot dependency bundle |
-| `assets/packages/foundpose/` | Six socket FoundPose representations, one TAR per socket to avoid thousands of tiny NAS writes; the installer extracts them into `shared_data/AutoDex/foundpose_assets/` |
+| `restore/foundpose_packages/` | Six socket FoundPose installation TARs; the installer extracts them into `shared_data/AutoDex/foundpose_assets/`. Live episodes do not read these packages. |
 | `assets/capture4_cache/` | capture4's offline SAM3 Hugging Face cache and two DINOv2 checkpoints |
 | `assets/capture4_foundationpose/` | FoundPose weights formerly reached through capture4's old absolute symlink |
 | `rigs/zerodex_capture4/runtime` | Project-local link to the capture4 calibration, robot profile and launch/catalog templates in `assets/shared_data` |
@@ -18,6 +18,10 @@ code; the old AutoDex experiment directory is not this project's archive.
 | `runs/zerodex_capture4/YYYY/MM/DD/RUN_ID/` | Post-run uploaded full-resolution camera recording, frame ID index, log and run receipt |
 | `development/zerodex_capture4/` | Camera, planning, timing and implementation diagnostics collected after development work; never read by the live pipeline |
 | `PROJECT_MANIFEST.json` | Code commits, asset paths, sizes and SHA256 hashes |
+
+The live pipeline consumes `assets/shared_data` and the selected rig profile.
+`restore/`, `code/`, and `environments/` are for installation and reproduction;
+`runs/` and `development/` contain outputs and are never input asset roots.
 
 The asset tree uses the existing `AssetPaths` layout. One project bundle covers
 gap sizes 1, 3, 5, 10, 15 and 20 mm for the cylindrical key. The current

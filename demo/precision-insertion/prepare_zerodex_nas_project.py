@@ -84,6 +84,29 @@ def refresh_code(*, nas_root: Path, paradex_repo: Path) -> dict:
     """Update tracked code without retransferring large runtime assets."""
     manifest_path = nas_root / "PROJECT_MANIFEST.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    # Socket representation TARs are installation inputs. Keep them out of
+    # the asset tree scanned by the live pipeline.
+    old_packages = nas_root / "assets/packages/foundpose"
+    restore_packages = nas_root / "restore/foundpose_packages"
+    if old_packages.is_dir():
+        restore_packages.parent.mkdir(parents=True, exist_ok=True)
+        if restore_packages.exists():
+            for package in old_packages.iterdir():
+                package.rename(restore_packages / package.name)
+            old_packages.rmdir()
+        else:
+            old_packages.rename(restore_packages)
+        (nas_root / "assets/packages").rmdir()
+    migrated = list(manifest.get("restore_files", []))
+    for row in manifest["assets"]:
+        if row["path"].startswith("assets/packages/foundpose/"):
+            migrated.append({**row, "path": row["path"].replace(
+                "assets/packages/foundpose/", "restore/foundpose_packages/", 1)})
+    manifest["restore_files"] = migrated
+    manifest["asset_packages"] = [
+        {**row, "path": row["path"].replace(
+            "assets/packages/foundpose/", "restore/foundpose_packages/", 1)}
+        for row in manifest["asset_packages"]]
     old_archives = {row["archive"] for row in manifest["code"]}
     code = nas_root / "code"
     snapshots = [_source_archive(REPO, code),
@@ -102,7 +125,9 @@ def refresh_code(*, nas_root: Path, paradex_repo: Path) -> dict:
                 "bytes": path.stat().st_size, "sha256": _sha256(path)}
                for path in asset_updates if path.is_file()}
     manifest["assets"] = sorted(
-        {**{row["path"]: row for row in manifest["assets"]}, **updates}.values(),
+        {**{row["path"]: row for row in manifest["assets"]
+             if not row["path"].startswith("assets/packages/foundpose/")},
+         **updates}.values(),
         key=lambda row: row["path"])
     manifest["asset_file_count"] = len(manifest["assets"])
     _copy_file(HERE / "install_zerodex_nas_project.py",
@@ -122,7 +147,7 @@ def refresh_code(*, nas_root: Path, paradex_repo: Path) -> dict:
 def _package_socket_representations(shared: Path, nas_root: Path) -> list[dict]:
     """Send many small representation files as one file per socket."""
     packages = []
-    package_dir = nas_root / "assets" / "packages" / "foundpose"
+    package_dir = nas_root / "restore" / "foundpose_packages"
     package_dir.mkdir(parents=True, exist_ok=True)
     for gap in GAPS:
         name = f"precision_socket_cylinder_gap_{gap:02d}mm"
@@ -261,6 +286,11 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
         "rig_files": _rig_inventory(nas_root),
         "code": snapshots, "assets": records,
         "asset_packages": packages,
+        "restore_files": [
+            {"path": str(path.relative_to(nas_root)),
+             "bytes": path.stat().st_size, "sha256": _sha256(path)}
+            for path in sorted((nas_root / "restore").rglob("*"))
+            if path.is_file()],
         "asset_file_count": len(records),
         "runtime_nas_upload": "separate_post_run_command_only",
     }
