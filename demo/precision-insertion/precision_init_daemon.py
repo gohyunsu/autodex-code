@@ -81,10 +81,11 @@ class PrecisionInitDaemon(InitDaemon):
     def _do_run(self) -> None:
         info = self.cmd_receiver.event_info.get("run", {}) or {}
         source = info.get("save_capture_dir")
-        if isinstance(source, str) and source.startswith("/mnt/paradex2/"):
+        project_prefix = "/mnt/paradex2/hyunsu/precision_insertion/"
+        if isinstance(source, str) and source.startswith(project_prefix):
             info["save_capture_dir"] = str(
-                Path("/home/capture4/shared_data") /
-                source[len("/mnt/paradex2/"):])
+                Path("/home/capture4/shared_data/hyunsu/precision_insertion") /
+                source[len(project_prefix):])
         request_id = info.get("request_id")
         if type(request_id) is not int or request_id <= 0:
             raise ValueError("precision FoundPose run needs request ID")

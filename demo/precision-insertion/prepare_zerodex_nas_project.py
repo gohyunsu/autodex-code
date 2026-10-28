@@ -73,6 +73,13 @@ def _source_archive(repo: Path, destination: Path) -> dict:
             "archive": archive.name, "sha256": _sha256(archive)}
 
 
+def _rig_inventory(nas_root: Path) -> list[dict]:
+    rig = nas_root / "rigs" / "zerodex_capture4"
+    return [{"path": str(path.relative_to(nas_root)),
+             "bytes": path.stat().st_size, "sha256": _sha256(path)}
+            for path in sorted(rig.rglob("*")) if path.is_file() and not path.is_symlink()]
+
+
 def refresh_code(*, nas_root: Path, paradex_repo: Path) -> dict:
     """Update tracked code without retransferring large runtime assets."""
     manifest_path = nas_root / "PROJECT_MANIFEST.json"
@@ -82,6 +89,22 @@ def refresh_code(*, nas_root: Path, paradex_repo: Path) -> dict:
     snapshots = [_source_archive(REPO, code),
                  _source_archive(paradex_repo.expanduser().resolve(), code)]
     manifest["code"] = snapshots
+    manifest["rig_files"] = _rig_inventory(nas_root)
+    foundation = nas_root / "assets/capture4_foundationpose"
+    asset_updates = [
+        nas_root / "assets/shared_data/AutoDex/foundpose_assets"
+        / KEY / name for name in ("summary.json", "reference_intrinsics.json")]
+    if foundation.is_dir():
+        asset_updates.extend(path for path in sorted(foundation.rglob("*"))
+                             if path.is_file())
+    updates = {str(path.relative_to(nas_root)):
+               {"path": str(path.relative_to(nas_root)),
+                "bytes": path.stat().st_size, "sha256": _sha256(path)}
+               for path in asset_updates if path.is_file()}
+    manifest["assets"] = sorted(
+        {**{row["path"]: row for row in manifest["assets"]}, **updates}.values(),
+        key=lambda row: row["path"])
+    manifest["asset_file_count"] = len(manifest["assets"])
     _copy_file(HERE / "install_zerodex_nas_project.py",
                nas_root / "install_project.py")
     _copy_file(HERE / "ZERODEX_NAS_PROJECT.md", nas_root / "README.md")
@@ -121,7 +144,7 @@ def _package_socket_representations(shared: Path, nas_root: Path) -> list[dict]:
 
 
 def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
-          source_stage: Path, capture4_host: str | None = None,
+          source_stage: Path | None, capture4_host: str | None = None,
           ssh_port: int = 77) -> dict:
     assets = nas_root / "assets" / "shared_data"
     code = nas_root / "code"
@@ -135,7 +158,8 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
         runtime_link.symlink_to(
             Path("../../assets/shared_data/AutoDex/precision_insertion/zerodex_capture4"))
     shared = source_shared.expanduser().resolve()
-    source_stage = source_stage.expanduser().resolve()
+    source_stage = (source_stage.expanduser().resolve()
+                    if source_stage is not None else None)
     relative_trees = [
         f"object_processing/{KEY}",
         f"object_processing/{KEY}_grip_proxy",
@@ -156,7 +180,15 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
     for relative in relative_trees:
         print(f"[bundle] {relative}", flush=True)
         _copy_tree(shared / relative, assets / relative,
-                   link_dest=source_stage / relative)
+                   link_dest=(source_stage / relative
+                              if source_stage is not None else None))
+    # The restored daemon links against libfranka, not the incomplete
+    # libmsgpack development symlink in the old dependency snapshot.
+    for relative in (
+        "AutoDex/precision_insertion/zerodex_capture4/robot_deps/prefix/usr/lib/x86_64-linux-gnu/libmsgpackc.so",
+        "AutoDex/precision_insertion/zerodex_capture4/robot_deps/prefix/usr/share/doc/libmsgpack-dev/changelog.Debian.gz",
+    ):
+        (assets / relative).unlink(missing_ok=True)
     packages = _package_socket_representations(shared, nas_root)
     runtime = Path("AutoDex/precision_insertion/zerodex_capture4")
     runtime_files = (
@@ -166,7 +198,7 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
     )
     for name in runtime_files:
         _copy_file(shared / runtime / name, assets / runtime / name)
-    _copy_file(Path("/mnt/paradex2/AutoDex/weights/sam3/sam3.pt"),
+    _copy_file(shared / "AutoDex/weights/sam3/sam3.pt",
                assets / "AutoDex/weights/sam3/sam3.pt")
     snapshots = [_source_archive(REPO, code),
                  _source_archive(paradex_repo.expanduser().resolve(), code)]
@@ -192,6 +224,13 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
                  f"ssh -p {ssh_port} -o BatchMode=yes", *includes,
                  f"{capture4_host}:{source}", str(target) + "/"],
                 check=True)
+        foundation = nas_root / "assets/capture4_foundationpose"
+        foundation.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["rsync", "-a", "--no-owner", "--no-group", "--no-perms",
+             "-e", f"ssh -p {ssh_port} -o BatchMode=yes",
+             f"{capture4_host}:/home/capture4/AutoDex/autodex/perception/thirdparty/weights/foundationpose/",
+             str(foundation) + "/"], check=True)
         for name, python in (
             ("capture4-flir", "/home/capture4/anaconda3/envs/flir_env/bin/python"),
             ("capture4-gotrack", "/home/capture4/anaconda3/envs/gotrack_cu128/bin/python"),
@@ -209,7 +248,7 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
                nas_root / "development" / "README.md")
     records = []
     for path in sorted((nas_root / "assets").rglob("*")):
-        if path.is_file():
+        if path.is_file() and not path.is_symlink():
             records.append({"path": str(path.relative_to(nas_root)),
                             "bytes": path.stat().st_size,
                             "sha256": _sha256(path)})
@@ -219,6 +258,7 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
         "source_shared_root": str(shared),
         "cylindrical_gap_mm": list(GAPS),
         "rig_runtime": "rigs/zerodex_capture4/runtime",
+        "rig_files": _rig_inventory(nas_root),
         "code": snapshots, "assets": records,
         "asset_packages": packages,
         "asset_file_count": len(records),
@@ -258,8 +298,6 @@ def main() -> None:
             nas_root=args.nas_root,
             paradex_repo=args.paradex_repo), indent=2))
         return
-    if args.source_stage is None:
-        parser.error("source stage needs --source-stage or PRECISION_NAS_LINK_STAGE")
     print(json.dumps(build(
         source_shared=args.source_shared, nas_root=args.nas_root,
         paradex_repo=args.paradex_repo, source_stage=args.source_stage,

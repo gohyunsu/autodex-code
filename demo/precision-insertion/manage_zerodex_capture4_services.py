@@ -9,6 +9,8 @@ opened. A persistent perception process avoids cold SAM3 load on every trial.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import math
 import os
 from pathlib import Path
@@ -41,6 +43,10 @@ FILES = (
 PORTS = {"camera": 5480, "snapshot": 6894, "precision": 16893}
 READY_PORTS = frozenset((5480, 5481, 5482, 5009, 6894, 15006, 15007, 16893))
 _PORT_RE = re.compile(r":(\d+)$")
+PROJECT = Path(os.environ.get("PRECISION_NAS_PROJECT_ROOT",
+                              "/mnt/paradex2/hyunsu/precision_insertion"))
+VENDOR = REMOTE / "vendor"
+CACHE = REMOTE / "cache"
 
 
 def _ssh(script: str) -> None:
@@ -77,8 +83,52 @@ def deploy() -> None:
     )
 
 
+def prepare_assets() -> None:
+    """Copy project-owned capture sources/models once to capture4 local storage."""
+    archive = PROJECT / "rigs/zerodex_capture4/capture4_source_20261028.tar.gz"
+    if not archive.is_file():
+        raise FileNotFoundError(archive)
+    digest_hash = hashlib.sha256()
+    with archive.open("rb") as stream:
+        for block in iter(lambda: stream.read(4 * 1024 * 1024), b""):
+            digest_hash.update(block)
+    digest = digest_hash.hexdigest()
+    manifest = json.loads((PROJECT / "PROJECT_MANIFEST.json").read_text(
+        encoding="utf-8"))
+    cache_rows = [row for row in manifest["assets"]
+                  if row["path"].startswith("assets/capture4_cache/")]
+    cache_digest = hashlib.sha256(json.dumps(
+        cache_rows, sort_keys=True).encode("utf-8")).hexdigest()
+    source = Path(os.environ.get(
+        "PRECISION_CAPTURE4_PROJECT_ROOT",
+        str(REMOTE_HOME / "shared_data/hyunsu/precision_insertion")))
+    remote_archive = source / "rigs/zerodex_capture4" / archive.name
+    _ssh(f"mkdir -p {shlex.quote(str(VENDOR))} {shlex.quote(str(CACHE))}; "
+         f"if test \"$(cat {shlex.quote(str(VENDOR / '.source_sha256'))} 2>/dev/null)\" != {shlex.quote(digest)}; then "
+         f"tar -xzf {shlex.quote(str(remote_archive))} -C {shlex.quote(str(VENDOR))} && "
+         f"printf '%s' {shlex.quote(digest)} > {shlex.quote(str(VENDOR / '.source_sha256'))}; fi")
+    # The source snapshot contains an old absolute FoundationPose weights
+    # symlink. Supply those weights from this project, then make it relative.
+    fp_source = source / "assets/capture4_foundationpose"
+    fp_target = VENDOR / "AutoDex/autodex/perception/thirdparty/weights/foundationpose"
+    fp_link = VENDOR / "AutoDex/autodex/perception/thirdparty/FoundationPose/weights"
+    _ssh(f"mkdir -p {shlex.quote(str(fp_target))} && "
+         f"rsync -a {shlex.quote(str(fp_source))}/ {shlex.quote(str(fp_target))}/ && "
+         f"if test -L {shlex.quote(str(fp_link))}; then "
+         f"rm {shlex.quote(str(fp_link))}; fi && "
+         f"ln -sfn ../weights/foundationpose {shlex.quote(str(fp_link))}")
+    for name in ("huggingface", "torch"):
+        marker = CACHE / f".{name}_sha256"
+        _ssh(f"if test \"$(cat {shlex.quote(str(marker))} 2>/dev/null)\" != {shlex.quote(cache_digest)}; then "
+             f"mkdir -p {shlex.quote(str(CACHE / name))} && "
+             f"rsync -a {shlex.quote(str(source / 'assets/capture4_cache' / name))}/ "
+             f"{shlex.quote(str(CACHE / name))}/ && "
+             f"printf '%s' {shlex.quote(cache_digest)} > {shlex.quote(str(marker))}; fi")
+
+
 def _command(kind: str, *, exposure_us: float | None = None) -> str:
     if kind == "camera":
+        # Camera acquisition keeps capture4's shared ParaDex installation.
         root = REMOTE_HOME / "paradex"
         python = REMOTE_HOME / "anaconda3/envs/flir_env/bin/python"
         setting = ("" if exposure_us is None else
@@ -88,7 +138,7 @@ def _command(kind: str, *, exposure_us: float | None = None) -> str:
     python = REMOTE_HOME / "anaconda3/envs/gotrack_cu128/bin/python"
     module_root = REMOTE / "demo/precision-insertion"
     pythonpath = ":".join((str(module_root), str(REMOTE),
-                           str(REMOTE_HOME / "AutoDex"),
+                           str(VENDOR / "AutoDex"),
                            str(REMOTE_HOME / "paradex")))
     if kind == "snapshot":
         return (f"exec env PYTHONPATH={pythonpath} {python} "
@@ -103,6 +153,7 @@ def _command(kind: str, *, exposure_us: float | None = None) -> str:
     # attention kernel. The vendored DINOv2 uses PyTorch SDPA when disabled;
     # keep this setting local to the ZeroDex precision service, not stock.
     return (f"exec env HF_HUB_OFFLINE=1 XFORMERS_DISABLED=1 "
+            f"HF_HOME={CACHE / 'huggingface'} TORCH_HOME={CACHE / 'torch'} "
             f"PRECISION_SAM3_BATCH={sam3_batch} AUTODEX_STOCK_ROOT={REMOTE} "
             f"PRECISION_CAPTURE_ASSET_ROOT={stage} PYTHONPATH={pythonpath} "
             f"{python} {module_root}/precision_init_daemon.py "
@@ -124,6 +175,7 @@ def start(*, exposure_us: float | None = None) -> None:
     if exposure_us is not None and PORTS["camera"] in listening:
         raise RuntimeError("camera daemon is already running; exposure override cannot be applied")
     deploy()
+    prepare_assets()
     for kind, port in PORTS.items():
         log = REMOTE / f"{kind}.log"
         pid = REMOTE / f"{kind}.pid"
@@ -188,7 +240,7 @@ def stop() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("deploy", "start", "check", "stop"))
+    parser.add_argument("action", choices=("deploy", "prepare-assets", "start", "check", "stop"))
     parser.add_argument("--exposure-us", type=float,
                         help="capture4-only process-local exposure override; start action only")
     args = parser.parse_args()
@@ -197,7 +249,8 @@ def main() -> int:
     if args.action == "start":
         start(exposure_us=args.exposure_us)
     else:
-        {"deploy": deploy, "check": check, "stop": stop}[args.action]()
+        {"deploy": deploy, "prepare-assets": prepare_assets,
+         "check": check, "stop": stop}[args.action]()
     return 0
 
 

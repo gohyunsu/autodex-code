@@ -28,7 +28,20 @@ def install(bundle: Path, destination: Path,
         target = destination / record["repository"]
         target.mkdir(parents=True, exist_ok=True)
         with tarfile.open(bundle / "code" / record["archive"], "r:gz") as archive:
-            archive.extractall(target)
+            # The upstream AutoDex tree tracks unrelated absolute xArm mesh
+            # links into another user's home. FR3/Inspire does not use them.
+            archive.extractall(target, members=(
+                member for member in archive
+                if not ((member.issym() or member.islnk()) and
+                        Path(member.linkname).is_absolute())))
+    # ParaDex imports system/current at module import time. The original
+    # workstation points that path outside the hyunsu NAS tree; restore the
+    # captured configuration into this project's own checkout instead.
+    paradex_system = destination / "paradex/system/current"
+    paradex_system.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["rsync", "-a", "--no-owner", "--no-group", "--no-perms",
+                    str(bundle / "rigs/zerodex_capture4/main_pc_system/current") + "/",
+                    str(paradex_system) + "/"], check=True)
     shared = destination / "shared_data"
     shared.mkdir(exist_ok=True)
     subprocess.run(["rsync", "-a", "--no-owner", "--no-group", "--no-perms",
@@ -56,9 +69,11 @@ def install(bundle: Path, destination: Path,
         f"export PRECISION_REPO_ROOT={repo}\n"
         f"export PRECISION_CODE_COMMIT={code_commit}\n"
         f"export PRECISION_STAGE_ROOT={stage}\n"
+        f"export PRECISION_PARADEX_ROOT={destination / 'paradex'}\n"
         f"export PRECISION_SAM_CHECKPOINT={shared / 'AutoDex/weights/sam3/sam3.pt'}\n"
         f"export PRECISION_FR3_INSPIRE_URDF={repo / 'autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf'}\n"
         f"export PRECISION_CAPTURE4_ASSET_ROOT={capture4_nas_root.rstrip('/')}/assets/shared_data\n"
+        f"export PRECISION_CAPTURE4_PROJECT_ROOT={capture4_nas_root.rstrip('/')}\n"
         f"export PRECISION_NAS_PROJECT_ROOT={bundle}\n"
         "export PRECISION_GAP_MM=5\n",
         encoding="utf-8")

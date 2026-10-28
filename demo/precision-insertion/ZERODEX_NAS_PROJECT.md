@@ -10,7 +10,10 @@ code; the old AutoDex experiment directory is not this project's archive.
 | `assets/shared_data/` | Object meshes, all six cylindrical sockets, key FoundPose representation, v8 grasps, reset candidates, scenes, fixture geometry, Qwen, SAM3, capture4 calibration, launch/catalog templates, robot dependency bundle |
 | `assets/packages/foundpose/` | Six socket FoundPose representations, one TAR per socket to avoid thousands of tiny NAS writes; the installer extracts them into `shared_data/AutoDex/foundpose_assets/` |
 | `assets/capture4_cache/` | capture4's offline SAM3 Hugging Face cache and two DINOv2 checkpoints |
+| `assets/capture4_foundationpose/` | FoundPose weights formerly reached through capture4's old absolute symlink |
 | `rigs/zerodex_capture4/runtime` | Project-local link to the capture4 calibration, robot profile and launch/catalog templates in `assets/shared_data` |
+| `rigs/zerodex_capture4/main_pc_system/current/` | ParaDex system configuration snapshot for this PC's robot adapter |
+| `rigs/zerodex_capture4/capture4_source_20261028.tar.gz` | capture4 perception source snapshot for our namespaced adapter |
 | `environments/` | Local planner and capture4 Python package lists |
 | `runs/zerodex_capture4/YYYY/MM/DD/RUN_ID/` | Post-run uploaded full-resolution camera recording, frame ID index, log and run receipt |
 | `development/zerodex_capture4/` | Camera, planning, timing and implementation diagnostics collected after development work; never read by the live pipeline |
@@ -24,6 +27,15 @@ profile.
 Development output rules and the migration of earlier scattered diagnostics
 are described in `development/README.md`.
 
+The live ZeroDex profile reads no NAS path outside
+`/mnt/paradex2/hyunsu/precision_insertion`. This PC imports ParaDex from a
+project-owned local checkout with a copied `system/current`; it does not
+follow the old `/home/hyunsu/paradex/system/current` link into NAS `/paradex`.
+On capture4, the existing `/home/capture4/paradex` installation remains an
+explicit exception for camera acquisition and shared-memory reading. Our
+FoundPose/SAM3 source and weights use the namespaced capture4 adapter and this
+project's assets. No shared capture4 source is modified.
+
 ## Build or refresh the project bundle
 
 Run after committing code changes:
@@ -31,14 +43,14 @@ Run after committing code changes:
 ```bash
 cd /home/hyunsu/autodex-code
 source demo/precision-insertion/config/zerodex_capture4.env.sh
-python demo/precision-insertion/prepare_zerodex_nas_project.py
+python3 demo/precision-insertion/prepare_zerodex_nas_project.py
 ```
 
 After a source-only commit, refresh the tracked code snapshots without
 recopying runtime assets:
 
 ```bash
-python demo/precision-insertion/prepare_zerodex_nas_project.py --refresh-code-only
+python3 demo/precision-insertion/prepare_zerodex_nas_project.py --refresh-code-only
 ```
 
 Large unchanged NAS source files are hardlinked where available, and local
@@ -51,7 +63,7 @@ start the robot.
 ## Restore on a comparable PC
 
 ```bash
-python /mnt/paradex2/hyunsu/precision_insertion/install_project.py \
+python3 /mnt/paradex2/hyunsu/precision_insertion/install_project.py \
   --destination /home/hyunsu/precision_insertion_runtime
 source /home/hyunsu/precision_insertion_runtime/activate_zerodex_capture4.sh
 cd /home/hyunsu/precision_insertion_runtime/autodex-code
@@ -60,15 +72,26 @@ bash demo/precision-insertion/run_zerodex_capture4.sh --check
 
 The installer copies assets to local storage and rewrites old absolute
 `shared_data` paths in JSON catalogs, scenes and launch profiles. It extracts
-the two code archives and writes an explicit machine profile. It does not
+the two code archives, restores ParaDex `system/current` into the local
+checkout, and writes an explicit machine profile. It does not
 install the operating system, NVIDIA driver, Python environments, RT kernel,
 Franka FCI, or camera hardware. The saved calibration is valid for the
 capture4/FR3 setup only while camera and robot geometry remain unchanged.
 
-Capture4 itself must have the project's source adapter deployed under its
-own namespace and its offline model caches available. The captured package
-lists and model caches in this bundle supply those inputs; the launch profile
-points capture4 at the project's `assets/shared_data` path on its NAS mount.
+Prepare capture4's namespaced adapter and local model cache once:
+
+```bash
+cd /home/hyunsu/autodex-code
+python3 demo/precision-insertion/manage_zerodex_capture4_services.py deploy
+python3 demo/precision-insertion/manage_zerodex_capture4_services.py prepare-assets
+```
+
+Preparation copies source and model weights from NAS `hyunsu/precision_insertion`
+to capture4 local storage. The resulting source and caches are reused on
+later starts. `manage_zerodex_capture4_services.py start` launches the
+namespaced services; there is no source or model transfer per episode. The
+launch profile points capture4 at this project's `assets/shared_data` path
+on its NAS mount.
 
 ## Record each pipeline run without NAS I/O
 
@@ -85,7 +108,7 @@ once with `manage_zerodex_capture4_services.py deploy`.
 **No NAS upload happens while the pipeline runs.** After it exits, use:
 
 ```bash
-python demo/precision-insertion/upload_zerodex_recording.py \
+python3 demo/precision-insertion/upload_zerodex_recording.py \
   --receipt /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/recordings/RUN_ID/recording_ref.json
 ```
 
