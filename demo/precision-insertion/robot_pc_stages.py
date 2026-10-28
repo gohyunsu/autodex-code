@@ -197,6 +197,12 @@ def configure(core, live, options) -> dict:
             "task": {
                 "transfer_limits": motion,
                 "insertion_limits": motion,
+                "path_limits": path,
+                "alignment_limits": alignment,
+                "same_trial_tip_height_error_m": (
+                    retry.max_grasp_translation_drift_m),
+                "same_trial_xy_tolerance_m": getattr(
+                    options, "same_trial_xy_tolerance_m", None),
                 "transfer_commissioning_path": None,
                 "preinsert_parameters": {
                     "max_capture_skew_s": 10.,

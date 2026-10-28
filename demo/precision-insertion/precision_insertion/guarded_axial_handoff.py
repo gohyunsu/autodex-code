@@ -221,6 +221,9 @@ def verify_guarded_axial_handoff(report_path: Path) -> dict:
     """Replay a packet against the same original plans and camera checkpoint."""
     record = json.loads(Path(report_path).expanduser().resolve().read_text(
         encoding="utf-8"))
+    if record.get("schema") == "precision_insertion_same_trial_axial_handoff_v1":
+        from .same_trial_xy import verify_same_trial_axial_handoff
+        return verify_same_trial_axial_handoff(report_path)
     if (not isinstance(record, dict) or record.get("schema") != _SCHEMA or
             record.get("robot_ready") is not False or
             record.get("scope") !=

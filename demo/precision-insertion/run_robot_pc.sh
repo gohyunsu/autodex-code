@@ -130,6 +130,9 @@ if [[ "$MODE" == --run && "$PRECISION_XY_ESTIMATOR" == tracked_tip ]]; then
 fi
 EXTRA_ARGS=()
 EXTRA_ARGS+=(--label-mode "$LABEL_MODE")
+if [[ -n ${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM:-} ]]; then
+  EXTRA_ARGS+=(--same-trial-xy-tolerance-mm "$PRECISION_SAME_TRIAL_XY_TOLERANCE_MM")
+fi
 if [[ "$LABEL_MODE" == manual ]]; then
   EXTRA_ARGS+=(--annotator "${PRECISION_ANNOTATOR:-Hyunsu Go}")
 fi

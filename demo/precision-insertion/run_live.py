@@ -93,6 +93,11 @@ def main(argv: list[str] | None = None) -> int:
                         "tracked_tip uses saved preinsert images and initial key masks; "
                         "sam_half_ellipse runs Qwen box then warmed SAM3 on "
                         "the same saved image ROI")
+    parser.add_argument(
+        "--same-trial-xy-tolerance-mm", type=float,
+        help="opt in to repeated pre-insertion XY observation and planned "
+             "held correction within this episode; insert after the measured "
+             "residual is at or below this socket-frame threshold")
     parser.add_argument("--annotator", help="required with --label-mode manual")
     parser.add_argument("--enable-robot-motion", action="store_true",
                         help="required: initial clear-view and trial motions")
@@ -152,6 +157,9 @@ def main(argv: list[str] | None = None) -> int:
         robot_config_path=args.robot_config,
         label_mode=args.label_mode, annotator=args.annotator,
         xy_estimator=args.xy_estimator,
+        same_trial_xy_tolerance_m=(
+            None if args.same_trial_xy_tolerance_mm is None else
+            args.same_trial_xy_tolerance_mm / 1000.),
         init_ports=init_ports, stop_after_planning=args.stop_after_planning,
         reuse_session_evidence_dir=args.reuse_session_evidence,
         key_already_placed=args.key_already_placed,

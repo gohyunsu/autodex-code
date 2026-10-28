@@ -8,6 +8,8 @@ from the AutoDex PC; this module does not emulate physical motion or sensors.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import count
+import json
 from pathlib import Path
 import time
 from typing import Callable, Mapping
@@ -25,6 +27,10 @@ from .session_policy import SessionDecision
 from .post_insertion_release import verify_post_insertion_release
 from .transfer_execution import execute_bound_held_transfer
 from .timing_profile import timed
+from .same_trial_xy import (
+    choose_xy_move, measure_preinsert_xy, plan_and_execute_shift,
+    plan_corrected_axial_handoff,
+)
 
 
 @dataclass
@@ -63,11 +69,20 @@ class LiveTaskHandlers:
     manual_label_provider: Callable | None = None
     release_and_clear: Callable | None = None
     enable_robot_motion: bool = False
+    planner: object | None = None
+    path_limits: object | None = None
+    alignment_limits: object | None = None
+    same_trial_tip_height_error_m: float | None = None
+    xy_estimator: str = "vlm"
+    sam_segmentor: object | None = None
+    same_trial_xy_tolerance_m: float | None = None
+    same_trial_max_shifts: int | None = None
     decision_time: Callable[[], float] = time.time
     _preinsert_bundle: Path | None = field(default=None, init=False)
     _preinsert_attempt_id: str | None = field(default=None, init=False)
     _withdrawn: tuple[str, LiveRobotState, Path] | None = field(
         default=None, init=False)
+    _same_trial_handoff: Path | None = field(default=None, init=False)
 
     def withdrawn_for_return(self):
         return self._withdrawn
@@ -107,6 +122,7 @@ class LiveTaskHandlers:
     def transfer_and_observe(self, runner, decision: SessionDecision) -> None:
         attempt = self._require(runner, decision,
                                 "transfer_execution_gate_required")
+        self._same_trial_handoff = None
         try:
             with timed("trial.transfer_motion", phase="trial", kind="motion",
                        attempt_id=attempt.attempt_id):
@@ -154,6 +170,8 @@ class LiveTaskHandlers:
                 raw_bundle=raw, transfer_execution_path=transfer_log,
                 joint_sample=state, backend=self.backend,
                 label_mode=self.label_mode,
+                **({"allow_held_misalignment": True}
+                   if self.same_trial_xy_tolerance_m is not None else {}),
                 manual_annotation=request_annotation(
                     mode=self.label_mode, provider=self.manual_label_provider,
                     stage="preinsert_reached",
@@ -177,6 +195,91 @@ class LiveTaskHandlers:
         if checkpoint.preinsert_reached is True:
             self._preinsert_bundle = raw
             self._preinsert_attempt_id = attempt.attempt_id
+            if self.same_trial_xy_tolerance_m is not None:
+                self._refine_current_hold(runner)
+
+    def _refine_current_hold(self, runner) -> None:
+        """Reobserve after each planned shift before preparing any axial path."""
+        if self.planner is None or self.path_limits is None or (
+                self.alignment_limits is None or
+                self.same_trial_tip_height_error_m is None or
+                (self.same_trial_max_shifts is not None and
+                 self.same_trial_max_shifts < 1)):
+            raise ValueError("same-trial XY needs the session planner and limits")
+        attempt = runner.active_attempt
+        folder = Path(runner._attempt_dir) / "same_trial_xy"
+        observations: list[Path] = []
+        shifts: list[Path] = []
+        total = [0., 0.]
+        final_residual = None
+        for index in count():
+            with timed("trial.same_trial_xy_measure", phase="trial",
+                       kind="vlm", attempt_id=attempt.attempt_id):
+                observed = measure_preinsert_xy(
+                    runner=runner, raw_bundle=self._preinsert_bundle,
+                    backend=self.backend,
+                    alignment_limits=self.alignment_limits, index=index,
+                    nominal_tip_height_error_m=(
+                        self.same_trial_tip_height_error_m),
+                    xy_estimator=self.xy_estimator,
+                    sam_segmentor=self.sam_segmentor)
+            choice = choose_xy_move(
+                observed["alignment"],
+                tolerance_m=self.same_trial_xy_tolerance_m)
+            report = folder / "observations" / f"{index:03d}.json"
+            report.parent.mkdir(parents=True, exist_ok=True)
+            with report.open("x", encoding="utf-8") as stream:
+                json.dump({**observed, "choice": choice}, stream,
+                          indent=2, sort_keys=True, allow_nan=False)
+                stream.write("\n")
+            observations.append(report)
+            if choice["status"] == "aligned":
+                final_residual = [-value for value in observed[
+                    "alignment"]["xy_correction_socket_m"]]
+                break
+            if choice["status"] == "not_metric_multiview":
+                if shifts:
+                    raise RuntimeError(
+                        "shifted hold needs a new multiview XY observation")
+                # No invented 3D point: retain the already verified nominal
+                # insertion path when alignment could not be measured.
+                break
+            if (self.same_trial_max_shifts is not None and
+                    index == self.same_trial_max_shifts):
+                raise RuntimeError(
+                    "same-trial XY did not reach its configured target")
+            step = choice["increment_socket_m"]
+            with timed("trial.same_trial_xy_motion", phase="trial",
+                       kind="motion", attempt_id=attempt.attempt_id):
+                shift = plan_and_execute_shift(
+                    runner=runner, planner=self.planner,
+                    adapter=self.transfer_adapter,
+                    read_state=self.read_state,
+                    motion_interlock=self.motion_interlock,
+                    limits=self.transfer_limits,
+                    path_limits=self.path_limits,
+                    increment_socket_m=step,
+                    residual_socket_m=[-value for value in observed[
+                        "alignment"]["xy_correction_socket_m"]],
+                    index=index)
+            shifts.append(shift)
+            total = [a + b for a, b in zip(total, step)]
+            current = runner.current_decision()
+            raw, _ = self._capture(
+                runner=runner, decision=current,
+                callback=self.capture_preinsert, phase="preinsert")
+            self._preinsert_bundle = raw
+        if final_residual is not None:
+            with timed("trial.same_trial_axial_replan", phase="planning",
+                       kind="planning", attempt_id=attempt.attempt_id):
+                self._same_trial_handoff = plan_corrected_axial_handoff(
+                    runner=runner, planner=self.planner,
+                    path_limits=self.path_limits,
+                    read_state=self.read_state,
+                    total_xy_m=total, residual_xy_m=final_residual,
+                    observations=observations,
+                    shifts=shifts,
+                    final_preinsert_bundle=self._preinsert_bundle)
 
     def insert_and_observe(self, runner, decision: SessionDecision) -> None:
         attempt = self._require(runner, decision,
@@ -186,10 +289,11 @@ class LiveTaskHandlers:
             raise ValueError("guarded insertion lacks this attempt's pre-insertion frames")
         with timed("trial.insertion_handoff", phase="planning", kind="planning",
                    attempt_id=attempt.attempt_id):
-            handoff = runner.prepare_guarded_axial_handoff(
-                measured_start=self.read_state(),
-                decision_timestamp_s=self.decision_time(),
-                **dict(self.handoff_parameters))
+            handoff = (self._same_trial_handoff or
+                       runner.prepare_guarded_axial_handoff(
+                           measured_start=self.read_state(),
+                           decision_timestamp_s=self.decision_time(),
+                           **dict(self.handoff_parameters)))
         prepare_release = getattr(self.release_and_clear, "prepare", None)
         if callable(prepare_release):
             prepare_release(self.live, runner, decision, handoff)

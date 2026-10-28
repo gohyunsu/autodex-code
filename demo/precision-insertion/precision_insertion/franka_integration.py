@@ -400,6 +400,10 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             stages["retry"]["xy_estimator"] = options.xy_estimator
             if sam_segmentor is not None:
                 stages["retry"]["sam_segmentor"] = sam_segmentor
+        if family == "cylinder" and "task" in stages:
+            stages["task"]["xy_estimator"] = options.xy_estimator
+            if sam_segmentor is not None:
+                stages["task"]["sam_segmentor"] = sam_segmentor
         if (family == "cylinder" and options.xy_estimator == "tracked_tip"
                 and "task" in stages):
             if _TIP_CAMERA_ID not in live.cameras.launch.camera_ids:

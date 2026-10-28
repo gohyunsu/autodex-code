@@ -152,7 +152,9 @@ def _metric_record(
             raise ValueError("guarded axial handoff reference changed")
         handoff_schema = json.loads(handoff_path.read_text(
             encoding="utf-8")).get("schema")
-        if handoff_schema == "precision_insertion_guarded_axial_handoff_v1":
+        if handoff_schema in {
+                "precision_insertion_guarded_axial_handoff_v1",
+                "precision_insertion_same_trial_axial_handoff_v1"}:
             handoff = verify_guarded_axial_handoff(handoff_path)
         elif handoff_schema == (
                 "precision_insertion_observed_xy_retry_axial_handoff_v1"):
@@ -245,6 +247,14 @@ def _handoff_capture_binding(metric: dict, before_root: Path) -> dict | None:
     handoff_path = Path(reference["path"])
     handoff_schema = json.loads(handoff_path.read_text(
         encoding="utf-8")).get("schema")
+    if handoff_schema == "precision_insertion_same_trial_axial_handoff_v1":
+        handoff = verify_guarded_axial_handoff(handoff_path)
+        if (Path(handoff["final_preinsert_bundle_path"]).resolve() !=
+                before_root.resolve() or
+                handoff["final_preinsert_manifest_sha256"] !=
+                _sha(before_root / "manifest.json")):
+            raise ValueError("same-trial stroke used another final hold capture")
+        return reference
     if handoff_schema == "precision_insertion_guarded_axial_handoff_v1":
         handoff = verify_guarded_axial_handoff(handoff_path)
         source_path = Path(handoff["preinsert_report_path"])

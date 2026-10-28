@@ -105,8 +105,10 @@ def plan_socket_release_exit(
         calibration=runner.calibration)
     postlift_path = Path(handoff["postlift_report_path"])
     postlift = json.loads(postlift_path.read_text(encoding="utf-8"))
-    pose = validate_se3(postlift["targets"]["T_robot_key_verification"],
-                        name="nominal inserted key pose")
+    pose = validate_se3(
+        handoff.get("inserted_key_pose_robot",
+                    postlift["targets"]["T_robot_key_verification"]),
+        name="planned inserted key pose")
     archive_path = Path(handoff["trajectory_archive_path"])
     if _sha(archive_path) != handoff["trajectory_archive_sha256"]:
         raise ValueError("release source axial path changed")
@@ -210,12 +212,14 @@ def verify_socket_release_plan(report_path: Path) -> tuple[dict, dict]:
         raise ValueError("release key mesh changed")
     postlift = json.loads(Path(handoff["postlift_report_path"]).read_text(
         encoding="utf-8"))
+    expected_pose = handoff.get(
+        "inserted_key_pose_robot",
+        postlift["targets"]["T_robot_key_verification"])
     if (report["attempt_id"] != handoff["attempt_id"] or
             report["candidate_id"] != handoff["candidate_id"] or
             report["session_calibration_sha256"] !=
             handoff["session_calibration_sha256"] or
-            report["inserted_key_pose_robot"] !=
-            postlift["targets"]["T_robot_key_verification"] or
+            report["inserted_key_pose_robot"] != expected_pose or
             any(check.get("all_feasible") is not True
                 for check in report["checks"].values())):
         raise ValueError("release plan differs from its bound insertion")

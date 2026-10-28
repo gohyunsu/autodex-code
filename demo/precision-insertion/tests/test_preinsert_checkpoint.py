@@ -362,6 +362,22 @@ def test_preinsert_vlm_vetoes_arrival_and_wrist_error_is_diagnostic(tmp_path):
     assert report.hand_translation_error_m > .005
 
 
+def test_same_trial_gross_xy_misalignment_remains_a_held_arrival(tmp_path):
+    args = _setup(tmp_path)
+    args.update(backend=_VLM("gross_misalignment"), label_mode="vlm_only")
+    assert assess_preinsert_checkpoint(**args).preinsert_reached is False
+    report = assess_preinsert_checkpoint(
+        **args, allow_held_misalignment=True)
+    assert report.preinsert_reached is True
+    assert report.reason == "held_arrival_xy_refinement_pending"
+    assert report.to_record()["vlm_label"]["value"] is False
+    saved = write_preinsert_checkpoint(report, tmp_path / "alignment_pending")
+    assert verify_preinsert_checkpoint(saved)["preinsert_reached"] is True
+    assert assess_preinsert_checkpoint(
+        **{**args, "backend": _VLM("slip_or_miss")},
+        allow_held_misalignment=True).preinsert_reached is False
+
+
 def test_preinsert_rejects_stale_or_tampered_external_evidence(tmp_path):
     args = _setup(tmp_path)
     altered = json.loads(args["transfer_execution_path"].read_text())

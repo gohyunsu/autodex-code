@@ -410,6 +410,7 @@ def assess_preinsert_checkpoint(
     label_mode: str = "evidence_fused",
     manual_annotation: dict | None = None,
     lift_checkpoint_report_path: Path | None = None,
+    allow_held_misalignment: bool = False,
 ) -> PreinsertCheckpoint:
     """Fuse per-view coarse VLM with measured hold pose and execution evidence.
 
@@ -555,6 +556,11 @@ def assess_preinsert_checkpoint(
         stage="preinsert_reached", mode=label_mode,
         visual_class=visual.status, fused_value=label,
         fused_reason=reason, annotation=manual_annotation)
+    if (allow_held_misalignment and label_mode == "vlm_only" and
+            visual.status == "gross_misalignment" and measurement == {
+                "trajectory_complete": True, "safety_abort": False,
+                "grasp_held": True}):
+        label, reason = True, "held_arrival_xy_refinement_pending"
     return PreinsertCheckpoint(
         attempt.attempt_id, attempt.candidate_id, label, reason,
         position_error, rotation_error, visual, comparison, {
@@ -584,6 +590,7 @@ def assess_preinsert_checkpoint(
                 for camera in selected_cameras},
             "transfer_measurement": measurement,
             "label_mode": label_mode,
+            "allow_held_misalignment": allow_held_misalignment,
             "manual_annotation": manual_annotation,
             "transfer_started_at_s": started,
             "transfer_completed_at_s": completed,
@@ -769,6 +776,14 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
         visual_class=report["visual"]["status"],
         fused_value=expected_label, fused_reason=expected_reason,
         annotation=report.get("manual_annotation"))
+    if (report.get("allow_held_misalignment") is True and
+            report.get("label_mode") == "vlm_only" and
+            report["visual"]["status"] == "gross_misalignment" and
+            report["transfer_measurement"] == {
+                "trajectory_complete": True, "safety_abort": False,
+                "grasp_held": True}):
+        expected_label, expected_reason = (
+            True, "held_arrival_xy_refinement_pending")
     if (report["preinsert_reached"] is not expected_label or
             report["reason"] != expected_reason):
         raise ValueError("preinsert label contradicts saved evidence")

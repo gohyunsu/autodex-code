@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -21,8 +22,10 @@ from .live_runtime import LiveRuntimeIntegration, RunLiveOptions
 from .stock_daemon_identity import _ports_and_timeout
 
 
-ZERODEX_FR3_FCI_IP = "172.16.1.11"
-LOCAL_DAEMON_HOST = "127.0.0.1"
+ZERODEX_FR3_FCI_IP = os.environ.get(
+    "PRECISION_ZERODEX_FR3_FCI_IP", "172.16.1.11")
+LOCAL_DAEMON_HOST = os.environ.get(
+    "PRECISION_ZERODEX_DAEMON_HOST", "127.0.0.1")
 _CLEAR_VIEW_SCHEMA = "precision_insertion_zerodex_clear_view_v1"
 
 

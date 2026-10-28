@@ -1663,6 +1663,7 @@ class SessionRunner:
         renderer_factory=None, robot_loader=None,
         label_mode: str = "evidence_fused",
         manual_annotation: dict | None = None,
+        allow_held_misalignment: bool = False,
     ) -> PreinsertCheckpoint:
         """Save an observed arrival assessment; never command the transfer.
 
@@ -1724,6 +1725,7 @@ class SessionRunner:
             max_arm_velocity_rad_s=max_arm_velocity_rad_s,
             label_mode=label_mode,
             manual_annotation=manual_annotation,
+            allow_held_misalignment=allow_held_misalignment,
             lift_checkpoint_report_path=self._lift_report_path,
             **kwargs)
         output = (self._attempt_dir / "preinsert_assessments" /
@@ -2741,9 +2743,25 @@ class SessionRunner:
         preinsert_events = [
             event for event in self._attempt.events
             if event["stage"] == "preinsert_reached" and event["value"] is True]
-        if len(preinsert_events) != 1 or preinsert_events[0]["evidence_refs"].get(
-                "preinsert_image") != str(preinsert_root / "manifest.json"):
-            raise ValueError("released-key label used another pre-insertion snapshot")
+        if len(preinsert_events) != 1:
+            raise ValueError("released-key label lacks the observed pre-insertion hold")
+        if (preinsert_events[0]["evidence_refs"].get("preinsert_image") !=
+                str(preinsert_root / "manifest.json")):
+            metric = json.loads(Path(metric_record_path).read_text(
+                encoding="utf-8"))
+            handoff_ref = metric.get("axial_handoff", {})
+            handoff_path = Path(handoff_ref.get("path", ""))
+            if (not handoff_path.is_file() or
+                    hashlib.sha256(handoff_path.read_bytes()).hexdigest() !=
+                    handoff_ref.get("sha256")):
+                raise ValueError("released-key label used another pre-insertion snapshot")
+            from .guarded_axial_handoff import verify_guarded_axial_handoff
+            handoff = verify_guarded_axial_handoff(handoff_path)
+            if (handoff.get("schema") !=
+                    "precision_insertion_same_trial_axial_handoff_v1" or
+                    Path(handoff["final_preinsert_bundle_path"]).resolve() !=
+                    preinsert_root):
+                raise ValueError("released-key label used another pre-insertion snapshot")
         report = assess_released_insertion_checkpoint(
             attempt_id=self._attempt.attempt_id,
             candidate_id=self._attempt.candidate_id,

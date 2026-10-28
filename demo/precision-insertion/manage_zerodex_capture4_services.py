@@ -18,9 +18,12 @@ import subprocess
 import time
 
 
-HOST = "capture4@147.46.219.136"
-REMOTE = Path("/home/capture4/precision_insertion_capture4_20261027")
-REMOTE_HOME = Path("/home/capture4")
+HOST = os.environ.get("PRECISION_CAPTURE4_SSH_HOST", "capture4@147.46.219.136")
+SSH_PORT = os.environ.get("PRECISION_CAPTURE4_SSH_PORT", "77")
+REMOTE_HOME = Path(os.environ.get("PRECISION_CAPTURE4_HOME", "/home/capture4"))
+REMOTE = Path(os.environ.get(
+    "PRECISION_CAPTURE4_ADAPTER_DIR",
+    str(REMOTE_HOME / "precision_insertion_capture4_20261027")))
 ROOT = Path(__file__).resolve().parents[2]
 FILES = (
     "src/execution/__init__.py",
@@ -41,7 +44,7 @@ _PORT_RE = re.compile(r":(\d+)$")
 
 def _ssh(script: str) -> None:
     subprocess.run(
-        ["ssh", "-p", "77", "-o", "BatchMode=yes", HOST,
+        ["ssh", "-p", SSH_PORT, "-o", "BatchMode=yes", HOST,
          "bash -lc " + shlex.quote(script)],
         check=True,
     )
@@ -49,7 +52,7 @@ def _ssh(script: str) -> None:
 
 def _listening_ports() -> set[int]:
     result = subprocess.run(
-        ["ssh", "-p", "77", "-o", "BatchMode=yes", HOST,
+        ["ssh", "-p", SSH_PORT, "-o", "BatchMode=yes", HOST,
          "bash -lc " + shlex.quote("ss -lntH")],
         check=True, capture_output=True, text=True,
     )
@@ -67,7 +70,7 @@ def _listening_ports() -> set[int]:
 def deploy() -> None:
     _ssh(f"mkdir -p {shlex.quote(str(REMOTE))}")
     subprocess.run(
-        ["rsync", "-a", "-e", "ssh -p 77 -o BatchMode=yes", "--relative",
+        ["rsync", "-a", "-e", f"ssh -p {SSH_PORT} -o BatchMode=yes", "--relative",
          *("./" + item for item in FILES), f"{HOST}:{REMOTE}/"],
         cwd=ROOT, check=True,
     )

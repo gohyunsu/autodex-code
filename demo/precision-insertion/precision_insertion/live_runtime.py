@@ -35,6 +35,7 @@ class RunLiveOptions:
     xy_estimator: str = "vlm"
     annotator: str | None = None
     xy_update_weight: float = 1.0
+    same_trial_xy_tolerance_m: float | None = None
     init_ports: tuple[int, int, int] | None = None
     stop_after_planning: bool = False
     reuse_session_evidence_dir: Path | None = None
@@ -247,6 +248,14 @@ def run_integrated_live_session(
         raise ValueError("current cylinder live loop needs vlm_only or manual labels")
     if options.xy_estimator not in {"vlm", "tracked_tip", "sam_half_ellipse"}:
         raise ValueError("unknown next-trial XY estimator")
+    if options.same_trial_xy_tolerance_m is not None and (
+            not math.isfinite(options.same_trial_xy_tolerance_m) or
+            options.same_trial_xy_tolerance_m <= 0):
+        raise ValueError("same-trial XY tolerance must be positive metres")
+    if (options.same_trial_xy_tolerance_m is not None and
+            options.xy_estimator == "tracked_tip"):
+        raise ValueError(
+            "same-trial XY currently uses vlm or sam_half_ellipse")
     with timed("startup.launch_config", phase="startup", kind="io"):
         launch = load_session_launch(options.launch_config_path)
     if launch.mode.family != "cylinder":

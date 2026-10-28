@@ -1,5 +1,78 @@
 # ZeroDex capture4 profile (kds-Z790)
 
+## Same-episode XY alignment and the current 5 mm socket
+
+The physical board currently holds a **5 mm radial-gap cylinder socket** and
+no key. The previous 10 mm socket pose and its session evidence belong to a
+different fixture state. The next 5 mm session must use a fresh socket capture:
+set `PRECISION_GAP_MM=5` and leave `PRECISION_REUSE_SESSION_EVIDENCE` unset.
+`--check` is file-only and already reports 114 eligible straight-mount
+candidates for this gap; it does not confirm the new physical socket pose.
+
+The optional same-episode mode runs after the existing after-lift/preinsert
+visual arrival check. It observes the saved, undistorted preinsert frames with
+Qwen's native-pixel axis points or Qwen-box/SAM3 half-ellipse key-face points.
+Calibrated views yield the key-face centre and an XY correction in the frozen
+socket frame. A metric result from at least two cameras is used for each held
+motion. The controller follows one cuRobo-planned lateral path of at most
+10 mm, **without opening the Inspire hand**, then captures new frames and
+repeats the same measurement. The repeat has no default count cutoff.
+
+When the measured lateral error is at or below the configured tolerance, the
+runner rebuilds the held-key target using that visual XY residual and the
+current measured Franka wrist. It plans a new Jacobian socket-axis stroke and
+audits the sampled key/hand geometry before the existing 20 mm insertion,
+release, clear-view snapshot, and VLM result. The visual XY measurement does
+not independently determine key tilt or prove physical insertion depth.
+If the first observation has no multiview metric estimate, the original
+verified nominal path remains available. After any held shift, a new metric
+estimate is required before insertion; the known single-view planar fallback
+produced a false 35.7 mm correction in a physically inserted 10 mm episode.
+
+Example with an operator-selected 2.5 mm centering target. This target is an
+example, not a new fixed acceptance rule. Start with the socket alone on the
+board; the launcher prompts for key placement after socket measurement:
+
+```bash
+cd /home/hyunsu/autodex-code
+export PRECISION_GAP_MM=5
+export PRECISION_XY_ESTIMATOR=sam_half_ellipse
+export PRECISION_SAME_TRIAL_XY_TOLERANCE_MM=2.5
+unset PRECISION_REUSE_SESSION_EVIDENCE
+bash demo/precision-insertion/run_zerodex_capture4.sh --check
+# With capture4, Franka and Inspire services ready, socket alone on the board:
+bash demo/precision-insertion/run_zerodex_capture4.sh --run
+```
+
+`--run` moves the robot after session startup. The `--check` command is
+read-only preparation. Same-episode records
+are under each attempt's `same_trial_xy/observations` and
+`same_trial_xy/shifts`; the final stroke is under
+`guarded_axial_handoffs`. The 5 mm same-episode path has not yet been tested
+with live robot motion.
+
+System-specific paths are confined to the ZeroDex launcher and can be
+overridden without editing the shared AutoDex executor:
+`PRECISION_STAGE_ROOT`, `PRECISION_PLANNER_PY`, `PRECISION_SAM_PYTHON`,
+`PRECISION_SAM_CHECKPOINT`, and `CUDA_HOME`. The namespaced capture4 manager
+accepts `PRECISION_CAPTURE4_SSH_HOST`, `PRECISION_CAPTURE4_SSH_PORT`,
+`PRECISION_CAPTURE4_HOME`, and `PRECISION_CAPTURE4_ADAPTER_DIR`. The ZeroDex
+Franka integration accepts `PRECISION_ZERODEX_FR3_FCI_IP` and
+`PRECISION_ZERODEX_DAEMON_HOST` while comparing against the measured
+clear-view record. The default SAM3 checkpoint resolves to NAS on this PC;
+its persistent worker loads it once per session. The local filesystem has
+insufficient spare capacity for a useful second 3.45 GB copy.
+
+The same-trial loop records `trial.same_trial_xy_measure`, per-view
+`vlm.infer`/`sam3.roi_infer`, `trial.same_trial_xy_motion`, the fresh
+`trial.preinsert_capture`, and `trial.same_trial_axial_replan` in the existing
+timing profile. The prior 10 mm live attempt spent 26.58 s capturing/refining
+the initial key, 19.20 s warming the first planner world (partly overlapped),
+and 5.27 s loading Qwen. These are the measured startup priorities. No
+same-trial timing or 5 mm physical latency has been measured yet; use the
+new per-step spans before moving SAM3 work to capture4 or changing the
+three-view measurement policy.
+
 This profile lives on branch `feat/zerodex-precision-insertion`. The AutoDex
 camera/robot profile and `src/execution` sources are not changed. The local
 kds-Z790 PC runs session orchestration, Qwen VLM and planning. Capture4
@@ -402,10 +475,10 @@ already ready now reuses the running services with one readiness probe,
 without repeating deployment. This reduces warm-start SSH/rsync overhead;
 the effect on a complete episode has not been measured.
 
-## Current board/socket capture and FR3 pose, 2026-10-28
+## Earlier 10 mm board/socket capture and FR3 pose, 2026-10-28
 
-The physical socket in the 2026-10-28 live setup is the **10 mm radial-gap**
-variant. Use `PRECISION_GAP_MM=10`; this selects its own endpoint catalog and
+The physical socket in this earlier live setup was the **10 mm radial-gap**
+variant. That record used `PRECISION_GAP_MM=10`; this selects its own endpoint catalog and
 socket mesh. The ZeroDex `launch.json` now sets
 `board_fit_camera_ids = [26053248, 25322639, 25322642]`. All four capture4
 images are still acquired and available for socket/key perception. The subset

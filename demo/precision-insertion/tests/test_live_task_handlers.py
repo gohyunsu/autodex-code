@@ -177,6 +177,53 @@ def test_preinsert_refs_use_canonical_episode_paths(tmp_path, monkeypatch):
     assert label_refs["preinsert_image"] == str(canonical_raw / "manifest.json")
 
 
+def test_same_trial_xy_reobserves_and_replans_from_final_hold(tmp_path,
+                                                              monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    runner._attempt_dir = tmp_path / "attempts" / runner.active_attempt.attempt_id
+    bound._preinsert_bundle = tmp_path / "first_preinsert"
+    bound.planner = object()
+    bound.path_limits = object()
+    bound.alignment_limits = object()
+    bound.same_trial_tip_height_error_m = .01
+    bound.same_trial_xy_tolerance_m = .001
+    observations = iter(([.004, 0.], [.0005, 0.]))
+    seen = []
+
+    def measure(**kwargs):
+        seen.append(("measure", kwargs["raw_bundle"]))
+        return {"alignment": {
+            "status": "diagnostic_metric_xy_correction",
+            "inlier_cameras": ["front", "side"],
+            "xy_correction_socket_m": next(observations),
+        }}
+
+    def shift(**kwargs):
+        seen.append(("shift", kwargs["increment_socket_m"]))
+        path = runner._attempt_dir / "shift.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+        return path
+
+    def handoff(**kwargs):
+        seen.append(("handoff", kwargs))
+        return tmp_path / "corrected_handoff.json"
+
+    monkeypatch.setattr(live_task_handlers, "measure_preinsert_xy", measure)
+    monkeypatch.setattr(live_task_handlers, "plan_and_execute_shift", shift)
+    monkeypatch.setattr(live_task_handlers, "plan_corrected_axial_handoff",
+                        handoff)
+    monkeypatch.setattr(live_task_handlers, "write_raw_camera_capture",
+                        lambda *_args, **_kwargs: None)
+    bound._refine_current_hold(runner)
+    assert [row[0] for row in seen] == [
+        "measure", "shift", "measure", "handoff"]
+    np.testing.assert_allclose(seen[1][1], [.004, 0.])
+    np.testing.assert_allclose(seen[-1][1]["total_xy_m"], [.004, 0.])
+    np.testing.assert_allclose(seen[-1][1]["residual_xy_m"], [-.0005, 0.])
+    assert bound._same_trial_handoff == tmp_path / "corrected_handoff.json"
+
+
 @pytest.mark.parametrize("result", [
     {"safety_abort": True, "grasp_held": True},
     {"safety_abort": False, "grasp_held": False},
