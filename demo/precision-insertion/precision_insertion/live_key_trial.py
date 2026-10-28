@@ -231,6 +231,7 @@ def capture_returned_key_for_reset(
     """
     if (expected_action not in {
             "recover_held_key_then_reobserve", "recover_key_then_reobserve",
+            "recover_corrected_hold_then_reobserve",
             "recover_released_key_then_reobserve",
             "await_repose_observation"} or
             not isinstance(runner, SessionRunner) or

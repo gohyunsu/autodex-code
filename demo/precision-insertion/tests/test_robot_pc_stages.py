@@ -78,7 +78,7 @@ def test_board9_binding_assembles_all_current_actions_without_hardware():
         live, shared=parameters["shared"], stages=stages,
         enable_robot_motion=True, held_relation_route="nominal")
     assert len(components) == 10
-    assert len(compose_live_handlers(live, *components)) == 18
+    assert len(compose_live_handlers(live, *components)) == 19
     assert all("white" in stages[name]["key_prompt"] for name in (
         "key_planning", "held_return", "transfer_recovery",
         "repose_execution"))
@@ -134,6 +134,8 @@ def test_franka_integration_injects_stock_callbacks_and_assembles_board9(
                         lambda **_kwargs: lambda *_a: None)
     monkeypatch.setattr(franka_integration, "StockFailedReturnRecorder",
                         lambda _executor: lambda *_a: None)
+    monkeypatch.setattr(franka_integration, "StockCorrectedHoldRecovery",
+                        lambda **_kwargs: lambda *_a: None)
     monkeypatch.setattr(franka_integration, "StockReposeExecutor",
                         lambda **_kwargs: SimpleNamespace(
                             execute_restoration=lambda *_a: None,
@@ -168,7 +170,7 @@ def test_franka_integration_injects_stock_callbacks_and_assembles_board9(
         robot_config_path=config_path)
     components = franka_factory(options).build_components(live)
     assert len(components) == 10
-    assert len(compose_live_handlers(live, *components)) == 18
+    assert len(compose_live_handlers(live, *components)) == 19
     transfer_recovery = components[7]
     assert ("max_transfer_state_gap_s" in
             transfer_recovery.return_parameters)

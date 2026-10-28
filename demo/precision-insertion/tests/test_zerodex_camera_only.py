@@ -164,6 +164,7 @@ def test_camera_only_launcher_keeps_default_output_with_other_options(
     fake_planner.chmod(0o755)
     stage = tmp_path / "stage"
     stage.mkdir()
+    development = tmp_path / "development"
     command = ["bash", str(launcher), "--camera-only",
                "--reuse-session-evidence", str(tmp_path / "saved")]
     if explicit_output:
@@ -171,12 +172,13 @@ def test_camera_only_launcher_keeps_default_output_with_other_options(
     completed = subprocess.run(
         command, capture_output=True, text=True, check=True,
         env={**os.environ, "PRECISION_STAGE_ROOT": str(stage),
+             "PRECISION_DEV_ROOT": str(development),
              "PRECISION_PLANNER_PY": str(fake_planner)})
     args = completed.stdout.splitlines()
     assert args.count("--output-dir") == 1
     output = args[args.index("--output-dir") + 1]
     assert output == (str(tmp_path / "chosen") if explicit_output else
-                      str(stage / "runs" / Path(output).name))
+                      str(development / "camera_only" / Path(output).name))
     assert args[args.index("--gap-mm") + 1] == "5"
 
 

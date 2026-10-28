@@ -221,3 +221,9 @@ and crop rectangles are saved as
 and `.json`. Legacy v1–v3 reports verify with their recorded original prompt;
 the new prompt applies only to new v4 reports. These four examples do not
 establish performance at a new socket position or under changed lighting.
+
+The previously documented corrected-hold `stop_for_review` outcome has since
+been replaced with a saved-trajectory reverse-return action. Its sampled
+offline replay and untested physical scope are documented in
+`RECOVERY_REVIEW_20261021.md`. This change does not alter VLM input pixels,
+the visual inside/outside label, or the four-view XY estimator.

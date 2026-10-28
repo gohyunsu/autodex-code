@@ -151,3 +151,28 @@ above covers only archived/configured joint samples. After release, the
 existing clear-view capture and original-pose restoration can check the
 actual landing and correct it. No robot or hand command was sent during this
 review.
+
+## 2026-10-29: corrected held-return implementation
+
+`preinsert_path_unavailable` now routes to
+`recover_corrected_hold_then_reobserve`. The new
+`precision_insertion/held_reverse_route.py` assembles the executed XY shifts
+in reverse order, then the executed transfer and lift. It bridges their
+measured joint gaps at the stock follower's 0.75 velocity scale, holds the
+measured Inspire joints, and runs the existing held-key geometry audit and
+cuRobo world/self collision query over every sampled state. It then plans
+the stock open-hand clear-view retract with the key at the inferred release
+pose. The separate `corrected_hold_recovery.py` reads and hashes the exact
+attempt archives, writes the plan, follows it through the existing Franka
+executor, opens the hand, moves to clear view and records measured feedback.
+The existing reset/repose handler then captures the actual landed key and
+returns it to the original pose and XY before the next attempt.
+
+The saved `9542c1bd` replay produced a 513-sample held route with all 513
+cuRobo states feasible, followed by a stock clear-view plan of 103–105
+samples across two planner runs. The source loader independently matched the
+three saved XY paths (67, 64, 68 samples), transfer (89) and lift (222).
+These are sampled offline results. The hand opening, actual key landing and
+live execution of this route are untested while the robot/hand are off. If a
+future measured state cannot pass the same preflight, the route is not
+executed and its held-key state must be handled with the robot present.

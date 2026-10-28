@@ -44,6 +44,14 @@ imported into the live loop. Keep machine addresses and Python/asset locations
 in the profile, task choices in launch/runtime JSON or explicit environment
 options, and per-run evidence under `runs/`.
 
+If the corrected 20 mm endpoint cannot be planned while the key remains
+held, `corrected_hold_recovery.py` reads this attempt's executed XY, transfer
+and lift archives, checks their reversed route with the existing planner,
+then uses the same Franka follower to return and open the hand. A fresh
+clear-view key capture and the existing reset/repose path restore the original
+tabletop pose and location. Saved-state planning replay passed; this recovery
+motion has not yet been tested on the physical robot.
+
 The vendored cuRobo `world_mesh.py` contains three unconditional tensor
 debug prints. Tensor formatting aborts CUDA graph capture during planner
 warmup. The ZeroDex integration shadows `print` only in that imported module

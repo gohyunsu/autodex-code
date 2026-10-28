@@ -81,6 +81,7 @@ class LiveHeldReturnHandlers:
     read_state: Callable[[], LiveRobotState] | None = None
     reuse_withdrawal: Callable[[], tuple[str, LiveRobotState, Path] | None] | None = None
     execute_restoration: Callable | None = None
+    recover_corrected_hold_motion: Callable | None = None
     restoration_height_cm: int = 12
     max_restoration_attempts: int = 3
 
@@ -355,8 +356,33 @@ class LiveHeldReturnHandlers:
             restoration_evidence_paths=restoration_logs,
             **dict(self.landing_parameters))
 
+    def recover_corrected(self, runner, decision: SessionDecision) -> None:
+        """Undo executed XY/transfer/lift, then use the usual fresh reset."""
+        if (runner is not self.live.opened.runner or
+                not isinstance(decision, SessionDecision) or
+                decision.action != "recover_corrected_hold_then_reobserve" or
+                runner.current_decision() != decision or
+                runner.active_attempt is None):
+            raise ValueError("corrected held return belongs to another attempt")
+        if not callable(self.recover_corrected_hold_motion):
+            raise RuntimeError("corrected held return lacks its FR3 executor")
+        recovery_path = Path(self.recover_corrected_hold_motion(
+            self.live, runner, decision)).expanduser().resolve()
+        launch = self.live.cameras.launch
+        landed = self._capture_landing(runner, launch, decision)
+        landed, restoration_logs = self.restore_until_original(
+            runner, decision, landed, launch)
+        runner.observe_reset_landing(
+            key_observation=landed.observation,
+            key_evidence_dir=landed.key_evidence_dir,
+            recovery_log_path=recovery_path,
+            timestamp_s=landed.observation.acquisition_interval_s[1],
+            restoration_evidence_paths=restoration_logs,
+            **dict(self.landing_parameters))
+
     def handlers(self) -> dict[str, ActionHandler]:
         return {
             "recover_held_key_then_reobserve": self.recover,
+            "recover_corrected_hold_then_reobserve": self.recover_corrected,
             "recover_released_key_then_reobserve": self.recover_released,
         }

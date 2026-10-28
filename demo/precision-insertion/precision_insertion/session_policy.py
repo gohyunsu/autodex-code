@@ -129,7 +129,10 @@ def decide_after_attempt(
         return result("stop_for_review", "key_state_unobservable")
     if attempt.failure_code == "preinsert_path_unavailable":
         return result(
-            "stop_for_review", "corrected_axial_plan_unavailable_while_key_held")
+            "recover_corrected_hold_then_reobserve",
+            "corrected_axial_plan_unavailable_return_held_key",
+            "reverse_executed_held_path", "fresh_key_pose",
+            "restore_original_pose_and_position")
     if attempt.failure_code == "slip":
         return result(
             "recover_key_then_reobserve", "slipped_key_restore_original_pose",

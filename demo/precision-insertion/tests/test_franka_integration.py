@@ -198,6 +198,7 @@ def test_cylinder_factory_injects_stock_force_and_release_with_existing_limits(
     force = object()
     release = object()
     return_recorder = object()
+    corrected_return = object()
     monkeypatch.setattr(franka_integration, "FrankaForceStopInsertionAdapter",
                         lambda executor: force if executor is core.executor else None)
 
@@ -210,6 +211,13 @@ def test_cylinder_factory_injects_stock_force_and_release_with_existing_limits(
     monkeypatch.setattr(franka_integration, "StockFailedReturnRecorder",
                         lambda executor: return_recorder
                         if executor is core.executor else None)
+    def make_corrected_return(**kwargs):
+        assert kwargs == {"executor": core.executor, "planner": core.planner,
+                          "read_state": core.read_state, "limits": limits,
+                          "motion_interlock": interlock}
+        return corrected_return
+    monkeypatch.setattr(franka_integration, "StockCorrectedHoldRecovery",
+                        make_corrected_return)
     restoration = lambda *_args: None
     repose = lambda *_args: None
 
@@ -230,6 +238,8 @@ def test_cylinder_factory_injects_stock_force_and_release_with_existing_limits(
         assert task["release_and_clear"] is release
         assert kwargs["stages"]["held_return"]["record_execution"] is (
             return_recorder)
+        assert kwargs["stages"]["held_return"]["recover_corrected_hold_motion"] is (
+            corrected_return)
         assert kwargs["stages"]["transfer_recovery"]["record_execution"] is (
             return_recorder)
         assert kwargs["stages"]["transfer_recovery"]["limits"] is limits

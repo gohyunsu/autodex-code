@@ -159,6 +159,32 @@ def test_held_return_clears_view_then_recaptures_same_session(
     assert runner.current_decision().action == "reobserve_key_and_preflight"
 
 
+def test_corrected_hold_returns_before_fresh_capture_and_reset(
+        tmp_path, monkeypatch):
+    bound, runner, events = _setup(tmp_path)
+    runner.decision = SessionDecision(
+        "recover_corrected_hold_then_reobserve", "corrected_plan_failed",
+        "table/0/3")
+    execution = tmp_path / "corrected_hold_execution.json"
+    bound.recover_corrected_hold_motion = lambda *_args: (
+        events.append("reverse_return") or execution)
+    observation = SimpleNamespace(acquisition_interval_s=(30., 31.))
+
+    def capture(**kwargs):
+        events.append("capture")
+        assert kwargs["expected_action"] == runner.decision.action
+        return ReturnedKeyCapture(observation, _state(),
+                                  kwargs["key_evidence_dir"])
+
+    monkeypatch.setattr(live_recovery_handlers,
+                        "capture_returned_key_for_reset", capture)
+    bound.recover_corrected(runner, runner.current_decision())
+    assert events == ["reverse_return", "capture"]
+    assert runner.events[-1][0] == "landing"
+    assert runner.events[-1][1]["recovery_log_path"] == execution
+    assert runner.current_decision().action == "reobserve_key_and_preflight"
+
+
 def test_held_return_reuses_withdrawal_after_inspire_fingers_settle(
         tmp_path, monkeypatch):
     bound, runner, events = _setup(tmp_path)

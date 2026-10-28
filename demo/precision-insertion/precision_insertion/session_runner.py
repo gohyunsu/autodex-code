@@ -2199,6 +2199,27 @@ class SessionRunner:
                 "planned_held_transfer_return" if expected_origin == "transfer"
                 else "planned_held_return")
         elif recovery.get("schema") == (
+                "precision_insertion_corrected_hold_recovery_v1"):
+            completed = float(recovery.get("completed_at_s", float("nan")))
+            plan_ref = recovery.get("plan")
+            if (self.current_decision().action !=
+                    "recover_corrected_hold_then_reobserve" or
+                    self._attempt.failure_code != "preinsert_path_unavailable" or
+                    recovery.get("attempt_id") != self._attempt.attempt_id or
+                    recovery.get("candidate_id") != self._attempt.candidate_id or
+                    recovery.get("hand_open") is not True or
+                    recovery.get("clear_view_reached") is not True or
+                    not math.isfinite(completed) or
+                    not isinstance(plan_ref, dict) or
+                    set(plan_ref) != {"path", "sha256"} or
+                    not Path(plan_ref["path"]).is_file() or
+                    hashlib.sha256(Path(plan_ref["path"]).read_bytes())
+                    .hexdigest() != plan_ref["sha256"] or
+                    recovery.get("measured_state", {}).get("schema") !=
+                    "precision_insertion_live_robot_state_v1"):
+                raise ValueError("corrected return lacks its measured execution")
+            recovery_mode = "corrected_held_reverse_then_restore"
+        elif recovery.get("schema") == (
                 "precision_insertion_released_failure_clear_view_v1"):
             try:
                 completed = float(recovery.get("completed_at_s", float("nan")))

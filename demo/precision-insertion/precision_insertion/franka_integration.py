@@ -32,6 +32,7 @@ from .stock_force_insertion import FrankaForceStopInsertionAdapter
 from .stock_failed_return import StockFailedReturnRecorder
 from .stock_repose_execution import StockReposeExecutor
 from .stock_socket_release import StockSocketRelease
+from .corrected_hold_recovery import StockCorrectedHoldRecovery
 from .live_runtime import LiveRuntimeIntegration, RunLiveOptions
 from .labeling import terminal_label_provider
 from .distributed_qwen import DistributedQwenBackend
@@ -482,6 +483,16 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 "record_execution" not in stages["held_return"]):
             stages["held_return"]["record_execution"] = (
                 StockFailedReturnRecorder(core.executor))
+        if (family == "cylinder" and "held_return" in stages and
+                "recover_corrected_hold_motion" not in stages["held_return"]):
+            interlock = (stages.get("pickup", {}).get("motion_interlock") or
+                         shared.get("motion_interlock"))
+            stages["held_return"]["recover_corrected_hold_motion"] = (
+                StockCorrectedHoldRecovery(
+                    executor=core.executor, planner=core.planner,
+                    read_state=core.read_state,
+                    limits=stages["held_return"]["limits"],
+                    motion_interlock=interlock))
         if (family == "cylinder" and
                 {"held_return", "transfer_recovery"} <= stages.keys()):
             # A completed but visibly misaligned transfer returns the held
