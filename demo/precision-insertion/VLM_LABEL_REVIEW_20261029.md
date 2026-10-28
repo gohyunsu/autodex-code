@@ -97,6 +97,13 @@ warm batch inference occupied 0.19–0.20 s versus roughly 0.21 s for the three
 warm independent calls. The production per-camera calls remain in place.
 Probe: `~/precision_insertion_project/development/zerodex_capture4/reviews/vlm_final_batch_probe_20261029.json`.
 
+The fourth capture4 view was retested with the v2 minimum-size crop on the
+same four saved episodes. It still answered `OUTSIDE` for the visibly inserted
+key while answering `OUTSIDE` for the three empty sockets. Upscaling does not
+justify adding it to the final-label vote. Its crop coordinates and tokens
+are saved in
+`~/precision_insertion_project/development/zerodex_capture4/reviews/vlm_final_fourth_view_v2_probe_20261029.json`.
+
 ## Pipeline review
 
 - Socket-only capture and board-constrained socket pose come before key perception. The measured pose is frozen for repeated attempts and projected into each camera for key exclusion and final VLM ROI. The current crop is therefore location-adaptive, not a fixed pixel rectangle.
@@ -163,3 +170,14 @@ landing and 12 nearby XY landing points. All 13 held-return queries failed at
 the return target endpoint IK before a release path existed. Automatic recovery
 from this specific corrected-plan failure remains an implementation gap; these
 offline probes did not command the robot.
+
+The three executed XY shift archives in attempt `9542c1bd` contain 67, 64
+and 68 joint samples. Each planned shift starts exactly at its saved measured
+start; the largest planned-end versus measured-end joint difference was
+0.0028 rad, and adjacent measured shift endpoints differ by at most
+0.0006 rad. The original saved transfer trajectory, however, ends about
+0.0207 rad (maximum joint difference) from the first shift's measured start.
+Reversing the archived shift arrays is a plausible *planning input*, but it
+is not yet a continuous, collision-audited return through the transfer,
+tabletop descent, release and clear-view phases. No reverse command is
+installed or claimed from these joint comparisons.
