@@ -219,7 +219,8 @@ for line in sys.stdin:
 
 
 @pytest.mark.parametrize("failure", [
-    None, "one_qwen", "one_sam", "one_invalid_mask", "one_end_on",
+    None, "batch", "batch_failure", "one_qwen", "one_sam",
+    "one_invalid_mask", "one_end_on",
     "all_qwen", "all_sam", "mixed_all", "all_empty_mask"])
 def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
     tmp_path, monkeypatch, failure,
@@ -266,8 +267,23 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
     class BoxBackend:
         max_parallel_views = 3
         model_id = "saved-box-stub"
+        preferred_grounding_batch_size = (
+            4 if failure in {"batch", "batch_failure"} else 1)
+
+        def __init__(self):
+            self.batch_calls = 0
+
+        def infer_many(self, requests):
+            self.batch_calls += 1
+            assert failure in {"batch", "batch_failure"} and len(requests) == 3
+            if failure == "batch_failure":
+                raise RuntimeError("batch GPU unavailable")
+            assert all(images[0].size == (512, 512)
+                       for images, _prompt in requests)
+            return ['{"bbox":[400,350,600,600]}'] * len(requests)
 
         def infer_for_camera(self, camera, images, prompt):
+            assert failure != "batch", "batched views must not decode twice"
             assert prompt.startswith(f"Camera {camera}.")
             assert images[0].size == (512, 512)
             if (failure == "all_qwen" or
@@ -307,16 +323,19 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
                     max_reprojection_px=5., min_parallax_deg=1.),
                 search_index=0, max_nominal_tip_height_error_m=.03)
         return
+    backend = BoxBackend()
     _hash, alignment, masks = (
         retry_session._compute_sam_half_ellipse_alignment(
             mode=mode, root=tmp_path, calibration=calibration,
             postlift_file=postlift, frames=frames, frame_rows=rows,
-            backend=BoxBackend(), sam_segmentor=MaskBackend(),
+            backend=backend, sam_segmentor=MaskBackend(),
             intrinsics_full=intrinsics, extrinsics_full=extrinsics,
             alignment_limits=SimpleNamespace(
                 max_reprojection_px=5., min_parallax_deg=1.),
             search_index=0, max_nominal_tip_height_error_m=.03))
     assert alignment["estimator"] == "sam3_half_ellipse_key_face_proxy"
+    assert backend.batch_calls == (
+        1 if failure in {"batch", "batch_failure"} else 0)
     if failure == "all_empty_mask":
         assert alignment["status"] == "abstain"
         assert alignment["inlier_cameras"] == []
@@ -327,7 +346,8 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
         return
     assert alignment["status"] == "diagnostic_metric_xy_correction"
     assert len(alignment["sam_half_ellipse_views"]) == 3
-    expected = ({"cam_a", "cam_b", "cam_c"} if failure is None else
+    expected = ({"cam_a", "cam_b", "cam_c"}
+                if failure in (None, "batch", "batch_failure") else
                 {"cam_a", "cam_b"})
     mask_expected = (expected | {"cam_c"} if failure == "one_end_on" else
                      expected)

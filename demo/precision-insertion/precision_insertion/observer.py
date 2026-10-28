@@ -242,9 +242,9 @@ class LocalQwenBackend:
         # a temporal pair; the released-socket label uses one final crop.
         # Batching never mixes camera identities into one conversation.
         self.preferred_image_batch_size = 2
-        # The three small, pixel-preserving grounding crops can share one
-        # Qwen decode. Full-resolution grounding remains one view at a time.
-        self.preferred_grounding_batch_size = 3
+        # Four capture4 grounding crops fit in one Qwen decode on the local
+        # RTX 3090. Full-resolution grounding still uses per-view inference.
+        self.preferred_grounding_batch_size = 4
 
     @classmethod
     def from_transformers(

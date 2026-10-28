@@ -1079,6 +1079,47 @@ def _compute_sam_half_ellipse_alignment(
     metric_quorum = threading.Event()
     sam_gate = threading.Lock()
 
+    # Local Qwen can decode independent camera boxes in one GPU pass. Keep
+    # the exact per-view prompt and crop; SAM still consumes each returned box
+    # on that view's original pixels. A batch GPU error falls back to the
+    # existing per-camera route rather than losing every view.
+    prefetched_boxes: dict[str, str] = {}
+    batch_size = getattr(backend, "preferred_grounding_batch_size", 1)
+    infer_many = getattr(backend, "infer_many", None)
+    if (type(batch_size) is int and batch_size > 1 and
+            callable(infer_many) and len(frames) > 1):
+        requests = []
+        for frame in frames:
+            camera = frame.camera_id
+            K = np.asarray(intrinsics_full[camera]["K_undist"], dtype=float)
+            E = np.asarray(extrinsics_full[camera], dtype=float)
+            try:
+                crop, _rear, _tip = projected_key_axis_crop(
+                    image_size_wh=frame.image.size, intrinsics=K,
+                    T_camera_robot=E @ c2r, T_robot_key=key,
+                    tip_z_m=tip_z)
+            except ValueError:
+                continue
+            requests.append((camera, [frame.image.crop(crop)],
+                             f"Camera {camera}. {KEY_BOX_PROMPT}"))
+        for start in range(0, len(requests), batch_size):
+            chunk = requests[start:start + batch_size]
+            try:
+                with timed("vlm.infer", phase="vlm", kind="inference",
+                           stage="sam_key_box", camera_ids=[row[0] for row in chunk],
+                           model=str(getattr(
+                               backend, "model_id", type(backend).__name__)),
+                           image_count=len(chunk)):
+                    answers = infer_many([(images, prompt)
+                                          for _camera, images, prompt in chunk])
+            except (RuntimeError, TimeoutError):
+                break
+            if len(answers) != len(chunk):
+                raise ValueError("batched key boxes differ from camera requests")
+            prefetched_boxes.update((camera, answer)
+                                    for (camera, _images, _prompt), answer
+                                    in zip(chunk, answers))
+
     def measure(frame: LabeledFrame):
         camera = frame.camera_id
         row = frame_rows[camera]
@@ -1108,15 +1149,18 @@ def _compute_sam_half_ellipse_alignment(
                       planned_rear_full_px=list(rear),
                       nominal_tip_full_px=list(tip))
         try:
-            with timed("vlm.infer", phase="vlm", kind="inference",
-                       stage="sam_key_box", camera_id=camera,
-                       model=str(getattr(
-                           backend, "model_id", type(backend).__name__)),
-                       image_count=1):
-                infer_for_camera = getattr(backend, "infer_for_camera", None)
-                answer = (infer_for_camera(camera, [image], prompt)
-                          if callable(infer_for_camera) else
-                          backend.infer([image], prompt))
+            if camera in prefetched_boxes:
+                answer = prefetched_boxes[camera]
+            else:
+                with timed("vlm.infer", phase="vlm", kind="inference",
+                           stage="sam_key_box", camera_id=camera,
+                           model=str(getattr(
+                               backend, "model_id", type(backend).__name__)),
+                           image_count=1):
+                    infer_for_camera = getattr(backend, "infer_for_camera", None)
+                    answer = (infer_for_camera(camera, [image], prompt)
+                              if callable(infer_for_camera) else
+                              backend.infer([image], prompt))
         except (RuntimeError, TimeoutError) as exc:
             record.update(admitted=False, reason="qwen_backend_unavailable",
                           qwen_response=None, backend_error=str(exc))

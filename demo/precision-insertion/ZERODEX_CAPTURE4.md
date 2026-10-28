@@ -979,7 +979,8 @@ same development review folder. This is a corrected held-pose planning
 failure, not evidence that the key reached 20 mm or that a physical collision
 occurred. Future failures at this handoff now save `plan_failure.json` with
 the measured start, corrected targets, and underlying cuRobo failure detail
-before raising. No collision check was disabled or relaxed.
+before recording `planning_stopped_before_insertion` with an unknown insertion
+label and stopping the session. No collision check was disabled or relaxed.
 An offline obstacle-attribution and exact-hand-mesh replay is saved under
 `~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/collision_attribution_20261029.json`.
 The corrected key still fits the 5 mm socket, but the measured thumb tip
@@ -990,3 +991,25 @@ reports the incompatible grasp sooner and avoids a wasted axial plan.
 
 The separate post-run uploader saved the 26053248 recording to
 `/mnt/paradex2/hyunsu/precision_insertion/runs/zerodex_capture4/2026/10/28/20261028_233041_868585_236445/video/26053248.avi`.
+
+## 2026-10-29 saved four-view Qwen batch comparison
+
+The saved `20261028_233043_399147` trace spends about 2.35–2.69 s per
+same-trial four-view XY measurement. Its Qwen key-box calls were sequential.
+The local Qwen backend now batches the four independent native-pixel key-box
+questions in one GPU decode, then uses each answer with the unchanged SAM3
+ROI and multiview triangulation. Other VLM stages and remote backends keep
+their existing execution route. A batch GPU error falls back to per-camera
+inference.
+
+On the four saved preinsert snapshots from attempt `9542c1bd`, the same local
+RTX 3090 took 1.36–1.37 s for steady sequential Qwen box calls versus
+0.56–0.57 s for a four-view batch. The 16 predicted boxes were identical
+except three boundaries that differed by 1–4 crop pixels. A full Qwen+SAM3
+replay of the first snapshot gave the same three triangulation inlier views;
+the resulting XY correction differed by 0.0043 mm. These are offline timing
+and one-snapshot geometric comparisons, not a new measured live-loop latency
+or general VLM accuracy result. Source records are under
+`~/precision_insertion_project/development/zerodex_capture4/reviews/` as
+`bench_saved_qwen_box_batch_20261029.json` and
+`replay_saved_xy_batch_20261029.json`.
