@@ -176,3 +176,57 @@ def test_saved_replay_profile_records_load_and_each_inference(tmp_path,
     assert summary["groups"]["replay.model_load"]["count"] == 1
     assert summary["groups"]["replay.case"]["count"] == 2
     assert summary["groups"]["vlm.infer"]["count"] == 2
+
+
+def test_released_benchmark_reuses_production_socket_crop_and_vote(tmp_path,
+                                                                    monkeypatch):
+    root = tmp_path / "released"
+    root.mkdir()
+    annotation = root / "annotation.json"
+    annotation.write_text(json.dumps({
+        "schema": "precision_insertion_visual_annotation_v1",
+        "case_id": "inserted", "task": "released_insertion_visual",
+        "label": "inside_socket", "source": "independent_human_review",
+        "reviewer_id": "r1", "evidence": "solid key protrudes inside rim",
+    }), encoding="utf-8")
+    views = []
+    for camera in ("front", "side", "top"):
+        view = {"camera_id": camera, "socket_bbox_px": [20, 20, 60, 60]}
+        for index, phase in enumerate(("initial_tabletop", "final_clear_view")):
+            path = root / f"{camera}_{phase}.png"
+            Image.new("RGB", (100, 80), (90 + index, 90, 90)).save(path)
+            view[phase] = {"path": path.name, "sha256": _digest(path),
+                           "timestamp_s": 10. + index}
+        views.append(view)
+    manifest = root / "manifest.json"
+    manifest.write_text(json.dumps({
+        "schema": "precision_insertion_vlm_visual_benchmark_v1",
+        "max_phase_skew_s": .01, "cases": [{
+            "case_id": "inserted", "task": "released_insertion_visual",
+            "annotation": {"path": annotation.name,
+                           "sha256": _digest(annotation)}, "views": views,
+        }],
+    }), encoding="utf-8")
+
+    class Backend:
+        def __init__(self):
+            self.calls = []
+
+        def infer(self, images, prompt):
+            self.calls.append((images[0].size, prompt))
+            return "INSIDE" if len(self.calls) < 3 else "OUTSIDE"
+
+    backend = Backend()
+    monkeypatch.setattr(evaluate_saved_vlm, "load_vlm_backend",
+                        lambda **_kwargs: backend)
+    output = root / "result.json"
+    evaluate_saved_vlm.main([
+        "--manifest", str(manifest), "--output", str(output)])
+    result = json.loads(output.read_text())
+    assert result["summary"]["released_insertion_visual"]["correct"] == 1
+    assert result["cases"][0]["prediction"] == "inside_socket"
+    assert len(backend.calls) == 3
+    assert all(size[0] >= 384 or size[1] >= 384 for size, _ in backend.calls)
+    assert all("final image only" in prompt for _, prompt in backend.calls)
+    assert set(result["cases"][0]["final_visual_crops"]) == {
+        "front", "side", "top"}

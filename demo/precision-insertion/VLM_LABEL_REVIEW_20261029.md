@@ -2,6 +2,45 @@
 
 This review uses saved capture4 frames only. It did not move the Franka or Inspire hand. The final label means **the key visibly occupies the socket opening after release and clear view**. It does not independently measure 20 mm depth.
 
+## Repeatable local Qwen evaluation
+
+`evaluate_saved_vlm.py` now accepts `released_insertion_visual` cases. It
+reconstructs the **production** final-only socket crop from each case's
+session-projected socket box, applies the same 384 px minimum and 768×576
+classifier fit, sends the same prompt to Qwen, and records every camera token,
+crop rectangle, source image hash and aggregate label. The initial tabletop
+image remains in the case to bind the two capture times; Qwen sees the final
+crop only. This is an offline visual-label evaluation; it never opens a camera
+or robot connection.
+
+The reviewed four-case manifest and separate visual annotations are in
+`~/precision_insertion_project/development/zerodex_capture4/reviews/released_vlm_dataset_20261029/`.
+Run from the repository root with the local model already installed:
+
+```bash
+~/.venvs/precision-vlm/bin/python demo/precision-insertion/evaluate_saved_vlm.py \
+  --manifest ~/precision_insertion_project/development/zerodex_capture4/reviews/released_vlm_dataset_20261029/manifest.json \
+  --model-id ~/shared_data/AutoDex/models/Qwen3-VL-2B-Instruct \
+  --max-input-width 768 --max-input-height 576 \
+  --output ~/precision_insertion_project/development/zerodex_capture4/reviews/released_vlm_dataset_20261029/new_evaluation.json --profile
+```
+
+The local Qwen replay on 2026-10-29 classified all four reviewed final
+frames as visually annotated: one `inside_socket` and three `outside_socket`.
+The 24 raw PNGs are copied into the dataset folder and referenced by relative
+path, so the evaluation does not depend on the old experiment tree. The
+report is `evaluation_local_bundle.json` in that folder. This checks crop/prompt
+replay on one camera layout and four recorded outcomes; it does not estimate
+accuracy for a relocated socket or a new lighting condition. Review new
+episodes with the same manifest format before treating their VLM labels as
+reliable observations.
+The evaluator's older `lift` and `insertion_visual` tasks exercise their
+original generic prompts; they do not evaluate the capture4-specific
+`visible_grip_v3` lift crop or the current after-lift/preinsert pair. Those
+stages need their own labeled saved-image cases. The existing transfer-pair
+negative control described below is synthetic and must not be counted as a
+measured transfer-failure rate.
+
 ## What changed
 
 The old final checkpoint sent each camera a two-image question: a crop of the loose tabletop key and a crop of the final socket. On the four available released-key episodes, the saved Qwen label disagreed with the visible final state every time. Varying resolution or placing the two images side by side did not resolve the observed inside case. The new checkpoint keeps the initial and final raw frames, timestamps and hashes paired for provenance, but sends **one final socket crop per camera** to Qwen. Its English question has three one-word answers: `INSIDE`, `OUTSIDE`, `UNCLEAR`. Camera votes are combined deterministically; the original tokens and input transforms are saved. Existing two-image reports still replay through their original verifier.

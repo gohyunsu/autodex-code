@@ -28,7 +28,10 @@ if str(DEMO_DIR) not in sys.path:
 
 from precision_insertion.observer import (  # noqa: E402
     DEFAULT_LOCAL_VLM_MODEL_ID, LabeledFrame, load_vlm_backend,
-    observe_insertion_visual, observe_lift,
+    observe_insertion_visual, observe_lift, observe_released_insertion_visual,
+)
+from precision_insertion.released_insertion_checkpoint import (  # noqa: E402
+    FINAL_MIN_LONG_SIDE_PX, _focus_final_frames,
 )
 from precision_insertion.timing_profile import (  # noqa: E402
     profile_run, timed,
@@ -44,6 +47,10 @@ _LABELS = {
         "visual_class", frozenset({"normal_appearance", "partial", "rim_jam",
                                   "slip", "unobservable"}),
         "preinsert", "final_or_abort"),
+    "released_insertion_visual": (
+        "visual_class", frozenset({"inside_socket", "outside_socket",
+                                  "unobservable"}),
+        "initial_tabletop", "final_clear_view"),
 }
 
 
@@ -124,6 +131,12 @@ def _load_cases(manifest_path: Path) -> tuple[list[dict], str]:
                     not _SAFE_ID.fullmatch(camera) or camera in seen_cameras):
                 raise ValueError("paired views need unique safe camera IDs")
             seen_cameras.add(camera)
+            if task == "released_insertion_visual":
+                bbox = view.get("socket_bbox_px")
+                if (not isinstance(bbox, list) or len(bbox) != 4 or
+                        any(type(v) is not int for v in bbox) or
+                        bbox[0] >= bbox[2] or bbox[1] >= bbox[3]):
+                    raise ValueError("released visual case needs a socket projection")
             for phase in (before, after):
                 row = view.get(phase)
                 if (not isinstance(row, dict) or
@@ -172,7 +185,8 @@ def _summarize(rows: list[dict]) -> dict:
         subset = [row for row in rows if row["task"] == task]
         confusion = Counter((row["truth"], row["prediction"])
                             for row in subset)
-        positive = "held" if task == "lift" else "normal_appearance"
+        positive = {"lift": "held", "insertion_visual": "normal_appearance",
+                    "released_insertion_visual": "inside_socket"}[task]
         by_task[task] = {
             "count": len(subset),
             "correct": sum(row["correct"] for row in subset),
@@ -237,9 +251,26 @@ def main(argv: list[str] | None = None) -> int:
                        task=case["task"]):
                 with timed("replay.images_load", phase="replay", kind="io"):
                     frames, sources = _frames_for_case(case, manifest_path.parent)
-                observed = (observe_lift(backend, frames)
-                            if case["task"] == "lift" else
-                            observe_insertion_visual(backend, frames))
+                crops = None
+                if case["task"] == "released_insertion_visual":
+                    projection = {view["camera_id"]: {
+                        "projected_hull_bbox_px": view["socket_bbox_px"]}
+                        for view in case["views"]}
+                    focused, crops = _focus_final_frames(
+                        [frame for frame in frames
+                         if frame.phase == "final_clear_view"],
+                        {"consistency": {"socket_exclusion": {
+                            "per_camera": projection}}},
+                        allow_partial_projection=True)
+                    originals = [frame for frame in frames
+                                 if frame.phase == "initial_tabletop"]
+                    observed = observe_released_insertion_visual(
+                        backend, originals + focused,
+                        min_long_side_px=FINAL_MIN_LONG_SIDE_PX)
+                elif case["task"] == "lift":
+                    observed = observe_lift(backend, frames)
+                else:
+                    observed = observe_insertion_visual(backend, frames)
                 field = _LABELS[case["task"]][0]
                 prediction = observed.parsed[field]
                 rows.append({
@@ -251,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
                     "annotation_path": case["annotation_path"],
                     "annotation_sha256": case["annotation_sha256"],
                     "source_images": sources, "observation": observed.to_record(),
+                    **({"final_visual_crops": crops} if crops is not None else {}),
                 })
         report = {
             "schema": "precision_insertion_vlm_visual_benchmark_report_v1",
