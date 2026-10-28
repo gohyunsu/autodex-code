@@ -31,6 +31,16 @@ reorientation pickup or release was executed in the trials below.
   transfer, opening and release were therefore never planned or executed.
   The report is under
   `/home/hyunsu/shared_data/AutoDex/experiment/precision-insertion/inspire/precision_key_cylinder_r15_h80/_pipeline_runs/20261028_223648_713821/repose_preflights/0000/report.json`.
+- After moving the lying key closer to the board center, the same three reset
+  seeds again passed candidate collision filtering and all returned
+  `n_ik_success=0` in
+  `_pipeline_runs/20261028_224018_043250/repose_preflights/0000/report.json`.
+  The six existing side-down insertion grasps were also tried for pickup in
+  `_pipeline_runs/20261028_224227_884266/trial_preflights/0000/report.json`;
+  all six passed candidate filtering and had `n_ik_success=0`. Thus the
+  current saved side-down grasp pool does not provide a planned pickup at
+  either observed key location. Key yaw and the straight Inspire mount remain
+  possible causes; the records do not isolate which one matters.
 - The earlier missed-grasp recovery aborted because it checked a freshly
   observed fallen key as though it were a *planned placement target*. That
   target-only check is now skipped for a visual miss; the key is still

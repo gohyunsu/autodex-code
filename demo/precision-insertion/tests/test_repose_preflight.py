@@ -381,6 +381,20 @@ def test_repose_rejects_key_footprint_outside_measured_board(
     assert planner.calls == []
 
 
+def test_zero_board_margin_allows_target_beyond_charuco_interior(
+        tmp_path, monkeypatch):
+    calibration, _scene, _pickup, _, limits = _fixture(tmp_path, monkeypatch)
+    outside = _pose(0.405, 0.003)
+    result = validate_repose_rest_target(
+        shared_root=tmp_path, mode=MODE, calibration=calibration,
+        T_robot_key_rest=outside,
+        support_tolerance_m=limits.goal_position_tolerance_m,
+        minimum_rest_socket_clearance_m=0.01,
+        minimum_board_edge_clearance_m=0.0)
+    assert result["minimum_board_edge_distance_m"] is None
+    assert result["key_socket_clearance_m"] >= 0.01
+
+
 def test_repose_only_skips_board_footprint_in_board_free_mode(
     tmp_path, monkeypatch,
 ):
