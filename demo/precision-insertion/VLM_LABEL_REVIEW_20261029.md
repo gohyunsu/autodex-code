@@ -169,24 +169,19 @@ Neither collision condition was disabled or relaxed. This saved grasp cannot
 establish a successful corrected insertion; another grasp or a changed
 physical key-in-hand relation is needed for that episode.
 
-The corrected-plan failure is now an explicit attempt outcome:
+The corrected-plan failure is an explicit attempt outcome:
 `preinsert_path_unavailable` with `status=planning_stopped_before_insertion`,
-`success=null`, and the exact `plan_failure.json` reference. The decision loop
-ends at `stop_for_review` while the key is still held; it does not fabricate
-an insertion label or try another candidate with the current held key.
-An offline replay of the existing held-return planner from that saved corrected
-joint state and inferred relation returned `held_transfer_unreachable`, so an
-automatic return to the original tabletop pose is not established for this
-attempt. The failed query was the return target's endpoint IK; no return
-trajectory was produced. This is an unfinished recovery path before unattended
-repeated trials.
-The replay script and log are in
-`~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/`.
-The same saved corrected hold was also tried against the original tabletop
-landing and 12 nearby XY landing points. All 13 held-return queries failed at
-the return target endpoint IK before a release path existed. Automatic recovery
-from this specific corrected-plan failure remains an implementation gap; these
-offline probes did not command the robot.
+`success=null`, and the exact `plan_failure.json` reference. The direct
+held-return planner could not reach the original tabletop target on the saved
+state. A later implementation therefore reverses the *executed* XY, transfer
+and lift trajectories, opens the hand at the inferred landing site, and uses
+the existing key perception/restoration route. The saved attempt's 513 held
+samples passed the existing sampled collision and cuRobo queries; its open-hand
+clear-view plan had 103 samples. This recovery is now connected to the session
+decision loop, but hand opening, landing and continuous physical execution
+have not been tested. The exact sources and replay result are in
+`~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/`;
+see `RECOVERY_REVIEW_20261021.md` for the implementation and limits.
 
 The three executed XY shift archives in attempt `9542c1bd` contain 67, 64
 and 68 joint samples. Each planned shift starts exactly at its saved measured
@@ -235,12 +230,6 @@ and crop rectangles are saved as
 and `.json`. Legacy v1–v3 reports verify with their recorded original prompt;
 the new prompt applies only to new v4 reports. These four examples do not
 establish performance at a new socket position or under changed lighting.
-
-The previously documented corrected-hold `stop_for_review` outcome has since
-been replaced with a saved-trajectory reverse-return action. Its sampled
-offline replay and untested physical scope are documented in
-`RECOVERY_REVIEW_20261021.md`. This change does not alter VLM input pixels,
-the visual inside/outside label, or the four-view XY estimator.
 
 The live final checkpoint now passes its just-captured undistorted BGR arrays
 to the classifier input builder. The saved capture manifest still supplies
