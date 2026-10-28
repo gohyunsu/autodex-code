@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -70,7 +71,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument("--nas-root", type=Path,
-                        default=Path("/mnt/paradex2/hyunsu/precision_insertion"))
+                        default=Path(os.environ.get(
+                            "PRECISION_NAS_PROJECT_ROOT",
+                            "/mnt/paradex2/hyunsu/precision_insertion")))
     parser.add_argument("--ssh-port", type=int, default=77)
     args = parser.parse_args()
     print(upload(args.receipt, args.nas_root, ssh_port=args.ssh_port))

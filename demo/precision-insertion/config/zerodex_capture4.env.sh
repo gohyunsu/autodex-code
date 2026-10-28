@@ -7,6 +7,8 @@ precision_profile_root=$(cd -- "$precision_profile_dir/../../.." && pwd)
 
 export PRECISION_REPO_ROOT=${PRECISION_REPO_ROOT:-$precision_profile_root}
 export PRECISION_STAGE_ROOT=${PRECISION_STAGE_ROOT:-$HOME/shared_data/AutoDex/precision_insertion/zerodex_capture4}
+export PRECISION_NAS_PROJECT_ROOT=${PRECISION_NAS_PROJECT_ROOT:-/mnt/paradex2/hyunsu/precision_insertion}
+export PRECISION_NAS_LINK_STAGE=${PRECISION_NAS_LINK_STAGE:-/mnt/paradex2/hyunsu/tmp/20261023_prev/precision_insertion_recipient_stage_20261013_b7e2392}
 export PRECISION_EXTRA_PYTHONPATH=${PRECISION_EXTRA_PYTHONPATH:-$precision_profile_root/demo/precision-insertion/compat}
 export PRECISION_PLANNER_PY=${PRECISION_PLANNER_PY:-$HOME/.venvs/precision-vlm/bin/python}
 export PRECISION_CHECK_PY=${PRECISION_CHECK_PY:-$PRECISION_PLANNER_PY}

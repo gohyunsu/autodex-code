@@ -26,6 +26,7 @@ Run after committing code changes:
 
 ```bash
 cd /home/hyunsu/autodex-code
+source demo/precision-insertion/config/zerodex_capture4.env.sh
 python demo/precision-insertion/prepare_zerodex_nas_project.py
 ```
 

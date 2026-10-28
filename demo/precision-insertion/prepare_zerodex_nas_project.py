@@ -185,16 +185,23 @@ def main() -> None:
     parser.add_argument("--source-shared", type=Path,
                         default=Path.home() / "shared_data")
     parser.add_argument("--nas-root", type=Path,
-                        default=Path("/mnt/paradex2/hyunsu/precision_insertion"))
+                        default=Path(os.environ.get(
+                            "PRECISION_NAS_PROJECT_ROOT",
+                            "/mnt/paradex2/hyunsu/precision_insertion")))
     parser.add_argument("--paradex-repo", type=Path,
                         default=Path.home() / "paradex")
     parser.add_argument("--source-stage", type=Path,
-                        default=Path("/mnt/paradex2/hyunsu/tmp/20261023_prev/"
-                                     "precision_insertion_recipient_stage_20261013_b7e2392"))
+                        default=(Path(os.environ["PRECISION_NAS_LINK_STAGE"])
+                                 if "PRECISION_NAS_LINK_STAGE" in os.environ
+                                 else None))
     parser.add_argument("--capture4-host",
-                        default="capture4@147.46.219.136")
-    parser.add_argument("--ssh-port", type=int, default=77)
+                        default=os.environ.get("PRECISION_CAPTURE4_SSH_HOST",
+                                               "capture4@147.46.219.136"))
+    parser.add_argument("--ssh-port", type=int,
+                        default=int(os.environ.get("PRECISION_CAPTURE4_SSH_PORT", "77")))
     args = parser.parse_args()
+    if args.source_stage is None:
+        parser.error("source stage needs --source-stage or PRECISION_NAS_LINK_STAGE")
     print(json.dumps(build(
         source_shared=args.source_shared, nas_root=args.nas_root,
         paradex_repo=args.paradex_repo, source_stage=args.source_stage,
