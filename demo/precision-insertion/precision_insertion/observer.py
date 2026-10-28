@@ -852,13 +852,28 @@ def observe_released_insertion_visual(
     order = _frame_order(frames)
     cameras = sorted({frame.camera_id for frame in frames})
 
-    def observe_camera(camera: str) -> VLMObservation:
+    def request_for_camera(camera: str):
         final = next(frame for frame in frames if
                      frame.camera_id == camera and
                      frame.phase == "final_clear_view")
         images, transform = resize_classification_images(
             [final.image], RELEASED_SOCKET_IMAGE_SIZE,
             min_long_side_px=min_long_side_px)
+        return final, images, transform
+
+    def observation_from_answer(camera: str, final: LabeledFrame,
+                                transform: dict, answer: str,
+                                latency_s: float) -> VLMObservation:
+        parsed, error = _released_socket_token_result(answer, camera)
+        return VLMObservation(
+            "released_insertion_visual", parsed, answer,
+            _released_socket_token_prompt(),
+            (f"final_clear_view/{camera}@{final.timestamp_s:.6f}",),
+            error, _backend_model(backend), latency_s,
+            input_transform=transform)
+
+    def observe_camera(camera: str) -> VLMObservation:
+        final, images, transform = request_for_camera(camera)
         prompt = _released_socket_token_prompt()
         started = time.perf_counter()
         with timed("vlm.infer", phase="vlm", kind="inference",
@@ -869,14 +884,37 @@ def observe_released_insertion_visual(
             answer = (infer_for_camera(camera, images, prompt)
                       if callable(infer_for_camera) else
                       backend.infer(images, prompt))
-        parsed, error = _released_socket_token_result(answer, camera)
-        return VLMObservation(
-            "released_insertion_visual", parsed, answer, prompt,
-            (f"final_clear_view/{camera}@{final.timestamp_s:.6f}",),
-            error, _backend_model(backend), time.perf_counter() - started,
-            input_transform=transform)
+        return observation_from_answer(
+            camera, final, transform, answer,
+            time.perf_counter() - started)
 
-    observations = map_view_calls(backend, cameras, observe_camera)
+    # Local Qwen can decode independent camera questions in one GPU pass.
+    # Keep each camera's image, prompt and raw token separate for the vote.
+    infer_many = getattr(backend, "infer_many", None)
+    if callable(infer_many):
+        prepared = [request_for_camera(camera) for camera in cameras]
+        prompt = _released_socket_token_prompt()
+        started = time.perf_counter()
+        with timed("vlm.view_batch", phase="vlm", kind="inference",
+                   view_count=len(cameras), parallel_workers=1,
+                   gpu_batch_size=len(cameras)):
+            with timed("vlm.infer", phase="vlm", kind="inference",
+                       stage="released_insertion_visual", camera_id="multiple",
+                       camera_ids=cameras, image_count=len(cameras),
+                       model=_backend_model(backend)):
+                answers = infer_many([
+                    (images, prompt) for _, images, _ in prepared])
+        elapsed = time.perf_counter() - started
+        if len(answers) != len(cameras):
+            raise RuntimeError("released socket batch returned wrong view count")
+        observations = [observation_from_answer(
+            camera, final, transform, answer, elapsed)
+            for camera, (final, _, transform), answer
+            in zip(cameras, prepared, answers)]
+        total_latency_s = elapsed
+    else:
+        observations = map_view_calls(backend, cameras, observe_camera)
+        total_latency_s = sum(row.latency_s for row in observations)
     parsed = _consensus_parsed(
         [row.to_record() for row in observations], field="visual_class",
         fallback="unobservable", cameras=cameras, majority=True,
@@ -887,7 +925,7 @@ def observe_released_insertion_visual(
         "Only the final raw socket crop is classified per camera; paired "
         "initial/final captures remain bound to this checkpoint.",
         order, None, _backend_model(backend),
-        sum(row.latency_s for row in observations), aggregation={
+        total_latency_s, aggregation={
             "schema": "precision_insertion_released_socket_token_consensus_v1",
             "per_view": [row.to_record() for row in observations],
             "completed_camera_ids": cameras,

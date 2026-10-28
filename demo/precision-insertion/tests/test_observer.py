@@ -491,6 +491,28 @@ def test_released_insertion_classifies_final_camera_images_without_overlay():
     verify_released_socket_token_consensus(result.to_record(), {"front", "side"})
 
 
+def test_released_insertion_batches_local_camera_questions_without_mixing_votes():
+    class BatchBackend(FakeBackend):
+        def infer_many(self, requests):
+            self.calls.extend(requests)
+            return [self.answers.pop(0) for _ in requests]
+
+    cameras = ("front", "side", "wide")
+    frames = [
+        LabeledFrame(camera, phase, timestamp, _image())
+        for camera in cameras
+        for phase, timestamp in (("initial_tabletop", 1.0),
+                                 ("final_clear_view", 2.0))
+    ]
+    backend = BatchBackend("INSIDE", "INSIDE", "OUTSIDE")
+    result = observe_released_insertion_visual(backend, frames)
+    assert len(backend.calls) == 3
+    assert all(len(images) == 1 for images, _ in backend.calls)
+    assert result.parsed["visual_class"] == "inside_socket"
+    assert result.parsed["evidence_views"] == ["front", "side"]
+    verify_released_socket_token_consensus(result.to_record(), set(cameras))
+
+
 def test_small_final_socket_crop_is_enlarged_without_changing_source_pixels():
     from precision_insertion.observer import resize_classification_images
 

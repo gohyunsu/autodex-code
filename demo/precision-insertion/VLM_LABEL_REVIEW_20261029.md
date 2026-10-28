@@ -361,3 +361,57 @@ the entire just-written final checkpoint before recording its label. That
 full verifier remains callable after the run; in a warm saved-session-cache
 replay it took about 0.59 s, while a cold offline replay took about 6.4 s.
 No VLM pixels, crop policy or label rule changed in this latency pass.
+
+### Socket-only baseline pair probe (offline)
+
+I also tested whether showing Qwen the session's empty-socket capture as
+image 1 and the final released-key socket crop as image 2 would improve the
+visual label. Both images used the **same recorded final ROI** per camera;
+the baseline was matched by the session's socket-capture request ID. On the
+four visually reviewed episodes and three selected cameras, the model answered
+`OUTSIDE` on all 12 pairs, including all three views of the visibly inserted
+episode `30e9cd0b`. This temporal pair therefore cannot replace the current
+final-only input. The read-only script, image hashes, ROIs, prompt and replies
+are in `~/precision_insertion_project/development/zerodex_capture4/reviews/
+probe_socket_baseline_pair_20261029.{py,json}`. The original socket-only
+capture remains useful for measuring the socket, but the model's answer does
+not become more reliable merely by adding that image.
+
+### Current label and crop boundary
+
+The final label's three-camera subset is configured separately from the
+four-view metric XY observer. Its **pixel ROIs are recalculated for every
+key-capture session** from the session-measured socket pose. A fixed padding
+formula is applied to each projected socket hull; the rectangle itself is
+not fixed. A new socket position requires a fresh socket measurement and
+fresh key capture before another attempt. Moving the socket inside a frozen
+session invalidates the crop, collision scene and target together. The
+saved final frames and ROIs allow the exact visual input to be reviewed
+without rerunning a camera.
+
+The remaining VLM limitation is at transfer arrival: archived positive
+transfer frames and synthetic empty-hand controls received the same
+`coarse_match` answer. The existing prompt, alternate short prompts, larger
+input, and two-view montage have not separated those cases. A real captured
+transfer-loss pair with a human label is needed before the arrival VLM can
+be described as a reliable key-retention test. This limitation does not
+invalidate the downstream four-view geometric XY calculation or the final
+released-key label; those are different observations with different inputs.
+
+### Local final-view GPU batching
+
+The final classifier now uses `LocalQwenBackend.infer_many` to send its
+three **independent one-image questions** through one local GPU decode.
+Remote per-camera backends retain their parallel request path. A saved-image
+batch probe returned the same 12 camera tokens as the previously recorded
+serial Qwen run: `OUTSIDE` on all nine empty-socket views, and
+`INSIDE`/`INSIDE`/`OUTSIDE` on the inserted episode's three views. The
+three-camera aggregate therefore remained correct in all four reviewed
+episodes. The median GPU inference call for three views changed from about
+0.252 s serial to 0.193 s batched across those four saved cases; this is a
+small saved-data microbenchmark, not a full pipeline latency measurement.
+Each view's raw token, crop hash and prompt remain separately recorded, so
+the existing checkpoint verifier can still replay the majority vote. The
+probe and individual timing values are in
+`~/precision_insertion_project/development/zerodex_capture4/reviews/
+probe_final_gpu_batch_20261029.{py,json}`.
