@@ -123,16 +123,17 @@ def validate_repose_rest_target(
     """Fail closed on a floating/buried target or a key resting on socket.
 
     The caller still owns the choice of release site and post-release
-    observation. ChArUco's measured *interior corner hull* is treated as a
-    conservative allowed footprint, not the larger physical board outline.
+    observation. The measured ChArUco corner hull is an optional placement
+    region when a positive board margin is requested. It does not describe
+    the physical tabletop boundary.
     """
     tolerance = float(support_tolerance_m)
     clearance = float(minimum_rest_socket_clearance_m)
     board_margin = float(minimum_board_edge_clearance_m)
     if (not math.isfinite(tolerance) or tolerance <= 0 or
             not math.isfinite(clearance) or clearance <= 0 or
-            not math.isfinite(board_margin) or board_margin <= 0):
-        raise ValueError("support, socket and board-edge limits must be positive")
+            not math.isfinite(board_margin) or board_margin < 0):
+        raise ValueError("support and socket limits must be positive; board margin may be zero")
     rest = validate_se3(T_robot_key_rest, name="reset target tabletop key")
     assets = AssetPaths(Path(shared_root).expanduser().resolve(), mode)
     key_mesh = _load_mesh(assets.raw_mesh(mode.key_object))
@@ -144,11 +145,11 @@ def validate_repose_rest_target(
     if abs(min_z - table_z) > tolerance:
         raise ValueError("reset target key bottom does not match measured table")
     raw_corners = calibration.board.get("corners_robot_m")
-    if raw_corners is None and calibration.record.get(
+    if board_margin > 0 and raw_corners is None and calibration.record.get(
             "scene_mode", "charuco_board") != "board_free":
         raise ValueError("measured ChArUco corners are needed for reset footprint")
     board_edge_distance = None
-    if raw_corners is not None:
+    if raw_corners is not None and board_margin > 0:
         corners = np.asarray(raw_corners, dtype=np.float64)
         if (corners.ndim != 2 or corners.shape[1] != 3 or len(corners) < 3 or
                 not np.all(np.isfinite(corners))):
@@ -162,7 +163,7 @@ def validate_repose_rest_target(
         signed = (vertices[:, :2] @ hull.equations[:, :2].T +
                   hull.equations[:, 2])
         board_edge_distance = float(np.min(-signed))
-        if board_edge_distance < board_margin:
+        if board_margin > 0 and board_edge_distance < board_margin:
             raise ValueError("reset key footprint exceeds measured ChArUco interior")
     fixed, _ = _fixed_world_models(
         calibration, mode=mode, shared_root=shared_root)

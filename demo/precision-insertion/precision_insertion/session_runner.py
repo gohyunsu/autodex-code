@@ -2291,13 +2291,19 @@ class SessionRunner:
             max_pose_error_deg=max_pose_error_deg)
         landed = geometry["landed_T_robot_key"]
         classification = geometry["classification"]
-        support = validate_repose_rest_target(
-            shared_root=self.shared_root, mode=self.mode,
-            calibration=self.calibration, T_robot_key_rest=landed,
-            support_tolerance_m=support_tolerance_m,
-            minimum_rest_socket_clearance_m=(
-                minimum_rest_socket_clearance_m),
-            minimum_board_edge_clearance_m=minimum_board_edge_clearance_m)
+        # A visual miss ends with a fresh key observation, not a commanded
+        # placement target. The planned-rest footprint/socket checks do not
+        # apply to an object already lying on the table.
+        support = ({"planned_rest_target_gate_applied": False}
+                   if recovery_mode == "autodex_missed_grasp_clear_view" else
+                   validate_repose_rest_target(
+                       shared_root=self.shared_root, mode=self.mode,
+                       calibration=self.calibration, T_robot_key_rest=landed,
+                       support_tolerance_m=support_tolerance_m,
+                       minimum_rest_socket_clearance_m=(
+                           minimum_rest_socket_clearance_m),
+                       minimum_board_edge_clearance_m=(
+                           minimum_board_edge_clearance_m)))
         shift = geometry["center_xy_displacement_m"]
         # A visually confirmed miss has no held key to place.  The fresh
         # supported tabletop observation is the next trial's start pose; the
@@ -2327,7 +2333,7 @@ class SessionRunner:
             "observed_support": support,
             "center_xy_displacement_m": shift,
             "maximum_center_xy_displacement_m": maximum_shift,
-            "reset_basis": ("observed_supported_key_pose" if
+            "reset_basis": ("fresh_observed_tabletop_key_pose" if
                             recovery_mode == "autodex_missed_grasp_clear_view"
                             else "original_pose_and_position"),
             "reset_success": success,

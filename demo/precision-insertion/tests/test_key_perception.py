@@ -188,6 +188,51 @@ def test_cylinder_tabletop_compares_board_body_with_stock_iou(
         0.1 if board_iou == 0.9 else 0.0)
 
 
+def test_side_down_cylinder_uses_stock_pose_and_measured_board_support(
+        tmp_path, monkeypatch):
+    from precision_insertion import board_socket_fit
+
+    mode = select_mode("cylinder", 10)
+    raw_pose = np.eye(4)
+    raw_pose[:3, :3] = np.array([[0., 0., 1.],
+                                [0., 1., 0.],
+                                [-1., 0., 0.]])
+    raw_pose[2, 3] = 0.01
+    capture = _capture({camera: raw_pose for camera in CAMERAS}, tmp_path)
+    session = _session(tmp_path, mode)
+    board = np.diag([1., -1., -1., 1.])
+    session = replace(session, board={"T_robot_board": board.tolist()})
+    symmetry = (tmp_path / "object_processing" / mode.key_object /
+                "processed_data" / "info" / "symmetry.json")
+    symmetry.parent.mkdir(parents=True, exist_ok=True)
+    symmetry.write_text(json.dumps({
+        "type": "Dinf", "center": [0, 0, 0.04],
+        "axes": [{"axis": [0, 0, 1], "fold": "inf"},
+                 {"axis": [1, 0, 0], "fold": 2}]}))
+    mesh = (tmp_path / "object_processing" / mode.key_object /
+            "raw_mesh" / f"{mode.key_object}.obj")
+    mesh.parent.mkdir(parents=True, exist_ok=True)
+    mesh.write_text("".join(
+        f"v {x} {y} {z}\n" for x in (-0.015, 0.015)
+        for y in (-0.015, 0.015) for z in (0., 0.08)))
+    monkeypatch.setattr(board_socket_fit, "fit_board_socket_body",
+                        lambda **_: pytest.fail("upright fit used for lying key"))
+    observation = admit_key_capture(
+        capture=capture, init_orchestrator=SelectorStub(mode.key_object),
+        mode=mode, shared_root=tmp_path, calibration=session,
+        calibrated_camera_ids=set(CAMERAS),
+        view_limits=SocketViewLimits(50, 0.5, 10, 2, 0.02),
+        maximum_multiview_center_error_mm=2.0,
+        maximum_multiview_angle_error_deg=5.0,
+        maximum_socket_mask_overlap_fraction=0.1,
+        socket_projection_dilation_px=0,
+        minimum_refinement_iou=0.5)
+    assert observation.selection["method"] == "AutoDex_refine_from_payloads_iou"
+    assert observation.selection["tabletop_axis_layout"] == "side_down"
+    assert observation.selection["board_support_offset_m"] == pytest.approx(0.005)
+    assert observation.pose_world[2, 3] == pytest.approx(0.015)
+
+
 def test_square_key_uses_agreeing_iou_selected_pose_and_full_capture_interval(
         tmp_path):
     mode = select_mode("square", 1.5)

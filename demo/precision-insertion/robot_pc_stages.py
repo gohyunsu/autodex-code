@@ -13,6 +13,7 @@ trial settings, not calibration or physical performance measurements.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from precision_insertion.grounded_alignment import AlignmentLimits
 from precision_insertion.config import CYLINDER_RADIAL_GAPS_MM
@@ -115,7 +116,9 @@ def configure(core, live, options) -> dict:
     }
     reset_geometry = {
         "minimum_rest_socket_clearance_m": .005,
-        "minimum_board_edge_clearance_m": .005,
+        # The ChArUco interior is a calibration footprint, not the physical
+        # tabletop boundary; a hand or key may extend outside that polygon.
+        "minimum_board_edge_clearance_m": 0.,
     }
     landing = {
         "max_pose_error_deg": tabletop_pose_error_deg,
@@ -239,6 +242,10 @@ def configure(core, live, options) -> dict:
                 "parameters": {
                     "max_state_skew_s": 5.,
                     "max_pose_error_deg": tabletop_pose_error_deg,
+                    **({"reset_candidate_root": Path(
+                        os.environ["PRECISION_RESET_CANDIDATE_ROOT"])}
+                       if os.environ.get("PRECISION_RESET_CANDIDATE_ROOT")
+                       else {}),
                     **reset_geometry,
                 },
             },

@@ -91,6 +91,37 @@ def test_cylinder_repose_preserves_cad_center_when_standing_key(tmp_path,
     assert choice["release_xy_robot_m"] == pytest.approx((.44, .2))
 
 
+def test_cylinder_standup_uses_measured_board_center_when_edge_site_is_invalid(
+        tmp_path, monkeypatch):
+    mode = select_mode("cylinder", 5)
+    tabletop = AssetPaths(tmp_path, mode).key_tabletop_dir
+    tabletop.mkdir(parents=True)
+    np.save(tabletop / "000.npy", np.eye(4))
+    monkeypatch.setattr(
+        "precision_insertion.repose_target_selector._load_mesh",
+        lambda _path: SimpleNamespace(bounds=np.array([
+            [-.015, -.015, 0.], [.015, .015, .08]])))
+    lying = np.eye(4)
+    lying[:3, :3] = [[0., 0., 1.], [0., 1., 0.], [-1., 0., 0.]]
+    lying[:3, 3] = [.5, .2, .015]
+    latest = SimpleNamespace(
+        observation=SimpleNamespace(capture_id="lying_edge"),
+        preflight=SimpleNamespace(
+            pose_class={"stem": "001"}, repose_target_stems=("000",),
+            trial_scene={"mesh": {"target": {
+                "pose": se32cart(lying).tolist()}}}))
+    runner = SimpleNamespace(
+        mode=mode, shared_root=tmp_path,
+        calibration=SimpleNamespace(board={
+            "center_robot_m": [.63, .02, .06]}),
+        catalog={"candidates": [{"tabletop_pose_stem": "000",
+                                 "eligible": True}]})
+    choice = DirectedReposeTargetSelector(xy_offsets_m=((0., 0.),))(
+        runner, _decision("preflight_repose"), latest,
+        site_available=lambda _stem, xy: xy[1] < .1)
+    assert choice["release_xy_robot_m"] == pytest.approx((.63, .02))
+
+
 def test_reset_selector_rejects_invalid_heights_and_resets_on_new_capture():
     with pytest.raises(ValueError, match="v8 heights"):
         DirectedReposeTargetSelector(heights_cm=(10,))

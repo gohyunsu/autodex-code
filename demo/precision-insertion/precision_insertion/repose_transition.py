@@ -224,7 +224,10 @@ def preflight_v8_repose_transition(
             hand="inspire", candidate_override=override,
             skip_done=False, success_only=False)
         if not pickup.success or pickup.lift_preflight is None:
-            attempts.append({**seed_record, "status": "pickup_unreachable"})
+            attempts.append({
+                **seed_record, "status": "pickup_unreachable",
+                "pickup_timing": pickup.timing,
+            })
             continue
         if tuple(pickup.scene_info) != override[3][0]:
             raise ValueError("reset planner selected a different v8 grasp")

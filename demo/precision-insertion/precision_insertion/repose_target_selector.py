@@ -72,6 +72,7 @@ class DirectedReposeTargetSelector:
                 counts[stem] += 1
         ordered = sorted(targets, key=lambda stem: (-counts[stem], stem))
         target_xy = {stem: xy for stem in ordered}
+        board_center_xy = None
         if getattr(getattr(runner, "mode", None), "family", None) == "cylinder":
             mesh = _load_mesh(AssetPaths(
                 runner.shared_root, runner.mode).raw_mesh(runner.mode.key_object))
@@ -84,17 +85,33 @@ class DirectedReposeTargetSelector:
                     original_center_xy_robot_m=tuple(map(float, center_xy)),
                     key_center_local_m=tuple(map(float, center_local)))
                 for stem in ordered}
+            measured_board = getattr(getattr(runner, "calibration", None),
+                                     "board", {})
+            board_center = measured_board.get("center_robot_m")
+            if board_center is not None:
+                board_center = np.asarray(board_center, dtype=float)
+                if board_center.shape == (3,) and np.all(np.isfinite(board_center)):
+                    board_center_xy = {
+                        stem: original_center_release_xy(
+                            shared_root=runner.shared_root, mode=runner.mode,
+                            target_pose_stem=stem,
+                            original_center_xy_robot_m=tuple(board_center[:2]),
+                            key_center_local_m=tuple(map(float, center_local)))
+                        for stem in ordered}
         self._choices = [
             {"to_pose_stem": stem, "height_cm": height,
              "release_xy_robot_m": (
-                 float(target_xy[stem][0] + dx),
-                 float(target_xy[stem][1] + dy))}
+                 float(site[0] + dx),
+                 float(site[1] + dy))}
             for stem in ordered for height in self.heights_cm
             if seed_available is None or seed_available(stem, height)
+            for site in ([target_xy[stem]] +
+                         ([] if board_center_xy is None else
+                          [board_center_xy[stem]]))
             for dx, dy in self.xy_offsets_m
             if site_available is None or site_available(
-                stem, (float(target_xy[stem][0] + dx),
-                       float(target_xy[stem][1] + dy)))]
+                stem, (float(site[0] + dx),
+                       float(site[1] + dy)))]
         self._capture_id = latest.observation.capture_id
         self._index = -1
         self._attempted = []

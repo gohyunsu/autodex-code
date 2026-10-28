@@ -106,6 +106,63 @@ def _cylinder_symmetry(mode: TaskMode, shared_root: Path):
     return symmetry.center_local, symmetry.axis_local
 
 
+def _tabletop_cylinder_axis_layout(
+    poses: dict[str, np.ndarray], *, calibration,
+    axis_local: np.ndarray,
+) -> str:
+    """Choose the upright or side tabletop geometry from the view majority."""
+    board = validate_se3(calibration.board["T_robot_board"],
+                         name="measured board pose")
+    c2r = validate_se3(calibration.record["c2r"], name="session C2R")
+    up_world = c2r[:3, :3] @ -board[:3, 2]
+    axial_cosines = [abs(float(np.dot(
+        pose[:3, :3] @ axis_local, up_world))) for pose in poses.values()]
+    # The two v8 tabletop classes are separated by the geometric 45-degree
+    # bisector. This only selects the pose model; it is not a failure gate.
+    return ("upright" if np.median(axial_cosines) >= np.sqrt(0.5)
+            else "side_down")
+
+
+def _support_side_down_key_on_board(
+    pose_world: np.ndarray, *, calibration, shared_root: Path,
+    mode: TaskMode,
+) -> tuple[np.ndarray, float]:
+    """Condition a refined side-down key on its measured tabletop plane."""
+    from .board_socket_fit import _mesh_vertices
+
+    board = validate_se3(calibration.board["T_robot_board"],
+                         name="measured board pose")
+    c2r = validate_se3(calibration.record["c2r"], name="session C2R")
+    robot_pose = np.linalg.inv(c2r) @ validate_se3(pose_world)
+    up = -board[:3, 2]
+    axis = robot_pose[:3, 2]
+    horizontal = axis - float(np.dot(axis, up)) * up
+    horizontal_norm = float(np.linalg.norm(horizontal))
+    if horizontal_norm <= 1e-12:
+        raise ValueError("side-down key refinement has no horizontal axis")
+    horizontal /= horizontal_norm
+    center_local, _ = _cylinder_symmetry(mode, shared_root)
+    measured_center = robot_pose[:3, :3] @ center_local + robot_pose[:3, 3]
+    cross = np.cross(axis, horizontal)
+    sine = float(np.linalg.norm(cross))
+    cosine = float(np.dot(axis, horizontal))
+    if sine > 1e-12:
+        skew = np.array([[0., -cross[2], cross[1]],
+                         [cross[2], 0., -cross[0]],
+                         [-cross[1], cross[0], 0.]])
+        rotation = np.eye(3) + skew + skew @ skew * ((1. - cosine) / sine**2)
+        robot_pose[:3, :3] = rotation @ robot_pose[:3, :3]
+        robot_pose[:3, 3] = measured_center - robot_pose[:3, :3] @ center_local
+    raw_mesh = (Path(shared_root) / "object_processing" / mode.key_object /
+                "raw_mesh" / f"{mode.key_object}.obj")
+    vertices = _mesh_vertices(raw_mesh)
+    transformed = vertices @ robot_pose[:3, :3].T + robot_pose[:3, 3]
+    offset = float(np.dot(board[:3, 3], up) -
+                   np.min(transformed @ up))
+    robot_pose[:3, 3] += offset * up
+    return validate_se3(c2r @ robot_pose), offset
+
+
 def _pose_residual(
     first: np.ndarray, second: np.ndarray,
     *, cylinder_center: np.ndarray | None,
@@ -339,8 +396,12 @@ def _admit_key_capture_common(
         raise ValueError("key multiview FoundPose estimates disagree")
     if not callable(getattr(init_orchestrator, "refine_from_payloads", None)):
         raise ValueError("AutoDex IoU/silhouette key selector is unavailable")
-    board_fit = None
+    tabletop_layout = None
     if stock_tabletop_cylinder and "T_robot_board" in calibration.board:
+        tabletop_layout = _tabletop_cylinder_axis_layout(
+            poses, calibration=calibration, axis_local=axis)
+    board_fit = None
+    if tabletop_layout == "upright":
         # For a tabletop cylinder, the measured board supplies the vertical
         # axis and the exact CAD body supplies the silhouette. Compare this
         # geometric estimate with stock FoundPose using the same mask IoU;
@@ -393,6 +454,12 @@ def _admit_key_capture_common(
             selection_mode="iou")
     if pose is None or not isinstance(diagnostics, dict):
         raise ValueError("AutoDex key pose refinement failed")
+    if tabletop_layout == "side_down":
+        pose, support_offset = _support_side_down_key_on_board(
+            pose, calibration=calibration, shared_root=shared_root,
+            mode=mode)
+        diagnostics["board_support_offset_m"] = support_offset
+    diagnostics["tabletop_axis_layout"] = tabletop_layout
     selected = diagnostics.get("best_serial")
     if selected not in admitted_ids:
         raise ValueError("AutoDex selected a non-admitted key camera")
@@ -442,6 +509,8 @@ def _admit_key_capture_common(
         "sil_skipped": diagnostics.get("sil_skipped", False),
         "board_body_fit": diagnostics.get("board_body_fit"),
         "stock_initial_iou": diagnostics.get("stock_initial_iou"),
+        "tabletop_axis_layout": diagnostics.get("tabletop_axis_layout"),
+        "board_support_offset_m": diagnostics.get("board_support_offset_m"),
     }
     return KeyPoseObservation(
         capture.capture_id, capture.request_id, mode.key_object, mode.family,

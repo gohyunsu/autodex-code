@@ -1380,7 +1380,8 @@ def test_missed_grasp_retries_from_fresh_supported_pose_without_restoration(
         lambda **_kwargs: {"stem": "001", "rotation_error_deg": 0.0})
     monkeypatch.setattr(
         session_runner, "validate_repose_rest_target",
-        lambda **_kwargs: {"key_socket_clearance_m": 0.1})
+        lambda **_kwargs: pytest.fail(
+            "a measured missed-grasp key is not a planned rest target"))
     monkeypatch.setattr(
         session_runner, "_load_mesh",
         lambda _path: SimpleNamespace(bounds=np.array([
@@ -1411,7 +1412,9 @@ def test_missed_grasp_retries_from_fresh_supported_pose_without_restoration(
     assert runner.current_decision().action == "reobserve_key_and_preflight"
     saved = json.loads((runner._attempt_dir / "reset_landing.json").read_text())
     assert saved["recovery_mode"] == "autodex_missed_grasp_clear_view"
-    assert saved["reset_basis"] == "observed_supported_key_pose"
+    assert saved["reset_basis"] == "fresh_observed_tabletop_key_pose"
+    assert saved["observed_support"] == {
+        "planned_rest_target_gate_applied": False}
     assert saved["center_xy_displacement_m"] > 0.01
 
 
