@@ -726,7 +726,11 @@ def assess_preinsert_checkpoint(
 def write_preinsert_checkpoint(
     checkpoint: PreinsertCheckpoint, output_dir: Path,
 ) -> Path:
-    """Save raw VLM inputs plus separate geometry-audit renderings."""
+    """Save raw VLM inputs plus separate geometry-audit renderings.
+
+    The same live session can reuse this producer result immediately. Offline
+    readers still run the full verifier against the saved PNGs and sources.
+    """
     if not isinstance(checkpoint, PreinsertCheckpoint):
         raise TypeError("expected a computed preinsert checkpoint")
     target = Path(output_dir).expanduser().resolve()
@@ -751,6 +755,8 @@ def write_preinsert_checkpoint(
     with report.open("x", encoding="utf-8") as stream:
         json.dump(record, stream, indent=2, sort_keys=True, allow_nan=False)
         stream.write("\n")
+    remember("preinsert_checkpoint", report, "preinsert", {
+        "sha256": _sha(report), "record": record})
     return report
 
 

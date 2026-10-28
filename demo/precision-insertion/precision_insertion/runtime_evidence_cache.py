@@ -1,9 +1,10 @@
 """Session-local producer evidence cache for immutable live NAS sessions.
 
 The producer validates camera/frame provenance before writing each artifact.
-During the same live session, readers may reuse that exact manifest instead
-of immediately re-reading and re-undistorting the same PNGs. Offline replay
-and handoff verification remain strict because this cache is inactive there.
+During the same live session, readers may reuse the just-written manifest or
+preinsert checkpoint instead of immediately replaying the same PNGs and
+source files. Offline replay and handoff verification remain strict because
+this cache is inactive there.
 """
 
 from __future__ import annotations

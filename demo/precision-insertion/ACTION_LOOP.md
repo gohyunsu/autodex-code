@@ -19,6 +19,11 @@ ChArUco→socket startup to `SessionRunner`'s existing trial policy. It keeps
 the same initialized cameras available across key captures, attempts and
 reobservations. It does **not** duplicate v8 grasp ranking, FoundPose,
 cuRobo planning, label policy or the guarded execution boundaries.
+The just-written preinsert VLM/checkpoint record is reused in the same live
+session instead of immediately replaying its PNGs and planning sources. A
+different process, a later session, or a changed report still runs the full
+saved-evidence verifier. This removes a repeated file audit from the motion
+critical path without changing its images, prompt, label or candidate choice.
 
 Its handler factory receives the live session after the socket/collision
 world is frozen. It returns an action-name → callable mapping. Each callable

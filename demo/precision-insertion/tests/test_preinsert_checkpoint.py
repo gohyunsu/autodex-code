@@ -312,21 +312,22 @@ def test_measured_preinsert_arrival_needs_multiview_visible_key(tmp_path):
         **{**args, "backend": _VLM("unobservable")}).preinsert_reached is None
 
 
-def test_live_preinsert_reuse_preserves_first_full_check_and_report_identity(
+def test_live_preinsert_reuses_producer_result_and_rechecks_changed_report(
     tmp_path, monkeypatch,
 ):
     args = _setup(tmp_path)
-    saved = write_preinsert_checkpoint(
-        assess_preinsert_checkpoint(**args), tmp_path / "cached_arrival")
-    original = saved.read_bytes()
     with live_evidence_cache():
-        verified = verify_preinsert_checkpoint(saved)
+        saved = write_preinsert_checkpoint(
+            assess_preinsert_checkpoint(**args), tmp_path / "cached_arrival")
+        original = saved.read_bytes()
 
         def unexpected_capture_read(*_args, **_kwargs):
             raise AssertionError("preinsert sources were read again")
 
         monkeypatch.setattr(preinsert_checkpoint, "verify_raw_camera_capture",
                             unexpected_capture_read)
+        verified = verify_preinsert_checkpoint(saved)
+        assert verified["preinsert_reached"] is True
         assert verify_preinsert_checkpoint(saved) is verified
         saved.write_bytes(original + b" ")
         with pytest.raises(AssertionError, match="read again"):
