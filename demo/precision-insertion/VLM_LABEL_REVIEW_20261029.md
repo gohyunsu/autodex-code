@@ -402,16 +402,22 @@ released-key label; those are different observations with different inputs.
 
 The final classifier now uses `LocalQwenBackend.infer_many` to send its
 three **independent one-image questions** through one local GPU decode.
-Remote per-camera backends retain their parallel request path. A saved-image
-batch probe returned the same 12 camera tokens as the previously recorded
-serial Qwen run: `OUTSIDE` on all nine empty-socket views, and
-`INSIDE`/`INSIDE`/`OUTSIDE` on the inserted episode's three views. The
-three-camera aggregate therefore remained correct in all four reviewed
-episodes. The median GPU inference call for three views changed from about
-0.252 s serial to 0.193 s batched across those four saved cases; this is a
-small saved-data microbenchmark, not a full pipeline latency measurement.
+Remote per-camera backends retain their parallel request path. The first
+direct-model probe preserved its previous 12 camera tokens, including one
+false negative on the inserted episode. A second probe used the **production
+`LocalQwenBackend` image padding and the production observer** for both
+serial and batch inference. The two paths returned identical tokens on all
+12 saved views: `OUTSIDE` on all nine empty-socket views and `INSIDE` on
+all three views of the inserted episode. Both paths gave the visually
+reviewed aggregate label on all four episodes. The cold first pair took
+0.776 s serial versus 0.201 s batched; over the three subsequent warm pairs,
+the median was 0.254 s serial versus 0.196 s batched. These are saved-data
+microbenchmarks, not full pipeline latency measurements.
 Each view's raw token, crop hash and prompt remain separately recorded, so
 the existing checkpoint verifier can still replay the majority vote. The
 probe and individual timing values are in
 `~/precision_insertion_project/development/zerodex_capture4/reviews/
-probe_final_gpu_batch_20261029.{py,json}`.
+probe_final_gpu_batch_20261029.{py,json}` and
+`probe_production_final_batch_vs_serial_20261029.{py,json}`. Two full saved
+checkpoint replays, one inserted and one outside, also wrote and verified
+new v4 reports under `batched_final_checkpoint_20261029/`.
