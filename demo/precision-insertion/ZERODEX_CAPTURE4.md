@@ -694,3 +694,39 @@ passed a nominal 20 mm opening sweep at sampled fractions 0, 0.1, 0.2,
 0.3, 0.5, and 1.0. These are offline release-geometry checks, not full
 Franka paths or physical successes. The next live trial should plan a
 candidate with an opening path before moving the held key to the socket.
+
+## 2026-10-28 saved-scene alternative after the release collision
+
+`screen_release_opening_candidates.py` samples the *nominal* Inspire hand
+opening at the centered 20 mm key pose using the straight ZeroDex mount URDF,
+the exact socket mesh, and the same v8 candidate transform used at runtime.
+It reports candidate order only; it does not add an acceptance threshold or
+replace the live cuRobo release plan. Example:
+
+```bash
+PYTHONPATH="$PWD/demo/precision-insertion:$PWD" \
+PRECISION_FR3_INSPIRE_URDF="$PWD/autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf" \
+/home/hyunsu/.venvs/precision-vlm/bin/python \
+  demo/precision-insertion/screen_release_opening_candidates.py \
+  --shared-root /home/hyunsu/shared_data \
+  --catalog /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/recipient_gap10_endpoint_catalog_straight.json \
+  --gap-mm 10 --pose-stem 000 --candidate-id table/0/20267 \
+  --output /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/release_opening_candidate_20267_20261028.json
+```
+
+For the **saved** actual upright-key observation from the prior attempt,
+`table/0/20267` passed the v8 pickup, transfer, and sampled 20 mm insertion
+plan. Its 21-sampled hand-opening mesh sweep found no socket collision and
+a nominal minimum mesh distance of 2.72 mm. The opening passed the stock
+cuRobo rollout (11 samples). The reversed axial exit with an inserted-key
+hypothesis also passed, as did a 119-sample cuRobo retract to this ZeroDex
+rig's *measured* clear-view joints. These are offline plan checks; the key's
+pose and the robot's start state must be measured again for a new trial.
+Use `--initial-candidate table/0/20267` to request it first in the live
+launcher; normal candidate planning still checks the fresh observation.
+
+The prior all-channel hand `65535` reading disappeared after the hand cable
+reconnection, power cycle, and ordinary open command. A later read-only
+Modbus check found measured raw angles `[998, 999, 1000, 998, 998, 987]`
+against commanded `[1000]*6`. This confirms current unloaded actuator
+response; it does not determine which connection caused the earlier state.
