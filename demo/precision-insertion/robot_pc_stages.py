@@ -179,6 +179,8 @@ def configure(core, live, options) -> dict:
             "lift": {
                 "limits": motion,
                 "commissioning_record_path": None,
+                "post_lift_settle_s": float(os.environ.get(
+                    "PRECISION_POST_LIFT_SETTLE_S", "0")),
                 "assessment_parameters": {
                     "max_phase_skew_s": 10.,
                     "minimum_visual_views": 2,

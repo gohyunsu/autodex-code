@@ -118,6 +118,21 @@ def test_lift_then_same_session_raw_capture_then_qwen_label(
     assert runner.current_decision().action == "held_relation_evidence_required"
 
 
+def test_capture_waits_for_configured_post_lift_settle(tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    bound.post_lift_settle_s = 2.0
+    monkeypatch.setattr(live_lift_handlers, "execute_bound_measured_lift",
+                        lambda **_kwargs: runner.events.append(("lift",)))
+    monkeypatch.setattr(live_lift_handlers.time, "sleep",
+                        lambda seconds: runner.events.append(("settle", seconds)))
+    monkeypatch.setattr(live_lift_handlers, "write_raw_camera_capture",
+                        lambda *_args, **_kwargs: None)
+    bound.lift_and_observe(runner, runner.current_decision())
+    assert [event[0] for event in runner.events[:3]] == [
+        "lift", "settle", "capture"]
+    assert runner.events[1][1] == 2.0
+
+
 def test_disabled_lift_does_not_capture_or_change_trial(tmp_path):
     bound, runner, *_ = _handler(tmp_path, enabled=False)
     with pytest.raises(PermissionError, match="not enabled"):

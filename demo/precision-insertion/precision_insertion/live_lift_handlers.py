@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import math
 import time
 from typing import Callable, Mapping
 
@@ -59,6 +60,7 @@ class LiveLiftHandlers:
     manual_label_provider: Callable | None = None
     enable_robot_motion: bool = False
     decision_time: Callable[[], float] = time.time
+    post_lift_settle_s: float = 0.0
 
     def __post_init__(self) -> None:
         if (not callable(self.read_state) or
@@ -70,6 +72,10 @@ class LiveLiftHandlers:
                 not isinstance(self.limits, LiftExecutionLimits) or
                 not isinstance(self.assessment_parameters, Mapping)):
             raise TypeError("live lift needs controller, cameras, Qwen and limits")
+        if (not isinstance(self.post_lift_settle_s, (int, float)) or
+                not math.isfinite(self.post_lift_settle_s) or
+                self.post_lift_settle_s < 0):
+            raise ValueError("post-lift capture delay must be nonnegative seconds")
         missing = _ASSESS_KEYS - self.assessment_parameters.keys()
         extra = (self.assessment_parameters.keys() - _ASSESS_KEYS -
                  _ASSESS_OPTIONAL)
@@ -117,6 +123,11 @@ class LiveLiftHandlers:
             return
         lift_log = (Path(runner.output_dir) / "attempts" /
                     attempt.attempt_id / "lift_execution.json")
+        if self.post_lift_settle_s:
+            with timed("trial.post_lift_settle", phase="trial", kind="wait",
+                       attempt_id=attempt.attempt_id,
+                       requested_duration_s=self.post_lift_settle_s):
+                time.sleep(self.post_lift_settle_s)
         with timed("trial.after_lift_capture", phase="trial", kind="camera",
                    attempt_id=attempt.attempt_id):
             capture = self.capture_after_lift(self.live, runner, decision)

@@ -663,6 +663,17 @@ does not identify whether the connector, cable, supply or hand internals
 are responsible. The demo must not resume finger calibration or pickup from
 this current all-channel state.
 
+## 2026-10-28 post-lift capture timing
+
+The ZeroDex launcher waits 2.0 seconds after the measured lift completes
+before requesting the `after_lift` camera snapshot. Set
+`PRECISION_POST_LIFT_SETTLE_S` to change this interval; the AutoDex launcher
+keeps its existing zero-delay behavior. The timing profile records the wait as
+`trial.post_lift_settle` and the subsequent camera request as
+`trial.after_lift_capture`. This observes whether the key remains held after
+a short pause; it does not establish that the grasp will remain stable during
+the later transfer or a blocking manual review.
+
 ## 2026-10-28 follow-up: hand restored, held transfer, release collision
 
 The preceding all-channel reading was taken before a valid post-restart angle

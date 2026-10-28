@@ -15,6 +15,8 @@ export PRECISION_VISIBLE_GRIP_CAMERA_IDS=${PRECISION_VISIBLE_GRIP_CAMERA_IDS:-$P
 export PRECISION_XY_ESTIMATOR=${PRECISION_XY_ESTIMATOR:-vlm}
 export PRECISION_TABLETOP_POSE_ERROR_DEG=${PRECISION_TABLETOP_POSE_ERROR_DEG:-20}
 export PRECISION_PRELOAD_VLM=${PRECISION_PRELOAD_VLM:-1}
+# Observe whether the grasp remains held briefly after the lift completes.
+export PRECISION_POST_LIFT_SETTLE_S=${PRECISION_POST_LIFT_SETTLE_S:-2.0}
 # The first live pickup previously spent 21.97 s initializing the fixed
 # cuRobo world. Start that work while capture4 acquires/refines the next key.
 # A caller can set 0 for a measured serial-latency comparison.
