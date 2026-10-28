@@ -47,6 +47,11 @@ def record(camera_id: str, output_dir: Path, *, fps: int, max_seconds: float,
             deadline = time.monotonic() + max_seconds
             while not stop and time.monotonic() < deadline:
                 fid = reader.get_frame_id()
+                if fid < last_id:
+                    # The camera stream starts a new frame-ID sequence for
+                    # this run; keep its first frames instead of waiting for
+                    # the previous run's last ID.
+                    last_id = 0
                 if fid <= last_id:
                     time.sleep(poll_seconds)
                     continue
@@ -67,7 +72,6 @@ def record(camera_id: str, output_dir: Path, *, fps: int, max_seconds: float,
                 index.write(json.dumps({"video_frame": count, "camera_id": camera_id,
                                         "source_frame_id": fid,
                                         "read_unix_ns": read_ns}) + "\n")
-                index.flush()
                 if first_id is None:
                     first_id = fid
                 last_id = fid

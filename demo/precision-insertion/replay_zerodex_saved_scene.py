@@ -61,8 +61,11 @@ def _board_from_undistorted_pngs(images_dir: Path, launch) -> tuple[dict, dict]:
         }
         for serial in launch.camera_ids
     }
+    board_fit_images = (
+        images if launch.board_fit_camera_ids is None else
+        {serial: images[serial] for serial in launch.board_fit_camera_ids})
     board = measure_tabletop_from_images(
-        images, intrinsics, launch.extrinsics_full, launch.c2r,
+        board_fit_images, intrinsics, launch.extrinsics_full, launch.c2r,
         board_id="9", minimum_board_corners=launch.minimum_board_corners)
     return board, {serial: _sha256(images_dir / f"{serial}.png")
                    for serial in launch.camera_ids}

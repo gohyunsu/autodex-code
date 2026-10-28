@@ -32,6 +32,7 @@ FILES = (
     "src/execution/daemon/snapshot_daemon.py",
     "demo/precision-insertion/precision_init_daemon.py",
     "demo/precision-insertion/capture4_exposure_daemon.py",
+    "demo/precision-insertion/record_selected_capture_view.py",
     "demo/precision-insertion/precision_insertion/__init__.py",
     "demo/precision-insertion/precision_insertion/camera_transport.py",
     "demo/precision-insertion/precision_insertion/sam3_batch.py",

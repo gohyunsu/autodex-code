@@ -59,6 +59,9 @@ if [[ ${1:-} == --run || ${1:-} == --plan-only ]]; then
   # the ZeroDex FR3 before the AutoDex executor can send any setup commands.
   # --plan-only still moves the robot to clear view and observes the key.
   export PRECISION_INTEGRATION_FACTORY=precision_insertion.zerodex_franka_integration:factory
+  # Keep the full-resolution selected view on capture4's local SSD while the
+  # pipeline runs. NAS transfer is a separate post-run command.
+  exec "$PRECISION_PLANNER_PY" "$SCRIPT_DIR/run_zerodex_recorded.py" "$1"
 fi
 
 exec bash "$SCRIPT_DIR/run_robot_pc.sh" "${1:---check}"

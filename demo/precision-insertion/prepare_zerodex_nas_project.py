@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""Materialize the ZeroDex capture4 precision insertion project on NAS.
+
+The bundle contains tracked source snapshots and the runtime data tree needed
+by the six cylindrical socket modes. Its shared_data layout mirrors the
+pipeline's AssetPaths contract; run artifacts and videos live outside assets.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parents[1]
+GAPS = (1, 3, 5, 10, 15, 20)
+KEY = "precision_key_cylinder_r15_h80"
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
+
+
+def _copy_tree(source: Path, destination: Path, *, link_dest: Path | None = None) -> None:
+    if not source.is_dir():
+        raise FileNotFoundError(source)
+    destination.mkdir(parents=True, exist_ok=True)
+    command = ["rsync", "-a", "--no-owner", "--no-group", "--no-perms"]
+    if link_dest is not None and link_dest.is_dir():
+        command.append(f"--link-dest={link_dest}")
+    subprocess.run(command + [str(source) + "/", str(destination) + "/"],
+                   check=True)
+
+
+def _copy_file(source: Path, destination: Path) -> None:
+    if not source.is_file():
+        raise FileNotFoundError(source)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        subprocess.run(["rsync", "-a", "--no-owner", "--no-group",
+                        "--no-perms", str(source), str(destination)],
+                       check=True)
+        return
+    try:
+        os.link(source, destination)
+    except OSError:
+        subprocess.run(["rsync", "-a", "--no-owner", "--no-group",
+                        "--no-perms", str(source), str(destination)],
+                       check=True)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(4 * 1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _source_archive(repo: Path, destination: Path) -> dict:
+    commit = _git(repo, "rev-parse", "HEAD")
+    archive = destination / f"{repo.name}_{commit[:12]}.tar.gz"
+    if not archive.is_file():
+        subprocess.run(["git", "-C", str(repo), "archive", "--format=tar.gz",
+                        "-o", str(archive), "HEAD"], check=True)
+    return {"repository": repo.name, "commit": commit,
+            "archive": archive.name, "sha256": _sha256(archive)}
+
+
+def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
+          source_stage: Path, capture4_host: str | None = None,
+          ssh_port: int = 77) -> dict:
+    assets = nas_root / "assets" / "shared_data"
+    code = nas_root / "code"
+    envs = nas_root / "environments"
+    for path in (assets, code, envs, nas_root / "runs" / "zerodex_capture4"):
+        path.mkdir(parents=True, exist_ok=True)
+    shared = source_shared.expanduser().resolve()
+    source_stage = source_stage.expanduser().resolve()
+    relative_trees = [
+        f"object_processing/{KEY}",
+        f"object_processing/{KEY}_grip_proxy",
+        f"AutoDex/candidates/inspire/v8/{KEY}",
+        f"AutoDex/candidates/inspire/reset_12/{KEY}",
+        f"AutoDex/scene/inspire/{KEY}",
+        f"AutoDex/foundpose_assets/{KEY}",
+        "AutoDex/models/Qwen3-VL-2B-Instruct",
+        "AutoDex/precision_insertion/zerodex_capture4/calibration",
+        "AutoDex/precision_insertion/zerodex_capture4/robot_deps",
+    ]
+    for gap in GAPS:
+        name = f"precision_socket_cylinder_gap_{gap:02d}mm"
+        relative_trees.extend((
+            f"object_processing/{name}",
+            f"AutoDex/foundpose_assets/{name}",
+            f"AutoDex/precision_insertion/fixtures/{name}",
+        ))
+    for relative in relative_trees:
+        print(f"[bundle] {relative}", flush=True)
+        _copy_tree(shared / relative, assets / relative,
+                   link_dest=source_stage / relative)
+    runtime = Path("AutoDex/precision_insertion/zerodex_capture4")
+    runtime_files = (
+        "base_scene.json", "charuco_board9.json", "clear_view_arm_q.json",
+        "franka_runtime.json", "launch.json",
+        *(f"recipient_gap{gap}_endpoint_catalog_straight.json" for gap in GAPS),
+    )
+    for name in runtime_files:
+        _copy_file(shared / runtime / name, assets / runtime / name)
+    _copy_file(Path("/mnt/paradex2/AutoDex/weights/sam3/sam3.pt"),
+               assets / "AutoDex/weights/sam3/sam3.pt")
+    snapshots = [_source_archive(REPO, code),
+                 _source_archive(paradex_repo.expanduser().resolve(), code)]
+    (envs / "precision-vlm.pip-freeze.txt").write_text(
+        subprocess.check_output(
+            [str(Path.home() / ".venvs/precision-vlm/bin/python"),
+             "-m", "pip", "freeze"], text=True), encoding="utf-8")
+    if capture4_host is not None:
+        remote_cache = nas_root / "assets" / "capture4_cache"
+        for source, relative in (
+            ("/home/capture4/.cache/huggingface/hub/models--facebook--sam3/",
+             "huggingface/hub/models--facebook--sam3"),
+            ("/home/capture4/.cache/torch/hub/checkpoints/",
+             "torch/hub/checkpoints"),
+        ):
+            target = remote_cache / relative
+            target.mkdir(parents=True, exist_ok=True)
+            includes = (["--include=dinov2_vits14_reg4_pretrain.pth",
+                         "--include=dinov2_vitl14_pretrain.pth", "--exclude=*"]
+                        if relative == "torch/hub/checkpoints" else [])
+            subprocess.run(
+                ["rsync", "-a", "--no-owner", "--no-group", "--no-perms", "-e",
+                 f"ssh -p {ssh_port} -o BatchMode=yes", *includes,
+                 f"{capture4_host}:{source}", str(target) + "/"],
+                check=True)
+        for name, python in (
+            ("capture4-flir", "/home/capture4/anaconda3/envs/flir_env/bin/python"),
+            ("capture4-gotrack", "/home/capture4/anaconda3/envs/gotrack_cu128/bin/python"),
+        ):
+            output = subprocess.check_output(
+                ["ssh", "-p", str(ssh_port), "-o", "BatchMode=yes",
+                 capture4_host, f"{python} -m pip freeze"], text=True)
+            (envs / f"{name}.pip-freeze.txt").write_text(
+                output, encoding="utf-8")
+    # The standalone installer is usable before extracting either repository.
+    _copy_file(HERE / "install_zerodex_nas_project.py",
+               nas_root / "install_project.py")
+    _copy_file(HERE / "ZERODEX_NAS_PROJECT.md", nas_root / "README.md")
+    records = []
+    for path in sorted((nas_root / "assets").rglob("*")):
+        if path.is_file():
+            records.append({"path": str(path.relative_to(nas_root)),
+                            "bytes": path.stat().st_size,
+                            "sha256": _sha256(path)})
+    manifest = {
+        "schema": "precision_insertion_reproducible_project_v1",
+        "project": "precision_insertion", "rig": "zerodex_capture4",
+        "source_shared_root": str(shared),
+        "cylindrical_gap_mm": list(GAPS),
+        "code": snapshots, "assets": records,
+        "asset_file_count": len(records),
+        "runtime_nas_upload": "separate_post_run_command_only",
+    }
+    (nas_root / "PROJECT_MANIFEST.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8")
+    return {"root": str(nas_root), "asset_file_count": len(records),
+            "code": snapshots}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source-shared", type=Path,
+                        default=Path.home() / "shared_data")
+    parser.add_argument("--nas-root", type=Path,
+                        default=Path("/mnt/paradex2/hyunsu/precision_insertion"))
+    parser.add_argument("--paradex-repo", type=Path,
+                        default=Path.home() / "paradex")
+    parser.add_argument("--source-stage", type=Path,
+                        default=Path("/mnt/paradex2/hyunsu/tmp/20261023_prev/"
+                                     "precision_insertion_recipient_stage_20261013_b7e2392"))
+    parser.add_argument("--capture4-host",
+                        default="capture4@147.46.219.136")
+    parser.add_argument("--ssh-port", type=int, default=77)
+    args = parser.parse_args()
+    print(json.dumps(build(
+        source_shared=args.source_shared, nas_root=args.nas_root,
+        paradex_repo=args.paradex_repo, source_stage=args.source_stage,
+        capture4_host=args.capture4_host, ssh_port=args.ssh_port), indent=2))
+
+
+if __name__ == "__main__":
+    main()

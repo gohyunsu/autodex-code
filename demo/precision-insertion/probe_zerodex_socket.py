@@ -62,8 +62,12 @@ def main(argv: list[str] | None = None) -> int:
                 timeout_s=launch.board_timeout_s)
             for serial, frame in board.images_bgr.items():
                 cv2.imwrite(str(output / f"{serial}_board.jpg"), frame)
+            board_fit_images = (
+                board.images_bgr if launch.board_fit_camera_ids is None else
+                {serial: board.images_bgr[serial]
+                 for serial in launch.board_fit_camera_ids})
             measured = measure_tabletop_from_images(
-                board.images_bgr, launch.intrinsics_full,
+                board_fit_images, launch.intrinsics_full,
                 launch.extrinsics_full, launch.c2r, board_id="9",
                 minimum_board_corners=launch.minimum_board_corners)
             init = cameras.init_orchestrator

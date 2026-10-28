@@ -82,7 +82,7 @@ PY
   exit
 fi
 
-RUN_TAG="$(date +%Y%m%d_%H%M%S_%N)_$$"
+RUN_TAG=${PRECISION_RUN_TAG:-"$(date +%Y%m%d_%H%M%S_%N)_$$"}
 LAUNCH_DIR="$STAGE/runs/live_${SCENE_MODE}_gap${GAP_MM}"
 mkdir -p "$LAUNCH_DIR"
 LAUNCH="$LAUNCH_DIR/launch_$RUN_TAG.json"

@@ -42,8 +42,10 @@ def run_camera_only(
     wait_for_key: Callable[[], object],
     reuse_session_evidence: Path | None = None,
     gap_mm: int | None = None,
+    socket_only: bool = False,
+    key_present_during_socket_capture: bool = False,
 ) -> dict:
-    """Capture one key after a fresh or explicitly reused fixed-socket session."""
+    """Capture a fixed socket, then optionally capture one key."""
     output = Path(output_dir).expanduser().resolve()
     if output.exists():
         raise FileExistsError(output)
@@ -81,11 +83,12 @@ def run_camera_only(
                 launch, init_ports=(15006, 15007, 16893)) as cameras:
             # The socket path is mask/body-only. Prewarm the key renderer as
             # the normal ZeroDex session does, before camera heartbeat starts.
-            with timed("startup.key_renderer_warmup", phase="startup"):
-                prepare_precision_silhouette(
-                    init_orchestrator=cameras.init_orchestrator,
-                    object_name=launch.mode.key_object,
-                    raw_mesh=paths.raw_mesh(launch.mode.key_object))
+            if not socket_only:
+                with timed("startup.key_renderer_warmup", phase="startup"):
+                    prepare_precision_silhouette(
+                        init_orchestrator=cameras.init_orchestrator,
+                        object_name=launch.mode.key_object,
+                        raw_mesh=paths.raw_mesh(launch.mode.key_object))
             with open_autodex_camera_stream(
                     launch.pc_list, capture_ips=launch.capture_ips,
                     name="precision_zerodex_camera_only",
@@ -106,6 +109,22 @@ def run_camera_only(
                         producer_manifest=started.producer_manifest,
                         calibration_snapshot=started.calibration,
                         upright_cylinder_only=launch.upright_cylinder_only)
+                if socket_only:
+                    report = {
+                        "schema": "precision_insertion_zerodex_socket_only_session_v1",
+                        "scope": "real_camera_board_and_socket_no_key_or_robot",
+                        "mode": {"family": launch.mode.family,
+                                 "gap_mm": launch.mode.gap_mm},
+                        "socket_evidence_dir": str(started.evidence_dir),
+                        "socket_evidence_reused": saved_session is not None,
+                        "key_present_during_socket_capture": key_present_during_socket_capture,
+                        "robot_ready": False,
+                    }
+                    with (output / "report.json").open("x", encoding="utf-8") as stream:
+                        json.dump(report, stream, indent=2, sort_keys=True,
+                                  allow_nan=False)
+                        stream.write("\n")
+                    return report
                 with timed("startup.key_placement_wait", phase="startup",
                            kind="operator"):
                     wait_for_key()
@@ -156,6 +175,7 @@ def run_camera_only(
             "scope": "real_camera_perception_and_catalog_not_robot_plan_or_motion",
             "socket_evidence_dir": str(started.evidence_dir),
             "socket_evidence_reused": saved_session is not None,
+            "key_present_during_socket_capture": key_present_during_socket_capture,
             "key_evidence_dir": str(output / "key_capture"),
             "key_request_id": observation.request_id,
             "selected_camera_id": observation.selected_camera_id,
@@ -185,13 +205,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reuse-session-evidence", type=Path,
                         help="verified fixed-socket session; skips board/socket recapture")
     parser.add_argument("--key-already-placed", action="store_true",
-                        help="reuse an unchanged socket session and capture the key immediately")
+                        help="capture an existing key immediately; a fresh socket capture with the key present is diagnostic only")
+    parser.add_argument("--socket-only", action="store_true",
+                        help="measure and save the fixed socket, then exit before key capture")
     args = parser.parse_args(argv)
-    if args.key_already_placed and args.reuse_session_evidence is None:
-        parser.error("--key-already-placed needs --reuse-session-evidence")
     if args.reuse_session_evidence is None:
-        print("Leave the fixed socket on board 9 and REMOVE the key before starting.")
-        input("Press Enter to measure board and socket... ")
+        if args.key_already_placed:
+            print("Key already on board: this fresh socket/key capture is a one-off diagnostic; its baseline includes the key.")
+        else:
+            print("Leave the fixed socket on board 9 and REMOVE the key before starting.")
+            input("Press Enter to measure board and socket... ")
     else:
         print("Reusing the saved fixed-socket session; leave the socket unmoved.")
     def wait_for_key() -> None:
@@ -204,6 +227,9 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=args.output_dir,
         reuse_session_evidence=args.reuse_session_evidence,
         gap_mm=args.gap_mm,
+        socket_only=args.socket_only,
+        key_present_during_socket_capture=(
+            args.key_already_placed and args.reuse_session_evidence is None),
         wait_for_key=wait_for_key)
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0

@@ -19,8 +19,9 @@ from precision_insertion.config import select_mode  # noqa: E402
 @pytest.mark.parametrize("reuse", (False, True))
 @pytest.mark.parametrize("stem", ("000", "001"))
 @pytest.mark.parametrize("upright_only", (False, True))
+@pytest.mark.parametrize("socket_only", (False, True))
 def test_camera_only_reuses_socket_key_and_catalog_without_robot(
-        tmp_path, monkeypatch, reuse, stem, upright_only):
+        tmp_path, monkeypatch, reuse, stem, upright_only, socket_only):
     events = []
     mode = select_mode("cylinder", 20)
     shared = tmp_path / "shared"
@@ -126,21 +127,28 @@ def test_camera_only_reuses_socket_key_and_catalog_without_robot(
         output_dir=tmp_path / "run",
         wait_for_key=lambda: events.append("key_placed"),
         reuse_session_evidence=(tmp_path / "saved" if reuse else None),
+        socket_only=socket_only,
     )
     assert events == (
         ["launch", "catalog"] + (["saved_socket"] if reuse else []) +
-        ["camera_open", "prewarm", "stream_open"] +
+        ["camera_open"] + ([] if socket_only else ["prewarm"]) +
+        ["stream_open"] +
         ([] if reuse else ["socket"]) +
         ["legacy_policy" if upright_only else "direct_lie",
-         "ledger", "key_placed", "key", "stream_close", "camera_close",
-         "scene", "classify", "select"])
-    assert report["endpoint_eligible_candidate_count"] == 1
-    assert report["schema"] == "precision_insertion_zerodex_camera_only_session_v2"
-    direct_preflight = not upright_only or stem == "000"
-    assert report["direct_candidate_preflight_available"] is direct_preflight
-    assert report["live_pose_route"] == (
-        "direct_candidate_preflight" if direct_preflight else
-        "reorientation_preflight_if_alternative_pose_available")
+         "ledger"] + ([] if socket_only else ["key_placed", "key"]) +
+        ["stream_close", "camera_close"] +
+        ([] if socket_only else ["scene", "classify", "select"]))
+    if socket_only:
+        assert report["schema"] == "precision_insertion_zerodex_socket_only_session_v1"
+        assert report["mode"]["gap_mm"] == 20
+    else:
+        assert report["endpoint_eligible_candidate_count"] == 1
+        assert report["schema"] == "precision_insertion_zerodex_camera_only_session_v2"
+        direct_preflight = not upright_only or stem == "000"
+        assert report["direct_candidate_preflight_available"] is direct_preflight
+        assert report["live_pose_route"] == (
+            "direct_candidate_preflight" if direct_preflight else
+            "reorientation_preflight_if_alternative_pose_available")
     assert report["socket_evidence_reused"] is reuse
     assert report["robot_ready"] is False
     assert (tmp_path / "run" / "report.json").is_file()
@@ -237,11 +245,18 @@ def test_key_already_placed_reuses_socket_without_operator_wait(
     assert seen[0]["wait_for_key"]() is None
 
 
-def test_key_already_placed_requires_prior_socket_session(tmp_path):
-    with pytest.raises(SystemExit, match="2"):
-        camera_only.main([
-            "--launch-config", str(tmp_path / "launch.json"),
-            "--endpoint-catalog", str(tmp_path / "catalog.json"),
-            "--output-dir", str(tmp_path / "run"),
-            "--key-already-placed",
-        ])
+def test_key_already_placed_fresh_capture_records_contaminated_baseline(
+        tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(camera_only, "run_camera_only", lambda **kwargs: (
+        seen.append(kwargs) or {"robot_ready": False}))
+    monkeypatch.setattr("builtins.input", lambda _prompt: pytest.fail(
+        "already-placed key must not prompt for placement"))
+    assert camera_only.main([
+        "--launch-config", str(tmp_path / "launch.json"),
+        "--endpoint-catalog", str(tmp_path / "catalog.json"),
+        "--output-dir", str(tmp_path / "run"),
+        "--key-already-placed",
+    ]) == 0
+    assert seen[0]["key_present_during_socket_capture"] is True
+    assert seen[0]["wait_for_key"]() is None

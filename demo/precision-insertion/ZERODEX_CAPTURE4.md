@@ -1,5 +1,8 @@
 # ZeroDex capture4 profile (kds-Z790)
 
+For the independent NAS project bundle and post-run recording upload, see
+[ZERODEX_NAS_PROJECT.md](ZERODEX_NAS_PROJECT.md).
+
 ## Code layout and machine settings
 
 `run_zerodex_capture4.sh` is the single entry point for `--check`,
