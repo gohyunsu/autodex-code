@@ -261,27 +261,31 @@ def observe_held_preinsert_scene(
         prediction_kwargs = {}
         if robot_loader is not None:
             prediction_kwargs["robot_loader"] = robot_loader
-        prediction = build_held_scene_prediction(
-            shared_root=shared_root, mode=mode,
-            full_q_measured=joint_sample.full_q,
-            T_robot_socket_frozen=validated_frozen_socket_pose(
-                mode=mode, shared_root=shared_root, calibration=calibration),
-            T_key_hand_hypothesis=T_key_hand,
-            relation_source=relation_source, **prediction_kwargs)
+        with timed("preinsert.prediction_build", phase="preinsert",
+                   kind="computation", view_count=len(camera_ids)):
+            prediction = build_held_scene_prediction(
+                shared_root=shared_root, mode=mode,
+                full_q_measured=joint_sample.full_q,
+                T_robot_socket_frozen=validated_frozen_socket_pose(
+                    mode=mode, shared_root=shared_root, calibration=calibration),
+                T_key_hand_hypothesis=T_key_hand,
+                relation_source=relation_source, **prediction_kwargs)
         target = validate_se3(T_robot_hand_target,
                               name="planned preinsert T_robot_hand")
         position_error = float(np.linalg.norm(
             prediction.T_robot_hand[:3, 3] - target[:3, 3]))
         rotation_error = pose_angle_deg(prediction.T_robot_hand, target)
-        comparison = build_held_scene_comparison(
-            prediction=prediction, frames_bgr=frames_bgr,
-            frame_timestamps_s={serial: frame_rows[serial]["timestamp_s"]
-                                for serial in camera_ids},
-            intrinsics_undistorted={serial: K_all[serial]
+        with timed("preinsert.audit_overlay_render", phase="preinsert",
+                   kind="visualization", view_count=len(camera_ids)):
+            comparison = build_held_scene_comparison(
+                prediction=prediction, frames_bgr=frames_bgr,
+                frame_timestamps_s={serial: frame_rows[serial]["timestamp_s"]
                                     for serial in camera_ids},
-            T_camera_robot={serial: camera_world_all[serial] @ c2r
-                            for serial in camera_ids},
-            renderer_factory=renderer_factory)
+                intrinsics_undistorted={serial: K_all[serial]
+                                        for serial in camera_ids},
+                T_camera_robot={serial: camera_world_all[serial] @ c2r
+                                for serial in camera_ids},
+                renderer_factory=renderer_factory)
         return position_error, rotation_error, comparison
 
     if after_lift_raw_bundle is None and after_lift_frame_rows is None:

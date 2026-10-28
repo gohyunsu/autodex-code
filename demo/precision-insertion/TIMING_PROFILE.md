@@ -276,8 +276,8 @@ python3 demo/precision-insertion/report_timing.py \
 ```
 
 The manifest must have independent human labels and real saved image SHA-256
-values; the older visual benchmark covers lift and preinsert/final appearance,
-not the live released-key `inside_socket` task label. The replay profile
+values. The evaluator now also supports the live released-key visual
+`inside_socket` label with its production final-socket crop. The replay profile
 separates manifest/image load, model load and individual VLM calls.
 Do not report animation/video playback duration or an offline VLM replay as
 a physical trial time.
@@ -306,8 +306,10 @@ numbers for that session.
    use visibility, non-occlusion, camera geometry and prior observed reliability,
    and fall back to more views for disagreement. Do not select just the nearest
    or one high-confidence view. Two separated views are the minimum for metric
-   triangulation; three provide redundancy. Qwen currently processes each
-   camera pair/grounded view serially, so this is a likely scaling lever.
+   triangulation; three provide redundancy. The original distributed-camera
+   benchmark used individual Qwen calls. The current capture4 local backend
+   batches the lift and final-label views; verify the actual timing trace
+   before assuming another view reduction saves model latency.
 3. The fixed socket is measured only at **session startup**, not every trial.
    The current board-9 / 20 mm launch uses one capture and one stock refinement.
    Launch, bootstrap, saved calibration replay, evidence and ledger now accept
@@ -327,3 +329,27 @@ numbers for that session.
 For a fair comparison, report total time **to first key attempt** and median
 time **per trial** separately. Exclude human placement wait only as a second
 reported statistic, not by silently subtracting it from end-to-end time.
+
+## ZeroDex capture4 pre-insertion timing audit (2026-10-29)
+
+The archived four-camera runs from 2026-10-28 measured
+`trial.preinsert_label` at 2.84–3.52 s, with the nested Qwen inference at
+0.90–1.01 s. The checkpoint also builds a measured-joint Franka/Inspire plus
+nominal held-key scene and renders four CAD overlays **for audit**, while the
+VLM receives only raw camera crops. A read-only replay of the saved 5 mm
+scene on this PC measured the repeated scene build at 0.39–0.42 s and the
+warm four-view render at 0.21 s. The first render in that isolated process
+took 16.3 s including renderer/CUDA initialization, so it must not be used
+as a steady-state per-trial estimate. These are component measurements from
+saved data, not a new robot-run timing result.
+
+New nested spans `preinsert.prediction_build` and
+`preinsert.audit_overlay_render` separate those two costs on the next live
+run. They do not change the VLM input, checkpoint evidence or motion policy.
+The remaining preinsert-label time includes saved-frame decoding, crop
+construction, report/overlay writing and other checkpoint work. Retaining
+the audit overlay currently costs less than a second after warmup; removing
+it would require a distinct checkpoint/report schema and is not justified by
+the current measurements alone. The larger observed startup costs remain
+planner world setup and SAM3 model loading; both have asynchronous warmup
+paths that need measurement on a new live run before claiming a speedup.
