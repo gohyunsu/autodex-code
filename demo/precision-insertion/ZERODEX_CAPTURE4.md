@@ -27,6 +27,8 @@ start the adapter if another experiment owns the cameras.
 - Profile: `/home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4`
 - Launch: `launch.json` (board 9, one fixed socket capture, four cameras)
 - Runtime: `franka_runtime.json` (local Qwen and planning)
+- Measured ZeroDex clear view: `clear_view_arm_q.json` beside the runtime file;
+  loaded only by the ZeroDex integration factory, never by stock AutoDex
 - Straight-mount cylinder catalogs: `recipient_gap{1,3,5,10,15,20}_endpoint_catalog_straight.json`
 - Franka/Inspire mount: `autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf`
 - Local Qwen weights: `/home/hyunsu/shared_data/AutoDex/models/Qwen3-VL-2B-Instruct`
@@ -364,25 +366,28 @@ or independently verified socket-pose accuracy. The launch currently selects
 the 20 mm radial-gap socket asset; confirm the physical socket variant before
 reusing this session for key planning.
 
-The operator-designated *current* FR3 pose has not yet been recorded as the
-ZeroDex clear-view joint target. A read-only libfranka probe is in
+The operator-designated FR3 pose was recorded after the operator added a
+robot-source-only UDP rule on `enp4s0`. A read-only libfranka probe is in
 `read_fr3_state_once.cpp`; its local built binary is at
-`zerodex_capture4/robot_deps/read_fr3_state_once`. On this host, the probe
-connects to `172.16.1.11:1337` over TCP, but `readOnce()` times out waiting
-for a robot-state UDP datagram. The local `ufw` service is active; its rules
-could not be inspected without sudo. No firewall setting was changed. A
+`zerodex_capture4/robot_deps/read_fr3_state_once`. Before that rule, TCP to
+`172.16.1.11:1337` worked but `readOnce()` timed out on UDP. Afterward two
+stationary reads agreed to within 0.000007 rad. The second seven-joint sample
+is saved at `zerodex_capture4/clear_view_arm_q.json`. The ZeroDex factory
+loads it before constructing AutoDex's executor/planner, updates the shared
+in-process ndarray referenced by the clear-view/release/recovery code, and
+restores the stock value when the session closes. It does not edit the stock
+AutoDex clear-view constant or ParaDex calibration on disk. A
 read-only Modbus check of Inspire `angleAct` returned
 `[800, 802, 800, 800, 1000, 787]` in controller order. The stock pipeline's
 `INSPIRE_INIT` means all raw angles near 1000 (fully open), so the measured
 hand is not yet at that software target.
 
-Do **not** run `--run` or `--plan-only` assuming this is already the clear
-view: the current ZeroDex factory still inherits AutoDex's hard-coded
-October-12 `FR3_CLEAR_VIEW` target, and initial `home(clear_view=True)` would
-command a move to it. First resolve the FCI UDP receive path, record the
-seven measured joints, and bind that target in the ZeroDex-only factory and
-planner before enabling motion. Neither the camera-only probe nor the saved
-socket calibration requires that robot-side step.
+`--run` and `--plan-only` still need the local ParaDex daemon and an explicit
+motion opt-in; neither was started in this capture. Initial
+`home(clear_view=True)` will open Inspire and command the *measured* FR3
+target, even if the arm is already near it. This is a command-capable action,
+not what the read-only pose probe or socket capture did. Keep the board/socket
+fixed if reusing this one-capture calibration.
 
 ## Observed fixed socket, 2026-10-27
 

@@ -1,14 +1,19 @@
 """Use the existing AutoDex FR3 executor with ZeroDex's local ParaDex daemon.
 
-This profile changes only the process-local ParaDex arm address. The daemon
-must already be running for the ZeroDex FR3; this module never launches it or
-claims ownership of the robot's FCI connection.
+This profile changes only process-local ParaDex arm routing and the clear-view
+joint target. The daemon must already be running for the ZeroDex FR3; this
+module never launches it or claims ownership of the robot's FCI connection.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from pathlib import Path
+
+import numpy as np
+
+from autodex.utils.robot_config import FR3_CLEAR_VIEW
 
 from .franka_integration import factory as stock_factory
 from .franka_integration import load_franka_integration_config
@@ -18,6 +23,20 @@ from .stock_daemon_identity import _ports_and_timeout
 
 ZERODEX_FR3_FCI_IP = "172.16.1.11"
 LOCAL_DAEMON_HOST = "127.0.0.1"
+_CLEAR_VIEW_SCHEMA = "precision_insertion_zerodex_clear_view_v1"
+
+
+def load_zerodex_clear_view(config_path: Path) -> np.ndarray:
+    """Read the measured clear-view joints beside the ZeroDex robot profile."""
+    source = Path(config_path).expanduser().resolve().parent / "clear_view_arm_q.json"
+    record = json.loads(source.read_text(encoding="utf-8"))
+    if (record.get("schema") != _CLEAR_VIEW_SCHEMA or
+            record.get("robot_fci_ip") != ZERODEX_FR3_FCI_IP):
+        raise ValueError(f"wrong ZeroDex FR3 clear-view record: {source}")
+    q = np.asarray(record.get("arm_q"), dtype=np.float64)
+    if q.shape != (7,) or not np.all(np.isfinite(q)):
+        raise ValueError(f"invalid seven-joint ZeroDex clear view: {source}")
+    return q
 
 
 def inspect_zerodex_daemon(
@@ -65,18 +84,26 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     monitor = parsed["held_motion_monitor"] or parsed["lift_monitor"]
     if monitor is not None and not monitor[0].is_file():
         raise FileNotFoundError(f"ZeroDex FR3 daemon binary is missing: {monitor[0]}")
+    clear_view_q = load_zerodex_clear_view(options.robot_config_path)
     inspect_zerodex_daemon()
 
+    # Imported FR3_CLEAR_VIEW references in the executor, clear-view gate and
+    # release/recovery planners all point to this one ndarray. Updating it in
+    # place before stock_factory constructs the core keeps their target
+    # identical without changing the AutoDex source or global calibration.
     # ParaDex's get_arm() reads this module-level dictionary. Mutating it in
     # this single-session process avoids editing the shared network.json.
     from paradex.utils.system import network_info
 
+    previous_clear_view = FR3_CLEAR_VIEW.copy()
+    FR3_CLEAR_VIEW[:] = clear_view_q
     previous_host = network_info["franka"]
     network_info["franka"] = LOCAL_DAEMON_HOST
     try:
         integration = stock_factory(options)
     except BaseException:
         network_info["franka"] = previous_host
+        FR3_CLEAR_VIEW[:] = previous_clear_view
         raise
 
     def close() -> None:
@@ -84,5 +111,6 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             integration.close()
         finally:
             network_info["franka"] = previous_host
+            FR3_CLEAR_VIEW[:] = previous_clear_view
 
     return replace(integration, close=close)

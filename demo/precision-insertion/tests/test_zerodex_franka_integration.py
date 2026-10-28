@@ -1,9 +1,12 @@
 """ZeroDex arm routing tests; no robot or camera connections are opened."""
 
+import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
+from autodex.utils.robot_config import FR3_CLEAR_VIEW
 from precision_insertion import zerodex_franka_integration as route
 from precision_insertion.live_runtime import LiveRuntimeIntegration, RunLiveOptions
 
@@ -36,6 +39,11 @@ def test_inspect_zerodex_daemon_requires_exact_robot_and_ports(tmp_path):
 
 
 def _options(tmp_path: Path) -> RunLiveOptions:
+    (tmp_path / "clear_view_arm_q.json").write_text(json.dumps({
+        "schema": "precision_insertion_zerodex_clear_view_v1",
+        "robot_fci_ip": "172.16.1.11",
+        "arm_q": [0.1, -0.7, 0.0, -2.3, 0.0, 1.5, 0.7],
+    }), encoding="utf-8")
     return RunLiveOptions(
         launch_config_path=tmp_path / "launch.json",
         endpoint_catalog_path=tmp_path / "catalog.json",
@@ -55,17 +63,23 @@ def test_factory_routes_process_only_and_restores_after_close(tmp_path, monkeypa
                             "lift_monitor": None})
     monkeypatch.setattr(route, "inspect_zerodex_daemon", lambda: {})
     original = network_info["franka"]
+    original_clear_view = FR3_CLEAR_VIEW.copy()
     observed = []
     monkeypatch.setattr(route, "stock_factory", lambda options: (
-        observed.append(network_info["franka"]) or
+        observed.append((network_info["franka"], FR3_CLEAR_VIEW.copy())) or
         LiveRuntimeIntegration(
             clear_view=object(), build_components=lambda live: (),
             close=lambda: observed.append(network_info["franka"]))))
     integration = route.factory(_options(tmp_path))
     assert network_info["franka"] == "127.0.0.1"
+    np.testing.assert_allclose(FR3_CLEAR_VIEW, [0.1, -0.7, 0, -2.3, 0, 1.5, 0.7])
     integration.close()
-    assert observed == ["127.0.0.1", "127.0.0.1"]
+    assert observed[0][0] == "127.0.0.1"
+    np.testing.assert_allclose(observed[0][1],
+                               [0.1, -0.7, 0, -2.3, 0, 1.5, 0.7])
+    assert observed[1] == "127.0.0.1"
     assert network_info["franka"] == original
+    np.testing.assert_allclose(FR3_CLEAR_VIEW, original_clear_view)
 
 
 def test_factory_restores_process_route_if_stock_factory_fails(tmp_path, monkeypatch):
@@ -76,15 +90,19 @@ def test_factory_restores_process_route_if_stock_factory_fails(tmp_path, monkeyp
                             "held_motion_monitor": None, "lift_monitor": None})
     monkeypatch.setattr(route, "inspect_zerodex_daemon", lambda: {})
     original = network_info["franka"]
+    original_clear_view = FR3_CLEAR_VIEW.copy()
 
     def fail(options):
         assert network_info["franka"] == "127.0.0.1"
+        np.testing.assert_allclose(FR3_CLEAR_VIEW,
+                                   [0.1, -0.7, 0, -2.3, 0, 1.5, 0.7])
         raise RuntimeError("startup failed")
 
     monkeypatch.setattr(route, "stock_factory", fail)
     with pytest.raises(RuntimeError, match="startup failed"):
         route.factory(_options(tmp_path))
     assert network_info["franka"] == original
+    np.testing.assert_allclose(FR3_CLEAR_VIEW, original_clear_view)
 
 
 def test_factory_does_not_touch_robot_when_daemon_binary_missing(tmp_path, monkeypatch):
@@ -100,3 +118,21 @@ def test_factory_does_not_touch_robot_when_daemon_binary_missing(tmp_path, monke
     with pytest.raises(FileNotFoundError, match="daemon binary is missing"):
         route.factory(_options(tmp_path))
     assert network_info["franka"] == original
+
+
+def test_clear_view_loader_rejects_wrong_robot_or_nonfinite_q(tmp_path):
+    options = _options(tmp_path)
+    np.testing.assert_allclose(
+        route.load_zerodex_clear_view(options.robot_config_path),
+        [0.1, -0.7, 0, -2.3, 0, 1.5, 0.7])
+    source = tmp_path / "clear_view_arm_q.json"
+    record = json.loads(source.read_text(encoding="utf-8"))
+    record["robot_fci_ip"] = "172.16.0.2"
+    source.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match="wrong ZeroDex FR3"):
+        route.load_zerodex_clear_view(options.robot_config_path)
+    record["robot_fci_ip"] = "172.16.1.11"
+    record["arm_q"][0] = float("nan")
+    source.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid seven-joint"):
+        route.load_zerodex_clear_view(options.robot_config_path)
