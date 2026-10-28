@@ -6,6 +6,8 @@ kds-Z790 PC runs session orchestration, Qwen VLM and planning. Capture4
 (`147.46.219.136`, SSH port `77`) provides four cameras and a persistent
 SAM3/FoundPose process. Its existing ParaDex checkout, global `system/current`
 configuration, calibration and Python environments are **not edited**.
+For the robot-free replay of previously lit four-camera socket/key photographs,
+see [SAVED_CAPTURE4_SCENE_20261028.md](SAVED_CAPTURE4_SCENE_20261028.md).
 
 The capture-side adapter is copied only to
 `/home/capture4/precision_insertion_capture4_20261027`. It starts three

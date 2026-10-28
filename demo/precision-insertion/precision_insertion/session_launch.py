@@ -395,6 +395,25 @@ def load_session_launch(
         fixture_contract_validated=mode.family == "cylinder")
 
 
+def register_profile_charuco_board(launch: SessionLaunch) -> None:
+    """Register this profile's board in-process for live or saved images."""
+    if launch.board_id != "9":
+        return
+    board_config = launch.capture_root / "charuco_board9.json"
+    if not board_config.is_file():
+        return
+    # The local ParaDex system/current may describe the old 20-camera rig.
+    # Never change shared ParaDex configuration for this capture4 board.
+    from paradex.image import aruco as paradex_aruco
+
+    info = json.loads(board_config.read_text(encoding="utf-8"))
+    paradex_aruco.check_boardinfo_valid({"9": info})
+    paradex_aruco.boardinfo_dict["9"] = info
+    paradex_aruco._charuco_board_cache.pop("9", None)
+    paradex_aruco._charuco_detector_cache.pop("9", None)
+    paradex_aruco.get_charuco_detector()
+
+
 @contextmanager
 def open_session_cameras(
     launch: SessionLaunch,
@@ -411,20 +430,7 @@ def open_session_cameras(
         raise TypeError("camera session needs a validated launch")
     if launch.execution_scope not in {"live", "camera_only_diagnostic"}:
         raise PermissionError("static preflight launch cannot open cameras")
-    if launch.board_id == "9":
-        board_config = launch.capture_root / "charuco_board9.json"
-        if board_config.is_file():
-            # The local ParaDex system/current may describe the old 20-camera
-            # rig. Register only this profile's measured board in-process;
-            # do not edit shared ParaDex configuration or the AutoDex path.
-            from paradex.image import aruco as paradex_aruco
-
-            info = json.loads(board_config.read_text(encoding="utf-8"))
-            paradex_aruco.check_boardinfo_valid({"9": info})
-            paradex_aruco.boardinfo_dict["9"] = info
-            paradex_aruco._charuco_board_cache.pop("9", None)
-            paradex_aruco._charuco_detector_cache.pop("9", None)
-            paradex_aruco.get_charuco_detector()
+    register_profile_charuco_board(launch)
     if init_ports is not None and (
             not isinstance(init_ports, tuple) or len(init_ports) != 3 or
             any(type(port) is not int or not 0 < port < 65536
