@@ -724,6 +724,11 @@ rig's *measured* clear-view joints. These are offline plan checks; the key's
 pose and the robot's start state must be measured again for a new trial.
 Use `--initial-candidate table/0/20267` to request it first in the live
 launcher; normal candidate planning still checks the fresh observation.
+The ZeroDex launcher now supplies this as its default initial preference
+when `PRECISION_GAP_MM=10`. `PRECISION_INITIAL_CANDIDATE=` disables the
+preference, and an explicit candidate value replaces it. Other socket gaps
+retain the original candidate order. This changes only planning order and
+adds no candidate rejection or robot-motion criterion.
 
 The prior all-channel hand `65535` reading disappeared after the hand cable
 reconnection, power cycle, and ordinary open command. A later read-only

@@ -19,6 +19,14 @@ export PRECISION_PRELOAD_VLM=${PRECISION_PRELOAD_VLM:-1}
 # cuRobo world. Start that work while capture4 acquires/refines the next key.
 # A caller can set 0 for a measured serial-latency comparison.
 export PRECISION_PREWARM_FIXED_WORLD=${PRECISION_PREWARM_FIXED_WORLD:-1}
+# For the current 10 mm socket, try the saved-scene grasp whose pickup,
+# insertion, opening, and return plans passed before spending time on the
+# other v8 candidates. Fresh-scene planning still decides eligibility and
+# falls back to the normal order. An explicitly empty value disables this
+# preference without introducing a candidate filter.
+if [[ ${PRECISION_GAP_MM:-20} == 10 && -z ${PRECISION_INITIAL_CANDIDATE+x} ]]; then
+  export PRECISION_INITIAL_CANDIDATE=table/0/20267
+fi
 # ZeroDex uses the original straight flange-to-Inspire mount, not the
 # October 12 right-angle mount selected by run_robot_pc.sh for AutoDex.
 export PRECISION_FR3_INSPIRE_URDF=${PRECISION_FR3_INSPIRE_URDF:-$ROOT/autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf}
