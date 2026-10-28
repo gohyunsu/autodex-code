@@ -283,6 +283,11 @@ start the adapter if another experiment owns the cameras.
   the hint is infeasible. Set `PRECISION_INITIAL_CANDIDATE=` to disable it.
   The saved label record does not establish that this grasp achieved a
   physically verified 20 mm insertion.
+  Eight archived 5 mm preflight reports all reached this candidate sixth,
+  after the same five earlier candidates. Their timing spans put the median
+  work before its candidate load at 7.12 s (range 5.48–10.00 s); the median
+  complete candidate preflight was 12.98 s. This is a trace-derived estimate
+  of avoidable prefix work, not a measured runtime saving from the new order.
 - The ZeroDex launcher sets `PRECISION_PREWARM_FIXED_WORLD=1` for both newly
   placed and already placed keys. After the fixed socket is available, the
   planner initializes its table/socket cuRobo world in a background thread
