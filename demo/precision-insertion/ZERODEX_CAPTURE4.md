@@ -220,7 +220,7 @@ start the adapter if another experiment owns the cameras.
   existing CUDA 12.1 toolkit and PyTorch-bundled header paths for first-use
   RTX 3090 JIT compilation. `--check` is file-only; the saved-view GPU replay
   below tests this renderer without a robot.
-- Local Qwen batches the three selected classification-camera pairs on one
+- Local Qwen batches the four selected classification-camera pairs on one
   GPU. Prompts, replies and votes remain per camera. Metric key-point
   grounding still uses its separate native-pixel path.
 - The ZeroDex launcher sets `PRECISION_PRELOAD_VLM=1`: after the cuRobo
@@ -246,13 +246,23 @@ start the adapter if another experiment owns the cameras.
   `PRECISION_PREWARM_FIXED_WORLD=0` for the former serial timing. No grasp,
   collision, or task-success criterion changes. `--check` and `--camera-only`
   do not perform this live planner warmup.
+- In the saved `20261028_233043_399147` live timing trace, the first
+  `capture_fresh_key` action took 31.66 s. This included 2.57 s for camera/key
+  capture, 11.31 s for candidate preflight, and a **17.62 s wait for the
+  one-time fixed-world planner warmup**. The warmup itself ran from pipeline
+  31.77 to 52.13 s while capture ran from 31.80 to 34.37 s. Thus the full
+  31.66 s is not key-perception latency; repeat attempts in the same process
+  should not pay that warmup wait. The trace also recorded 7.91 s cumulative
+  across 22 VLM calls and 7.44 s cumulative across 44 PNG writes; cumulative
+  parallel times are not additional wall-clock time. Use the saved timing
+  summary before changing image or planning work that is already overlapped.
 - The ZeroDex launcher sets `PRECISION_VISIBLE_GRIP_CAMERA_IDS` to the same
-  three selected views. Its lift checkpoint uses measured Franka/Inspire FK,
+  four selected views. Its lift checkpoint uses measured Franka/Inspire FK,
   the straight-mount URDF and calibrated projections to crop the hand in each
-  raw after-lift frame; three single-image YES/NO prompts share one GPU batch.
+  raw after-lift frame; four single-image YES/NO prompts share one GPU batch.
   The original AutoDex fixed two-camera crop and its saved report schema are
-  unchanged. A real capture4 held-key example is still needed to audit crop
-  placement and classification accuracy.
+  unchanged. Saved capture4 held-key and missed-grasp examples are reviewed in
+  [VLM_LABEL_REVIEW_20261029.md](VLM_LABEL_REVIEW_20261029.md).
 - Same-frame full-resolution capture exchange: the existing SAM mask PUB message
   now also carries one lossless PNG of its source frame. The main PC writes it
   under local `zerodex_capture4/<capture_id>_request_<id>/images/`.
