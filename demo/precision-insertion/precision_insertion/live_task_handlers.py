@@ -395,7 +395,7 @@ class LiveTaskHandlers:
             guarded_execution_path=metric)
         # The release callback already measured the open-hand clear-view
         # endpoint. Capture the final image without a second pose gate.
-        final, _capture = self._capture(
+        final, final_capture = self._capture(
             runner=runner, decision=decision,
             callback=self.capture_final, phase="final_clear_view")
         decision_at = self.decision_time()
@@ -409,6 +409,7 @@ class LiveTaskHandlers:
                 preinsert_bundle=self._preinsert_bundle,
                 final_bundle=final, metric_record_path=metric,
                 release_record_path=release_path,
+                final_capture=final_capture,
                 backend=self.backend,
                 decision_timestamp_s=decision_at,
                 label_mode=self.label_mode,

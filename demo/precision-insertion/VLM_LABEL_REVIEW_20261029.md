@@ -227,3 +227,16 @@ been replaced with a saved-trajectory reverse-return action. Its sampled
 offline replay and untested physical scope are documented in
 `RECOVERY_REVIEW_20261021.md`. This change does not alter VLM input pixels,
 the visual inside/outside label, or the four-view XY estimator.
+
+The live final checkpoint now passes its just-captured undistorted BGR arrays
+to the classifier input builder. The saved capture manifest still supplies
+frame IDs, timestamps and PNG hashes; image pixel hashes are compared against
+that manifest. Offline replay continues to decode and verify saved PNGs. On
+the saved inside episode `30e9cd0b`, constructing the three final VLM inputs
+from PNGs took a 0.214 s median across five calls; reusing already decoded
+capture arrays took 0.029 s. This is a saved-data microbenchmark, not an
+end-to-end live timing claim. The runner also stopped immediately replaying
+the entire just-written final checkpoint before recording its label. That
+full verifier remains callable after the run; in a warm saved-session-cache
+replay it took about 0.59 s, while a cold offline replay took about 6.4 s.
+No VLM pixels, crop policy or label rule changed in this latency pass.

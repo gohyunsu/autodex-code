@@ -46,7 +46,6 @@ from .insertion_checkpoint import (
 )
 from .released_insertion_checkpoint import (
     assess_released_insertion_checkpoint,
-    verify_released_insertion_checkpoint,
     write_released_insertion_checkpoint,
 )
 from .endpoint import _load_mesh
@@ -2749,6 +2748,7 @@ class SessionRunner:
         self, *, initial_key_bundle: Path, preinsert_bundle: Path,
         final_bundle: Path, metric_record_path: Path,
         release_record_path: Path, backend: ImageVLM,
+        final_capture=None,
         decision_timestamp_s: float, max_phase_skew_s: float,
         minimum_visual_views: int = 2, label_mode: str = "vlm_only",
         manual_annotation: dict | None = None,
@@ -2805,11 +2805,15 @@ class SessionRunner:
             decision_timestamp_s=decision_timestamp_s, backend=backend,
             max_phase_skew_s=max_phase_skew_s,
             minimum_visual_views=minimum_visual_views,
-            label_mode=label_mode, manual_annotation=manual_annotation)
+            label_mode=label_mode, manual_annotation=manual_annotation,
+            final_capture=final_capture)
         output = (self._attempt_dir / "released_insertion_assessments" /
                   f"{self._insertion_assessment_index:03d}")
         checkpoint = write_released_insertion_checkpoint(report, output)
-        verify_released_insertion_checkpoint(checkpoint)
+        # The live producer has already bound frame identities, pixel hashes,
+        # metric sources and the VLM result while constructing this report.
+        # Replaying all saved PNGs here repeats the same work on the trial's
+        # critical path. The full verifier remains available offline.
         metric = json.loads(Path(metric_record_path).read_text(encoding="utf-8"))
         sources = metric.get("source_records")
         if sources is None and metric.get("schema") == (

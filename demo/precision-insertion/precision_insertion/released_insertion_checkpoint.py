@@ -31,6 +31,7 @@ from .observer import (
 from .outcome import InsertionEvidence, resolve_insertion_outcome
 from .post_insertion_release import verify_post_insertion_release
 from .raw_camera_capture import verify_raw_camera_capture
+from .raw_camera_capture import RawCameraCapture
 from .session_bootstrap import _safe_id
 from .visual_views import final_assessment_cameras
 
@@ -43,12 +44,19 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _image_frames(root: Path, record: dict, cameras: list[str], phase: str):
+def _image_frames(root: Path, record: dict, cameras: list[str], phase: str,
+                  live_capture: RawCameraCapture | None = None):
     frames, rows = [], []
+    if live_capture is not None and (
+            live_capture.capture_id != record["capture_id"] or
+            live_capture.request_id != record["request_id"] or
+            not set(cameras) <= set(live_capture.images_bgr)):
+        raise ValueError("live final pixels differ from the saved capture")
     for camera in cameras:
         name = _safe_id(camera, "camera ID")
         path = root / "images" / f"{name}.png"
-        image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        image = (cv2.imread(str(path), cv2.IMREAD_COLOR)
+                 if live_capture is None else live_capture.images_bgr[camera])
         evidence = record["frame_evidence"][camera]
         if image is None or image_sha256(image) != evidence["image_sha256"]:
             raise ValueError("released-insertion VLM image differs from capture")
@@ -57,7 +65,10 @@ def _image_frames(root: Path, record: dict, cameras: list[str], phase: str):
             Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))))
         rows.append({
             "phase": phase, "camera_id": camera, "path": str(path),
-            "file_sha256": _sha(path), "frame_id": evidence["frame_id"],
+            "file_sha256": (
+                _sha(path) if live_capture is None else
+                record["image_file_sha256"][camera]),
+            "frame_id": evidence["frame_id"],
             "image_sha256": evidence["image_sha256"],
             "timestamp_s": evidence["timestamp_s"],
             "max_error_s": evidence["max_error_s"],
@@ -176,6 +187,7 @@ def assess_released_insertion_checkpoint(
     max_phase_skew_s: float, minimum_visual_views: int = 2,
     label_mode: str = "vlm_only", manual_annotation: dict | None = None,
     final_camera_ids: list[str] | None = None,
+    final_capture: RawCameraCapture | None = None,
 ) -> dict:
     """Create the released-key task label while retaining controller metrics."""
     _safe_id(attempt_id, "attempt ID")
@@ -236,7 +248,8 @@ def assess_released_insertion_checkpoint(
     frames, inputs = _image_frames(
         initial_image_root, initial, cameras, "initial_tabletop")
     later, later_inputs = _image_frames(
-        final_root, final, cameras, "final_clear_view")
+        final_root, final, cameras, "final_clear_view",
+        live_capture=final_capture)
     initial_sizes = {frame.camera_id: frame.image.size for frame in frames}
     if any(initial_sizes[frame.camera_id] != frame.image.size
            for frame in later):

@@ -38,6 +38,7 @@ from precision_insertion.raw_camera_capture import (  # noqa: E402
     RawCameraCapture, write_raw_camera_capture,
 )
 from precision_insertion.released_insertion_checkpoint import (  # noqa: E402
+    _image_frames,
     assess_released_insertion_checkpoint,
     verify_released_insertion_checkpoint,
     write_released_insertion_checkpoint,
@@ -61,6 +62,36 @@ class FakeBackend:
     def infer(self, images, prompt):
         self.calls.append((images, prompt))
         return self.answer if isinstance(self.answer, str) else json.dumps(self.answer)
+
+
+def test_live_final_pixels_reuse_saved_capture_without_png_decode(
+        tmp_path, monkeypatch):
+    image = np.full((24, 32, 3), 73, dtype=np.uint8)
+    images = {"cam_a": image.copy(), "cam_b": image.copy()}
+    rows = {camera: {
+        "frame_id": index + 1, "image_sha256": image_sha256(pixels),
+        "timestamp_s": 100. + index * .005, "max_error_s": .001,
+        "timestamp_method": "hardware_exposure", "clock_domain": "unix_utc",
+    } for index, (camera, pixels) in enumerate(images.items())}
+    capture = RawCameraCapture(
+        "final_test", 7, images,
+        {camera: row["frame_id"] for camera, row in rows.items()},
+        {"request_id": 7, "source": "camera_acquisition", "frames": rows})
+    root = write_raw_camera_capture(
+        capture, tmp_path / "final_test", phase="final_clear_view")
+    manifest = json.loads((root / "manifest.json").read_text())
+    offline_frames, offline_rows = _image_frames(
+        root, manifest, sorted(images), "final_clear_view")
+    monkeypatch.setattr(
+        "precision_insertion.released_insertion_checkpoint.cv2.imread",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("live checkpoint decoded a saved PNG")))
+    live_frames, live_rows = _image_frames(
+        root, manifest, sorted(images), "final_clear_view",
+        live_capture=capture)
+    assert live_rows == offline_rows
+    assert [frame.image.tobytes() for frame in live_frames] == [
+        frame.image.tobytes() for frame in offline_frames]
 
 
 def _setup(tmp_path, *, answer=None, metric_overrides=None,
