@@ -116,7 +116,7 @@ are under each attempt's `same_trial_xy/observations` and
 `guarded_axial_handoffs`. The 5 mm same-episode path has not yet been tested
 with live robot motion.
 
-System-specific paths are confined to the ZeroDex launcher and can be
+System-specific runtime defaults are in the ZeroDex machine profile and can be
 overridden without editing the shared AutoDex executor:
 `PRECISION_STAGE_ROOT`, `PRECISION_PLANNER_PY`, `PRECISION_SAM_PYTHON`,
 `PRECISION_SAM_CHECKPOINT`, and `CUDA_HOME`. The namespaced capture4 manager
