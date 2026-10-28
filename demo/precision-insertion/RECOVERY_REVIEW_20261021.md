@@ -115,3 +115,39 @@ suite passed 1,085 tests with 4 skipped, excluding the separate
 `test_franka_completion_checked.py` module whose cuRobo dependency is not
 installed in that environment. The saved-pose GPU preflight above passed
 before this socket-fit change; no new live motion test was run.
+
+## 2026-10-29: corrected axial plan unavailable while the key is held
+
+The saved four-view attempt `9542c1bd` completed three same-trial XY shifts,
+then rejected the corrected 20 mm endpoint because the measured hand
+intersected the socket. No insertion stroke was commanded. The current
+`preinsert_path_unavailable` policy stops with the key held. This is a real
+gap in unattended recovery, distinct from an insertion failure after release.
+
+Replanning the existing held-key return from the original pre-insertion hold
+also returned `held_transfer_unreachable` at endpoint IK. Thus simply
+reversing the three shifts and calling the old return planner does not solve
+this saved attempt. The direct return failure is reproducible with
+`~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/probe_preinsert_return.py`.
+
+A second offline route reversed the archived three XY paths, transfer and
+lift while keeping the measured held Inspire joints fixed. Four short linear
+bridges, sampled at 11 configurations each, joined the adjacent archives.
+All 554 sampled configurations passed the existing key/hand versus
+fixed-world collision screen **and** cuRobo's whole-arm world/self constraint
+query. This is a sampled check, not a time-parameterized swept-motion proof.
+The reversed key center lies approximately 22 mm from the original tabletop
+center and 4.7 mm above it, using the cylinder's end-for-end symmetry. From
+that inferred release pose, the stock `plan_js_to_init` found an open-hand
+clear-view retract with 103 samples in the saved run. Its scene included the
+key at the inferred landing pose and the frozen socket/table.
+The replay script, result JSON, and planned retract array are grouped in the
+same development review folder as the direct-return probe.
+
+This route is **not installed for live execution**. It still needs a start
+bridge from fresh measured joints, time parameterization for the interpolated
+joins, and a verified hand opening at the tabletop site. The whole-arm result
+above covers only archived/configured joint samples. After release, the
+existing clear-view capture and original-pose restoration can check the
+actual landing and correct it. No robot or hand command was sent during this
+review.
