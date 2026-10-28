@@ -34,6 +34,11 @@ def install(bundle: Path, destination: Path,
     subprocess.run(["rsync", "-a", "--no-owner", "--no-group", "--no-perms",
                     str(bundle / "assets/shared_data") + "/",
                     str(shared) + "/"], check=True)
+    for package in manifest.get("asset_packages", []):
+        target = shared / package["extract_to"]
+        target.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(bundle / package["path"], "r:") as archive:
+            archive.extractall(target)
     original = manifest["source_shared_root"]
     for path in shared.rglob("*.json"):
         before = path.read_text(encoding="utf-8")

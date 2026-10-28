@@ -7,7 +7,8 @@ code; the old AutoDex experiment directory is not this project's archive.
 | Path under project root | Contents |
 | --- | --- |
 | `code/` | Exact tracked AutoDex fork and ParaDex source archives, with commits and SHA256 in `PROJECT_MANIFEST.json` |
-| `assets/shared_data/` | Object meshes, all six cylindrical sockets, FoundPose representations, v8 grasps, reset candidates, scenes, fixture geometry, Qwen, SAM3, capture4 calibration, launch/catalog templates, robot dependency bundle |
+| `assets/shared_data/` | Object meshes, all six cylindrical sockets, key FoundPose representation, v8 grasps, reset candidates, scenes, fixture geometry, Qwen, SAM3, capture4 calibration, launch/catalog templates, robot dependency bundle |
+| `assets/packages/foundpose/` | Six socket FoundPose representations, one TAR per socket to avoid thousands of tiny NAS writes; the installer extracts them into `shared_data/AutoDex/foundpose_assets/` |
 | `assets/capture4_cache/` | capture4's offline SAM3 Hugging Face cache and two DINOv2 checkpoints |
 | `rigs/zerodex_capture4/runtime` | Project-local link to the capture4 calibration, robot profile and launch/catalog templates in `assets/shared_data` |
 | `environments/` | Local planner and capture4 Python package lists |
@@ -31,7 +32,8 @@ python demo/precision-insertion/prepare_zerodex_nas_project.py
 ```
 
 Large unchanged NAS source files are hardlinked where available, and local
-runtime files are copied into the project tree. Hardlinks remain readable
+runtime files are copied into the project tree. Socket representations are
+packed locally and transferred as one file per socket. Hardlinks remain readable
 from the project root even if the older handoff pathname is removed. The
 manifest hashes the resulting files. The builder does not move source files or
 start the robot.

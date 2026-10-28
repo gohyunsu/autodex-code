@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 
 
 HERE = Path(__file__).resolve().parent
@@ -72,6 +73,30 @@ def _source_archive(repo: Path, destination: Path) -> dict:
             "archive": archive.name, "sha256": _sha256(archive)}
 
 
+def _package_socket_representations(shared: Path, nas_root: Path) -> list[dict]:
+    """Send many small representation files as one file per socket."""
+    packages = []
+    package_dir = nas_root / "assets" / "packages" / "foundpose"
+    package_dir.mkdir(parents=True, exist_ok=True)
+    for gap in GAPS:
+        name = f"precision_socket_cylinder_gap_{gap:02d}mm"
+        source = shared / "AutoDex" / "foundpose_assets" / name
+        if not source.is_dir():
+            raise FileNotFoundError(source)
+        destination = package_dir / f"{name}.tar"
+        print(f"[bundle] packed FoundPose {name}", flush=True)
+        with tempfile.TemporaryDirectory(prefix="precision_foundpose_") as temp:
+            temporary_tar = Path(temp) / destination.name
+            subprocess.run(["tar", "-C", str(source), "-cf",
+                            str(temporary_tar), "."], check=True)
+            _copy_file(temporary_tar, destination)
+        packages.append({
+            "path": str(destination.relative_to(nas_root)),
+            "extract_to": f"AutoDex/foundpose_assets/{name}",
+        })
+    return packages
+
+
 def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
           source_stage: Path, capture4_host: str | None = None,
           ssh_port: int = 77) -> dict:
@@ -103,13 +128,13 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
         name = f"precision_socket_cylinder_gap_{gap:02d}mm"
         relative_trees.extend((
             f"object_processing/{name}",
-            f"AutoDex/foundpose_assets/{name}",
             f"AutoDex/precision_insertion/fixtures/{name}",
         ))
     for relative in relative_trees:
         print(f"[bundle] {relative}", flush=True)
         _copy_tree(shared / relative, assets / relative,
                    link_dest=source_stage / relative)
+    packages = _package_socket_representations(shared, nas_root)
     runtime = Path("AutoDex/precision_insertion/zerodex_capture4")
     runtime_files = (
         "base_scene.json", "charuco_board9.json", "clear_view_arm_q.json",
@@ -170,6 +195,7 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
         "cylindrical_gap_mm": list(GAPS),
         "rig_runtime": "rigs/zerodex_capture4/runtime",
         "code": snapshots, "assets": records,
+        "asset_packages": packages,
         "asset_file_count": len(records),
         "runtime_nas_upload": "separate_post_run_command_only",
     }
