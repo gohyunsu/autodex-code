@@ -40,12 +40,19 @@ def record(camera_id: str, output_dir: Path, *, fps: int, max_seconds: float,
     skipped = 0
     first_id = None
     last_id = reader.get_frame_id()
+    frame_period_ns = int(1_000_000_000 / fps)
+    next_write_ns = time.monotonic_ns()
     started_ns = time.time_ns()
     status = "completed"
     try:
         with index_path.open("x", encoding="utf-8") as index:
             deadline = time.monotonic() + max_seconds
             while not stop and time.monotonic() < deadline:
+                now_ns = time.monotonic_ns()
+                if now_ns < next_write_ns:
+                    time.sleep(min(poll_seconds,
+                                   (next_write_ns - now_ns) / 1_000_000_000))
+                    continue
                 fid = reader.get_frame_id()
                 if fid < last_id:
                     # The camera stream starts a new frame-ID sequence for
@@ -76,6 +83,7 @@ def record(camera_id: str, output_dir: Path, *, fps: int, max_seconds: float,
                     first_id = fid
                 last_id = fid
                 count += 1
+                next_write_ns = now_ns + frame_period_ns
     except Exception:
         status = "error"
         raise
