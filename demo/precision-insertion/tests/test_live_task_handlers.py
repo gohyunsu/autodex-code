@@ -238,6 +238,42 @@ def test_same_trial_xy_reobserves_and_replans_from_final_hold(
     assert bound._same_trial_handoff == tmp_path / "corrected_handoff.json"
 
 
+def test_corrected_plan_failure_records_stop_without_insertion(tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    runner._attempt_dir = tmp_path / "attempts" / runner.active_attempt.attempt_id
+    bound._preinsert_bundle = tmp_path / "preinsert"
+    bound.planner = object()
+    bound.path_limits = object()
+    bound.alignment_limits = object()
+    bound.same_trial_tip_height_error_m = .01
+    bound.same_trial_xy_tolerance_m = .005
+    failure = runner._attempt_dir / "guarded_axial_handoffs/000/plan_failure.json"
+    failure.parent.mkdir(parents=True)
+    failure.write_text('{"status":"corrected_20mm_endpoint_rejected"}\n',
+                       encoding="utf-8")
+    recorded = []
+    runner.record_failure = lambda code, **kwargs: recorded.append((code, kwargs))
+    monkeypatch.setattr(live_task_handlers, "measure_preinsert_xy",
+                        lambda **_kwargs: {"alignment": {
+                            "status": "diagnostic_metric_xy_correction",
+                            "inlier_cameras": ["front", "side"],
+                            "xy_correction_socket_m": [.001, 0.],
+                        }})
+    monkeypatch.setattr(live_task_handlers, "plan_corrected_axial_handoff",
+                        lambda **_kwargs: (_ for _ in ()).throw(
+                            live_task_handlers.CorrectedAxialPlanUnavailable(
+                                failure, "corrected_20mm_endpoint_rejected")))
+    bound._refine_current_hold(runner)
+    assert bound._same_trial_handoff is None
+    assert recorded == [("preinsert_path_unavailable", {
+        "timestamp_s": 20.,
+        "evidence_refs": {
+            "corrected_axial_plan_failure": str(failure),
+            "preinsert_snapshot": str(bound._preinsert_bundle / "manifest.json"),
+        },
+    })]
+
+
 @pytest.mark.parametrize("result", [
     {"safety_abort": True, "grasp_held": True},
     {"safety_abort": False, "grasp_held": False},

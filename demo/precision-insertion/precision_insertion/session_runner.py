@@ -326,6 +326,8 @@ class SessionRunner:
                              else "insertion"),
             "status": ("observed_success" if observed is True else
                        "observed_failure" if observed is False else
+                       "planning_stopped_before_insertion" if
+                       attempt.failure_code == "preinsert_path_unavailable" else
                        "in_progress"),
             "success": observed,
             "failure_code": attempt.failure_code,

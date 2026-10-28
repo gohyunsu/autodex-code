@@ -29,7 +29,8 @@ from .post_insertion_release import verify_post_insertion_release
 from .transfer_execution import execute_bound_held_transfer
 from .timing_profile import timed
 from .same_trial_xy import (
-    choose_xy_move, measure_preinsert_xy, plan_and_execute_shift,
+    CorrectedAxialPlanUnavailable, choose_xy_move, measure_preinsert_xy,
+    plan_and_execute_shift,
     plan_corrected_axial_handoff,
 )
 
@@ -305,15 +306,28 @@ class LiveTaskHandlers:
         if final_residual is not None:
             with timed("trial.same_trial_axial_replan", phase="planning",
                        kind="planning", attempt_id=attempt.attempt_id):
-                self._same_trial_handoff = plan_corrected_axial_handoff(
-                    runner=runner, planner=self.planner,
-                    path_limits=self.path_limits,
-                    read_state=self.read_state,
-                    total_xy_m=total, residual_xy_m=final_residual,
-                    residual_source=residual_source,
-                    observations=observations,
-                    shifts=shifts,
-                    final_preinsert_bundle=self._preinsert_bundle)
+                try:
+                    self._same_trial_handoff = plan_corrected_axial_handoff(
+                        runner=runner, planner=self.planner,
+                        path_limits=self.path_limits,
+                        read_state=self.read_state,
+                        total_xy_m=total, residual_xy_m=final_residual,
+                        residual_source=residual_source,
+                        observations=observations,
+                        shifts=shifts,
+                        final_preinsert_bundle=self._preinsert_bundle)
+                except CorrectedAxialPlanUnavailable as exc:
+                    # The held key has not undergone an insertion stroke.
+                    # Preserve that distinction and the exact failed plan;
+                    # the session decision cannot proceed to contact motion.
+                    runner.record_failure(
+                        "preinsert_path_unavailable",
+                        timestamp_s=self.decision_time(),
+                        evidence_refs={
+                            "corrected_axial_plan_failure": str(exc.report_path),
+                            "preinsert_snapshot": str(
+                                self._preinsert_bundle / "manifest.json"),
+                        })
 
     def insert_and_observe(self, runner, decision: SessionDecision) -> None:
         attempt = self._require(runner, decision,

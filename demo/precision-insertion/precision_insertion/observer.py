@@ -238,9 +238,9 @@ class LocalQwenBackend:
         self.max_new_tokens = max_new_tokens
         self.native_pixel_coordinates = bool(require_native_pixels)
         self.classification_image_size = classification_image_size
-        # Each camera keeps its own temporal pair and answer. The local model
-        # may batch those separate conversations on one GPU; it never sees a
-        # single mixed-camera conversation.
+        # Each camera gets an independent question and answer. Some stages use
+        # a temporal pair; the released-socket label uses one final crop.
+        # Batching never mixes camera identities into one conversation.
         self.preferred_image_batch_size = 2
         # The three small, pixel-preserving grounding crops can share one
         # Qwen decode. Full-resolution grounding remains one view at a time.

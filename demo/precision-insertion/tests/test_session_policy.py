@@ -68,6 +68,19 @@ def _insert(record, *, vlm="partial", grasp_held=True, safety_abort=False,
                        "force_trace": "sensors/wrench.json"})
 
 
+def test_corrected_axial_plan_failure_stops_with_unknown_insertion():
+    record = _attempt()
+    _grasp(record)
+    _hold(record)
+    record.record_failure(
+        "preinsert_path_unavailable", timestamp_s=4.,
+        evidence_refs={"corrected_axial_plan_failure": "plan_failure.json"})
+    assert record.labels["insertion_success"] is None
+    decision = decide_after_attempt(record, max_xy_retries=None)
+    assert decision.action == "stop_for_review"
+    assert decision.reason == "corrected_axial_plan_unavailable_while_key_held"
+
+
 def _decision(*, choice="x_plus_1mm", cameras=("cam0", "cam1")):
     return ChoiceDecision(
         "propose", "two_view_consensus", choice, (0.001, 0.0),

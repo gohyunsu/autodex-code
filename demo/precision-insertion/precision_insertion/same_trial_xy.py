@@ -49,6 +49,15 @@ def _write(path: Path, record: dict) -> Path:
     return path
 
 
+class CorrectedAxialPlanUnavailable(RuntimeError):
+    """A saved corrected 20 mm plan failed before insertion motion."""
+
+    def __init__(self, report_path: Path, status: str):
+        self.report_path = Path(report_path)
+        self.status = status
+        super().__init__(f"corrected 20 mm plan failed: {status}")
+
+
 def choose_xy_move(alignment: dict, *, tolerance_m: float,
                    max_step_m: float = .010) -> dict:
     """Use measured multiview XY; single-view plane guesses are not metric.
@@ -359,7 +368,7 @@ def plan_corrected_axial_handoff(*, runner, planner,
                        atol=1e-8, rtol=0):
         raise ValueError("corrected endpoint and axial goal differ")
     if endpoint["endpoint_pass"] is not True:
-        _write(folder / "plan_failure.json", {
+        failure = _write(folder / "plan_failure.json", {
             "schema": "precision_insertion_same_trial_axial_plan_failure_v1",
             "attempt_id": runner.active_attempt.attempt_id,
             "candidate_id": runner.active_attempt.candidate_id,
@@ -373,7 +382,8 @@ def plan_corrected_axial_handoff(*, runner, planner,
             "planning": None,
             "scope": "failed_plan_no_insertion_command",
         })
-        raise RuntimeError("corrected 20 mm endpoint intersects the socket")
+        raise CorrectedAxialPlanUnavailable(
+            failure, "corrected_20mm_endpoint_rejected")
     planned = plan_held_transfer_and_axial(
         planner=planner, trial_scene=runner._preflight.trial_scene,
         shared_root=runner.shared_root, calibration=runner.calibration,
@@ -382,7 +392,7 @@ def plan_corrected_axial_handoff(*, runner, planner,
         limits=path_limits, axial_waypoint_step_m=.005,
         start_at_preinsert=True)
     if not planned.sampled_planning_pass or planned.axial_trajectory is None:
-        _write(folder / "plan_failure.json", {
+        failure = _write(folder / "plan_failure.json", {
             "schema": "precision_insertion_same_trial_axial_plan_failure_v1",
             "attempt_id": runner.active_attempt.attempt_id,
             "candidate_id": runner.active_attempt.candidate_id,
@@ -396,7 +406,7 @@ def plan_corrected_axial_handoff(*, runner, planner,
             "planning": planned.to_record(),
             "scope": "failed_plan_no_insertion_command",
         })
-        raise RuntimeError(f"corrected 20 mm plan failed: {planned.status}")
+        raise CorrectedAxialPlanUnavailable(failure, planned.status)
     archive = folder / "planned_trajectories.npz"
     np.savez_compressed(archive, axial=planned.axial_trajectory)
     report = _write(folder / "report.json", {

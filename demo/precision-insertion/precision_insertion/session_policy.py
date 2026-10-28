@@ -127,6 +127,9 @@ def decide_after_attempt(
         return result("stop_for_review", "force_stop_without_verified_ascent")
     if attempt.failure_code == "perception_unreliable":
         return result("stop_for_review", "key_state_unobservable")
+    if attempt.failure_code == "preinsert_path_unavailable":
+        return result(
+            "stop_for_review", "corrected_axial_plan_unavailable_while_key_held")
     if attempt.failure_code == "slip":
         return result(
             "recover_key_then_reobserve", "slipped_key_restore_original_pose",

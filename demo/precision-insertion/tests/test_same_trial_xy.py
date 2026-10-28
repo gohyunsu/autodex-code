@@ -16,7 +16,8 @@ from precision_insertion.guarded_axial_handoff import (  # noqa: E402
     verify_guarded_axial_handoff,
 )
 from precision_insertion.same_trial_xy import (  # noqa: E402
-    _alignment_frame_inputs, _shifted_targets, choose_xy_move,
+    CorrectedAxialPlanUnavailable, _alignment_frame_inputs,
+    _shifted_targets, choose_xy_move,
 )
 from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
 from precision_insertion.targets import InsertionTargets  # noqa: E402
@@ -170,7 +171,7 @@ def test_corrected_axial_screens_measured_hand_endpoint_before_planning(
     monkeypatch.setattr(same_trial, "plan_held_transfer_and_axial",
                         lambda **_kwargs: (_ for _ in ()).throw(
                             AssertionError("collision endpoint reached axial planner")))
-    with pytest.raises(RuntimeError, match="endpoint intersects"):
+    with pytest.raises(CorrectedAxialPlanUnavailable) as stopped:
         same_trial.plan_corrected_axial_handoff(
             runner=runner,
             planner=SimpleNamespace(fk_wrist=lambda _q: pose),
@@ -179,5 +180,8 @@ def test_corrected_axial_screens_measured_hand_endpoint_before_planning(
             residual_xy_m=(0., 0.), residual_source="test",
             observations=[], shifts=[], final_preinsert_bundle=tmp_path)
     failure = json.loads((tmp_path / "attempt/guarded_axial_handoffs/000/plan_failure.json").read_text())
+    assert stopped.value.report_path == (
+        tmp_path / "attempt/guarded_axial_handoffs/000/plan_failure.json")
+    assert stopped.value.status == "corrected_20mm_endpoint_rejected"
     assert failure["status"] == "corrected_20mm_endpoint_rejected"
     assert failure["endpoint"]["hand_socket_clear_at_20mm"] is False

@@ -48,6 +48,7 @@ FAILURE_CODES = frozenset({
     "pickup_execution_failed", "post_squeeze_preflight_failed",
     "lift_execution_failed",
     "transfer_unreachable", "transfer_collision", "preinsert_misaligned",
+    "preinsert_path_unavailable",
     "rim_jam", "depth_shortfall", "force_abort", "reset_failed",
 })
 

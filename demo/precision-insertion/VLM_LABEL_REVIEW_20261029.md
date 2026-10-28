@@ -80,3 +80,17 @@ first invalid joint sample and cuRobo status when a later collision occurs.
 Neither collision condition was disabled or relaxed. This saved grasp cannot
 establish a successful corrected insertion; another grasp or a changed
 physical key-in-hand relation is needed for that episode.
+
+The corrected-plan failure is now an explicit attempt outcome:
+`preinsert_path_unavailable` with `status=planning_stopped_before_insertion`,
+`success=null`, and the exact `plan_failure.json` reference. The decision loop
+ends at `stop_for_review` while the key is still held; it does not fabricate
+an insertion label or try another candidate with the current held key.
+An offline replay of the existing held-return planner from that saved corrected
+joint state and inferred relation returned `held_transfer_unreachable`, so an
+automatic return to the original tabletop pose is not established for this
+attempt. The failed query was the return target's endpoint IK; no return
+trajectory was produced. This is an unfinished recovery path before unattended
+repeated trials.
+The replay script and log are in
+`~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/`.
