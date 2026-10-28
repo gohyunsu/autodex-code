@@ -87,6 +87,56 @@ def organize(*, stage_runs: Path, temp_root: Path, development_root: Path) -> di
                 for category, _ in sources}}
 
 
+def organize_nas_history(*, hyunsu_root: Path, project_root: Path) -> dict:
+    """Relocate precision diagnostics on the same NAS, retaining old paths."""
+    source_paths = [
+        hyunsu_root / "tmp/20261023_prev",
+        hyunsu_root / "tmp/20261024_key_face_center_methods",
+        *sorted((hyunsu_root / "tmp").glob("20261026_*")),
+        *sorted(hyunsu_root.glob("precision_socket_pose_review*")),
+    ]
+    destination_root = project_root / "development/historical_nas"
+    destination_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = project_root / "development/HISTORICAL_NAS_MANIFEST.json"
+    previous = (json.loads(manifest_path.read_text(encoding="utf-8"))
+                if manifest_path.is_file() else None)
+    moved = []
+    existing_links = []
+    for source in source_paths:
+        if source.is_symlink():
+            if source.resolve().is_relative_to(destination_root.resolve()):
+                existing_links.append({"original": str(source),
+                                       "canonical": str(source.resolve()),
+                                       "old_path_is_relative_symlink": True})
+            continue
+        if not source.exists():
+            continue
+        relative = source.relative_to(hyunsu_root)
+        destination = destination_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            raise FileExistsError(destination)
+        source.rename(destination)
+        source.symlink_to(os.path.relpath(destination, source.parent),
+                          target_is_directory=destination.is_dir())
+        moved.append({"original": str(source), "canonical": str(destination),
+                      "old_path_is_relative_symlink": True})
+    report = {
+        "schema": "precision_insertion_historical_nas_migration_v1",
+        "created_at": datetime.now().astimezone().isoformat(),
+        "moved": list({row["original"]: row for row in
+                       (previous.get("moved", []) if previous else []) +
+                       existing_links + moved}.values()),
+        "external_provenance_not_runtime": [
+            str(hyunsu_root / "handoff"),
+            str(hyunsu_root / "backup/precision-insertion_20261024"),
+        ],
+    }
+    manifest_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {"manifest": str(manifest_path), "moved_count": len(moved)}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage-runs", type=Path, default=(
@@ -95,7 +145,16 @@ def main() -> None:
     parser.add_argument("--development-root", type=Path, default=Path(
         os.environ.get("PRECISION_DEV_ROOT",
                        str(Path.home() / "precision_insertion_project/development/zerodex_capture4"))))
+    parser.add_argument("--organize-nas-history", action="store_true")
+    parser.add_argument("--nas-project-root", type=Path, default=Path(
+        os.environ.get("PRECISION_NAS_PROJECT_ROOT",
+                       "/mnt/paradex2/hyunsu/precision_insertion")))
     args = parser.parse_args()
+    if args.organize_nas_history:
+        print(json.dumps(organize_nas_history(
+            hyunsu_root=args.nas_project_root.parent,
+            project_root=args.nas_project_root), indent=2))
+        return
     print(json.dumps(organize(
         stage_runs=args.stage_runs, temp_root=args.temp_root,
         development_root=args.development_root), indent=2))

@@ -36,3 +36,17 @@ rsync -a --no-owner --no-group --no-perms \
 New camera-only runs default to `camera_only/`; timing defaults to `timing/`.
 Other diagnostic tools that require an explicit `--output-dir` should use a
 date-named directory under `probes/` or `planning/`.
+
+Historical NAS diagnostics from `hyunsu/tmp/20261023_prev`, the 24–26 October
+precision experiments, and socket pose reviews are collected under
+`development/historical_nas/` by:
+
+```bash
+python demo/precision-insertion/organize_zerodex_development.py \
+  --organize-nas-history
+```
+
+The original NAS paths become relative symlinks, including when viewed from
+capture4's different mount point. `development/HISTORICAL_NAS_MANIFEST.json`
+records every move. Older handoffs and the explicit backup remain provenance
+archives and are listed there; live runtime assets do not depend on them.
