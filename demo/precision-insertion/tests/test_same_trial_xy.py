@@ -16,9 +16,10 @@ from precision_insertion.guarded_axial_handoff import (  # noqa: E402
     verify_guarded_axial_handoff,
 )
 from precision_insertion.same_trial_xy import (  # noqa: E402
-    CorrectedAxialPlanUnavailable, _alignment_frame_inputs,
-    _shifted_targets, choose_xy_move,
+    CorrectedAxialPlanUnavailable, HeldXYPlanUnavailable,
+    _alignment_frame_inputs, _shifted_targets, choose_xy_move,
 )
+from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
 from precision_insertion.targets import InsertionTargets  # noqa: E402
 
@@ -63,6 +64,50 @@ def test_live_xy_measurement_reuses_just_saved_pixels(tmp_path, monkeypatch):
     assert set(rows) == set(images) == {"100", "200"}
     assert images["100"] is frames["100"]
     assert images["200"] is frames["200"]
+
+
+@pytest.mark.parametrize("collision", [False, True])
+def test_held_xy_plan_failure_keeps_key_held_for_reverse_return(
+        tmp_path, monkeypatch, collision):
+    import precision_insertion.same_trial_xy as same_trial
+
+    pose = np.eye(4)
+    state = LiveRobotState(
+        np.zeros(13), np.zeros(7), 20., 20., 10., 20.,
+        np.zeros(6), np.zeros(6), 0., np.zeros(6))
+    attempted = SimpleNamespace(attempt_id="a1", candidate_id="table/0/42")
+    runner = SimpleNamespace(
+        active_attempt=attempted, _attempt_dir=tmp_path,
+        shared_root=tmp_path, mode=object(), calibration=object(),
+        _preflight=SimpleNamespace(trial_scene={}),
+        _postlift_preflight=SimpleNamespace(targets=SimpleNamespace(
+            T_robot_key_preinsert=pose)))
+    planner = SimpleNamespace(
+        fk_wrist=lambda _q: pose,
+        plan_cartesian_pose=lambda *_args, **_kwargs: SimpleNamespace(
+            success=collision,
+            trajectory=(np.zeros((2, 13)) if collision else None)))
+    monkeypatch.setattr(same_trial, "validated_frozen_socket_pose",
+                        lambda **_kwargs: pose)
+    monkeypatch.setattr(same_trial, "build_held_scene_from_trial",
+                        lambda **_kwargs: {})
+    monkeypatch.setattr(same_trial, "_audit_held_geometry_samples",
+                        lambda **_kwargs: (["collision"], {}, None))
+    with pytest.raises(HeldXYPlanUnavailable) as stopped:
+        same_trial.plan_and_execute_shift(
+            runner=runner, planner=planner,
+            adapter=SimpleNamespace(follow_transfer=lambda *_a, **_k:
+                                    pytest.fail("XY motion was commanded")),
+            read_state=lambda: state, motion_interlock=lambda: True,
+            limits=object(),
+            path_limits=SimpleNamespace(minimum_hand_clearance_m=0.),
+            increment_socket_m=(.002, 0.), residual_socket_m=(.003, 0.),
+            residual_source="current_metric_multiview", index=0)
+    report = json.loads(stopped.value.report_path.read_text())
+    assert report["schema"] == "precision_insertion_same_trial_xy_plan_failure_v1"
+    assert report["scope"] == "failed_plan_no_xy_command"
+    assert report["measured_start"]["full_q"] == [0.] * 13
+    assert not (tmp_path / "same_trial_xy" / "shifts").exists()
 
 
 def test_corrected_axial_keeps_key_at_observed_residual_and_moves_wrist():

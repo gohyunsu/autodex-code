@@ -106,16 +106,25 @@ class StockCorrectedHoldRecovery:
                 attempt.failure_code != "preinsert_path_unavailable"):
             raise ValueError("corrected hold return belongs to another attempt")
         folder = Path(runner._attempt_dir)
-        failure_ref = attempt.events[-1]["evidence_refs"][
-            "corrected_axial_plan_failure"]
+        refs = attempt.events[-1]["evidence_refs"]
+        axial_failure = "corrected_axial_plan_failure" in refs
+        failure_ref = refs[("corrected_axial_plan_failure" if axial_failure
+                            else "corrected_xy_plan_failure")]
         failure_path = Path(failure_ref).resolve()
-        if failure_path.parent.parent != folder / "guarded_axial_handoffs":
-            raise ValueError("corrected axial failure is not in this attempt")
+        if axial_failure:
+            in_attempt = failure_path.parent.parent == (
+                folder / "guarded_axial_handoffs")
+            schema = "precision_insertion_same_trial_axial_plan_failure_v1"
+        else:
+            in_attempt = failure_path.parent == (
+                folder / "same_trial_xy" / "plan_failures")
+            schema = "precision_insertion_same_trial_xy_plan_failure_v1"
+        if not in_attempt:
+            raise ValueError("corrected plan failure is not in this attempt")
         failure = json.loads(failure_path.read_text(encoding="utf-8"))
-        if (failure.get("schema") !=
-                "precision_insertion_same_trial_axial_plan_failure_v1" or
+        if (failure.get("schema") != schema or
                 failure.get("attempt_id") != attempt.attempt_id):
-            raise ValueError("corrected axial failure differs from this attempt")
+            raise ValueError("corrected plan failure differs from this attempt")
         current = self.read_state()
         if not isinstance(current, LiveRobotState):
             raise TypeError("corrected hold needs measured robot joints")

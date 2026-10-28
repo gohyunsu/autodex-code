@@ -7,6 +7,7 @@ import sys
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion import corrected_hold_recovery as recovery  # noqa: E402
@@ -33,14 +34,18 @@ def _state():
         np.zeros(6), np.zeros(6), 0., np.zeros(6))
 
 
+@pytest.mark.parametrize("failure_kind", ["axial", "xy"])
 def test_corrected_return_uses_attempt_sources_and_opens_after_held_motion(
-        tmp_path, monkeypatch):
+        tmp_path, monkeypatch, failure_kind):
     attempt_id = "attempt_123"
-    failure_dir = tmp_path / "guarded_axial_handoffs" / "000"
+    failure_dir = (tmp_path / "guarded_axial_handoffs" / "000"
+                   if failure_kind == "axial" else
+                   tmp_path / "same_trial_xy" / "plan_failures")
     failure_dir.mkdir(parents=True)
-    failure_path = failure_dir / "plan_failure.json"
+    failure_path = failure_dir / ("plan_failure.json" if failure_kind ==
+                                  "axial" else "000.json")
     failure_path.write_text(json.dumps({
-        "schema": "precision_insertion_same_trial_axial_plan_failure_v1",
+        "schema": f"precision_insertion_same_trial_{failure_kind}_plan_failure_v1",
         "attempt_id": attempt_id,
         "measured_start": {"full_q": [0.] * 13},
         "targets": {"T_robot_key_preinsert": np.eye(4).tolist()}}))
@@ -53,7 +58,7 @@ def test_corrected_return_uses_attempt_sources_and_opens_after_held_motion(
         attempt_id=attempt_id, candidate_id="table/0/1",
         failure_code="preinsert_path_unavailable",
         events=[{"evidence_refs": {
-            "corrected_axial_plan_failure": str(failure_path)}}])
+            f"corrected_{failure_kind}_plan_failure": str(failure_path)}}])
     runner = SimpleNamespace(
         active_attempt=attempt, current_decision=lambda: decision,
         _attempt_dir=tmp_path, _measured_lift_report_path=lift,

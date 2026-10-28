@@ -29,7 +29,8 @@ from .post_insertion_release import verify_post_insertion_release
 from .transfer_execution import execute_bound_held_transfer
 from .timing_profile import timed
 from .same_trial_xy import (
-    CorrectedAxialPlanUnavailable, choose_xy_move, measure_preinsert_xy,
+    CorrectedAxialPlanUnavailable, HeldXYPlanUnavailable,
+    choose_xy_move, measure_preinsert_xy,
     plan_and_execute_shift,
     plan_corrected_axial_handoff,
 )
@@ -280,18 +281,29 @@ class LiveTaskHandlers:
                     "xy_correction_socket_m"]])
             with timed("trial.same_trial_xy_motion", phase="trial",
                        kind="motion", attempt_id=attempt.attempt_id):
-                shift = plan_and_execute_shift(
-                    runner=runner, planner=self.planner,
-                    adapter=self.transfer_adapter,
-                    read_state=self.read_state,
-                    motion_interlock=self.motion_interlock,
-                    limits=self.transfer_limits,
-                    path_limits=self.path_limits,
-                    increment_socket_m=step,
-                    residual_socket_m=current_residual,
-                    residual_source=(choice.get("source") or
-                                     "current_metric_multiview"),
-                    index=index)
+                try:
+                    shift = plan_and_execute_shift(
+                        runner=runner, planner=self.planner,
+                        adapter=self.transfer_adapter,
+                        read_state=self.read_state,
+                        motion_interlock=self.motion_interlock,
+                        limits=self.transfer_limits,
+                        path_limits=self.path_limits,
+                        increment_socket_m=step,
+                        residual_socket_m=current_residual,
+                        residual_source=(choice.get("source") or
+                                         "current_metric_multiview"),
+                        index=index)
+                except HeldXYPlanUnavailable as exc:
+                    runner.record_failure(
+                        "preinsert_path_unavailable",
+                        timestamp_s=self.decision_time(),
+                        evidence_refs={
+                            "corrected_xy_plan_failure": str(exc.report_path),
+                            "preinsert_snapshot": str(
+                                self._preinsert_bundle / "manifest.json"),
+                        })
+                    return
             shifts.append(shift)
             shift_result = json.loads(shift.read_text(encoding="utf-8"))
             measured_step = shift_result["measured_increment_socket_m"]

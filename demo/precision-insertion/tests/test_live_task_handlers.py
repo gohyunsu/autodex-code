@@ -274,6 +274,43 @@ def test_corrected_plan_failure_records_stop_without_insertion(tmp_path, monkeyp
     })]
 
 
+def test_held_xy_plan_failure_records_recoverable_stop(tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    runner._attempt_dir = tmp_path / "attempts" / runner.active_attempt.attempt_id
+    bound._preinsert_bundle = tmp_path / "preinsert"
+    bound.planner = object()
+    bound.path_limits = object()
+    bound.alignment_limits = object()
+    bound.same_trial_tip_height_error_m = .01
+    bound.same_trial_xy_tolerance_m = .001
+    failure = runner._attempt_dir / "same_trial_xy/plan_failures/000.json"
+    failure.parent.mkdir(parents=True)
+    failure.write_text('{"status":"held_xy_pose_unreachable"}\n',
+                       encoding="utf-8")
+    recorded = []
+    runner.record_failure = lambda code, **kwargs: recorded.append((code, kwargs))
+    monkeypatch.setattr(live_task_handlers, "measure_preinsert_xy",
+                        lambda **_kwargs: {"alignment": {
+                            "status": "diagnostic_metric_xy_correction",
+                            "inlier_cameras": ["front", "side"],
+                            "xy_correction_socket_m": [.004, 0.],
+                        }})
+    monkeypatch.setattr(live_task_handlers, "plan_and_execute_shift",
+                        lambda **_kwargs: (_ for _ in ()).throw(
+                            live_task_handlers.HeldXYPlanUnavailable(
+                                failure, "held_xy_pose_unreachable")))
+    monkeypatch.setattr(live_task_handlers, "plan_corrected_axial_handoff",
+                        lambda **_kwargs: pytest.fail("axial plan after XY failure"))
+    bound._refine_current_hold(runner)
+    assert recorded == [("preinsert_path_unavailable", {
+        "timestamp_s": 20.,
+        "evidence_refs": {
+            "corrected_xy_plan_failure": str(failure),
+            "preinsert_snapshot": str(bound._preinsert_bundle / "manifest.json"),
+        },
+    })]
+
+
 @pytest.mark.parametrize("result", [
     {"safety_abort": True, "grasp_held": True},
     {"safety_abort": False, "grasp_held": False},

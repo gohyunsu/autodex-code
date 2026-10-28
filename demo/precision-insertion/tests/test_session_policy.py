@@ -78,7 +78,7 @@ def test_corrected_axial_plan_failure_returns_held_key_with_unknown_insertion():
     assert record.labels["insertion_success"] is None
     decision = decide_after_attempt(record, max_xy_retries=None)
     assert decision.action == "recover_corrected_hold_then_reobserve"
-    assert decision.reason == "corrected_axial_plan_unavailable_return_held_key"
+    assert decision.reason == "held_xy_or_axial_plan_unavailable_return_held_key"
 
 
 def _decision(*, choice="x_plus_1mm", cameras=("cam0", "cam1")):

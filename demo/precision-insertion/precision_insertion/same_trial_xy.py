@@ -58,6 +58,15 @@ class CorrectedAxialPlanUnavailable(RuntimeError):
         super().__init__(f"corrected 20 mm plan failed: {status}")
 
 
+class HeldXYPlanUnavailable(RuntimeError):
+    """A held lateral plan failed before any XY motion was commanded."""
+
+    def __init__(self, report_path: Path, status: str):
+        self.report_path = Path(report_path)
+        self.status = status
+        super().__init__(f"held XY plan failed: {status}")
+
+
 def choose_xy_move(alignment: dict, *, tolerance_m: float,
                    max_step_m: float = .010) -> dict:
     """Use measured multiview XY; single-view plane guesses are not metric.
@@ -207,6 +216,29 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
         calibration=runner.calibration)
     start_wrist = validate_se3(planner.fk_wrist(start.full_q),
                                name="current measured wrist FK")
+    residual = np.asarray(residual_socket_m, dtype=float)
+    if residual.shape != (2,) or not np.all(np.isfinite(residual)):
+        raise ValueError("held key residual must contain finite socket XY")
+    key_at_hold = runner._postlift_preflight.targets.T_robot_key_preinsert.copy()
+    key_at_hold[:3, 3] += socket[:3, :2] @ residual
+
+    def unavailable(status: str) -> None:
+        report = _write(
+            Path(runner._attempt_dir) / "same_trial_xy" / "plan_failures" /
+            f"{index:03d}.json", {
+                "schema": "precision_insertion_same_trial_xy_plan_failure_v1",
+                "attempt_id": runner.active_attempt.attempt_id,
+                "candidate_id": runner.active_attempt.candidate_id,
+                "status": status,
+                "measured_start": start.to_record(),
+                "targets": {"T_robot_key_preinsert": key_at_hold.tolist()},
+                "increment_socket_m": increment.tolist(),
+                "residual_socket_xy_m": residual.tolist(),
+                "residual_source": residual_source,
+                "scope": "failed_plan_no_xy_command",
+            })
+        raise HeldXYPlanUnavailable(report, status)
+
     goal = start_wrist.copy()
     goal[:3, 3] += socket[:3, :2] @ increment
     scene = build_held_scene_from_trial(
@@ -217,14 +249,9 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
         include_obj_obstacle=False, return_result=True, lock_hand=True,
         timing_phase="precision_insertion_same_trial_xy")
     if not query.success or query.trajectory is None:
-        raise RuntimeError("cuRobo could not plan the held XY correction")
+        unavailable("held_xy_pose_unreachable")
     trajectory = _path(query.trajectory, "same-trial held XY",
                        start.full_q, start.full_q[7:])
-    residual = np.asarray(residual_socket_m, dtype=float)
-    if residual.shape != (2,) or not np.all(np.isfinite(residual)):
-        raise ValueError("held key residual must contain finite socket XY")
-    key_at_hold = runner._postlift_preflight.targets.T_robot_key_preinsert.copy()
-    key_at_hold[:3, 3] += socket[:3, :2] @ residual
     held_relation = np.linalg.inv(key_at_hold) @ validate_se3(
         planner.fk_wrist(start.full_q), name="measured held wrist FK")
     wrist = {"lateral": [validate_se3(planner.fk_wrist(q),
@@ -236,7 +263,7 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
         minimum_hand_clearance_m=path_limits.minimum_hand_clearance_m,
         stop_on_first_failure=True, collision_only_if_clear=True)
     if geometry_failures:
-        raise RuntimeError("held XY path intersects the frozen collision world")
+        unavailable("held_xy_path_intersects_frozen_world")
     folder = (Path(runner._attempt_dir) / "same_trial_xy" / "shifts" /
               f"{index:03d}")
     folder.mkdir(parents=True, exist_ok=False)

@@ -120,9 +120,10 @@ before this socket-fit change; no new live motion test was run.
 
 The saved four-view attempt `9542c1bd` completed three same-trial XY shifts,
 then rejected the corrected 20 mm endpoint because the measured hand
-intersected the socket. No insertion stroke was commanded. The current
-`preinsert_path_unavailable` policy stops with the key held. This is a real
-gap in unattended recovery, distinct from an insertion failure after release.
+intersected the socket. No insertion stroke was commanded. At the time of
+this saved attempt, `preinsert_path_unavailable` stopped with the key held.
+The implementation added below now routes this condition to the measured
+held-return procedure.
 
 Replanning the existing held-key return from the original pre-insertion hold
 also returned `held_transfer_unreachable` at endpoint IK. Thus simply
@@ -144,9 +145,10 @@ key at the inferred landing pose and the frozen socket/table.
 The replay script, result JSON, and planned retract array are grouped in the
 same development review folder as the direct-return probe.
 
-This route is **not installed for live execution**. It still needs a start
-bridge from fresh measured joints, time parameterization for the interpolated
-joins, and a verified hand opening at the tabletop site. The whole-arm result
+At this point in the investigation the route was **not installed for live
+execution**. It still needed a start bridge from fresh measured joints,
+time parameterization for the interpolated joins, and a verified hand opening
+at the tabletop site. The whole-arm result
 above covers only archived/configured joint samples. After release, the
 existing clear-view capture and original-pose restoration can check the
 actual landing and correct it. No robot or hand command was sent during this
@@ -176,3 +178,16 @@ These are sampled offline results. The hand opening, actual key landing and
 live execution of this route are untested while the robot/hand are off. If a
 future measured state cannot pass the same preflight, the route is not
 executed and its held-key state must be handled with the robot present.
+
+## 2026-10-29: held XY planning failure
+
+The same recovery route now also receives a held XY correction that fails
+**before motion**: either cuRobo cannot produce the lateral path or the
+existing held-key collision audit rejects it. The failure report records the
+measured joints and the current key-pose hypothesis in
+`same_trial_xy/plan_failures/NNN.json`. The session records
+`preinsert_path_unavailable`, then reverses only XY shifts that actually
+completed, followed by transfer and lift. A controller/execution exception
+after the XY command is kept distinct; this pre-motion return is not applied
+to a path whose completion is unknown. Focused policy, handler and recovery
+tests passed offline; no live return has been attempted.
