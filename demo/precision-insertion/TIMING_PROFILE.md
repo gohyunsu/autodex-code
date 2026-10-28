@@ -353,3 +353,24 @@ it would require a distinct checkpoint/report schema and is not justified by
 the current measurements alone. The larger observed startup costs remain
 planner world setup and SAM3 model loading; both have asynchronous warmup
 paths that need measurement on a new live run before claiming a speedup.
+
+The four-view Qwen key-box batch added after the archived 2026-10-28 runs
+was checked on all four saved XY snapshots of attempt `9542c1bd`. With the
+production local backend, four independent camera requests took 1.36–1.93 s
+per snapshot, while one four-view batch took 0.57–0.58 s. Thirteen of the
+sixteen raw boxes matched exactly; the other three differed by at most
+4.1 source-crop pixels. Replaying both sets of answers through the existing
+SAM3 ROI worker and XY geometry reproduced the saved serial offsets exactly.
+The batched answers kept the same inlier cameras and metric status in all
+four snapshots; the largest XY-offset difference was 0.130 mm. This is a
+saved-scene result, not a new physical alignment or insertion trial.
+
+A separate SAM3 batch probe on the first snapshot returned masks with IoU
+at least 0.9996 against serial inference. Its warm four-view runtime was
+0.63 s versus 0.68 s serial. That approximately 0.05 s gain does not yet
+justify changing the worker protocol and mask provenance. These read-only
+probes and their JSON results are under
+`~/precision_insertion_project/development/zerodex_capture4/reviews/`
+as `probe_qwen_key_box_batch_20261029`,
+`probe_grounding_batch_geometry_20261029`, and
+`probe_sam_roi_batch_20261029`.
