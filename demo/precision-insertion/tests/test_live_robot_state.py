@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 import sys
+import time
 
 import numpy as np
 import pytest
@@ -111,3 +112,24 @@ def test_recent_daemon_state_needs_no_second_packet_but_stale_state_rejects(
             arm=arm, hand=hand, max_arm_hand_skew_s=0.03,
             max_sample_age_s=0.05, max_hand_command_error_raw=30,
             max_arm_velocity_rad_s=0.05, now_s=100.02)
+
+
+def test_live_read_reacquires_arm_packet_after_blocking_motion():
+    _, _, arm_data, hand_data, _ = _devices()
+
+    class Arm:
+        calls = 0
+
+        def get_data(self):
+            self.calls += 1
+            return dict(arm_data, time=time.monotonic() -
+                        (0.3 if self.calls == 1 else 0.005))
+
+    arm = Arm()
+    hand = SimpleNamespace(get_data=lambda: dict(hand_data, time=time.time()))
+    result = read_live_franka_inspire_state(
+        arm=arm, hand=hand, max_arm_hand_skew_s=0.1,
+        max_sample_age_s=0.5, max_hand_command_error_raw=30,
+        max_arm_velocity_rad_s=0.05)
+    assert arm.calls >= 2
+    assert abs(result.arm_timestamp_s - result.hand_timestamp_s) < 0.1

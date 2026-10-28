@@ -94,6 +94,27 @@ def test_lift_adapter_records_actual_arm_and_hand_samples(tmp_path, monkeypatch)
     assert trace["samples"][0]["hand_raw_measured"] == [500.] * 6
 
 
+def test_one_missing_modbus_reply_does_not_abort_held_motion(tmp_path, monkeypatch):
+    executor = _Executor(sample_count=4)
+    original = executor.hand.get_data
+    calls = 0
+
+    def sometimes_missing():
+        nonlocal calls
+        calls += 1
+        sample = original()
+        if calls == 2:
+            sample["qpos"] = None
+        return sample
+
+    executor.hand.get_data = sometimes_missing
+    result = _follow(_adapter(tmp_path, monkeypatch, executor))
+    trace = json.loads(Path(result["controller_trace_path"]).read_text())
+    assert trace["status"] == "completed"
+    assert len(trace["samples"]) == 3
+    assert executor.stop_calls == 1
+
+
 def test_object_blocks_hand_closure_without_aborting_lift(tmp_path, monkeypatch):
     executor = _Executor()
     executor.hand.action[:] = 600.

@@ -398,6 +398,40 @@ the effect on a complete episode has not been measured.
 
 ## Current board/socket capture and FR3 pose, 2026-10-28
 
+The physical socket in the 2026-10-28 live setup is the **10 mm radial-gap**
+variant. Use `PRECISION_GAP_MM=10`; this selects its own endpoint catalog and
+socket mesh. The ZeroDex `launch.json` now sets
+`board_fit_camera_ids = [26053248, 25322639, 25322642]`. All four capture4
+images are still acquired and available for socket/key perception. The subset
+applies only to ChArUco triangulation: on the current board, camera
+`25305462` made corner 8 reprojection about 4.0 px, whereas the other three
+cameras fitted 41 corners with median reprojection 0.275 px and board rigid-fit
+RMS 0.675 mm. No reprojection threshold was changed. The diagnostic source
+frames are under `/tmp/precision_gap10_board_diag_20261028/`.
+
+The first integrated 10 mm `--plan-only` session froze the socket in
+`zerodex_capture4/runs/live_charuco_board_gap10/session_evidence_20261028_135908_048797173_21840/`.
+After placing the upright key, four-view SAM3/FoundPose and local silhouette
+refinement completed. Its current-scene preflight selected `table/0/20232`:
+pickup approach, measured-start lift, transfer and a sampled 20 mm axial
+path passed. The saved report and trajectories are under
+`AutoDex/experiment/precision-insertion/inspire/precision_key_cylinder_r15_h80/_pipeline_runs/20261028_135909_098315/trial_preflights/0000/`.
+The plan-only result is `planning_ready`, not a physical insertion result.
+
+The first live `--run` reused that frozen socket. A stale FR3/Inspire pair
+immediately after the blocking clear-view command stopped the first start;
+the feedback reader now reacquires within its existing sample-age interval.
+The next run executed approach, pregrasp, grasp, squeeze and part of lift.
+Two empty Inspire Modbus replies during lift caused the measured-motion
+adapter to abort at 156/221 references. The controller trace is at
+`.../_pipeline_runs/20261028_140538_313569/controller_traces/lift_295a405722414788b63c991e3f033c6f/controller_trace.json`.
+The key remained upright on the board in the post-abort four-camera snapshot
+`/tmp/precision_gap10_after_lift_abort_20261028/`. No transfer, insertion,
+VLM outcome or next-episode XY update occurred. The measured-motion adapter
+now tolerates a missing Modbus reply within its existing 0.5 s state-gap
+limit, while continuing to read FR3 state; this fix is not yet confirmed in a
+subsequent physical trial.
+
 With the socket on board 9, the camera-only `start-session --capture` path
 completed without moving the FR3 or Inspire. Evidence is under
 `/home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/session_evidence/`.
@@ -407,9 +441,9 @@ median reprojection 0.926 px). Socket SAM3 masks were nonempty in
 0.941 and 0.948. The other two camera masks were empty and did not
 contribute to socket localization. The two fitted socket centers differed
 by 4.73 mm. These are diagnostics from one capture, not a repeatability test
-or independently verified socket-pose accuracy. The launch currently selects
-the 20 mm radial-gap socket asset; confirm the physical socket variant before
-reusing this session for key planning.
+or independently verified socket-pose accuracy. This earlier camera-only
+session used the default 20 mm asset and must not be reused for the current
+10 mm socket.
 
 The operator-designated FR3 pose was recorded after the operator added a
 robot-source-only UDP rule on `enp4s0`. A read-only libfranka probe is in

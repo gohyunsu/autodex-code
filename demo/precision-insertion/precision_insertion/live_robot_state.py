@@ -105,7 +105,7 @@ def _finite_vector(value, size: int, name: str) -> np.ndarray:
     return array.copy()
 
 
-def read_live_franka_inspire_state(
+def _read_live_franka_inspire_state_once(
     *, arm, hand, max_arm_hand_skew_s: float,
     max_sample_age_s: float, max_hand_command_error_raw: float,
     max_arm_velocity_rad_s: float,
@@ -124,6 +124,9 @@ def read_live_franka_inspire_state(
                   max_hand_command_error_raw, max_arm_velocity_rad_s)
     if not all(math.isfinite(float(v)) and float(v) > 0 for v in thresholds):
         raise ValueError("joint age, skew and hand-error limits must be positive")
+    # Inspire's Modbus read can lag behind the FR3's 100 Hz state stream.
+    # Read the hand first, then pair it with the newest arm packet.
+    hand_data = hand.get_data()
     arm_data = arm.get_data()
     if not isinstance(arm_data, dict):
         raise FrankaStateUnavailable("FR3 state stream is unavailable")
@@ -136,7 +139,6 @@ def read_live_franka_inspire_state(
         raise FrankaStateUnavailable(
             "FR3 state stream is stale or not on the host clock")
     arm_time = host_wall - state_age
-    hand_data = hand.get_data()
     now = time.time() if now_s is None else float(now_s)
     if not isinstance(hand_data, dict):
         raise ValueError("FR3 and Inspire feedback must both be available")
@@ -173,3 +175,31 @@ def read_live_franka_inspire_state(
         max_hand_command_error_raw=max_hand_command_error_raw,
         max_arm_velocity_rad_s=max_arm_velocity_rad_s)
     return result
+
+
+def read_live_franka_inspire_state(
+    *, arm, hand, max_arm_hand_skew_s: float,
+    max_sample_age_s: float, max_hand_command_error_raw: float,
+    max_arm_velocity_rad_s: float,
+    now_s: float | None = None,
+) -> LiveRobotState:
+    """Pair fresh FR3 and Inspire samples after a blocking robot command.
+
+    The daemon pauses state publishing during some blocking moves. Reacquire
+    only a stale or unpaired sample, within the existing sample-age budget.
+    An explicit ``now_s`` remains a single deterministic read for tests.
+    """
+    deadline = time.monotonic() + max_sample_age_s
+    while True:
+        try:
+            return _read_live_franka_inspire_state_once(
+                arm=arm, hand=hand,
+                max_arm_hand_skew_s=max_arm_hand_skew_s,
+                max_sample_age_s=max_sample_age_s,
+                max_hand_command_error_raw=max_hand_command_error_raw,
+                max_arm_velocity_rad_s=max_arm_velocity_rad_s,
+                now_s=now_s)
+        except (FrankaStateUnavailable, FeedbackTimeAlignmentUnavailable):
+            if now_s is not None or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)

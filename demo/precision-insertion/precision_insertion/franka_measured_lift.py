@@ -61,6 +61,7 @@ class _ObservedArm:
         self.samples: list[dict] = []
         self._last_uptime: float | None = None
         self._last_advance_monotonic = time.monotonic()
+        self._last_hand_sample_monotonic = self._last_advance_monotonic
 
     def __getattr__(self, name):
         return getattr(self.arm, name)
@@ -92,8 +93,17 @@ class _ObservedArm:
         hand_state = self.hand.get_data()
         if not isinstance(hand_state, dict):
             raise RuntimeError(f"Inspire {self.stage} state stream is absent")
-        measured = _vector(hand_state.get("qpos"), 6,
-                           "measured Inspire joints")
+        raw = np.asarray(hand_state.get("qpos"), dtype=np.float64)
+        if raw.shape != (6,) or not np.all(np.isfinite(raw)):
+            # One failed Modbus reply does not erase the preceding measured
+            # sample. Keep monitoring FR3 and wait for the next hand reply,
+            # using the existing state-gap limit for both streams.
+            if now_monotonic - self._last_hand_sample_monotonic <= \
+                    self.limits.max_state_gap_s:
+                return state
+            raise RuntimeError(f"Inspire {self.stage} state stream stopped advancing")
+        measured = raw
+        self._last_hand_sample_monotonic = now_monotonic
         commanded = _vector(hand_state.get("action"), 6,
                             "commanded Inspire joints")
         hand_time = float(hand_state.get("time", float("nan")))

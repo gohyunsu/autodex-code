@@ -62,6 +62,7 @@ def start_precision_session(
     board_id: str = "11",
     minimum_board_corners: int = 54,
     board_capture_phase: str = "empty_before_socket",
+    board_fit_camera_ids: tuple[str, ...] | None = None,
     confirm_socket_placement: Callable[[], bool] | None = None,
     fixture_contract_validated: bool = False,
     scene_mode: str = "charuco_board",
@@ -191,7 +192,10 @@ def start_precision_session(
         from src.execution.charuco_tabletop import measure_tabletop_from_images
         with timed("board.charuco_fit", phase="board"):
             measured_board = measure_tabletop_from_images(
-                board.images_bgr, intrinsics_full, extrinsics_full, c2r,
+                (board.images_bgr if board_fit_camera_ids is None else
+                 {serial: board.images_bgr[serial]
+                  for serial in board_fit_camera_ids}),
+                intrinsics_full, extrinsics_full, c2r,
                 board_id=board_id, minimum_board_corners=minimum_board_corners)
         if (board_capture_phase == "empty_before_socket" and
                 not _confirmed_socket_placement(confirm_socket_placement)):

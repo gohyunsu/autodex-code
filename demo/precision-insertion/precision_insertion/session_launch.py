@@ -69,6 +69,7 @@ class SessionLaunch:
     board_id: str | None = "11"
     minimum_board_corners: int | None = 54
     board_capture_phase: str | None = "empty_before_socket"
+    board_fit_camera_ids: tuple[str, ...] | None = None
     camera_time_mode: str = "calibrated_frame_id"
     camera_acquisition_mode: str = "acquire"
     init_frame_transport: str = "shared_png"
@@ -105,7 +106,10 @@ class SessionLaunch:
         if self.scene_mode == "charuco_board":
             result.update(board_id=self.board_id,
                           minimum_board_corners=self.minimum_board_corners,
-                          board_capture_phase=self.board_capture_phase)
+                          board_capture_phase=self.board_capture_phase,
+                          board_fit_camera_ids=(list(self.board_fit_camera_ids)
+                                                if self.board_fit_camera_ids else
+                                                sorted(self.camera_ids)))
         return result
 
 
@@ -150,6 +154,7 @@ class OpenSessionCameras:
             board_id=launch.board_id,
             minimum_board_corners=launch.minimum_board_corners,
             board_capture_phase=launch.board_capture_phase,
+            board_fit_camera_ids=launch.board_fit_camera_ids,
             scene_mode=launch.scene_mode,
             table_surface_z_m=launch.table_surface_z_m,
             fixture_contract_validated=launch.fixture_contract_validated,
@@ -292,6 +297,13 @@ def load_session_launch(
     except ValueError as exc:
         raise ValueError("capture PCs need literal IP addresses") from exc
     camera_ids = set(cameras)
+    board_fit_ids = record.get("board_fit_camera_ids")
+    if board_fit_ids is not None:
+        if (not isinstance(board_fit_ids, list) or len(board_fit_ids) < 2 or
+                len(set(board_fit_ids)) != len(board_fit_ids) or
+                not set(board_fit_ids) <= camera_ids):
+            raise ValueError("board_fit_camera_ids must name active cameras")
+        board_fit_ids = tuple(board_fit_ids)
     calib_dir = _path(record.get("calib_dir"), name="calib_dir",
                       kind="directory")
     intrinsics, extrinsics, image_hw = _load_stock_camera_calibration(
@@ -387,6 +399,7 @@ def load_session_launch(
         socket_perception_mode=socket_perception_mode,
         minimum_board_corners=minimum_board_corners,
         board_capture_phase=board_capture_phase,
+        board_fit_camera_ids=board_fit_ids,
         scene_mode=scene_mode, table_surface_z_m=table_surface_z_m,
         camera_time_mode=time_mode, execution_scope=execution_scope,
         camera_acquisition_mode=acquisition_mode,

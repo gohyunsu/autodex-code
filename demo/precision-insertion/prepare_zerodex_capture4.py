@@ -15,6 +15,10 @@ import shutil
 
 
 CAMERAS = ("26053248", "25322639", "25305462", "25322642")
+# On the current board, 25305462 contributes a repeatable ~4 px corner-8
+# mismatch. Use the other three only for board triangulation; retain all four
+# for socket/key perception and three selected views for VLM.
+BOARD_FIT_CAMERAS = ("26053248", "25322639", "25322642")
 def _write_json(path: Path, record) -> None:
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n",
                     encoding="utf-8")
@@ -46,6 +50,7 @@ def build(*, source_stage: Path, shared_root: Path, calibration_dir: Path,
         c2r_npy=str(output_dir / "calibration" / "C2R.npy"),
         pc_list=["capture4"], capture_ips=["147.46.219.136"],
         camera_ids=list(CAMERAS),
+        board_fit_camera_ids=list(BOARD_FIT_CAMERAS),
         camera_acquisition_mode="stream",
         init_frame_transport="inline_png",
         upright_cylinder_only=False,
@@ -78,7 +83,8 @@ def build(*, source_stage: Path, shared_root: Path, calibration_dir: Path,
     return {"launch": str(output_dir / "launch.json"),
             "robot_config": str(output_dir / "franka_runtime.json"),
             "catalogs": catalogs, "missing_straight_mount_catalogs": missing_catalogs,
-            "camera_ids": list(CAMERAS)}
+            "camera_ids": list(CAMERAS),
+            "board_fit_camera_ids": list(BOARD_FIT_CAMERAS)}
 
 
 def main(argv: list[str] | None = None) -> int:
