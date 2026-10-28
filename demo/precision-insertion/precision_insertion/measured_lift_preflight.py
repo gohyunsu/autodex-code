@@ -19,7 +19,6 @@ import numpy as np
 
 from .candidates import select_pose_candidates
 from .curobo_compat import install_curobo_planner_compat
-from .endpoint import screen_grasp_endpoint
 from .geometry import validate_se3
 from .live_robot_state import LiveRobotState
 from .path_audit import PathAuditLimits
@@ -200,22 +199,20 @@ def plan_measured_lift_chain(
     relation = validate_se3(np.load(
         candidate_dir / "wrist_se3.npy", allow_pickle=False),
         name="nominal BODex T_key_hand")
-    endpoint = screen_grasp_endpoint(
-        shared_root=runner.shared_root, mode=runner.mode,
-        candidate_dir=candidate_dir,
-        minimum_hand_clearance_m=runner.catalog["minimum_hand_clearance_m"],
-        T_key_hand_override=relation,
-        hand_poses_override={"measured_squeeze": joint_sample.full_q[7:]},
-        override_source="nominal_BODex_relation_measured_Inspire_joints")
-    if (not np.allclose(validate_se3(
-            endpoint.get("T_key_hand"), name="screened key/hand relation"),
-            relation, atol=1e-8, rtol=0) or
+    # The candidate already passed the requested offline 20 mm hand/socket
+    # screen. A post-squeeze finger reading does not locate the key in the
+    # hand; applying the nominal key/hand transform to that reading as a new
+    # endpoint gate can reject a valid physical trial before lift observation.
+    # Keep measured joints for the lift planner, and let the lift image decide
+    # whether the key was actually picked up.
+    endpoint = matches[0]["endpoint_report"]
+    if (endpoint.get("endpoint_pass") is not True or
+            not np.allclose(validate_se3(
+                endpoint.get("T_key_hand"), name="catalog key/hand relation"),
+                relation, atol=1e-8, rtol=0) or
             not np.allclose(endpoint.get("xy_offset_socket_m"),
-                            [0.0, 0.0], atol=1e-12, rtol=0) or
-            not np.allclose(endpoint.get("hold_pose_screens", {}).get(
-                "measured_squeeze", {}).get("hand_q"),
-                joint_sample.full_q[7:], atol=1e-8, rtol=0)):
-        raise ValueError("20 mm screen used a different held relation or hand")
+                            [0.0, 0.0], atol=1e-12, rtol=0)):
+        raise ValueError("selected candidate lacks its offline 20 mm screen")
 
     def result(status: str, *, targets=None, planning=None,
                margin=None) -> MeasuredLiftChain:
@@ -228,8 +225,6 @@ def plan_measured_lift_chain(
              "nominal_BODex_relation_without_future_surface_bound"),
             endpoint, targets, planning, margin, planner_mode)
 
-    if endpoint.get("endpoint_pass") is not True:
-        return result("measured_squeeze_endpoint_rejected")
     # This can run in a new process after pickup, not just in the process
     # where the initial candidate loop installed its cuRobo compatibility.
     install_curobo_planner_compat()

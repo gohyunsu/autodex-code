@@ -133,3 +133,26 @@ def test_live_read_reacquires_arm_packet_after_blocking_motion():
         max_arm_velocity_rad_s=0.05)
     assert arm.calls >= 2
     assert abs(result.arm_timestamp_s - result.hand_timestamp_s) < 0.1
+
+
+def test_live_read_retries_one_missing_inspire_reply():
+    _, _, arm_data, hand_data, _ = _devices()
+    arm = SimpleNamespace(get_data=lambda: dict(
+        arm_data, time=time.monotonic() - 0.005))
+
+    class Hand:
+        calls = 0
+
+        def get_data(self):
+            self.calls += 1
+            if self.calls == 1:
+                return None
+            return dict(hand_data, time=time.time())
+
+    hand = Hand()
+    result = read_live_franka_inspire_state(
+        arm=arm, hand=hand, max_arm_hand_skew_s=0.1,
+        max_sample_age_s=0.5, max_hand_command_error_raw=30,
+        max_arm_velocity_rad_s=0.05)
+    assert hand.calls >= 2
+    assert result.source == "robot_joint_feedback"

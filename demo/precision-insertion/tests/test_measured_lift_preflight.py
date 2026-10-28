@@ -116,19 +116,14 @@ def _fixture(tmp_path, monkeypatch):
                         lambda self: SimpleNamespace(action="await_lift_observation"))
     monkeypatch.setattr(SessionRunner, "verify_current_preflight_evidence",
                         lambda self: {"report_sha256": "r" * 64})
+    runner._selected_candidate = {
+        "key": ["table", "0", "1"], "candidate_dir": str(candidate),
+        "endpoint_report": {"endpoint_pass": True,
+                            "T_key_hand": np.eye(4).tolist(),
+                            "xy_offset_socket_m": [0., 0.]}}
     monkeypatch.setattr(lift, "select_pose_candidates", lambda *args, **kwargs: {
-        "status": "candidates_available", "candidates": [{
-            "key": ["table", "0", "1"], "candidate_dir": str(candidate)}]})
-    def screen(**kwargs):
-        return {
-            "endpoint_pass": True,
-            "T_key_hand": kwargs["T_key_hand_override"].tolist(),
-            "xy_offset_socket_m": [0., 0.],
-            "hold_pose_screens": {"measured_squeeze": {
-                "hand_q": kwargs["hand_poses_override"][
-                    "measured_squeeze"].tolist()}},
-        }
-    monkeypatch.setattr(lift, "screen_grasp_endpoint", screen)
+        "status": "candidates_available",
+        "candidates": [runner._selected_candidate]})
     targets = SimpleNamespace(to_record=lambda: {"test": "target"})
     monkeypatch.setattr(lift, "build_rigid_insertion_targets",
                         lambda **kwargs: targets)
@@ -256,29 +251,15 @@ def test_post_squeeze_replan_requires_the_bound_cartesian_mode(
         "native-locked-experimental")
 
 
-def test_endpoint_and_uncertainty_margins_fail_closed(tmp_path, monkeypatch):
+def test_offline_endpoint_and_uncertainty_margins(tmp_path, monkeypatch):
     args, planned_calls, _log, _marker = _fixture(tmp_path, monkeypatch)
-    monkeypatch.setattr(lift, "screen_grasp_endpoint",
-                        lambda **kwargs: {
-                            "endpoint_pass": False,
-                            "T_key_hand": kwargs["T_key_hand_override"].tolist(),
-                            "xy_offset_socket_m": [0., 0.],
-                            "hold_pose_screens": {"measured_squeeze": {
-                                "hand_q": kwargs["hand_poses_override"][
-                                    "measured_squeeze"].tolist()}},
-                        })
-    result = lift.plan_measured_lift_chain(**args)
-    assert result.status == "measured_squeeze_endpoint_rejected"
+    endpoint = args["runner"]._selected_candidate["endpoint_report"]
+    endpoint["endpoint_pass"] = False
+    with pytest.raises(ValueError, match="offline 20 mm screen"):
+        lift.plan_measured_lift_chain(**args)
     assert not args["planner"].starts
     assert not planned_calls
-    monkeypatch.setattr(lift, "screen_grasp_endpoint", lambda **kwargs: {
-        "endpoint_pass": True,
-        "T_key_hand": kwargs["T_key_hand_override"].tolist(),
-        "xy_offset_socket_m": [0., 0.],
-        "hold_pose_screens": {"measured_squeeze": {
-            "hand_q": kwargs["hand_poses_override"][
-                "measured_squeeze"].tolist()}},
-    })
+    endpoint["endpoint_pass"] = True
     monkeypatch.setattr(lift, "audit_sampled_uncertainty_margins",
                         lambda **kwargs: {"sampled_margin_pass": False})
     result = lift.plan_measured_lift_chain(**args)
@@ -325,18 +306,12 @@ def test_runner_saves_single_passing_measured_lift_chain(
         runner.prepare_measured_lift_chain(**args)
 
 
-def test_endpoint_cannot_silently_use_other_xy_or_hand(
+def test_offline_endpoint_cannot_silently_use_other_xy(
         tmp_path, monkeypatch):
     args, planned_calls, _log, _marker = _fixture(tmp_path, monkeypatch)
-    monkeypatch.setattr(lift, "screen_grasp_endpoint", lambda **kwargs: {
-        "endpoint_pass": True,
-        "T_key_hand": kwargs["T_key_hand_override"].tolist(),
-        "xy_offset_socket_m": [.001, 0.],
-        "hold_pose_screens": {"measured_squeeze": {
-            "hand_q": kwargs["hand_poses_override"][
-                "measured_squeeze"].tolist()}},
-    })
-    with pytest.raises(ValueError, match="different held relation or hand"):
+    args["runner"]._selected_candidate["endpoint_report"][
+        "xy_offset_socket_m"] = [.001, 0.]
+    with pytest.raises(ValueError, match="offline 20 mm screen"):
         lift.plan_measured_lift_chain(**args)
     assert not args["planner"].starts
     assert not planned_calls

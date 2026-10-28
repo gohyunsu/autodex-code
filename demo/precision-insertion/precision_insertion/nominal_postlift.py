@@ -121,7 +121,10 @@ def plan_nominal_postlift_transfer(
     """Replan from measured joints while *assuming* the selected v8 relation.
 
     No physical grasp calibration or post-lift key-pose observation is inferred.
-    Exact endpoint and sampled held-path checks use this named hypothesis.
+    The selected candidate's offline 20 mm endpoint screen is reused. A
+    pending XY correction is screened against the candidate's nominal hold
+    poses. Measured hand joints still seed the actual transfer planner, but
+    they are not treated as a newly observed key-in-hand transform.
     """
     thresholds = (max_arm_hand_skew_s, max_hand_command_error_raw,
                   max_arm_velocity_rad_s, axial_waypoint_step_m)
@@ -202,21 +205,20 @@ def plan_nominal_postlift_transfer(
         max_arm_velocity_rad_s=max_arm_velocity_rad_s)
     if joint_sample.sample_timestamp_s <= raw_lift.decision_timestamp_s:
         raise ValueError("post-lift measured hold predates the lift observation")
-    endpoint = screen(
-        shared_root=root, mode=mode, candidate_dir=candidate_dir,
-        minimum_hand_clearance_m=catalog["minimum_hand_clearance_m"],
-        T_key_hand_override=command,
-        hand_poses_override={"measured_post_lift": joint_sample.full_q[7:]},
-        override_source="nominal_v8_relation_plus_measured_Inspire")
+    if not any(attempt.wrist_correction_socket_m):
+        endpoint = matches[0]["endpoint_report"]
+    else:
+        endpoint = screen(
+            shared_root=root, mode=mode, candidate_dir=candidate_dir,
+            minimum_hand_clearance_m=catalog["minimum_hand_clearance_m"],
+            T_key_hand_override=command,
+            override_source="nominal_v8_relation_with_pending_xy")
     if (not np.allclose(validate_se3(endpoint.get("T_key_hand"),
                                     name="nominal endpoint relation"),
                         command, atol=1e-8, rtol=0) or
             not np.allclose(endpoint.get("xy_offset_socket_m"),
-                            [0., 0.], atol=1e-12, rtol=0) or
-            not np.allclose(endpoint.get("hold_pose_screens", {}).get(
-                "measured_post_lift", {}).get("hand_q"),
-                joint_sample.full_q[7:], atol=1e-8, rtol=0)):
-        raise ValueError("nominal endpoint used another grasp or finger state")
+                            [0., 0.], atol=1e-12, rtol=0)):
+        raise ValueError("nominal endpoint used another grasp or XY target")
 
     def result(status: str, *, targets=None,
                planning=None) -> NominalPostLiftPreflight:

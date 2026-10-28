@@ -312,10 +312,10 @@ class RobotFeedbackSampler:
         return self.buffer.latest(max_age_s=max_age_s)
 
     def state_for_capture(self, capture: RawCameraCapture) -> LiveRobotState:
-        if self._thread is None or self._stop.is_set() or not self._thread.is_alive():
-            raise RuntimeError("feedback sampler is not running")
         if self._failure is not None:
             raise RuntimeError("feedback sampling failed") from self._failure
+        if self._thread is None or self._stop.is_set() or not self._thread.is_alive():
+            raise RuntimeError("feedback sampler is not running")
         return self.buffer.state_for_capture(capture)
 
     def close(self, *, timeout_s: float = 5.0) -> None:

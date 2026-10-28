@@ -535,3 +535,30 @@ contributing views was 0.943. This is a camera-only mask/body-fit probe, not
 a new frozen socket pose or key trial. The camera-only full session still
 needs the physical key after its socket phase. No physical insertion or task
 success is claimed here.
+
+## 2026-10-28 live pickup attempt and current hardware finding
+
+The 10 mm-gap socket and upright key were measured in a frozen capture4
+session. A live selected v8 grasp (`table/0/20232`) reached squeeze and then
+completed the planned 10 cm lift. The key remained on the board in the saved
+after-lift views. An offline replay of three before/after camera pairs with
+the configured Qwen3-VL-2B backend returned `miss` in all three views. The
+feedback sampler exited after a transient missing Inspire Modbus reply, so
+the live attempt stopped before its VLM checkpoint. No pre-insertion,
+insertion, XY correction, or next-episode correction was executed. The stock
+planned missed-grasp reset returned the arm to clear view.
+
+The commanded raw Inspire angles after squeeze were
+`[899, 267, 512, 604, 32, 0]`; measured thumb-bending channel 4 was about
+`995` rather than its commanded `32`, while the other bending channels
+tracked their commands. A separate, unloaded thumb-bend command of `600`
+also left its measured angle at `1000`; the command was then restored to
+`1000`. This localizes the observed defect to the thumb-bend channel. The
+available measurements do **not** distinguish its connector/wiring, motor,
+or driver. The external Modbus link communicates with the other channels.
+
+The integration now tolerates a missing hand-feedback sample and exposes a
+sampler failure if one occurs. It reuses the candidate's offline 20 mm
+hand/socket endpoint screen after squeeze; measured finger joints are used
+for the lift/transfer planner, not treated as a measured key-in-hand pose.
+These code changes do not make the missed physical grasp a success.

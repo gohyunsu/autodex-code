@@ -42,12 +42,20 @@ def _case(tmp_path, monkeypatch):
     mode = select_mode("cylinder", 20)
 
     def cylinder_fixture(root):
-        result = _candidate_fixture(root, mode=mode)
+        fixture_mode, paths, candidates, catalog_screen = _candidate_fixture(
+            root, mode=mode)
         geometry = AssetPaths(root, mode).task_geometry
         geometry.write_text(json.dumps({
             "T_socket_key_verification": np.eye(4).tolist(),
         }), encoding="utf-8")
-        return result
+        def screen_with_relation(*, candidate_dir, **kwargs):
+            report = catalog_screen(candidate_dir=candidate_dir, **kwargs)
+            report["T_key_hand"] = np.load(
+                candidate_dir / "wrist_se3.npy").tolist()
+            report["xy_offset_socket_m"] = [0.0, 0.0]
+            return report
+
+        return fixture_mode, paths, candidates, screen_with_relation
 
     monkeypatch.setattr(observed_fixture, "_candidate_fixture", cylinder_fixture)
     original, calls = observed_fixture._setup(tmp_path, monkeypatch)
@@ -85,10 +93,19 @@ def _case(tmp_path, monkeypatch):
         max_arm_hand_skew_s=.05, max_hand_command_error_raw=30,
         max_arm_velocity_rad_s=.05,
         limits=original["limits"], axial_waypoint_step_m=.005,
-        screen=original["screen"])
+        screen=lambda **kwargs: _nominal_screen(calls, **kwargs))
     candidate_dir = (AssetPaths(tmp_path, mode).candidate_dir /
                      Path(*original["trial"].selected_candidate_key))
     return args, candidate_dir, calls
+
+
+def _nominal_screen(calls, **kwargs):
+    calls.append(kwargs)
+    return {
+        "endpoint_pass": True,
+        "T_key_hand": kwargs["T_key_hand_override"].tolist(),
+        "xy_offset_socket_m": [0.0, 0.0],
+    }
 
 
 def test_nominal_relation_is_marked_hypothesis_and_source_verified(
@@ -102,7 +119,7 @@ def test_nominal_relation_is_marked_hypothesis_and_source_verified(
     assert result.to_record()["nominal_held_relation"]["source"] == (
         "selected_v8_wrist_hypothesis_not_observed_key_pose")
     assert calls[0]["override_source"] == (
-        "nominal_v8_relation_plus_measured_Inspire")
+        "nominal_v8_relation_with_pending_xy")
     assert result.relation.T_key_hand_command[0, 3] == pytest.approx(
         result.relation.T_key_hand[0, 3] + .0006)
     output = write_nominal_postlift_preflight(result, tmp_path / "nominal")

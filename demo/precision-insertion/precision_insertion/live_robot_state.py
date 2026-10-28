@@ -141,7 +141,8 @@ def _read_live_franka_inspire_state_once(
     arm_time = host_wall - state_age
     now = time.time() if now_s is None else float(now_s)
     if not isinstance(hand_data, dict):
-        raise ValueError("FR3 and Inspire feedback must both be available")
+        raise FeedbackTimeAlignmentUnavailable(
+            "Inspire feedback unavailable for this Modbus read")
     hand_time = float(hand_data.get("time", float("nan")))
     if (not all(math.isfinite(t) and t > 0 for t in
                 (now, arm_time, hand_time)) or
@@ -152,8 +153,15 @@ def _read_live_franka_inspire_state_once(
             "FR3/Inspire feedback is stale or not time-aligned")
     arm_q = _finite_vector(arm_data.get("qpos"), 7, "FR3 qpos")
     arm_qvel = _finite_vector(arm_data.get("qvel"), 7, "FR3 qvel")
-    measured_raw = _finite_vector(hand_data.get("qpos"), 6,
-                                  "Inspire measured raw qpos")
+    try:
+        measured_raw = _finite_vector(hand_data.get("qpos"), 6,
+                                      "Inspire measured raw qpos")
+    except (TypeError, ValueError) as exc:
+        # ParaDex returns None when one Modbus read has no reply. That single
+        # sample cannot be paired with a camera exposure, but the next read
+        # can; do not permanently stop the session sampler for it.
+        raise FeedbackTimeAlignmentUnavailable(
+            "Inspire measured raw qpos unavailable for this Modbus read") from exc
     commanded_raw = _finite_vector(hand_data.get("action"), 6,
                                    "Inspire commanded raw action")
     if (np.any(measured_raw < 0) or np.any(measured_raw > 1000) or
