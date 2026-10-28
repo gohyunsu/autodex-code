@@ -110,6 +110,46 @@ def _focus_final_frames(
     return focused, records
 
 
+def _focus_initial_key_frames(
+    frames: list[LabeledFrame], initial_key_bundle: Path,
+) -> tuple[list[LabeledFrame], dict[str, dict]]:
+    """Show the actual tabletop key at the same scale as the final socket.
+
+    The verified FoundPose/SAM mask is used only to crop the raw image.  It is
+    never overlaid on the pixels supplied to the VLM.
+    """
+    focused, records = [], {}
+    for frame in frames:
+        mask_path = (initial_key_bundle / "masks" /
+                     f"{_safe_id(frame.camera_id, 'camera ID')}.png")
+        mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+        if mask is None or mask.shape != (frame.image.height, frame.image.width):
+            focused.append(frame)
+            continue
+        points = cv2.findNonZero(mask)
+        if points is None:
+            focused.append(frame)
+            continue
+        x, y, width, height = cv2.boundingRect(points)
+        # A square crop keeps the narrow cylinder visible after the
+        # classification resize and stays above Qwen's minimum pixel area.
+        side = max(3 * width, 3 * height, 256)
+        cx, cy = x + width // 2, y + height // 2
+        left = max(0, min(cx - side // 2, frame.image.width - side))
+        top = max(0, min(cy - side // 2, frame.image.height - side))
+        roi = (left, top, min(frame.image.width, left + side),
+               min(frame.image.height, top + side))
+        crop = frame.image.crop(roi)
+        focused.append(LabeledFrame(
+            frame.camera_id, frame.phase, frame.timestamp_s, crop))
+        records[frame.camera_id] = {
+            "roi_xyxy_full_px": list(roi),
+            "mask_file_sha256": _sha(mask_path),
+            "crop_rgb_sha256": hashlib.sha256(crop.tobytes()).hexdigest(),
+        }
+    return focused, records
+
+
 def assess_released_insertion_checkpoint(
     *, attempt_id: str, candidate_id: str, target_depth_m: float,
     session_calibration_sha256: str, initial_key_bundle: Path,
@@ -176,6 +216,8 @@ def assess_released_insertion_checkpoint(
             "initial, preinsert, stroke, release and final images are not ordered")
     frames, inputs = _image_frames(
         initial_image_root, initial, cameras, "initial_tabletop")
+    frames, initial_visual_crops = _focus_initial_key_frames(
+        frames, initial_root)
     later, later_inputs = _image_frames(
         final_root, final, cameras, "final_clear_view")
     later, final_visual_crops = _focus_final_frames(later, initial)
@@ -221,6 +263,7 @@ def assess_released_insertion_checkpoint(
         "release_record_path": str(release_path),
         "release_record_sha256": _sha(release_path),
         "frames": inputs, "visual": visual.to_record(),
+        "initial_visual_crops": initial_visual_crops,
         "final_visual_crops": final_visual_crops,
         "minimum_visual_views": minimum_visual_views,
         "max_phase_skew_s": max_phase_skew_s,
@@ -296,6 +339,23 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
             len(grouped["initial_tabletop"]) < report["minimum_visual_views"] or
             report["visual"].get("image_order") != expected_order):
         raise ValueError("released-insertion camera pairs changed")
+    if "initial_visual_crops" in report:
+        replay_frames, _ = _image_frames(
+            initial_image_root, initial, sorted(grouped["initial_tabletop"]),
+            "initial_tabletop")
+        _, expected_crops = _focus_initial_key_frames(replay_frames, initial_root)
+        if report["initial_visual_crops"] != expected_crops:
+            raise ValueError("released-insertion initial key crops changed")
+        aggregation = report["visual"].get("aggregation") or {}
+        for camera, row in zip(
+                aggregation.get("completed_camera_ids", []),
+                aggregation.get("per_view", [])):
+            if camera in expected_crops:
+                images = (row.get("input_transform") or {}).get("images") or []
+                if (len(images) != 2 or
+                        images[0].get("source_rgb_sha256") !=
+                        expected_crops[camera]["crop_rgb_sha256"]):
+                    raise ValueError("released-insertion initial VLM crop changed")
     if "final_visual_crops" in report:
         replay_frames, _ = _image_frames(
             final_root, final, sorted(grouped["final_clear_view"]),

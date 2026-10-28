@@ -342,6 +342,27 @@ def test_final_classifier_crops_around_frozen_socket_projection():
         frames[0].image.tobytes()).hexdigest()
 
 
+def test_final_classifier_crops_initial_key_from_saved_mask(tmp_path):
+    from PIL import Image
+    from precision_insertion.observer import LabeledFrame
+    from precision_insertion.released_insertion_checkpoint import (
+        _focus_initial_key_frames,
+    )
+
+    source = Image.new("RGB", (640, 480), "white")
+    frame = LabeledFrame("cam_a", "initial_tabletop", 123., source)
+    mask_dir = tmp_path / "masks"
+    mask_dir.mkdir()
+    mask = np.zeros((480, 640), dtype=np.uint8)
+    mask[100:180, 200:240] = 255
+    cv2.imwrite(str(mask_dir / "cam_a.png"), mask)
+    focused, crops = _focus_initial_key_frames([frame], tmp_path)
+    assert focused[0].image.size == (256, 256)
+    assert crops["cam_a"]["roi_xyxy_full_px"] == [92, 12, 348, 268]
+    assert crops["cam_a"]["crop_rgb_sha256"] == hashlib.sha256(
+        focused[0].image.tobytes()).hexdigest()
+
+
 def test_reviewed_visual_depth_can_complete_task_label(tmp_path, monkeypatch):
     from precision_insertion import depth_admission
 
