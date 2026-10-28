@@ -345,11 +345,24 @@ def plan_corrected_axial_handoff(*, runner, planner,
         held_hand_q=state.full_q[7:], held_hand_source="measured",
         limits=path_limits, axial_waypoint_step_m=.005,
         start_at_preinsert=True)
-    if not planned.sampled_planning_pass or planned.axial_trajectory is None:
-        raise RuntimeError(f"corrected 20 mm plan failed: {planned.status}")
     folder = (Path(runner._attempt_dir) / "guarded_axial_handoffs" /
               f"{runner._guarded_axial_index:03d}")
     folder.mkdir(parents=True, exist_ok=False)
+    if not planned.sampled_planning_pass or planned.axial_trajectory is None:
+        _write(folder / "plan_failure.json", {
+            "schema": "precision_insertion_same_trial_axial_plan_failure_v1",
+            "attempt_id": runner.active_attempt.attempt_id,
+            "candidate_id": runner.active_attempt.candidate_id,
+            "status": planned.status,
+            "measured_start": state.to_record(),
+            "total_xy_correction_socket_m": total.tolist(),
+            "final_residual_socket_xy_m": residual.tolist(),
+            "residual_source": residual_source,
+            "targets": targets.to_record(),
+            "planning": planned.to_record(),
+            "scope": "failed_plan_no_insertion_command",
+        })
+        raise RuntimeError(f"corrected 20 mm plan failed: {planned.status}")
     archive = folder / "planned_trajectories.npz"
     np.savez_compressed(archive, axial=planned.axial_trajectory)
     report = _write(folder / "report.json", {

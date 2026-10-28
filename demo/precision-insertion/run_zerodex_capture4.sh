@@ -12,7 +12,7 @@ if [[ -n ${PRECISION_SYSTEM_PROFILE:-} ]]; then
 fi
 source "$SCRIPT_DIR/config/zerodex_capture4.env.sh"
 export PRECISION_GAP_MM=${PRECISION_GAP_MM:-5}
-export PRECISION_XY_ESTIMATOR=${PRECISION_XY_ESTIMATOR:-vlm}
+export PRECISION_XY_ESTIMATOR=${PRECISION_XY_ESTIMATOR:-sam_half_ellipse}
 export PRECISION_TABLETOP_POSE_ERROR_DEG=${PRECISION_TABLETOP_POSE_ERROR_DEG:-20}
 export PRECISION_PRELOAD_VLM=${PRECISION_PRELOAD_VLM:-1}
 # Observe whether the grasp remains held briefly after the lift completes.

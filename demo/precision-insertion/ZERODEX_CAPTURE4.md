@@ -944,3 +944,33 @@ under `zerodex_capture4/inline_probe_25062427d2f3_request_1941213717/`.
 The key was visibly still inside the socket in those frames; no separate
 tabletop key was available for another pickup. This was a mask-only transport
 probe, so its `pose_ok: false` fields do not evaluate FoundPose accuracy.
+
+## 2026-10-28 four-view same-trial XY execution
+
+The ZeroDex launcher now defaults to all four capture4 cameras for visual
+assessment and to the Qwen-box + SAM3 half-ellipse key-face estimator for XY.
+The recorded 5 mm-gap attempt `attempt_9542c1bd6c174baa9cc8a7f5b3a03211`
+picked, lifted, transferred, and executed three held-key XY shifts. The four
+camera observations are under `same_trial_xy/observations/000.json` through
+`003.json`; the three measured motion reports are under `same_trial_xy/shifts/`.
+The estimated XY correction decreased from 32.0 mm to 1.27 mm. Camera
+`26053248` was captured and assessed, but its detected point stayed on the
+socket while the key moved and was excluded as a 123 px reprojection outlier.
+The other three views contributed to the 3D fit. All four images with the
+last detected point and nominal projection are in the development review at
+`~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/preinsert_after_three_shifts_four_view_grid.png`.
+
+No insertion command was sent. Offline replay from the saved final joint
+state and frozen collision world reproduced `axial_waypoint_unreachable`:
+eight 5 mm socket-axis waypoints passed, then the 45 mm progress waypoint
+(15 mm past the socket entry) returned
+`MotionGenStatus.INVALID_START_STATE_WORLD_COLLISION`. The robot stopped with
+the key still held above the socket. The replay record and sources are in the
+same development review folder. This is a corrected held-pose planning
+failure, not evidence that the key reached 20 mm or that a physical collision
+occurred. Future failures at this handoff now save `plan_failure.json` with
+the measured start, corrected targets, and underlying cuRobo failure detail
+before raising. No collision check was disabled or relaxed.
+
+The separate post-run uploader saved the 26053248 recording to
+`/mnt/paradex2/hyunsu/precision_insertion/runs/zerodex_capture4/2026/10/28/20261028_233041_868585_236445/video/26053248.avi`.

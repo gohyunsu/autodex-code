@@ -306,6 +306,11 @@ def plan_held_transfer_and_axial(
         **row, "planner_api": "plan_jacobian_axis_stroke",
     } for row in query.step_records)
     if not query.success or query.trajectory is None:
+        if query.step_records:
+            query_records[-1].update({
+                "stroke_failure_code": getattr(query, "failure_code", None),
+                "stroke_failure_detail": getattr(query, "failure_detail", None),
+            })
         completed = sum(row["success"] is True for row in query.step_records)
         return result("axial_waypoint_unreachable", transfer=transfer,
                       waypoints=completed)
