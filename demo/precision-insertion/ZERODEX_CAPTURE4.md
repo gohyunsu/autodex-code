@@ -51,24 +51,18 @@ start the adapter if another experiment owns the cameras.
   2026-10-22 AutoDex episode recorded 3.924 s for Qwen load and 5.687 s for
   clear-view motion; this is an overlap opportunity, **not** a measured
   ZeroDex live-session saving.
-- The ZeroDex launcher sets `PRECISION_PREWARM_FIXED_WORLD=1` when the key
-  will be placed after the fixed-socket measurement. Once a live
-  session has measured the fixed socket and loaded Qwen, the planner initializes
-  its table/socket cuRobo world in a background thread while the operator
-  places the key. Fresh key capture can also overlap the warmup; the key
-  handler joins it immediately before candidate planning. Other planner
-  actions join before entry. Later trials reuse the initialized planner.
-  Set the variable to
-  `0` to use the original first-candidate initialization. When
-  `PRECISION_KEY_ALREADY_PLACED=1`, the default is `0`: key perception runs
-  first because there is no placement wait to hide the GPU work. An explicit
-  `PRECISION_PREWARM_FIXED_WORLD=1` still overrides that choice. This does not
-  change any grasp, collision or task-success criterion. It is not exercised
-  by `--check` or `--camera-only`; live use requires the ZeroDex FR3 daemon
-  and robot/hand commissioning described below.
-  The capture4 and main GPUs are separate, although local silhouette fitting
-  can contend with cuRobo on the main RTX 3090. A live speedup has not yet
-  been measured.
+- The ZeroDex launcher sets `PRECISION_PREWARM_FIXED_WORLD=1` for both newly
+  placed and already placed keys. After the fixed socket is available, the
+  planner initializes its table/socket cuRobo world in a background thread
+  while capture4 acquires and refines the next key. Candidate planning joins
+  that work; later trials reuse the initialized planner. The 2026-10-28 live
+  attempt spent 21.97 s in the first v8 pickup's cuRobo world setup while
+  the camera request took 2.26 s. This change aims to overlap those stages;
+  its net saving still needs a live measurement because local silhouette
+  fitting can contend with cuRobo on the main RTX 3090. Set
+  `PRECISION_PREWARM_FIXED_WORLD=0` for the former serial timing. No grasp,
+  collision, or task-success criterion changes. `--check` and `--camera-only`
+  do not perform this live planner warmup.
 - The ZeroDex launcher sets `PRECISION_VISIBLE_GRIP_CAMERA_IDS` to the same
   three selected views. Its lift checkpoint uses measured Franka/Inspire FK,
   the straight-mount URDF and calibrated projections to crop the hand in each

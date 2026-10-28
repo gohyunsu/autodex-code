@@ -62,13 +62,13 @@ def test_zerodex_launcher_provides_demo_collision_compat(tmp_path):
     already_placed = subprocess.run(
         ["bash", str(demo / "run_zerodex_capture4.sh"), "--check"],
         env=env, capture_output=True, text=True, check=True)
-    assert "PREWARM=0" in already_placed.stdout
+    assert "PREWARM=1" in already_placed.stdout
 
-    env["PRECISION_PREWARM_FIXED_WORLD"] = "1"
+    env["PRECISION_PREWARM_FIXED_WORLD"] = "0"
     overridden = subprocess.run(
         ["bash", str(demo / "run_zerodex_capture4.sh"), "--check"],
         env=env, capture_output=True, text=True, check=True)
-    assert "PREWARM=1" in overridden.stdout
+    assert "PREWARM=0" in overridden.stdout
 
     env["PRECISION_PRELOAD_VLM"] = "0"
     no_preload = subprocess.run(
