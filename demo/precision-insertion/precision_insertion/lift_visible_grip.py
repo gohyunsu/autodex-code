@@ -81,24 +81,62 @@ def _legacy_result(rows: list[dict]) -> dict:
     }
 
 
-def _hand_transform(joint_q: Sequence[float], robot_urdf: Path) -> np.ndarray:
+def _robot_at_q(joint_q: Sequence[float], robot_urdf: Path, robot=None):
     from yourdfpy import URDF
 
     joints = np.asarray(joint_q, dtype=float)
     if joints.shape != (13,) or not np.all(np.isfinite(joints)):
         raise ValueError("hand crop needs thirteen measured robot joints")
-    robot = URDF.load(str(robot_urdf), build_scene_graph=True,
-                      load_meshes=False)
+    if robot is None:
+        robot = URDF.load(str(robot_urdf), build_scene_graph=True,
+                          load_meshes=False)
     names = [joint.name for joint in robot.actuated_joints]
     if len(names) != 13 or not all(name.startswith("fr3_") for name in names[:7]):
         raise ValueError("hand crop needs the FR3/Inspire adapter URDF")
     robot.update_cfg(dict(zip(names, joints)))
+    return robot
+
+
+def _hand_transform(joint_q: Sequence[float], robot_urdf: Path) -> np.ndarray:
+    robot = _robot_at_q(joint_q, robot_urdf)
     return np.asarray(robot.get_transform("base_link", robot.base_link),
                       dtype=float)
 
 
+def _hand_and_finger_focus(
+    joint_q: Sequence[float], robot_urdf: Path, *, robot=None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Project the measured thumb/index/middle contact region, not the wrist."""
+    robot = _robot_at_q(joint_q, robot_urdf, robot)
+    base = np.asarray(robot.get_transform("base_link", robot.base_link),
+                      dtype=float).copy()
+    tips = np.stack([
+        np.asarray(robot.get_transform(name, robot.base_link),
+                   dtype=float)[:3, 3]
+        for name in ("right_thumb_4", "right_index_2", "right_middle_2")
+    ])
+    finger_world = np.r_[tips.mean(axis=0), 1.]
+    focus_local = np.linalg.inv(base) @ finger_world
+    return base, focus_local
+
+
+def _hand_foci_for_pair(after_lift_q, preinsert_q, robot_urdf: Path):
+    """Load the hand model once for both measured exposure states."""
+    from yourdfpy import URDF
+
+    robot = URDF.load(str(robot_urdf), build_scene_graph=True,
+                      load_meshes=False)
+    return {
+        "after_lift": _hand_and_finger_focus(
+            after_lift_q, robot_urdf, robot=robot),
+        "preinsert": _hand_and_finger_focus(
+            preinsert_q, robot_urdf, robot=robot),
+    }
+
+
 def _hand_roi(*, image_size: tuple[int, int], camera: str,
               calibration: Mapping, T_robot_hand: np.ndarray,
+              focus_local: np.ndarray = HAND_FOCUS,
               ) -> tuple[tuple[int, int, int, int], list[float]]:
     camera_cal = calibration["camera_calibration"]
     K = np.asarray(camera_cal["intrinsics_full"][camera]["K_undist"],
@@ -111,7 +149,7 @@ def _hand_roi(*, image_size: tuple[int, int], camera: str,
                     (K, camera_world, world_robot, T_robot_hand)) or
             K[0, 0] <= 0 or K[1, 1] <= 0):
         raise ValueError("hand crop needs finite undistorted session calibration")
-    point = camera_world @ world_robot @ T_robot_hand @ HAND_FOCUS
+    point = camera_world @ world_robot @ T_robot_hand @ focus_local
     if point[2] <= 0:
         raise ValueError("measured hand is behind the camera")
     pixel = K @ point[:3]

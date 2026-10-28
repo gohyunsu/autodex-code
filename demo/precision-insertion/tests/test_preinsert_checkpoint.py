@@ -22,8 +22,10 @@ from precision_insertion.frame_provenance import image_sha256  # noqa: E402
 from precision_insertion.held_relation import HeldRelation  # noqa: E402
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.observer import resize_classification_images  # noqa: E402
+from precision_insertion.observer import LabeledFrame  # noqa: E402
 from precision_insertion.postlift_preflight import PostLiftPreflight  # noqa: E402
 from precision_insertion.preinsert_checkpoint import (  # noqa: E402
+    _focus_temporal_frames, _replay_temporal_crops,
     assess_preinsert_checkpoint, verify_preinsert_checkpoint,
     write_preinsert_checkpoint,
 )
@@ -35,6 +37,55 @@ from precision_insertion.runtime_evidence_cache import live_evidence_cache  # no
 from precision_insertion.records import begin_attempt  # noqa: E402
 from test_key_perception import CAMERAS, _session  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
+
+
+def test_temporal_vlm_focus_replays_saved_pixels_and_includes_moved_socket(
+        tmp_path, monkeypatch):
+    from PIL import Image
+    from precision_insertion import lift_visible_grip
+
+    def geometry(q):
+        transform = np.eye(4)
+        transform[0, 3] = q[0]
+        return transform, np.array([0., 0., 0., 1.])
+
+    def pair_geometry(after_lift_q, preinsert_q, _urdf):
+        return {"after_lift": geometry(after_lift_q),
+                "preinsert": geometry(preinsert_q)}
+
+    def hand_roi(*, image_size, camera, calibration, T_robot_hand,
+                 focus_local):
+        origin = 20 if T_robot_hand[0, 3] == 0 else 80
+        return (origin, origin, origin + 64, origin + 64), [origin + 32.] * 2
+
+    monkeypatch.setattr(lift_visible_grip, "_hand_foci_for_pair", pair_geometry)
+    monkeypatch.setattr(lift_visible_grip, "_hand_roi", hand_roi)
+    monkeypatch.setattr(lift_visible_grip, "HAND_CROP_SIDE", 64)
+    image = Image.new("RGB", (256, 256), "white")
+    frames = [LabeledFrame("cam_a", phase, index + 1., image)
+              for index, phase in enumerate(("after_lift", "preinsert"))]
+    focused, record = _focus_temporal_frames(
+        frames, calibration={}, after_lift_q=[0], preinsert_q=[1],
+        robot_urdf=tmp_path / "unused.urdf",
+        socket_bboxes={"cam_a": {
+            "projected_hull_bbox_px": [150, 150, 180, 180]}})
+    pre_roi = record["per_camera"]["cam_a"]["preinsert"][
+        "roi_xyxy_full_px"]
+    assert pre_roi[0] <= 150 < 180 <= pre_roi[2]
+    assert pre_roi[1] <= 150 < 180 <= pre_roi[3]
+    _, wide_record = _focus_temporal_frames(
+        frames, calibration={}, after_lift_q=[0], preinsert_q=[1],
+        robot_urdf=tmp_path / "unused.urdf",
+        socket_bboxes={"cam_a": {
+            "projected_hull_bbox_px": [0, 0, 250, 250]}})
+    assert wide_record["per_camera"]["cam_a"]["preinsert"][
+        "roi_xyxy_full_px"] == [0, 0, 256, 256]
+    assert [frame.image.tobytes() for frame in focused] == [
+        frame.image.tobytes() for frame in _replay_temporal_crops(frames, record)]
+    changed = [frames[0], replace(frames[1], image=Image.new(
+        "RGB", (256, 256), "black"))]
+    with pytest.raises(ValueError, match="crop pixels changed"):
+        _replay_temporal_crops(changed, record)
 
 
 class _Robot:

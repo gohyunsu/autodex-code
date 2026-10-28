@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import math
@@ -62,6 +62,96 @@ def _canonical_digest(record: dict) -> str:
     return hashlib.sha256(json.dumps(
         record, sort_keys=True, separators=(",", ":"),
         allow_nan=False).encode("utf-8")).hexdigest()
+
+
+def _focus_temporal_frames(
+    frames: list[LabeledFrame], *, calibration: dict,
+    after_lift_q, preinsert_q, robot_urdf: Path,
+    socket_bboxes: dict,
+) -> tuple[list[LabeledFrame], dict]:
+    """Keep the measured hand and this session's socket large in VLM pairs.
+
+    The hand projection locates the crop; it is not a claim that the key is
+    still held. The socket box comes from the frozen session's CAD projection.
+    No overlay, resampling, or synthetic pixel is added to either image.
+    """
+    from .lift_visible_grip import (
+        HAND_CROP_SIDE, _hand_foci_for_pair, _hand_roi,
+    )
+
+    geometry = _hand_foci_for_pair(after_lift_q, preinsert_q, robot_urdf)
+    focused, records = [], {}
+    for frame in frames:
+        roi, hand_px = _hand_roi(
+            image_size=frame.image.size, camera=frame.camera_id,
+            calibration=calibration,
+            T_robot_hand=geometry[frame.phase][0],
+            focus_local=geometry[frame.phase][1])
+        if frame.phase == "preinsert":
+            socket = socket_bboxes.get(frame.camera_id, {}).get(
+                "projected_hull_bbox_px")
+            if (isinstance(socket, list) and len(socket) == 4 and
+                    all(type(v) is int for v in socket) and
+                    socket[0] < socket[2] and socket[1] < socket[3]):
+                width, height = frame.image.size
+                left = max(0, min(roi[0], socket[0]))
+                top = max(0, min(roi[1], socket[1]))
+                right = min(width, max(roi[2], socket[2]))
+                bottom = min(height, max(roi[3], socket[3]))
+                needed = max(HAND_CROP_SIDE, right - left + 64,
+                             bottom - top + 64)
+                if needed > min(width, height):
+                    roi = (0, 0, width, height)
+                else:
+                    side = needed
+                    cx, cy = (left + right) / 2, (top + bottom) / 2
+                    x0 = max(0, min(width - side, round(cx - side / 2)))
+                    y0 = max(0, min(height - side, round(cy - side / 2)))
+                    roi = (x0, y0, x0 + side, y0 + side)
+            else:
+                # Without a projected socket, retain the raw full scene so
+                # the model can still inspect the target in this camera.
+                roi = (0, 0, *frame.image.size)
+        crop = frame.image.crop(roi)
+        focused.append(LabeledFrame(
+            frame.camera_id, frame.phase, frame.timestamp_s, crop))
+        records.setdefault(frame.camera_id, {})[frame.phase] = {
+            "roi_xyxy_full_px": list(roi),
+            "source_size_wh": list(frame.image.size),
+            "crop_rgb_sha256": hashlib.sha256(crop.tobytes()).hexdigest(),
+            "projected_hand_px": hand_px,
+        }
+    return focused, {
+        "schema": "precision_insertion_temporal_hand_socket_crop_v1",
+        "per_camera": records,
+    }
+
+
+def _replay_temporal_crops(
+    frames: list[LabeledFrame], crops: dict,
+) -> list[LabeledFrame]:
+    """Rebuild the exact VLM pixels from the immutable raw camera captures."""
+    if crops.get("schema") != "precision_insertion_temporal_hand_socket_crop_v1":
+        raise ValueError("unknown preinsert VLM crop policy")
+    records = crops.get("per_camera", {})
+    if set(records) != {frame.camera_id for frame in frames}:
+        raise ValueError("preinsert VLM crop camera set changed")
+    focused = []
+    for frame in frames:
+        row = records[frame.camera_id][frame.phase]
+        roi = row["roi_xyxy_full_px"]
+        if (row["source_size_wh"] != list(frame.image.size) or
+                not isinstance(roi, list) or len(roi) != 4 or
+                any(type(v) is not int for v in roi) or
+                not (0 <= roi[0] < roi[2] <= frame.image.width and
+                     0 <= roi[1] < roi[3] <= frame.image.height)):
+            raise ValueError("preinsert VLM crop lies outside saved frame")
+        image = frame.image.crop(tuple(roi))
+        if row["crop_rgb_sha256"] != hashlib.sha256(image.tobytes()).hexdigest():
+            raise ValueError("preinsert VLM crop pixels changed")
+        focused.append(LabeledFrame(
+            frame.camera_id, frame.phase, frame.timestamp_s, image))
+    return focused
 
 
 def _transfer_log(
@@ -138,6 +228,8 @@ def observe_held_preinsert_scene(
     robot_loader: Callable | None = None,
     after_lift_raw_bundle: Path | None = None,
     after_lift_frame_rows: dict | None = None,
+    after_lift_joint_q=None,
+    socket_bboxes: dict | None = None,
 ) -> tuple[float, float, HeldSceneComparison, PreinsertVisualAssessment]:
     """Render and label one measured held-key arrival for either transfer route."""
     snapshot = calibration.record.get("camera_calibration", {})
@@ -216,6 +308,14 @@ def observe_held_preinsert_scene(
                          Image.fromarray(cv2.cvtColor(
                              frames_bgr[camera], cv2.COLOR_BGR2RGB))),
         ))
+    crop_record = None
+    if after_lift_joint_q is not None and socket_bboxes is not None:
+        paired, crop_record = _focus_temporal_frames(
+            paired, calibration=calibration.record,
+            after_lift_q=after_lift_joint_q,
+            preinsert_q=joint_sample.full_q,
+            robot_urdf=AssetPaths(Path(shared_root), mode).robot_urdf,
+            socket_bboxes=socket_bboxes)
     # Only a remote backend can overlap inference with this PC's GPU renderer
     # without competing for the same GPU memory. Both use the same saved raw
     # camera pixels; the overlay is never a VLM input.
@@ -231,6 +331,8 @@ def observe_held_preinsert_scene(
         position_error, rotation_error, comparison = render_comparison()
         visual = observe_preinsert_temporal_views(
             backend, paired, max_capture_skew_s=max_capture_skew_s)
+    if crop_record is not None:
+        visual = replace(visual, input_crops=crop_record)
     return position_error, rotation_error, comparison, visual
 
 
@@ -354,7 +456,10 @@ def _verify_visual_replay(
                     else observe_preinsert_raw_views)
         replay = observer(
             _RecordedPreinsertAnswers(recorded), paired_pixels,
-            max_capture_skew_s=replay_skew_s).to_record()
+            max_capture_skew_s=replay_skew_s)
+        if visual.get("input_crops") is not None:
+            replay = replace(replay, input_crops=visual["input_crops"])
+        replay = replay.to_record()
     except (TypeError, ValueError, IndexError) as exc:
         raise ValueError("preinsert VLM saved answer cannot be replayed") from exc
     for old, new in zip(recorded, replay["per_view"]):
@@ -491,6 +596,7 @@ def assess_preinsert_checkpoint(
     after_lift_capture = verify_raw_camera_capture(
         after_lift_bundle, phase="after_lift")
     lift_checkpoint_path = None
+    lift_record = None
     if lift_checkpoint_report_path is not None:
         lift_checkpoint_path = Path(lift_checkpoint_report_path).expanduser().resolve()
         lift_record = verify_lift_checkpoint(lift_checkpoint_path)
@@ -534,6 +640,15 @@ def assess_preinsert_checkpoint(
     selected_rows = {camera: frame_rows[camera] for camera in selected_cameras}
     selected_after_rows = {
         camera: after_lift_rows[camera] for camera in selected_cameras}
+    socket_bboxes = None
+    if (lift_record is not None and
+            isinstance(lift_record.get("before_bundle"), str) and
+            isinstance(lift_record.get("joint_feedback"), dict)):
+        initial_key = json.loads((Path(lift_record["before_bundle"]) /
+                                  "key_observation.json").read_text(
+                                      encoding="utf-8"))
+        socket_bboxes = (initial_key.get("consistency", {})
+                         .get("socket_exclusion", {}).get("per_camera"))
     position_error, rotation_error, comparison, visual = (
         observe_held_preinsert_scene(
             calibration=calibration, shared_root=shared_root, mode=mode,
@@ -548,7 +663,10 @@ def assess_preinsert_checkpoint(
                 "nominal_v8_grasp_hypothesis" if nominal else
                 "observed_multiview_key_plus_wrist"),
             backend=backend, max_capture_skew_s=max_capture_skew_s,
-            renderer_factory=renderer_factory, robot_loader=robot_loader))
+            renderer_factory=renderer_factory, robot_loader=robot_loader,
+            after_lift_joint_q=(lift_record["joint_feedback"].get("full_q")
+                                if socket_bboxes else None),
+            socket_bboxes=socket_bboxes))
     measurement = transfer["measurement"]
     label, reason = _arrival_label(
         measurement=measurement, visual_status=visual.status)
@@ -766,6 +884,9 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
         ))
     _verify_visual_record(report["visual"], views,
                           after_capture["frame_evidence"])
+    if report["visual"].get("input_crops") is not None:
+        paired_pixels = _replay_temporal_crops(
+            paired_pixels, report["visual"]["input_crops"])
     _verify_visual_replay(report["visual"], paired_pixels)
     expected_label, expected_reason = _arrival_label(
         measurement=report["transfer_measurement"],

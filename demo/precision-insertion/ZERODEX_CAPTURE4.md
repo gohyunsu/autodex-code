@@ -152,6 +152,12 @@ session-dependent VLM crops, and the revised final-only socket classifier
 are documented in [VLM_LABEL_REVIEW_20261029.md](VLM_LABEL_REVIEW_20261029.md).
 The initial and final raw captures remain paired in the saved checkpoint;
 only the final socket crop is sent to Qwen for this specific label.
+The after-lift/preinsert coarse VLM pair now receives crops around the
+measured fingertip region and the session-projected socket, with the exact
+ROIs saved for replay. The full raw frames remain the evidence source. A
+saved-frame negative diagnostic found that Qwen's coarse-pair prompt can
+answer `coarse_match` even for an empty hand; use the stage as a coarse
+observation and inspect per-camera responses when collecting transfer losses.
 
 System-specific runtime defaults are in the ZeroDex machine profile and can be
 overridden without editing the shared AutoDex executor:

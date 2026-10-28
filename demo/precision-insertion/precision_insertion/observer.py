@@ -135,6 +135,7 @@ class PreinsertVisualAssessment:
     status: str
     supporting_cameras: tuple[str, ...]
     per_view: tuple[VLMObservation, ...]
+    input_crops: dict | None = None
 
     def to_record(self) -> dict:
         return {
@@ -144,6 +145,8 @@ class PreinsertVisualAssessment:
             "per_view": [row.to_record() for row in self.per_view],
             "scope": "coarse_visual_check_not_metric_alignment_or_arrival_label",
             "robot_ready": False,
+            **({"input_crops": self.input_crops}
+               if self.input_crops is not None else {}),
         }
 
 
