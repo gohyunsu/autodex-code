@@ -125,14 +125,6 @@ class InitDaemon:
 
     # ── lifecycle ──
 
-    def _undistort_live_image(self, serial: str, image_bgr: np.ndarray) -> np.ndarray:
-        mapx, mapy = self.undistort_maps[serial]
-        return cv2.remap(image_bgr, mapx, mapy, cv2.INTER_LINEAR)
-
-    def _segment_snapshot_batch(self, frames, serials, prompt):
-        """Optional adapter hook; stock AutoDex keeps per-camera SAM3/FP order."""
-        return None
-
     def _do_init(self) -> None:
         from autodex.perception.mask import Sam3ImageSegmentor
         from autodex.perception.foundpose_init import FoundPoseInit
@@ -329,7 +321,6 @@ class InitDaemon:
         # standard AutoDex's original reader order exactly when P2 is absent.
         serials_to_process = (sorted(self.my_serials) if p2_semantic_enabled
                               else self.my_serials)
-        batch_masks = self._segment_snapshot_batch(frames, serials_to_process, prompt)
         for s in serials_to_process:
             if s not in self.K_undist:
                 continue
@@ -340,7 +331,8 @@ class InitDaemon:
             img_bgr, _ = f
             t0 = time.perf_counter()
             if self.mode == "live":
-                img_und = self._undistort_live_image(s, img_bgr)
+                mapx, mapy = self.undistort_maps[s]
+                img_und = cv2.remap(img_bgr, mapx, mapy, cv2.INTER_LINEAR)
                 rgb = cv2.cvtColor(img_und, cv2.COLOR_BGR2RGB)
                 if save_capture_dir:
                     out_path = str(Path(save_capture_dir) / "images" / f"{s}.png")
@@ -354,12 +346,9 @@ class InitDaemon:
             t_und = time.perf_counter() - t0
 
             # SAM3
-            if batch_masks is None:
-                t1 = time.perf_counter()
-                mask = self.sam3.segment(rgb, prompt)  # bool HxW or None
-                t_sam3 = time.perf_counter() - t1
-            else:
-                mask, t_sam3 = batch_masks[s]
+            t1 = time.perf_counter()
+            mask = self.sam3.segment(rgb, prompt)  # bool HxW or None
+            t_sam3 = time.perf_counter() - t1
             if mask is None or not mask.any():
                 logger.warning(f"[run {req_id}] no mask for {s}")
                 # still publish empty mask + None pose so robot knows

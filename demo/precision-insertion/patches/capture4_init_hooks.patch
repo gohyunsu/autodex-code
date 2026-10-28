@@ -1,0 +1,29 @@
+diff --git a/src/execution/daemon/init_daemon.py b/src/execution/daemon/init_daemon.py
+index 9f75ab5..8f42f48 100644
+--- a/src/execution/daemon/init_daemon.py
++++ b/src/execution/daemon/init_daemon.py
+@@ -127,0 +128,8 @@ class InitDaemon:
++    def _undistort_live_image(self, serial: str, image_bgr: np.ndarray) -> np.ndarray:
++        mapx, mapy = self.undistort_maps[serial]
++        return cv2.remap(image_bgr, mapx, mapy, cv2.INTER_LINEAR)
++
++    def _segment_snapshot_batch(self, frames, serials, prompt):
++        """Optional adapter hook; stock AutoDex keeps per-camera SAM3/FP order."""
++        return None
++
+@@ -323,0 +332 @@ class InitDaemon:
++        batch_masks = self._segment_snapshot_batch(frames, serials_to_process, prompt)
+@@ -334,2 +343 @@ class InitDaemon:
+-                mapx, mapy = self.undistort_maps[s]
+-                img_und = cv2.remap(img_bgr, mapx, mapy, cv2.INTER_LINEAR)
++                img_und = self._undistort_live_image(s, img_bgr)
+@@ -349,3 +357,6 @@ class InitDaemon:
+-            t1 = time.perf_counter()
+-            mask = self.sam3.segment(rgb, prompt)  # bool HxW or None
+-            t_sam3 = time.perf_counter() - t1
++            if batch_masks is None:
++                t1 = time.perf_counter()
++                mask = self.sam3.segment(rgb, prompt)  # bool HxW or None
++                t_sam3 = time.perf_counter() - t1
++            else:
++                mask, t_sam3 = batch_masks[s]

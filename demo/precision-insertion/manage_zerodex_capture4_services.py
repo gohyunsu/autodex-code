@@ -31,6 +31,7 @@ FILES = (
     "src/execution/__init__.py",
     "src/execution/daemon/__init__.py",
     "src/execution/daemon/init_daemon.py",
+    "demo/precision-insertion/patches/capture4_init_hooks.patch",
     "src/execution/daemon/snapshot_daemon.py",
     "demo/precision-insertion/precision_init_daemon.py",
     "demo/precision-insertion/capture4_exposure_daemon.py",
@@ -84,10 +85,15 @@ def _listening_ports() -> set[int]:
 def deploy() -> None:
     _ssh(f"mkdir -p {shlex.quote(str(REMOTE))}")
     subprocess.run(
-        ["rsync", "-a", "-e", f"ssh -p {SSH_PORT} -o BatchMode=yes", "--relative",
+        ["rsync", "-a", "--checksum", "-e", f"ssh -p {SSH_PORT} -o BatchMode=yes", "--relative",
          *("./" + item for item in FILES), f"{HOST}:{REMOTE}/"],
         cwd=ROOT, check=True,
     )
+    # Keep the fork's stock daemon unmodified. Apply the precision-specific
+    # batching/provenance hooks only to our namespaced capture4 copy.
+    _ssh(f"cd {shlex.quote(str(REMOTE))} && "
+         "patch --batch --forward -p1 -i "
+         "demo/precision-insertion/patches/capture4_init_hooks.patch")
 
 
 def prepare_assets() -> None:

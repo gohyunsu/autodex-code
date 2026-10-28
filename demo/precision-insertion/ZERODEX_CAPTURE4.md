@@ -21,6 +21,11 @@ The profile also supplies the namespaced camera service manager's remote
 asset root. For service commands in this checkout, load it in the calling
 shell first:
 
+The service manager copies the stock init daemon into its own capture4
+namespace and applies `patches/capture4_init_hooks.patch` there. This keeps
+SAM3 batching and frame provenance local to the precision insertion service;
+the fork's stock AutoDex daemon remains unchanged.
+
 ```bash
 cd /home/hyunsu/autodex-code
 source demo/precision-insertion/config/zerodex_capture4.env.sh

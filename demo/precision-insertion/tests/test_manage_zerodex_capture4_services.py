@@ -51,6 +51,7 @@ def test_start_waits_until_all_ports_listen(monkeypatch):
     commands = []
     observations = iter((set(), services.READY_PORTS, services.READY_PORTS))
     monkeypatch.setattr(services, "deploy", lambda: None)
+    monkeypatch.setattr(services, "prepare_assets", lambda: None)
     monkeypatch.setattr(services, "_ssh", commands.append)
     monkeypatch.setattr(services, "_listening_ports",
                         lambda: next(observations))
@@ -87,6 +88,7 @@ def test_service_start_passes_exposure_only_to_own_camera_daemon(monkeypatch):
     commands = []
     observations = iter((set(), services.READY_PORTS, services.READY_PORTS))
     monkeypatch.setattr(services, "deploy", lambda: None)
+    monkeypatch.setattr(services, "prepare_assets", lambda: None)
     monkeypatch.setattr(services, "_ssh", commands.append)
     monkeypatch.setattr(services, "_listening_ports", lambda: next(observations))
     monkeypatch.setattr(services.time, "sleep", lambda *_: None)

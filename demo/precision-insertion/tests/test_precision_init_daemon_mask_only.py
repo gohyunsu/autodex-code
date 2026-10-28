@@ -162,4 +162,4 @@ def test_capture4_auto_uses_serial_masks_when_source_pngs_are_sent(monkeypatch):
 
 def test_stock_auto_dex_daemon_keeps_serial_route():
     daemon = adapter.InitDaemon.__new__(adapter.InitDaemon)
-    assert daemon._segment_snapshot_batch({}, [], "key") is None
+    assert not hasattr(daemon, "_segment_snapshot_batch")
