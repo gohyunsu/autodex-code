@@ -85,10 +85,11 @@ def _socket_focus_roi(
 
 
 def _focus_final_frames(
-    frames: list[LabeledFrame], initial: dict,
+    frames: list[LabeledFrame], initial: dict, *,
+    allow_partial_projection: bool = False,
 ) -> tuple[list[LabeledFrame], dict[str, dict]]:
-    projections = (initial.get("consistency", {})
-                   .get("socket_exclusion", {}).get("per_camera", {}))
+    projections = ((initial.get("consistency", {})
+                    .get("socket_exclusion") or {}).get("per_camera", {}))
     focused, records = [], {}
     for frame in frames:
         projection = projections.get(frame.camera_id)
@@ -97,12 +98,25 @@ def _focus_final_frames(
             continue
         bbox = projection.get("projected_hull_bbox_px")
         if (not isinstance(bbox, list) or len(bbox) != 4 or
-                not (0 <= bbox[0] < bbox[2] <= frame.image.width and
-                     0 <= bbox[1] < bbox[3] <= frame.image.height)):
+                any(type(value) is not int for value in bbox)):
             focused.append(frame)
             continue
-        roi = _socket_focus_roi(
-            frame.image.size, bbox)
+        width, height = frame.image.size
+        if (not allow_partial_projection and
+                not (0 <= bbox[0] < bbox[2] <= width and
+                     0 <= bbox[1] < bbox[3] <= height)):
+            focused.append(frame)
+            continue
+        # A socket close to the image boundary can have a projected mesh
+        # hull partly outside the frame. Use its visible portion instead of
+        # shrinking the socket to a full-frame classifier input.
+        visible_bbox = [max(0, bbox[0]), max(0, bbox[1]),
+                        min(width, bbox[2]), min(height, bbox[3])]
+        if (visible_bbox[0] >= visible_bbox[2] or
+                visible_bbox[1] >= visible_bbox[3]):
+            focused.append(frame)
+            continue
+        roi = _socket_focus_roi(frame.image.size, visible_bbox)
         crop = frame.image.crop(roi)
         focused.append(LabeledFrame(
             frame.camera_id, frame.phase, frame.timestamp_s, crop))
@@ -227,7 +241,8 @@ def assess_released_insertion_checkpoint(
     if any(initial_sizes[frame.camera_id] != frame.image.size
            for frame in later):
         raise ValueError("initial/final temporal pair changed image geometry")
-    later, final_visual_crops = _focus_final_frames(later, initial)
+    later, final_visual_crops = _focus_final_frames(
+        later, initial, allow_partial_projection=True)
     frames.extend(later)
     inputs.extend(later_inputs)
     visual = observe_released_insertion_visual(
@@ -265,7 +280,7 @@ def assess_released_insertion_checkpoint(
         "release_record_path": str(release_path),
         "release_record_sha256": _sha(release_path),
         "frames": inputs, "visual": visual.to_record(),
-        "visual_input_policy": "final_socket_crop_token_v2",
+        "visual_input_policy": "final_socket_crop_token_v3",
         "final_visual_crops": final_visual_crops,
         "minimum_visual_views": minimum_visual_views,
         "max_phase_skew_s": max_phase_skew_s,
@@ -343,9 +358,11 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
         raise ValueError("released-insertion camera pairs changed")
     policy = report.get("visual_input_policy")
     new_policy = policy in ("final_socket_crop_token_v1",
-                            "final_socket_crop_token_v2")
+                            "final_socket_crop_token_v2",
+                            "final_socket_crop_token_v3")
     if policy not in (None, "final_socket_crop_token_v1",
-                       "final_socket_crop_token_v2"):
+                       "final_socket_crop_token_v2",
+                       "final_socket_crop_token_v3"):
         raise ValueError("unknown released-insertion visual input policy")
     if new_policy and "final_visual_crops" not in report:
         raise ValueError("released-insertion final socket crops are missing")
@@ -371,7 +388,8 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
             final_root, final, sorted(grouped["final_clear_view"]),
             "final_clear_view")
         focused_frames, expected_crops = _focus_final_frames(
-            replay_frames, initial)
+            replay_frames, initial,
+            allow_partial_projection=policy == "final_socket_crop_token_v3")
         if report["final_visual_crops"] != expected_crops:
             raise ValueError("released-insertion socket crops changed")
         aggregation = report["visual"].get("aggregation") or {}
@@ -383,8 +401,9 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
                 _, expected_transform = resize_classification_images(
                     [focused_by_camera[camera].image],
                     RELEASED_SOCKET_IMAGE_SIZE,
-                    min_long_side_px=(FINAL_MIN_LONG_SIDE_PX if policy ==
-                                      "final_socket_crop_token_v2" else None))
+                    min_long_side_px=(FINAL_MIN_LONG_SIDE_PX if policy in (
+                        "final_socket_crop_token_v2",
+                        "final_socket_crop_token_v3") else None))
                 if row.get("input_transform") != expected_transform:
                     raise ValueError("released-insertion final VLM input changed")
             if camera in expected_crops:

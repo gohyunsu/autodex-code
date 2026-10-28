@@ -178,6 +178,29 @@ start; the largest planned-end versus measured-end joint difference was
 0.0006 rad. The original saved transfer trajectory, however, ends about
 0.0207 rad (maximum joint difference) from the first shift's measured start.
 Reversing the archived shift arrays is a plausible *planning input*, but it
-is not yet a continuous, collision-audited return through the transfer,
-tabletop descent, release and clear-view phases. No reverse command is
-installed or claimed from these joint comparisons.
+is not yet a continuous return through tabletop release and clear-view exit.
+
+An additional offline audit reversed those three shifts, the archived
+transfer, and the archived lift while holding the Inspire finger joints fixed
+at the last measured hold. All 510 sampled configurations passed the existing
+key/hand versus fixed-world collision screen. Its `screened_pair_count=0`
+means every moving/fixed bounding-box pair exceeded the clearance threshold;
+the optimized collision screen therefore needed no exact mesh query. This
+screen does **not** evaluate the whole Franka arm, path segments between
+samples, release, or a future live key-in-hand relation. The reverse joins
+had up to 0.0207 rad maximum joint difference at the shift/transfer boundary,
+so a continuous executable path has not been assembled. Under the cylindrical
+key's end-for-end symmetry, the reversed key center was about 3.7 mm in X,
+21.8 mm in Y, and 4.7 mm in Z from its original tabletop center; its axis
+differed by 1.34 degrees. A fresh visual landing check and the existing
+original-pose restoration would still be needed after release. No reverse
+motion command was installed or sent. Audit JSON:
+`~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/reverse_executed_path_collision_audit_20261029.json`.
+
+The final socket VLM crop now has policy `final_socket_crop_token_v3`. If a
+measured socket projects partly beyond an image edge, the new policy crops
+around its visible portion rather than reducing it to the entire frame. A
+fully absent projection still uses the full raw frame. This changes neither
+camera selection nor the one-word Qwen prompt. All 26 focused checkpoint tests
+pass, and the four saved v2 reports verify unchanged. The older v1/v2 crop
+algorithm remains selected by their recorded policy during replay.

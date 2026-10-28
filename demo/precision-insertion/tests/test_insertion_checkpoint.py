@@ -307,7 +307,7 @@ def test_released_label_pairs_initial_and_clear_view_raw_per_camera(
     assert report["effective_vlm_class"] == "inside_socket"
     assert len(backend.calls) == 2
     assert all(len(images) == 1 for images, _prompt in backend.calls)
-    assert report["visual_input_policy"] == "final_socket_crop_token_v2"
+    assert report["visual_input_policy"] == "final_socket_crop_token_v3"
     saved = write_released_insertion_checkpoint(
         report, tmp_path / "released_assessment")
     assert verify_released_insertion_checkpoint(saved)["outcome"][
@@ -356,6 +356,45 @@ def test_final_classifier_crop_follows_socket_remeasurement():
     moved = crop_for([450, 650, 846, 939])
     assert [moved[0] - first[0], moved[1] - first[1]] == [-497, -305]
     assert [moved[2] - first[2], moved[3] - first[3]] == [-497, -305]
+
+
+def test_final_classifier_crops_partly_visible_socket_and_preserves_old_replay():
+    from PIL import Image
+    from precision_insertion.observer import LabeledFrame
+    from precision_insertion.released_insertion_checkpoint import (
+        _focus_final_frames,
+    )
+
+    frame = LabeledFrame(
+        "cam_a", "final_clear_view", 123.,
+        Image.new("RGB", (2048, 1536), "black"))
+    initial = {"consistency": {"socket_exclusion": {"per_camera": {
+        "cam_a": {"projected_hull_bbox_px": [-30, 500, 170, 720]},
+    }}}}
+    old_frames, old_crops = _focus_final_frames([frame], initial)
+    new_frames, new_crops = _focus_final_frames(
+        [frame], initial, allow_partial_projection=True)
+    assert old_frames[0].image.size == frame.image.size
+    assert old_crops == {}
+    assert new_frames[0].image.width < frame.image.width
+    assert new_crops["cam_a"]["roi_xyxy_full_px"] == [0, 236, 255, 786]
+
+
+def test_final_classifier_uses_full_frame_without_socket_projection():
+    from PIL import Image
+    from precision_insertion.observer import LabeledFrame
+    from precision_insertion.released_insertion_checkpoint import (
+        _focus_final_frames,
+    )
+
+    frame = LabeledFrame(
+        "cam_a", "final_clear_view", 123.,
+        Image.new("RGB", (2048, 1536), "black"))
+    focused, crops = _focus_final_frames(
+        [frame], {"consistency": {"socket_exclusion": None}},
+        allow_partial_projection=True)
+    assert focused[0].image.size == frame.image.size
+    assert crops == {}
 
 
 def test_final_classifier_crops_initial_key_from_saved_mask(tmp_path):
