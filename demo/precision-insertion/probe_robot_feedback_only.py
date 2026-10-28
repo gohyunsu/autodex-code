@@ -102,7 +102,10 @@ def read_hand_feedback(
     if not host or not 0 < port < 65536 or not 0 < timeout_s <= 30:
         raise ValueError("invalid Inspire feedback endpoint or timeout")
     if client_factory is None:
-        from pymodbus.client import ModbusTcpClient
+        try:
+            from pymodbus.client import ModbusTcpClient
+        except ImportError:
+            from pymodbus.client.sync import ModbusTcpClient
         client_factory = ModbusTcpClient
     client = client_factory(host=host, port=port, timeout=timeout_s)
     try:
