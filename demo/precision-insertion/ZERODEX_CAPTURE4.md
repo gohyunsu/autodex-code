@@ -623,3 +623,27 @@ An isolated, robot-free import of `franka_integration` subsequently took
 time. New timing spans split integration module import from construction in
 future runs. The saved second-run pickup report attributes 22.80 s of its
 26.08 s first candidate plan to initial cuRobo world setup.
+
+## Hand state after reconnecting the same cable
+
+After the operator disconnected and reconnected the same Inspire cable,
+Modbus TCP still answered at `192.168.11.210:6000`, but the read-only state
+changed across **all six** channels: `ANGLE_SET=[65535]*6`,
+`FORCE_SET=[2000]*6`, `STATUS=[7]*6`, and the voltage register returned
+`65535`. The six error bytes were zero. The [manufacturer's RH56 register
+table](https://static.generation-robots.com/media/rh56-series-user-manual.pdf)
+assigns status `7` to actuator fault; the angle/force values are
+outside the documented command ranges. The hand's indicator light was on,
+which does not by itself establish actuator power or normal operation.
+This is a new whole-hand state following reconnection, distinct from the
+earlier thumb-only nonresponse. Do not infer that the cable, actuators, or
+software caused it without a normal power/connector comparison.
+
+One manufacturer force-calibration request (`register 1009 = 1`) was sent
+while the hand was clear of objects. The pre-request read already showed
+the abnormal all-channel state; the diagnostic script failed to check that
+state before writing. No finger motion was observed during the following
+ten seconds, and repeat read-only checks still showed the same abnormal
+values. No further hand/arm motion commands were sent. This calibration
+attempt must **not** be treated as completed or as evidence that the
+original thumb-force offset was corrected.
