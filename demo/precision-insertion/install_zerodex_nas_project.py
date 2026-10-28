@@ -43,10 +43,13 @@ def install(bundle: Path, destination: Path,
             path.write_text(after, encoding="utf-8")
     repo = destination / "autodex-code"
     stage = shared / "AutoDex/precision_insertion/zerodex_capture4"
+    code_commit = next(row["commit"] for row in manifest["code"]
+                       if row["repository"] == "autodex-code")
     profile = destination / "activate_zerodex_capture4.sh"
     profile.write_text(
         "#!/usr/bin/env bash\n"
         f"export PRECISION_REPO_ROOT={repo}\n"
+        f"export PRECISION_CODE_COMMIT={code_commit}\n"
         f"export PRECISION_STAGE_ROOT={stage}\n"
         f"export PRECISION_SAM_CHECKPOINT={shared / 'AutoDex/weights/sam3/sam3.pt'}\n"
         f"export PRECISION_FR3_INSPIRE_URDF={repo / 'autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf'}\n"

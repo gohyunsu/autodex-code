@@ -9,6 +9,7 @@ code; the old AutoDex experiment directory is not this project's archive.
 | `code/` | Exact tracked AutoDex fork and ParaDex source archives, with commits and SHA256 in `PROJECT_MANIFEST.json` |
 | `assets/shared_data/` | Object meshes, all six cylindrical sockets, FoundPose representations, v8 grasps, reset candidates, scenes, fixture geometry, Qwen, SAM3, capture4 calibration, launch/catalog templates, robot dependency bundle |
 | `assets/capture4_cache/` | capture4's offline SAM3 Hugging Face cache and two DINOv2 checkpoints |
+| `rigs/zerodex_capture4/runtime` | Project-local link to the capture4 calibration, robot profile and launch/catalog templates in `assets/shared_data` |
 | `environments/` | Local planner and capture4 Python package lists |
 | `runs/zerodex_capture4/YYYY/MM/DD/RUN_ID/` | Post-run uploaded full-resolution camera recording, frame ID index, log and run receipt |
 | `PROJECT_MANIFEST.json` | Code commits, asset paths, sizes and SHA256 hashes |

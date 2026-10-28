@@ -58,6 +58,7 @@ def upload(receipt_path: Path, nas_root: Path, *, ssh_port: int = 77) -> Path:
         "video_sha256": recording["video_sha256"],
         "frame_count": recording["frame_count"],
         "pipeline_exit_code": receipt["pipeline_exit_code"],
+        "code_commit": receipt.get("code_commit"),
     }
     (destination / "run_manifest.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",

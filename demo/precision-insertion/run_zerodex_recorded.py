@@ -83,6 +83,12 @@ def run(mode: str) -> int:
     receipt_dir = stage / "runs" / "recordings" / run_tag
     receipt_dir.mkdir(parents=True, exist_ok=False)
     env = {**os.environ, "PRECISION_RUN_TAG": run_tag}
+    code_commit = os.environ.get("PRECISION_CODE_COMMIT")
+    if code_commit is None:
+        result = subprocess.run(
+            ["git", "-C", str(HERE.parents[1]), "rev-parse", "HEAD"],
+            check=False, capture_output=True, text=True)
+        code_commit = result.stdout.strip() if result.returncode == 0 else None
     start_ns = time.time_ns()
     recorder_started = False
     recording_error = None
@@ -118,6 +124,7 @@ def run(mode: str) -> int:
             "remote_directory": str(remote_dir),
             "started_unix_ns": start_ns, "ended_unix_ns": time.time_ns(),
             "pipeline_exit_code": exit_code,
+            "code_commit": code_commit,
             "recording": recording_manifest,
             "recording_error": recording_error,
             "nas_uploaded": False,

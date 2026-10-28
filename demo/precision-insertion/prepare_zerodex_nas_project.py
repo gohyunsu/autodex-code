@@ -80,6 +80,12 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
     envs = nas_root / "environments"
     for path in (assets, code, envs, nas_root / "runs" / "zerodex_capture4"):
         path.mkdir(parents=True, exist_ok=True)
+    rig = nas_root / "rigs" / "zerodex_capture4"
+    rig.mkdir(parents=True, exist_ok=True)
+    runtime_link = rig / "runtime"
+    if not runtime_link.is_symlink() and not runtime_link.exists():
+        runtime_link.symlink_to(
+            Path("../../assets/shared_data/AutoDex/precision_insertion/zerodex_capture4"))
     shared = source_shared.expanduser().resolve()
     source_stage = source_stage.expanduser().resolve()
     relative_trees = [
@@ -162,6 +168,7 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
         "project": "precision_insertion", "rig": "zerodex_capture4",
         "source_shared_root": str(shared),
         "cylindrical_gap_mm": list(GAPS),
+        "rig_runtime": "rigs/zerodex_capture4/runtime",
         "code": snapshots, "assets": records,
         "asset_file_count": len(records),
         "runtime_nas_upload": "separate_post_run_command_only",
