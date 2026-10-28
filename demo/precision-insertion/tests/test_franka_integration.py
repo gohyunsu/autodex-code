@@ -603,7 +603,7 @@ def test_tracked_mode_attaches_exact_preinsert_camera_window(monkeypatch, tmp_pa
                       "camera_id": "25322651", "target_frame_id": 42}]
 
 
-def test_sam_roi_worker_warms_before_retry_and_closes_with_session(
+def test_sam_roi_worker_load_overlaps_pickup_until_first_xy_use(
     monkeypatch, tmp_path,
 ):
     events = []
@@ -619,7 +619,8 @@ def test_sam_roi_worker_warms_before_retry_and_closes_with_session(
     module.configure = lambda *_: {
         "shared": {"backend": SimpleNamespace(
             close=lambda: events.append("vlm_close"))},
-        "stages": {"task": {}, "retry": {}, "key_planning": {}}}
+        "stages": {"task": {}, "retry": {}, "key_planning": {},
+                   "pickup": {}}}
     monkeypatch.setitem(sys.modules, module.__name__, module)
     python = tmp_path / "sam-python"
     python.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -641,11 +642,14 @@ def test_sam_roi_worker_warms_before_retry_and_closes_with_session(
 
     monkeypatch.setattr(franka_integration, "SamRoiBackend", MaskWorker)
 
+    deferred = []
+
     def assemble(_live, **kwargs):
         retry = kwargs["stages"]["retry"]
         assert retry["xy_estimator"] == "sam_half_ellipse"
-        assert isinstance(retry["sam_segmentor"].ready(), MaskWorker)
-        kwargs["stages"]["key_planning"]["before_preflight"]()
+        deferred.append(retry["sam_segmentor"])
+        assert "before_preflight" not in kwargs["stages"]["key_planning"]
+        deferred.append(kwargs["stages"]["pickup"]["before_pickup"])
         events.append("assembled")
         return ()
 
@@ -660,8 +664,11 @@ def test_sam_roi_worker_warms_before_retry_and_closes_with_session(
     integration = franka_integration.factory(options)
     assert loading.wait(1.)
     assert "core_open" in events
-    release.set()
     integration.build_components(live)
+    assert not deferred[0]._future.done()
+    release.set()
+    deferred[1]()
+    assert isinstance(deferred[0].ready(), MaskWorker)
     options.run_output_dir.mkdir()
     integration.close()
     warm = next(value for value in events if isinstance(value, tuple))
@@ -673,7 +680,7 @@ def test_sam_roi_worker_warms_before_retry_and_closes_with_session(
         "SAM worker log\n")
 
 
-def test_sam_model_load_failure_surfaces_before_key_preflight(monkeypatch, tmp_path):
+def test_sam_model_load_failure_surfaces_at_first_xy_use(monkeypatch, tmp_path):
     python = tmp_path / "sam-python"
     python.write_text("#!/bin/sh\n", encoding="utf-8")
     python.chmod(0o755)
@@ -686,18 +693,19 @@ def test_sam_model_load_failure_surfaces_before_key_preflight(monkeypatch, tmp_p
                             RuntimeError("SAM CUDA unavailable")))
     events = []
     core = SimpleNamespace(
-        clear_view=object(), planner=object(), read_state=lambda: None,
+        clear_view=object(), planner=object(), executor=object(),
+        read_state=lambda: None,
         sampler=None, close=lambda: events.append("core_close"))
     monkeypatch.setattr(franka_integration, "open_franka_core",
                         lambda _: (events.append("core_open") or core))
     module = ModuleType("robot_pc_stages")
     module.configure = lambda *_: {
-        "shared": {"backend": object()}, "stages": {"key_planning": {}}}
+        "shared": {"backend": object()},
+        "stages": {"key_planning": {}, "retry": {}, "pickup": {}}}
     monkeypatch.setitem(sys.modules, module.__name__, module)
     monkeypatch.setattr(
         franka_integration, "assemble_live_components",
-        lambda _live, **kwargs: kwargs["stages"]["key_planning"][
-            "before_preflight"]())
+        lambda _live, **kwargs: kwargs["stages"]["pickup"]["before_pickup"])
     options = replace(_options(tmp_path, _config()),
                       xy_estimator="sam_half_ellipse")
     integration = franka_integration.factory(options)
@@ -706,8 +714,9 @@ def test_sam_model_load_failure_surfaces_before_key_preflight(monkeypatch, tmp_p
             shared_root=tmp_path, image_hw=(1080, 1920))),
         opened=SimpleNamespace(runner=SimpleNamespace(
             mode=SimpleNamespace(family="cylinder"))))
+    before_pickup = integration.build_components(live)
     with pytest.raises(RuntimeError, match="SAM CUDA unavailable"):
-        integration.build_components(live)
+        before_pickup()
     integration.close()
     assert events == ["core_open", "core_close"]
 

@@ -114,6 +114,18 @@ def test_disabled_motion_does_not_open_an_attempt(tmp_path, monkeypatch):
     assert runner.current_decision().action == "execution_gate_required"
 
 
+def test_model_readiness_failure_does_not_begin_pickup(tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    bound.before_pickup = lambda: (_ for _ in ()).throw(
+        RuntimeError("SAM worker unavailable"))
+    monkeypatch.setattr(live_pickup_handlers, "execute_bound_pickup",
+                        lambda **_kwargs: pytest.fail("motion began"))
+    with pytest.raises(RuntimeError, match="SAM worker unavailable"):
+        bound.begin_and_squeeze(runner, runner.current_decision())
+    assert runner.events == []
+    assert runner.current_decision().action == "execution_gate_required"
+
+
 def test_acknowledged_pickup_abort_routes_unknown_grasp_to_manual_recovery(
         tmp_path, monkeypatch):
     bound, runner, *_ = _handler(tmp_path)

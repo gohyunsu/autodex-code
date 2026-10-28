@@ -281,8 +281,9 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                if sam_paths is not None else None)
     if sam_paths is not None:
         python, model = sam_paths
-        # This worker is first needed at pre-insertion. Load it while the
-        # socket/key cameras and planner initialize, then join before pickup.
+        # This worker is first used at pre-insertion. Load it alongside the
+        # socket/key capture and candidate planning, then join just before
+        # pickup so a load failure cannot strand an already held key.
         sam_load_pool = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="precision-sam3-load")
         context = copy_context()
@@ -441,17 +442,12 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 if stage_name in stages:
                     stages[stage_name].setdefault(
                         "key_prompt", "white plastic cylindrical key")
-        if "key_planning" in stages and (
-                os.environ.get("PRECISION_PREWARM_FIXED_WORLD") == "1" or
-                sam_segmentor is not None):
+        if ("key_planning" in stages and
+                os.environ.get("PRECISION_PREWARM_FIXED_WORLD") == "1"):
             prior_before_preflight = stages["key_planning"].get(
                 "before_preflight")
 
-            def join_models_before_planning():
-                if sam_segmentor is not None:
-                    with timed("startup.sam3_roi_model_load_join",
-                               phase="startup", kind="wait"):
-                        sam_segmentor.ready()
+            def join_world_before_planning():
                 if warmup_future is not None:
                     with timed("startup.planner_fixed_world_warmup_wait",
                                phase="startup", kind="wait"):
@@ -460,12 +456,23 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                     prior_before_preflight()
 
             stages["key_planning"]["before_preflight"] = (
-                join_models_before_planning)
+                join_world_before_planning)
         if "pickup" in stages and "executor" not in stages["pickup"]:
             # Use the same FR3 connection as clear-view and measured state.
             # This is the demo's completion-checked stock subclass; the
             # robot-PC factory still supplies the motion interlock and limits.
             stages["pickup"]["executor"] = core.executor
+        if sam_segmentor is not None and "pickup" in stages:
+            prior_before_pickup = stages["pickup"].get("before_pickup")
+
+            def ready_before_pickup():
+                with timed("startup.sam3_roi_model_load_join",
+                           phase="startup", kind="wait"):
+                    sam_segmentor.ready()
+                if prior_before_pickup is not None:
+                    prior_before_pickup()
+
+            stages["pickup"]["before_pickup"] = ready_before_pickup
         if family == "cylinder" and "task" in stages:
             # The cylinder stroke uses the same FR3 connection and follower
             # as AutoDex place, with the demo's configured object speed cap.

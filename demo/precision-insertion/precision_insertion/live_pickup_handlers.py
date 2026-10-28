@@ -46,6 +46,7 @@ class LivePickupHandlers:
     path_limits: object
     measured_lift_parameters: Mapping[str, float]
     enable_robot_motion: bool = False
+    before_pickup: Callable[[], None] | None = None
     attempt_id_factory: Callable[[], str] = lambda: f"attempt_{uuid4().hex}"
     started_at_factory: Callable[[], float] = time.time
     decision_time: Callable[[], float] = time.time
@@ -56,6 +57,8 @@ class LivePickupHandlers:
                 not callable(self.attempt_id_factory) or
                 not callable(self.started_at_factory) or
                 not callable(self.decision_time) or
+                (self.before_pickup is not None and
+                 not callable(self.before_pickup)) or
                 not isinstance(self.pickup_limits, PickupExecutionLimits) or
                 not isinstance(self.measured_lift_parameters, Mapping)):
             raise TypeError("live pickup needs feedback, limits and an interlock")
@@ -74,6 +77,8 @@ class LivePickupHandlers:
             raise ValueError("pickup belongs to another session or decision")
         if self.enable_robot_motion is not True:
             raise PermissionError("live pickup motion is not enabled")
+        if self.before_pickup is not None:
+            self.before_pickup()
         attempt = runner.begin_selected_attempt(
             attempt_id=self.attempt_id_factory(),
             started_at_s=self.started_at_factory())

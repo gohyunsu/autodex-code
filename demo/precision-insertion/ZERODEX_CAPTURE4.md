@@ -252,7 +252,10 @@ start the adapter if another experiment owns the cameras.
 - For `sam_half_ellipse`, the main-PC SAM3 ROI worker now begins loading in
   the background while the camera session and key perception proceed. Its
   checkpoint and Python path are still checked before the FR3 core opens;
-  candidate preflight joins the worker before any pickup. `--plan-only`
+  candidate planning overlaps that load; pickup joins the worker before
+  robot motion, only if it is still loading. This keeps a load error from
+  appearing after the key has been grasped.
+  `--plan-only`
   skips this worker because it never reaches pre-insertion XY. The saved
   `20261028_233043_399147` trace loaded SAM3 serially for 23.71 s before
   opening the FR3 core. Inspect `startup.sam3_roi_model_load_join` in the

@@ -16,6 +16,8 @@ from uuid import uuid4
 import numpy as np
 from PIL import Image
 
+from .timing_profile import timed
+
 
 class DeferredSamRoiBackend:
     """Expose one asynchronously loaded worker to the existing XY stages."""
@@ -29,7 +31,13 @@ class DeferredSamRoiBackend:
 
     def segment(self, image: Image.Image, *, camera_id: str,
                 prompt: str) -> tuple[np.ndarray | None, dict]:
-        return self.ready().segment(image, camera_id=camera_id, prompt=prompt)
+        if self._future.done():
+            worker = self.ready()
+        else:
+            with timed("trial.sam3_roi_model_load_join", phase="trial",
+                       kind="wait", camera_id=camera_id):
+                worker = self.ready()
+        return worker.segment(image, camera_id=camera_id, prompt=prompt)
 
     def close(self) -> None:
         try:
