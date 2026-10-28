@@ -46,6 +46,21 @@ def test_franka_core_uses_stock_fr3_objects_without_homing(monkeypatch):
     assert "home" not in events
 
 
+def test_franka_core_applies_configured_inspire_force_after_stock_setup():
+    events = []
+    executor = _executor(events)
+    executor.hand = SimpleNamespace(
+        write6=lambda name, values: events.append((name, values)))
+    force = (400, 400, 400, 400, 600, 400)
+    core = franka_core.open_franka_core(
+        _settings(), executor_factory=lambda: executor,
+        planner_factory=lambda: SimpleNamespace(
+            _n_arm=7, _hand="fr3_inspire"),
+        hand_force_set_raw=force)
+    assert events[1] == ("forceSet", list(force))
+    core.close()
+
+
 @pytest.mark.parametrize("explicit_override", [False, True])
 def test_franka_core_passes_one_selected_mount_to_planner_and_executor(
         monkeypatch, explicit_override):

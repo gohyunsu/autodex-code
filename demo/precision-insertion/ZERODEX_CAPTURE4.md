@@ -583,6 +583,16 @@ possibilities include channel wiring/contact, motor/driver, force sensing or
 mechanical loading; cable replacement is a useful next comparison. No
 robot motion or insertion was attempted during these unloaded hand probes.
 
+The ZeroDex FR3 robot config accepts an optional six-value
+`hand_force_set_raw` array in little/ring/middle/index/thumb-bend/thumb-rotate
+order. When absent, the stock ParaDex `400` per channel remains unchanged.
+When present, the demo applies the specified values after stock Inspire
+construction and before the trial. For example,
+`[400, 400, 400, 400, 600, 400]` reproduces the small-command diagnostic;
+it is **not** validated for the full grasp target. The current local
+`zerodex_capture4/franka_runtime.json` intentionally has no override until
+the cable comparison and no-load full-range behavior are resolved.
+
 The integration now tolerates a missing hand-feedback sample and exposes a
 sampler failure if one occurs. It reuses the candidate's offline 20 mm
 hand/socket endpoint screen after squeeze; measured finger joints are used

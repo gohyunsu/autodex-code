@@ -51,6 +51,23 @@ def test_obsolete_update_wait_is_ignored_in_existing_robot_config(tmp_path):
     assert with_old == without_old
 
 
+def test_hand_force_override_is_explicit_and_validated(tmp_path):
+    config = _config()
+    path = _options(tmp_path, config).robot_config_path
+    assert franka_integration.load_franka_integration_config(
+        path, import_stages=False)["hand_force_set_raw"] is None
+    config["hand_force_set_raw"] = [400, 400, 400, 400, 600, 400]
+    path.write_text(json.dumps(config), encoding="utf-8")
+    assert franka_integration.load_franka_integration_config(
+        path, import_stages=False)["hand_force_set_raw"] == (
+            400, 400, 400, 400, 600, 400)
+    config["hand_force_set_raw"] = [400, 400, 400]
+    path.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(ValueError, match="six Inspire values"):
+        franka_integration.load_franka_integration_config(
+            path, import_stages=False)
+
+
 def test_franka_integration_reuses_core_and_existing_stage_assembly(
         monkeypatch, tmp_path):
     events = []

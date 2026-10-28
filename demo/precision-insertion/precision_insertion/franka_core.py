@@ -118,6 +118,7 @@ def open_franka_core(
     feedback: FrankaFeedbackSettings, *,
     executor_factory: Callable[[], object] | None = None,
     planner_factory: Callable[[], object] | None = None,
+    hand_force_set_raw: tuple[int, int, int, int, int, int] | None = None,
 ) -> FrankaRuntimeCore:
     """Construct the motion-capable FR3/Inspire runtime after motion opt-in.
 
@@ -162,6 +163,11 @@ def open_franka_core(
         # Match run_auto.py: generic return/recovery trajectories use this
         # planner for the stock live object-proximity speed profile.
         executor.set_speed_profile_planner(planner)
+        if hand_force_set_raw is not None:
+            # The stock Inspire constructor writes 400 to all six channels.
+            # This demo-local override permits a commissioned setting for the
+            # ZeroDex hand without modifying the shared ParaDex controller.
+            executor.hand.write6("forceSet", list(hand_force_set_raw))
         def read_state() -> LiveRobotState:
             return read_live_franka_inspire_state(
                 arm=executor.arm, hand=executor.hand,

@@ -188,7 +188,7 @@ def load_franka_integration_config(
             not {"schema", "feedback", "stages_factory"} <= set(record) or
             set(record) - {"schema", "feedback", "sampling",
                            "stages_factory", "vlm", "lift_monitor",
-                           "held_motion_monitor"} or
+                           "held_motion_monitor", "hand_force_set_raw"} or
             not isinstance(record["feedback"], dict) or
             not _FEEDBACK_KEYS <= set(record["feedback"]) <= (
                 _FEEDBACK_KEYS | _OBSOLETE_FEEDBACK_KEYS)):
@@ -197,6 +197,14 @@ def load_franka_integration_config(
            not math.isfinite(value) or value <= 0
            for value in record["feedback"].values()):
         raise ValueError("FR3 feedback thresholds must be finite and positive")
+    hand_force_set_raw = record.get("hand_force_set_raw")
+    if hand_force_set_raw is not None:
+        if (not isinstance(hand_force_set_raw, list) or
+                len(hand_force_set_raw) != 6 or
+                any(type(value) is not int or not 0 <= value <= 1000
+                    for value in hand_force_set_raw)):
+            raise ValueError("hand_force_set_raw needs six Inspire values 0..1000")
+        hand_force_set_raw = tuple(hand_force_set_raw)
     sampling = None
     vlm = _vlm_settings(record.get("vlm"))
     lift_monitor = _lift_monitor_settings(record.get("lift_monitor"))
@@ -227,6 +235,7 @@ def load_franka_integration_config(
         "vlm": vlm,
         "lift_monitor": lift_monitor,
         "held_motion_monitor": held_motion_monitor,
+        "hand_force_set_raw": hand_force_set_raw,
         "build_stages": (_stage_factory(record["stages_factory"])
                          if import_stages else None),
     }
@@ -254,6 +263,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     vlm = parsed["vlm"]
     lift_monitor = parsed["lift_monitor"]
     held_motion_monitor = parsed["held_motion_monitor"]
+    hand_force_set_raw = parsed["hand_force_set_raw"]
     build_stages = parsed["build_stages"]
     sam_paths = (_sam_runtime_paths()
                  if options.xy_estimator == "sam_half_ellipse" else None)
@@ -278,7 +288,11 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     core = None
     try:
         with timed("startup.franka_planner_core", phase="startup"):
-            core = open_franka_core(feedback)
+            if hand_force_set_raw is None:
+                core = open_franka_core(feedback)
+            else:
+                core = open_franka_core(
+                    feedback, hand_force_set_raw=hand_force_set_raw)
         if sampling is not None:
             with timed("startup.feedback_sampler", phase="startup"):
                 core.start_feedback_sampler(sampling)
