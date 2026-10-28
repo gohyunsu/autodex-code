@@ -206,10 +206,12 @@ def load_runtime_integration(
             not all(part.isidentifier() for part in module_name.split(".")) or
             not factory_name.isidentifier()):
         raise ValueError("integration needs a valid module and factory name")
-    factory = getattr(import_module(module_name), factory_name)
+    with timed("startup.integration_module_import", phase="startup"):
+        factory = getattr(import_module(module_name), factory_name)
     if not callable(factory):
         raise TypeError("integration factory is not callable")
-    integration = factory(options)
+    with timed("startup.integration_construct", phase="startup"):
+        integration = factory(options)
     if (not isinstance(integration, LiveRuntimeIntegration) or
             not isinstance(integration.clear_view, ClearViewForPerception) or
             not callable(integration.build_components) or

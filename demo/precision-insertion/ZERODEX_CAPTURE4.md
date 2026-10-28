@@ -618,3 +618,8 @@ its first-run counterpart was only about 0.04 s. It should be profiled
 separately before treating it as a stable bottleneck. The first pickup plan
 and repeated candidate planning dominate the observed critical path; the
 four-camera key request is not the main delay in these two traces.
+An isolated, robot-free import of `franka_integration` subsequently took
+1.33 s, so the 25.4 s live interval is not yet reproducible as module import
+time. New timing spans split integration module import from construction in
+future runs. The saved second-run pickup report attributes 22.80 s of its
+26.08 s first candidate plan to initial cuRobo world setup.
