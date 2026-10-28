@@ -1,5 +1,46 @@
 # Released-key VLM review (2026-10-29)
 
+## Exact-input audit after a saved run
+
+`export_saved_vlm_inputs.py` reconstructs the RGB images submitted to the
+classifier from a saved lift, preinsert, or current final checkpoint. It
+reapplies each recorded ROI and Lanczos resize and compares the resulting
+pixel SHA-256 with the original VLM input transform. The output is a per-view
+PNG set, a contact sheet, and a JSON manifest with the saved model answers.
+It uses no model, camera, or robot and adds no work to the live path. Example:
+
+```bash
+python demo/precision-insertion/export_saved_vlm_inputs.py \
+  --report /path/to/attempt/preinsert_assessments/000/report.json \
+  --output-dir ~/precision_insertion_project/development/zerodex_capture4/reviews/my_preinsert_review
+```
+
+The three-stage saved-frame audit is under
+`~/precision_insertion_project/development/zerodex_capture4/reviews/vlm_input_audit_20261029/`:
+`lift_9542c1bd`, `preinsert_9542c1bd`, `preinsert_focused_9542c1bd`,
+`final_30e9cd0b`, and `final_30cbe1f3`. The first preinsert report used full
+frames; the focused report is an offline replay of the later crop policy. All submitted image
+hashes reproduced exactly. In the focused four-view sheet, the white key is
+visible below the hand in several views, while the overhead view gives much
+weaker key evidence. This illustrates why a single preinsert camera or a
+generic hand crop is not a dependable transfer label. The saved Qwen
+`coarse_match` response is still only a coarse observation; the existing
+empty-hand controls show that it can be falsely positive.
+
+The offline 5 mm `run_zerodex_capture4.sh --check` path still passes with four
+configured cameras and 114 eligible endpoint catalog entries. Focused
+checkpoint, camera-selection, action-loop, lift, and same-trial tests pass
+(108 tests in two groups). These are file/code checks; the robot and hand were
+off during this review. The saved `9542c1bd` corrected 20 mm path still has
+the measured thumb/socket collision documented below. The input exporter does
+not change candidate screening, motion, or the live VLM decision rule.
+
+For a relocated socket, start a new socket-only measurement session. The
+measured pose is frozen and projected into each camera during key perception;
+the final crop and preinsert hand/socket crop follow those new projected
+pixels. Crops move with the socket between sessions. Neither crop nor the
+collision world follows a socket moved during an active session.
+
 This review uses saved capture4 frames only. It did not move the Franka or Inspire hand. The final label means **the key visibly occupies the socket opening after release and clear view**. It does not independently measure 20 mm depth.
 
 The final classifier intentionally receives only the session-located socket
