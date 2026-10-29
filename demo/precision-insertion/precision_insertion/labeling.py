@@ -113,6 +113,8 @@ def terminal_label_provider(annotator: str) -> Callable:
         print(f"\nManual {stage}: {attempt_id} / {candidate_id}", flush=True)
         for directory in evidence_dirs:
             print(f"Inspect saved PNGs in {directory}", flush=True)
+        print("Judge the saved snapshot at capture time; a later slip is a separate event.",
+              flush=True)
         while True:
             answer = input("Label [y=yes, n=no, u=unknown]: ").strip().lower()
             if answer in {"y", "n", "u"}:
