@@ -126,6 +126,7 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
                          alignment_limits: AlignmentLimits,
                          index: int, nominal_tip_height_error_m: float,
                          nominal_key_xy_shift_socket_m=(0., 0.),
+                         nominal_key_axis_raise_socket_m: float = 0.,
                          xy_estimator: str = "vlm",
                          sam_segmentor=None,
                          capture: RawCameraCapture | None = None) -> dict:
@@ -152,7 +153,8 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
             extrinsics_full=calibration["extrinsics_full"],
             alignment_limits=alignment_limits, search_index=index,
             max_nominal_tip_height_error_m=nominal_tip_height_error_m,
-            nominal_key_xy_shift_socket_m=nominal_key_xy_shift_socket_m)
+            nominal_key_xy_shift_socket_m=nominal_key_xy_shift_socket_m,
+            nominal_key_axis_raise_socket_m=nominal_key_axis_raise_socket_m)
         observations = []
         mask_records = []
         if masks:
@@ -180,7 +182,8 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
             axis_reference_key_z_m=None, roi_xyxy_by_camera=None,
             square_translation_only=False, search_index=index,
             max_nominal_tip_height_error_m=nominal_tip_height_error_m,
-            nominal_key_xy_shift_socket_m=nominal_key_xy_shift_socket_m)
+            nominal_key_xy_shift_socket_m=nominal_key_xy_shift_socket_m,
+            nominal_key_axis_raise_socket_m=nominal_key_axis_raise_socket_m)
         mask_records = []
     else:
         raise ValueError("same-trial XY supports vlm or sam_half_ellipse")
@@ -198,6 +201,8 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
         "xy_estimator": xy_estimator,
         "nominal_key_xy_shift_socket_m": list(
             map(float, nominal_key_xy_shift_socket_m)),
+        "nominal_key_axis_raise_socket_m": float(
+            nominal_key_axis_raise_socket_m),
         "sam_mask_files": mask_records,
         "alignment": alignment,
         "vlm_observations": [item.to_record() for item in observations],
@@ -208,11 +213,16 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
                            motion_interlock, limits, path_limits,
                            increment_socket_m, residual_socket_m,
                            residual_source: str,
-                           index: int) -> Path:
-    """Move one held wrist along socket XY using the existing measured follower."""
+                           index: int,
+                           axis_increment_socket_m: float = 0.,
+                           current_axis_raise_socket_m: float = 0.) -> Path:
+    """Move the held wrist in socket XY/Z with the measured follower."""
     increment = np.asarray(increment_socket_m, dtype=float)
     if increment.shape != (2,) or not np.all(np.isfinite(increment)):
         raise ValueError("held XY increment must contain two finite metres")
+    if not (math.isfinite(axis_increment_socket_m) and
+            math.isfinite(current_axis_raise_socket_m)):
+        raise ValueError("held axis translation must be finite")
     start = read_state()
     if not isinstance(start, LiveRobotState):
         raise TypeError("same-trial shift needs measured FR3/Inspire state")
@@ -225,7 +235,8 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
     if residual.shape != (2,) or not np.all(np.isfinite(residual)):
         raise ValueError("held key residual must contain finite socket XY")
     key_at_hold = runner._postlift_preflight.targets.T_robot_key_preinsert.copy()
-    key_at_hold[:3, 3] += socket[:3, :2] @ residual
+    key_at_hold[:3, 3] += (socket[:3, :2] @ residual +
+                           socket[:3, 2] * current_axis_raise_socket_m)
 
     def unavailable(status: str) -> None:
         report = _write(
@@ -238,6 +249,8 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
                 "measured_start": start.to_record(),
                 "targets": {"T_robot_key_preinsert": key_at_hold.tolist()},
                 "increment_socket_m": increment.tolist(),
+                "axis_increment_socket_m": axis_increment_socket_m,
+                "current_axis_raise_socket_m": current_axis_raise_socket_m,
                 "residual_socket_xy_m": residual.tolist(),
                 "residual_source": residual_source,
                 "scope": "failed_plan_no_xy_command",
@@ -245,7 +258,8 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
         raise HeldXYPlanUnavailable(report, status)
 
     goal = start_wrist.copy()
-    goal[:3, 3] += socket[:3, :2] @ increment
+    goal[:3, 3] += (socket[:3, :2] @ increment +
+                    socket[:3, 2] * axis_increment_socket_m)
     scene = build_held_scene_from_trial(
         trial_scene=runner._preflight.trial_scene,
         calibration=runner.calibration)
@@ -301,12 +315,17 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
                              name="measured lateral end FK")
     measured_increment = (socket[:3, :2].T @
                           (end_wrist[:3, 3] - start_wrist[:3, 3]))
+    measured_axis_increment = float(socket[:3, 2] @
+        (end_wrist[:3, 3] - start_wrist[:3, 3]))
     return _write(folder / "report.json", {
         "schema": "precision_insertion_same_trial_xy_shift_v2",
         "attempt_id": runner.active_attempt.attempt_id,
         "candidate_id": runner.active_attempt.candidate_id,
         "increment_socket_m": increment.tolist(),
         "measured_increment_socket_m": measured_increment.tolist(),
+        "axis_increment_socket_m": axis_increment_socket_m,
+        "measured_axis_increment_socket_m": measured_axis_increment,
+        "current_axis_raise_socket_m": current_axis_raise_socket_m,
         "key_xy_socket_m": residual.tolist(),
         "residual_source": residual_source,
         "sampled_geometry_clear": True,

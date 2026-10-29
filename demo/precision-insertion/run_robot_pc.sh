@@ -136,6 +136,11 @@ fi
 if [[ -n ${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM:-} ]]; then
   EXTRA_ARGS+=(--same-trial-xy-tolerance-mm "$PRECISION_SAME_TRIAL_XY_TOLERANCE_MM")
 fi
+if [[ -n ${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM:-} &&
+      -n ${PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM:-} ]]; then
+  EXTRA_ARGS+=(--same-trial-observation-raise-mm \
+    "$PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM")
+fi
 if [[ "$LABEL_MODE" == manual ]]; then
   EXTRA_ARGS+=(--annotator "${PRECISION_ANNOTATOR:-Hyunsu Go}")
 fi

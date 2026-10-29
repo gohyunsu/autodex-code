@@ -135,7 +135,8 @@ need stronger evidence than a different wording of the same image question.
    (`25305462`, `25322639`, `26053248`) are batched locally and combined by
    majority. This is a visual inside/outside label, not a depth measurement.
 
-The final VLM route reproduced all six human reviewed labels. A read-only
+The final VLM route reproduced all six human reviewed labels (five 5 mm
+episodes and one 10 mm episode). A read-only
 crop perturbation probe moved each socket projection by 10% of its width or
 height in four directions, with the nominal crop as a fifth condition. The
 majority stayed correct in all 30 episode/crop combinations; per-camera
@@ -164,8 +165,9 @@ and `probe_final_crop_jitter.py` beside it.
   negative controls. Those controls are not real transfer-loss episodes;
   the method needs separately labeled real slips before it can replace a
   human transfer judgment. See `VLM_LABEL_REVIEW_20261029.md`.
-- The 6/6 final visual result is in-sample for one 5 mm socket family. It
-  does not establish generalization to another socket gap, lighting, or
+- The 6/6 final visual result is in-sample for five 5 mm episodes and one
+  10 mm episode. It does not establish generalization to other socket gaps,
+  lighting, or
   camera layout, and does not prove physical 20 mm penetration.
 
 ## 29 October lift-input probe: keep the current runtime method
@@ -483,9 +485,17 @@ end*. Evaluate the Qwen/SAM tip fit and shaft-axis fit against manually
 marked key pixels on those actual new images, rather than ranking masks by
 appearance alone. Execute an XY correction only when two calibrated views
 support a corresponding point. If not, keep the already physically successful
-nominal insertion branch. This observation-pose experiment is **not yet a
-default runtime motion** because no raised/yawed live image exists and the
-robot is currently off.
+nominal insertion branch. The ZeroDex profile now defaults to a conditional
+40 mm observation raise **only after the initial view lacks a metric point**;
+it can be disabled with `PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM=0`. This
+is a prospective data-collection action, not evidence that the tip becomes
+observable at that height. The robot was off during this implementation.
+
+The additional read-only return replay planned a 20 or 40 mm upward move and
+then planned back to the original pre-insertion wrist from the raised plan's
+endpoint. All **8/8** raise/return pairs passed cuRobo and the sampled
+full-key/whole-hand world audit. The exact script and per-attempt results are
+`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_observation_raise_return_20261029.{py,json}`.
 
 Keep `20195` and the current 5 mm socket. At the preinsert hold, collect raw
 four-view images while deliberately exposing the key end in **two calibrated

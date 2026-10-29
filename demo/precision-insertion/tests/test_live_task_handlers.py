@@ -323,6 +323,65 @@ def test_unobserved_first_xy_still_replans_axial_from_measured_hold(
     assert captured["residual_source"] == "nominal_unobserved"
 
 
+@pytest.mark.parametrize("raised_correction", [None, [.001, 0.]])
+def test_unobserved_xy_can_raise_reobserve_and_return_before_axial(
+        tmp_path, monkeypatch, raised_correction):
+    bound, runner, *_ = _handler(tmp_path)
+    runner._attempt_dir = tmp_path / "attempts" / runner.active_attempt.attempt_id
+    bound._preinsert_bundle = tmp_path / "first_preinsert"
+    bound.planner = object()
+    bound.path_limits = object()
+    bound.alignment_limits = object()
+    bound.same_trial_tip_height_error_m = .01
+    bound.same_trial_xy_tolerance_m = .0025
+    bound.same_trial_observation_raise_m = .04
+    seen = []
+    corrections = iter((None, raised_correction))
+
+    def measure(**kwargs):
+        seen.append(("measure", kwargs["nominal_key_axis_raise_socket_m"]))
+        correction = next(corrections)
+        return {"alignment": {
+            "status": ("diagnostic_metric_xy_correction" if correction
+                       is not None else "abstain"),
+            "inlier_cameras": (["front", "side"] if correction else []),
+            "xy_correction_socket_m": correction,
+        }}
+
+    def shift(**kwargs):
+        seen.append(("motion", kwargs["axis_increment_socket_m"]))
+        path = (runner._attempt_dir / "shift" /
+                f'{kwargs["index"]:03d}.json')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "measured_increment_socket_m": [0., 0.],
+            "measured_axis_increment_socket_m":
+                kwargs["axis_increment_socket_m"],
+        }), encoding="utf-8")
+        return path
+
+    def handoff(**kwargs):
+        seen.append(("handoff", kwargs))
+        return tmp_path / "raised_handoff.json"
+
+    monkeypatch.setattr(live_task_handlers, "measure_preinsert_xy", measure)
+    monkeypatch.setattr(live_task_handlers, "plan_and_execute_shift", shift)
+    monkeypatch.setattr(live_task_handlers, "plan_corrected_axial_handoff",
+                        handoff)
+    monkeypatch.setattr(live_task_handlers, "write_raw_camera_capture",
+                        lambda *_args, **_kwargs: None)
+    bound._refine_current_hold(runner)
+    assert seen[:4] == [
+        ("measure", 0.), ("motion", .04),
+        ("measure", .04), ("motion", -.04)]
+    assert seen[-1][0] == "handoff"
+    assert len(seen[-1][1]["shifts"]) == 2
+    assert seen[-1][1]["residual_source"] == (
+        "nominal_unobserved" if raised_correction is None else
+        "current_metric_multiview")
+    assert bound._same_trial_handoff == tmp_path / "raised_handoff.json"
+
+
 def test_held_xy_plan_failure_records_recoverable_stop(tmp_path, monkeypatch):
     bound, runner, *_ = _handler(tmp_path)
     runner._attempt_dir = tmp_path / "attempts" / runner.active_attempt.attempt_id

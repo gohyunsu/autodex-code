@@ -84,6 +84,9 @@ def test_repeat_xy_crop_prediction_follows_measured_socket_frame_shift(tmp_path)
         postlift, socket, [.006, -.004])
     np.testing.assert_allclose(shifted[:3, 3], [.104, .206, .3])
     np.testing.assert_allclose(shifted[:3, :3], key[:3, :3])
+    raised = _nominal_key_for_xy_capture(
+        postlift, socket, [.006, -.004], axis_raise_socket_m=.04)
+    np.testing.assert_allclose(raised[:3, 3], [.104, .206, .34])
 
 
 def test_repeat_xy_vlm_roi_moves_with_completed_lateral_motion(tmp_path):
@@ -151,6 +154,66 @@ def test_held_xy_plan_failure_keeps_key_held_for_reverse_return(
     assert report["scope"] == "failed_plan_no_xy_command"
     assert report["measured_start"]["full_q"] == [0.] * 13
     assert not (tmp_path / "same_trial_xy" / "shifts").exists()
+
+
+def test_observation_raise_moves_wrist_on_socket_axis_and_records_feedback(
+        tmp_path, monkeypatch):
+    import precision_insertion.same_trial_xy as same_trial
+
+    socket = np.eye(4)
+    socket[:3, :3] = np.array([
+        [1., 0., 0.], [0., 0., -1.], [0., 1., 0.]])
+    trajectory = np.zeros((2, 13))
+    trajectory[-1, 0] = .04
+    states = iter((
+        LiveRobotState(np.zeros(13), np.zeros(7), 10., 10., 10., 10.,
+                       np.zeros(6), np.zeros(6), 0., np.zeros(6)),
+        LiveRobotState(trajectory[-1], np.zeros(7), 11., 11., 11., 11.,
+                       np.zeros(6), np.zeros(6), 0., np.zeros(6)),
+    ))
+
+    def fk(q):
+        wrist = np.eye(4)
+        wrist[:3, 3] = socket[:3, 2] * q[0]
+        return wrist
+
+    goals = []
+
+    def plan(_start, goal, **_kwargs):
+        goals.append(goal.copy())
+        return SimpleNamespace(success=True, trajectory=trajectory)
+
+    runner = SimpleNamespace(
+        active_attempt=SimpleNamespace(attempt_id="a1", candidate_id="table/0/42"),
+        _attempt_dir=tmp_path, shared_root=tmp_path, mode=object(),
+        calibration=object(), _preflight=SimpleNamespace(trial_scene={}),
+        _postlift_preflight=SimpleNamespace(targets=SimpleNamespace(
+            T_robot_key_preinsert=np.eye(4))))
+    monkeypatch.setattr(same_trial, "validated_frozen_socket_pose",
+                        lambda **_kwargs: socket)
+    monkeypatch.setattr(same_trial, "build_held_scene_from_trial",
+                        lambda **_kwargs: {})
+    monkeypatch.setattr(same_trial, "_path",
+                        lambda *_args, **_kwargs: trajectory)
+    monkeypatch.setattr(same_trial, "_audit_held_geometry_samples",
+                        lambda **_kwargs: ([], {}, None))
+    monkeypatch.setattr(same_trial, "verify_transfer_controller_result",
+                        lambda *_args, **_kwargs: (10., 11., {}))
+    result = same_trial.plan_and_execute_shift(
+        runner=runner,
+        planner=SimpleNamespace(fk_wrist=fk, plan_cartesian_pose=plan),
+        adapter=SimpleNamespace(follow_transfer=lambda *_args, **_kwargs: {}),
+        read_state=lambda: next(states), motion_interlock=lambda: True,
+        limits=SimpleNamespace(max_execution_duration_s=5.),
+        path_limits=SimpleNamespace(minimum_hand_clearance_m=0.),
+        increment_socket_m=(0., 0.), residual_socket_m=(0., 0.),
+        residual_source="nominal_unobserved", index=0,
+        axis_increment_socket_m=.04)
+    np.testing.assert_allclose(goals[0][:3, 3], [0., -.04, 0.])
+    report = json.loads(result.read_text())
+    assert report["axis_increment_socket_m"] == .04
+    assert report["measured_axis_increment_socket_m"] == .04
+    np.testing.assert_allclose(report["measured_increment_socket_m"], [0., 0.])
 
 
 def test_corrected_axial_keeps_key_at_observed_residual_and_moves_wrist():

@@ -80,6 +80,7 @@ class LiveTaskHandlers:
     sam_segmentor: object | None = None
     same_trial_xy_tolerance_m: float | None = None
     same_trial_max_shifts: int | None = None
+    same_trial_observation_raise_m: float = 0.
     after_lift_capture_provider: (
         Callable[[], tuple[str, RawCameraCapture] | None] | None) = None
     decision_time: Callable[[], float] = time.time
@@ -227,6 +228,9 @@ class LiveTaskHandlers:
         final_residual = None
         predicted_residual = None
         residual_source = None
+        axis_raise = 0.
+        observation_raise_attempted = False
+        xy_shift_count = 0
         for index in count():
             with timed("trial.same_trial_xy_measure", phase="trial",
                        kind="vlm", attempt_id=attempt.attempt_id):
@@ -237,6 +241,7 @@ class LiveTaskHandlers:
                     nominal_tip_height_error_m=(
                         self.same_trial_tip_height_error_m),
                     nominal_key_xy_shift_socket_m=total,
+                    nominal_key_axis_raise_socket_m=axis_raise,
                     xy_estimator=self.xy_estimator,
                     sam_segmentor=self.sam_segmentor,
                     capture=capture)
@@ -265,6 +270,44 @@ class LiveTaskHandlers:
                           indent=2, sort_keys=True, allow_nan=False)
                 stream.write("\n")
             observations.append(report)
+            if (choice["status"] == "not_metric_multiview" and
+                    predicted_residual is None and
+                    self.same_trial_observation_raise_m > 0 and
+                    not observation_raise_attempted):
+                observation_raise_attempted = True
+                try:
+                    with timed("trial.same_trial_observation_raise",
+                               phase="trial", kind="motion",
+                               attempt_id=attempt.attempt_id):
+                        raised = plan_and_execute_shift(
+                            runner=runner, planner=self.planner,
+                            adapter=self.transfer_adapter,
+                            read_state=self.read_state,
+                            motion_interlock=self.motion_interlock,
+                            limits=self.transfer_limits,
+                            path_limits=self.path_limits,
+                            increment_socket_m=(0., 0.),
+                            residual_socket_m=(0., 0.),
+                            residual_source="nominal_unobserved",
+                            axis_increment_socket_m=(
+                                self.same_trial_observation_raise_m),
+                            current_axis_raise_socket_m=0., index=index)
+                except HeldXYPlanUnavailable:
+                    # The optional viewpoint was unreachable; the measured
+                    # original preinsert hold remains available for insertion.
+                    pass
+                else:
+                    shifts.append(raised)
+                    motion = json.loads(raised.read_text(encoding="utf-8"))
+                    axis_raise = motion["measured_axis_increment_socket_m"]
+                    total = [a + b for a, b in zip(
+                        total, motion["measured_increment_socket_m"])]
+                    current = runner.current_decision()
+                    raw, capture = self._capture(
+                        runner=runner, decision=current,
+                        callback=self.capture_preinsert, phase="preinsert")
+                    self._preinsert_bundle = raw
+                    continue
             if choice["status"] == "aligned":
                 if choice.get("source") == "last_metric_plus_completed_held_motion":
                     final_residual = predicted_residual
@@ -278,14 +321,16 @@ class LiveTaskHandlers:
                 # No XY observation was available. Replan from the measured
                 # hold even in this case: the post-lift axial archive starts
                 # at the planned transfer endpoint, not necessarily here.
-                final_residual = ([0., 0.] if predicted_residual is None
+                final_residual = (total if predicted_residual is None
                                   else predicted_residual)
-                residual_source = ("nominal_unobserved" if
-                                   predicted_residual is None else
-                                   "last_metric_plus_completed_held_motion")
+                residual_source = (
+                    ("nominal_unobserved" if total == [0., 0.] else
+                     "nominal_plus_observation_motion")
+                    if predicted_residual is None else
+                    "last_metric_plus_completed_held_motion")
                 break
             if (self.same_trial_max_shifts is not None and
-                    index == self.same_trial_max_shifts):
+                    xy_shift_count >= self.same_trial_max_shifts):
                 raise RuntimeError(
                     "same-trial XY did not reach its configured target")
             step = choice["increment_socket_m"]
@@ -308,6 +353,7 @@ class LiveTaskHandlers:
                         residual_socket_m=current_residual,
                         residual_source=(choice.get("source") or
                                          "current_metric_multiview"),
+                        current_axis_raise_socket_m=axis_raise,
                         index=index)
                 except HeldXYPlanUnavailable as exc:
                     runner.record_failure(
@@ -320,11 +366,51 @@ class LiveTaskHandlers:
                         })
                     return
             shifts.append(shift)
+            xy_shift_count += 1
             shift_result = json.loads(shift.read_text(encoding="utf-8"))
             measured_step = shift_result["measured_increment_socket_m"]
             total = [a + b for a, b in zip(total, measured_step)]
             predicted_residual = [a + b for a, b in zip(
                 current_residual, measured_step)]
+            current = runner.current_decision()
+            raw, capture = self._capture(
+                runner=runner, decision=current,
+                callback=self.capture_preinsert, phase="preinsert")
+            self._preinsert_bundle = raw
+        if axis_raise != 0.:
+            with timed("trial.same_trial_observation_return",
+                       phase="trial", kind="motion",
+                       attempt_id=attempt.attempt_id):
+                try:
+                    returned = plan_and_execute_shift(
+                        runner=runner, planner=self.planner,
+                        adapter=self.transfer_adapter,
+                        read_state=self.read_state,
+                        motion_interlock=self.motion_interlock,
+                        limits=self.transfer_limits,
+                        path_limits=self.path_limits,
+                        increment_socket_m=(0., 0.),
+                        residual_socket_m=final_residual,
+                        residual_source=residual_source,
+                        axis_increment_socket_m=-axis_raise,
+                        current_axis_raise_socket_m=axis_raise,
+                        index=index + 1)
+                except HeldXYPlanUnavailable as exc:
+                    runner.record_failure(
+                        "preinsert_path_unavailable",
+                        timestamp_s=self.decision_time(),
+                        evidence_refs={
+                            "observation_return_plan_failure": str(exc.report_path),
+                            "preinsert_snapshot": str(
+                                self._preinsert_bundle / "manifest.json"),
+                        })
+                    return
+            shifts.append(returned)
+            motion = json.loads(returned.read_text(encoding="utf-8"))
+            total = [a + b for a, b in zip(
+                total, motion["measured_increment_socket_m"])]
+            final_residual = [a + b for a, b in zip(
+                final_residual, motion["measured_increment_socket_m"])]
             current = runner.current_decision()
             raw, capture = self._capture(
                 runner=runner, decision=current,

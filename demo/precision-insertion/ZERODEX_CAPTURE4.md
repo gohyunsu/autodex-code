@@ -181,6 +181,20 @@ ZeroDex runs now enable the same-episode XY loop by default with a 2.5 mm
 centering target. This is a pre-insertion correction target, not the final
 insertion-success label. Set `PRECISION_SAME_TRIAL_XY_TOLERANCE_MM=''` to run
 the earlier open-loop baseline, or set another value for a different target.
+If the first four-view hold cannot yield a metric XY point, the ZeroDex
+profile now raises the held grasp 40 mm along the measured socket axis,
+recaptures, and tries the same estimator again. It returns to the original
+pre-insertion height and replans the insertion from the measured wrist state.
+If the raised photograph still has no metric point, it continues with the
+existing nominal insertion target. The view change is conditional, so a
+usable first photograph does not pay for an extra robot move or inference.
+Set `PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM=0` to disable it, or `20` to
+compare a smaller observation move. The exact commanded and measured axis
+increments are recorded under `same_trial_xy/shifts/` and the observation
+reports record their nominal raised height. The four archived 5 mm attempts
+passed offline cuRobo rise-and-return planning and sampled held-key collision
+checks at both 20 and 40 mm; no raised live photograph or physical correction
+has yet validated improved key visibility.
 Start with the socket alone on the board; the launcher prompts for key
 placement after socket measurement:
 
@@ -188,6 +202,7 @@ placement after socket measurement:
 cd /home/hyunsu/autodex-code
 export PRECISION_GAP_MM=5
 export PRECISION_XY_ESTIMATOR=sam_half_ellipse
+export PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM=40
 unset PRECISION_REUSE_SESSION_EVIDENCE
 bash demo/precision-insertion/run_zerodex_capture4.sh --check
 # With capture4, Franka and Inspire services ready, socket alone on the board:

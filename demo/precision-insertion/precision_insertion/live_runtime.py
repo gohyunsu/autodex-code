@@ -36,6 +36,7 @@ class RunLiveOptions:
     annotator: str | None = None
     xy_update_weight: float = 1.0
     same_trial_xy_tolerance_m: float | None = None
+    same_trial_observation_raise_m: float = 0.
     init_ports: tuple[int, int, int] | None = None
     stop_after_planning: bool = False
     reuse_session_evidence_dir: Path | None = None
@@ -254,6 +255,11 @@ def run_integrated_live_session(
             not math.isfinite(options.same_trial_xy_tolerance_m) or
             options.same_trial_xy_tolerance_m <= 0):
         raise ValueError("same-trial XY tolerance must be positive metres")
+    if (not math.isfinite(options.same_trial_observation_raise_m) or
+            options.same_trial_observation_raise_m < 0 or
+            (options.same_trial_observation_raise_m > 0 and
+             options.same_trial_xy_tolerance_m is None)):
+        raise ValueError("observation raise needs an enabled same-trial XY target")
     if (options.same_trial_xy_tolerance_m is not None and
             options.xy_estimator == "tracked_tip"):
         raise ValueError(

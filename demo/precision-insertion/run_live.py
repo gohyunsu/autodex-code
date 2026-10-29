@@ -98,6 +98,11 @@ def main(argv: list[str] | None = None) -> int:
         help="opt in to repeated pre-insertion XY observation and planned "
              "held correction within this episode; insert after the measured "
              "residual is at or below this socket-frame threshold")
+    parser.add_argument(
+        "--same-trial-observation-raise-mm", type=float, default=0.,
+        help="if the first preinsert view has no metric XY point, temporarily "
+             "raise the held key along the socket axis, recapture, then "
+             "return to preinsert before the planned insertion (default: 0)")
     parser.add_argument("--annotator", help="required with --label-mode manual")
     parser.add_argument("--enable-robot-motion", action="store_true",
                         help="required: initial clear-view and trial motions")
@@ -168,6 +173,8 @@ def main(argv: list[str] | None = None) -> int:
         same_trial_xy_tolerance_m=(
             None if args.same_trial_xy_tolerance_mm is None else
             args.same_trial_xy_tolerance_mm / 1000.),
+        same_trial_observation_raise_m=(
+            args.same_trial_observation_raise_mm / 1000.),
         init_ports=init_ports, stop_after_planning=args.stop_after_planning,
         reuse_session_evidence_dir=args.reuse_session_evidence,
         key_already_placed=args.key_already_placed,
