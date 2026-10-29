@@ -27,6 +27,18 @@ only about 4 degrees at the socket. Prefer cameras that show the **same
 physical key feature** with useful parallax. Do not count two positive
 object-presence labels as two metric end-center observations.
 
+A fresh replay of the **current** Qwen-box → SAM3 implementation on the two
+human-confirmed `20195` insertions found no metric XY point in either case.
+The socket-overlap exclusion correctly rejected the `25305462` and
+`25322642` boxes (95–99% overlap with the frozen socket projection). The
+remaining `25322639` and `26053248` requests returned no key SAM mask.
+Both observations therefore abstained instead of issuing the large false
+corrections that an earlier single-view shaft-pixel hypothesis suggested.
+The replay used the saved original images, current code, local Qwen3-VL-2B
+and SAM3; it sent no robot command. Exact per-view prompts, boxes, exclusion
+fractions and reasons are in `replay_current_sam_xy_20195_20261029.{py,json,log}`
+under the development review directory.
+
 ## Alternative observation action tested offline
 
 For each frozen session, the probe takes the 80 mm key CAD tip
@@ -63,7 +75,8 @@ The probe scripts and exact numerical results are under
 `probe_face_visibility_20261029`,
 `probe_tilt_observation_return_axial_20261029`, and
 `probe_tilt_face_occlusion_20261029` (`.py` and `.json`; the planning probe
-also has a `.log`). These eight files have SHA256-matched copies under
+also has a `.log`). These files and the current-code Qwen/SAM replay have
+SHA256-matched copies under
 `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/tilt_observation_20261029/`.
 The final outcome Qwen replay in the same review folder
 reproduced the six available human reviewed released-key labels, five 5 mm
