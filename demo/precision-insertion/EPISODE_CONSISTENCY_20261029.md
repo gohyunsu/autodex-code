@@ -62,8 +62,10 @@ All eight views produced a confident mask with a positive box, so SAM3's
 score alone cannot identify the correct object. The exact masks, overlays,
 per-view scores and reproducible script are under
 `~/precision_insertion_project/development/zerodex_capture4/reviews/sam_box_prompt_20261029/`
-and `probe_sam_box_prompt_20261029.py` beside that directory. The runtime
-segmentor was **not** switched to box prompting: the experiment proves a
+and `probe_sam_box_prompt_20261029.py` beside that directory. A verified
+74-file mirror of the probe, images and script is under
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/sam_box_prompt_20261029/`.
+The runtime segmentor was **not** switched to box prompting: the experiment proves a
 one-view segmentation improvement, not a reliable multiview 3D tip.
 
 ## Method supported by these episodes
