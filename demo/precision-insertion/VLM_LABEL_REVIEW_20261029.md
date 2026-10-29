@@ -4,6 +4,26 @@ The four-case sections below document the earlier v4 final prompt and 384 px
 crop. The current v5 method and six human-labeled ZeroDex episodes are in
 [SAVED_ZERODEX_VISION_REVIEW_20261029.md](SAVED_ZERODEX_VISION_REVIEW_20261029.md).
 
+## Independent labels available for the next model iteration (2026-10-30)
+
+The saved capture4 attempt reports contain three human-positive after-lift
+labels: the contemporaneous VLM agreed on two and called one (`0c787032`)
+`miss`. The same three attempts have human-positive pre-insertion transfer
+labels and the contemporaneous VLM called all three `coarse_match`. There are
+**no independently human-labeled lift misses or transfer slips** in these
+reports. A later outside-socket outcome does not establish when a key was
+lost, and archived VLM-negative attempts without human labels cannot be used
+as negative ground truth.
+
+The two manually labeled released-key successes in these attempts disagreed
+with the VLM answers saved by the older final prompt. The current v5 final
+crop/prompt was separately replayed on six human-reviewed outcomes and
+matched all six; this is an in-sample result. For the next live data
+collection, label the key state shown in each saved snapshot separately at
+after-lift, pre-insertion and final release. A later slip must not revise an
+earlier snapshot's held label. Keep manual and VLM answers side by side so a
+real negative set can be assembled before changing the automatic decision.
+
 ## Current source and saved-data check
 
 The capture4 four-view same-trial estimator now shifts its projected key ROI
