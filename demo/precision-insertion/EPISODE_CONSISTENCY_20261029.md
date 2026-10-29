@@ -52,6 +52,19 @@ images are in each attempt's `same_trial_xy/observations/000.json` and
 reliable multiview correction have not yet occurred in the same archived
 episode.
 
+The two success runs share the same calibrated camera geometry. Rays from
+`25305462` and `25322642` to the socket origin differ by only **4.02°**,
+below the current 5° minimum parallax for a metric tip. Each has a 38–39°
+baseline with `25322639`, and an 82–83° baseline with `26053248`.
+In the saved full frames, the hand occludes the tip from `25322639`;
+`25305462` and `25322642` see almost the same socket-side aspect.
+`26053248` shows the held key's side, but its mask did not resolve a
+measured end centre. Thus two masks from the near-duplicate cameras could
+not by themselves provide a metric correction even if both identified the
+key. The next camera/hold arrangement must expose the **same physical end
+centre** to at least two views with useful parallax. This is a geometric
+observability issue in addition to the key/socket identity issue.
+
 A read-only local SAM3 experiment reused each archived Qwen box as a positive
 geometric prompt on all eight saved `20195` views. A box alone and a box plus
 the existing `white cylinder` text both recovered the **visible key** mask

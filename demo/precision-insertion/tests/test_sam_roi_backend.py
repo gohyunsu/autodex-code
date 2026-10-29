@@ -513,7 +513,7 @@ def test_remote_sam_tip_uses_first_metric_quorum_or_later_views(
 
 
 @pytest.mark.parametrize("one_bad", [False, True])
-def test_capture4_prefers_three_tip_views_and_only_uses_fourth_if_needed(
+def test_capture4_batches_four_boxes_but_only_segments_fourth_if_needed(
     tmp_path, monkeypatch, one_bad,
 ):
     monkeypatch.setattr(
@@ -594,8 +594,8 @@ def test_capture4_prefers_three_tip_views_and_only_uses_fourth_if_needed(
             max_reprojection_px=5., min_parallax_deg=1.),
         search_index=0, max_nominal_tip_height_error_m=.03)
     assert alignment["status"] == "diagnostic_metric_xy_correction"
-    assert backend.batches == [["cam_a", "cam_b", "cam_c"]]
-    assert backend.singles == (["cam_d"] if one_bad else [])
+    assert backend.batches == [["cam_a", "cam_b", "cam_c", "cam_d"]]
+    assert backend.singles == []
     assert segmentor.calls == (["cam_a", "cam_b", "cam_c", "cam_d"]
                                if one_bad else ["cam_a", "cam_b", "cam_c"])
     assert alignment["camera_selection"]["fallback_used"] is one_bad

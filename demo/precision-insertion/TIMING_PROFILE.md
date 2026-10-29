@@ -405,6 +405,23 @@ The batched answers kept the same inlier cameras and metric status in all
 four snapshots; the largest XY-offset difference was 0.130 mm. This is a
 saved-scene result, not a new physical alignment or insertion trial.
 
+On the two human-confirmed 5 mm `20195` episodes, the preferred first three
+views did not yield metric XY, so the fourth Qwen request was needed. A
+read-only replay of their exact saved crops measured a warm median of
+0.840 s for a 3+1 Qwen split versus 0.572 s for one four-view batch
+(three repetitions on the first episode). On the second episode, the same
+comparison was 0.833 s versus 0.567 s. Seven of eight boxes matched exactly;
+the remaining box edge moved 5.12 crop pixels. Replaying both answer sets
+through the production SAM3/geometry code returned the same status
+(`abstain`), no metric XY, and identical per-view reasons in both episodes.
+The raw Qwen answers and times are in
+`~/precision_insertion_project/development/zerodex_capture4/reviews/qwen_split_quartet_20195_20261029.json`.
+The local batch-capable backend now asks all four key-box questions in one
+batch even when SAM still tests the preferred three views first. The fourth
+SAM view is still used only when the first three do not yield metric XY.
+This changes no motion or XY admission rule. The component saving is about
+0.27 s after model warmup; it is not a measured live-session speedup.
+
 A separate SAM3 batch probe on the first snapshot returned masks with IoU
 at least 0.9996 against serial inference. Its warm four-view runtime was
 0.63 s versus 0.68 s serial. That approximately 0.05 s gain does not yet

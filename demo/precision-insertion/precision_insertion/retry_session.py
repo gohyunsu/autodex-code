@@ -1291,7 +1291,16 @@ def _compute_sam_half_ellipse_alignment(
                    [frame for frame in frames
                     if frame.camera_id not in preferred])
         first, fallback = ordered[:3], ordered[3:]
-        prefetch_boxes(first)
+        # On capture4, the first three views often cannot resolve the held
+        # key, so the fourth is needed. One local Qwen batch is faster than
+        # two consecutive 3+1 batches; keep the existing SAM view order and
+        # stop rule unchanged.
+        if (type(batch_size) is int and
+                batch_size >= len(ordered) and
+                callable(infer_many)):
+            prefetch_boxes(ordered)
+        else:
+            prefetch_boxes(first)
         measured = map_view_calls(backend, first, measure)
         first_metric = sufficient({i: row for i, row in enumerate(measured)})
         if not first_metric and fallback:
