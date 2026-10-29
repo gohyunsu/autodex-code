@@ -346,13 +346,22 @@ saved data, not a new robot-run timing result.
 New nested spans `preinsert.prediction_build` and
 `preinsert.audit_overlay_render` separate those two costs on the next live
 run. They do not change the VLM input, checkpoint evidence or motion policy.
-The remaining preinsert-label time includes saved-frame decoding, crop
-construction, report/overlay writing and other checkpoint work. Retaining
-the audit overlay currently costs less than a second after warmup; removing
-it would require a distinct checkpoint/report schema and is not justified by
-the current measurements alone. The larger observed startup costs remain
+The capture4 profile now disables the diagnostic CAD overlay by default;
+its raw held-scene comparison retains the measured transforms and camera
+hashes. The remaining preinsert-label time includes image input, crop
+construction, VLM inference, report writing and other checkpoint work.
+The larger observed startup costs remain
 planner world setup and SAM3 model loading; both have asynchronous warmup
 paths that need measurement on a new live run before claiming a speedup.
+
+The live preinsert checkpoint now reuses both just-captured camera arrays:
+the current preinsert frames and the earlier after-lift frames from the same
+attempt. It still writes the source PNGs and binds each reused array to the
+saved frame hash. Saved-data replay keeps the PNG decode path. On four
+archived 2048×1536 after-lift views, ten local repetitions measured 0.243 s
+median for PNG decoding versus 0.020 s for the in-memory pixel hashes. The
+new `preinsert.temporal_pair_input` span records which source was used. The
+roughly 0.22 s component difference is not a measured live-pipeline saving.
 
 The four-view Qwen key-box batch added after the archived 2026-10-28 runs
 was checked on all four saved XY snapshots of attempt `9542c1bd`. With the

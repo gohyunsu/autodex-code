@@ -1,51 +1,5 @@
 # Released-key VLM review (2026-10-29)
 
-## Transfer label limitation found in saved capture4 frames
-
-The current temporal preinsert Qwen question returns `coarse_match` on all six
-archived transfer checkpoints. That answer must be read as the model's coarse
-scene description, **not** independent proof that the key remains in the hand:
-it also returned `coarse_match` on synthetic empty-hand pair controls. The
-runtime separately saves the controller's transfer completion and grip record
-and the later SAM half-ellipse key-face observations. Do not count those six
-`coarse_match` answers as six verified held-key classifications.
-
-We tested the same saved images with a 650 px measured-hand crop, fitted to
-640 px, and two short questions asking whether a separate solid white peg is
-visible at the hand in the second image. The eight per-camera requests were
-two recorded transfers (`30e9cd0b`, `9542c1bd`) and two empty-lift controls
-(`687a4a49`, `ecb0c571`) in cameras `25305462` and `25322642`. The first
-three-choice wording returned `UNCLEAR` for all eight. Both binary wordings
-returned `NO` for all eight; repeating the second wording on cameras
-`25322639` and `26053248` also returned `NO` for all eight. The source paths,
-image hashes, crops, prompts, scripts, and replies are in
-`~/precision_insertion_project/development/zerodex_capture4/reviews/preinsert_vlm_crop_20261029/hand_pair_probe_*.{py,json}`.
-The empty controls reuse an after-lift exposure as the second frame; they are
-not recorded transfer failures. The probe shows that prompt/crop replacement
-does not yet give this Qwen model a discriminative held-key label. No runtime
-prompt, label rule, or motion gate was changed on the strength of it.
-
-The first live `same_trial_xy` record for attempt `9542c1bd` subsequently
-admitted an observed key-face half ellipse in all four cameras, and did so
-again after three shifts. That is stronger **key-tip localization** evidence
-than the transfer `coarse_match` text in this one attempt, but it is not a
-general empty-hand classifier. A useful next saved-image study should annotate
-each camera's raw after-lift and preinsert frame as visible held key, visible
-empty hand, or occluded, including real transfer slips. Compare those labels
-against the exact production crop and Qwen answers, and separately evaluate
-whether the key-face detector can confuse a socket rim or finger shell with a
-key. Keep the per-view labels and final socket label distinct.
-
-An offline lying-key pose `001` replay also confirms that candidate fallback
-is present: five catalog candidates were tried in order; two passed v8 pickup
-but failed later (`transfer_unreachable` and
-`axial_waypoint_unreachable`), while three failed pickup. It ended in a
-proposed repose to pose `000`, not an executed reorientation. The related
-camera-only report has six endpoint-eligible entries but contains no robot
-planning; its count is not a success count. This is a grasp/trajectory
-coverage gap, not evidence that the runtime stops after its first failed
-candidate.
-
 ## Exact-input audit after a saved run
 
 The capture4 temporal preinsert path now skips its separate GPU CAD overlay
@@ -559,6 +513,20 @@ The duplicated lift images are a synthetic transfer control, not a captured
 transfer failure. This probe supplies no evidence for replacing the current
 live transfer prompt or adding another stop condition. Actual dropped-key
 transfer images with independent labels are still needed.
+
+Two additional binary prompts on the same hand crops asked whether a separate
+solid peg was visible at the hand in the second image. Both answered `NO` on
+all eight requests; the second prompt also answered `NO` on all eight when
+repeated with cameras `25322639` and `26053248`. Those scripts, source/crop
+hashes, and responses are `hand_pair_probe_binary_640` and
+`hand_pair_probe_attached{,_bestviews}_640` in the same development folder.
+Together with the archived `coarse_match` responses, these probes show that
+the current Qwen transfer wording is not a verified held-key classifier. In
+the saved `9542c1bd` attempt, the later SAM half-ellipse estimator admitted
+key-face observations in all four cameras at each of four preinsert
+snapshots. That is key-tip localization evidence for this attempt, not a
+validated empty-hand classifier. New labeled real transfer slips are required
+to compare either method against a genuine negative case.
 
 In the saved four-view same-trial run `20261028_233043_399147`, the four XY
 measurements took 2.69, 2.35, 2.36 and 2.44 s. Each used sequential Qwen

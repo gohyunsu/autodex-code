@@ -141,6 +141,9 @@ def assemble_live_components(
         components.append(cls(**arguments))
     retry = components[list(classes).index("retry")]
     task = components[list(classes).index("task")]
+    lift = components[list(classes).index("lift")]
+    if isinstance(task, LiveTaskHandlers) and isinstance(lift, LiveLiftHandlers):
+        task.after_lift_capture_provider = lambda: lift.latest_capture
     held_return = components[list(classes).index("held_return")]
     if (isinstance(task, LiveTaskHandlers) and
             isinstance(held_return, LiveHeldReturnHandlers) and

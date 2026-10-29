@@ -178,6 +178,23 @@ def test_preinsert_refs_use_canonical_episode_paths(tmp_path, monkeypatch):
     assert label_refs["preinsert_image"] == str(canonical_raw / "manifest.json")
 
 
+def test_transfer_reuses_only_same_attempt_lift_pixels(tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    lift = _capture("lift_001")
+    bound.after_lift_capture_provider = lambda: ("attempt_001", lift)
+    monkeypatch.setattr(live_task_handlers, "execute_bound_held_transfer",
+                        lambda **_kwargs: None)
+    monkeypatch.setattr(live_task_handlers, "write_raw_camera_capture",
+                        lambda *_args, **_kwargs: None)
+    bound.transfer_and_observe(runner, runner.current_decision())
+    assert runner.events[0][1]["after_lift_live_capture"] is lift
+
+    bound, runner, *_ = _handler(tmp_path / "next")
+    bound.after_lift_capture_provider = lambda: ("previous_attempt", lift)
+    bound.transfer_and_observe(runner, runner.current_decision())
+    assert runner.events[0][1]["after_lift_live_capture"] is None
+
+
 @pytest.mark.parametrize("second,predicted", [
     ([.0005, 0.], False),
     (None, True),

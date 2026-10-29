@@ -320,17 +320,31 @@ def test_live_preinsert_reuses_the_saved_capture_pixels(tmp_path, monkeypatch):
             {"request_id": manifest["request_id"],
              "source": "camera_acquisition",
              "frames": manifest["frame_evidence"]})
+        lift_manifest = json.loads((args["after_lift_raw_bundle"] /
+                                    "manifest.json").read_text())
+        lift_images = {camera: np.full((24, 32, 3), (0, 80, 0),
+                                      dtype=np.uint8) for camera in CAMERAS}
+        live_lift = RawCameraCapture(
+            lift_manifest["capture_id"], lift_manifest["request_id"],
+            lift_images,
+            {camera: row["frame_id"] for camera, row in
+             lift_manifest["frame_evidence"].items()},
+            {"request_id": lift_manifest["request_id"],
+             "source": "camera_acquisition",
+             "frames": lift_manifest["frame_evidence"]})
         original_read = preinsert_checkpoint.cv2.imread
 
         def read_other_frames(path, flags):
-            if str(args["raw_bundle"] / "images") in str(path):
-                raise AssertionError("live preinsert decoded its saved PNG again")
+            if (str(args["raw_bundle"] / "images") in str(path) or
+                    str(args["after_lift_raw_bundle"] / "images") in str(path)):
+                raise AssertionError("live VLM decoded a just-captured PNG again")
             return original_read(path, flags)
 
         monkeypatch.setattr(preinsert_checkpoint.cv2, "imread", read_other_frames)
         reused = assess_preinsert_checkpoint(**{
             **args, "render_audit_overlay": False,
-            "live_capture": live})
+            "live_capture": live,
+            "after_lift_live_capture": live_lift})
         assert reused.preinsert_reached == saved.preinsert_reached
         assert sorted(backend.inputs) == saved_inputs
         wrong = {camera: image.copy() for camera, image in images.items()}
@@ -339,6 +353,14 @@ def test_live_preinsert_reuses_the_saved_capture_pixels(tmp_path, monkeypatch):
             assess_preinsert_checkpoint(**{
                 **args, "render_audit_overlay": False,
                 "live_capture": replace(live, images_bgr=wrong)})
+        wrong_lift = {camera: image.copy() for camera, image in
+                      lift_images.items()}
+        wrong_lift["cam_a"][0, 0, 0] = 1
+        with pytest.raises(ValueError, match="live after-lift pixels differ"):
+            assess_preinsert_checkpoint(**{
+                **args, "render_audit_overlay": False,
+                "after_lift_live_capture": replace(
+                    live_lift, images_bgr=wrong_lift)})
 
 
 def test_measured_preinsert_arrival_needs_multiview_visible_key(tmp_path):

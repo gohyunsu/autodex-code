@@ -115,6 +115,7 @@ def test_lift_then_same_session_raw_capture_then_qwen_label(
     assert assessed["lift_execution_log_path"] == (
         tmp_path / "attempts/attempt_001/lift_execution.json")
     assert assessed["after_raw_evidence_dir"] == runner.events[2][2]
+    assert bound.latest_capture == ("attempt_001", capture)
     assert runner.current_decision().action == "held_relation_evidence_required"
 
 

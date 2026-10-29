@@ -80,6 +80,8 @@ class LiveTaskHandlers:
     sam_segmentor: object | None = None
     same_trial_xy_tolerance_m: float | None = None
     same_trial_max_shifts: int | None = None
+    after_lift_capture_provider: (
+        Callable[[], tuple[str, RawCameraCapture] | None] | None) = None
     decision_time: Callable[[], float] = time.time
     _preinsert_bundle: Path | None = field(default=None, init=False)
     _preinsert_attempt_id: str | None = field(default=None, init=False)
@@ -164,6 +166,10 @@ class LiveTaskHandlers:
         after_lift_raw = getattr(lift_checkpoint, "after_bundle", None)
         if after_lift_raw is None:
             raise ValueError("preinsert VLM needs this attempt's raw after-lift capture")
+        recent_lift = (self.after_lift_capture_provider()
+                       if self.after_lift_capture_provider is not None else None)
+        lift_capture = (recent_lift[1] if recent_lift is not None and
+                        recent_lift[0] == attempt.attempt_id else None)
         state = self.state_for_capture(capture)
         if not isinstance(state, LiveRobotState):
             raise TypeError("pre-insertion exposure needs measured robot state")
@@ -173,6 +179,7 @@ class LiveTaskHandlers:
                 raw_bundle=raw, transfer_execution_path=transfer_log,
                 joint_sample=state, backend=self.backend,
                 live_capture=capture,
+                after_lift_live_capture=lift_capture,
                 label_mode=self.label_mode,
                 **({"allow_held_misalignment": True}
                    if self.same_trial_xy_tolerance_m is not None else {}),

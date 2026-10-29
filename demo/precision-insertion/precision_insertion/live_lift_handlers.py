@@ -8,7 +8,7 @@ planned path or a motor command alone.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import math
 import time
@@ -61,6 +61,8 @@ class LiveLiftHandlers:
     enable_robot_motion: bool = False
     decision_time: Callable[[], float] = time.time
     post_lift_settle_s: float = 0.0
+    latest_capture: tuple[str, RawCameraCapture] | None = field(
+        default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if (not callable(self.read_state) or
@@ -85,6 +87,7 @@ class LiveLiftHandlers:
                 f"unknown {sorted(extra)}")
 
     def lift_and_observe(self, runner, decision: SessionDecision) -> None:
+        self.latest_capture = None
         if (runner is not self.live.opened.runner or
                 not isinstance(decision, SessionDecision) or
                 runner.current_decision() != decision or
@@ -163,6 +166,7 @@ class LiveLiftHandlers:
                     attempt_id=attempt.attempt_id,
                     candidate_id=attempt.candidate_id),
                 **dict(self.assessment_parameters))
+        self.latest_capture = (attempt.attempt_id, capture)
         if checkpoint.grasp_success is None:
             if type(assessment_index) is not int:
                 raise ValueError("unknown lift verdict lacks a saved assessment index")

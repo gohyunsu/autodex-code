@@ -1667,6 +1667,7 @@ class SessionRunner:
         allow_held_misalignment: bool = False,
         render_audit_overlay: bool = True,
         live_capture: RawCameraCapture | None = None,
+        after_lift_live_capture: RawCameraCapture | None = None,
     ) -> PreinsertCheckpoint:
         """Save an observed arrival assessment; never command the transfer.
 
@@ -1732,6 +1733,7 @@ class SessionRunner:
             render_audit_overlay=render_audit_overlay,
             lift_checkpoint_report_path=self._lift_report_path,
             live_capture=live_capture,
+            after_lift_live_capture=after_lift_live_capture,
             **kwargs)
         output = (self._attempt_dir / "preinsert_assessments" /
                   f"{self._preinsert_assessment_index:03d}")
