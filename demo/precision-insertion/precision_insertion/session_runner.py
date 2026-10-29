@@ -1665,6 +1665,7 @@ class SessionRunner:
         label_mode: str = "evidence_fused",
         manual_annotation: dict | None = None,
         allow_held_misalignment: bool = False,
+        render_audit_overlay: bool = True,
     ) -> PreinsertCheckpoint:
         """Save an observed arrival assessment; never command the transfer.
 
@@ -1727,6 +1728,7 @@ class SessionRunner:
             label_mode=label_mode,
             manual_annotation=manual_annotation,
             allow_held_misalignment=allow_held_misalignment,
+            render_audit_overlay=render_audit_overlay,
             lift_checkpoint_report_path=self._lift_report_path,
             **kwargs)
         output = (self._attempt_dir / "preinsert_assessments" /

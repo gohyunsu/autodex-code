@@ -2,8 +2,8 @@
 
 An external controller supplies a completed transfer log. The saved camera
 bundle, measured stationary FR3/Inspire joints, post-lift grasp relation, and
-per-view raw-only VLM check are evaluated together. CAD projections are saved
-for deterministic geometry/audit only and are never passed to the VLM. This
+per-view raw-only VLM check are evaluated together. The optional diagnostic
+CAD overlay is never passed to the VLM. This
 does not execute motion, prove contact, or certify the external producer.
 """
 
@@ -31,8 +31,9 @@ from .config import TaskMode, select_mode
 from .frame_provenance import bounded_capture_skew_s, image_sha256
 from .geometry import pose_angle_deg, validate_se3
 from .held_scene_overlay import (
-    HeldSceneComparison, build_held_scene_comparison,
-    build_held_scene_prediction,
+    HeldSceneComparison, HeldSceneRawComparison,
+    build_held_scene_comparison, build_held_scene_prediction,
+    build_raw_held_scene_comparison,
 )
 from .live_robot_state import LiveRobotState
 from .nominal_postlift import (
@@ -230,8 +231,10 @@ def observe_held_preinsert_scene(
     after_lift_frame_rows: dict | None = None,
     after_lift_joint_q=None,
     socket_bboxes: dict | None = None,
-) -> tuple[float, float, HeldSceneComparison, PreinsertVisualAssessment]:
-    """Render and label one measured held-key arrival for either transfer route."""
+    render_audit_overlay: bool = True,
+) -> tuple[float, float, HeldSceneComparison | HeldSceneRawComparison,
+           PreinsertVisualAssessment]:
+    """Label one held-key arrival; the audit overlay is optional."""
     snapshot = calibration.record.get("camera_calibration", {})
     camera_ids = set(frame_rows)
     if (not isinstance(snapshot, dict) or
@@ -320,10 +323,32 @@ def observe_held_preinsert_scene(
             preinsert_q=joint_sample.full_q,
             robot_urdf=AssetPaths(Path(shared_root), mode).robot_urdf,
             socket_bboxes=socket_bboxes)
-    # Only a remote backend can overlap inference with this PC's GPU renderer
-    # without competing for the same GPU memory. Both use the same saved raw
-    # camera pixels; the overlay is never a VLM input.
-    if getattr(backend, "independent_remote_inference", False):
+    if not render_audit_overlay:
+        # The temporal VLM uses the raw pair, never the CAD overlay. Avoid
+        # loading visual meshes and occupying the local Qwen GPU here.
+        with timed("preinsert.prediction_build", phase="preinsert",
+                   kind="computation", view_count=len(camera_ids)):
+            comparison = build_raw_held_scene_comparison(
+                shared_root=shared_root, mode=mode,
+                full_q_measured=joint_sample.full_q,
+                T_robot_socket_frozen=validated_frozen_socket_pose(
+                    mode=mode, shared_root=shared_root,
+                    calibration=calibration),
+                T_key_hand_hypothesis=T_key_hand,
+                relation_source=relation_source,
+                frames_bgr=frames_bgr,
+                frame_timestamps_s={serial: frame_rows[serial]["timestamp_s"]
+                                    for serial in camera_ids},
+                robot_loader=robot_loader)
+        target = validate_se3(T_robot_hand_target,
+                              name="planned preinsert T_robot_hand")
+        position_error = float(np.linalg.norm(
+            comparison.T_robot_hand[:3, 3] - target[:3, 3]))
+        rotation_error = pose_angle_deg(comparison.T_robot_hand, target)
+        visual = observe_preinsert_temporal_views(
+            backend, paired, max_capture_skew_s=max_capture_skew_s)
+    # Only a remote backend can overlap inference with this PC's GPU renderer.
+    elif getattr(backend, "independent_remote_inference", False):
         with ThreadPoolExecutor(max_workers=1,
                                 thread_name_prefix="precision-preinsert") as pool:
             visual_future = pool.submit(
@@ -481,7 +506,7 @@ class PreinsertCheckpoint:
     hand_translation_error_m: float
     hand_rotation_error_deg: float
     visual: PreinsertVisualAssessment
-    comparison: HeldSceneComparison
+    comparison: HeldSceneComparison | HeldSceneRawComparison
     source_record: dict
 
     def to_record(self) -> dict:
@@ -520,6 +545,7 @@ def assess_preinsert_checkpoint(
     manual_annotation: dict | None = None,
     lift_checkpoint_report_path: Path | None = None,
     allow_held_misalignment: bool = False,
+    render_audit_overlay: bool = True,
 ) -> PreinsertCheckpoint:
     """Fuse per-view coarse VLM with measured hold pose and execution evidence.
 
@@ -668,6 +694,7 @@ def assess_preinsert_checkpoint(
                 "observed_multiview_key_plus_wrist"),
             backend=backend, max_capture_skew_s=max_capture_skew_s,
             renderer_factory=renderer_factory, robot_loader=robot_loader,
+            render_audit_overlay=render_audit_overlay,
             after_lift_joint_q=(lift_record["joint_feedback"].get("full_q")
                                 if socket_bboxes else None),
             socket_bboxes=socket_bboxes))
@@ -730,31 +757,32 @@ def assess_preinsert_checkpoint(
 def write_preinsert_checkpoint(
     checkpoint: PreinsertCheckpoint, output_dir: Path,
 ) -> Path:
-    """Save raw VLM inputs plus separate geometry-audit renderings.
+    """Save raw VLM evidence and optional geometry-audit renderings.
 
     The same live session can reuse this producer result immediately. Offline
-    readers still run the full verifier against the saved PNGs and sources.
+    readers still verify the saved source PNGs and any rendered overlays.
     """
     if not isinstance(checkpoint, PreinsertCheckpoint):
         raise TypeError("expected a computed preinsert checkpoint")
     target = Path(output_dir).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.mkdir(exist_ok=False)
-    image_dir = target / "overlays"
-    image_dir.mkdir()
     record = checkpoint.to_record()
-    png_hashes = {}
-    for view in checkpoint.comparison.views:
-        path = image_dir / f"{view.camera_id}.png"
-        overlay_bgr = cv2.cvtColor(
-            np.asarray(view.predicted_overlay), cv2.COLOR_RGB2BGR)
-        if not cv2.imwrite(str(path), overlay_bgr):
-            raise OSError(f"could not save preinsert overlay: {path}")
-        if (image_sha256(overlay_bgr) != checkpoint.comparison.pixel_digests[
-                view.camera_id]["overlay_image_sha256"]):
-            raise ValueError("saved preinsert geometry-audit overlay changed")
-        png_hashes[view.camera_id] = _sha(path)
-    record["overlay_png_sha256"] = png_hashes
+    if isinstance(checkpoint.comparison, HeldSceneComparison):
+        image_dir = target / "overlays"
+        image_dir.mkdir()
+        png_hashes = {}
+        for view in checkpoint.comparison.views:
+            path = image_dir / f"{view.camera_id}.png"
+            overlay_bgr = cv2.cvtColor(
+                np.asarray(view.predicted_overlay), cv2.COLOR_RGB2BGR)
+            if not cv2.imwrite(str(path), overlay_bgr):
+                raise OSError(f"could not save preinsert overlay: {path}")
+            if (image_sha256(overlay_bgr) != checkpoint.comparison.pixel_digests[
+                    view.camera_id]["overlay_image_sha256"]):
+                raise ValueError("saved preinsert geometry-audit overlay changed")
+            png_hashes[view.camera_id] = _sha(path)
+        record["overlay_png_sha256"] = png_hashes
     report = target / "report.json"
     with report.open("x", encoding="utf-8") as stream:
         json.dump(record, stream, indent=2, sort_keys=True, allow_nan=False)
@@ -854,11 +882,18 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
                 pre_rows[camera]["timestamp_s"] for camera in pre_rows)):
         raise ValueError("preinsert raw camera pair chronology changed")
     views = report.get("comparison", {}).get("views", {})
+    comparison_schema = report.get("comparison", {}).get("schema")
+    if comparison_schema not in {
+            "precision_insertion_held_scene_comparison_v1",
+            "precision_insertion_held_scene_comparison_v2"}:
+        raise ValueError("unknown preinsert comparison format")
+    rendered = comparison_schema.endswith("_v1")
     png_hashes = report.get("overlay_png_sha256", {})
     if (not set(views) <= set(capture["frame_evidence"]) or
             not set(views) <= set(after_capture["frame_evidence"]) or
-            set(png_hashes) != set(views) or len(views) < 2):
-        raise ValueError("preinsert overlay camera set changed")
+            (set(png_hashes) != set(views) if rendered else
+             "overlay_png_sha256" in report) or len(views) < 2):
+        raise ValueError("preinsert comparison camera set changed")
     paired_pixels = []
     for serial in sorted(views):
         hashes = views[serial]
@@ -866,13 +901,8 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
                                   cv2.IMREAD_COLOR)
         before_image = cv2.imread(
             str(after_lift / "images" / f"{serial}.png"), cv2.IMREAD_COLOR)
-        overlay_path = path.parent / "overlays" / f"{serial}.png"
-        overlay_image = cv2.imread(str(overlay_path), cv2.IMREAD_COLOR)
         if (source_image is None or before_image is None or
-                overlay_image is None or
                 image_sha256(source_image) != hashes["raw_image_sha256"] or
-                image_sha256(overlay_image) != hashes["overlay_image_sha256"] or
-                _sha(overlay_path) != png_hashes[serial] or
                 hashes["timestamp_s"] !=
                 capture["frame_evidence"][serial]["timestamp_s"] or
                 report.get("vlm_frame_evidence", {}).get(serial) != {
@@ -885,6 +915,14 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
                     for phase, source in (("after_lift", after_capture),
                                           ("preinsert", capture))}):
             raise ValueError("preinsert VLM pixel evidence changed")
+        if rendered:
+            overlay_path = path.parent / "overlays" / f"{serial}.png"
+            overlay_image = cv2.imread(str(overlay_path), cv2.IMREAD_COLOR)
+            if (overlay_image is None or
+                    image_sha256(overlay_image) !=
+                    hashes["overlay_image_sha256"] or
+                    _sha(overlay_path) != png_hashes[serial]):
+                raise ValueError("preinsert VLM pixel evidence changed")
         paired_pixels.extend((
             LabeledFrame(serial, "after_lift",
                          after_capture["frame_evidence"][serial]["timestamp_s"],

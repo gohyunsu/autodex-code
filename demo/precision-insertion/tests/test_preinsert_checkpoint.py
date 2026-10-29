@@ -272,6 +272,25 @@ def test_raw_preinsert_vlm_starts_before_diagnostic_overlay(tmp_path):
     assert assess_preinsert_checkpoint(**args).preinsert_reached is True
 
 
+def test_temporal_preinsert_qwen_input_needs_no_gpu_overlay(tmp_path):
+    class UnexpectedRenderer:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("raw temporal VLM input must not render")
+
+    args = _setup(tmp_path)
+    checkpoint = assess_preinsert_checkpoint(**{
+        **args, "render_audit_overlay": False,
+        "renderer_factory": UnexpectedRenderer})
+    assert checkpoint.preinsert_reached is True
+    assert checkpoint.comparison.to_record()["schema"] == (
+        "precision_insertion_held_scene_comparison_v2")
+    saved = write_preinsert_checkpoint(checkpoint, tmp_path / "raw_arrival")
+    assert not (saved.parent / "overlays").exists()
+    record = verify_preinsert_checkpoint(saved)
+    assert record["preinsert_reached"] is True
+    assert "overlay_png_sha256" not in record
+
+
 def test_measured_preinsert_arrival_needs_multiview_visible_key(tmp_path):
     args = _setup(tmp_path)
     report = assess_preinsert_checkpoint(**args)

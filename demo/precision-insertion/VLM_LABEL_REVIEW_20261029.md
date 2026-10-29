@@ -2,6 +2,15 @@
 
 ## Exact-input audit after a saved run
 
+The capture4 temporal preinsert path now skips its separate GPU CAD overlay
+by default. That overlay was generated before local Qwen inference but was
+never a VLM input. The new report stores raw-frame hashes and the same
+measured-joint hand/key hypothesis. Existing overlay reports retain their
+original verifier. On archived 5 mm attempt `9542c1bd`, the four raw-image
+hashes and hand/key transforms matched the earlier report when loaded with
+the straight-mount capture4 profile. This is an offline consistency check,
+not a measured end-to-end speedup or a new grasp observation.
+
 `export_saved_vlm_inputs.py` reconstructs the RGB images submitted to the
 classifier from a saved lift, preinsert, or current final checkpoint. It
 reapplies each recorded ROI and Lanczos resize and compares the resulting

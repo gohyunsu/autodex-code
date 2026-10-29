@@ -56,6 +56,7 @@ def test_board9_binding_assembles_all_current_actions_without_hardware():
     assert parameters["stages"]["retry"]["retry_limits"].max_total_offset_m is None
     assert parameters["stages"]["task"]["insertion_limits"].max_execution_duration_s == 90
     assert parameters["stages"]["task"]["handoff_parameters"] == {}
+    assert parameters["stages"]["task"]["preinsert_parameters"]["render_audit_overlay"]
     assert parameters["shared"]["motion_interlock"]()
     assert calls == []
 
@@ -82,6 +83,14 @@ def test_board9_binding_assembles_all_current_actions_without_hardware():
     assert all("white" in stages[name]["key_prompt"] for name in (
         "key_planning", "held_return", "transfer_recovery",
         "repose_execution"))
+
+
+def test_capture4_profile_can_skip_unused_preinsert_renderer(monkeypatch):
+    monkeypatch.setenv("PRECISION_PREINSERT_AUDIT_OVERLAY", "0")
+    core, live, options, calls = _fixture(gap=5)
+    parameters = configure(core, live, options)
+    assert not parameters["stages"]["task"]["preinsert_parameters"]["render_audit_overlay"]
+    assert calls == []
 
 
 @pytest.mark.parametrize("gap", [1, 3, 5, 10, 15, 20])

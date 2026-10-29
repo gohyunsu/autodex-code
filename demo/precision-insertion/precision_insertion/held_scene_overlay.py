@@ -86,6 +86,86 @@ class HeldSceneComparison:
         }
 
 
+@dataclass(frozen=True)
+class HeldSceneRawComparison:
+    """Measured-FK geometry and raw-frame identities without a GPU render."""
+
+    timestamps_s: Mapping[str, float]
+    raw_digests: Mapping[str, str]
+    T_robot_hand: np.ndarray
+    T_robot_key_predicted: np.ndarray
+    T_robot_socket: np.ndarray
+    relation_source: str
+
+    def to_record(self) -> dict:
+        return {
+            "schema": "precision_insertion_held_scene_comparison_v2",
+            "prediction": {
+                "T_robot_hand_measured_fk": self.T_robot_hand.tolist(),
+                "T_robot_key_predicted": self.T_robot_key_predicted.tolist(),
+                "T_robot_socket_frozen": self.T_robot_socket.tolist(),
+                "relation_source": self.relation_source,
+                "scope": "measured_fk_and_explicit_held_key_hypothesis_no_render",
+            },
+            "views": {
+                serial: {
+                    "timestamp_s": stamp,
+                    "raw_image_sha256": self.raw_digests[serial],
+                } for serial, stamp in self.timestamps_s.items()
+            },
+            "scope": "raw_camera_pixels_no_diagnostic_overlay",
+            "robot_ready": False,
+        }
+
+
+def build_raw_held_scene_comparison(
+    *, shared_root: Path, mode: TaskMode, full_q_measured: np.ndarray,
+    T_robot_socket_frozen: np.ndarray, T_key_hand_hypothesis: np.ndarray,
+    relation_source: str, frames_bgr: Mapping[str, np.ndarray],
+    frame_timestamps_s: Mapping[str, float], robot_loader: Callable | None = None,
+) -> HeldSceneRawComparison:
+    """Compute the same hand/key transforms without visual mesh loading."""
+    if relation_source not in _RELATION_SOURCES:
+        raise ValueError("held-key relation source must be explicit")
+    q = np.asarray(full_q_measured, dtype=np.float64)
+    if q.shape != (13,) or not np.all(np.isfinite(q)):
+        raise ValueError("raw held scene needs 13 finite measured joints")
+    if set(frames_bgr) != set(frame_timestamps_s) or not frames_bgr:
+        raise ValueError("raw held scene needs matching camera frames and times")
+    T_socket = validate_se3(T_robot_socket_frozen, name="frozen T_robot_socket")
+    T_key_hand = validate_se3(T_key_hand_hypothesis,
+                              name="hypothesized T_key_hand")
+    if robot_loader is None:
+        from yourdfpy import URDF
+        robot = URDF.load(str(AssetPaths(
+            Path(shared_root).expanduser().resolve(), mode).robot_urdf),
+            build_scene_graph=True, load_meshes=False)
+    else:
+        robot = robot_loader(AssetPaths(
+            Path(shared_root).expanduser().resolve(), mode).robot_urdf)
+    joints = [joint.name for joint in robot.actuated_joints]
+    if len(joints) != 13 or not all(name.startswith("fr3_") for name in joints[:7]):
+        raise ValueError("raw held scene needs the FR3/Inspire 13-joint model")
+    robot.update_cfg(dict(zip(joints, q)))
+    hand = validate_se3(robot.get_transform("base_link", robot.base_link),
+                        name="measured-joint URDF hand FK")
+    key = validate_se3(hand @ np.linalg.inv(T_key_hand),
+                       name="predicted held key pose")
+    timestamps = {}
+    digests = {}
+    for serial in sorted(frames_bgr):
+        frame = np.asarray(frames_bgr[serial])
+        stamp = float(frame_timestamps_s[serial])
+        if (frame.ndim != 3 or frame.shape[2] != 3 or
+                frame.dtype != np.uint8 or not math.isfinite(stamp) or
+                stamp <= 0):
+            raise ValueError("raw held scene needs timed uint8 BGR frames")
+        digests[serial] = image_sha256(frame)
+        timestamps[serial] = stamp
+    return HeldSceneRawComparison(timestamps, digests, hand, key, T_socket,
+                                  relation_source)
+
+
 def _finger_label(name: str) -> str | None:
     for prefix, label in (
         ("right_thumb_", "thumb"), ("right_index_", "index"),

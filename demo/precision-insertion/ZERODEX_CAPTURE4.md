@@ -44,6 +44,17 @@ imported into the live loop. Keep machine addresses and Python/asset locations
 in the profile, task choices in launch/runtime JSON or explicit environment
 options, and per-run evidence under `runs/`.
 
+The capture4 profile sets `PRECISION_PREINSERT_AUDIT_OVERLAY=0`. The
+after-lift/preinsert Qwen pair already uses raw camera pixels, so the live
+checkpoint now records measured hand FK, the nominal held-key transform, the
+frozen socket pose, and raw image hashes without loading visual meshes or
+rendering a separate four-view 3D diagnostic. This removes a GPU render from
+the local Qwen critical path; no VLM input, prompt, crop, or arrival label is
+changed. Set `PRECISION_PREINSERT_AUDIT_OVERLAY=1` when an overlay is needed
+for debugging. Existing reports with overlay PNGs remain verifiable. This
+change has been checked with saved 5 mm cylinder frames; live latency has not
+yet been measured after the change.
+
 If the corrected 20 mm endpoint cannot be planned while the key remains
 held, `corrected_hold_recovery.py` reads this attempt's executed XY, transfer
 and lift archives, checks their reversed route with the existing planner,

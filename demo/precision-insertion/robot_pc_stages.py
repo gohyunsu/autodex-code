@@ -210,6 +210,8 @@ def configure(core, live, options) -> dict:
                 "preinsert_parameters": {
                     "max_capture_skew_s": 10.,
                     "max_joint_frame_skew_s": 5.,
+                    "render_audit_overlay": os.environ.get(
+                        "PRECISION_PREINSERT_AUDIT_OVERLAY", "1") != "0",
                     **stationary,
                 },
                 "handoff_parameters": {},
