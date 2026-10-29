@@ -85,6 +85,17 @@ in `tip_tracking.py` is already available when two real tip observations are
 present; the third preferred camera helps reject mismatches rather than
 supplying a fundamental degree of freedom.
 
+Two shorter identity-focused Qwen box prompts were replayed on the same
+eight pre-insertion crops. Both still boxed the socket in views where the
+key was hidden. The more explicit key/socket prompt additionally returned
+`null` for the **visible key** in `26053248` of `5e08757b`; the stock prompt
+boxed it. Thus these prompt variants do not improve the archived success
+cases, and the stock runtime prompt remains in place. The exact text,
+per-view answers and replay script are mirrored at
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/qwen_key_identity_prompt_20261029/`
+with matching SHA256 for both files. Camera visibility and object identity
+need stronger evidence than a different wording of the same image question.
+
 ## Method supported by these episodes
 
 1. Measure the socket once per fixed-board session. Undistort each capture
