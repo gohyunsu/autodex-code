@@ -497,3 +497,31 @@ probe_final_gpu_batch_20261029.{py,json}` and
 `probe_production_final_batch_vs_serial_20261029.{py,json}`. Two full saved
 checkpoint replays, one inserted and one outside, also wrote and verified
 new v4 reports under `batched_final_checkpoint_20261029/`.
+
+### Hand-centered transfer prompt probe and measured latency boundary
+
+One further read-only probe used a 650 px crop around the measured finger
+region in **both** raw images, resized each to 640×640, and asked a short
+`HELD`/`EMPTY`/`UNCLEAR` question about the second image. It used two
+recorded preinsert pairs (`30e9cd0b`, `9542c1bd`) and two recorded empty-hand
+lift images duplicated as a negative control (`687a4a49`, `ecb0c571`), in
+two side cameras each. Qwen returned `UNCLEAR` for all eight requests. The
+script and full answers are in the development review folder
+`preinsert_vlm_crop_20261029/hand_pair_probe_640.{py,json}`; source image
+bytes and input crop pixels are SHA-256 bound in the result.
+The duplicated lift images are a synthetic transfer control, not a captured
+transfer failure. This probe supplies no evidence for replacing the current
+live transfer prompt or adding another stop condition. Actual dropped-key
+transfer images with independent labels are still needed.
+
+In the saved four-view same-trial run `20261028_233043_399147`, the four XY
+measurements took 2.69, 2.35, 2.36 and 2.44 s. Each used sequential Qwen
+key-box calls and SAM ROI calls in that historical run. The newer four-view
+Qwen box batching was checked separately on saved frames, but has not been
+timed in a new physical episode. The archived run also spent 7.45 s summed
+across 44 PNG encode/hash jobs, while their six parallel batch-write spans
+occupied 1.20 s wall time. Summing the child times as an extra 7.45 s of
+serial latency would be incorrect. Startup SAM3 and fixed-world cuRobo warmup
+were 23.71 and 20.36 s respectively in that run; these are session startup
+costs, not costs repeated at every XY correction. No runtime threshold or
+failure rule was changed based on this timing review.
