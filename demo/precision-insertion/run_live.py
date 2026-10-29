@@ -195,21 +195,26 @@ def main(argv: list[str] | None = None) -> int:
         key_already_placed=args.key_already_placed,
         initial_preferred_candidate=initial_candidate,
         excluded_candidates=tuple(excluded_candidates))
+    output = options.run_output_dir.expanduser().resolve()
+    report_path = output / "action_loop_result.json"
+
+    def save_action_result(result):
+        payload = result.to_record()
+        payload["exp_name"] = args.exp_name
+        payload["run_output_dir"] = str(output)
+        payload["timing_dir"] = str(timing_directory(output))
+        with report_path.open("x", encoding="utf-8") as stream:
+            json.dump(payload, stream, indent=2, sort_keys=True, allow_nan=False)
+            stream.write("\n")
+
     with profile_run(output_dir) as profile:
         with timed("live.session", phase="session"):
             result = run_integrated_live_session(
-                options, integration_spec=args.integration)
+                options, integration_spec=args.integration,
+                on_result=save_action_result)
         if result.status != "success":
             profile.outcome = result.status
-    payload = result.to_record()
-    output = options.run_output_dir.expanduser().resolve()
-    payload["exp_name"] = args.exp_name
-    payload["run_output_dir"] = str(output)
-    payload["timing_dir"] = str(timing_directory(output))
-    report_path = output / "action_loop_result.json"
-    with report_path.open("x", encoding="utf-8") as stream:
-        json.dump(payload, stream, indent=2, sort_keys=True, allow_nan=False)
-        stream.write("\n")
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
     print(json.dumps({"result": payload, "report_path": str(report_path)},
                      indent=2, sort_keys=True))
     return 0 if result.status in ("success", "planning_ready") else 2

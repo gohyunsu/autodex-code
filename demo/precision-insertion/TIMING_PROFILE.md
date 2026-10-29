@@ -92,6 +92,10 @@ These spans only observe shutdown and do not alter resource ownership or
 motion. The 55.55 s archived span was interrupted by the operator, so do not
 attribute it to normal cleanup. Compare their **inclusive** and **self** times
 in an uninterrupted fresh trace before changing shutdown behavior.
+The CLI now writes `action_loop_result.json` as soon as the completed action
+loop returns, before integration cleanup. An interrupted cleanup therefore
+cannot erase an already decided success or failure result; the interruption
+still propagates to the caller and remains visible in the timing trace.
 
 `run_robot_pc.sh --run` now runs only the Python pipeline. Start/check/stop
 long-lived services independently with `manage_robot_pc_services.sh`; its

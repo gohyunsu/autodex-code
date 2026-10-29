@@ -230,6 +230,7 @@ def load_runtime_integration(
 
 def run_integrated_live_session(
     options: RunLiveOptions, *, integration_spec: str,
+    on_result: Callable[[ActionLoopResult], None] | None = None,
 ) -> ActionLoopResult:
     """Start the one-session AutoDex v8 loop with complete demo handlers."""
     if not isinstance(options, RunLiveOptions):
@@ -298,7 +299,7 @@ def run_integrated_live_session(
             return joined
 
         with timed("live.orchestration", phase="session"):
-            return run_live_precision_session(
+            result = run_live_precision_session(
                 launch_config_path=options.launch_config_path,
                 endpoint_catalog_path=options.endpoint_catalog_path,
                 run_output_dir=options.run_output_dir,
@@ -315,6 +316,9 @@ def run_integrated_live_session(
                 begin_pre_socket_warmup=integration.begin_pre_socket_warmup,
                 initial_preferred_candidate=options.initial_preferred_candidate,
                 excluded_candidates=options.excluded_candidates)
+        if on_result is not None:
+            on_result(result)
+        return result
     finally:
         with timed("cleanup.integration_close", phase="cleanup", kind="io"):
             integration.close()

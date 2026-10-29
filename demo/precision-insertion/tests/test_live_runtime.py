@@ -197,6 +197,7 @@ def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path)
 
     monkeypatch.setattr(live_runtime, "ClearViewForPerception", ClearView)
     closed = []
+    order = []
     warmup_started = []
     early_warmup = []
     module = ModuleType("test_robot_integration")
@@ -217,7 +218,8 @@ def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path)
             return future
 
         return live_runtime.LiveRuntimeIntegration(
-            ClearView(), components, lambda: closed.append(True),
+            ClearView(), components,
+            lambda: (closed.append(True), order.append("close")),
             begin_warmup, begin_pre_socket_warmup=lambda:
             early_warmup.append(True))
 
@@ -242,8 +244,44 @@ def test_integration_is_complete_and_closed_after_session(monkeypatch, tmp_path)
         tmp_path / "run", enable_robot_motion=True,
         init_ports=(15006, 15007, 16893))
     assert live_runtime.run_integrated_live_session(
-        options, integration_spec="test_robot_integration:factory") is result
+        options, integration_spec="test_robot_integration:factory",
+        on_result=lambda saved: order.append(("result", saved))) is result
     assert closed == [True]
+    assert order == [("result", result), "close"]
+
+
+@pytest.mark.parametrize("interrupt_cleanup", [False, True])
+def test_cli_saves_completed_action_before_integration_cleanup(
+        monkeypatch, tmp_path, interrupt_cleanup):
+    output = tmp_path / "run"
+    monkeypatch.delenv("PRECISION_TIMING_LOCAL_ROOT", raising=False)
+
+    def interrupted(options, *, integration_spec, on_result):
+        assert integration_spec == "test:factory"
+        output.mkdir()
+        completed = SimpleNamespace(
+            status="success", to_record=lambda: {"status": "success"})
+        on_result(completed)
+        if interrupt_cleanup:
+            raise KeyboardInterrupt
+        return completed
+
+    monkeypatch.setattr(run_live, "run_integrated_live_session", interrupted)
+    arguments = [
+        "--launch-config", str(tmp_path / "launch.json"),
+        "--endpoint-catalog", str(tmp_path / "catalog.json"),
+        "--integration", "test:factory", "--enable-robot-motion",
+        "--init-port-mask", "15006", "--init-port-pose", "15007",
+        "--init-port-cmd", "16893", "--output-dir", str(output),
+    ]
+    if interrupt_cleanup:
+        with pytest.raises(KeyboardInterrupt):
+            run_live.main(arguments)
+    else:
+        assert run_live.main(arguments) == 0
+    saved = json.loads((output / "action_loop_result.json").read_text())
+    assert saved["status"] == "success"
+    assert saved["run_output_dir"] == str(output)
 
 
 def test_integration_refuses_motion_without_opt_in_or_missing_handlers(
