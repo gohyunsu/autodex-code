@@ -266,6 +266,23 @@ the recorded frozen world with default CUDA graphs, and the four yaw plans
 above passed with it. This is a launcher path choice inside the precision
 demo; neither vendored cuRobo tree was edited.
 
+For the same saved `20195` grasp, an offline command-correction screen kept
+the CAD key centered and shifted the modeled hand by eleven XY offsets:
+zero, ±5 and ±10 mm along each socket axis, plus two ±5 mm diagonals. Every
+aligned 20 mm endpoint passed the existing key/socket and whole Inspire
+hand/socket screens; the smallest reported hand clearance was 12.97 mm.
+**The same nominal-hypothesis control on the failed `20096` grasp also
+passed all eleven offsets**, though its smallest clearance was only
+2.45 mm. The recorded corrected-hold `20096` state was later rejected because
+its image-inferred held-key relation put the hand into the socket (reported
+minimum hand clearance 0, while the CAD key/socket fit itself was clear).
+Nominal endpoint screening therefore cannot evaluate the changed held-key relation
+after physical motion; the 20195 result is a planning margin, not evidence of a
+successful real correction. It also does not establish a clear intervening
+path or an accurately measured camera offset. The exact inputs and outputs
+are archived as `precision_{20195,20096}_xy_screen.{py,json}` beside the
+yaw-gauge probes.
+
 For the next data collection, record a human held/miss/slipped label **at the
 post-lift snapshot time**, and retain the later transfer result separately.
 Evaluate camera-wise and episode-wise confusion on those independent labels.
