@@ -27,13 +27,16 @@ joints. This removed a duplicate 0.02 rad arrival gate that stopped a held
 0.0336 rad). A grasp-success label still requires the later lift image.
 
 The latest source and saved-image audit is in
-[VLM_LABEL_REVIEW_20261029.md](VLM_LABEL_REVIEW_20261029.md). Local Qwen
-reproduced four reviewed released-key labels, but the after-lift/preinsert
-coarse class has no demonstrated ability to distinguish a real transfer
-slip. The previous corrected 5 mm stroke for grasp `table/0/20096` remains
-unavailable because the measured hand collides with the socket at waypoint
-9; the preferred `table/0/208` has passed saved-scene nominal planning and
-opening only. Neither result proves a new physical insertion.
+[VLM_LABEL_REVIEW_20261029.md](VLM_LABEL_REVIEW_20261029.md). The
+[episode consistency review](EPISODE_CONSISTENCY_20261029.md) compares six
+human-reviewed released-key trials and repeated XY feedback. Local Qwen
+reproduced all six final visual labels in saved-image replay, but the
+after-lift/preinsert coarse class has not demonstrated real transfer-slip
+discrimination. The corrected 5 mm stroke for `table/0/20096` remains
+unavailable because the measured hand intersects the socket at waypoint 9.
+The ZeroDex 5 mm launcher now prefers the twice-inserted `table/0/20195`
+and excludes `20096` by default. The former `208` preference has only
+saved-scene planning evidence.
 
 For the independent NAS project bundle and post-run recording upload, see
 [ZERODEX_NAS_PROJECT.md](ZERODEX_NAS_PROJECT.md).
@@ -333,7 +336,7 @@ start the adapter if another experiment owns the cameras.
   The runtime performs no extra full-file hash pass. The local copy avoids
   NAS reads at model startup; its actual effect on warm Qwen/SAM/cuRobo
   startup latency still needs a measured run.
-- For the 5 mm socket, the capture4 launcher now prefers `table/0/208` on
+- A prior 5 mm capture4 launcher preferred `table/0/208` on
   the first upright-key capture. In the saved `9542c1bd` scene this candidate
   passed the unchanged v8 pickup, held-path, socket-opening, and sampled
   20 mm insertion preflight. Its nominal hand/socket clearance is 20.9 mm,
@@ -348,8 +351,12 @@ start the adapter if another experiment owns the cameras.
   The matching `candidate_priority_review_20261029.json` lists the 108
   eligible upright candidates and distinguishes the 11 with archived
   post-squeeze fidelity measurements from those without one.
-  Set `PRECISION_INITIAL_CANDIDATE=table/0/20096` to reproduce the previous
-  priority or `PRECISION_INITIAL_CANDIDATE=` to use catalog order.
+  The current 5 mm launch preference is the later twice-inserted
+  `table/0/20195`; fresh-scene planning still tests it normally. Set
+  `PRECISION_INITIAL_CANDIDATE=table/0/208` to reproduce the older planned
+  priority, or `PRECISION_INITIAL_CANDIDATE=` to use catalog order.
+  `PRECISION_EXCLUDED_CANDIDATES=` explicitly clears the default exclusion
+  of `table/0/20096` for a controlled comparison.
 - The ZeroDex launcher sets `PRECISION_PREWARM_FIXED_WORLD=1` for both newly
   placed and already placed keys. After the initial clear-view motion, the
   planner initializes a **provisional** table/socket cuRobo world in a

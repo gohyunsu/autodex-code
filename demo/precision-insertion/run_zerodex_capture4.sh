@@ -27,9 +27,16 @@ export PRECISION_PREWARM_FIXED_WORLD=${PRECISION_PREWARM_FIXED_WORLD:-1}
 # An explicitly empty override disables the hint.
 if [[ -z ${PRECISION_INITIAL_CANDIDATE+x} ]]; then
   case $PRECISION_GAP_MM in
-    5) export PRECISION_INITIAL_CANDIDATE=table/0/208 ;;
+    # This grasp reached the released, human-confirmed inside-socket state in
+    # two recorded 5 mm episodes. The former hint 208 has only offline plans.
+    5) export PRECISION_INITIAL_CANDIDATE=table/0/20195 ;;
     10) export PRECISION_INITIAL_CANDIDATE=table/0/20267 ;;
   esac
+fi
+if [[ $PRECISION_GAP_MM == 5 && -z ${PRECISION_EXCLUDED_CANDIDATES+x} ]]; then
+  # In two corrected-hold replays 20096 intersected the socket at 20 mm;
+  # three released trials with this grasp left the key outside the socket.
+  export PRECISION_EXCLUDED_CANDIDATES=table/0/20096
 fi
 export PRECISION_ENDPOINT_CATALOG=${PRECISION_ENDPOINT_CATALOG:-$PRECISION_STAGE_ROOT/recipient_gap${PRECISION_GAP_MM}_endpoint_catalog_straight.json}
 
