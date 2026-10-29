@@ -18,7 +18,8 @@ from precision_insertion.guarded_axial_handoff import (  # noqa: E402
 )
 from precision_insertion.same_trial_xy import (  # noqa: E402
     CorrectedAxialPlanUnavailable, HeldXYPlanUnavailable,
-    _alignment_frame_inputs, _shifted_targets, choose_xy_move,
+    _alignment_frame_inputs, _held_wrist_goal, _shifted_targets,
+    choose_xy_move,
 )
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
@@ -110,6 +111,27 @@ def test_repeat_xy_vlm_roi_moves_with_completed_lateral_motion(tmp_path):
         nominal_key_xy_shift_socket_m=(.03, 0.))
     np.testing.assert_allclose(shifted_tip[:2] - original_tip[:2], [.03, 0.])
     assert shifted_rois["camera1"][0] > original_rois["camera1"][0]
+
+
+def test_observation_yaw_keeps_held_key_origin_on_target_axis():
+    socket = np.eye(4)
+    socket[:3, :3] = np.array([
+        [0., -1., 0.], [1., 0., 0.], [0., 0., 1.]])
+    pivot = np.array([.2, .3, .4])
+    wrist = np.eye(4)
+    wrist[:3, 3] = pivot + np.array([.05, -.02, .01])
+    key = np.eye(4)
+    key[:3, 3] = pivot
+    key_in_wrist = np.linalg.inv(wrist) @ key
+    goal = _held_wrist_goal(
+        wrist, pivot, socket, np.array([.003, -.004]), .04,
+        np.deg2rad(150.))
+    held_key_goal = goal @ key_in_wrist
+    np.testing.assert_allclose(
+        held_key_goal[:3, 3],
+        pivot + socket[:3, :2] @ np.array([.003, -.004]) +
+        socket[:3, 2] * .04, atol=1e-12)
+    np.testing.assert_allclose(held_key_goal[:3, 2], key[:3, 2], atol=1e-12)
 
 
 @pytest.mark.parametrize("collision", [False, True])
@@ -214,6 +236,42 @@ def test_observation_raise_moves_wrist_on_socket_axis_and_records_feedback(
     assert report["axis_increment_socket_m"] == .04
     assert report["measured_axis_increment_socket_m"] == .04
     np.testing.assert_allclose(report["measured_increment_socket_m"], [0., 0.])
+
+
+def test_failed_raise_and_yaw_at_same_observation_keep_separate_reports(
+        tmp_path, monkeypatch):
+    import precision_insertion.same_trial_xy as same_trial
+
+    pose = np.eye(4)
+    state = LiveRobotState(
+        np.zeros(13), np.zeros(7), 20., 20., 10., 20.,
+        np.zeros(6), np.zeros(6), 0., np.zeros(6))
+    runner = SimpleNamespace(
+        active_attempt=SimpleNamespace(attempt_id="a1", candidate_id="table/0/42"),
+        _attempt_dir=tmp_path, shared_root=tmp_path, mode=object(),
+        calibration=object(), _preflight=SimpleNamespace(trial_scene={}),
+        _postlift_preflight=SimpleNamespace(targets=SimpleNamespace(
+            T_robot_key_preinsert=pose)))
+    monkeypatch.setattr(same_trial, "validated_frozen_socket_pose",
+                        lambda **_kwargs: pose)
+    monkeypatch.setattr(same_trial, "build_held_scene_from_trial",
+                        lambda **_kwargs: {})
+    planner = SimpleNamespace(
+        fk_wrist=lambda _q: pose,
+        plan_cartesian_pose=lambda *_args, **_kwargs: SimpleNamespace(
+            success=False, trajectory=None))
+    paths = []
+    for movement in ({"axis_increment_socket_m": .04},
+                     {"yaw_increment_socket_rad": np.deg2rad(60.)}):
+        with pytest.raises(HeldXYPlanUnavailable) as stopped:
+            same_trial.plan_and_execute_shift(
+                runner=runner, planner=planner, adapter=object(),
+                read_state=lambda: state, motion_interlock=lambda: True,
+                limits=object(), path_limits=object(),
+                increment_socket_m=(0., 0.), residual_socket_m=(0., 0.),
+                residual_source="nominal_unobserved", index=0, **movement)
+        paths.append(stopped.value.report_path)
+    assert {path.name for path in paths} == {"000_axis.json", "000_yaw.json"}
 
 
 def test_corrected_axial_keeps_key_at_observed_residual_and_moves_wrist():

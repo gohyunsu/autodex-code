@@ -384,6 +384,59 @@ def test_unobserved_xy_can_raise_reobserve_and_return_before_axial(
     assert bound._same_trial_handoff == tmp_path / "raised_handoff.json"
 
 
+def test_unobserved_xy_can_rotate_once_after_raise_then_return(
+        tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    runner._attempt_dir = tmp_path / "attempts" / runner.active_attempt.attempt_id
+    bound._preinsert_bundle = tmp_path / "first_preinsert"
+    bound.planner = object()
+    bound.path_limits = object()
+    bound.alignment_limits = object()
+    bound.same_trial_tip_height_error_m = .01
+    bound.same_trial_xy_tolerance_m = .0025
+    bound.same_trial_observation_raise_m = .04
+    bound.same_trial_observation_yaw_rad = np.deg2rad(150.)
+    actions = []
+
+    def measure(**kwargs):
+        actions.append(("observe", kwargs["nominal_key_axis_raise_socket_m"]))
+        return {"alignment": {
+            "status": "abstain", "inlier_cameras": [],
+            "xy_correction_socket_m": None}}
+
+    def shift(**kwargs):
+        actions.append(("move", kwargs["axis_increment_socket_m"],
+                        kwargs.get("yaw_increment_socket_rad", 0.)))
+        path = runner._attempt_dir / "shifts" / f'{kwargs["index"]:03d}.json'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "measured_increment_socket_m": [0., 0.],
+            "measured_axis_increment_socket_m":
+                kwargs["axis_increment_socket_m"],
+        }), encoding="utf-8")
+        return path
+
+    def handoff(**kwargs):
+        actions.append(("handoff", kwargs))
+        return tmp_path / "yaw_handoff.json"
+
+    monkeypatch.setattr(live_task_handlers, "measure_preinsert_xy", measure)
+    monkeypatch.setattr(live_task_handlers, "plan_and_execute_shift", shift)
+    monkeypatch.setattr(live_task_handlers, "plan_corrected_axial_handoff",
+                        handoff)
+    monkeypatch.setattr(live_task_handlers, "write_raw_camera_capture",
+                        lambda *_args, **_kwargs: None)
+    bound._refine_current_hold(runner)
+    assert [row[0] for row in actions] == [
+        "observe", "move", "observe", "move", "observe", "move", "handoff"]
+    assert actions[1] == ("move", .04, 0.)
+    assert actions[3] == ("move", 0., np.deg2rad(150.))
+    assert actions[5] == ("move", -.04, 0.)
+    assert actions[-1][1]["residual_source"] == "nominal_unobserved"
+    assert len(actions[-1][1]["observations"]) == 3
+    assert len(actions[-1][1]["shifts"]) == 3
+
+
 def test_raised_xy_correction_reobserves_then_returns_for_axial(
         tmp_path, monkeypatch):
     bound, runner, *_ = _handler(tmp_path)

@@ -81,6 +81,7 @@ class LiveTaskHandlers:
     same_trial_xy_tolerance_m: float | None = None
     same_trial_max_shifts: int | None = None
     same_trial_observation_raise_m: float = 0.
+    same_trial_observation_yaw_rad: float = 0.
     after_lift_capture_provider: (
         Callable[[], tuple[str, RawCameraCapture] | None] | None) = None
     decision_time: Callable[[], float] = time.time
@@ -230,6 +231,7 @@ class LiveTaskHandlers:
         residual_source = None
         axis_raise = 0.
         observation_raise_attempted = False
+        observation_yaw_attempted = False
         xy_shift_count = 0
         for index in count():
             with timed("trial.same_trial_xy_measure", phase="trial",
@@ -302,6 +304,53 @@ class LiveTaskHandlers:
                     axis_raise = motion["measured_axis_increment_socket_m"]
                     total = [a + b for a, b in zip(
                         total, motion["measured_increment_socket_m"])]
+                    current = runner.current_decision()
+                    raw, capture = self._capture(
+                        runner=runner, decision=current,
+                        callback=self.capture_preinsert, phase="preinsert")
+                    self._preinsert_bundle = raw
+                    continue
+            if (choice["status"] == "not_metric_multiview" and
+                    self.same_trial_observation_yaw_rad != 0. and
+                    not observation_yaw_attempted):
+                observation_yaw_attempted = True
+                current_residual = (total if predicted_residual is None
+                                    else predicted_residual)
+                try:
+                    with timed("trial.same_trial_observation_yaw",
+                               phase="trial", kind="motion",
+                               attempt_id=attempt.attempt_id):
+                        turned = plan_and_execute_shift(
+                            runner=runner, planner=self.planner,
+                            adapter=self.transfer_adapter,
+                            read_state=self.read_state,
+                            motion_interlock=self.motion_interlock,
+                            limits=self.transfer_limits,
+                            path_limits=self.path_limits,
+                            increment_socket_m=(0., 0.),
+                            residual_socket_m=current_residual,
+                            residual_source=(
+                                "nominal_unobserved" if predicted_residual is None
+                                else "last_metric_plus_completed_held_motion"),
+                            axis_increment_socket_m=0.,
+                            current_axis_raise_socket_m=axis_raise,
+                            yaw_increment_socket_rad=(
+                                self.same_trial_observation_yaw_rad),
+                            index=index)
+                except HeldXYPlanUnavailable:
+                    # A different view was not planned; keep the original
+                    # insertion route available from the current hold.
+                    pass
+                else:
+                    shifts.append(turned)
+                    motion = json.loads(turned.read_text(encoding="utf-8"))
+                    total = [a + b for a, b in zip(
+                        total, motion["measured_increment_socket_m"])]
+                    if predicted_residual is not None:
+                        predicted_residual = [a + b for a, b in zip(
+                            predicted_residual,
+                            motion["measured_increment_socket_m"])]
+                    axis_raise += motion["measured_axis_increment_socket_m"]
                     current = runner.current_decision()
                     raw, capture = self._capture(
                         runner=runner, decision=current,

@@ -141,6 +141,11 @@ if [[ -n ${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM:-} &&
   EXTRA_ARGS+=(--same-trial-observation-raise-mm \
     "$PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM")
 fi
+if [[ -n ${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM:-} &&
+      -n ${PRECISION_SAME_TRIAL_OBSERVATION_YAW_DEG:-} ]]; then
+  EXTRA_ARGS+=(--same-trial-observation-yaw-deg \
+    "$PRECISION_SAME_TRIAL_OBSERVATION_YAW_DEG")
+fi
 if [[ "$LABEL_MODE" == manual ]]; then
   EXTRA_ARGS+=(--annotator "${PRECISION_ANNOTATOR:-Hyunsu Go}")
 fi

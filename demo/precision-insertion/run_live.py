@@ -12,6 +12,7 @@ import argparse
 from datetime import datetime
 import json
 import logging
+import math
 from pathlib import Path
 import re
 import sys
@@ -103,6 +104,11 @@ def main(argv: list[str] | None = None) -> int:
         help="if the first preinsert view has no metric XY point, temporarily "
              "raise the held key along the socket axis, recapture, then "
              "return to preinsert before the planned insertion (default: 0)")
+    parser.add_argument(
+        "--same-trial-observation-yaw-deg", type=float, default=0.,
+        help="if no metric key end is found after the initial/raised view, "
+             "rotate the held cylinder around its nominal axis and recapture; "
+             "0 disables this experimental observation action")
     parser.add_argument("--annotator", help="required with --label-mode manual")
     parser.add_argument("--enable-robot-motion", action="store_true",
                         help="required: initial clear-view and trial motions")
@@ -175,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
             args.same_trial_xy_tolerance_mm / 1000.),
         same_trial_observation_raise_m=(
             args.same_trial_observation_raise_mm / 1000.),
+        same_trial_observation_yaw_rad=math.radians(
+            args.same_trial_observation_yaw_deg),
         init_ports=init_ports, stop_after_planning=args.stop_after_planning,
         reuse_session_evidence_dir=args.reuse_session_evidence,
         key_already_placed=args.key_already_placed,

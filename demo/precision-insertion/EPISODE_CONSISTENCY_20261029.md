@@ -542,6 +542,47 @@ trajectory ends slightly higher or lower than commanded, the next image
 projection and return move use that measured height. This fixes a bookkeeping
 error without adding a new motion threshold or failure condition.
 
+### Optional observation yaw: compare actual held-state paths
+
+The initial yaw-gauge target probe replaced the pre-insertion target with a
+new wrist pose. A subsequent replay instead started at the **recorded held
+wrist joints**, rotated that wrist about the nominal held-key origin, and
+planned the complete sequence 40 mm raise → yaw → return to pre-insertion
+height → existing 20 mm socket-axis descent. Both human-confirmed 5 mm
+`table/0/20195` states passed at 60°, 90° and 150° (**6/6** combinations):
+cuRobo planned all three observation moves, the sampled held-key/whole-hand
+paths cleared the frozen world, the 20 mm endpoint passed, and the Jacobian
+descent passed its sampled audit. The archived 10 mm `table/0/20267` state
+also passed the whole sequence at 30°, 45°, 60° and 75° (**4/4**), while its
+90° and 150° raised turns did not plan. Thus 60° is a feasible candidate
+for all three saved held states, but no rotated photograph has tested whether
+it reveals the same key end in two cameras. A separate replay from the 10 mm
+original pre-insertion height found that direct -90°, -45°, +30°, +45°, +60° and
++75° turns cleared the sampled observation path and passed the 20 mm
+endpoint and descent; +90° and +150° had no endpoint IK. The -60° and -75°
+paths hit the socket in the held-key audit, and -30° reached a clear yaw
+endpoint but its axial continuation failed. This comparison shows why a
+replaced target pose is insufficient evidence for the motion of an already
+held object. The reachability of a yaw observation depends on the current
+grasp and wrist state; 60° is one candidate shared by these three records,
+not a proven universal observation policy.
+
+The runtime exposes one **disabled-by-default** observation-yaw option. It
+tries the configured turn only after the current pre-insertion photograph has
+no metric multiview point; the 40 mm raise remains an independently
+configurable first observation action. Its geometric pivot is the nominal
+held-key origin, so actual post-squeeze key-in-hand displacement is still
+unknown. The code records the commanded yaw, wrist-FK-inferred nominal
+key-origin XY/axis displacements, fresh photograph and subsequent axial
+plan; this is not a new observation of the key inside the hand. If the optional
+yaw cannot be planned, it retains the current held pose and continues through
+the existing return/insertion route. No rotated live image exists yet, so
+no tested angle is established as a visibility improvement or a physical
+closed-loop insertion. Read-only reproducer and exact JSON are under
+`~/precision_insertion_project/development/zerodex_capture4/reviews/` as
+`probe_raise_yaw_return_axial_20261029.*` and
+`probe_gap10_direct_yaw_20261029.*`.
+
 The earlier `9542c1bd` timing trace charged about 1.82-1.90 s of exact
 minimum-distance scanning to each held XY move. Its saved 67-sample first
 shift was replayed with the **current** collision-audit implementation. After

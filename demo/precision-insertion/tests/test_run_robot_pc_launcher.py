@@ -23,12 +23,15 @@ def test_run_launcher_forwards_xy_update_weight(tmp_path):
                PRECISION_STAGE_ROOT=str(stage),
                PRECISION_CHECK_PY=sys.executable,
                PRECISION_PLANNER_PY=str(fake_planner),
-               PRECISION_XY_UPDATE_WEIGHT="0.4")
+               PRECISION_XY_UPDATE_WEIGHT="0.4",
+               PRECISION_SAME_TRIAL_XY_TOLERANCE_MM="2.5",
+               PRECISION_SAME_TRIAL_OBSERVATION_YAW_DEG="60")
     completed = subprocess.run(
         ["bash", str(demo / "run_robot_pc.sh"), "--run"],
         env=env, capture_output=True, text=True, check=True)
     lines = completed.stdout.splitlines()
     assert lines[lines.index("--xy-update-weight") + 1] == "0.4"
+    assert lines[lines.index("--same-trial-observation-yaw-deg") + 1] == "60"
 
 
 def test_zerodex_launcher_provides_demo_collision_compat(tmp_path):

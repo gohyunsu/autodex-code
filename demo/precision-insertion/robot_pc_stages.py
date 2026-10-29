@@ -207,6 +207,8 @@ def configure(core, live, options) -> dict:
                     options, "same_trial_xy_tolerance_m", None),
                 "same_trial_observation_raise_m": getattr(
                     options, "same_trial_observation_raise_m", 0.),
+                "same_trial_observation_yaw_rad": getattr(
+                    options, "same_trial_observation_yaw_rad", 0.),
                 "transfer_commissioning_path": None,
                 "preinsert_parameters": {
                     "max_capture_skew_s": 10.,

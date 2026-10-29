@@ -195,6 +195,21 @@ reports record their nominal raised height. The four archived 5 mm attempts
 passed offline cuRobo rise-and-return planning and sampled held-key collision
 checks at both 20 and 40 mm; no raised live photograph or physical correction
 has yet validated improved key visibility.
+An optional cylinder observation rotation is available when the initial and
+raised captures both lack a multiview key-end point. Set
+`PRECISION_SAME_TRIAL_OBSERVATION_YAW_DEG=60` to try a 60° turn about the
+nominal held-key axis, recapture, and then return to the pre-insertion height.
+The default is `0` because no physical rotated-view image has yet shown that
+this improves the key-end estimate. The turn uses the measured wrist state and
+the current session socket axis; a planned trajectory is checked against the
+frozen world before execution. A missing turn plan leaves the ordinary
+pre-insertion route available. In two archived 5 mm `20195` states and one
+10 mm `20267` state, the full 40 mm raise → 60° turn → return → 20 mm
+descent planned and passed the sampled held-key/world check. The 10 mm
+state could not plan 90° or 150° turns after the raise. Camera visibility
+at 60° remains untested. These
+are read-only replays, not physical outcomes; choose the observation action
+from new image evidence instead of assuming one angle works for every grasp.
 Start with the socket alone on the board; the launcher prompts for key
 placement after socket measurement:
 

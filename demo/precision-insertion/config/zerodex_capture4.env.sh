@@ -18,6 +18,10 @@ export PRECISION_LABEL_MODE=${PRECISION_LABEL_MODE:-manual}
 # explicitly empty value disables this mode for a baseline run.
 export PRECISION_SAME_TRIAL_XY_TOLERANCE_MM=${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM-2.5}
 export PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM=${PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM-40}
+# An optional cylinder observation turn can be tried after no metric point is
+# found. Sixty degrees planned in saved 5 and 10 mm episodes; live visibility
+# is unknown, so keep it off until a photographed A/B comparison is intended.
+export PRECISION_SAME_TRIAL_OBSERVATION_YAW_DEG=${PRECISION_SAME_TRIAL_OBSERVATION_YAW_DEG-0}
 export PRECISION_EXTRA_PYTHONPATH=${PRECISION_EXTRA_PYTHONPATH:-$precision_profile_root/demo/precision-insertion/compat}
 export PRECISION_PLANNER_PY=${PRECISION_PLANNER_PY:-$HOME/.venvs/precision-vlm/bin/python}
 export PRECISION_CHECK_PY=${PRECISION_CHECK_PY:-$PRECISION_PLANNER_PY}

@@ -209,20 +209,37 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
     }
 
 
+def _held_wrist_goal(start_wrist: np.ndarray, key_origin_robot: np.ndarray,
+                     socket: np.ndarray, increment_socket_m: np.ndarray,
+                     axis_increment_socket_m: float,
+                     yaw_increment_socket_rad: float) -> np.ndarray:
+    """Rotate the held wrist about the nominal key origin, then translate it."""
+    turn, _ = cv2.Rodrigues(socket[:3, 2] * yaw_increment_socket_rad)
+    goal = start_wrist.copy()
+    goal[:3, :3] = turn @ start_wrist[:3, :3]
+    goal[:3, 3] = (
+        key_origin_robot + turn @ (start_wrist[:3, 3] - key_origin_robot) +
+        socket[:3, :2] @ increment_socket_m +
+        socket[:3, 2] * axis_increment_socket_m)
+    return goal
+
+
 def plan_and_execute_shift(*, runner, planner, adapter, read_state,
                            motion_interlock, limits, path_limits,
                            increment_socket_m, residual_socket_m,
                            residual_source: str,
                            index: int,
                            axis_increment_socket_m: float = 0.,
-                           current_axis_raise_socket_m: float = 0.) -> Path:
-    """Move the held wrist in socket XY/Z with the measured follower."""
+                           current_axis_raise_socket_m: float = 0.,
+                           yaw_increment_socket_rad: float = 0.) -> Path:
+    """Move the rigidly held key in socket XY/Z or yaw around its axis."""
     increment = np.asarray(increment_socket_m, dtype=float)
     if increment.shape != (2,) or not np.all(np.isfinite(increment)):
         raise ValueError("held XY increment must contain two finite metres")
     if not (math.isfinite(axis_increment_socket_m) and
-            math.isfinite(current_axis_raise_socket_m)):
-        raise ValueError("held axis translation must be finite")
+            math.isfinite(current_axis_raise_socket_m) and
+            math.isfinite(yaw_increment_socket_rad)):
+        raise ValueError("held axis translation and yaw must be finite")
     start = read_state()
     if not isinstance(start, LiveRobotState):
         raise TypeError("same-trial shift needs measured FR3/Inspire state")
@@ -237,11 +254,15 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
     key_at_hold = runner._postlift_preflight.targets.T_robot_key_preinsert.copy()
     key_at_hold[:3, 3] += (socket[:3, :2] @ residual +
                            socket[:3, 2] * current_axis_raise_socket_m)
+    held_relation = np.linalg.inv(key_at_hold) @ start_wrist
+    key_in_hand = np.linalg.inv(held_relation)
 
     def unavailable(status: str) -> None:
+        action = ("_yaw" if yaw_increment_socket_rad else
+                  "_axis" if axis_increment_socket_m else "")
         report = _write(
             Path(runner._attempt_dir) / "same_trial_xy" / "plan_failures" /
-            f"{index:03d}.json", {
+            f"{index:03d}{action}.json", {
                 "schema": "precision_insertion_same_trial_xy_plan_failure_v1",
                 "attempt_id": runner.active_attempt.attempt_id,
                 "candidate_id": runner.active_attempt.candidate_id,
@@ -250,6 +271,7 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
                 "targets": {"T_robot_key_preinsert": key_at_hold.tolist()},
                 "increment_socket_m": increment.tolist(),
                 "axis_increment_socket_m": axis_increment_socket_m,
+                "yaw_increment_socket_rad": yaw_increment_socket_rad,
                 "current_axis_raise_socket_m": current_axis_raise_socket_m,
                 "residual_socket_xy_m": residual.tolist(),
                 "residual_source": residual_source,
@@ -257,9 +279,10 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
             })
         raise HeldXYPlanUnavailable(report, status)
 
-    goal = start_wrist.copy()
-    goal[:3, 3] += (socket[:3, :2] @ increment +
-                    socket[:3, 2] * axis_increment_socket_m)
+    pivot = key_at_hold[:3, 3]
+    goal = _held_wrist_goal(
+        start_wrist, pivot, socket, increment,
+        axis_increment_socket_m, yaw_increment_socket_rad)
     scene = build_held_scene_from_trial(
         trial_scene=runner._preflight.trial_scene,
         calibration=runner.calibration)
@@ -271,8 +294,6 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
         unavailable("held_xy_pose_unreachable")
     trajectory = _path(query.trajectory, "same-trial held XY",
                        start.full_q, start.full_q[7:])
-    held_relation = np.linalg.inv(key_at_hold) @ validate_se3(
-        planner.fk_wrist(start.full_q), name="measured held wrist FK")
     wrist = {"lateral": [validate_se3(planner.fk_wrist(q),
                     name=f"lateral FK[{i}]") for i, q in enumerate(trajectory)]}
     geometry_failures, distances, _ = _audit_held_geometry_samples(
@@ -313,10 +334,9 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
         raise
     end_wrist = validate_se3(planner.fk_wrist(end.full_q),
                              name="measured lateral end FK")
-    measured_increment = (socket[:3, :2].T @
-                          (end_wrist[:3, 3] - start_wrist[:3, 3]))
-    measured_axis_increment = float(socket[:3, 2] @
-        (end_wrist[:3, 3] - start_wrist[:3, 3]))
+    measured_key_delta = (end_wrist @ key_in_hand)[:3, 3] - pivot
+    measured_increment = socket[:3, :2].T @ measured_key_delta
+    measured_axis_increment = float(socket[:3, 2] @ measured_key_delta)
     return _write(folder / "report.json", {
         "schema": "precision_insertion_same_trial_xy_shift_v2",
         "attempt_id": runner.active_attempt.attempt_id,
@@ -324,6 +344,7 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
         "increment_socket_m": increment.tolist(),
         "measured_increment_socket_m": measured_increment.tolist(),
         "axis_increment_socket_m": axis_increment_socket_m,
+        "yaw_increment_socket_rad": yaw_increment_socket_rad,
         "measured_axis_increment_socket_m": measured_axis_increment,
         "current_axis_raise_socket_m": current_axis_raise_socket_m,
         "key_xy_socket_m": residual.tolist(),
