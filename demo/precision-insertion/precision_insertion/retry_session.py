@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import math
+import os
 from pathlib import Path
 import threading
 from typing import Callable, Mapping, Sequence
@@ -1103,10 +1104,12 @@ def _compute_sam_half_ellipse_alignment(
     prefetched_boxes: dict[str, str] = {}
     batch_size = getattr(backend, "preferred_grounding_batch_size", 1)
     infer_many = getattr(backend, "infer_many", None)
-    if (type(batch_size) is int and batch_size > 1 and
-            callable(infer_many) and len(frames) > 1):
+    def prefetch_boxes(selected_frames: Sequence[LabeledFrame]) -> None:
+        if (type(batch_size) is not int or batch_size <= 1 or
+                not callable(infer_many) or len(selected_frames) <= 1):
+            return
         requests = []
-        for frame in frames:
+        for frame in selected_frames:
             camera = frame.camera_id
             K = np.asarray(intrinsics_full[camera]["K_undist"], dtype=float)
             E = np.asarray(extrinsics_full[camera], dtype=float)
@@ -1253,15 +1256,42 @@ def _compute_sam_half_ellipse_alignment(
         metric_quorum.set()
         return True
 
-    if (len(frames) > 3 and
-            getattr(backend, "independent_remote_inference", False) and
-            callable(getattr(backend, "register_view_pool", None))):
+    preferred = tuple(camera.strip() for camera in os.environ.get(
+        "PRECISION_XY_PREFERRED_CAMERA_IDS", "").split(",") if camera.strip())
+    if preferred:
+        if len(preferred) < 3 or len(set(preferred)) != len(preferred):
+            raise ValueError("preferred XY cameras need three distinct IDs")
+        by_camera = {frame.camera_id: frame for frame in frames}
+        ordered = ([by_camera[camera] for camera in preferred
+                    if camera in by_camera] +
+                   [frame for frame in frames
+                    if frame.camera_id not in preferred])
+        first, fallback = ordered[:3], ordered[3:]
+        prefetch_boxes(first)
+        measured = map_view_calls(backend, first, measure)
+        first_metric = sufficient({i: row for i, row in enumerate(measured)})
+        if not first_metric and fallback:
+            prefetch_boxes(fallback)
+            measured.extend(map_view_calls(backend, fallback, measure))
+        view_selection = {
+            "preferred_camera_ids": list(preferred),
+            "processed_camera_ids": [row[1]["camera_id"] for row in measured],
+            "fallback_camera_ids": [frame.camera_id for frame in fallback],
+            "fallback_used": not first_metric and bool(fallback),
+        }
+    elif (len(frames) > 3 and
+          getattr(backend, "independent_remote_inference", False) and
+          callable(getattr(backend, "register_view_pool", None))):
+        prefetch_boxes(frames)
         completed = map_view_calls_until(
             backend, tuple(range(len(frames))),
             lambda index: measure(frames[index]), sufficient)
         measured = [completed[index] for index in sorted(completed)]
+        view_selection = None
     else:
+        prefetch_boxes(frames)
         measured = map_view_calls(backend, frames, measure)
+        view_selection = None
     backend_failures = {
         record.get("reason") for _view, record, _mask in measured}
     if measured and all(reason in {
@@ -1290,6 +1320,8 @@ def _compute_sam_half_ellipse_alignment(
         socket_entry_plane_z_m=float(geometry["socket_entry_plane_z_m"]),
         verification_depth_m=mode.target_depth_m,
         key_object=mode.key_object, socket_object=mode.socket_object)
+    if view_selection is not None:
+        alignment["camera_selection"] = view_selection
     masks = {record["camera_id"]: mask for _view, record, mask in measured
              if mask is not None}
     return hashlib.sha256(geometry_bytes).hexdigest(), alignment, masks

@@ -1123,8 +1123,13 @@ probe, so its `pose_ok: false` fields do not evaluate FoundPose accuracy.
 
 ## 2026-10-28 four-view same-trial XY execution
 
-The ZeroDex launcher now defaults to all four capture4 cameras for visual
-assessment and to the Qwen-box + SAM3 half-ellipse key-face estimator for XY.
+The ZeroDex launcher captures all four capture4 cameras and defaults to the
+Qwen-box + SAM3 half-ellipse key-face estimator for XY. It now computes the
+tip from `25305462`, `25322639`, and `25322642` first. Only when those views
+do not yield a consistent three-view metric point does it run Qwen/SAM3 on
+`26053248`. `PRECISION_XY_PREFERRED_CAMERA_IDS` changes the priority order;
+an empty value restores the original all-view processing. Camera acquisition,
+raw evidence, and other VLM checkpoint selections remain four-view.
 The recorded 5 mm-gap attempt `attempt_9542c1bd6c174baa9cc8a7f5b3a03211`
 picked, lifted, transferred, and executed three held-key XY shifts. The four
 camera observations are under `same_trial_xy/observations/000.json` through
@@ -1135,6 +1140,11 @@ socket while the key moved and was excluded as a 123 px reprojection outlier.
 The other three views contributed to the 3D fit. All four images with the
 last detected point and nominal projection are in the development review at
 `~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/preinsert_after_three_shifts_four_view_grid.png`.
+Recomputing those four saved observations from the three inlier cameras
+yielded metric XY in all four; compared with the archived four-view robust
+fit, the XY coordinate difference was below 0.7 mm per axis. These four
+images are one held-grasp trajectory, so this supports the camera priority
+for the current fixture but does not establish general 3-view accuracy.
 
 No insertion command was sent. Offline replay from the saved final joint
 state and frozen collision world reproduced `axial_waypoint_unreachable`:

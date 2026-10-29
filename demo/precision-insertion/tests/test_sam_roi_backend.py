@@ -479,6 +479,92 @@ def test_remote_sam_tip_uses_first_metric_quorum_or_later_views(
     assert ("cam_d" in segmentor.calls or "cam_e" in segmentor.calls) is first_bad
 
 
+@pytest.mark.parametrize("one_bad", [False, True])
+def test_capture4_prefers_three_tip_views_and_only_uses_fourth_if_needed(
+    tmp_path, monkeypatch, one_bad,
+):
+    mode = select_mode("cylinder", 20)
+    geometry = tmp_path / "geometry.json"
+    geometry.write_text(json.dumps({
+        "key_frame": {"tip_z_m": .08},
+        "socket_entry_plane_z_m": 0.0,
+    }), encoding="utf-8")
+    monkeypatch.setattr(retry_session, "AssetPaths",
+                        lambda *_: SimpleNamespace(task_geometry=geometry))
+    monkeypatch.setattr(retry_session, "validated_frozen_socket_pose",
+                        lambda **_: np.eye(4))
+    monkeypatch.setenv("PRECISION_XY_PREFERRED_CAMERA_IDS",
+                       "cam_a,cam_b,cam_c")
+    key = np.eye(4)
+    key[:3, :3] = [[1., 0., 0.], [0., 0., 1.], [0., -1., 0.]]
+    key[2, 3] = 1.
+    postlift = tmp_path / "postlift.json"
+    postlift.write_text(json.dumps({
+        "targets": {"T_robot_key_preinsert": key.tolist()}}))
+    K = np.array([[1000., 0., 1024.], [0., 1000., 768.], [0., 0., 1.]])
+    frames, rows, intrinsics, extrinsics = [], {}, {}, {}
+    for index, camera in enumerate(("cam_a", "cam_b", "cam_c", "cam_d")):
+        E = np.eye(4)
+        E[0, 3] = (index-1) * .05
+        image = Image.new("RGB", (2048, 1536), "black")
+        frames.append(LabeledFrame(camera, "preinsert_hold", 100., image))
+        rows[camera] = {"frame_id": index, "timestamp_s": 100.,
+                        "image_sha256": image_sha256(np.asarray(image))}
+        intrinsics[camera] = {"K_undist": K.tolist()}
+        extrinsics[camera] = E.tolist()
+
+    class BoxBackend:
+        max_parallel_views = 1
+        preferred_grounding_batch_size = 4
+        model_id = "test-key-box"
+
+        def __init__(self):
+            self.batches = []
+            self.singles = []
+
+        def infer_many(self, requests):
+            self.batches.append([prompt.split()[1].rstrip(".")
+                                 for _images, prompt in requests])
+            return ['{"bbox":[400,350,600,600]}'] * len(requests)
+
+        def infer_for_camera(self, camera, _images, _prompt):
+            self.singles.append(camera)
+            return '{"bbox":[400,350,600,600]}'
+
+    class MaskBackend:
+        model = "test-mask"
+
+        def __init__(self):
+            self.calls = []
+
+        def segment(self, image, *, camera_id, prompt):
+            self.calls.append(camera_id)
+            if one_bad and camera_id == "cam_a":
+                return np.zeros((3, 4), np.uint8), {}
+            mask = np.zeros((image.height, image.width), np.uint8)
+            mask[62:145, 70:115] = 255
+            return mask, {"score": .9}
+
+    backend, segmentor = BoxBackend(), MaskBackend()
+    _hash, alignment, _masks = retry_session._compute_sam_half_ellipse_alignment(
+        mode=mode, root=tmp_path, calibration=SimpleNamespace(
+            record={"c2r": np.eye(4).tolist()}),
+        postlift_file=postlift, frames=frames, frame_rows=rows,
+        backend=backend, sam_segmentor=segmentor,
+        intrinsics_full=intrinsics, extrinsics_full=extrinsics,
+        alignment_limits=SimpleNamespace(
+            max_reprojection_px=5., min_parallax_deg=1.),
+        search_index=0, max_nominal_tip_height_error_m=.03)
+    assert alignment["status"] == "diagnostic_metric_xy_correction"
+    assert backend.batches == [["cam_a", "cam_b", "cam_c"]]
+    assert backend.singles == (["cam_d"] if one_bad else [])
+    assert segmentor.calls == (["cam_a", "cam_b", "cam_c", "cam_d"]
+                               if one_bad else ["cam_a", "cam_b", "cam_c"])
+    assert alignment["camera_selection"]["fallback_used"] is one_bad
+    assert len(alignment["camera_selection"]["processed_camera_ids"]) == (
+        4 if one_bad else 3)
+
+
 def test_sam_roi_mask_bytes_are_saved_with_the_xy_diagnostic(tmp_path):
     frames = []
     frame_binding = {}

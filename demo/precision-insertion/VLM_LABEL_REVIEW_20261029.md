@@ -23,6 +23,16 @@ that attempt's axial collision. The exact image hashes, old/new crop boxes,
 Qwen answers and prior SAM points are in the development review file
 `xy_shifted_roi_qwen_audit_20261029.json`.
 
+For the capture4 key-face estimator, the first pass now runs Qwen box and
+SAM3 ROI on cameras `25305462`, `25322639`, and `25322642`. They were the
+three triangulation inliers in all four archived same-trial captures. The
+fourth camera is queried only if the first pass lacks a consistent metric
+point; it is still captured with the other cameras and remains available.
+The alignment record lists processed and skipped cameras. This changes model
+work, not a robot threshold or the insertion success criterion. A synthetic
+four-camera test covers both early metric completion and fourth-view fallback;
+the saved four-capture 3-view recomputation remained metric in every capture.
+
 The local Qwen GPU replay of the current production final-socket prompt and
 crop again matched the four reviewed released-key outcomes: one
 `inside_socket`, three `outside_socket`, with no parse failures. This is a
