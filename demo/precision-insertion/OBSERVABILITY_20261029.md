@@ -39,6 +39,32 @@ and SAM3; it sent no robot command. Exact per-view prompts, boxes, exclusion
 fractions and reasons are in `replay_current_sam_xy_20195_20261029.{py,json,log}`
 under the development review directory.
 
+An additional depth render used the **saved measured FR3/Inspire joints** and
+nominal held-key transform from `5e08757b`, with the existing AutoDex visual
+meshes and calibrated capture4 cameras. This distinguishes a projected key
+from one hidden behind the robot; it does not measure the key after squeeze:
+
+| Camera | Predicted key pixels visible after robot occlusion | Current saved-image Qwen/SAM3 result |
+| --- | ---: | --- |
+| `25305462` | 1,389 / 44% of isolated key projection | Qwen box matched the socket |
+| `25322639` | 0 / 0% | No key mask |
+| `25322642` | 1,348 / 41% | Qwen box matched the socket |
+| `26053248` | 6,610 / 63% | Qwen box selected the key region; SAM3 returned no mask |
+
+On the same raw preinsert snapshot, 36 combinations of three ROIs and four
+short English SAM3 prompts produced seven masks. Their overlap with the
+nominal rendered *visible key* ranged from 0 to 9.4% of selected pixels;
+visual inspection showed the masks primarily on the socket or arm. Changing
+the prompt or ROI alone therefore did not recover two usable key-end views
+for this grasp. The render is a nominal CAD comparison, and its overlap is
+not segmentation ground truth. The local probe files are
+`probe_key_visibility_render_20261029.py`,
+`probe_key_visibility_5e08757b_20261029.json`, and
+`sam_prompt_roi_probe_20261029/results.json` under the development review
+directory. These measurements strengthen the distinction between geometric
+camera coverage and actual *identifiable* key-face observations; they add no
+grasp rejection rule or live inference step.
+
 ## Alternative observation action tested offline
 
 For each frozen session, the probe takes the 80 mm key CAD tip
