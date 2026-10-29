@@ -184,6 +184,33 @@ reprojection consistency, then compare the inferred correction with the
 released-key outcome. This will determine whether the extra motion earns
 its latency or whether a different camera/hold arrangement is needed.
 
+### Saved-view stopping and Qwen batch cost (2026-10-30)
+
+Six saved same-trial observations have the current adaptive 3+1 camera record:
+four successive snapshots from `0c787032` obtained metric XY from the first
+three preferred cameras and did not run the fourth SAM view; the two
+human-confirmed `20195` insertions, `5e08757b` and `4e26ec99`, did not obtain
+metric XY from those three and processed the fourth. These are six snapshots
+from three episodes, not six independent attempts. In this set, none had a
+valid two-camera metric fit in the preferred group that a two-view early stop
+would have saved. Counting two masks as a metric pair would have been wrong
+for `5e08757b`: its two admitted views were the nearly coincident
+`25305462`/`25322642` pair.
+
+On four warm repetitions of one archived four-view Qwen box request, the
+three-view GPU batch took a median 0.457 s and the four-view batch 0.530 s;
+the first three answers were identical. The extra fourth Qwen question costs
+about 0.073 s on this saved crop. The current one-batch four-view prefetch is
+reasonable while the fourth view remains a common SAM fallback. This is an
+isolated saved-image Qwen measurement, not end-to-end trial latency. Reproducer
+and raw durations are `probe_qwen_3v4_batch_20261030.{py,json}` in the local
+ZeroDex development review directory, with SHA256-matched copies under
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/qwen_batch_timing_20261030/`.
+No camera or robot command
+was issued. The ranking decision remains unchanged: retain all insertion-
+compatible grasps, then evaluate same-feature observability in the measured
+scene rather than adding a two-camera grasp rejection.
+
 ## Reusable observation geometry (2026-10-30)
 
 `precision_insertion/held_face_observation.py` now computes a nominal held
