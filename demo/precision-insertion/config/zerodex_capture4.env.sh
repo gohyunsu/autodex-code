@@ -11,6 +11,9 @@ export PRECISION_PARADEX_ROOT=${PRECISION_PARADEX_ROOT:-$HOME/precision_insertio
 export PRECISION_DEV_ROOT=${PRECISION_DEV_ROOT:-$HOME/precision_insertion_project/development/zerodex_capture4}
 export PRECISION_TIMING_LOCAL_ROOT=${PRECISION_TIMING_LOCAL_ROOT:-$PRECISION_DEV_ROOT/timing}
 export PRECISION_NAS_PROJECT_ROOT=${PRECISION_NAS_PROJECT_ROOT:-/mnt/paradex2/hyunsu/precision_insertion}
+# Continue the human-reviewed episode collection on this rig. VLM answers are
+# still stored beside manual labels; callers can explicitly choose vlm_only.
+export PRECISION_LABEL_MODE=${PRECISION_LABEL_MODE:-manual}
 # ZeroDex runs reobserve and correct XY at pre-insertion by default. An
 # explicitly empty value disables this mode for a baseline run.
 export PRECISION_SAME_TRIAL_XY_TOLERANCE_MM=${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM-2.5}

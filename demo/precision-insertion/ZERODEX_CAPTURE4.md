@@ -38,6 +38,13 @@ The ZeroDex 5 mm launcher now prefers the twice-inserted `table/0/20195`
 and excludes `20096` by default. The former `208` preference has only
 saved-scene planning evidence.
 
+The ZeroDex profile defaults to `PRECISION_LABEL_MODE=manual` for the ongoing
+human-reviewed episode collection. Every manual checkpoint also saves its
+independent Qwen answer. Set `PRECISION_LABEL_MODE=vlm_only` explicitly to
+test automatic labels; this changes the decision source, not image capture,
+prompts, crops, or the geometric XY computation. The stock AutoDex launcher
+retains its own default.
+
 For the independent NAS project bundle and post-run recording upload, see
 [ZERODEX_NAS_PROJECT.md](ZERODEX_NAS_PROJECT.md).
 
