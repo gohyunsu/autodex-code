@@ -421,6 +421,37 @@ configured tolerance must not be reported as physical insertion success.
 
 ## Next discriminating experiment
 
+The new read-only observation-pose replay checked a second way to obtain
+better photographs without committing to one key-end algorithm. Starting
+from the measured pre-insertion FR3/Inspire joints in the four archived
+episodes (`5e08757b`, `4e26ec99`, `0c787032`, `9542c1bd`), it planned
+20 and 40 mm upward translations along each episode's frozen socket axis.
+All **8/8** cuRobo arm plans succeeded (64–97 dense samples), and the
+existing sampled full-key/whole-hand versus frozen-world collision check
+reported no collisions at either height. With the measured camera
+calibration and nominal rigid key pose, the projected key-tip to socket-rim
+centre separation changes from about **27–47 px** at the current 30 mm
+pre-insertion clearance to **41–80 px** after a 20 mm raise and **59–114 px**
+after a 40 mm raise, depending on camera and the moved socket pose. This is
+projected separation, not measured key visibility: raising may remove socket
+mask confusion while the fingers could still hide the key. The audit also
+assumes the nominal key-in-hand transform; it does not establish the actual
+post-squeeze relation or a successful insertion from the raised pose. The
+reproducer and exact eight-row report are in
+`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_observation_raise_plan_20261029.{py,json}`.
+
+The method choice for the next live comparison is therefore empirical:
+photograph the same held `20195` grasp at its current pre-insertion pose,
+then at one collision-planned raised pose; try a separately planned cylinder
+yaw if raising still leaves fewer than two views with the *same visible key
+end*. Evaluate the Qwen/SAM tip fit and shaft-axis fit against manually
+marked key pixels on those actual new images, rather than ranking masks by
+appearance alone. Execute an XY correction only when two calibrated views
+support a corresponding point. If not, keep the already physically successful
+nominal insertion branch. This observation-pose experiment is **not yet a
+default runtime motion** because no raised/yawed live image exists and the
+robot is currently off.
+
 Keep `20195` and the current 5 mm socket. At the preinsert hold, collect raw
 four-view images while deliberately exposing the key end in **two calibrated
 oblique views** (camera angle or collision-checked axial yaw gauge). Compare
