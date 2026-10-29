@@ -542,6 +542,19 @@ trajectory ends slightly higher or lower than commanded, the next image
 projection and return move use that measured height. This fixes a bookkeeping
 error without adding a new motion threshold or failure condition.
 
+The earlier `9542c1bd` timing trace charged about 1.82-1.90 s of exact
+minimum-distance scanning to each held XY move. Its saved 67-sample first
+shift was replayed with the **current** collision-audit implementation. After
+the CAD/FK cache was warm, collision-only checking took 0.013 s, versus
+1.79 s for an exact 28-pair distance report; both returned zero collisions.
+The first collision-only call took 1.20 s while loading models, so 0.013 s
+is a warm-path measurement, not session startup time. This confirms that the
+existing collision-only path removes that repeated diagnostic scan from XY
+correction while retaining the collision decision. It does not justify
+removing exact distances from other preflights that use their margins. The
+read-only benchmark and its four timings are under
+`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_saved_xy_audit_cost_20261029.*`.
+
 ### 10 mm saved-image key-tip replay
 
 The actual four undistorted pre-insertion frames from `30e9cd0b` were also

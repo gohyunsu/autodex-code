@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run the separate ZeroDex capture4 profile with the existing cylinder pipeline.
-# Capture4 owns camera acquisition and SAM3/FoundPose; this PC owns Qwen/cuRobo.
+# Capture4 owns acquisition and object-perception SAM3/FoundPose. This PC owns
+# Qwen, the pre-insertion SAM3 ROI worker, and cuRobo.
 set -Eeuo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
