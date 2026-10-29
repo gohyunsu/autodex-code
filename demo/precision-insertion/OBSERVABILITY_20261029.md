@@ -86,9 +86,15 @@ visual-label result, not a measured insertion success rate.
 ## Pipeline decision
 
 Keep the current nominal pre-insertion capture and measured XY correction.
-Store a camera visibility score per candidate after socket calibration, but
-do not reject an insertion-compatible grasp solely because the vertical
-key face is hidden. When the normal observation has no metric end center,
+The grasp catalog and trial preflight currently do not reject candidates by
+camera visibility. A future candidate ranking could score visibility after
+socket calibration, but should not reject an insertion-compatible grasp
+solely because the vertical key face is hidden. This ranking is not yet
+implemented. The live XY controller accepts a metric correction with at least
+two inlier cameras; the SAM half-ellipse route uses three consistent views
+for its early completion and robust fit, then processes the fourth view when
+needed. Thus two cameras containing key pixels do not themselves authorize
+an XY move. When the normal observation has no metric end center,
 an additional **optional** camera-informed observation action is justified
 only after its real tilted images show that the same physical face is
 detectable in two separated views. The observation must then return to the
