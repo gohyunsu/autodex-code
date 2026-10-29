@@ -1,9 +1,10 @@
 # Saved ZeroDex episode vision review (2026-10-29)
 
 This review uses only archived capture4 images and the operator's final
-labels. The Franka and Inspire hand were off. The six released-key cases all
-use the 5 mm cylinder socket and the same four-camera rig; there are three
-`inside_socket` and three `outside_socket` labels. They are a replay set, not
+labels. The Franka and Inspire hand were off. Five released-key cases use the
+5 mm cylinder socket and one uses the 10 mm socket, all on the same
+four-camera rig; there are three `inside_socket` and three `outside_socket`
+labels. They are a replay set, not
 an estimate of performance after the socket, lighting, or camera layout moves.
 
 ## Final visual label

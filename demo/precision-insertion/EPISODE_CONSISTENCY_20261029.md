@@ -1,6 +1,6 @@
 # ZeroDex capture4 episode consistency review (2026-10-29)
 
-This review uses the locally archived 5 mm cylinder-socket trials. The
+This review uses the locally archived 5 and 10 mm cylinder-socket trials. The
 Franka and Inspire hand were off during the analysis. A `result.json` visual
 success flag is **not** an independent ground-truth annotation: four of the
 six released-key trials disagree with the later human review. The human
@@ -320,16 +320,15 @@ hand were off during this replay.
 **Implication for a consistent pipeline.** Keep the physically successful
 nominal `20195` branch for the current 5 mm standing-key task; lack of a
 metric visible end must not be silently converted into a large correction.
-For arbitrary grasps and placements, add an *observation action* before
-insertion: use the cylinder's axial-yaw equivalence to present the held end
-to a camera pair with useful parallax, capture again, and only then derive a
-metric correction. The saved 0/150/180-degree plans establish that such a
-change of held wrist yaw is kinematically possible for one recorded state,
-but they do not establish that the real end becomes visible. That requires
-new camera frames with the robot on. A narrow contrasting mark on the key
-shaft above the insertion region is another testable appearance aid if a
-different hold alone does not expose a common point; it is not part of the
-current white-key experiment.
+For arbitrary grasps and placements, an *observation action* before insertion
+may expose the held end to a camera pair with useful parallax. Axial yaw can
+change hand occlusion of the shaft, but **cannot** turn the downward-facing
+distal face toward these cameras. The read-only raised-and-tilted observation
+probe in `OBSERVABILITY_20261029.md` found complete planned return and axial
+paths for the three recorded 5/10 mm inserted states; real tilted images are
+still needed to establish that the face is detectable. A narrow contrasting
+mark on the key shaft above the insertion region is another testable
+appearance aid, but is not part of the current white-key experiment.
 
 ## Offline yaw-gauge experiment on the successful grasp
 
