@@ -52,6 +52,20 @@ images are in each attempt's `same_trial_xy/observations/000.json` and
 reliable multiview correction have not yet occurred in the same archived
 episode.
 
+A read-only local SAM3 experiment reused each archived Qwen box as a positive
+geometric prompt on all eight saved `20195` views. A box alone and a box plus
+the existing `white cylinder` text both recovered the **visible key** mask
+on `26053248` in both successful attempts, where text-only SAM3 had returned
+no mask. Neither prompt fixed the other views: it also segmented the socket
+rim on `25305462`/`25322642` and white robot components on `25322639`.
+All eight views produced a confident mask with a positive box, so SAM3's
+score alone cannot identify the correct object. The exact masks, overlays,
+per-view scores and reproducible script are under
+`~/precision_insertion_project/development/zerodex_capture4/reviews/sam_box_prompt_20261029/`
+and `probe_sam_box_prompt_20261029.py` beside that directory. The runtime
+segmentor was **not** switched to box prompting: the experiment proves a
+one-view segmentation improvement, not a reliable multiview 3D tip.
+
 ## Method supported by these episodes
 
 1. Measure the socket once per fixed-board session. Undistort each capture
