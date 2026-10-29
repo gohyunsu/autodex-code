@@ -201,7 +201,10 @@ final clear-view photographs show the key outside the socket in both trials,
 despite their `inside_socket` Qwen labels; treat those recorded labels as
 false positives when analyzing this data.
 
-The 2026-10-29 saved-frame review of all four released-key episodes, the
+The latest six-episode saved-frame result, including the v5 A/B final label
+and the pre-insertion socket-versus-key box audit, is in
+[SAVED_ZERODEX_VISION_REVIEW_20261029.md](SAVED_ZERODEX_VISION_REVIEW_20261029.md).
+The earlier 2026-10-29 saved-frame review of four released-key episodes, the
 session-dependent VLM crops, and the revised final-only socket classifier
 are documented in [VLM_LABEL_REVIEW_20261029.md](VLM_LABEL_REVIEW_20261029.md).
 The initial and final raw captures remain paired in the saved checkpoint;

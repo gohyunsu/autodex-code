@@ -43,7 +43,8 @@ from .grounding_crop import (
 from .held_relation import HeldRelation, resolve_postlift_held_relation
 from .held_key_tip import (
     KEY_BOX_PROMPT, KEY_MASK_PROMPT, distal_key_mask_half_ellipse,
-    padded_key_box_roi, parse_normalized_key_box, projected_key_axis_crop,
+    key_box_socket_bbox_overlap_fraction, padded_key_box_roi,
+    parse_normalized_key_box, projected_key_axis_crop,
 )
 from .key_perception import KeyPoseObservation, verify_key_capture_artifacts
 from .live_robot_state import LiveRobotState
@@ -58,6 +59,7 @@ from .retry_preflight import (
     write_xy_retry_preflight,
 )
 from .session_bootstrap import _safe_id
+from .socket_exclusion import project_frozen_socket_exclusion
 from .tip_tracking import (
     KeyAppearance, TipObservation, track_tip_frames,
     tracked_tip_xy_alignment, tracked_view, usable_tip_observation,
@@ -1094,6 +1096,17 @@ def _compute_sam_half_ellipse_alignment(
     nominal_tip = np.linalg.inv(socket) @ key @ np.array([0., 0., tip_z, 1.])
     if not callable(getattr(sam_segmentor, "segment", None)):
         raise TypeError("SAM half-ellipse needs a warmed ROI segmentor")
+    socket_bboxes = project_frozen_socket_exclusion(
+        mode=mode, shared_root=root, calibration=calibration,
+        images_bgr={},
+        image_shapes={frame.camera_id: (frame.image.height, frame.image.width)
+                      for frame in frames},
+        intrinsics_undist={
+            frame.camera_id: np.asarray(
+                intrinsics_full[frame.camera_id]["K_undist"], dtype=float)
+            for frame in frames},
+        extrinsics_full=extrinsics_full,
+        dilation_px=0).per_camera
     metric_quorum = threading.Event()
     sam_gate = threading.Lock()
 
@@ -1189,6 +1202,17 @@ def _compute_sam_half_ellipse_alignment(
         box = parse_normalized_key_box(answer, canvas_size_wh=image.size)
         if box is None:
             record.update(admitted=False, reason="key_box_unavailable")
+            return None, record, None
+        overlap = key_box_socket_bbox_overlap_fraction(
+            box, crop,
+            socket_bboxes[camera]["projected_hull_bbox_px"])
+        record["qwen_box_socket_bbox_overlap_fraction"] = overlap
+        # In 12 saved pre-insertion observations, boxes on the static socket
+        # occupied 95-100% of its projected box. Accepted held-key boxes
+        # occupied at most 59%. Do not spend SAM inference on the known socket.
+        if overlap >= .90:
+            record.update(qwen_box_crop_px=list(box), admitted=False,
+                          reason="key_box_matches_frozen_socket")
             return None, record, None
         roi = padded_key_box_roi(box, canvas_size_wh=image.size)
         rx0, ry0, rx1, ry1 = roi

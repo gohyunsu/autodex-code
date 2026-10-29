@@ -42,9 +42,8 @@ export PRECISION_VLM_CAMERA_IDS=${PRECISION_VLM_CAMERA_IDS:-26053248,25322639,25
 # The fourth view is processed only when the first three do not yield metric XY.
 export PRECISION_XY_PREFERRED_CAMERA_IDS=${PRECISION_XY_PREFERRED_CAMERA_IDS:-25305462,25322639,25322642}
 export PRECISION_PREINSERT_AUDIT_OVERLAY=${PRECISION_PREINSERT_AUDIT_OVERLAY:-0}
-# The saved released-key review found the first three views reached the
-# correct visual majority on all four reviewed episodes. The fourth view
-# disagreed on the observed inside case. XY grounding still uses all four.
+# Six human-labeled 5 mm socket episodes replayed correctly with a short A/B
+# question and these three views. XY grounding still has all four available.
 export PRECISION_FINAL_VLM_CAMERA_IDS=${PRECISION_FINAL_VLM_CAMERA_IDS:-26053248,25322639,25305462}
 export PRECISION_VISIBLE_GRIP_CAMERA_IDS=${PRECISION_VISIBLE_GRIP_CAMERA_IDS:-$PRECISION_VLM_CAMERA_IDS}
 

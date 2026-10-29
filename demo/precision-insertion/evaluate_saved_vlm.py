@@ -268,12 +268,14 @@ def main(argv: list[str] | None = None) -> int:
         with timed("replay.manifest_load", phase="replay", kind="io"):
             cases, manifest_sha = _load_cases(manifest_path)
         with timed("replay.model_load", phase="startup"):
+            released_only = all(
+                case["task"] == "released_insertion_visual" for case in cases)
             backend = load_vlm_backend(
                 mode=args.backend, model_id=args.model_id,
                 max_input_size=(args.max_input_width, args.max_input_height),
                 max_new_tokens=args.max_new_tokens,
                 require_cuda=not args.allow_cpu,
-                require_native_pixels=False,
+                require_native_pixels=released_only,
                 parallel_views=args.parallel_views)  # visual labels only
         rows = []
         for case in cases:
@@ -296,7 +298,8 @@ def main(argv: list[str] | None = None) -> int:
                                  if frame.phase == "initial_tabletop"]
                     observed = observe_released_insertion_visual(
                         backend, originals + focused,
-                        min_long_side_px=FINAL_MIN_LONG_SIDE_PX)
+                        min_long_side_px=FINAL_MIN_LONG_SIDE_PX,
+                        prompt_version="v3")
                 elif case["task"] == "lift":
                     observed = observe_lift(backend, frames)
                 else:
@@ -321,6 +324,8 @@ def main(argv: list[str] | None = None) -> int:
             "backend": args.backend,
             "model_id": (args.model_id if args.model_id is not None else
                          DEFAULT_LOCAL_VLM_MODEL_ID),
+            "released_input_policy": (
+                "final_socket_crop_token_v5" if released_only else None),
             "cases": rows, "summary": _summarize(rows),
             "scope": "visual_label_dataset_replay_not_physical_task_success",
             "robot_ready": False,

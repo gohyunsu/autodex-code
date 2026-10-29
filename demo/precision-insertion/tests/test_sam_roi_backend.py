@@ -22,6 +22,9 @@ from precision_insertion.next_trial_xy import (  # noqa: E402
 )
 from precision_insertion.observer import LabeledFrame  # noqa: E402
 from precision_insertion.frame_provenance import image_sha256  # noqa: E402
+from precision_insertion.held_key_tip import (  # noqa: E402
+    key_box_socket_bbox_overlap_fraction,
+)
 from precision_insertion.retry_session import (  # noqa: E402
     PreinsertXYDiagnostic, assess_saved_preinsert_xy_diagnostic,
     write_retry_session_artifacts,
@@ -29,6 +32,17 @@ from precision_insertion.retry_session import (  # noqa: E402
 )
 from precision_insertion.sam_roi_backend import SamRoiBackend  # noqa: E402
 from sam_roi_worker import _error_response  # noqa: E402
+
+
+def test_key_box_on_frozen_socket_is_distinguished_from_key_above_it():
+    crop = (900, 700, 1412, 1212)
+    socket = (1056, 808, 1184, 915)
+    wrong_socket_box = (208, 105, 266, 156)
+    visible_key_box = (0, 0, 70, 90)
+    assert key_box_socket_bbox_overlap_fraction(
+        wrong_socket_box, crop, socket) > .9
+    assert key_box_socket_bbox_overlap_fraction(
+        visible_key_box, crop, socket) == 0.
 
 
 def test_real_worker_keeps_model_prints_out_of_reply_pipe():
@@ -221,10 +235,18 @@ for line in sys.stdin:
 @pytest.mark.parametrize("failure", [
     None, "batch", "batch_failure", "one_qwen", "one_sam",
     "one_invalid_mask", "one_end_on",
-    "all_qwen", "all_sam", "mixed_all", "all_empty_mask"])
+    "all_qwen", "all_sam", "mixed_all", "all_empty_mask",
+    "socket_box"])
 def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
     tmp_path, monkeypatch, failure,
 ):
+    monkeypatch.setattr(
+        retry_session, "project_frozen_socket_exclusion",
+        lambda **kw: SimpleNamespace(per_camera={
+            camera: {"projected_hull_bbox_px": (
+                [0, 0, 2048, 1536] if failure == "socket_box" else
+                [0, 0, 10, 10])}
+            for camera in kw["image_shapes"]}))
     mode = select_mode("cylinder", 20.)
     geometry = AssetPaths(tmp_path, mode).task_geometry
     geometry.parent.mkdir(parents=True)
@@ -336,6 +358,12 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
     assert alignment["estimator"] == "sam3_half_ellipse_key_face_proxy"
     assert backend.batch_calls == (
         1 if failure in {"batch", "batch_failure"} else 0)
+    if failure == "socket_box":
+        assert alignment["status"] == "abstain"
+        assert not masks
+        assert all(row["reason"] == "key_box_matches_frozen_socket"
+                   for row in alignment["sam_half_ellipse_views"])
+        return
     if failure == "all_empty_mask":
         assert alignment["status"] == "abstain"
         assert alignment["inlier_cameras"] == []
@@ -388,6 +416,11 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
 def test_remote_sam_tip_uses_first_metric_quorum_or_later_views(
     tmp_path, monkeypatch, first_bad,
 ):
+    monkeypatch.setattr(
+        retry_session, "project_frozen_socket_exclusion",
+        lambda **kw: SimpleNamespace(per_camera={
+            camera: {"projected_hull_bbox_px": [0, 0, 10, 10]}
+            for camera in kw["image_shapes"]}))
     mode = select_mode("cylinder", 20)
     geometry = tmp_path / "geometry.json"
     geometry.write_text(json.dumps({
@@ -483,6 +516,11 @@ def test_remote_sam_tip_uses_first_metric_quorum_or_later_views(
 def test_capture4_prefers_three_tip_views_and_only_uses_fourth_if_needed(
     tmp_path, monkeypatch, one_bad,
 ):
+    monkeypatch.setattr(
+        retry_session, "project_frozen_socket_exclusion",
+        lambda **kw: SimpleNamespace(per_camera={
+            camera: {"projected_hull_bbox_px": [0, 0, 10, 10]}
+            for camera in kw["image_shapes"]}))
     mode = select_mode("cylinder", 20)
     geometry = tmp_path / "geometry.json"
     geometry.write_text(json.dumps({

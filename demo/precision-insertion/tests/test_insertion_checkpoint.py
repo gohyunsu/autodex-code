@@ -46,6 +46,9 @@ from precision_insertion.released_insertion_checkpoint import (  # noqa: E402
 from precision_insertion.perception_evidence import SocketViewLimits  # noqa: E402
 from precision_insertion.records import begin_attempt  # noqa: E402
 from precision_insertion import session_runner  # noqa: E402
+from precision_insertion.socket_temporal_change import (  # noqa: E402
+    socket_temporal_change,
+)
 from precision_insertion.trial_preflight import _canonical_sha256  # noqa: E402
 from test_key_perception import (  # noqa: E402
     CAMERAS, SelectorStub, _capture, _session,
@@ -62,6 +65,28 @@ class FakeBackend:
     def infer(self, images, prompt):
         self.calls.append((images, prompt))
         return self.answer if isinstance(self.answer, str) else json.dumps(self.answer)
+
+
+def test_socket_temporal_diagnostic_records_change_without_labeling_success():
+    from PIL import Image
+    from precision_insertion.observer import LabeledFrame
+
+    cameras = ("a", "b", "c")
+    before = [LabeledFrame(camera, "initial_tabletop", 1.,
+                           Image.new("RGB", (100, 100), (100, 100, 100)))
+              for camera in cameras]
+    after = [LabeledFrame(camera, "final_clear_view", 2.,
+                          Image.new("RGB", (100, 100),
+                                    (200, 200, 200) if camera != "c" else
+                                    (100, 100, 100)))
+             for camera in cameras]
+    projections = {camera: {"projected_hull_bbox_px": [30, 50, 70, 80]}
+                   for camera in cameras}
+    record = socket_temporal_change(before, after, projections)
+    assert [row["changed_fraction"] for row in record["per_view"]] == [
+        1., 1., 0.]
+    assert record["median_changed_fraction"] == 1.
+    assert "class" not in record
 
 
 def test_live_final_pixels_reuse_saved_capture_without_png_decode(
@@ -323,7 +348,7 @@ def test_released_label_pairs_initial_and_clear_view_raw_per_camera(
         "measurement": {"hand_open": True, "clear_view_reached": True},
     }), encoding="utf-8")
     backend = FakeBackend({})
-    answers = iter(("INSIDE", "INSIDE"))
+    answers = iter(("B", "B"))
     backend.infer = lambda images, prompt: (
         backend.calls.append((images, prompt)) or next(answers))
     report = assess_released_insertion_checkpoint(
@@ -338,7 +363,9 @@ def test_released_label_pairs_initial_and_clear_view_raw_per_camera(
     assert report["effective_vlm_class"] == "inside_socket"
     assert len(backend.calls) == 2
     assert all(len(images) == 1 for images, _prompt in backend.calls)
-    assert report["visual_input_policy"] == "final_socket_crop_token_v4"
+    assert report["visual_input_policy"] == "final_socket_crop_token_v5"
+    assert report["socket_temporal_change"]["schema"] == (
+        "precision_insertion_socket_temporal_change_v1")
     saved = write_released_insertion_checkpoint(
         report, tmp_path / "released_assessment")
     assert verify_released_insertion_checkpoint(saved)["outcome"][

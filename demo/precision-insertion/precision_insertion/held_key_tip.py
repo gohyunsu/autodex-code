@@ -27,6 +27,33 @@ KEY_BOX_PROMPT = (
 KEY_MASK_PROMPT = "white cylinder"
 
 
+def key_box_socket_bbox_overlap_fraction(
+    key_box_crop_px: Sequence[float], crop_xyxy_full_px: Sequence[int],
+    socket_bbox_full_px: Sequence[int],
+) -> float:
+    """Measure how much a proposed key box occupies the fixed socket image.
+
+    The socket projection is a broad bounding box, so this is an identity
+    check for a box almost entirely on the socket, not a collision test.
+    """
+    if (len(key_box_crop_px) != 4 or len(crop_xyxy_full_px) != 4 or
+            len(socket_bbox_full_px) != 4):
+        raise ValueError("key/socket overlap needs four coordinates per box")
+    x0, y0 = crop_xyxy_full_px[:2]
+    a = [float(key_box_crop_px[0]) + x0,
+         float(key_box_crop_px[1]) + y0,
+         float(key_box_crop_px[2]) + x0,
+         float(key_box_crop_px[3]) + y0]
+    b = [float(value) for value in socket_bbox_full_px]
+    if (not all(math.isfinite(value) for value in a + b) or
+            a[0] >= a[2] or a[1] >= a[3] or
+            b[0] >= b[2] or b[1] >= b[3]):
+        raise ValueError("key/socket boxes need finite positive area")
+    intersection = (max(0., min(a[2], b[2]) - max(a[0], b[0])) *
+                    max(0., min(a[3], b[3]) - max(a[1], b[1])))
+    return intersection / ((a[2] - a[0]) * (a[3] - a[1]))
+
+
 def projected_key_axis_crop(
     *, image_size_wh: tuple[int, int], intrinsics: np.ndarray,
     T_camera_robot: np.ndarray, T_robot_key: np.ndarray,

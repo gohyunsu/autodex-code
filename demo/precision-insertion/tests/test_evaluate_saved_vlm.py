@@ -214,7 +214,7 @@ def test_released_benchmark_reuses_production_socket_crop_and_vote(tmp_path,
 
         def infer(self, images, prompt):
             self.calls.append((images[0].size, prompt))
-            return "INSIDE" if len(self.calls) < 3 else "OUTSIDE"
+            return "B" if len(self.calls) < 3 else "A"
 
     backend = Backend()
     monkeypatch.setattr(evaluate_saved_vlm, "load_vlm_backend",
@@ -236,8 +236,9 @@ def test_released_benchmark_reuses_production_socket_crop_and_vote(tmp_path,
                 "inside_false_positives": 0, "inside_false_negatives": 1},
     }
     assert result["cases"][0]["prediction"] == "inside_socket"
+    assert result["released_input_policy"] == "final_socket_crop_token_v5"
     assert len(backend.calls) == 3
-    assert all(size[0] >= 384 or size[1] >= 384 for size, _ in backend.calls)
-    assert all("final image only" in prompt for _, prompt in backend.calls)
+    assert all(size[0] >= 512 or size[1] >= 512 for size, _ in backend.calls)
+    assert all("Reply A or B" in prompt for _, prompt in backend.calls)
     assert set(result["cases"][0]["final_visual_crops"]) == {
         "front", "side", "top"}

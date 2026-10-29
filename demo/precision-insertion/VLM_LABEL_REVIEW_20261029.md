@@ -1,5 +1,9 @@
 # Released-key VLM review (2026-10-29)
 
+The four-case sections below document the earlier v4 final prompt and 384 px
+crop. The current v5 method and six human-labeled ZeroDex episodes are in
+[SAVED_ZERODEX_VISION_REVIEW_20261029.md](SAVED_ZERODEX_VISION_REVIEW_20261029.md).
+
 ## Current source and saved-data check
 
 The capture4 four-view same-trial estimator now shifts its projected key ROI

@@ -513,6 +513,26 @@ def test_released_insertion_batches_local_camera_questions_without_mixing_votes(
     verify_released_socket_token_consensus(result.to_record(), set(cameras))
 
 
+def test_released_socket_ab_prompt_uses_three_view_majority_and_replays_tokens():
+    cameras = ("front", "side", "wide")
+    frames = [
+        LabeledFrame(camera, phase, timestamp, _image())
+        for camera in cameras
+        for phase, timestamp in (("initial_tabletop", 1.0),
+                                 ("final_clear_view", 2.0))
+    ]
+    result = observe_released_insertion_visual(
+        FakeBackend("A", "B", "B"), frames,
+        prompt_version="v3")
+    assert result.parsed["visual_class"] == "inside_socket"
+    assert result.parsed["evidence_views"] == ["side", "wide"]
+    assert result.aggregation["vote_rule"] == "configured_camera_majority"
+    assert all("Reply A or B" in row["prompt"]
+               for row in result.aggregation["per_view"])
+    verify_released_socket_token_consensus(
+        result.to_record(), set(cameras), prompt_version="v3")
+
+
 def test_small_final_socket_crop_is_enlarged_without_changing_source_pixels():
     from precision_insertion.observer import resize_classification_images
 

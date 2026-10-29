@@ -834,14 +834,14 @@ def observe_insertion_visual(
 def observe_released_insertion_visual(
     backend: ImageVLM, frames: Sequence[LabeledFrame], *,
     min_long_side_px: int | None = None,
+    prompt_version: str = "v2",
 ) -> VLMObservation:
     """Judge the final socket crop; retain the initial image as trial evidence.
 
-    Paired source captures still bind identity and chronology. On the saved
-    cylinder trials, Qwen3-VL-2B confused the two-image temporal question in
-    both directions. A short, final-image-only answer distinguished the four
-    visually reviewed outcomes. Each camera is asked independently and the
-    original model token is saved without inventing a visual explanation.
+    Paired source captures still bind identity and chronology. On six saved
+    capture4 trials, a short A/B question over the final socket crop gave a
+    correct three-view majority in offline replay. Each camera is asked
+    independently and its original token is retained for review.
     """
     phases = {frame.phase for frame in frames}
     if not {"initial_tabletop", "final_clear_view"} <= phases:
@@ -864,17 +864,18 @@ def observe_released_insertion_visual(
     def observation_from_answer(camera: str, final: LabeledFrame,
                                 transform: dict, answer: str,
                                 latency_s: float) -> VLMObservation:
-        parsed, error = _released_socket_token_result(answer, camera)
+        parsed, error = _released_socket_token_result(
+            answer, camera, version=prompt_version)
         return VLMObservation(
             "released_insertion_visual", parsed, answer,
-            _released_socket_token_prompt(),
+            _released_socket_token_prompt(prompt_version),
             (f"final_clear_view/{camera}@{final.timestamp_s:.6f}",),
             error, _backend_model(backend), latency_s,
             input_transform=transform)
 
     def observe_camera(camera: str) -> VLMObservation:
         final, images, transform = request_for_camera(camera)
-        prompt = _released_socket_token_prompt()
+        prompt = _released_socket_token_prompt(prompt_version)
         started = time.perf_counter()
         with timed("vlm.infer", phase="vlm", kind="inference",
                    stage="released_insertion_visual", camera_id=camera,
@@ -893,7 +894,7 @@ def observe_released_insertion_visual(
     infer_many = getattr(backend, "infer_many", None)
     if callable(infer_many):
         prepared = [request_for_camera(camera) for camera in cameras]
-        prompt = _released_socket_token_prompt()
+        prompt = _released_socket_token_prompt(prompt_version)
         started = time.perf_counter()
         with timed("vlm.view_batch", phase="vlm", kind="inference",
                    view_count=len(cameras), parallel_workers=1,
@@ -915,9 +916,10 @@ def observe_released_insertion_visual(
     else:
         observations = map_view_calls(backend, cameras, observe_camera)
         total_latency_s = sum(row.latency_s for row in observations)
+    per_view = [row.to_record() for row in observations]
     parsed = _consensus_parsed(
-        [row.to_record() for row in observations], field="visual_class",
-        fallback="unobservable", cameras=cameras, majority=True,
+        per_view, field="visual_class", fallback="unobservable",
+        cameras=cameras, majority=True,
         minimum_support=len(cameras) // 2 + 1)
     return VLMObservation(
         "released_insertion_visual", parsed,
@@ -927,13 +929,17 @@ def observe_released_insertion_visual(
         order, None, _backend_model(backend),
         total_latency_s, aggregation={
             "schema": "precision_insertion_released_socket_token_consensus_v1",
-            "per_view": [row.to_record() for row in observations],
+            "per_view": per_view,
             "completed_camera_ids": cameras,
             "vote_rule": "configured_camera_majority",
         })
 
 
 def _released_socket_token_prompt(version: str = "v2") -> str:
+    if version == "v3":
+        return (
+            "Classify the large white socket: B = narrow solid peg inserted "
+            "in its opening; A = empty hollow opening. Reply A or B.")
     if version not in {"v1", "v2"}:
         raise ValueError("unknown released socket prompt version")
     empty = ("If the rim opening is empty and the key is elsewhere, answer "
@@ -951,12 +957,16 @@ def _released_socket_token_prompt(version: str = "v2") -> str:
     )
 
 
-def _released_socket_token_result(answer: str, camera: str) -> tuple[dict, str | None]:
+def _released_socket_token_result(
+    answer: str, camera: str, *, version: str = "v2",
+) -> tuple[dict, str | None]:
     if not isinstance(answer, str):
         raise TypeError("released socket VLM answer must be text")
     token = answer.strip().rstrip(".").upper()
-    classes = {"INSIDE": "inside_socket", "OUTSIDE": "outside_socket",
-               "UNCLEAR": "unobservable"}
+    classes = ({"B": "inside_socket", "A": "outside_socket"}
+               if version == "v3" else
+               {"INSIDE": "inside_socket", "OUTSIDE": "outside_socket",
+                "UNCLEAR": "unobservable"})
     visual_class = classes.get(token, "unobservable")
     error = None if token in classes else "released socket VLM did not answer one class token"
     return ({"visual_class": visual_class,
@@ -982,7 +992,8 @@ def verify_released_socket_token_consensus(
     for camera, row in zip(ordered, rows):
         expected_order = next((label for label in visual["image_order"]
                                if label.startswith(f"final_clear_view/{camera}@")), None)
-        parsed, error = _released_socket_token_result(row.get("raw_answer"), camera)
+        parsed, error = _released_socket_token_result(
+            row.get("raw_answer"), camera, version=prompt_version)
         if (expected_order is None or row.get("stage") !=
                 "released_insertion_visual" or
                 row.get("image_order") != [expected_order] or
