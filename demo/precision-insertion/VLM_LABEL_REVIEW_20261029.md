@@ -560,6 +560,34 @@ failure rule was changed based on this timing review.
 The archived production inputs for eight lift, six pre-insertion, and four
 released-key checkpoints are collected under
 `~/precision_insertion_project/development/zerodex_capture4/reviews/vlm_presence_crop_20261029/`.
+
+The six archived pre-insertion transfers were also replayed through the
+**current** measured-hand plus session-socket crop policy, rather than the
+historical full-frame input. `replay_current_preinsert_crop.py` writes one
+`current_crop_<attempt>.jpg` sheet per attempt and
+`current_crop_replay_results.json` with the exact per-camera ROI and Qwen
+answer. The local Qwen backend used the live profile's native-pixel mode,
+128-token limit, three or four available camera pairs, and the production
+`observe_preinsert_temporal_views` prompt. All 6/6 transfers returned
+`coarse_match` at both the configured 384×288 classifier fit and an offline
+640×480 fit; all 19 per-camera answers matched at both sizes. Median warm
+inference was 0.71 s versus 0.88 s per multiview checkpoint respectively.
+The larger input did not improve these saved positive labels and costs more
+inference time, so the runtime size remains 384×288. The replay does not
+contain a genuine empty-hand pre-insertion frame: it verifies positive-case
+reproduction and crop placement, not failure detection or future accuracy.
+No runtime prompt or failure threshold was changed from this result.
+
+All saved crop rectangles were 650–776 px squares inside the original
+2048×1536 images; none fell back to the full frame. The after-lift ROI tracks
+the measured hand, and the pre-insertion ROI encloses both that hand and the
+socket projected from the session's frozen measured pose. The replay sheets
+show why evidence differs by camera: in some views the hand hides much of the
+key. These coordinates are recomputed per camera and per session, not fixed
+pixel coordinates. The exact live crop procedure and its round-trip pixel
+hash test are in `preinsert_checkpoint.py` and
+`tests/test_preinsert_checkpoint.py`.
+
 `export_saved_vlm_inputs.py` now reconstructs the older two-image released-key
 reports as well as the current final-only policy, verifying each resized input
 against its saved RGB hash. The old reports remain historical answers; the
