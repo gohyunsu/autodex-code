@@ -401,6 +401,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 raise ValueError("visible-grip cameras differ from the active rig")
             backend.visible_grip_camera_ids = selected
             backend.supports_visible_grip_lift = True
+            backend.supports_finger_focus_retry = True
         shared.update(planner=core.planner, read_state=core.read_state)
         if core.sampler is not None:
             shared.update(

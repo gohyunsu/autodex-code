@@ -288,6 +288,23 @@ saved-frame negative diagnostic found that Qwen's coarse-pair prompt can
 answer `coarse_match` even for an empty hand; use the stage as a coarse
 observation and inspect per-camera responses when collecting transfer losses.
 
+The local capture4 lift classifier keeps its 650-pixel measured-hand crop as
+the first pass. Only when **all** selected cameras answer `NO` does it make
+one more Qwen batch with 320-pixel crops around the measured Inspire
+thumb/index/middle fingertips. Two `YES` replies in that retry promote the
+visual result to `held`; one `YES` does not change the original result. The
+retry never overrides an existing positive first pass and adds no new grasp
+rejection. Both sets of raw replies, exact crop coordinates, and batch timing
+are saved in the lift record. On four archived capture4 after-lift bundles,
+the production replay changed the human-confirmed `0c787032` false negative
+from `NO` in all four views to `held` after two fingertip `YES` replies.
+Three old `vlm_only` negative outcomes stayed negative, but they have no
+independent human ground truth. This was an image-only replay with the local
+Qwen3-VL-2B; it did not send camera or robot commands. The reproducible
+script and per-view results are in
+`~/precision_insertion_project/development/zerodex_capture4/reviews/`
+as `replay_lift_finger_retry_20261030.{py,json}`.
+
 System-specific runtime defaults are in the ZeroDex machine profile and can be
 overridden without editing the shared AutoDex executor:
 `PRECISION_STAGE_ROOT`, `PRECISION_PLANNER_PY`, `PRECISION_SAM_PYTHON`,

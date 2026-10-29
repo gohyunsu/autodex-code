@@ -164,3 +164,58 @@ def test_capture4_straight_mount_batches_three_hand_crops(tmp_path):
     assert visual.parsed["class"] == "held"
     verify_visible_grip(visual.to_record(), set(selected), tmp_path,
                         calibration=calibration, joint_q=joints)
+
+
+@pytest.mark.parametrize("retry_answers,expected", [
+    (["YES", "YES", "NO"], "held"),
+    (["YES", "NO", "NO"], "miss"),
+])
+def test_capture4_all_no_retries_measured_fingertips(
+        tmp_path, retry_answers, expected):
+    selected = ("26053248", "25322639", "25305462")
+    calibration, joints, _ = _geometry()
+    for camera in selected:
+        calibration["camera_calibration"]["intrinsics_full"][camera] = (
+            calibration["camera_calibration"]["intrinsics_full"][CAMERAS[0]])
+        calibration["camera_calibration"]["extrinsics_full"][camera] = (
+            calibration["camera_calibration"]["extrinsics_full"][CAMERAS[0]])
+    straight_urdf = (Path(__file__).resolve().parents[3] / "autodex" /
+                     "planner/src/curobo/content/assets/robot/" /
+                     "fr3_inspire_description/fr3_inspire.urdf")
+
+    class BatchedAnswers:
+        visible_grip_camera_ids = selected
+        supports_finger_focus_retry = True
+
+        def __init__(self):
+            self.calls = []
+
+        def infer_many(self, requests):
+            self.calls.append(requests)
+            return (["NO"] * len(selected) if len(self.calls) == 1
+                    else retry_answers)
+
+    frames = [LabeledFrame(camera, phase, float(stamp),
+                           Image.new("RGB", (800, 800), "white"))
+              for camera in selected
+              for phase, stamp in (("before_grasp", 1), ("after_lift", 2))]
+    backend = BatchedAnswers()
+    visual = observe_visible_grip(
+        backend, frames, tmp_path, calibration=calibration,
+        joint_q=joints, robot_urdf=straight_urdf)
+    assert len(backend.calls) == 2
+    assert visual.parsed["class"] == expected
+    assert (len(visual.parsed["confirming_views"]) == 2) == (expected == "held")
+    retry = visual.aggregation["finger_focus_retry"]
+    assert retry["crop_side_px"] == 320
+    assert all(row["crop"]["source_roi_xyxy"][2] -
+               row["crop"]["source_roi_xyxy"][0] == 320
+               for row in retry["per_view"])
+    record = visual.to_record()
+    verify_visible_grip(record, set(selected), tmp_path,
+                        calibration=calibration, joint_q=joints)
+    record["aggregation"]["finger_focus_retry"]["per_view"][0][
+        "crop"]["source_roi_xyxy"][0] += 1
+    with pytest.raises(ValueError, match="fingertip crop changed"):
+        verify_visible_grip(record, set(selected), tmp_path,
+                            calibration=calibration, joint_q=joints)

@@ -37,6 +37,7 @@ HAND_PROMPT = (
     "black fingers in this image? The robot also has white finger shells. "
     "Reply only YES or NO.")
 HAND_CROP_SIDE = 650
+FINGER_CROP_SIDE = 320
 HAND_IMAGE_SIZE = 640
 HAND_FOCUS = np.array([0., .07, -.08, 1.])
 
@@ -137,6 +138,7 @@ def _hand_foci_for_pair(after_lift_q, preinsert_q, robot_urdf: Path):
 def _hand_roi(*, image_size: tuple[int, int], camera: str,
               calibration: Mapping, T_robot_hand: np.ndarray,
               focus_local: np.ndarray = HAND_FOCUS,
+              side_px: int = HAND_CROP_SIDE,
               ) -> tuple[tuple[int, int, int, int], list[float]]:
     camera_cal = calibration["camera_calibration"]
     K = np.asarray(camera_cal["intrinsics_full"][camera]["K_undist"],
@@ -157,34 +159,44 @@ def _hand_roi(*, image_size: tuple[int, int], camera: str,
     if not np.all(np.isfinite(xy)):
         raise ValueError("measured hand projection is not finite")
     width, height = image_size
-    side = min(HAND_CROP_SIDE, width, height)
+    side = min(side_px, width, height)
     left = max(0, min(width - side, int(round(xy[0] - side / 2))))
     top = max(0, min(height - side, int(round(xy[1] - side / 2))))
     return (left, top, left + side, top + side), xy.tolist()
 
 
 def _hand_answer(backend: ImageVLM, camera: str, frame: LabeledFrame,
-                 calibration: Mapping, hand_transform: np.ndarray) -> dict:
+                 calibration: Mapping, hand_transform: np.ndarray,
+                 *, focus_local: np.ndarray = HAND_FOCUS,
+                 side_px: int = HAND_CROP_SIDE,
+                 stage: str = "post_lift") -> dict:
     prepared, transform, roi, pixel = _hand_input(
-        camera, frame, calibration, hand_transform)
+        camera, frame, calibration, hand_transform,
+        focus_local=focus_local, side_px=side_px)
     infer_for_camera = getattr(backend, "infer_for_camera", None)
     start = time.perf_counter()
     with timed("vlm.infer", phase="vlm", kind="inference",
-               stage="post_lift", camera_id=camera, image_count=1,
+               stage=stage, camera_id=camera, image_count=1,
                image_sizes=[list(prepared[0].size)],
                model=getattr(backend, "model", None)):
         raw = (infer_for_camera(camera, prepared, HAND_PROMPT)
                if callable(infer_for_camera) else backend.infer(
                    prepared, HAND_PROMPT))
     return _hand_row(camera, frame, raw, transform, roi, pixel,
-                     time.perf_counter() - start)
+                     time.perf_counter() - start,
+                     method=("measured_fr3_inspire_fingertip_fk_and_undistorted_camera"
+                             if side_px == FINGER_CROP_SIDE else
+                             "measured_fr3_inspire_fk_and_undistorted_camera"))
 
 
 def _hand_input(camera: str, frame: LabeledFrame, calibration: Mapping,
-                hand_transform: np.ndarray):
+                hand_transform: np.ndarray, *,
+                focus_local: np.ndarray = HAND_FOCUS,
+                side_px: int = HAND_CROP_SIDE):
     roi, pixel = _hand_roi(image_size=frame.image.size, camera=camera,
                            calibration=calibration,
-                           T_robot_hand=hand_transform)
+                           T_robot_hand=hand_transform,
+                           focus_local=focus_local, side_px=side_px)
     prepared, transform = resize_classification_images(
         [frame.image.crop(roi)], (HAND_IMAGE_SIZE, HAND_IMAGE_SIZE))
     return prepared, transform, roi, pixel
@@ -192,7 +204,8 @@ def _hand_input(camera: str, frame: LabeledFrame, calibration: Mapping,
 
 def _hand_row(camera: str, frame: LabeledFrame, raw: str, transform: dict,
               roi: tuple[int, int, int, int], pixel: list[float],
-              latency_s: float) -> dict:
+              latency_s: float, *,
+              method: str = "measured_fr3_inspire_fk_and_undistorted_camera") -> dict:
     if not isinstance(raw, str):
         raise TypeError("lift VLM response must be text")
     return {
@@ -205,7 +218,7 @@ def _hand_row(camera: str, frame: LabeledFrame, raw: str, transform: dict,
         "crop": {"source_roi_xyxy": list(roi),
                  "original_image_size_wh": list(frame.image.size),
                  "projected_hand_px": pixel,
-                 "method": "measured_fr3_inspire_fk_and_undistorted_camera"},
+                 "method": method},
     }
 
 
@@ -227,6 +240,21 @@ def _hand_result(rows: list[dict]) -> dict:
             "evidence_views": [row["camera_id"] for row in rows]
             if label != "unobservable" else [],
             "confirming_views": confirmed}
+
+
+def _finger_retry_result(primary: list[dict], retry: list[dict]) -> dict:
+    """A second crop can rescue an all-NO result, not override any YES."""
+    result = _hand_result(primary)
+    if (result["class"] == "miss" and
+            sum(row["yes"] is True for row in retry) >= 2):
+        return {
+            "class": "held",
+            "evidence": "Two fingertip views show the gripped key",
+            "evidence_views": [row["camera_id"] for row in retry],
+            "confirming_views": [row["camera_id"] for row in retry
+                                 if row["yes"] is True],
+        }
+    return result
 
 
 def observe_visible_grip(
@@ -278,6 +306,45 @@ def observe_visible_grip(
             lambda camera: _hand_answer(
                 backend, camera, paired["after_lift", camera], calibration, hand))
     parsed = _hand_result(rows)
+    retry_rows = None
+    retry_latency_s = 0.
+    if (parsed["class"] == "miss" and
+            getattr(backend, "supports_finger_focus_retry", False)):
+        _, finger_focus = _hand_and_finger_focus(joint_q, robot_urdf)
+        if batched:
+            retry_inputs = [_hand_input(
+                camera, paired["after_lift", camera], calibration, hand,
+                focus_local=finger_focus, side_px=FINGER_CROP_SIDE)
+                for camera in selected]
+            retry_started = time.perf_counter()
+            with timed("vlm.view_batch", phase="vlm", kind="inference",
+                       stage="post_lift_finger_retry", view_count=len(selected),
+                       parallel_workers=1, gpu_batch_size=len(selected)):
+                with timed("vlm.infer", phase="vlm", kind="inference",
+                           stage="post_lift_finger_retry", camera_id="multiple",
+                           camera_ids=list(selected), image_count=len(selected),
+                           model=getattr(backend, "model", None)):
+                    retry_answers = backend.infer_many([
+                        (prepared, HAND_PROMPT)
+                        for prepared, _, _, _ in retry_inputs])
+            retry_latency_s = time.perf_counter() - retry_started
+            if len(retry_answers) != len(selected):
+                raise RuntimeError("lift retry VLM batch returned wrong view count")
+            retry_rows = [_hand_row(
+                camera, paired["after_lift", camera], answer, transform,
+                roi, pixel, retry_latency_s,
+                method="measured_fr3_inspire_fingertip_fk_and_undistorted_camera")
+                for camera, (prepared, transform, roi, pixel), answer
+                in zip(selected, retry_inputs, retry_answers)]
+        else:
+            retry_rows = map_view_calls(
+                backend, list(selected),
+                lambda camera: _hand_answer(
+                    backend, camera, paired["after_lift", camera], calibration,
+                    hand, focus_local=finger_focus, side_px=FINGER_CROP_SIDE,
+                    stage="post_lift_finger_retry"))
+            retry_latency_s = sum(row["latency_s"] for row in retry_rows)
+        parsed = _finger_retry_result(rows, retry_rows)
     order = tuple(
         f"{frame.phase}/{frame.camera_id}@{frame.timestamp_s:.6f}"
         for frame in frames)
@@ -288,10 +355,13 @@ def observe_visible_grip(
         "post_lift", parsed, json.dumps(parsed, sort_keys=True), prompt,
         order, None, str(getattr(backend, "model", "local_qwen")),
         (max(row["latency_s"] for row in rows) if batched else
-         sum(row["latency_s"] for row in rows)),
+         sum(row["latency_s"] for row in rows)) + retry_latency_s,
         aggregation={
             "schema": SCHEMA if selected == CAMERAS else CAPTURE4_SCHEMA,
             "per_view": rows,
+            **({"finger_focus_retry": {"per_view": retry_rows,
+                                        "crop_side_px": FINGER_CROP_SIDE}}
+               if retry_rows is not None else {}),
             **({"camera_ids": list(selected)} if selected != CAMERAS else {}),
             **({"execution_mode": "single_gpu_batch",
                 "batch_latency_s": rows[0]["latency_s"]} if batched else {}),
@@ -406,7 +476,48 @@ def verify_visible_grip(visual: dict, cameras: set[str],
                 not np.allclose(crop.get("projected_hand_px", []), pixel,
                                 atol=1e-6, rtol=0)):
             raise ValueError("visible grip hand crop changed")
-    expected = _hand_result(rows)
+    retry = aggregation.get("finger_focus_retry")
+    retry_rows = None
+    if retry is not None:
+        if (_hand_result(rows)["class"] != "miss" or
+                not isinstance(retry, dict) or
+                retry.get("crop_side_px") != FINGER_CROP_SIDE or
+                not isinstance(retry.get("per_view"), list) or
+                [row.get("camera_id") for row in retry["per_view"]] != selected):
+            raise ValueError("visible grip fingertip retry changed")
+        retry_rows = retry["per_view"]
+        _, focus = _hand_and_finger_focus(joint_q, robot_urdf)
+        for row in retry_rows:
+            camera = row["camera_id"]
+            order = next((item for item in visual.get("image_order", [])
+                          if item.startswith(f"after_lift/{camera}@")), None)
+            transform = row.get("input_transform", {})
+            crop = row.get("crop", {})
+            size = crop.get("original_image_size_wh")
+            if (order is None or row.get("image_order") != [order] or
+                    row.get("prompt") != HAND_PROMPT or
+                    not isinstance(row.get("raw_answer"), str) or
+                    row.get("yes") is not _vote(row["raw_answer"]) or
+                    transform.get("max_size") !=
+                    [HAND_IMAGE_SIZE, HAND_IMAGE_SIZE] or
+                    not isinstance(size, list) or len(size) != 2 or
+                    not all(type(value) is int and value > 0
+                            for value in size)):
+                raise ValueError("visible grip fingertip input changed")
+            roi, pixel = _hand_roi(
+                image_size=tuple(size), camera=camera,
+                calibration=calibration, T_robot_hand=hand,
+                focus_local=focus, side_px=FINGER_CROP_SIDE)
+            if (crop.get("method") !=
+                    "measured_fr3_inspire_fingertip_fk_and_undistorted_camera" or
+                    crop.get("source_roi_xyxy") != list(roi) or
+                    transform.get("images", [{}])[0].get("source_size") !=
+                    [roi[2] - roi[0], roi[3] - roi[1]] or
+                    not np.allclose(crop.get("projected_hand_px", []), pixel,
+                                    atol=1e-6, rtol=0)):
+                raise ValueError("visible grip fingertip crop changed")
+    expected = (_finger_retry_result(rows, retry_rows) if retry_rows is not None
+                else _hand_result(rows))
     if (visual.get("parsed") != expected or
             visual.get("raw_answer") != json.dumps(expected, sort_keys=True) or
             visual.get("parse_error") is not None):

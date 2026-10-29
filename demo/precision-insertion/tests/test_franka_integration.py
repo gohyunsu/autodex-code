@@ -542,6 +542,7 @@ def test_zerodex_local_lift_uses_configured_visible_grip_views(monkeypatch, tmp_
         assert kwargs["shared"]["backend"] is backend
         assert backend.visible_grip_camera_ids == selected
         assert backend.supports_visible_grip_lift is True
+        assert backend.supports_finger_focus_retry is True
         return ()
 
     monkeypatch.setattr(franka_integration, "assemble_live_components", assemble)
