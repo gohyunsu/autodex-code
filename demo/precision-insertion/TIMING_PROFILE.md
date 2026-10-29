@@ -52,6 +52,17 @@ run in parallel; that sum is not checkpoint wall time. The writer already uses
 lossless PNG compression level 1 and local parallel I/O. Changing its format
 or skipping evidence is not justified by the cumulative number.
 
+An offline startup-order probe on this PC used the saved 5 mm fixed collision
+world and the same local cuRobo, Qwen and SAM3 assets. With the FR3 planner
+core constructed first, starting all three remaining GPU jobs together took
+16.79 s wall time; finishing cuRobo world setup before starting Qwen and SAM3
+took 21.10 s. The planner's own job was slower under overlap (16.79 versus
+12.20 s), but the concurrent schedule finished sooner. This is one offline
+measurement without camera or robot traffic, so it does not establish a live
+startup speedup. It gives no reason to serialize the current model preloads.
+The probe and raw results are grouped under
+`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_gpu_startup_*_20261029.*`.
+
 Future runs now nest `cleanup.planner_warmup_join`, `cleanup.vlm_load_join`,
 `cleanup.vlm_backend_close`, `cleanup.sam_roi_close`,
 `cleanup.sam_load_join`, and `cleanup.franka_core_close` under
