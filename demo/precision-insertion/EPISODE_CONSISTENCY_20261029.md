@@ -552,14 +552,22 @@ overlaps were 100%, 100% and 98.5%. Only `26053248` yielded a SAM3 point,
 so there was **no multiview metric tip**. Projecting that one point onto the
 nominal tip-height plane would suggest an 80.0 mm XY correction in an episode
 whose released key the operator judged inside the socket. Its fitted ellipse
-also collapsed to a line (minor radius effectively zero), so the point is not
-a reliable observed distal-face centre. The one-view plane result remains a
+also had a near-zero minor radius, which can occur when a circular face is
+viewed edge-on; this alone cannot identify whether the mask is correct. The
+one-view plane result remains a
 diagnostic and was never sent to the robot. This independent 10 mm recording
 supports the same conclusion as the 5 mm successes: changing prompt wording
 or trusting one visible white patch cannot replace a view where the actual
 distal end is exposed. The read-only script, four camera responses, masks and
 timing record are
 `~/precision_insertion_project/development/zerodex_capture4/reviews/probe_gap10_saved_preinsert_xy_20261029.*`.
+Rejecting every near-zero minor radius was tested and **not adopted**: it
+removed one camera from each of the four `9542c1bd` feedback steps and made
+all four previously metric estimates unobservable. Those steps had reduced
+the recorded XY residual from 32.0 to 1.27 mm. A near-linear projected rim
+can still contribute a useful image point; point identity and cross-view
+consistency must be judged from the complete observation, not that radius
+alone.
 
 Keep `20195` and the current 5 mm socket. At the preinsert hold, collect raw
 four-view images while deliberately exposing the key end in **two calibrated
