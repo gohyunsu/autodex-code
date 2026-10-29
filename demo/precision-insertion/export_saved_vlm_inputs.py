@@ -26,9 +26,7 @@ def _stage(report: dict) -> str:
         return "lift"
     if schema == "precision_insertion_preinsert_checkpoint_v1":
         return "preinsert"
-    if (schema == "precision_insertion_released_checkpoint_v1" and
-            report.get("visual_input_policy") ==
-            "final_socket_crop_token_v4"):
+    if schema == "precision_insertion_released_checkpoint_v1":
         return "final"
     raise ValueError("report has no supported saved VLM input policy")
 
@@ -53,14 +51,22 @@ def _requests(report: dict, stage: str):
                                crop.get("crop_rgb_sha256")))
             yield camera, row, inputs
     else:
-        frames = {row["camera_id"]: Path(row["path"])
-                  for row in report["frames"]
-                  if row["phase"] == "final_clear_view"}
+        frames = {(row["phase"], row["camera_id"]): Path(row["path"])
+                  for row in report["frames"]}
         for row in report["visual"]["aggregation"]["per_view"]:
             camera = row["image_order"][0].split("/", 1)[1].split("@", 1)[0]
-            crop = report["final_visual_crops"].get(camera, {})
-            yield camera, row, [("final_clear_view", frames[camera],
-                crop.get("roi_xyxy_full_px"), crop.get("crop_rgb_sha256"))]
+            phases = (["initial_tabletop", "final_clear_view"]
+                      if len(row["image_order"]) == 2 else
+                      ["final_clear_view"])
+            sources = []
+            for phase in phases:
+                crop = report.get(
+                    "initial_visual_crops" if phase == "initial_tabletop"
+                    else "final_visual_crops", {}).get(camera, {})
+                sources.append((phase, frames[phase, camera],
+                                crop.get("roi_xyxy_full_px"),
+                                crop.get("crop_rgb_sha256")))
+            yield camera, row, sources
 
 
 def _input_image(path: Path, roi, crop_hash, transform: dict) -> Image.Image:
@@ -115,7 +121,8 @@ def export(report_path: Path, output_dir: Path) -> Path:
         prepared.save(output_dir / name)
     width = max(image.width for _, image in tiles)
     height = max(image.height for _, image in tiles)
-    columns = 2 if stage == "preinsert" else 1
+    columns = 2 if stage == "preinsert" or any(
+        row["phase"] == "initial_tabletop" for row in rows) else 1
     cameras = len(tiles) // columns
     sheet = Image.new("RGB", (columns * width, cameras * (height + 28)),
                       "#14202a")

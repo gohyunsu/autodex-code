@@ -291,6 +291,35 @@ def test_corrected_plan_failure_records_stop_without_insertion(tmp_path, monkeyp
     })]
 
 
+def test_unobserved_first_xy_still_replans_axial_from_measured_hold(
+        tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    runner._attempt_dir = tmp_path / "attempts" / runner.active_attempt.attempt_id
+    bound._preinsert_bundle = tmp_path / "preinsert"
+    bound.planner = object()
+    bound.path_limits = object()
+    bound.alignment_limits = object()
+    bound.same_trial_tip_height_error_m = .01
+    bound.same_trial_xy_tolerance_m = .0025
+    monkeypatch.setattr(live_task_handlers, "measure_preinsert_xy",
+                        lambda **_kwargs: {"alignment": {
+                            "status": "abstain", "inlier_cameras": [],
+                            "xy_correction_socket_m": None}})
+    captured = {}
+
+    def handoff(**kwargs):
+        captured.update(kwargs)
+        return tmp_path / "measured_handoff.json"
+
+    monkeypatch.setattr(live_task_handlers, "plan_corrected_axial_handoff",
+                        handoff)
+    bound._refine_current_hold(runner)
+    assert bound._same_trial_handoff == tmp_path / "measured_handoff.json"
+    assert captured["total_xy_m"] == [0., 0.]
+    assert captured["residual_xy_m"] == [0., 0.]
+    assert captured["residual_source"] == "nominal_unobserved"
+
+
 def test_held_xy_plan_failure_records_recoverable_stop(tmp_path, monkeypatch):
     bound, runner, *_ = _handler(tmp_path)
     runner._attempt_dir = tmp_path / "attempts" / runner.active_attempt.attempt_id

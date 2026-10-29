@@ -274,8 +274,14 @@ class LiveTaskHandlers:
                     residual_source = "current_metric_multiview"
                 break
             if choice["status"] == "not_metric_multiview":
-                # No invented 3D point: retain the already verified nominal
-                # insertion path when alignment could not be measured.
+                # No XY observation was available. Replan from the measured
+                # hold even in this case: the post-lift axial archive starts
+                # at the planned transfer endpoint, not necessarily here.
+                final_residual = ([0., 0.] if predicted_residual is None
+                                  else predicted_residual)
+                residual_source = ("nominal_unobserved" if
+                                   predicted_residual is None else
+                                   "last_metric_plus_completed_held_motion")
                 break
             if (self.same_trial_max_shifts is not None and
                     index == self.same_trial_max_shifts):

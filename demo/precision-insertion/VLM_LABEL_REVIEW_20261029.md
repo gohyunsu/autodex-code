@@ -274,6 +274,21 @@ are saved in
 - The final checkpoint occurs after the guarded stroke, hand opening and clear-view exit. The VLM reads final pixels only; initial and preinsert captures still establish provenance and chronological order. `vlm_only` uses this visual `inside_socket` label for task success; a physical depth claim requires separate evidence.
 - The saved four-view XY attempt `9542c1bd` executed three lateral corrections but its corrected axial preflight stopped at the ninth waypoint with `axis_segment_robot_collision` / `INVALID_START_STATE_WORLD_COLLISION`. No corrected insertion command was sent. This is a remaining motion-planning issue, independent of the final VLM change. Do not count that episode as a successful insertion.
 
+The obstacle attribution in the saved development review isolates this to the
+socket: the same robot state passes with the table alone, while both the
+socket-only and full worlds reject it. The corrected key fits the opening, but
+the measured right thumb tip intersects the socket at the intended 20 mm
+endpoint. This is a candidate-specific hand/socket geometry conflict. The
+configured 5 mm preferred candidate is now `table/0/208`; its nominal pickup,
+transfer, 20 mm descent, and opening preflight passed offline, but no live
+corrected descent or release has yet been observed for it.
+
+When the first pre-insertion XY image has no metric multiview result, the live
+same-trial branch now replans the axial path from the measured held joints
+with zero observed residual. It does not reuse the earlier post-lift path,
+whose first joint state could differ from the live arrival. This adds no new
+confidence threshold and does not pretend to measure an unseen key point.
+
 The current execution order was checked against
 `run_robot_pc.sh`, `live_task_handlers.py`, and the session action map:
 session socket measurement and frozen collision world → each attempt's
@@ -539,3 +554,48 @@ serial latency would be incorrect. Startup SAM3 and fixed-world cuRobo warmup
 were 23.71 and 20.36 s respectively in that run; these are session startup
 costs, not costs repeated at every XY correction. No runtime threshold or
 failure rule was changed based on this timing review.
+
+### Archived production-input audit
+
+The archived production inputs for eight lift, six pre-insertion, and four
+released-key checkpoints are collected under
+`~/precision_insertion_project/development/zerodex_capture4/reviews/vlm_presence_crop_20261029/`.
+`export_saved_vlm_inputs.py` now reconstructs the older two-image released-key
+reports as well as the current final-only policy, verifying each resized input
+against its saved RGB hash. The old reports remain historical answers; the
+export does not relabel them.
+
+A key-local pre-insertion probe used the same 512 px nominal-axis crop as the
+current XY detector. A short single-image presence question found at least
+one positive view in all six archived arrivals, but only one of three views
+for `30e9cd0b`, whose key is visibly present. A paired-image variant answered
+`NO` in all four views of `9542c1bd` despite its visible key. On two archived
+empty-lift controls, the single-image presence question gave one positive
+among six views; the XY detector's Qwen box prompt returned a box in all six.
+These controls are not real empty-hand pre-insertion examples. The probe
+supports keeping a Qwen box, SAM3 mask, calibrated geometry, and a task label
+as distinct evidence. It does not support replacing the live transfer
+checkpoint with either new prompt or treating a box as a held-key label. The
+exact images, answers, scripts, and per-attempt crop mappings are in the
+development review directory. No extra live inference or abort criterion was
+added.
+
+### Closed-loop descent boundary
+
+The same saved run spent 12.85 s on three measured XY motions and 4.04 s on
+four pre-insertion captures. The corrected axial Jacobian replan lasted only
+0.056 s before the hand/socket geometry conflict stopped it. The 10 mm move
+cap and a fresh snapshot after each move account for the repeated cycles in
+this 32 mm initial-error example; image writing is already parallel and was
+not the main wall-time cost.
+
+The live sequence is final XY observation, corrected held relation from the
+measured wrist and observed residual, exact hand/socket endpoint screen,
+socket-axis Jacobian waypoints with full robot collision checks, held path
+audit, planned open-hand/axis-exit/clear-view route, stock force-stop stroke,
+release, then final clear-view VLM. A failed endpoint or route is recorded as
+a planning failure and sent to held-key recovery, never as an insertion.
+For the archived `9542c1bd` grasp, the thumb/socket intersection is the
+reason this sequence cannot reach the stroke. A separate nominal replay of
+`table/0/208` passes pickup, transfer, 20 mm descent and release opening,
+but that candidate has not been tested after a real XY correction.
