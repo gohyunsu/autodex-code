@@ -27,7 +27,7 @@ export PRECISION_PREWARM_FIXED_WORLD=${PRECISION_PREWARM_FIXED_WORLD:-1}
 # An explicitly empty override disables the hint.
 if [[ -z ${PRECISION_INITIAL_CANDIDATE+x} ]]; then
   case $PRECISION_GAP_MM in
-    5) export PRECISION_INITIAL_CANDIDATE=table/0/20096 ;;
+    5) export PRECISION_INITIAL_CANDIDATE=table/0/208 ;;
     10) export PRECISION_INITIAL_CANDIDATE=table/0/20267 ;;
   esac
 fi

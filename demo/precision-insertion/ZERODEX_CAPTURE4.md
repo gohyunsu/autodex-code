@@ -295,19 +295,23 @@ start the adapter if another experiment owns the cameras.
   The runtime performs no extra full-file hash pass. The local copy avoids
   NAS reads at model startup; its actual effect on warm Qwen/SAM/cuRobo
   startup latency still needs a measured run.
-- For the 5 mm socket, the capture4 launcher prefers `table/0/20096` on the
-  first upright-key capture. All five saved 5 mm attempts selected this grasp
-  after a multi-candidate preflight; four recorded lift and pre-insertion
-  arrival. This is only an ordering hint: fresh-scene v8 pickup, held-path
-  and endpoint checks still run, and the normal catalog order is tried if
-  the hint is infeasible. Set `PRECISION_INITIAL_CANDIDATE=` to disable it.
-  The saved label record does not establish that this grasp achieved a
-  physically verified 20 mm insertion.
-  Eight archived 5 mm preflight reports all reached this candidate sixth,
-  after the same five earlier candidates. Their timing spans put the median
-  work before its candidate load at 7.12 s (range 5.48–10.00 s); the median
-  complete candidate preflight was 12.98 s. This is a trace-derived estimate
-  of avoidable prefix work, not a measured runtime saving from the new order.
+- For the 5 mm socket, the capture4 launcher now prefers `table/0/208` on
+  the first upright-key capture. In the saved `9542c1bd` scene this candidate
+  passed the unchanged v8 pickup, held-path, socket-opening, and sampled
+  20 mm insertion preflight. Its nominal hand/socket clearance is 20.9 mm,
+  versus 8.0 mm for the previously preferred `table/0/20096`. Its archived
+  MuJoCo end-gravity key-in-hand center displacement is 5.5 mm; no comparable
+  achieved-pose diagnostic was supplied for `20096`. This is only a planning
+  order hint, not a new candidate rejection or physical-success claim.
+  Fresh-scene planning still checks the chosen candidate and falls through
+  to the remaining eligible grasps if it fails. `208` has not been physically
+  grasped in this rig. The saved-scene replay and its source script are in
+  `~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/preflight_candidate_208.json`.
+  The matching `candidate_priority_review_20261029.json` lists the 108
+  eligible upright candidates and distinguishes the 11 with archived
+  post-squeeze fidelity measurements from those without one.
+  Set `PRECISION_INITIAL_CANDIDATE=table/0/20096` to reproduce the previous
+  priority or `PRECISION_INITIAL_CANDIDATE=` to use catalog order.
 - The ZeroDex launcher sets `PRECISION_PREWARM_FIXED_WORLD=1` for both newly
   placed and already placed keys. After the initial clear-view motion, the
   planner initializes a **provisional** table/socket cuRobo world in a
