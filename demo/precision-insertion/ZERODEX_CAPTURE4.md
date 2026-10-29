@@ -295,12 +295,14 @@ thumb/index/middle fingertips. Two `YES` replies in that retry promote the
 visual result to `held`; one `YES` does not change the original result. The
 retry never overrides an existing positive first pass and adds no new grasp
 rejection. Both sets of raw replies, exact crop coordinates, and batch timing
-are saved in the lift record. On four archived capture4 after-lift bundles,
-the production replay changed the human-confirmed `0c787032` false negative
-from `NO` in all four views to `held` after two fingertip `YES` replies.
-Three old `vlm_only` negative outcomes stayed negative, but they have no
-independent human ground truth. This was an image-only replay with the local
-Qwen3-VL-2B; it did not send camera or robot commands. The reproducible
+are saved in the lift record. On all 12 archived capture4 after-lift bundles,
+the production replay changed only the human-confirmed `0c787032` visual
+false negative: its original four `NO` replies became `held` after two
+fingertip `YES` replies. The other 11 visual classes were unchanged, including
+the three old `vlm_only` negative outcomes; those three have no independent
+human ground truth. Four bundles needed a retry batch. This was an image-only
+replay with the local Qwen3-VL-2B; it did not send camera or robot commands.
+The reproducible
 script and per-view results are in
 `~/precision_insertion_project/development/zerodex_capture4/reviews/`
 as `replay_lift_finger_retry_20261030.{py,json}`.

@@ -127,6 +127,6 @@ def test_local_qwen_batches_independent_camera_prompts(monkeypatch, tmp_path):
     assert [reply.answer for reply in replies] == ["first", "second"]
     conversations, kwargs, padding_side = calls[0]
     assert padding_side == "left"
-    assert kwargs["padding"] is True
+    assert kwargs["processor_kwargs"] == {"padding": True}
     assert conversations[0][0]["content"][0]["image"] is frames[0]
     assert conversations[1][0]["content"][-1]["text"] == "camera two"

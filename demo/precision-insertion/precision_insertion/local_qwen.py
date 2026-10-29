@@ -94,7 +94,8 @@ class LocalQwenModel:
         self.processor.tokenizer.padding_side = "left"
         encoded = self.processor.apply_chat_template(
             conversations, tokenize=True, add_generation_prompt=True,
-            return_dict=True, return_tensors="pt", padding=True)
+            return_dict=True, return_tensors="pt",
+            processor_kwargs={"padding": True})
         inputs = {name: value.to(self.device) if hasattr(value, "to") else value
                   for name, value in encoded.items()}
         with torch.inference_mode():
