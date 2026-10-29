@@ -542,6 +542,25 @@ trajectory ends slightly higher or lower than commanded, the next image
 projection and return move use that measured height. This fixes a bookkeeping
 error without adding a new motion threshold or failure condition.
 
+### 10 mm saved-image key-tip replay
+
+The actual four undistorted pre-insertion frames from `30e9cd0b` were also
+replayed through the production Qwen box, socket-projection exclusion, SAM3
+ROI and distal half-ellipse route. The first three cameras (`25305462`,
+`25322639`, `25322642`) boxed the fixed socket: their projected-socket box
+overlaps were 100%, 100% and 98.5%. Only `26053248` yielded a SAM3 point,
+so there was **no multiview metric tip**. Projecting that one point onto the
+nominal tip-height plane would suggest an 80.0 mm XY correction in an episode
+whose released key the operator judged inside the socket. Its fitted ellipse
+also collapsed to a line (minor radius effectively zero), so the point is not
+a reliable observed distal-face centre. The one-view plane result remains a
+diagnostic and was never sent to the robot. This independent 10 mm recording
+supports the same conclusion as the 5 mm successes: changing prompt wording
+or trusting one visible white patch cannot replace a view where the actual
+distal end is exposed. The read-only script, four camera responses, masks and
+timing record are
+`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_gap10_saved_preinsert_xy_20261029.*`.
+
 Keep `20195` and the current 5 mm socket. At the preinsert hold, collect raw
 four-view images while deliberately exposing the key end in **two calibrated
 oblique views** (camera angle or collision-checked axial yaw gauge). Compare
