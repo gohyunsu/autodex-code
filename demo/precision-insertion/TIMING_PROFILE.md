@@ -54,7 +54,7 @@ next run:
 | All `vlm.infer` spans, cumulative | 2.76 s | 2.70 s | GPU work across checkpoints, not the source of the long manual waits. |
 | Fixed-world warmup joins, cumulative | 20.91 s | 21.04 s | Almost entirely the first wait on provisional cuRobo world creation; latest launcher overlaps its start with initial clear-view motion, unmeasured live. |
 | `startup.sam3_roi_model_load` | 9.56 s | 10.22 s | One model startup per process. |
-| `cleanup.integration_close` | 0.43 s | 55.55 s | The second cleanup span recorded a failure; these historical traces do not identify the slow child. The insertion itself was human-confirmed. |
+| `cleanup.integration_close` | 0.43 s | 55.55 s | The second span ended in `KeyboardInterrupt()` and is not a normal shutdown-time sample. The insertion itself was human-confirmed. |
 
 `evidence.png_write_hash` sums to about 4.6 s in each run, but the PNG jobs
 run in parallel; that sum is not checkpoint wall time. The writer already uses
@@ -89,8 +89,9 @@ Future runs now nest `cleanup.planner_warmup_join`, `cleanup.vlm_load_join`,
 `cleanup.integration_close`. The core span separates
 `cleanup.feedback_sampler_close` from `cleanup.franka_executor_shutdown`.
 These spans only observe shutdown and do not alter resource ownership or
-motion. Compare their **inclusive** and **self** times in a fresh trace before
-changing shutdown behavior to address the isolated 55.55 s case.
+motion. The 55.55 s archived span was interrupted by the operator, so do not
+attribute it to normal cleanup. Compare their **inclusive** and **self** times
+in an uninterrupted fresh trace before changing shutdown behavior.
 
 `run_robot_pc.sh --run` now runs only the Python pipeline. Start/check/stop
 long-lived services independently with `manage_robot_pc_services.sh`; its
