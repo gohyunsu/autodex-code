@@ -477,6 +477,19 @@ start the adapter if another experiment owns the cameras.
   `PRECISION_PREWARM_FIXED_WORLD=0` for the former serial timing. No grasp,
   collision, or task-success criterion changes. `--check` and `--camera-only`
   do not perform this live planner warmup.
+- In the two archived, human-confirmed 5 mm insertions, the provisional
+  cuRobo warmup occupied pipeline seconds 6.93–32.79 and 3.12–32.63.
+  The fixed-world wait occupied 11.90–32.80 and 11.60–32.64, respectively;
+  the actual measured-world update was 0.014 s in each run. Therefore the
+  ~21 s wait is the **remaining time of the first warmup overlapping key
+  capture**, not a second ~21 s world initialization. The catalog selection
+  span after this join was below the recorded millisecond resolution. The
+  current live catalog path validates its session identity and hashes one
+  small URDF at opening; it does not rescan all candidate files on each
+  trial. These historical traces predate the later change that starts the
+  provisional worker before initial clear-view, so they cannot measure that
+  change's net saving. Avoid removing the existing overlap based on the wait
+  span alone; compare new live critical-path timestamps when the rig runs.
 - Two human-confirmed 5 mm insertions on 2026-10-29 showed initial clear-view
   durations of 4.49 s and 0.55 s. Their provisional cuRobo initialization
   took 25.86 s and 29.51 s and previously started only after clear-view.
