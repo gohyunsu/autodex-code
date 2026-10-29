@@ -456,6 +456,20 @@ removed. Exact probe records are under
 Its three files have SHA256-matched copies at the corresponding
 `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/warmup_saved_socket_20261029/` path.
 
+The two physically inserted `20195` timing traces distinguish wall time from
+parallel worker totals. Each trace reports 28 `evidence.png_write_hash`
+worker spans summing to 4.61-4.65 s, but the four enclosing
+`evidence.png_batch_write` spans sum to only 0.74-0.76 s of wall time.
+Removing lossless frame evidence based on the worker sum would target the
+wrong bottleneck. Their initial same-trial XY measurements took 2.05-2.13 s;
+the 186/135/31 s and 109/80/65 s lift/preinsert/final label spans were
+dominated by waiting for interactive human answers. One trace reports a
+55.55 s `cleanup.integration_close`, but its timing event ended with
+`KeyboardInterrupt()`; the other completed cleanup in 0.43 s. The interrupted
+span is not a normal shutdown-latency measurement. For autonomous runs, the
+first cuRobo world initialization and the extra raised-view capture/motion
+remain the latency costs to measure on a new physical episode.
+
 The new read-only observation-pose replay checked a second way to obtain
 better photographs without committing to one key-end algorithm. Starting
 from the measured pre-insertion FR3/Inspire joints in the four archived
@@ -496,6 +510,17 @@ then planned back to the original pre-insertion wrist from the raised plan's
 endpoint. All **8/8** raise/return pairs passed cuRobo and the sampled
 full-key/whole-hand world audit. The exact script and per-attempt results are
 `~/precision_insertion_project/development/zerodex_capture4/reviews/probe_observation_raise_return_20261029.{py,json}`.
+For the two physically inserted `20195` attempts, a further replay began at
+each **returned joint state**, screened the full hand/key at the 20 mm
+endpoint, and planned the socket-axis Jacobian descent with the same sampled
+held-path audit. All **4/4** variants (20 and 40 mm raise per attempt) passed.
+This closes an offline planning gap between the observation action and the
+subsequent insertion path; it does not prove that the raised photograph gives
+a better key-tip estimate or that the real robot completes the route. The
+script and four-row result are
+`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_observation_return_axial_20261029.{py,json}`;
+both have copies under
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/`.
 
 Keep `20195` and the current 5 mm socket. At the preinsert hold, collect raw
 four-view images while deliberately exposing the key end in **two calibrated
