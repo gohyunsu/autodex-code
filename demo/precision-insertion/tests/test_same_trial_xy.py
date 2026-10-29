@@ -7,6 +7,7 @@ import sys
 from types import SimpleNamespace
 
 import numpy as np
+from PIL import Image
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -21,7 +22,11 @@ from precision_insertion.same_trial_xy import (  # noqa: E402
 )
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
+from precision_insertion.retry_session import (  # noqa: E402
+    _cylinder_tip_and_rois, _nominal_key_for_xy_capture,
+)
 from precision_insertion.targets import InsertionTargets  # noqa: E402
+from precision_insertion.xy_overlay import CalibratedXYFrame  # noqa: E402
 
 
 def test_same_trial_move_requires_metric_multiview_and_caps_one_motion():
@@ -64,6 +69,44 @@ def test_live_xy_measurement_reuses_just_saved_pixels(tmp_path, monkeypatch):
     assert set(rows) == set(images) == {"100", "200"}
     assert images["100"] is frames["100"]
     assert images["200"] is frames["200"]
+
+
+def test_repeat_xy_crop_prediction_follows_measured_socket_frame_shift(tmp_path):
+    postlift = tmp_path / "postlift.json"
+    key = np.eye(4)
+    key[:3, 3] = [.1, .2, .3]
+    postlift.write_text(json.dumps({
+        "targets": {"T_robot_key_preinsert": key.tolist()}}))
+    socket = np.eye(4)
+    socket[:3, :3] = np.array([
+        [0., -1., 0.], [1., 0., 0.], [0., 0., 1.]])
+    shifted = _nominal_key_for_xy_capture(
+        postlift, socket, [.006, -.004])
+    np.testing.assert_allclose(shifted[:3, 3], [.104, .206, .3])
+    np.testing.assert_allclose(shifted[:3, :3], key[:3, :3])
+
+
+def test_repeat_xy_vlm_roi_moves_with_completed_lateral_motion(tmp_path):
+    postlift = tmp_path / "postlift.json"
+    key = np.eye(4)
+    key[2, 3] = 1.
+    postlift.write_text(json.dumps({
+        "targets": {"T_robot_key_preinsert": key.tolist()}}))
+    frame = CalibratedXYFrame(
+        "camera1", 1., Image.new("RGB", (2048, 1536)), np.eye(4),
+        np.array([[1000., 0., 1024.], [0., 1000., 768.], [0., 0., 1.]]))
+    backend = SimpleNamespace(native_pixel_coordinates=True)
+    original_tip, original_rois = _cylinder_tip_and_rois(
+        postlift_file=postlift, socket=np.eye(4), tip_z_m=.08,
+        socket_rim_z_m=.5, frames=[frame], backend=backend,
+        roi_xyxy_by_camera=None)
+    shifted_tip, shifted_rois = _cylinder_tip_and_rois(
+        postlift_file=postlift, socket=np.eye(4), tip_z_m=.08,
+        socket_rim_z_m=.5, frames=[frame], backend=backend,
+        roi_xyxy_by_camera=None,
+        nominal_key_xy_shift_socket_m=(.03, 0.))
+    np.testing.assert_allclose(shifted_tip[:2] - original_tip[:2], [.03, 0.])
+    assert shifted_rois["camera1"][0] > original_rois["camera1"][0]
 
 
 @pytest.mark.parametrize("collision", [False, True])

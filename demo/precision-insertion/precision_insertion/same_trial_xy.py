@@ -125,6 +125,7 @@ def _alignment_frame_inputs(
 def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
                          alignment_limits: AlignmentLimits,
                          index: int, nominal_tip_height_error_m: float,
+                         nominal_key_xy_shift_socket_m=(0., 0.),
                          xy_estimator: str = "vlm",
                          sam_segmentor=None,
                          capture: RawCameraCapture | None = None) -> dict:
@@ -150,7 +151,8 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
             intrinsics_full=calibration["intrinsics_full"],
             extrinsics_full=calibration["extrinsics_full"],
             alignment_limits=alignment_limits, search_index=index,
-            max_nominal_tip_height_error_m=nominal_tip_height_error_m)
+            max_nominal_tip_height_error_m=nominal_tip_height_error_m,
+            nominal_key_xy_shift_socket_m=nominal_key_xy_shift_socket_m)
         observations = []
         mask_records = []
         if masks:
@@ -177,7 +179,8 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
             backend=backend, alignment_limits=alignment_limits,
             axis_reference_key_z_m=None, roi_xyxy_by_camera=None,
             square_translation_only=False, search_index=index,
-            max_nominal_tip_height_error_m=nominal_tip_height_error_m)
+            max_nominal_tip_height_error_m=nominal_tip_height_error_m,
+            nominal_key_xy_shift_socket_m=nominal_key_xy_shift_socket_m)
         mask_records = []
     else:
         raise ValueError("same-trial XY supports vlm or sam_half_ellipse")
@@ -193,6 +196,8 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
         "postlift_report_sha256": _sha(runner._postlift_report_path),
         "task_geometry_sha256": geometry_sha,
         "xy_estimator": xy_estimator,
+        "nominal_key_xy_shift_socket_m": list(
+            map(float, nominal_key_xy_shift_socket_m)),
         "sam_mask_files": mask_records,
         "alignment": alignment,
         "vlm_observations": [item.to_record() for item in observations],

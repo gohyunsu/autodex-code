@@ -1,5 +1,14 @@
 # Precision insertion demo
 
+**Current capture4 execution:** use
+[`run_zerodex_capture4.sh`](run_zerodex_capture4.sh) and
+[`ZERODEX_CAPTURE4.md`](ZERODEX_CAPTURE4.md). This profile defaults to four
+cameras, `sam_half_ellipse` XY observation, and repeated lateral correction
+**within the same held-key attempt** before replanning the socket-axis
+insertion stroke. The next-trial cumulative XY mechanism also remains for an
+observed failed insertion. Older AutoDex robot-PC descriptions below refer
+to that separate launch profile and should not be read as capture4 defaults.
+
 The current cylinder frame conventions and live gate audit are in
 [SYMMETRY_AND_LIVE_GATES.md](SYMMETRY_AND_LIVE_GATES.md).
 The current active-route comparison with stock AutoDex and removed
@@ -147,15 +156,13 @@ does not treat live-camera/robot commissioning as a missing 3D file.
 Presentation-ready 16:9 cylinder animations, their evidence boundary, and
 rebuild commands are indexed in
 [PRESENTATION_VISUAL_ASSETS.md](PRESENTATION_VISUAL_ASSETS.md).
-The active cylinder live loop uses a **next-physical-attempt** cumulative XY
-offset after failed insertion. It does not perform lateral correction or
-reinsertion within the failed attempt. The current behavior is specified in
-[NEXT_TRIAL_XY.md](NEXT_TRIAL_XY.md): 10 mm per-update norm cap, default gain
-1.0, no cumulative cap, nominal v8 held relation, and original-pose reset.
-Sections below discussing 1 mm same-held-attempt shifts or physical/observed
-held relations are historical/optional utilities, **not** the live route.
-The older same-attempt lateral-shift tools discussed below are experimental
-read-only/opt-in utilities, not the active live retry route.
+The capture4 profile now also runs held-key lateral correction in the same
+attempt before insertion; see [ZERODEX_CAPTURE4.md](ZERODEX_CAPTURE4.md).
+After an observed failed insertion, the separate next-attempt cumulative XY
+offset still follows [NEXT_TRIAL_XY.md](NEXT_TRIAL_XY.md): 10 mm per-update
+norm cap, default gain 1.0, no cumulative cap, nominal v8 held relation,
+and original-pose reset. Historical sections below describe other profiles
+or experiments, not the current capture4 default.
 
 ## Calibrated VLM point grounding (read-only diagnostic)
 

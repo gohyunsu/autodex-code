@@ -213,7 +213,8 @@ def test_same_trial_xy_reobserves_and_replans_from_final_hold(
     seen = []
 
     def measure(**kwargs):
-        seen.append(("measure", kwargs["raw_bundle"]))
+        seen.append(("measure", kwargs["raw_bundle"],
+                     tuple(kwargs["nominal_key_xy_shift_socket_m"])))
         correction = next(observations)
         return {"alignment": {
             "status": ("diagnostic_metric_xy_correction" if correction
@@ -244,6 +245,8 @@ def test_same_trial_xy_reobserves_and_replans_from_final_hold(
     bound._refine_current_hold(runner)
     assert [row[0] for row in seen] == [
         "measure", "shift", "measure", "handoff"]
+    assert seen[0][2] == (0., 0.)
+    np.testing.assert_allclose(seen[2][2], [.0035, 0.])
     np.testing.assert_allclose(seen[1][1], [.004, 0.])
     np.testing.assert_allclose(seen[-1][1]["total_xy_m"], [.0035, 0.])
     np.testing.assert_allclose(

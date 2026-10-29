@@ -109,11 +109,10 @@ def _cylinder_tip_and_rois(
     socket_rim_z_m: float, frames: Sequence[CalibratedXYFrame],
     backend: ImageVLM,
     roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]] | None,
+    nominal_key_xy_shift_socket_m: Sequence[float] = (0., 0.),
 ) -> tuple[np.ndarray, Mapping[str, tuple[int, int, int, int]] | None]:
-    nominal = json.loads(postlift_file.read_text(encoding="utf-8"))
-    T_robot_key = validate_se3(
-        nominal["targets"]["T_robot_key_preinsert"],
-        name="commanded preinsert key target")
+    T_robot_key = _nominal_key_for_xy_capture(
+        postlift_file, socket, nominal_key_xy_shift_socket_m)
     tip_robot = T_robot_key @ np.array([0., 0., tip_z_m, 1.])
     socket_from_robot = np.linalg.inv(socket)
     tip_socket = socket_from_robot @ tip_robot
@@ -125,6 +124,22 @@ def _cylinder_tip_and_rois(
             rear_socket_m=rear_socket[:3],
             socket_rim_z_m=socket_rim_z_m)
     return tip_socket, roi_xyxy_by_camera
+
+
+def _nominal_key_for_xy_capture(
+    postlift_file: Path, socket: np.ndarray,
+    shift_socket_m: Sequence[float],
+) -> np.ndarray:
+    """Follow completed same-trial wrist shifts when locating the next ROI."""
+    nominal = json.loads(postlift_file.read_text(encoding="utf-8"))
+    key = validate_se3(
+        nominal["targets"]["T_robot_key_preinsert"],
+        name="commanded preinsert key target").copy()
+    shift = np.asarray(shift_socket_m, dtype=float)
+    if shift.shape != (2,) or not np.isfinite(shift).all():
+        raise ValueError("nominal key XY shift needs two finite socket metres")
+    key[:3, 3] += socket[:3, :2] @ shift
+    return key
 
 
 @dataclass(frozen=True)
@@ -807,6 +822,7 @@ def _compute_grounded_alignment(
     roi_xyxy_by_camera: Mapping[str, tuple[int, int, int, int]] | None,
     square_translation_only: bool, search_index: int,
     max_nominal_tip_height_error_m: float,
+    nominal_key_xy_shift_socket_m: Sequence[float] = (0., 0.),
 ) -> tuple[str, dict, tuple]:
     """Shared raw-pixel geometry for live-withdrawal and saved-snapshot use."""
     geometry_path = AssetPaths(root, mode).task_geometry
@@ -868,7 +884,8 @@ def _compute_grounded_alignment(
             postlift_file=postlift_file, socket=socket, tip_z_m=tip_z,
             socket_rim_z_m=float(geometry["socket_entry_plane_z_m"]),
             frames=calibrated, backend=backend,
-            roi_xyxy_by_camera=roi_xyxy_by_camera)
+            roi_xyxy_by_camera=roi_xyxy_by_camera,
+            nominal_key_xy_shift_socket_m=nominal_key_xy_shift_socket_m)
         if roi_xyxy_by_camera is None:
             grounded, observations = observe_grounded_cylinder_axis(
                 backend, calibrated, tolerate_backend_failure=True)
@@ -1062,6 +1079,7 @@ def _compute_sam_half_ellipse_alignment(
     intrinsics_full: Mapping, extrinsics_full: Mapping,
     alignment_limits: AlignmentLimits, search_index: int,
     max_nominal_tip_height_error_m: float,
+    nominal_key_xy_shift_socket_m: Sequence[float] = (0., 0.),
 ) -> tuple[str, dict, dict[str, bytes]]:
     """Qwen box then stock SAM3 on the same saved, undistorted frame ROI."""
     geometry_bytes = AssetPaths(root, mode).task_geometry.read_bytes()
@@ -1069,9 +1087,8 @@ def _compute_sam_half_ellipse_alignment(
     socket = validated_frozen_socket_pose(
         mode=mode, shared_root=root, calibration=calibration)
     c2r = validate_se3(calibration.record["c2r"], name="session C2R")
-    postlift = json.loads(postlift_file.read_text(encoding="utf-8"))
-    key = validate_se3(postlift["targets"]["T_robot_key_preinsert"],
-                       name="commanded preinsert key target")
+    key = _nominal_key_for_xy_capture(
+        postlift_file, socket, nominal_key_xy_shift_socket_m)
     tip_z = float(geometry["key_frame"]["tip_z_m"])
     nominal_tip = np.linalg.inv(socket) @ key @ np.array([0., 0., tip_z, 1.])
     if not callable(getattr(sam_segmentor, "segment", None)):

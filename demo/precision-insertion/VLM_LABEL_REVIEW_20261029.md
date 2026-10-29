@@ -1,5 +1,36 @@
 # Released-key VLM review (2026-10-29)
 
+## Current source and saved-data check
+
+The capture4 four-view same-trial estimator now shifts its projected key ROI
+by the **measured cumulative XY wrist motion in the frozen socket frame**.
+Both Qwen native-pixel key-axis crops and Qwen-box/SAM3 crops use this
+updated projection; each observation records the applied shift. Archived
+attempt `9542c1bd` proves the old inconsistency: after three measured moves
+totaling about (-8.4, +27.1) mm, its saved `nominal_tip_full_px` in camera
+`25322639` was still `[761.56, 752.92]` in all four observations. The new
+projection follows those moves while leaving the Qwen/SAM image measurement
+free to disagree with the nominal held-key hypothesis. A rotated-socket
+geometry regression, a camera-ROI regression, and the full nonmoving suite
+passed: **1390 passed, 5 skipped**. The file-only 5 mm launch check reports
+four cameras and 114 endpoint-eligible candidates.
+For the archived fourth snapshot, the updated Qwen crop returned a parsable
+key box in all four cameras; each box enclosed the previously saved SAM
+key-face centre. The old 512 px crops happened to contain those same centres,
+so this replay verifies that the updated ROI still sees the key, while the
+stale prediction was a future repeated-shift risk rather than the cause of
+that attempt's axial collision. The exact image hashes, old/new crop boxes,
+Qwen answers and prior SAM points are in the development review file
+`xy_shifted_roi_qwen_audit_20261029.json`.
+
+The local Qwen GPU replay of the current production final-socket prompt and
+crop again matched the four reviewed released-key outcomes: one
+`inside_socket`, three `outside_socket`, with no parse failures. This is a
+four-case saved-image check. The preinsert transfer pair still has no real
+captured slip-negative evaluation, and the `9542c1bd` corrected 20 mm path
+still has a measured-hand/socket collision. No robot or hand command was sent
+for this review.
+
 ## Same-trial arrival when the visual pair is occluded
 
 The capture4 closed-loop route now lets an `unknown` pre-insertion VLM vote

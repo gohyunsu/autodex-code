@@ -236,6 +236,7 @@ class LiveTaskHandlers:
                     alignment_limits=self.alignment_limits, index=index,
                     nominal_tip_height_error_m=(
                         self.same_trial_tip_height_error_m),
+                    nominal_key_xy_shift_socket_m=total,
                     xy_estimator=self.xy_estimator,
                     sam_segmentor=self.sam_segmentor,
                     capture=capture)

@@ -1,5 +1,25 @@
 # ZeroDex capture4 profile (kds-Z790)
 
+The current four-camera closed-loop route follows the measured cumulative
+socket-frame XY motion when it frames the next Qwen key box or native-pixel
+key-axis ROI. The original post-lift target alone is no longer reused after
+each lateral move. In archived attempt `9542c1bd`, three executed shifts
+totaled approximately (-8.4, +27.1) mm, while the old projected key-tip
+pixel stayed identical in all four observations. The new per-observation
+`nominal_key_xy_shift_socket_m` records the prediction used for the crop;
+the detected image point and triangulated residual remain independent
+measurements. This is a crop-location correction, not a claim that the key
+stayed rigid in the hand or that the 20 mm stroke is collision-free.
+
+The latest source and saved-image audit is in
+[VLM_LABEL_REVIEW_20261029.md](VLM_LABEL_REVIEW_20261029.md). Local Qwen
+reproduced four reviewed released-key labels, but the after-lift/preinsert
+coarse class has no demonstrated ability to distinguish a real transfer
+slip. The previous corrected 5 mm stroke for grasp `table/0/20096` remains
+unavailable because the measured hand collides with the socket at waypoint
+9; the preferred `table/0/208` has passed saved-scene nominal planning and
+opening only. Neither result proves a new physical insertion.
+
 For the independent NAS project bundle and post-run recording upload, see
 [ZERODEX_NAS_PROJECT.md](ZERODEX_NAS_PROJECT.md).
 
