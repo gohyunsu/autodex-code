@@ -421,6 +421,39 @@ configured tolerance must not be reported as physical insertion success.
 
 ## Next discriminating experiment
 
+### Corrected descent with the physically successful grasp
+
+An additional read-only replay used the actual measured pre-insertion FR3
+joints from **both** human-confirmed inserted `table/0/20195` episodes. For
+each saved wrist state it hypothesized that the held key began with the
+opposite socket-frame XY error, then planned a rigidly held wrist shift of
+0, ±5, or ±10 mm on one socket axis. All **18/18** cases passed cuRobo's
+lateral plan, the sampled full-key/whole-hand world collision check, the
+full-hand/key 20 mm endpoint screen, and the existing socket-axis Jacobian
+descent plus its sampled held-path audit. The smallest endpoint hand/socket
+clearance reported across these hypothetical cases was **4.88 mm**. Once
+the GPU planner was warm, each complete lateral-plus-descent replay took
+about 3.2–3.8 s in this offline process. The scope is deliberately narrow:
+the hypothesized starting key-in-hand XY error was *not measured in the
+photographs*, no trajectory was executed, and no force/contact outcome was
+observed. These results isolate the visual correspondence problem from a
+general inability to plan a corrected `20195` descent. Reproducer and
+per-offset JSON are under
+`~/precision_insertion_project/development/zerodex_capture4/reviews/corrected_path_20195_20261029/`.
+The three files have SHA256-matched copies at
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/corrected_path_20195_20261029/`.
+
+The saved-session startup warmup was also compared in separate offline GPU
+processes using the same frozen 5 mm socket scene. Loading the measured world
+directly took **13.22 s**; loading a provisional world followed by the
+measured world took **13.19 s** (13.18 s plus 0.005 s). The provisional world
+already performs the expensive cuRobo initialization, so replacing that
+sequence does not establish a latency benefit. The proposed runtime edit was
+removed. Exact probe records are under
+`~/precision_insertion_project/development/zerodex_capture4/reviews/warmup_saved_socket_20261029/`.
+Its three files have SHA256-matched copies at the corresponding
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/warmup_saved_socket_20261029/` path.
+
 The new read-only observation-pose replay checked a second way to obtain
 better photographs without committing to one key-end algorithm. Starting
 from the measured pre-insertion FR3/Inspire joints in the four archived
