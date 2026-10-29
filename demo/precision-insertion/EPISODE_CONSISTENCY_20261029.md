@@ -690,3 +690,42 @@ the archived images do not show whether any of these new viewpoints actually
 improves key identity or end-centre accuracy. A selected direction still
 needs its own held-path planning; the offline 20/20 result is evidence for
 the four tested directions in five saved states, not every new placement.
+
+### Correcting from the temporary view without an extra return move
+
+We replayed a **hypothetical** 8 mm key-in-hand XY error in four cardinal
+directions from the saved pre-insertion joints of the two human-confirmed
+5 mm `20195` insertions and the 10 mm `20267` insertion. The synthetic error
+tests motion planning; it was not inferred from the archived pixels. The
+sequence raised 40 mm, moved to the temporary (+30, −30) mm view, returned
+laterally, applied the exact XY correction, returned to the original height,
+screened the aligned 20 mm endpoint, and planned the socket-axis descent.
+**11/12** split correction/height-return plans passed the full sampled
+hand/key/socket audit and axial preflight. In the remaining case, cuRobo could
+not find the single 40 mm downward joint-space path *after* an 8 mm lateral
+correction. This does not mean the endpoint or insertion geometry failed.
+
+For that case, three other motion orders planned and passed the same sampled
+held-geometry audit: descend then correct, correct and descend in one
+trajectory, or correct then descend in two 20 mm segments. Replaying the
+combined XY-correction/height-return route over **all 12** synthetic cases
+gave **12/12** sampled-clear paths, aligned 20 mm endpoint screens and
+socket-axis descent plans. The maximum simulated final XY error from the
+nominal target was 0.016 mm. The reproducible probes and per-case JSON are
+`probe_lateral_corrected_descent_20261029.*`,
+`probe_failed_return_route_20261029.*`, and
+`probe_lateral_diagonal_corrected_descent_20261029.*` under the local
+development reviews folder and its NAS `observation_geometry_20261029` mirror.
+
+The live same-trial loop now uses this combined motion when the current
+metric or propagated XY correction fits in one existing 10 mm step and the
+key is still raised for observation. The existing cuRobo plan and sampled
+held-key collision audit run before that movement. If the combined plan is
+unavailable, the loop tries its former horizontal correction, leaving the
+subsequent height return intact. A completed combined move is followed by a
+fresh pre-insertion capture and the ordinary measured/predicted residual
+update; it is not treated as a successful insertion. This change removes one
+robot motion and one independent planner call when the combined route works.
+There is still **no real lateral-view frame or live corrected insertion** in
+the archive, so the 12/12 result verifies planning reachability under the
+synthetic error model, not visual error accuracy or physical success.

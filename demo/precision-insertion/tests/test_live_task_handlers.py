@@ -559,9 +559,10 @@ def test_lateral_metric_correction_uses_returned_hold_without_extra_inference(
     monkeypatch.setattr(live_task_handlers, "write_raw_camera_capture",
                         lambda *_args, **_kwargs: None)
     bound._refine_current_hold(runner)
-    assert len(moves) == 5
+    assert len(moves) == 4
     np.testing.assert_allclose(moves[3][0], [-.008, 0.], atol=1e-12)
-    assert moves[3][2] == "post_lateral_correction"
+    assert moves[3][1] == -.04
+    assert moves[3][2] == "post_lateral_correction_xy_and_axis_return"
     np.testing.assert_allclose(handoff["total_xy_m"], [-.008, 0.], atol=1e-12)
     np.testing.assert_allclose(handoff["residual_xy_m"], [0., 0.], atol=1e-12)
 
@@ -598,10 +599,9 @@ def test_raised_xy_correction_reobserves_then_returns_for_axial(
         path = (runner._attempt_dir / "shift" /
                 f'{kwargs["index"]:03d}.json')
         path.parent.mkdir(parents=True, exist_ok=True)
-        measured_xy = ([.0035, 0.] if kwargs.get("axis_increment_socket_m", 0.) == 0.
-                       else [0., 0.])
-        measured_axis = (.002 if kwargs.get("axis_increment_socket_m", 0.) == 0.
-                         else kwargs["axis_increment_socket_m"])
+        measured_xy = ([.0035, 0.] if np.linalg.norm(
+            kwargs["increment_socket_m"]) > 0. else [0., 0.])
+        measured_axis = kwargs.get("axis_increment_socket_m", 0.)
         path.write_text(json.dumps({
             "measured_increment_socket_m": measured_xy,
             "measured_axis_increment_socket_m": measured_axis,
@@ -619,14 +619,68 @@ def test_raised_xy_correction_reobserves_then_returns_for_axial(
     monkeypatch.setattr(live_task_handlers, "write_raw_camera_capture",
                         lambda *_args, **_kwargs: None)
     bound._refine_current_hold(runner)
-    assert measured_heights == [0., .04, .042]
+    assert measured_heights == [0., .04, 0.]
     assert [row.get("axis_increment_socket_m", 0.) for row in motions] == [
-        .04, 0., -.042]
+        .04, -.04]
     np.testing.assert_allclose(motions[1]["increment_socket_m"], [.004, 0.])
     np.testing.assert_allclose(handed["total_xy_m"], [.0035, 0.])
     np.testing.assert_allclose(handed["residual_xy_m"], [-.0005, 0.])
-    assert len(handed["observations"]) == len(handed["shifts"]) == 3
+    assert len(handed["observations"]) == 3
+    assert len(handed["shifts"]) == 2
     assert bound._same_trial_handoff == tmp_path / "raised_corrected_handoff.json"
+
+
+def test_combined_correction_plan_can_use_horizontal_route(
+        tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    runner._attempt_dir = tmp_path / "attempts" / runner.active_attempt.attempt_id
+    bound._preinsert_bundle = tmp_path / "first_preinsert"
+    bound.planner = object()
+    bound.path_limits = object()
+    bound.alignment_limits = object()
+    bound.same_trial_tip_height_error_m = .01
+    bound.same_trial_xy_tolerance_m = .001
+    bound.same_trial_observation_raise_m = .04
+    corrections = iter((None, [.004, 0.], None))
+    moves = []
+    handed = {}
+
+    def measure(**_kwargs):
+        correction = next(corrections)
+        return {"alignment": {
+            "status": ("diagnostic_metric_xy_correction" if correction
+                       is not None else "abstain"),
+            "inlier_cameras": (["front", "side"] if correction else []),
+            "xy_correction_socket_m": correction,
+        }}
+
+    def shift(**kwargs):
+        axis = kwargs.get("axis_increment_socket_m", 0.)
+        moves.append((kwargs.get("action_tag", ""), axis))
+        if kwargs.get("action_tag") == "xy_and_axis_return":
+            raise live_task_handlers.HeldXYPlanUnavailable(
+                tmp_path / "combined_plan_failure.json", "unreachable")
+        path = runner._attempt_dir / "shifts" / (
+            f'{kwargs["index"]:03d}_{kwargs.get("action_tag", "")}.json')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "measured_increment_socket_m": list(kwargs["increment_socket_m"]),
+            "measured_axis_increment_socket_m": axis,
+        }), encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(live_task_handlers, "measure_preinsert_xy", measure)
+    monkeypatch.setattr(live_task_handlers, "plan_and_execute_shift", shift)
+    monkeypatch.setattr(live_task_handlers, "plan_corrected_axial_handoff",
+                        lambda **kwargs: (handed.update(kwargs) or
+                                          tmp_path / "handoff.json"))
+    monkeypatch.setattr(live_task_handlers, "write_raw_camera_capture",
+                        lambda *_args, **_kwargs: None)
+    bound._refine_current_hold(runner)
+    assert moves == [("", .04), ("xy_and_axis_return", -.04),
+                     ("xy_only", 0.), ("", -.04)]
+    np.testing.assert_allclose(handed["total_xy_m"], [.004, 0.])
+    np.testing.assert_allclose(handed["residual_xy_m"], [0., 0.])
 
 
 def test_held_xy_plan_failure_records_recoverable_stop(tmp_path, monkeypatch):

@@ -505,28 +505,48 @@ class LiveTaskHandlers:
                     "xy_correction_socket_m"]])
             with timed("trial.same_trial_xy_motion", phase="trial",
                        kind="motion", attempt_id=attempt.attempt_id):
-                try:
-                    shift = plan_and_execute_shift(
-                        runner=runner, planner=self.planner,
-                        adapter=self.transfer_adapter,
-                        read_state=self.read_state,
-                        motion_interlock=self.motion_interlock,
-                        limits=self.transfer_limits,
-                        path_limits=self.path_limits,
-                        increment_socket_m=step,
-                        residual_socket_m=current_residual,
-                        residual_source=(choice.get("source") or
-                                         "current_metric_multiview"),
-                        current_axis_raise_socket_m=axis_raise,
-                        index=index,
-                        action_tag=("post_lateral_correction"
-                                    if returned_lateral_this_iteration else ""))
-                except HeldXYPlanUnavailable as exc:
+                action = ("post_lateral_correction"
+                          if returned_lateral_this_iteration else "")
+                # If one XY step reaches the observed target, return from the
+                # temporary observation height in the same planned motion.
+                # This shortens the episode and avoids the independently
+                # planned full-height return that failed in saved-state replay.
+                combined_return = (axis_raise > 0. and
+                                   np.linalg.norm(step) >=
+                                   choice["xy_error_m"] - 1e-9)
+                routes = (
+                    [(-axis_raise, f"{action}_xy_and_axis_return".strip("_")),
+                     (0., f"{action}_xy_only".strip("_"))]
+                    if combined_return else [(0., action)])
+                failure = None
+                shift = None
+                for axis_step, route_tag in routes:
+                    try:
+                        shift = plan_and_execute_shift(
+                            runner=runner, planner=self.planner,
+                            adapter=self.transfer_adapter,
+                            read_state=self.read_state,
+                            motion_interlock=self.motion_interlock,
+                            limits=self.transfer_limits,
+                            path_limits=self.path_limits,
+                            increment_socket_m=step,
+                            residual_socket_m=current_residual,
+                            residual_source=(choice.get("source") or
+                                             "current_metric_multiview"),
+                            axis_increment_socket_m=axis_step,
+                            current_axis_raise_socket_m=axis_raise,
+                            index=index, action_tag=route_tag)
+                    except HeldXYPlanUnavailable as exc:
+                        failure = exc
+                    else:
+                        break
+                if shift is None:
                     runner.record_failure(
                         "preinsert_path_unavailable",
                         timestamp_s=self.decision_time(),
                         evidence_refs={
-                            "corrected_xy_plan_failure": str(exc.report_path),
+                            "corrected_xy_plan_failure": str(
+                                failure.report_path),
                             "preinsert_snapshot": str(
                                 self._preinsert_bundle / "manifest.json"),
                         })

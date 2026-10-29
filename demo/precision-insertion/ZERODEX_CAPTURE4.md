@@ -213,6 +213,14 @@ point. The selected offset and measured return are stored under
 raised-view observation. A metric result is propagated through the measured
 return without an immediate redundant Qwen/SAM3 pass. See
 `EPISODE_CONSISTENCY_20261029.md` for evidence.
+When a raised-view XY correction fits in one 10 mm step, the live loop plans
+the XY correction and return to the original height in one held-key motion.
+It uses the existing cuRobo and sampled collision audit; if that combined
+plan is unavailable, it tries the former horizontal correction and later
+height return. The correction still ends with a new four-view snapshot and
+20 mm axial replan. Saved-state replay with synthetic ±8 mm errors passed
+12/12 combined motion/axial planning cases across three 5/10 mm episodes;
+this is not a physical correction result.
 An optional cylinder observation rotation is available when the initial and
 raised captures both lack a multiview key-end point. Set
 `PRECISION_SAME_TRIAL_OBSERVATION_YAW_DEG=60` to try a 60° turn about the
