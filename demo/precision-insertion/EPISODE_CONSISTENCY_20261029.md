@@ -218,6 +218,68 @@ alone is not evidence of a held key. No pixel-difference gate was added.
 The saved-image paths, SHA256 hashes, and per-camera statistics are in
 `lift_mask_difference_20261029.{py,json}` beside the Qwen probes.
 
+## Paired reference and geometric-mask probes: no reliable metric tip yet
+
+We replayed four archived pre-insertion attempts (`5e08757b`, `4e26ec99`,
+`0c787032`, `9542c1bd`) with the initial tabletop key-mask crop as image 1
+and the original, undistorted pre-insertion crop as image 2. Qwen3-VL-2B was
+asked to box the *same movable key* in image 2. On the two physically
+successful `20195` attempts, the new boxes avoided the socket boxes returned
+by the production single-image prompt on `25305462` and `25322642`, but
+mostly boxed the black fingers or wrist instead. Applying SAM3 with either
+the box alone or text plus box preserved these wrong identities. This is a
+failure of image-object identity, not a syntax or batch-execution failure;
+the paired prompt was **not** integrated into the runtime.
+
+A second SAM3 replay skipped Qwen and prompted a 64 x 60 px box around the
+distal 72% point of the *planned* key axis. On both successful attempts,
+`25322642` segmented a small exposed white shaft below the hand, but
+`25305462` and `26053248` segmented the fixed socket, while `25322639`
+segmented robot hardware. SAM3 scores for these false masks were still
+0.85-0.97. The planned position is useful for search but is not an identity
+label; prompting it directly does not produce a robust multi-camera key mask.
+
+The existing per-camera Lab-colour tracker was also replayed, using that
+attempt's *own initial key mask* for colour. For the two `20195` successes,
+it found a plausible key-side component in `26053248`, but found the metallic
+wrist in `25322639` and returned no component in `25322642`. Its existing
+admission rule accepted zero views in each success attempt. Simply removing
+that rule would admit the wrong wrist point; it would not create a valid
+two-view measurement. In a diagnostic pairing of the visually plausible
+`25322642` SAM point and `26053248` SAM point, the two-view DLT estimates
+were 18-21 mm higher than the nominal 85 mm key-tip height and reprojected
+20-29 px away from the input points. Replacing the `26053248` SAM point by
+the colour-track point still left 7-17 mm height error and 18-31 px
+reprojection error. These are **inconsistent image features**, not a
+physical key-tip offset. Do not turn them into a robot XY command.
+
+The socket-only reference frame was compared with the pre-insertion frame
+using raw pixel difference. Arm motion, lighting, and the patterned board
+dominated the difference, so a static-background subtraction is not a key
+segmentation result either. This probe did not change the runtime.
+
+The reproducible saved-frame scripts, JSON replies, masks, and contact
+sheets are grouped under
+`~/precision_insertion_project/development/zerodex_capture4/reviews/method_probe_20261029/`
+and mirrored below
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/method_probe_20261029/`.
+The source episodes remain the original read-only evidence. The robot and
+hand were off during this replay.
+
+**Implication for a consistent pipeline.** Keep the physically successful
+nominal `20195` branch for the current 5 mm standing-key task; lack of a
+metric visible end must not be silently converted into a large correction.
+For arbitrary grasps and placements, add an *observation action* before
+insertion: use the cylinder's axial-yaw equivalence to present the held end
+to a camera pair with useful parallax, capture again, and only then derive a
+metric correction. The saved 0/150/180-degree plans establish that such a
+change of held wrist yaw is kinematically possible for one recorded state,
+but they do not establish that the real end becomes visible. That requires
+new camera frames with the robot on. A narrow contrasting mark on the key
+shaft above the insertion region is another testable appearance aid if a
+different hold alone does not expose a common point; it is not part of the
+current white-key experiment.
+
 ## Offline yaw-gauge experiment on the successful grasp
 
 The cylinder has no meaningful axial yaw. This allows a held `table/0/20195`
