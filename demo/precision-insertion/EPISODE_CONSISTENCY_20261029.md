@@ -293,6 +293,20 @@ The script and strict JSON replay are `probe_two_view_shaft_axis_20261029.*`
 in the same development evidence directory. No robot command or runtime
 estimator change was made.
 
+A follow-up replay applied the projected-region SAM3 prompt to all four
+attempts, then ranked the available masks by overlap with the measured socket
+projection, colour difference from that camera's initial key mask, and size
+difference from that mask. It recovered the visually plausible key masks on
+`25322642` and `26053248` in the two `20195` successes, and the existing
+runtime masks remained the best choices on the displaced `20096` views.
+However, on `25305462` it ranked a dark hand region above every socket mask;
+on `25322639` of `4e26ec99` it ranked a large white robot region above the
+dark hardware masks. A numerical rank alone therefore cannot certify key
+identity. The complete per-camera ranking, input masks, and failed-attempt
+contact sheet are in `mask_rank_probe_20261029/` beside this review's other
+development evidence. This probe did not alter runtime selection or add a
+new failure condition.
+
 The reproducible saved-frame scripts, JSON replies, masks, and contact
 sheets are grouped under
 `~/precision_insertion_project/development/zerodex_capture4/reviews/method_probe_20261029/`
