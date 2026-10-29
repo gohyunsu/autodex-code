@@ -189,15 +189,20 @@ def read_live_franka_inspire_state(
     *, arm, hand, max_arm_hand_skew_s: float,
     max_sample_age_s: float, max_hand_command_error_raw: float,
     max_arm_velocity_rad_s: float,
+    max_feedback_wait_s: float = 5.0,
     now_s: float | None = None,
 ) -> LiveRobotState:
     """Pair fresh FR3 and Inspire samples after a blocking robot command.
 
     The daemon pauses state publishing during some blocking moves. Reacquire
-    only a stale or unpaired sample, within the existing sample-age budget.
+    only a stale or unpaired sample. The retry window is separate from the
+    per-sample age limit: a slow Modbus reply must not make a fresh later
+    reading stale merely because an earlier read failed.
     An explicit ``now_s`` remains a single deterministic read for tests.
     """
-    deadline = time.monotonic() + max_sample_age_s
+    if not math.isfinite(max_feedback_wait_s) or max_feedback_wait_s <= 0:
+        raise ValueError("feedback retry wait must be positive")
+    deadline = time.monotonic() + max_feedback_wait_s
     while True:
         try:
             return _read_live_franka_inspire_state_once(

@@ -170,7 +170,6 @@ def configure(core, live, options) -> dict:
                 "pickup_limits": PickupExecutionLimits(
                     max_start_age_s=1.,
                     max_start_joint_error_rad=.02,
-                    max_arrival_arm_error_rad=.02,
                     **stationary),
                 "lift_bounds": None,
                 "path_limits": path,

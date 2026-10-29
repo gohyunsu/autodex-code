@@ -151,6 +151,7 @@ class SessionRunner:
         catalog: dict, shared_root: Path, output_dir: Path,
         max_xy_retries: int | None, xy_update_weight: float = 1.0,
         initial_preferred_candidate: tuple[str, str, str] | None = None,
+        excluded_candidates: tuple[tuple[str, str, str], ...] = (),
         upright_cylinder_only: bool = True,
     ) -> None:
         if max_xy_retries is not None and (
@@ -180,6 +181,10 @@ class SessionRunner:
                             and row.get("eligible") is True
                             for row in catalog["candidates"])):
                 raise ValueError("initial preferred candidate must be an eligible v8 catalog key")
+        if any(len(key) != 3 or any(not isinstance(part, str) or not part
+                                   for part in key)
+               for key in excluded_candidates):
+            raise ValueError("excluded candidates must be scene/pose/grasp keys")
         target = Path(output_dir).expanduser().resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
         target.mkdir(exist_ok=False)
@@ -217,6 +222,7 @@ class SessionRunner:
         self._key_evidence_manifest_sha256: str | None = None
         self._attempt: AttemptRecord | None = None
         self._attempted: set[tuple[str, str, str]] = set()
+        self._excluded_candidates = set(excluded_candidates)
         self._initial_preferred_candidate = initial_preferred_candidate
         self._pending_next_trial_xy: dict | None = None
         self._future_xy_corrections_used = 0
@@ -290,6 +296,7 @@ class SessionRunner:
             "upright_cylinder_only": self.upright_cylinder_only,
             "initial_preferred_candidate": (None if initial_preferred_candidate is None
                                             else list(initial_preferred_candidate)),
+            "excluded_candidates": [list(key) for key in sorted(excluded_candidates)],
             "scope": "evidence_and_preflight_only_not_robot_motion_authorization",
             "robot_ready": False,
         })
@@ -546,7 +553,7 @@ class SessionRunner:
                 _digest(self.catalog) != self.catalog_sha256):
             raise ValueError("frozen session or endpoint catalogue changed")
         new_capture = key_observation.capture_id != self._capture_id
-        exclusions = set(self._attempted)
+        exclusions = set(self._attempted) | self._excluded_candidates
         pending_xy = self._pending_next_trial_xy
         preferred = (self._initial_preferred_candidate
                      if self._capture_id is None else None)
@@ -554,7 +561,8 @@ class SessionRunner:
             preferred = tuple(pending_xy["candidate_id"].split("/"))
             # One new physical pickup of the same grasp is permitted even
             # though all other attempted v8 grasps remain excluded.
-            exclusions.discard(preferred)
+            if preferred not in self._excluded_candidates:
+                exclusions.discard(preferred)
         if not new_capture:
             exclusions.update(self._same_capture_planning_rejects)
         if {"attempted", "covered_scenes", "mode", "calibration", "catalog",

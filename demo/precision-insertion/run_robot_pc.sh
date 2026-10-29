@@ -151,6 +151,12 @@ fi
 if [[ -n ${PRECISION_INITIAL_CANDIDATE:-} ]]; then
   EXTRA_ARGS+=(--initial-candidate "$PRECISION_INITIAL_CANDIDATE")
 fi
+if [[ -n ${PRECISION_EXCLUDED_CANDIDATES:-} ]]; then
+  IFS=, read -ra excluded_candidates <<< "$PRECISION_EXCLUDED_CANDIDATES"
+  for excluded_candidate in "${excluded_candidates[@]}"; do
+    EXTRA_ARGS+=(--exclude-candidate "$excluded_candidate")
+  done
+fi
 exec "$PY" demo/precision-insertion/run_live.py \
   --launch-config "$LAUNCH" --endpoint-catalog "$CATALOG" \
   --integration "${PRECISION_INTEGRATION_FACTORY:-precision_insertion.franka_integration:factory}" \

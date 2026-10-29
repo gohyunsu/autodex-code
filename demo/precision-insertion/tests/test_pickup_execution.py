@@ -110,7 +110,7 @@ def _case(tmp_path, monkeypatch):
                         })
     limits = PickupExecutionLimits(
         max_start_age_s=.5, max_start_joint_error_rad=.01,
-        max_arrival_arm_error_rad=.01, max_arm_hand_skew_s=.01,
+        max_arm_hand_skew_s=.01,
         max_hand_command_error_raw=10., max_arm_velocity_rad_s=.01)
     executor = _Executor()
     kwargs = dict(runner=runner, executor=executor, planner=object(),
@@ -201,17 +201,16 @@ def test_failed_pickup_calls_available_stop_adapter(tmp_path, monkeypatch):
     assert kwargs["executor"].calls[-1][0] == "stop"
 
 
-def test_post_command_feedback_mismatch_is_not_grasp_success(
+def test_post_squeeze_arm_residual_is_recorded_for_measured_lift(
         tmp_path, monkeypatch):
     kwargs, _archive, attempt_dir = _case(tmp_path, monkeypatch)
     kwargs["read_post_state"] = lambda: _state(
         102., np.full(7, .2), 600.)
-    with pytest.raises(RuntimeError, match="post-squeeze"):
-        execute_bound_pickup(**kwargs)
-    assert kwargs["executor"].calls[-1][0] == "stop"
+    report = execute_bound_pickup(**kwargs)
     log = json.loads((attempt_dir / "pickup_execution.json").read_text())
-    assert log["status"] == "execution_or_feedback_failed"
+    assert log["status"] == "squeeze_command_and_feedback_complete"
     assert log["post_state"]["full_q"][:7] == [.2] * 7
+    assert report["arrival_arm_error_rad"] == pytest.approx(.17)
     assert kwargs["runner"].active_attempt.events == []
 
 

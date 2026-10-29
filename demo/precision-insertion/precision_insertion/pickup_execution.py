@@ -28,7 +28,6 @@ from .trial_preflight import TrialPreflight
 class PickupExecutionLimits:
     max_start_age_s: float
     max_start_joint_error_rad: float
-    max_arrival_arm_error_rad: float
     max_arm_hand_skew_s: float
     max_hand_command_error_raw: float
     max_arm_velocity_rad_s: float
@@ -213,14 +212,18 @@ def execute_bound_pickup(
             max_hand_command_error_raw=limits.max_hand_command_error_raw,
             max_arm_velocity_rad_s=limits.max_arm_velocity_rad_s)
         if (post.sample_timestamp_s <= pre_state.sample_timestamp_s or
-                float(np.max(np.abs(post.full_q[:7] - planned[-1, :7]))) >
-                limits.max_arrival_arm_error_rad or
                 not np.allclose(post.hand_raw_commanded, raw,
                                 atol=limits.max_hand_command_error_raw,
                                 rtol=0)):
             raise RuntimeError("post-squeeze arm/hand feedback differs from command")
+        # The stock follower can finish with a nonzero arm residual. The next
+        # stage plans the lift from these measured joints, so the nominal
+        # pickup endpoint is diagnostic rather than a second arrival gate.
+        arrival_arm_error = float(np.max(np.abs(
+            post.full_q[:7] - planned[-1, :7])))
         record = {**base, "status": "squeeze_command_and_feedback_complete",
                   "squeeze_action_raw": raw.tolist(),
+                  "arrival_arm_error_rad": arrival_arm_error,
                   "post_state": post.to_record(),
                   "completed_at_s": post.sample_timestamp_s,
                   "robot_ready": False}

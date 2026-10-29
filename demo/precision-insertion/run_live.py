@@ -109,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="skip the initial key-placement prompt")
     parser.add_argument("--initial-candidate",
                         help="eligible v8 key for the first pickup plan, e.g. table/0/20237")
+    parser.add_argument("--exclude-candidate", action="append", default=[],
+                        help="skip one previously observed failed grasp in this session")
     args = parser.parse_args(argv)
     initial_candidate = None
     if args.initial_candidate is not None:
@@ -116,6 +118,12 @@ def main(argv: list[str] | None = None) -> int:
         if len(parts) != 3 or any(not part for part in parts):
             parser.error("--initial-candidate needs scene/pose/grasp")
         initial_candidate = tuple(parts)
+    excluded_candidates = []
+    for value in args.exclude_candidate:
+        parts = value.split("/")
+        if len(parts) != 3 or any(not part for part in parts):
+            parser.error("--exclude-candidate needs scene/pose/grasp")
+        excluded_candidates.append(tuple(parts))
     if not _EXP_NAME.fullmatch(args.exp_name):
         parser.error("exp name must be a single path-safe directory name")
     ports = (args.init_port_mask, args.init_port_pose, args.init_port_cmd)
@@ -163,7 +171,8 @@ def main(argv: list[str] | None = None) -> int:
         init_ports=init_ports, stop_after_planning=args.stop_after_planning,
         reuse_session_evidence_dir=args.reuse_session_evidence,
         key_already_placed=args.key_already_placed,
-        initial_preferred_candidate=initial_candidate)
+        initial_preferred_candidate=initial_candidate,
+        excluded_candidates=tuple(excluded_candidates))
     with profile_run(output_dir) as profile:
         with timed("live.session", phase="session"):
             result = run_integrated_live_session(

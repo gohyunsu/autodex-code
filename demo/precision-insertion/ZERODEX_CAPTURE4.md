@@ -11,6 +11,21 @@ the detected image point and triangulated residual remain independent
 measurements. This is a crop-location correction, not a claim that the key
 stayed rigid in the hand or that the 20 mm stroke is collision-free.
 
+To skip a grasp with an observed physical or measured-hand endpoint failure
+in a new session, set `PRECISION_EXCLUDED_CANDIDATES=table/0/20096` (comma
+separate multiple keys). The session records these exclusions separately from
+grasps attempted in that session. The next eligible candidate still runs the
+normal fresh-scene v8 pickup and insertion preflight. On 2026-10-29, the
+measured 5 mm `table/0/20096` hand intersected the socket at the corrected
+20 mm endpoint; with it excluded, `table/0/20195` passed nominal planning.
+
+The stock pickup follower can finish with a small joint residual. After its
+squeeze command completes, the pickup record now saves the arm residual as a
+diagnostic and the lift planner starts from fresh measured arm and Inspire
+joints. This removed a duplicate 0.02 rad arrival gate that stopped a held
+`table/0/20195` pickup before lift on 2026-10-29 (measured joint-7 residual
+0.0336 rad). A grasp-success label still requires the later lift image.
+
 The latest source and saved-image audit is in
 [VLM_LABEL_REVIEW_20261029.md](VLM_LABEL_REVIEW_20261029.md). Local Qwen
 reproduced four reviewed released-key labels, but the after-lift/preinsert
