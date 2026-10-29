@@ -574,11 +574,15 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     def close() -> None:
         try:
             if warmup_pool is not None:
-                warmup_pool.shutdown(wait=True)
+                with timed("cleanup.planner_warmup_join", phase="cleanup",
+                           kind="wait"):
+                    warmup_pool.shutdown(wait=True)
         finally:
             try:
                 if vlm_load_pool is not None:
-                    vlm_load_pool.shutdown(wait=True)
+                    with timed("cleanup.vlm_load_join", phase="cleanup",
+                               kind="wait"):
+                        vlm_load_pool.shutdown(wait=True)
             finally:
                 close_backend_and_core()
 
@@ -587,21 +591,26 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             # A three-view XY quorum can leave remote Qwen requests draining.
             # Their view threads may still be entering the shared SAM worker.
             if callable(getattr(backend, "close", None)):
-                backend.close()
+                with timed("cleanup.vlm_backend_close", phase="cleanup"):
+                    backend.close()
         finally:
             try:
                 if sam_segmentor is not None:
-                    sam_segmentor.close()
+                    with timed("cleanup.sam_roi_close", phase="cleanup"):
+                        sam_segmentor.close()
             finally:
                 try:
                     if sam_load_pool is not None:
-                        sam_load_pool.shutdown(wait=True)
+                        with timed("cleanup.sam_load_join", phase="cleanup",
+                                   kind="wait"):
+                            sam_load_pool.shutdown(wait=True)
                     if (sam_log is not None and sam_log.is_file() and
                             options.run_output_dir.is_dir()):
                         sam_log.replace(
                             options.run_output_dir / "sam_roi_worker.stderr.log")
                 finally:
-                    core.close()
+                    with timed("cleanup.franka_core_close", phase="cleanup"):
+                        core.close()
 
     def begin_pre_socket_warmup():
         nonlocal warmup_pool

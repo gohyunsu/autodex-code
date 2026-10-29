@@ -19,6 +19,7 @@ from .clear_view import ClearViewForPerception
 from .feedback_buffer import ExposureStateBuffer, RobotFeedbackSampler
 from .live_robot_state import LiveRobotState, read_live_franka_inspire_state
 from .mount_geometry import link8_to_hand
+from .timing_profile import timed
 
 
 # Match stock AutoDex FR3's near-object and held-object speed scale.
@@ -109,9 +110,13 @@ class FrankaRuntimeCore:
             self._closed = True
             try:
                 if self.sampler is not None:
-                    self.sampler.close()
+                    with timed("cleanup.feedback_sampler_close",
+                               phase="cleanup", kind="wait"):
+                        self.sampler.close()
             finally:
-                self.executor.shutdown()
+                with timed("cleanup.franka_executor_shutdown",
+                           phase="cleanup", kind="io"):
+                    self.executor.shutdown()
 
 
 def open_franka_core(
