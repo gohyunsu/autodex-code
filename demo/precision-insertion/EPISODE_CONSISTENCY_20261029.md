@@ -25,6 +25,33 @@ corrected 20 mm endpoint. The decreasing residuals show repeatable image
 feedback in those two held-key trajectories; they do not demonstrate a
 successful corrected insertion or eight independent trials.
 
+## Archived attempt accounting
+
+There are 19 local `attempt_*/result.json` files across the 5 and 10 mm
+socket sessions. They include attempts that stopped before physical insertion,
+so 19 is not an insertion-trial denominator. The files report five
+`observed_success`, one `observed_failure`, one
+`planning_stopped_before_insertion`, and 12 `in_progress`. The 12 include
+two `lift_execution_failed`, one `pickup_execution_failed`, and one
+`post_squeeze_preflight_failed`; `in_progress` is the compact result writer's
+default when no final insertion label was recorded, **not** evidence that the
+robot was still moving. Use `failure_code`, state events, and the human review
+alongside `status` when counting outcomes. Five archived visual-success flags
+become two 5 mm inside-socket results for `20195` after human review; the
+10 mm `20267` visual-failure flag was judged inside by the operator. Neither
+the recorded flags nor this small human review estimate a grasp success rate.
+
+The recent `20195` pre-insertion crops expose a concrete perception mismatch.
+The Qwen box/SAM3 masks on `25305462` and `25322642` in `5e08757b` follow
+the white **socket rim**, whereas `26053248` shows the held key but returns
+`sam_mask_unavailable`. In `4e26ec99`, only `25305462` yields a SAM mask and
+its single-view, fixed-height XY hypothesis is about 105 mm; it must not be
+used as a measured correction. The saved masks, per-view prompts, boxes and
+images are in each attempt's `same_trial_xy/observations/000.json` and
+`raw_captures/preinsert/`. This is why successful nominal insertion and
+reliable multiview correction have not yet occurred in the same archived
+episode.
+
 ## Method supported by these episodes
 
 1. Measure the socket once per fixed-board session. Undistort each capture
