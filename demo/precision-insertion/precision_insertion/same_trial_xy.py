@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import hashlib
+from itertools import combinations
 import json
 import math
 from pathlib import Path
@@ -227,9 +228,12 @@ def _held_wrist_goal(start_wrist: np.ndarray, key_origin_robot: np.ndarray,
 def rank_lateral_observation_offsets(*, runner, current_xy_socket_m,
                                      axis_raise_m: float,
                                      component_m: float) -> list[dict]:
-    """Rank temporary held-key viewpoints by calibrated key/socket separation.
+    """Rank viewpoints by key/socket separation and camera-pair parallax.
 
-    This ranks *projected nominal* tip positions, not measured key-tip pixels.
+    The pair score is minimum landmark separation times sine of the angle
+    between viewing rays. It downweights nearly duplicate cameras without
+    adding a pass/fail threshold. These are projected nominal tip positions,
+    not measured key-tip pixels.
     A candidate still needs the normal held-path plan before any motion.
     """
     if not math.isfinite(component_m) or component_m <= 0:
@@ -272,7 +276,8 @@ def rank_lateral_observation_offsets(*, runner, current_xy_socket_m,
 
         rim_pixel = project(rim)
         if rim_pixel is not None:
-            projections.append((camera, project, rim_pixel))
+            camera_center = np.linalg.inv(camera_robot)[:3, 3]
+            projections.append((camera, project, rim_pixel, camera_center))
     d = component_m
     offsets = ((d, -d), (-d, d), (d, d), (-d, -d),
                (d, 0.), (-d, 0.), (0., d), (0., -d))
@@ -281,19 +286,32 @@ def rank_lateral_observation_offsets(*, runner, current_xy_socket_m,
         moved = tip.copy()
         moved[:3] += socket[:3, :2] @ np.asarray(offset)
         separation = {}
-        for camera, project, rim_pixel in projections:
+        directions = {}
+        for camera, project, rim_pixel, camera_center in projections:
             pixel = project(moved)
             if pixel is not None:
                 separation[camera] = float(np.linalg.norm(pixel - rim_pixel))
+                toward_camera = camera_center - moved[:3]
+                directions[camera] = toward_camera / np.linalg.norm(
+                    toward_camera)
         if len(separation) >= 2:
+            pair_scores = [
+                (min(separation[first], separation[second]) *
+                 float(np.linalg.norm(np.cross(
+                     directions[first], directions[second]))),
+                 first, second)
+                for first, second in combinations(sorted(separation), 2)]
+            best_pair = max(pair_scores)
             ranked.append({
                 "offset_socket_m": list(offset),
+                "best_parallax_pair": [best_pair[1], best_pair[2]],
+                "pair_separation_parallax_score_px": best_pair[0],
                 "second_smallest_separation_px": sorted(
                     separation.values())[1],
                 "projected_separation_px_by_camera": separation,
             })
     return sorted(ranked, key=lambda row: row[
-        "second_smallest_separation_px"], reverse=True)
+        "pair_separation_parallax_score_px"], reverse=True)
 
 
 def plan_and_execute_shift(*, runner, planner, adapter, read_state,
@@ -303,7 +321,8 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
                            index: int,
                            axis_increment_socket_m: float = 0.,
                            current_axis_raise_socket_m: float = 0.,
-                           yaw_increment_socket_rad: float = 0.) -> Path:
+                           yaw_increment_socket_rad: float = 0.,
+                           action_tag: str = "") -> Path:
     """Move the rigidly held key in socket XY/Z or yaw around its axis."""
     increment = np.asarray(increment_socket_m, dtype=float)
     if increment.shape != (2,) or not np.all(np.isfinite(increment)):
@@ -334,7 +353,7 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
                   "_axis" if axis_increment_socket_m else "")
         report = _write(
             Path(runner._attempt_dir) / "same_trial_xy" / "plan_failures" /
-            f"{index:03d}{action}.json", {
+            f"{index:03d}{action}{'_' + action_tag if action_tag else ''}.json", {
                 "schema": "precision_insertion_same_trial_xy_plan_failure_v1",
                 "attempt_id": runner.active_attempt.attempt_id,
                 "candidate_id": runner.active_attempt.candidate_id,
@@ -377,7 +396,7 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
     if geometry_failures:
         unavailable("held_xy_path_intersects_frozen_world")
     folder = (Path(runner._attempt_dir) / "same_trial_xy" / "shifts" /
-              f"{index:03d}")
+              f"{index:03d}{'_' + action_tag if action_tag else ''}")
     folder.mkdir(parents=True, exist_ok=False)
     path = folder / "trajectory.npy"
     np.save(path, trajectory, allow_pickle=False)

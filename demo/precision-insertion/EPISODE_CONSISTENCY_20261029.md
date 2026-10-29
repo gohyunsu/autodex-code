@@ -661,7 +661,7 @@ scene. This projection measures separation only; it does not prove that the
 actual key end is visible or that Qwen/SAM3 assigns the correct pixels.
 Its potential advantage is reducing white-key/white-socket identity
 confusion, while retaining the socket's fixed pose for triangulation.
-The projection and the 15 planning replays have byte-verified copies under
+The projection and the 20 planning replays have byte-verified copies under
 `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/observation_geometry_20261029/`.
 
 Read-only cuRobo replay with the saved FR3/Inspire joints checks the sequence
@@ -669,7 +669,7 @@ raise 40 mm → temporary lateral observation → return lateral → return heig
 → screen the 20 mm endpoint → plan the socket-axis descent. The exact
 per-attempt results and reproducer are
 `~/precision_insertion_project/development/zerodex_capture4/reviews/probe_lateral_observation_return_axial_20261029.{py,json}`.
-All **15/15** combinations of three tested offsets and five archived held
+All **20/20** combinations of four tested offsets and five archived held
 states passed that nominal planning sequence: two human-confirmed 5 mm
 insertions with grasp `20195`, two corrected-but-not-inserted 5 mm attempts
 with grasp `20096`, and one human-confirmed 10 mm insertion with grasp
@@ -679,12 +679,14 @@ These are nominal rigid-key planning results, not live observations or
 physical insertion successes. The temporary lateral displacement is an
 **observation action**, not an XY error correction. The optional live route
 now ranks eight socket-frame XY observation directions by calibrated
-key-tip/socket-rim image separation, plans the selected temporary move,
-recaptures, and returns using its **measured** XY displacement. When a metric
-point was obtained, its current residual is updated by that measured return
-before ordinary correction continues. Thus the observation displacement is
+key-tip/socket-rim image separation multiplied by camera-pair ray parallax,
+tries directions in score order until a held path plans, recaptures, and
+returns using its **measured** XY displacement. When a metric point was
+obtained, its current residual is updated by that measured return before
+ordinary correction continues; Qwen/SAM3 is not immediately rerun after
+the return. Thus the observation displacement is
 not mistaken for an insertion error. The live option is disabled by default:
 the archived images do not show whether any of these new viewpoints actually
 improves key identity or end-centre accuracy. A selected direction still
-needs its own held-path planning; the offline 15/15 result is evidence for
-the three tested directions in five saved states, not every new placement.
+needs its own held-path planning; the offline 20/20 result is evidence for
+the four tested directions in five saved states, not every new placement.

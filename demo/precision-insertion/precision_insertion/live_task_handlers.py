@@ -268,13 +268,25 @@ class LiveTaskHandlers:
                          step_fraction).tolist()),
                     "source": "last_metric_plus_completed_held_motion",
                 }
+            lateral_viewpoints = None
+            if (choice["status"] == "not_metric_multiview" and
+                    predicted_residual is None and axis_raise > 0 and
+                    self.same_trial_observation_lateral_m > 0 and
+                    not observation_lateral_attempted):
+                lateral_viewpoints = rank_lateral_observation_offsets(
+                    runner=runner, current_xy_socket_m=total,
+                    axis_raise_m=axis_raise,
+                    component_m=self.same_trial_observation_lateral_m)
             report = folder / "observations" / f"{index:03d}.json"
             report.parent.mkdir(parents=True, exist_ok=True)
             with report.open("x", encoding="utf-8") as stream:
-                json.dump({**observed, "choice": choice}, stream,
+                json.dump({**observed, "choice": choice,
+                           **({"lateral_viewpoint_ranking": lateral_viewpoints}
+                              if lateral_viewpoints is not None else {})}, stream,
                           indent=2, sort_keys=True, allow_nan=False)
                 stream.write("\n")
             observations.append(report)
+            returned_lateral_this_iteration = False
             if observation_lateral_offset is not None:
                 metric = choice["status"] in {"aligned", "shift"}
                 current_residual = (
@@ -318,12 +330,21 @@ class LiveTaskHandlers:
                     (np.asarray(current_residual) + measured_return).tolist()
                     if metric else None)
                 observation_lateral_offset = None
-                current = runner.current_decision()
-                raw, capture = self._capture(
-                    runner=runner, decision=current,
-                    callback=self.capture_preinsert, phase="preinsert")
-                self._preinsert_bundle = raw
-                continue
+                returned_lateral_this_iteration = True
+                if metric:
+                    predicted_error = float(np.linalg.norm(predicted_residual))
+                    step_fraction = min(1., .010 / max(predicted_error, 1e-12))
+                    choice = {
+                        "status": ("aligned" if predicted_error <=
+                                   self.same_trial_xy_tolerance_m else "shift"),
+                        "xy_error_m": predicted_error,
+                        "increment_socket_m": (
+                            [0., 0.] if predicted_error <=
+                            self.same_trial_xy_tolerance_m else
+                            (-np.asarray(predicted_residual) *
+                             step_fraction).tolist()),
+                        "source": "lateral_metric_plus_completed_return",
+                    }
             if (choice["status"] == "not_metric_multiview" and
                     predicted_residual is None and
                     self.same_trial_observation_raise_m > 0 and
@@ -362,17 +383,10 @@ class LiveTaskHandlers:
                         callback=self.capture_preinsert, phase="preinsert")
                     self._preinsert_bundle = raw
                     continue
-            if (choice["status"] == "not_metric_multiview" and
-                    predicted_residual is None and axis_raise > 0 and
-                    self.same_trial_observation_lateral_m > 0 and
-                    not observation_lateral_attempted):
+            if lateral_viewpoints is not None:
                 observation_lateral_attempted = True
-                ranked = rank_lateral_observation_offsets(
-                    runner=runner, current_xy_socket_m=total,
-                    axis_raise_m=axis_raise,
-                    component_m=self.same_trial_observation_lateral_m)
-                if ranked:
-                    offset = np.asarray(ranked[0]["offset_socket_m"], float)
+                for rank_index, viewpoint in enumerate(lateral_viewpoints):
+                    offset = np.asarray(viewpoint["offset_socket_m"], float)
                     try:
                         with timed("trial.same_trial_observation_lateral",
                                    phase="trial", kind="motion",
@@ -388,9 +402,10 @@ class LiveTaskHandlers:
                                 residual_socket_m=total,
                                 residual_source="nominal_observation_view",
                                 current_axis_raise_socket_m=axis_raise,
-                                index=index)
+                                index=index,
+                                action_tag=f"lateral_{rank_index}")
                     except HeldXYPlanUnavailable:
-                        pass
+                        continue
                     else:
                         shifts.append(shifted)
                         motion = json.loads(shifted.read_text(encoding="utf-8"))
@@ -404,7 +419,9 @@ class LiveTaskHandlers:
                             runner=runner, decision=current,
                             callback=self.capture_preinsert, phase="preinsert")
                         self._preinsert_bundle = raw
-                        continue
+                        break
+                if observation_lateral_offset is not None:
+                    continue
             if (choice["status"] == "not_metric_multiview" and
                     self.same_trial_observation_yaw_rad != 0. and
                     not observation_yaw_attempted):
@@ -453,7 +470,9 @@ class LiveTaskHandlers:
                     self._preinsert_bundle = raw
                     continue
             if choice["status"] == "aligned":
-                if choice.get("source") == "last_metric_plus_completed_held_motion":
+                if choice.get("source") in {
+                        "last_metric_plus_completed_held_motion",
+                        "lateral_metric_plus_completed_return"}:
                     final_residual = predicted_residual
                     residual_source = choice["source"]
                 else:
@@ -479,8 +498,9 @@ class LiveTaskHandlers:
                     "same-trial XY did not reach its configured target")
             step = choice["increment_socket_m"]
             current_residual = (
-                predicted_residual if choice.get("source") ==
-                "last_metric_plus_completed_held_motion" else
+                predicted_residual if choice.get("source") in {
+                    "last_metric_plus_completed_held_motion",
+                    "lateral_metric_plus_completed_return"} else
                 [-value for value in observed["alignment"][
                     "xy_correction_socket_m"]])
             with timed("trial.same_trial_xy_motion", phase="trial",
@@ -498,7 +518,9 @@ class LiveTaskHandlers:
                         residual_source=(choice.get("source") or
                                          "current_metric_multiview"),
                         current_axis_raise_socket_m=axis_raise,
-                        index=index)
+                        index=index,
+                        action_tag=("post_lateral_correction"
+                                    if returned_lateral_this_iteration else ""))
                 except HeldXYPlanUnavailable as exc:
                     runner.record_failure(
                         "preinsert_path_unavailable",

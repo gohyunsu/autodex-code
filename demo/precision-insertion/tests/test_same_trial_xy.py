@@ -71,12 +71,14 @@ def test_lateral_observation_ranking_uses_each_calibrated_camera(
                          [0., 0., 1.]],
             "width": 1000, "height": 1000,
         }
+    camera_two = np.eye(4)
+    camera_two[0, 3] = .2
     calibration = SimpleNamespace(record={
         "c2r": np.eye(4).tolist(),
         "camera_calibration": {
             "intrinsics_full": intrinsics,
-            "extrinsics_full": {camera: np.eye(4).tolist()
-                                for camera in intrinsics},
+            "extrinsics_full": {
+                "one": np.eye(4).tolist(), "two": camera_two.tolist()},
         },
     })
     runner = SimpleNamespace(
@@ -91,6 +93,8 @@ def test_lateral_observation_ranking_uses_each_calibrated_camera(
                if item["offset_socket_m"] == [.03, 0.])
     assert row["projected_separation_px_by_camera"]["one"] == pytest.approx(3.)
     assert row["projected_separation_px_by_camera"]["two"] == pytest.approx(6.)
+    assert row["best_parallax_pair"] == ["one", "two"]
+    assert row["pair_separation_parallax_score_px"] > 0
 
 
 def test_live_xy_measurement_reuses_just_saved_pixels(tmp_path, monkeypatch):

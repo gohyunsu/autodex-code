@@ -198,17 +198,21 @@ has yet validated improved key visibility.
 If a raised capture still cannot identify a metric key end, the optional
 `PRECISION_SAME_TRIAL_OBSERVATION_LATERAL_MM=30` mode ranks eight temporary
 socket-frame XY viewpoints by calibrated projected separation of the held
-key tip from the socket rim. It plans one held move, captures the key away
+key tip from the socket rim and the camera pair's triangulation angle. It
+tries planned directions in score order, captures the key away
 from the white socket, returns by the **measured** lateral displacement, and
 then continues the ordinary same-trial correction or nominal insertion. The
 temporary viewpoint is not counted as an XY correction. It is disabled by
 default because no real photograph at the offset viewpoint has been taken.
-Five archived 5/10 mm held states passed 15 read-only raise/lateral/return/
-20 mm insertion plans for three tested directions, but that does not prove
+Five archived 5/10 mm held states passed 20 read-only raise/lateral/return/
+20 mm insertion plans for four tested directions, but that does not prove
 new key pixels will be identified. The test option adds two robot motions,
 one capture and one Qwen/SAM pass only when both prior views lack a metric
 point. The selected offset and measured return are stored under
-`same_trial_xy/shifts/`; see `EPISODE_CONSISTENCY_20261029.md` for evidence.
+`same_trial_xy/shifts/`; the ranked camera-pair scores are saved with the
+raised-view observation. A metric result is propagated through the measured
+return without an immediate redundant Qwen/SAM3 pass. See
+`EPISODE_CONSISTENCY_20261029.md` for evidence.
 An optional cylinder observation rotation is available when the initial and
 raised captures both lack a multiview key-end point. Set
 `PRECISION_SAME_TRIAL_OBSERVATION_YAW_DEG=60` to try a 60° turn about the
