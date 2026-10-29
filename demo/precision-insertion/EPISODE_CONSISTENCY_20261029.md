@@ -439,6 +439,8 @@ assumes the nominal key-in-hand transform; it does not establish the actual
 post-squeeze relation or a successful insertion from the raised pose. The
 reproducer and exact eight-row report are in
 `~/precision_insertion_project/development/zerodex_capture4/reviews/probe_observation_raise_plan_20261029.{py,json}`.
+The same two files are SHA256-matched under
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/observation_raise_20261029/`.
 
 The method choice for the next live comparison is therefore empirical:
 photograph the same held `20195` grasp at its current pre-insertion pose,
