@@ -63,8 +63,9 @@ silhouette end is distal. It is not an observed key pose.
 The archived failure was more basic than a triangulation threshold: Qwen
 sometimes boxed the **fixed white socket** as the white key. In 12 saved
 pre-insertion observations, 39 camera boxes were recorded. Nine boxes had
-at least 90% of their own area inside the projected frozen-socket bounding box, and eight of those
-nine had already been accepted as SAM3 key-face points. Visual review of the
+at least 90% of their own area inside the projected frozen-socket bounding
+box, and eight of those nine had already been accepted as SAM3 key-face
+points. Visual review of the
 two latest inserted episodes confirms socket masks in cameras `25305462`
 and `25322642`. The image and source-bound box audit is at
 `endpoint_roi_eval_20261029/endpoint_box_overlap_audit.json` and the

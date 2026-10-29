@@ -1207,9 +1207,9 @@ def _compute_sam_half_ellipse_alignment(
             box, crop,
             socket_bboxes[camera]["projected_hull_bbox_px"])
         record["qwen_box_socket_bbox_overlap_fraction"] = overlap
-        # In 12 saved pre-insertion observations, boxes on the static socket
-        # occupied 95-100% of its projected box. Accepted held-key boxes
-        # occupied at most 59%. Do not spend SAM inference on the known socket.
+        # In 12 saved pre-insertion observations, 95-100% of a mistaken
+        # socket box's area fell inside the socket projection. The accepted
+        # held-key boxes occupied at most 59%. Skip SAM on the known socket.
         if overlap >= .90:
             record.update(qwen_box_crop_px=list(box), admitted=False,
                           reason="key_box_matches_frozen_socket")
