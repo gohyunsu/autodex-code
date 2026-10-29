@@ -28,6 +28,8 @@ if [[ -f $precision_local_sam ]]; then
 fi
 export PRECISION_SAM_CHECKPOINT=${PRECISION_SAM_CHECKPOINT:-$precision_default_sam}
 export PRECISION_FR3_INSPIRE_URDF=${PRECISION_FR3_INSPIRE_URDF:-$precision_profile_root/autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf}
+# Resolve the planner's cuRobo copy before the BODex copy on this profile.
+export PRECISION_CUROBO_PYTHONPATH=${PRECISION_CUROBO_PYTHONPATH:-$precision_profile_root/autodex/planner/src}
 
 export PRECISION_CAPTURE4_SSH_HOST=${PRECISION_CAPTURE4_SSH_HOST:-capture4@147.46.219.136}
 export PRECISION_CAPTURE4_SSH_PORT=${PRECISION_CAPTURE4_SSH_PORT:-77}

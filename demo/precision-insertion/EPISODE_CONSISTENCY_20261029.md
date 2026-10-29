@@ -218,6 +218,54 @@ alone is not evidence of a held key. No pixel-difference gate was added.
 The saved-image paths, SHA256 hashes, and per-camera statistics are in
 `lift_mask_difference_20261029.{py,json}` beside the Qwen probes.
 
+## Offline yaw-gauge experiment on the successful grasp
+
+The cylinder has no meaningful axial yaw. This allows a held `table/0/20195`
+key to approach the same socket at a different wrist orientation without
+changing the key/socket fit. Using the frozen 5 mm world, saved pre-insertion
+13-joint feedback and nominal key/hand transform from `5e08757b`, all 12
+30-degree yaw samples passed the 20 mm hand/socket endpoint check and a
+cuRobo path to the pre-insertion wrist pose. Four representative yaw choices
+(0, 90, 150, 180 degrees) also passed the existing ten-waypoint socket-axis
+Jacobian descent and `audit_held_joint_paths` for the dense transfer/descent
+samples. These are offline plans from a recorded state, not four physical
+trials or a proof about another tabletop key location.
+
+A separate **predicted visibility** probe used the saved camera extrinsics,
+the planned wrist joint endpoints and the actual FR3/Inspire visual meshes.
+It ray-tested 72 distal cylinder-side samples per camera against the hand
+mesh. At yaw 0, the visible/front-facing sample counts were `36/36` on
+`25305462`, `30/33` on `25322639`, `36/36` on `25322642`, and `33/33` on
+`26053248`. At yaw 180 all four counts equalled their front-facing totals.
+The large counts at yaw 0 despite real-image tip failures are important:
+visible **shaft side** does not establish a visible **bottom-face centre**.
+The probe assumes the nominal key/hand transform, ignores real key slip,
+key/self and socket occlusion, and does not run Qwen or SAM on a yaw-180
+photo. It supports testing a different wrist orientation but does **not**
+justify selecting one automatically yet. The reproducible scripts and JSON
+are under `~/precision_insertion_project/development/zerodex_capture4/reviews/yaw_gauge_20261029/`.
+
+The evidence-backed operating method remains: prefer the physically
+successful `20195` grasp and nominal 5 mm insertion; at the pre-insertion
+hold, use any calibrated camera pair that identifies the same key end and has
+useful parallax for an actual metric correction; otherwise retain the nominal
+target. The two corrected-hold runs that reached about 1.3 mm residual did
+not insert because `20096` collided at the 20 mm endpoint. A future live
+comparison of the **same `20195` grasp** at 0 and 150/180 degrees should save
+all four raw pre-insertion views, the hand joints, per-view key boxes/masks,
+accepted tip points and insertion outcome. Prefer a yaw only if that real
+comparison improves end-centre detection without losing the complete
+transfer/descent and release sequence. No VLM prompt can recover a centre
+that remains hidden in every camera.
+
+The ZeroDex launcher now resolves the FR3 planner's own cuRobo copy before
+the BODex copy. In the old shell path, a debug `print` in BODex's
+`world_mesh.py` can raise `operation not permitted when stream is capturing`
+during a fresh CUDA-graph world initialization. The planner copy initializes
+the recorded frozen world with default CUDA graphs, and the four yaw plans
+above passed with it. This is a launcher path choice inside the precision
+demo; neither vendored cuRobo tree was edited.
+
 For the next data collection, record a human held/miss/slipped label **at the
 post-lift snapshot time**, and retain the later transfer result separately.
 Evaluate camera-wise and episode-wise confusion on those independent labels.
