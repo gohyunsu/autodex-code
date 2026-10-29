@@ -172,6 +172,7 @@ class LiveTaskHandlers:
             checkpoint = runner.prepare_observed_preinsert_label(
                 raw_bundle=raw, transfer_execution_path=transfer_log,
                 joint_sample=state, backend=self.backend,
+                live_capture=capture,
                 label_mode=self.label_mode,
                 **({"allow_held_misalignment": True}
                    if self.same_trial_xy_tolerance_m is not None else {}),

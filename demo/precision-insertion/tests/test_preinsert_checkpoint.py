@@ -291,6 +291,56 @@ def test_temporal_preinsert_qwen_input_needs_no_gpu_overlay(tmp_path):
     assert "overlay_png_sha256" not in record
 
 
+def test_live_preinsert_reuses_the_saved_capture_pixels(tmp_path, monkeypatch):
+    class HashingVLM(_VLM):
+        def __init__(self):
+            super().__init__()
+            self.inputs = []
+
+        def infer(self, images, prompt):
+            self.inputs.append(tuple(hashlib.sha256(
+                image.tobytes()).hexdigest() for image in images))
+            return super().infer(images, prompt)
+
+    with live_evidence_cache():
+        args = _setup(tmp_path)
+        backend = HashingVLM()
+        args["backend"] = backend
+        saved = assess_preinsert_checkpoint(**{
+            **args, "render_audit_overlay": False})
+        saved_inputs = sorted(backend.inputs)
+        backend.inputs.clear()
+        manifest = json.loads((args["raw_bundle"] / "manifest.json").read_text())
+        images = {camera: np.zeros((24, 32, 3), dtype=np.uint8)
+                  for camera in CAMERAS}
+        live = RawCameraCapture(
+            manifest["capture_id"], manifest["request_id"], images,
+            {camera: row["frame_id"] for camera, row in
+             manifest["frame_evidence"].items()},
+            {"request_id": manifest["request_id"],
+             "source": "camera_acquisition",
+             "frames": manifest["frame_evidence"]})
+        original_read = preinsert_checkpoint.cv2.imread
+
+        def read_other_frames(path, flags):
+            if str(args["raw_bundle"] / "images") in str(path):
+                raise AssertionError("live preinsert decoded its saved PNG again")
+            return original_read(path, flags)
+
+        monkeypatch.setattr(preinsert_checkpoint.cv2, "imread", read_other_frames)
+        reused = assess_preinsert_checkpoint(**{
+            **args, "render_audit_overlay": False,
+            "live_capture": live})
+        assert reused.preinsert_reached == saved.preinsert_reached
+        assert sorted(backend.inputs) == saved_inputs
+        wrong = {camera: image.copy() for camera, image in images.items()}
+        wrong["cam_a"][0, 0, 0] = 1
+        with pytest.raises(ValueError, match="live preinsert pixels differ"):
+            assess_preinsert_checkpoint(**{
+                **args, "render_audit_overlay": False,
+                "live_capture": replace(live, images_bgr=wrong)})
+
+
 def test_measured_preinsert_arrival_needs_multiview_visible_key(tmp_path):
     args = _setup(tmp_path)
     report = assess_preinsert_checkpoint(**args)

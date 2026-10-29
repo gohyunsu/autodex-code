@@ -47,7 +47,7 @@ from .observer import (
     resize_classification_images,
 )
 from .postlift_preflight import PostLiftPreflight
-from .raw_camera_capture import verify_raw_camera_capture
+from .raw_camera_capture import RawCameraCapture, verify_raw_camera_capture
 from .records import AttemptRecord
 from .runtime_evidence_cache import recalled, remember
 from .timing_profile import timed
@@ -232,6 +232,7 @@ def observe_held_preinsert_scene(
     after_lift_joint_q=None,
     socket_bboxes: dict | None = None,
     render_audit_overlay: bool = True,
+    preinsert_images_bgr: dict | None = None,
 ) -> tuple[float, float, HeldSceneComparison | HeldSceneRawComparison,
            PreinsertVisualAssessment]:
     """Label one held-key arrival; the audit overlay is optional."""
@@ -254,9 +255,15 @@ def observe_held_preinsert_scene(
         calibration, intrinsics_undist=K_all,
         extrinsics_full=camera_world_all, calibrated_camera_ids=all_camera_ids)
     c2r = validate_se3(calibration.record.get("c2r"), name="session C2R")
-    frames_bgr = {serial: cv2.imread(
-        str(raw_bundle / "images" / f"{serial}.png"), cv2.IMREAD_COLOR)
-        for serial in camera_ids}
+    with timed("preinsert.raw_frame_input", phase="preinsert", kind="io",
+               source=("saved_png" if preinsert_images_bgr is None else
+                       "just_captured_array"), view_count=len(camera_ids)):
+        frames_bgr = {
+            serial: (cv2.imread(str(raw_bundle / "images" / f"{serial}.png"),
+                                cv2.IMREAD_COLOR)
+                     if preinsert_images_bgr is None else
+                     preinsert_images_bgr[serial])
+            for serial in camera_ids}
     if any(frame is None for frame in frames_bgr.values()):
         raise ValueError("saved preinsert image cannot be decoded")
 
@@ -301,20 +308,24 @@ def observe_held_preinsert_scene(
     if after_lift_raw_bundle is None or after_lift_frame_rows is None:
         raise ValueError("preinsert temporal views need an after-lift bundle")
     paired = []
-    for camera in sorted(camera_ids):
-        after_lift = cv2.imread(
-            str(after_lift_raw_bundle / "images" / f"{camera}.png"),
-            cv2.IMREAD_COLOR)
-        if after_lift is None:
-            raise ValueError("saved after-lift image cannot be decoded")
-        paired.extend((
-            LabeledFrame(camera, "after_lift",
-                         after_lift_frame_rows[camera]["timestamp_s"],
-                         Image.fromarray(cv2.cvtColor(after_lift, cv2.COLOR_BGR2RGB))),
-            LabeledFrame(camera, "preinsert", frame_rows[camera]["timestamp_s"],
-                         Image.fromarray(cv2.cvtColor(
-                             frames_bgr[camera], cv2.COLOR_BGR2RGB))),
-        ))
+    with timed("preinsert.temporal_pair_input", phase="preinsert", kind="io",
+               view_count=len(camera_ids)):
+        for camera in sorted(camera_ids):
+            after_lift = cv2.imread(
+                str(after_lift_raw_bundle / "images" / f"{camera}.png"),
+                cv2.IMREAD_COLOR)
+            if after_lift is None:
+                raise ValueError("saved after-lift image cannot be decoded")
+            paired.extend((
+                LabeledFrame(camera, "after_lift",
+                             after_lift_frame_rows[camera]["timestamp_s"],
+                             Image.fromarray(cv2.cvtColor(
+                                 after_lift, cv2.COLOR_BGR2RGB))),
+                LabeledFrame(camera, "preinsert",
+                             frame_rows[camera]["timestamp_s"],
+                             Image.fromarray(cv2.cvtColor(
+                                 frames_bgr[camera], cv2.COLOR_BGR2RGB))),
+            ))
     crop_record = None
     if after_lift_joint_q is not None and socket_bboxes is not None:
         paired, crop_record = _focus_temporal_frames(
@@ -546,6 +557,7 @@ def assess_preinsert_checkpoint(
     lift_checkpoint_report_path: Path | None = None,
     allow_held_misalignment: bool = False,
     render_audit_overlay: bool = True,
+    live_capture: RawCameraCapture | None = None,
 ) -> PreinsertCheckpoint:
     """Fuse per-view coarse VLM with measured hold pose and execution evidence.
 
@@ -622,6 +634,14 @@ def assess_preinsert_checkpoint(
         raise ValueError("transfer predates the observed post-lift replan")
     bundle = Path(raw_bundle).expanduser().resolve()
     capture = verify_raw_camera_capture(bundle, phase="preinsert")
+    if live_capture is not None:
+        if (live_capture.capture_id != capture["capture_id"] or
+                live_capture.request_id != capture["request_id"] or
+                set(live_capture.images_bgr) != set(capture["frame_evidence"]) or
+                any(image_sha256(live_capture.images_bgr[camera]) !=
+                    row["image_sha256"] for camera, row in
+                    capture["frame_evidence"].items())):
+            raise ValueError("live preinsert pixels differ from saved capture")
     after_lift_bundle = Path(after_lift_raw_bundle).expanduser().resolve()
     after_lift_capture = verify_raw_camera_capture(
         after_lift_bundle, phase="after_lift")
@@ -697,7 +717,9 @@ def assess_preinsert_checkpoint(
             render_audit_overlay=render_audit_overlay,
             after_lift_joint_q=(lift_record["joint_feedback"].get("full_q")
                                 if socket_bboxes else None),
-            socket_bboxes=socket_bboxes))
+            socket_bboxes=socket_bboxes,
+            preinsert_images_bgr=(None if live_capture is None else
+                                  live_capture.images_bgr)))
     measurement = transfer["measurement"]
     label, reason = _arrival_label(
         measurement=measurement, visual_status=visual.status)

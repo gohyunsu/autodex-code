@@ -371,6 +371,15 @@ start the adapter if another experiment owns the cameras.
   The original AutoDex fixed two-camera crop and its saved report schema are
   unchanged. Saved capture4 held-key and missed-grasp examples are reviewed in
   [VLM_LABEL_REVIEW_20261029.md](VLM_LABEL_REVIEW_20261029.md).
+- The live preinsert checkpoint now builds its raw VLM/geometry input from the
+  just-captured undistorted arrays after writing the unchanged PNG evidence.
+  It checks the live pixel hashes against the saved capture manifest. Offline
+  replay still reads the PNGs. Decoding four archived 2048×1536 preinsert
+  PNGs took 0.23 s median in a seven-run local microbenchmark, versus 0.019 s
+  median to hash the four decoded arrays over nine runs. Avoiding that
+  duplicate decode is a plausible per-transfer latency saving, not yet a
+  measured live end-to-end gain. A focused test confirms both routes submit
+  identical VLM image bytes and reject a changed live pixel.
 - Same-frame full-resolution capture exchange: the existing SAM mask PUB message
   now also carries one lossless PNG of its source frame. The main PC writes it
   under local `zerodex_capture4/<capture_id>_request_<id>/images/`.

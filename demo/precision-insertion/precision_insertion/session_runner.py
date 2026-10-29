@@ -58,7 +58,7 @@ from .nominal_postlift import (
     verify_nominal_postlift_preflight, write_nominal_postlift_preflight,
 )
 from .observer import ImageVLM
-from .raw_camera_capture import verify_raw_camera_capture
+from .raw_camera_capture import RawCameraCapture, verify_raw_camera_capture
 from .outcome import InsertionEvidence, judge_insertion, resolve_insertion_outcome
 from .path_audit import PathAuditLimits
 from .pose_selection import classify_key_tabletop_pose
@@ -1666,6 +1666,7 @@ class SessionRunner:
         manual_annotation: dict | None = None,
         allow_held_misalignment: bool = False,
         render_audit_overlay: bool = True,
+        live_capture: RawCameraCapture | None = None,
     ) -> PreinsertCheckpoint:
         """Save an observed arrival assessment; never command the transfer.
 
@@ -1730,6 +1731,7 @@ class SessionRunner:
             allow_held_misalignment=allow_held_misalignment,
             render_audit_overlay=render_audit_overlay,
             lift_checkpoint_report_path=self._lift_report_path,
+            live_capture=live_capture,
             **kwargs)
         output = (self._attempt_dir / "preinsert_assessments" /
                   f"{self._preinsert_assessment_index:03d}")
