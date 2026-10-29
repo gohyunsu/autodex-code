@@ -1124,10 +1124,19 @@ eight 5 mm socket-axis waypoints passed, then the 45 mm progress waypoint
 the key still held above the socket. The replay record and sources are in the
 same development review folder. This is a corrected held-pose planning
 failure, not evidence that the key reached 20 mm or that a physical collision
-occurred. Future failures at this handoff now save `plan_failure.json` with
-the measured start, corrected targets, and underlying cuRobo failure detail
-before recording `planning_stopped_before_insertion` with an unknown insertion
-label and stopping the session. No collision check was disabled or relaxed.
+occurred. Future failures at this handoff save `plan_failure.json` with the
+measured start, corrected targets, and underlying cuRobo failure detail, then
+record `preinsert_path_unavailable` without claiming insertion. The session
+policy routes to `recover_corrected_hold_then_reobserve`: the current handler
+joins measured joints to this attempt's executed XY, transfer and lift paths
+in reverse, audits the held key, executes that return, opens the hand at the
+planned release pose, moves to clear view, and reobserves/restores the key.
+The next fresh-key preflight excludes the failed physical grasp candidate.
+This route differs from the older offline `replay_corrected_return.json` probe,
+whose new Cartesian return target had no IK solution. The live reverse-route
+planner passed a saved-scene offline audit for this attempt (513 held-path
+samples and 103 open-hand clear-view samples); the robot has not executed this
+recovery route. No collision check was disabled or relaxed.
 An offline obstacle-attribution and exact-hand-mesh replay is saved under
 `~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/collision_attribution_20261029.json`.
 The corrected key still fits the 5 mm socket, but the measured thumb tip
@@ -1138,6 +1147,12 @@ reports the incompatible grasp sooner and avoids a wasted axial plan.
 
 The separate post-run uploader saved the 26053248 recording to
 `/mnt/paradex2/hyunsu/precision_insertion/runs/zerodex_capture4/2026/10/28/20261028_233041_868585_236445/video/26053248.avi`.
+
+The complete `demo/precision-insertion/tests` suite was rerun on this branch
+on 2026-10-29: 1,387 passed and five skipped (four retired-path tests and
+one CUDA-only import test in this sandbox). This checks the software
+boundaries, including corrected-hold return dispatch, but does not
+replace live capture4, Inspire, or Franka execution evidence.
 
 ## 2026-10-29 saved four-view Qwen batch comparison
 
