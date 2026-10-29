@@ -183,3 +183,26 @@ measure per-view face-center detection, parallax, hand occlusion and
 reprojection consistency, then compare the inferred correction with the
 released-key outcome. This will determine whether the extra motion earns
 its latency or whether a different camera/hold arrangement is needed.
+
+## Reusable observation geometry (2026-10-30)
+
+`precision_insertion/held_face_observation.py` now computes a nominal held
+key/wrist raise and tilt, ranks face-facing camera pairs by the weaker face
+view times ray parallax, and converts a measured tilted face centre back to
+the insertion pose's socket-frame XY translation. If the actual key differs
+from the nominal key by translation `d` before tilting, a rigid grasp gives
+`p_observed = p_nominal_tilted + R_tilt d`. Thus the proposed correction is
+`-R_socket_xy^T R_tilt^T (p_observed - p_nominal_tilted)`. The calculation
+does not treat a projected CAD point as a camera measurement and does not
+assume that one face-facing camera is unoccluded by the hand.
+
+Synthetic calibrated two-view pixels recover the imposed XY translation in
+the unit test. With the three archived capture4 calibrations and pre-insertion
+key poses, the new face-direction ranking reproduces the prior offline top
+view geometry for the two 5 mm holds (90° tilt, 30° socket azimuth). This
+ranking is **not** a motion plan: the 10 mm hold's highest camera score had
+no FR3 endpoint IK in the earlier planning probe, while a lower-ranked
+75°/60° alternative passed. Neither the new geometry helper nor a tilted
+VLM observation is active in the live controller. Actual tilted photographs
+must establish that the same physical face centre can be found in separated
+views before this inverse calculation is used for an XY motion.
