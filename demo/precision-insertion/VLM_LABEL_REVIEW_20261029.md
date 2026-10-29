@@ -139,6 +139,16 @@ VLM pixels.
 | `c6141471` | key lying outside; socket empty | `inside_socket` | `OUTSIDE` / `OUTSIDE` |
 | `dc5958a9` | key lying outside; socket empty | `inside_socket` | `OUTSIDE` / `OUTSIDE` |
 
+The archived `attempt_*/result.json` files still contain the original
+two-image VLM decisions: `30cbe1f3`, `c6141471`, and `dc5958a9` say
+`observed_success=true` although the reviewed final images show an empty
+socket; `30e9cd0b` says `observed_failure` although the key visibly occupies
+the opening. These historical records are immutable execution evidence,
+not visual ground truth. Use the separate per-case human annotation JSONs in
+`~/precision_insertion_project/development/zerodex_capture4/reviews/released_vlm_dataset_20261029/`
+and the current final-only replay when comparing VLM labels. Neither the
+annotation nor the replay independently verifies 20 mm depth.
+
 These are four visually reviewed episodes, not a measured generalization rate. The first short-prompt probe is `precision_insertion_project/development/zerodex_capture4/reviews/vlm_prompt_probe_20261029.json`. An exact replay through the revised runtime observer with **all three originally selected cameras** produced the correct aggregate label on all four episodes: `vlm_released_runtime_replay_20261029.json`. Camera `25305462` answered `OUTSIDE` for the observed inside case, but the other two answered `INSIDE`, giving a 2-of-3 majority. The saved raw bundles also include `25322642`; a separate replay found that it answered `OUTSIDE` on the inside case, yielding a 2-to-2 tie if all four were used. Those fourth-view results are in `vlm_released_fourth_view_replay_20261029.json`. The capture4 profile now selects the reviewed three views **for the final label only**; four-view XY grounding and other stages are unchanged. Each full episode report is under `shared_data/AutoDex/experiment/precision-insertion/inspire/precision_key_cylinder_r15_h80/attempt_<full-id>/released_insertion_assessments/000/report.json`.
 
 The three final input crops and Qwen tokens for all four saved episodes are
