@@ -182,19 +182,20 @@ centering target. This is a pre-insertion correction target, not the final
 insertion-success label. Set `PRECISION_SAME_TRIAL_XY_TOLERANCE_MM=''` to run
 the earlier open-loop baseline, or set another value for a different target.
 If the first four-view hold cannot yield a metric XY point, the ZeroDex
-profile now raises the held grasp 40 mm along the measured socket axis,
-recaptures, and tries the same estimator again. It returns to the original
-pre-insertion height and replans the insertion from the measured wrist state.
-If the raised photograph still has no metric point, it continues with the
-existing nominal insertion target. The view change is conditional, so a
-usable first photograph does not pay for an extra robot move or inference.
-Set `PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM=0` to disable it, or `20` to
-compare a smaller observation move. The exact commanded and measured axis
+profile continues toward the existing nominal insertion target by default.
+Set `PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM=40` to opt into a temporary
+raise along the measured socket axis, recapture and another estimator call.
+The key then returns to the original pre-insertion height before insertion
+is replanned from the measured wrist state. The extra move is conditional on
+the first photograph lacking a metric point. The commanded and measured axis
 increments are recorded under `same_trial_xy/shifts/` and the observation
 reports record their nominal raised height. The four archived 5 mm attempts
 passed offline cuRobo rise-and-return planning and sampled held-key collision
 checks at both 20 and 40 mm; no raised live photograph or physical correction
-has yet validated improved key visibility.
+has yet validated improved key visibility. In the saved 5 and 10 mm poses, a
+40 mm straight raise still leaves the downward-facing key end behind its
+face plane in all four calibrated cameras. This is why the unvalidated extra
+move is disabled in the default profile.
 If a raised capture still cannot identify a metric key end, the optional
 `PRECISION_SAME_TRIAL_OBSERVATION_LATERAL_MM=30` mode ranks eight temporary
 socket-frame XY viewpoints by calibrated projected separation of the held

@@ -157,6 +157,12 @@ visual-label result, not a measured insertion success rate.
 ## Pipeline decision
 
 Keep the current nominal pre-insertion capture and measured XY correction.
+For the three saved holds, a 40 mm straight raise changes the distal-face
+view dots but leaves every one negative (the largest is -0.51). The two
+human-confirmed 5 mm insertions did not execute an observation raise, so
+there is no live timing or detection gain to support enabling it by default.
+As of 2026-10-30 the ZeroDex profile uses zero raise by default; 40 mm is
+still available as an explicit observation experiment.
 The grasp catalog and trial preflight currently do not reject candidates by
 camera visibility. A future candidate ranking could score visibility after
 socket calibration, but should not reject an insertion-compatible grasp

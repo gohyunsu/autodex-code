@@ -498,11 +498,14 @@ end*. Evaluate the Qwen/SAM tip fit and shaft-axis fit against manually
 marked key pixels on those actual new images, rather than ranking masks by
 appearance alone. Execute an XY correction only when two calibrated views
 support a corresponding point. If not, keep the already physically successful
-nominal insertion branch. The ZeroDex profile now defaults to a conditional
-40 mm observation raise **only after the initial view lacks a metric point**;
-it can be disabled with `PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM=0`. This
-is a prospective data-collection action, not evidence that the tip becomes
-observable at that height. The robot was off during this implementation.
+nominal insertion branch. The 40 mm observation raise developed in this
+probe was conditional on the initial view lacking a metric point. The
+current ZeroDex profile (2026-10-30) keeps it opt-in with
+`PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM=40`: a straight raise still leaves
+the downward-facing end behind its face plane in all four saved calibrated
+views. It remains a prospective data-collection action, not evidence that
+the tip becomes observable at that height. The robot was off during this
+implementation.
 
 The additional read-only return replay planned a 20 or 40 mm upward move and
 then planned back to the original pre-insertion wrist from the raised plan's
