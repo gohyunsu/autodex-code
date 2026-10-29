@@ -241,7 +241,8 @@ def plan_nominal_postlift_transfer(
         targets=targets, start_q=joint_sample.full_q,
         held_hand_q=joint_sample.full_q[7:],
         held_hand_source="measured", limits=limits,
-        axial_waypoint_step_m=axial_waypoint_step_m)
+        axial_waypoint_step_m=axial_waypoint_step_m,
+        exact_distances=False)
     return result(
         "sampled_postlift_preflight_pass" if planning.sampled_planning_pass
         else planning.status, targets=targets, planning=planning)

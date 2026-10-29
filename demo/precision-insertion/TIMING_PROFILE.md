@@ -63,13 +63,14 @@ or skipping evidence is not justified by the cumulative number.
 
 The second saved run also spent 1.926 s in
 `planning.nominal_insertion > planning.held_path_audit >
-audit.minimum_distance_scan`. Initial grasp selection consumes the sampled
-collision result, but not the exact minimum-distance table. Its candidate
-preflight now requests a collision-only sampled audit, retaining the same
-key/hand collision decision and omitting that unused diagnostic scan. The
-measured post-squeeze path still requests exact distances when a commissioned
-surface-deviation margin needs them. The 1.926 s is a historical scan time,
-not a measured speedup; compare a fresh trace after this change.
+audit.minimum_distance_scan`, and 1.783 s in the nominal post-lift path
+audit. Initial grasp selection and the nominal post-lift replan consume the
+sampled collision result, but not the exact minimum-distance table. Both now
+request a collision-only sampled audit, retaining the same key/hand collision
+decision and omitting that unused diagnostic scan. Bounded post-lift paths
+still request exact distances for their commissioned surface-deviation margin.
+The 1.926 s and 1.783 s are historical scan times, not measured speedups;
+compare a fresh trace after these changes.
 
 An offline startup-order probe on this PC used the saved 5 mm fixed collision
 world and the same local cuRobo, Qwen and SAM3 assets. With the FR3 planner

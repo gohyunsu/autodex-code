@@ -112,9 +112,18 @@ def test_nominal_relation_is_marked_hypothesis_and_source_verified(
     tmp_path, monkeypatch,
 ):
     args, candidate_dir, calls = _case(tmp_path, monkeypatch)
+    audit_modes = []
+
+    def audit(**kwargs):
+        audit_modes.append(kwargs["exact_distances"])
+        return {"sampled_clear": True}
+
+    monkeypatch.setattr(
+        "precision_insertion.preflight.audit_held_joint_paths", audit)
     args["attempt"].wrist_correction_socket_m = (.0006, -.0008)
     result = plan_nominal_postlift_transfer(**args)
     assert result.status == "sampled_postlift_preflight_pass"
+    assert audit_modes == [False]
     assert result.to_record()["robot_ready"] is False
     assert result.to_record()["nominal_held_relation"]["source"] == (
         "selected_v8_wrist_hypothesis_not_observed_key_pose")
