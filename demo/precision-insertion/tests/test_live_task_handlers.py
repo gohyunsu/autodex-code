@@ -437,6 +437,67 @@ def test_unobserved_xy_can_rotate_once_after_raise_then_return(
     assert len(actions[-1][1]["shifts"]) == 3
 
 
+def test_temporary_lateral_view_is_removed_before_insertion(
+        tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    runner._attempt_dir = tmp_path / "attempts" / runner.active_attempt.attempt_id
+    bound._preinsert_bundle = tmp_path / "first_preinsert"
+    bound.planner = object()
+    bound.path_limits = object()
+    bound.alignment_limits = object()
+    bound.same_trial_tip_height_error_m = .01
+    bound.same_trial_xy_tolerance_m = .0025
+    bound.same_trial_observation_raise_m = .04
+    bound.same_trial_observation_lateral_m = .03
+    corrections = iter((None, None, [-.03, .03], None))
+    actions = []
+
+    def measure(**kwargs):
+        correction = next(corrections)
+        actions.append(("observe", tuple(kwargs["nominal_key_xy_shift_socket_m"]),
+                        kwargs["nominal_key_axis_raise_socket_m"]))
+        return {"alignment": {
+            "status": ("diagnostic_metric_xy_correction" if correction
+                       is not None else "abstain"),
+            "inlier_cameras": (["front", "side"] if correction else []),
+            "xy_correction_socket_m": correction,
+        }}
+
+    def shift(**kwargs):
+        xy = np.asarray(kwargs["increment_socket_m"], float)
+        axis = kwargs.get("axis_increment_socket_m", 0.)
+        actions.append(("move", tuple(xy), axis))
+        path = runner._attempt_dir / "shifts" / f'{kwargs["index"]:03d}.json'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "measured_increment_socket_m": xy.tolist(),
+            "measured_axis_increment_socket_m": axis,
+        }), encoding="utf-8")
+        return path
+
+    def handoff(**kwargs):
+        actions.append(("handoff", kwargs))
+        return tmp_path / "lateral_handoff.json"
+
+    monkeypatch.setattr(live_task_handlers, "measure_preinsert_xy", measure)
+    monkeypatch.setattr(live_task_handlers, "plan_and_execute_shift", shift)
+    monkeypatch.setattr(live_task_handlers, "plan_corrected_axial_handoff",
+                        handoff)
+    monkeypatch.setattr(live_task_handlers, "rank_lateral_observation_offsets",
+                        lambda **_kwargs: [{"offset_socket_m": [.03, -.03]}])
+    monkeypatch.setattr(live_task_handlers, "write_raw_camera_capture",
+                        lambda *_args, **_kwargs: None)
+    bound._refine_current_hold(runner)
+    assert actions[0] == ("observe", (0., 0.), 0.)
+    assert actions[1] == ("move", (0., 0.), .04)
+    assert actions[3] == ("move", (.03, -.03), 0.)
+    assert actions[4] == ("observe", (.03, -.03), .04)
+    assert actions[5] == ("move", (-.03, .03), 0.)
+    assert actions[-2] == ("move", (0., 0.), -.04)
+    assert actions[-1][1]["total_xy_m"] == [0., 0.]
+    assert actions[-1][1]["residual_xy_m"] == [0., 0.]
+
+
 def test_raised_xy_correction_reobserves_then_returns_for_axial(
         tmp_path, monkeypatch):
     bound, runner, *_ = _handler(tmp_path)

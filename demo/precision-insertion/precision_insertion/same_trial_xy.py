@@ -224,6 +224,78 @@ def _held_wrist_goal(start_wrist: np.ndarray, key_origin_robot: np.ndarray,
     return goal
 
 
+def rank_lateral_observation_offsets(*, runner, current_xy_socket_m,
+                                     axis_raise_m: float,
+                                     component_m: float) -> list[dict]:
+    """Rank temporary held-key viewpoints by calibrated key/socket separation.
+
+    This ranks *projected nominal* tip positions, not measured key-tip pixels.
+    A candidate still needs the normal held-path plan before any motion.
+    """
+    if not math.isfinite(component_m) or component_m <= 0:
+        raise ValueError("observation lateral component must be positive")
+    xy = np.asarray(current_xy_socket_m, float)
+    if xy.shape != (2,) or not np.all(np.isfinite(xy)):
+        raise ValueError("current nominal socket XY must be finite")
+    socket = validated_frozen_socket_pose(
+        mode=runner.mode, shared_root=runner.shared_root,
+        calibration=runner.calibration)
+    geometry = json.loads(AssetPaths(
+        Path(runner.shared_root), runner.mode).task_geometry.read_text())
+    key = runner._postlift_preflight.targets.T_robot_key_preinsert
+    tip = key @ np.array([0., 0.,
+                          float(geometry["key_frame"]["tip_z_m"]), 1.])
+    tip[:3] += socket[:3, :2] @ xy + socket[:3, 2] * axis_raise_m
+    rim = socket @ np.array([0., 0.,
+                             float(geometry["socket_rim_z_m"]), 1.])
+    camera_calibration = runner.calibration.record["camera_calibration"]
+    c2r = np.asarray(runner.calibration.record["c2r"], float)
+    projections = []
+    for camera, intrinsics in camera_calibration["intrinsics_full"].items():
+        extrinsic = camera_calibration["extrinsics_full"].get(camera)
+        if extrinsic is None:
+            continue
+        camera_robot = np.asarray(extrinsic, float) @ c2r
+        K = np.asarray(intrinsics["K_undist"], float)
+
+        def project(point, camera_robot=camera_robot, K=K,
+                    intrinsics=intrinsics):
+            camera_point = camera_robot @ point
+            if camera_point[2] <= 0:
+                return None
+            pixel = K @ camera_point[:3]
+            pixel = pixel[:2] / pixel[2]
+            if (pixel[0] < 0 or pixel[0] >= intrinsics["width"] or
+                    pixel[1] < 0 or pixel[1] >= intrinsics["height"]):
+                return None
+            return pixel
+
+        rim_pixel = project(rim)
+        if rim_pixel is not None:
+            projections.append((camera, project, rim_pixel))
+    d = component_m
+    offsets = ((d, -d), (-d, d), (d, d), (-d, -d),
+               (d, 0.), (-d, 0.), (0., d), (0., -d))
+    ranked = []
+    for offset in offsets:
+        moved = tip.copy()
+        moved[:3] += socket[:3, :2] @ np.asarray(offset)
+        separation = {}
+        for camera, project, rim_pixel in projections:
+            pixel = project(moved)
+            if pixel is not None:
+                separation[camera] = float(np.linalg.norm(pixel - rim_pixel))
+        if len(separation) >= 2:
+            ranked.append({
+                "offset_socket_m": list(offset),
+                "second_smallest_separation_px": sorted(
+                    separation.values())[1],
+                "projected_separation_px_by_camera": separation,
+            })
+    return sorted(ranked, key=lambda row: row[
+        "second_smallest_separation_px"], reverse=True)
+
+
 def plan_and_execute_shift(*, runner, planner, adapter, read_state,
                            motion_interlock, limits, path_limits,
                            increment_socket_m, residual_socket_m,

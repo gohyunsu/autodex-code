@@ -32,7 +32,7 @@ from .same_trial_xy import (
     CorrectedAxialPlanUnavailable, HeldXYPlanUnavailable,
     choose_xy_move, measure_preinsert_xy,
     plan_and_execute_shift,
-    plan_corrected_axial_handoff,
+    plan_corrected_axial_handoff, rank_lateral_observation_offsets,
 )
 
 
@@ -81,6 +81,7 @@ class LiveTaskHandlers:
     same_trial_xy_tolerance_m: float | None = None
     same_trial_max_shifts: int | None = None
     same_trial_observation_raise_m: float = 0.
+    same_trial_observation_lateral_m: float = 0.
     same_trial_observation_yaw_rad: float = 0.
     after_lift_capture_provider: (
         Callable[[], tuple[str, RawCameraCapture] | None] | None) = None
@@ -231,6 +232,8 @@ class LiveTaskHandlers:
         residual_source = None
         axis_raise = 0.
         observation_raise_attempted = False
+        observation_lateral_attempted = False
+        observation_lateral_offset = None
         observation_yaw_attempted = False
         xy_shift_count = 0
         for index in count():
@@ -272,6 +275,55 @@ class LiveTaskHandlers:
                           indent=2, sort_keys=True, allow_nan=False)
                 stream.write("\n")
             observations.append(report)
+            if observation_lateral_offset is not None:
+                metric = choice["status"] in {"aligned", "shift"}
+                current_residual = (
+                    [-value for value in observed["alignment"][
+                        "xy_correction_socket_m"]] if metric else total)
+                source = ("current_metric_multiview" if metric else
+                          "nominal_unobserved_lateral_view")
+                try:
+                    with timed("trial.same_trial_observation_lateral_return",
+                               phase="trial", kind="motion",
+                               attempt_id=attempt.attempt_id):
+                        returned = plan_and_execute_shift(
+                            runner=runner, planner=self.planner,
+                            adapter=self.transfer_adapter,
+                            read_state=self.read_state,
+                            motion_interlock=self.motion_interlock,
+                            limits=self.transfer_limits,
+                            path_limits=self.path_limits,
+                            increment_socket_m=-observation_lateral_offset,
+                            residual_socket_m=current_residual,
+                            residual_source=source,
+                            current_axis_raise_socket_m=axis_raise,
+                            index=index)
+                except HeldXYPlanUnavailable as exc:
+                    runner.record_failure(
+                        "preinsert_path_unavailable",
+                        timestamp_s=self.decision_time(),
+                        evidence_refs={
+                            "observation_return_plan_failure": str(exc.report_path),
+                            "preinsert_snapshot": str(
+                                self._preinsert_bundle / "manifest.json"),
+                        })
+                    return
+                shifts.append(returned)
+                motion = json.loads(returned.read_text(encoding="utf-8"))
+                measured_return = np.asarray(
+                    motion["measured_increment_socket_m"], float)
+                total = (np.asarray(total) + measured_return).tolist()
+                axis_raise += motion["measured_axis_increment_socket_m"]
+                predicted_residual = (
+                    (np.asarray(current_residual) + measured_return).tolist()
+                    if metric else None)
+                observation_lateral_offset = None
+                current = runner.current_decision()
+                raw, capture = self._capture(
+                    runner=runner, decision=current,
+                    callback=self.capture_preinsert, phase="preinsert")
+                self._preinsert_bundle = raw
+                continue
             if (choice["status"] == "not_metric_multiview" and
                     predicted_residual is None and
                     self.same_trial_observation_raise_m > 0 and
@@ -310,6 +362,49 @@ class LiveTaskHandlers:
                         callback=self.capture_preinsert, phase="preinsert")
                     self._preinsert_bundle = raw
                     continue
+            if (choice["status"] == "not_metric_multiview" and
+                    predicted_residual is None and axis_raise > 0 and
+                    self.same_trial_observation_lateral_m > 0 and
+                    not observation_lateral_attempted):
+                observation_lateral_attempted = True
+                ranked = rank_lateral_observation_offsets(
+                    runner=runner, current_xy_socket_m=total,
+                    axis_raise_m=axis_raise,
+                    component_m=self.same_trial_observation_lateral_m)
+                if ranked:
+                    offset = np.asarray(ranked[0]["offset_socket_m"], float)
+                    try:
+                        with timed("trial.same_trial_observation_lateral",
+                                   phase="trial", kind="motion",
+                                   attempt_id=attempt.attempt_id):
+                            shifted = plan_and_execute_shift(
+                                runner=runner, planner=self.planner,
+                                adapter=self.transfer_adapter,
+                                read_state=self.read_state,
+                                motion_interlock=self.motion_interlock,
+                                limits=self.transfer_limits,
+                                path_limits=self.path_limits,
+                                increment_socket_m=offset,
+                                residual_socket_m=total,
+                                residual_source="nominal_observation_view",
+                                current_axis_raise_socket_m=axis_raise,
+                                index=index)
+                    except HeldXYPlanUnavailable:
+                        pass
+                    else:
+                        shifts.append(shifted)
+                        motion = json.loads(shifted.read_text(encoding="utf-8"))
+                        observation_lateral_offset = np.asarray(
+                            motion["measured_increment_socket_m"], float)
+                        total = (np.asarray(total) +
+                                 observation_lateral_offset).tolist()
+                        axis_raise += motion["measured_axis_increment_socket_m"]
+                        current = runner.current_decision()
+                        raw, capture = self._capture(
+                            runner=runner, decision=current,
+                            callback=self.capture_preinsert, phase="preinsert")
+                        self._preinsert_bundle = raw
+                        continue
             if (choice["status"] == "not_metric_multiview" and
                     self.same_trial_observation_yaw_rad != 0. and
                     not observation_yaw_attempted):

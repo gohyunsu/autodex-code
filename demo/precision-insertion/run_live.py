@@ -109,6 +109,11 @@ def main(argv: list[str] | None = None) -> int:
         help="if no metric key end is found after the initial/raised view, "
              "rotate the held cylinder around its nominal axis and recapture; "
              "0 disables this experimental observation action")
+    parser.add_argument(
+        "--same-trial-observation-lateral-mm", type=float, default=0.,
+        help="after an unmeasurable raised view, temporarily separate the "
+             "held key from the socket in a calibration-ranked XY direction; "
+             "return before correction (default: 0)")
     parser.add_argument("--annotator", help="required with --label-mode manual")
     parser.add_argument("--enable-robot-motion", action="store_true",
                         help="required: initial clear-view and trial motions")
@@ -181,6 +186,8 @@ def main(argv: list[str] | None = None) -> int:
             args.same_trial_xy_tolerance_mm / 1000.),
         same_trial_observation_raise_m=(
             args.same_trial_observation_raise_mm / 1000.),
+        same_trial_observation_lateral_m=(
+            args.same_trial_observation_lateral_mm / 1000.),
         same_trial_observation_yaw_rad=math.radians(
             args.same_trial_observation_yaw_deg),
         init_ports=init_ports, stop_after_planning=args.stop_after_planning,

@@ -37,6 +37,7 @@ class RunLiveOptions:
     xy_update_weight: float = 1.0
     same_trial_xy_tolerance_m: float | None = None
     same_trial_observation_raise_m: float = 0.
+    same_trial_observation_lateral_m: float = 0.
     same_trial_observation_yaw_rad: float = 0.
     init_ports: tuple[int, int, int] | None = None
     stop_after_planning: bool = False
@@ -261,6 +262,11 @@ def run_integrated_live_session(
             (options.same_trial_observation_raise_m > 0 and
              options.same_trial_xy_tolerance_m is None)):
         raise ValueError("observation raise needs an enabled same-trial XY target")
+    if (not math.isfinite(options.same_trial_observation_lateral_m) or
+            options.same_trial_observation_lateral_m < 0 or
+            (options.same_trial_observation_lateral_m > 0 and
+             options.same_trial_observation_raise_m <= 0)):
+        raise ValueError("lateral observation needs an enabled observation raise")
     if (not math.isfinite(options.same_trial_observation_yaw_rad) or
             (options.same_trial_observation_yaw_rad != 0. and
              options.same_trial_xy_tolerance_m is None)):

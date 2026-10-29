@@ -677,8 +677,14 @@ with grasp `20096`, and one human-confirmed 10 mm insertion with grasp
 erase that grasp's observed corrected-hold hand/socket collision.
 These are nominal rigid-key planning results, not live observations or
 physical insertion successes. The temporary lateral displacement is an
-**observation action**, not an XY error correction. A future live
-implementation must subtract its measured displacement from an estimated
-tip residual before correcting toward the socket. It should choose the
-observation action from calibrated visibility and a planned round trip,
-not assume one fixed direction works for every socket pose.
+**observation action**, not an XY error correction. The optional live route
+now ranks eight socket-frame XY observation directions by calibrated
+key-tip/socket-rim image separation, plans the selected temporary move,
+recaptures, and returns using its **measured** XY displacement. When a metric
+point was obtained, its current residual is updated by that measured return
+before ordinary correction continues. Thus the observation displacement is
+not mistaken for an insertion error. The live option is disabled by default:
+the archived images do not show whether any of these new viewpoints actually
+improves key identity or end-centre accuracy. A selected direction still
+needs its own held-path planning; the offline 15/15 result is evidence for
+the three tested directions in five saved states, not every new placement.

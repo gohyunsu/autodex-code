@@ -50,6 +50,49 @@ def test_same_trial_move_requires_metric_multiview_and_caps_one_motion():
                           tolerance_m=.0025)["status"] == "aligned"
 
 
+def test_lateral_observation_ranking_uses_each_calibrated_camera(
+        tmp_path, monkeypatch):
+    import precision_insertion.same_trial_xy as same_trial
+
+    mode = select_mode("cylinder", 5)
+    geometry = same_trial.AssetPaths(tmp_path, mode).task_geometry
+    geometry.parent.mkdir(parents=True)
+    geometry.write_text(json.dumps({
+        "key_frame": {"tip_z_m": 0.}, "socket_rim_z_m": 1.,
+    }))
+    monkeypatch.setattr(same_trial, "validated_frozen_socket_pose",
+                        lambda **_kwargs: np.eye(4))
+    key = np.eye(4)
+    key[2, 3] = 1.
+    intrinsics = {}
+    for camera, focal in (("one", 100.), ("two", 200.)):
+        intrinsics[camera] = {
+            "K_undist": [[focal, 0., 500.], [0., focal, 500.],
+                         [0., 0., 1.]],
+            "width": 1000, "height": 1000,
+        }
+    calibration = SimpleNamespace(record={
+        "c2r": np.eye(4).tolist(),
+        "camera_calibration": {
+            "intrinsics_full": intrinsics,
+            "extrinsics_full": {camera: np.eye(4).tolist()
+                                for camera in intrinsics},
+        },
+    })
+    runner = SimpleNamespace(
+        mode=mode, shared_root=tmp_path, calibration=calibration,
+        _postlift_preflight=SimpleNamespace(targets=SimpleNamespace(
+            T_robot_key_preinsert=key)))
+    ranked = same_trial.rank_lateral_observation_offsets(
+        runner=runner, current_xy_socket_m=(0., 0.),
+        axis_raise_m=0., component_m=.03)
+    assert len(ranked) == 8
+    row = next(item for item in ranked
+               if item["offset_socket_m"] == [.03, 0.])
+    assert row["projected_separation_px_by_camera"]["one"] == pytest.approx(3.)
+    assert row["projected_separation_px_by_camera"]["two"] == pytest.approx(6.)
+
+
 def test_live_xy_measurement_reuses_just_saved_pixels(tmp_path, monkeypatch):
     import precision_insertion.same_trial_xy as same_trial
 
