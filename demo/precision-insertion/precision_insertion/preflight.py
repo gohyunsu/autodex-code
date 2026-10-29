@@ -207,6 +207,7 @@ def plan_held_transfer_and_axial(
     lift_trajectory: np.ndarray | None = None,
     prior_query_records: tuple[dict[str, Any], ...] = (),
     start_at_preinsert: bool = False,
+    exact_distances: bool = True,
 ) -> InsertionPreflight:
     """Plan from a measured held state to preinsert and nominal 20 mm pose.
 
@@ -330,7 +331,8 @@ def plan_held_transfer_and_axial(
             shared_root=shared_root, calibration=calibration, targets=targets,
             planner=planner, transfer_trajectory=transfer,
             descent_trajectory=axial, held_hand_q=held, limits=limits,
-            lift_trajectory=lift, stop_on_first_geometry_failure=True)
+            lift_trajectory=lift, stop_on_first_geometry_failure=True,
+            exact_distances=exact_distances)
     if not sampled["sampled_clear"]:
         return result("sampled_held_path_rejected",
                       transfer=transfer, axial=axial, audit=sampled,

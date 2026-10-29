@@ -12,6 +12,8 @@ from typing import Mapping
 from pathlib import Path
 from typing import Callable
 
+from .timing_profile import timed
+
 
 LABEL_MODES = frozenset({"evidence_fused", "vlm_only", "manual"})
 STAGES = frozenset({"grasp_success", "preinsert_reached", "insertion_success"})
@@ -96,8 +98,10 @@ def request_annotation(
         return None
     if not callable(provider):
         raise ValueError("manual mode needs a human label provider")
-    return validate_annotation(stage, provider(
-        stage, evidence_dirs, attempt_id, candidate_id))
+    with timed("label.manual_review_wait", phase="trial", kind="human",
+               stage=stage, attempt_id=attempt_id):
+        answer = provider(stage, evidence_dirs, attempt_id, candidate_id)
+    return validate_annotation(stage, answer)
 
 
 def terminal_label_provider(annotator: str) -> Callable:

@@ -553,7 +553,7 @@ def plan_corrected_axial_handoff(*, runner, planner,
         targets=targets, start_q=state.full_q,
         held_hand_q=state.full_q[7:], held_hand_source="measured",
         limits=path_limits, axial_waypoint_step_m=.005,
-        start_at_preinsert=True)
+        start_at_preinsert=True, exact_distances=False)
     if not planned.sampled_planning_pass or planned.axial_trajectory is None:
         failure = _write(folder / "plan_failure.json", {
             "schema": "precision_insertion_same_trial_axial_plan_failure_v1",

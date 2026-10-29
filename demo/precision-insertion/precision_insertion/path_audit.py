@@ -412,6 +412,7 @@ def audit_held_joint_paths(
     held_hand_q: np.ndarray, limits: PathAuditLimits,
     lift_trajectory: np.ndarray | None = None,
     stop_on_first_geometry_failure: bool = False,
+    exact_distances: bool = True,
 ) -> dict[str, Any]:
     """Audit FK samples of lift, transfer and axial approach.
 
@@ -420,10 +421,10 @@ def audit_held_joint_paths(
     The hand-to-key transform and six Inspire joints are fixed at all samples.
     A tilted socket is supported *only for checking a supplied axis-aligned
     path*; this function does not create such a path or contact controller.
-    Candidate screening may stop after the first decisive geometry failure;
-    then minimum distances include only exactly queried pairs before the
-    first failure, as indicated by ``geometry_scan_complete=False``. A
-    passing audit still reports exact minima over all samples.
+    Candidate screening may stop after the first decisive geometry failure.
+    A passing audit reports exact minima unless ``exact_distances=False``;
+    that option retains the same collision decision and skips the diagnostic
+    distance scan when its margins are not consumed by the caller.
     """
     limits.validate()
     root = Path(shared_root).expanduser().resolve()
@@ -566,10 +567,13 @@ def audit_held_joint_paths(
                 held_hand_q=hand_q,
                 minimum_hand_clearance_m=limits.minimum_hand_clearance_m,
                 allow_initial_key_table_support=lift is not None,
-                stop_on_first_failure=stop_on_first_geometry_failure))
+                stop_on_first_failure=stop_on_first_geometry_failure,
+                collision_only_if_clear=(stop_on_first_geometry_failure and
+                                         not exact_distances)))
     failures.extend(geometry_failures)
-    geometry_scan_complete = not (stop_on_first_geometry_failure and
-                                  geometry_failures)
+    geometry_scan_complete = not (
+        stop_on_first_geometry_failure and
+        (geometry_failures or not exact_distances))
 
     return {
         "schema": "precision_insertion_sampled_held_path_audit_v1",

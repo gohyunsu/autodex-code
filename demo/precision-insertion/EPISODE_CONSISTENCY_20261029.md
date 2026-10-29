@@ -735,3 +735,26 @@ robot motion and one independent planner call when the combined route works.
 There is still **no real lateral-view frame or live corrected insertion** in
 the archive, so the 12/12 result verifies planning reachability under the
 synthetic error model, not visual error accuracy or physical success.
+
+### Corrected descent audit and operator timing
+
+The two human-confirmed 5 mm insertions have archived `20195` axial joint
+paths. Replaying their full held-key and Inspire collision audit with exact
+pairwise minimum-distance diagnostics took 3.08 and 2.58 s in a local GPU
+process. Checking the same sampled collisions without the unconsumed exact
+distance report took 0.188 and 0.178 s. Both modes reported `sampled_clear`
+with the same modeled 20 mm endpoint metrics. The corrected same-trial axial
+replan now uses the collision-only form; nominal and post-lift preflights
+retain exact margins where their callers use them. This replay measures the
+audit substep on saved trajectories, not an end-to-end physical time saving.
+The script, report and log are
+`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_corrected_audit_distance_cost_20261029.*`.
+Their NAS copies under
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/corrected_audit_distance_20261029/`
+were checked against the local report SHA256.
+
+Human-review waiting is now timed as `label.manual_review_wait` within each
+lift, pre-insertion and final-label stage. Existing completed-session traces
+included the operator's response time in those stage durations; the new
+timer permits a later physical run to separate human waiting from model and
+robot latency. It does not alter either the VLM answer or the human verdict.

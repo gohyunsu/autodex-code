@@ -294,6 +294,14 @@ def test_candidate_geometry_scan_stops_after_first_collision(
     assert report["geometry_scan_complete"] is False
     assert any(row["reason"] == "held_geometry_collision_or_clearance"
                for row in report["failures"])
+    collision_only = audit_held_joint_paths(
+        shared_root=tmp_path, calibration=calibration, targets=targets,
+        planner=_FakePlanner(), transfer_trajectory=transfer,
+        descent_trajectory=descent, held_hand_q=np.zeros(6),
+        limits=_limits(), stop_on_first_geometry_failure=True,
+        exact_distances=False)
+    assert collision_only["sampled_clear"] is False
+    assert collision_only["failures"] == report["failures"]
 
 
 def test_candidate_collision_first_scan_skips_far_exact_distances(

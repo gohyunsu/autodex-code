@@ -310,6 +310,17 @@ same-trial timing or 5 mm physical latency has been measured yet; use the
 new per-step spans before moving SAM3 work to capture4 or changing the
 three-view measurement policy.
 
+In the latest two saved 5 mm inserted attempts, the final axial replan's
+sampled geometry audit spent about 2.6–3.1 s computing exact mesh-pair
+minimum distances that the corrected handoff does not consume. Its
+collision-only form took about 0.18–0.19 s on the same archived paths and
+returned the same clear result and modeled endpoint. The corrected handoff
+now uses this form; nominal and post-lift audits keep exact distances. A
+separate `label.manual_review_wait` timing span now accounts for time spent
+waiting on the operator inside each label stage. The offline replay and its
+limits are documented in `EPISODE_CONSISTENCY_20261029.md`; neither change
+has yet been timed in a new physical episode.
+
 This profile lives on branch `feat/zerodex-precision-insertion`. The AutoDex
 camera/robot profile and `src/execution` sources are not changed. The local
 kds-Z790 PC runs session orchestration, Qwen VLM and planning. Capture4
