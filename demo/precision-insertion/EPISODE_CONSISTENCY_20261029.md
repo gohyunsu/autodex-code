@@ -68,6 +68,23 @@ and `probe_sam_box_prompt_20261029.py` beside that directory. A verified
 The runtime segmentor was **not** switched to box prompting: the experiment proves a
 one-view segmentation improvement, not a reliable multiview 3D tip.
 
+The after-lift and pre-insertion bundles for these two attempts both contain
+four calibrated frames and measured robot joints. They permit a future
+motion-based point reconstruction only if the **same physical key-end centre**
+can be located at both times and the key stayed rigid in the hand. In the
+saved `20195` images, `25322639` exposes the circular end after lift but the
+arm covers it at pre-insertion; `26053248` exposes the key at pre-insertion
+but mainly as an occluded side silhouette. The box-prompt mask there gives a
+distal half-ellipse centre 71–77 px from the projected nominal tip. That
+projection is an unverified grasp hypothesis, so this difference is **not**
+a measured physical error; it does show that neither the mask score nor the
+fitted point validates a corresponding end centre. Temporal triangulation
+from these two snapshots therefore remains a proposal, not an established
+shortcut for the current runtime. The existing two-view geometric fallback
+in `tip_tracking.py` is already available when two real tip observations are
+present; the third preferred camera helps reject mismatches rather than
+supplying a fundamental degree of freedom.
+
 ## Method supported by these episodes
 
 1. Measure the socket once per fixed-board session. Undistort each capture
