@@ -84,6 +84,58 @@ and `probe_final_crop_jitter.py` beside it.
   does not establish generalization to another socket gap, lighting, or
   camera layout, and does not prove physical 20 mm penetration.
 
+## 29 October lift-input probe: keep the current runtime method
+
+The archived lift reports contain three human-confirmed held keys: `0c787032`,
+`5e08757b`, and `4e26ec99`. The production single-image hand crop produced
+at least one positive view in two of these three. A read-only Qwen3-VL-2B
+probe added the initial tabletop key-mask crop as image 1 and kept the exact
+recorded post-lift hand crop as image 2. The prompt asked for `A` (visibly
+held), `B` (visibly not held), or `C` (hidden). With the production-style
+"any positive camera" combination, this pair produced a positive view in
+all three human-confirmed lifts, including the missed `0c787032`. However,
+the per-camera positive counts were **2/4, 1/4, 1/4**, versus **0/4, 3/4,
+3/4** with the original single image. A majority-of-views rule would miss
+all three. This is an unstable view dependence, not a demonstrated robust
+improvement.
+
+Three additional archived VLM-negative lifts (`687a4a49`, `804ef849`,
+`ecb0c571`) produced zero `A` answers in the nine evaluable camera pairs.
+They have **no independent human lift annotation**, so this is a diagnostic
+control, not a measured false-positive rate. One further view was omitted
+because its initial key mask was empty. The reproducible scripts and exact
+per-camera answers are in the local development review directory:
+`lift_pair_probe_20261029.py`, `lift_pair_probe_20261029.json`,
+`lift_pair_controls_20261029.py`, and `lift_pair_controls_20261029.json`.
+They access saved images only. The production prompt, crop, and gate were
+left unchanged because the evidence does not yet establish a reliable
+automatic negative lift label.
+
+For the next data collection, record a human held/miss/slipped label **at the
+post-lift snapshot time**, and retain the later transfer result separately.
+Evaluate camera-wise and episode-wise confusion on those independent labels.
+The video should be used to mark slips occurring after the still image;
+otherwise a correct snapshot label can be mistaken for a classifier error.
+Until that dataset exists, use manual lift/transfer labels while logging the
+Qwen answer in parallel. Final release can use the current three-camera
+visual vote, with the explicit meaning `inside_socket` rather than measured
+20 mm depth.
+
+The cross-episode recipe supported by the available physical evidence is:
+prefer the twice-inserted `20195` grasp for the 5 mm socket; locate the socket
+once per fixed session; take fresh key images and run the usual pickup and
+20 mm hand/socket preflight; retain the held key during transfer; at the
+preinsert hold, run Qwen box + SAM3 half-ellipse + calibrated multiview
+triangulation when at least two views resolve the tip; move the rigidly held
+grasp by the measured socket-frame XY correction and recapture; replan the
+descent from the reached wrist; release and classify the actual socket crop.
+The two successful `20195` episodes followed the nominal branch because a
+metric multiview tip was unavailable. The two episodes that did obtain a
+sequence of metric XY points used `20096` and stopped before descent on
+hand/socket collision. Therefore successful **closed-loop insertion** has
+not yet been demonstrated in these records. A visual residual below the
+configured tolerance must not be reported as physical insertion success.
+
 ## Next discriminating experiment
 
 Keep `20195` and the current 5 mm socket. At the preinsert hold, collect raw
