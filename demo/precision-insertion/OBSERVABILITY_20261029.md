@@ -65,6 +65,51 @@ directory. These measurements strengthen the distinction between geometric
 camera coverage and actual *identifiable* key-face observations; they add no
 grasp rejection rule or live inference step.
 
+### Focused crop and geometric SAM3 prompt follow-up
+
+On saved `5e08757b`, a 200-pixel-wide crop centered on the *nominal* shaft
+improved Qwen's coarse key boxes in the two similar side views. Unlike the
+runtime lossless crop, this exploratory input was resampled into a 512-pixel
+canvas with an explicitly recorded inverse pixel mapping. The box comparison
+used the nominal rendered visible-key mask, **not** an annotated physical key.
+In those focused crops, text-only SAM3 still returned no mask in eight
+trials. The installed `Sam3Processor.add_geometric_prompt` accepts a positive
+box. Passing the Qwen box to that stock API produced masks visually covering
+the held key in `25305462`, `25322642` and `26053248`. The first view's mask
+covered 73% of the rendered nominal visible-key pixels at 83% precision;
+the other two covered about 48% at 55–57% precision. These figures describe
+agreement with a nominal projection, not actual segmentation accuracy.
+
+The existing half-ellipse end fitter did **not** turn those three masks into
+a consistent key-face center. Its fitted point differed from the nominal
+tip projection by 14.7, 9.7 and 73.0 pixels respectively; the three-view
+fit left 14.8–21.7 pixel reprojection residuals. A separate direct-Qwen
+point prompt also returned a point in `25322639`, where the nominal key is
+fully hidden by the hand. Its four per-view points differed from the nominal
+tip by 34–89 pixels. These are not independent measurements of the actual
+key pose after squeeze.
+
+For comparison, a fixed-height XY least-squares fit to the two side-view
+mask displacements relative to the nominal rendered key yielded roughly
+(-0.3, -8.8) mm. The saved 5 mm-gap attempt was human-labelled as inserted.
+That mismatch does not establish the true physical offset, but rules out
+using these projected-mask shifts as an automatic correction without a
+physical key-center reference. The two side cameras also have only about
+4 degrees of parallax. In earlier `20096` episodes the existing text-prompt
+route obtained three consistent inlier cameras; replacing it globally with
+the box prompt lost one fitted end and moved another by 37.7 pixels. Keep
+the production estimator unchanged until a method produces consistent
+physical-face observations across both grasp families.
+
+Reproducible local-only probes and outputs are in the development review
+directory: `qwen_tip_crop_probe_20261029.{py,json}`,
+`sam_focused_qwen_probe_20261029/results.json`,
+`qwen_focused_tip_point_probe_20261029.{py,json}`,
+`probe_sam_box_prompt_20261029.py`,
+`sam_box_prompt_20261029/{results,tip_evaluation}.json`, and
+`sam_box_prior_metric_20261029.json`, plus
+`probe_mask_shift_xy_20261029.{py,json}`. No camera or robot command was sent.
+
 ## Alternative observation action tested offline
 
 For each frozen session, the probe takes the 80 mm key CAD tip
