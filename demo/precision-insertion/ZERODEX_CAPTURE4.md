@@ -358,12 +358,12 @@ start the adapter if another experiment owns the cameras.
   `PRECISION_EXCLUDED_CANDIDATES=` explicitly clears the default exclusion
   of `table/0/20096` for a controlled comparison.
 - The ZeroDex launcher sets `PRECISION_PREWARM_FIXED_WORLD=1` for both newly
-  placed and already placed keys. After the initial clear-view motion, the
-  planner initializes a **provisional** table/socket cuRobo world in a
-  background thread while capture4 opens and measures the socket. This world
-  is used only to initialize cuRobo; it is never used for a motion plan. Once
-  the measured session world exists, the same single-worker queue replaces
-  the provisional poses with the measured table/socket poses. Candidate
+  placed and already placed keys. The planner initializes a **provisional**
+  table/socket cuRobo world in a background thread concurrently with the
+  initial clear-view motion, then capture4 opening and socket measurement.
+  This world is used only to initialize cuRobo; it is never used for a motion
+  plan. Once the measured session world exists, the same worker replaces the
+  provisional poses with the measured table/socket poses. Candidate
   planning joins that measured-world update; later trials reuse the planner.
   An offline GPU probe initialized the provisional world in 23.68 s and
   updated it to the saved measured world in 0.014 s. Its record is
@@ -377,6 +377,14 @@ start the adapter if another experiment owns the cameras.
   `PRECISION_PREWARM_FIXED_WORLD=0` for the former serial timing. No grasp,
   collision, or task-success criterion changes. `--check` and `--camera-only`
   do not perform this live planner warmup.
+- Two human-confirmed 5 mm insertions on 2026-10-29 showed initial clear-view
+  durations of 4.49 s and 0.55 s. Their provisional cuRobo initialization
+  took 25.86 s and 29.51 s and previously started only after clear-view.
+  Beginning that independent worker immediately before the stock free-space
+  `home(clear_view=True)` can overlap at most those 4.49 s/0.55 s portions;
+  the actual end-to-end saving has not yet been measured on the robot. The
+  initial home still finishes before any camera exposure. This is a startup
+  scheduling change, with no new label, grasp, or collision criterion.
 - A separate offline concurrent-load probe on this RTX 3090 initialized the
   exact 5 mm provisional table/socket world and local Qwen3-VL-2B in parallel:
   cuRobo took 24.72 s, Qwen took 4.73 s, combined wall time was 24.72 s, and

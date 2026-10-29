@@ -191,12 +191,15 @@ def open_live_precision_session(
         with timed("startup.saved_session_verify", phase="startup", kind="io"):
             saved_session = load_reused_socket_session(
                 launch=launch, evidence_dir=reuse_session_evidence_dir)
+    if begin_pre_socket_warmup is not None:
+        # The provisional table/socket world contains no measured socket pose.
+        # Start its independent cuRobo worker while the stock initial home
+        # command parks the arm; the measured world is installed after capture.
+        begin_pre_socket_warmup()
     # Stock AutoDex free-space home is appropriate only before the session's
     # first exposure, not after a failed insertion or tabletop release.
     with timed("startup.clear_view", phase="startup", kind="motion"):
         clear_view.prepare_initial()
-    if begin_pre_socket_warmup is not None:
-        begin_pre_socket_warmup()
     resources = ExitStack()
     try:
         with timed("startup.camera_transport_open", phase="startup", kind="io"):

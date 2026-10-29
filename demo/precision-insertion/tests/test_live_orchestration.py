@@ -109,6 +109,7 @@ def test_live_session_keeps_same_camera_transport_for_next_key(
             "xy_update_weight": 1.0, "catalog_snapshot": None,
             "producer_manifest": None, "calibration_snapshot": None,
             "initial_preferred_candidate": None,
+            "excluded_candidates": (),
             "upright_cylinder_only": True,
         }
         return opened
@@ -119,8 +120,8 @@ def test_live_session_keeps_same_camera_transport_for_next_key(
             endpoint_catalog_path=catalog, run_output_dir=tmp_path / "new_run",
             max_xy_retries=2, clear_view=_clear_view(events),
             begin_pre_socket_warmup=lambda: events.append("planner_prewarm")) as live:
-        assert events == ["catalog_preflight", "home_clear_view",
-                          "planner_prewarm", "camera_open",
+        assert events == ["catalog_preflight", "planner_prewarm",
+                          "home_clear_view", "camera_open",
                           "socket_renderer_warmup", "stream_open",
                           "socket_frozen", "ledger_open"]
         assert live.opened is opened
