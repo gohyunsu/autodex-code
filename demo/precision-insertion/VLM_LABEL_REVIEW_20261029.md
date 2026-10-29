@@ -598,4 +598,7 @@ a planning failure and sent to held-key recovery, never as an insertion.
 For the archived `9542c1bd` grasp, the thumb/socket intersection is the
 reason this sequence cannot reach the stroke. A separate nominal replay of
 `table/0/208` passes pickup, transfer, 20 mm descent and release opening,
-but that candidate has not been tested after a real XY correction.
+and an additional saved-scene replay passed the open-hand socket-axis exit
+and clear-view retract (101 descent samples, 118 retract samples). The replay
+is in `candidate_208_full_release_replay.json` beside the collision review.
+That candidate has not been tested after a real XY correction.
