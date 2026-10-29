@@ -637,3 +637,48 @@ successful insertions had no reliable metric tip point.
 The read-only replay does not modify robot or camera state. The perturbation
 probe changes only the final VLM input crop; no new runtime failure threshold
 or extra safety gate is introduced.
+
+### Distal-face observability and a temporary lateral view
+
+The socket-aligned insertion end points downward in the saved pre-insertion
+states. Reprojecting the nominal key tip and all four calibrated camera
+centres for both human-confirmed 5 mm insertions (`5e08757b`, `4e26ec99`)
+and the 10 mm inserted result (`30e9cd0b`) gives a **negative** dot product
+between the distal planar face's outward normal and the direction toward
+every camera: −0.54 to −0.89. Thus none of these cameras can directly image
+the bottom-face centre at that hold. Axial yaw does not change that sign.
+The current SAM half-ellipse point is a side-silhouette proxy inferred near
+the end, not an observed bottom-face centre. This geometric fact explains
+why a seemingly plausible white shaft pixel must not be treated as a
+millimetre-scale insertion error without consistent multiview geometry.
+
+One alternative is to photograph the held key **temporarily above and beside**
+the socket, then return it before inserting. With the saved calibration,
+raising 40 mm and moving +30 mm in socket X and −30 mm in socket Y increases
+the second-smallest projected key-tip/socket-rim centre separation from
+64.7 to 91.2 px in the 5 mm scene, and from 62.8 to 85.9 px in the 10 mm
+scene. This projection measures separation only; it does not prove that the
+actual key end is visible or that Qwen/SAM3 assigns the correct pixels.
+Its potential advantage is reducing white-key/white-socket identity
+confusion, while retaining the socket's fixed pose for triangulation.
+The projection and the 15 planning replays have byte-verified copies under
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/observation_geometry_20261029/`.
+
+Read-only cuRobo replay with the saved FR3/Inspire joints checks the sequence
+raise 40 mm → temporary lateral observation → return lateral → return height
+→ screen the 20 mm endpoint → plan the socket-axis descent. The exact
+per-attempt results and reproducer are
+`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_lateral_observation_return_axial_20261029.{py,json}`.
+All **15/15** combinations of three tested offsets and five archived held
+states passed that nominal planning sequence: two human-confirmed 5 mm
+insertions with grasp `20195`, two corrected-but-not-inserted 5 mm attempts
+with grasp `20096`, and one human-confirmed 10 mm insertion with grasp
+`20267`. The `20096` result uses the nominal held-key relation; it does not
+erase that grasp's observed corrected-hold hand/socket collision.
+These are nominal rigid-key planning results, not live observations or
+physical insertion successes. The temporary lateral displacement is an
+**observation action**, not an XY error correction. A future live
+implementation must subtract its measured displacement from an estimated
+tip residual before correcting toward the socket. It should choose the
+observation action from calibrated visibility and a planned round trip,
+not assume one fixed direction works for every socket pose.
