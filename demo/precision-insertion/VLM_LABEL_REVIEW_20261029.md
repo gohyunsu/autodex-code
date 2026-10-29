@@ -1,5 +1,32 @@
 # Released-key VLM review (2026-10-29)
 
+## Same-trial arrival when the visual pair is occluded
+
+The capture4 closed-loop route now lets an `unknown` pre-insertion VLM vote
+reach the existing metric XY observation **only** when the transfer controller
+reports completion, no abort, and a held grasp. The report keeps the VLM label
+as unknown and records `held_arrival_visual_unknown_xy_refinement_pending` as
+the stage reason. A clear `slip_or_miss` vote remains a negative transfer
+label. This removes an occlusion-induced stop before the four-view Qwen/SAM3
+tip measurement; it does not turn an unseen key into visual evidence. The
+pre-insertion checkpoint's saved-report verifier replays the same decision.
+The focused checkpoint suite passed 15 tests, and the file-only capture4
+launch check still found four cameras and 114 eligible 5 mm grasp candidates.
+The robot and hand were off, so no physical correction or insertion was
+performed for this change.
+
+The current compute split is appropriate for the measured machines: capture4
+acquires four cameras and runs its existing SAM3/FoundPose perception; this PC
+runs Qwen, cuRobo, and the persistent pre-insertion SAM3 ROI worker. A read-only
+GPU query found capture4's RTX 5060 Ti had a separate GoTrack Python process
+using 6,964 MiB, while the local RTX 3090 was nearly idle. Moving the ROI
+worker to the shared capture PC would add a remote image/model dependency
+without measured critical-path benefit. The saved physical traces instead
+attribute 22.80 s of one 26.08 s first pickup plan to initial cuRobo world
+setup; the archived four-view XY measurements took 2.35–2.69 s each before
+the newer Qwen box batch optimization. Reassess the split from a future live
+timing trace rather than changing it from GPU occupancy alone.
+
 ## Exact-input audit after a saved run
 
 The capture4 temporal preinsert path now skips its separate GPU CAD overlay

@@ -521,6 +521,20 @@ def test_same_trial_gross_xy_misalignment_remains_a_held_arrival(tmp_path):
         allow_held_misalignment=True).preinsert_reached is False
 
 
+def test_same_trial_occluded_visual_can_continue_to_metric_xy(tmp_path):
+    args = _setup(tmp_path)
+    args.update(backend=_VLM("unobservable"), label_mode="vlm_only")
+    assert assess_preinsert_checkpoint(**args).preinsert_reached is None
+    report = assess_preinsert_checkpoint(
+        **args, allow_held_misalignment=True)
+    assert report.preinsert_reached is True
+    assert report.reason == "held_arrival_visual_unknown_xy_refinement_pending"
+    assert report.visual.status == "unknown"
+    assert report.to_record()["vlm_label"]["value"] is None
+    saved = write_preinsert_checkpoint(report, tmp_path / "visual_unknown")
+    assert verify_preinsert_checkpoint(saved)["preinsert_reached"] is True
+
+
 def test_preinsert_rejects_stale_or_tampered_external_evidence(tmp_path):
     args = _setup(tmp_path)
     altered = json.loads(args["transfer_execution_path"].read_text())

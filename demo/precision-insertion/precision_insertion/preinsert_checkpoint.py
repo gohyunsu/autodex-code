@@ -748,10 +748,14 @@ def assess_preinsert_checkpoint(
         visual_class=visual.status, fused_value=label,
         fused_reason=reason, annotation=manual_annotation)
     if (allow_held_misalignment and label_mode == "vlm_only" and
-            visual.status == "gross_misalignment" and measurement == {
+            visual.status in {"gross_misalignment", "unknown"} and
+            measurement == {
                 "trajectory_complete": True, "safety_abort": False,
                 "grasp_held": True}):
-        label, reason = True, "held_arrival_xy_refinement_pending"
+        label, reason = True, (
+            "held_arrival_xy_refinement_pending" if
+            visual.status == "gross_misalignment" else
+            "held_arrival_visual_unknown_xy_refinement_pending")
     return PreinsertCheckpoint(
         attempt.attempt_id, attempt.candidate_id, label, reason,
         position_error, rotation_error, visual, comparison, {
@@ -989,12 +993,14 @@ def verify_preinsert_checkpoint(report_path: Path) -> dict:
         annotation=report.get("manual_annotation"))
     if (report.get("allow_held_misalignment") is True and
             report.get("label_mode") == "vlm_only" and
-            report["visual"]["status"] == "gross_misalignment" and
+            report["visual"]["status"] in {"gross_misalignment", "unknown"} and
             report["transfer_measurement"] == {
                 "trajectory_complete": True, "safety_abort": False,
                 "grasp_held": True}):
-        expected_label, expected_reason = (
-            True, "held_arrival_xy_refinement_pending")
+        expected_label, expected_reason = True, (
+            "held_arrival_xy_refinement_pending" if
+            report["visual"]["status"] == "gross_misalignment" else
+            "held_arrival_visual_unknown_xy_refinement_pending")
     if (report["preinsert_reached"] is not expected_label or
             report["reason"] != expected_reason):
         raise ValueError("preinsert label contradicts saved evidence")
