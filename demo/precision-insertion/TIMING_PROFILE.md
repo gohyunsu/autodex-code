@@ -30,6 +30,15 @@ python3 demo/precision-insertion/report_timing.py \
   --tree --max-depth 8 --min-duration-s 0.01
 ```
 
+For the separate ZeroDex capture4 checkout on `kds-Z790`, use its local
+evidence root instead. This command was run on the saved 5 mm insertion trace:
+
+```bash
+cd /home/hyunsu/autodex-code
+python3 demo/precision-insertion/report_timing.py \
+  /home/hyunsu/shared_data/AutoDex/experiment/precision-insertion/inspire/precision_key_cylinder_r15_h80/_pipeline_runs/20261029_132835_069139.timing
+```
+
 ## ZeroDex capture4: two successful 5 mm episodes (2026-10-29)
 
 The archived traces for `20261029_131932_872369` and
@@ -51,6 +60,16 @@ next run:
 run in parallel; that sum is not checkpoint wall time. The writer already uses
 lossless PNG compression level 1 and local parallel I/O. Changing its format
 or skipping evidence is not justified by the cumulative number.
+
+The second saved run also spent 1.926 s in
+`planning.nominal_insertion > planning.held_path_audit >
+audit.minimum_distance_scan`. Initial grasp selection consumes the sampled
+collision result, but not the exact minimum-distance table. Its candidate
+preflight now requests a collision-only sampled audit, retaining the same
+key/hand collision decision and omitting that unused diagnostic scan. The
+measured post-squeeze path still requests exact distances when a commissioned
+surface-deviation margin needs them. The 1.926 s is a historical scan time,
+not a measured speedup; compare a fresh trace after this change.
 
 An offline startup-order probe on this PC used the saved 5 mm fixed collision
 world and the same local cuRobo, Qwen and SAM3 assets. With the FR3 planner

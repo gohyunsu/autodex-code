@@ -324,8 +324,8 @@ def _audit_held_geometry_samples(
                         # rejection; far pairs cannot violate clearance.
                         if collision_only and lower_bound > required + 1e-9:
                             continue
-                        # Passing candidates still need exact per-pair minima.
-                        # Skip only when the lower bound cannot improve one.
+                        # Exact-distance callers need per-pair minima. Skip a
+                        # query when its lower bound cannot improve one.
                         if (not collision_only and
                                 lower_bound > required + 1e-9 and
                                 lower_bound - 1e-9 >=
@@ -358,9 +358,8 @@ def _audit_held_geometry_samples(
             if scan(collision_only=True):
                 return failures, minimum_distances, source_hashes
         if collision_only_if_clear:
-            # The lateral shift needs a collision decision, not exact
-            # minima for every distant pair. Full path preflights retain
-            # their exact diagnostic scan.
+            # Callers without a margin consumer need only the collision
+            # decision, not minima for every distant pair.
             return failures, minimum_distances, source_hashes
         # The collision pass has already checked every pair whose AABB gap
         # could violate clearance. For exact minimum distances, inspect the

@@ -467,7 +467,8 @@ def plan_fresh_key_trial(
                     planner=planner, pickup_plan=pickup, trial_scene=scene,
                     shared_root=root, calibration=calibration, targets=targets,
                     held_hand_q=hold, held_hand_source="commanded_nominal",
-                    limits=limits, axial_waypoint_step_m=axial_waypoint_step_m)
+                    limits=limits, axial_waypoint_step_m=axial_waypoint_step_m,
+                    exact_distances=False)
             row["insertion_preflight_status"] = trial.status
             if trial.status == "sampled_held_path_rejected":
                 row["sampled_audit_rejection"] = _rejected_path_summary(

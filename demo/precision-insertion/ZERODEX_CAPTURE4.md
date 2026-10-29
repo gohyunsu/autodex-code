@@ -783,15 +783,17 @@ catalog. These are endpoint-screen results, not executable arm plans. The
 ZeroDex profile tries pose-matched grasps for both upright `000` and lying
 `001` first. A lying key enters reorientation only when its direct
 current-scene plans are exhausted. Do **not** use `--run` while
-the robot/hand are off or before the local robot adapter is commissioned.
+the robot/hand are off.
 The ZeroDex launcher accepts `--run` and `--plan-only` through its separate
 integration factory, but the factory refuses to construct an executor unless
 exactly one local ParaDex daemon targets the ZeroDex FR3 on the expected
-ports. On this PC the daemon binary/runtime and exclusive FCI ownership are
-not yet commissioned, so **neither live mode can currently run**. This is
-target-routing correctness, not a new grasp, perception or insertion
-acceptance threshold. `--check` and `--camera-only` remain robot-free.
-Once the daemon route is commissioned, `PRECISION_XY_UPDATE_WEIGHT` can set the
+ports. This paragraph originally described the uncommissioned 2026-10-27
+setup. The RT daemon route and FCI were subsequently commissioned, and the
+2026-10-29 episodes below reached physical insertion. A new `--run` or
+`--plan-only` session still needs a running `[READY]` daemon and active FCI;
+`--plan-only` moves the arm to clear view. This is target-routing correctness,
+not a new grasp, perception or insertion acceptance threshold. `--check` and
+`--camera-only` remain robot-free. `PRECISION_XY_UPDATE_WEIGHT` can set the
 next-trial residual gain (default `1.0`); the launcher forwards it to
 `run_live.py` instead of fixing the value in its command line.
 

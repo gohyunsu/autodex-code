@@ -106,6 +106,7 @@ def plan_insertion_after_pickup(
     shared_root: Path, calibration, targets: InsertionTargets,
     held_hand_q: np.ndarray, held_hand_source: str,
     limits: PathAuditLimits, axial_waypoint_step_m: float,
+    exact_distances: bool = True,
 ) -> InsertionPreflight:
     """Attempt one grasp's nominal lift, transfer and 20 mm axial preflight.
 
@@ -114,6 +115,8 @@ def plan_insertion_after_pickup(
     endpoint-screened v8 candidate. ``held_hand_q`` is the hand configuration
     modeled throughout lift and transfer; label its provenance truthfully.
     Supplying ``commanded_nominal`` never proves the physical grip.
+    ``exact_distances=False`` keeps the sampled collision decision but skips
+    the diagnostic per-pair minimum-distance scan for candidate selection.
 
     A failed cuRobo query returns a stage-specific status. CUDA/solver faults,
     stale assets or contradictory frames raise: they must not be converted
@@ -196,7 +199,8 @@ def plan_insertion_after_pickup(
         calibration=calibration, targets=targets, start_q=lift[-1],
         held_hand_q=held, held_hand_source=held_hand_source, limits=limits,
         axial_waypoint_step_m=step, lift_trajectory=lift,
-        prior_query_records=tuple(query_records))
+        prior_query_records=tuple(query_records),
+        exact_distances=exact_distances)
 
 
 def plan_held_transfer_and_axial(

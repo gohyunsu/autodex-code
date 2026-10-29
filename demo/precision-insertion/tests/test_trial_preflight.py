@@ -159,9 +159,10 @@ def test_fresh_trial_tries_next_grasp_after_pickup_or_insertion_preflight_failur
 ):
     fixture = _fixture(tmp_path, monkeypatch)
     calls = []
+    exact_distance_requests = []
 
     def plan_after(*, pickup_plan, **kwargs):
-        del kwargs
+        exact_distance_requests.append(kwargs["exact_distances"])
         calls.append(tuple(pickup_plan.scene_info))
         status = ("transfer_unreachable" if calls[-1][-1] == "2"
                   else "sampled_planning_pass")
@@ -180,6 +181,7 @@ def test_fresh_trial_tries_next_grasp_after_pickup_or_insertion_preflight_failur
     assert planner.pickups == [("table", "0", "1"),
                                ("table", "0", "2"),
                                ("table", "0", "3")]
+    assert exact_distance_requests == [False, False]
     assert len(planner.starts) == 3
     assert [row["insertion_preflight_status"]
             for row in result.attempted_candidates] == [
