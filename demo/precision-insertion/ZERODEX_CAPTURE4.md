@@ -213,6 +213,12 @@ point. The selected offset and measured return are stored under
 raised-view observation. A metric result is propagated through the measured
 return without an immediate redundant Qwen/SAM3 pass. See
 `EPISODE_CONSISTENCY_20261029.md` for evidence.
+If the first temporary view still has no metric key point, the loop returns
+to the raised hold and tries the next ranked, planned view. It does not
+repeat Qwen/SAM3 on the unchanged returned image. A successful metric view
+stops this viewpoint search; if none of the available directions yields a
+metric point, the existing nominal insertion route remains available. This
+search runs only when the lateral observation option is explicitly enabled.
 When a raised-view XY correction fits in one 10 mm step, the live loop plans
 the XY correction and return to the original height in one held-key motion.
 It uses the existing cuRobo and sampled collision audit; if that combined

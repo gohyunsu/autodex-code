@@ -234,6 +234,8 @@ class LiveTaskHandlers:
         observation_raise_attempted = False
         observation_lateral_attempted = False
         observation_lateral_offset = None
+        lateral_pending = []
+        lateral_attempt_index = 0
         observation_yaw_attempted = False
         xy_shift_count = 0
         for index in count():
@@ -277,6 +279,7 @@ class LiveTaskHandlers:
                     runner=runner, current_xy_socket_m=total,
                     axis_raise_m=axis_raise,
                     component_m=self.same_trial_observation_lateral_m)
+                lateral_pending = list(lateral_viewpoints)
             report = folder / "observations" / f"{index:03d}.json"
             report.parent.mkdir(parents=True, exist_ok=True)
             with report.open("x", encoding="utf-8") as stream:
@@ -345,6 +348,11 @@ class LiveTaskHandlers:
                              step_fraction).tolist()),
                         "source": "lateral_metric_plus_completed_return",
                     }
+                elif lateral_pending:
+                    # The first planned viewpoint was still uninformative.
+                    # Try the next ranked view now, without re-inferencing
+                    # the unchanged raised hold after the return.
+                    lateral_viewpoints = lateral_pending
             if (choice["status"] == "not_metric_multiview" and
                     predicted_residual is None and
                     self.same_trial_observation_raise_m > 0 and
@@ -385,7 +393,10 @@ class LiveTaskHandlers:
                     continue
             if lateral_viewpoints is not None:
                 observation_lateral_attempted = True
-                for rank_index, viewpoint in enumerate(lateral_viewpoints):
+                while lateral_pending:
+                    viewpoint = lateral_pending.pop(0)
+                    rank_index = lateral_attempt_index
+                    lateral_attempt_index += 1
                     offset = np.asarray(viewpoint["offset_socket_m"], float)
                     try:
                         with timed("trial.same_trial_observation_lateral",

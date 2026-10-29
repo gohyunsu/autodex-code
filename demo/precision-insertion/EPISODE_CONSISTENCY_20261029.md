@@ -690,6 +690,12 @@ the archived images do not show whether any of these new viewpoints actually
 improves key identity or end-centre accuracy. A selected direction still
 needs its own held-path planning; the offline 20/20 result is evidence for
 the four tested directions in five saved states, not every new placement.
+If a planned temporary view produces no metric point, the optional live loop
+now returns to the raised hold and tries the next ranked view, without
+repeating inference at the unchanged return pose. This addresses a control
+flow gap in which only the first *reachable* view was photographed. The
+archived data contain no actual lateral-view frames, so the added search
+order is a testable strategy rather than a demonstrated detection gain.
 
 ### Correcting from the temporary view without an extra return move
 
