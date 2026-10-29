@@ -111,6 +111,29 @@ They access saved images only. The production prompt, crop, and gate were
 left unchanged because the evidence does not yet establish a reliable
 automatic negative lift label.
 
+An additional saved-image probe shifted the same 650 px crop from the fixed
+hand offset to the measured mean thumb/index/middle fingertip projection.
+With the original single-image prompt, the three human-confirmed held lifts
+had at least one `YES` each; however, two of the three unannotated control
+attempts also gained a `YES` in a single camera. Pairing the initial-key crop
+with this finger-centred crop likewise gave positive views in all three held
+lifts **and** two control attempts. The white key or socket left on the board
+can enter the enlarged finger-centred field, so the apparent sensitivity
+gain does not establish better discrimination. The raw answers and exact ROI
+coordinates are in `lift_finger_roi_probe_20261029.{py,json}` and
+`lift_pair_finger_probe_20261029.{py,json}` in the same local review folder.
+The controls have no independent human lift label; treat their `YES` results
+as a reason to collect labels, not as a measured false-positive rate.
+
+A simple initial-mask-versus-post-lift pixel difference also failed to
+separate those groups. Across the four cameras, median absolute RGB changes
+inside the initial mask were 6–206 levels for the three held lifts and
+50–148 levels for the unannotated controls. The moving arm can cover the
+initial key region, and a missed key may be displaced, so disappearance
+alone is not evidence of a held key. No pixel-difference gate was added.
+The saved-image paths, SHA256 hashes, and per-camera statistics are in
+`lift_mask_difference_20261029.{py,json}` beside the Qwen probes.
+
 For the next data collection, record a human held/miss/slipped label **at the
 post-lift snapshot time**, and retain the later transfer result separately.
 Evaluate camera-wise and episode-wise confusion on those independent labels.
