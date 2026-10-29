@@ -522,6 +522,26 @@ script and four-row result are
 both have copies under
 `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/`.
 
+The same return-and-descent replay was also run on the archived **10 mm**
+socket episode `30e9cd0b`, using its actual pre-insertion joints, frozen
+10 mm socket pose and selected `table/0/20267` grasp. Both 20 and 40 mm
+observation raises passed cuRobo up/return planning, sampled held-key and
+whole-hand world collision audit, the 20 mm insertion endpoint screen, and
+the socket-axis Jacobian descent with sampled path audit (**2/2**). This
+extends the offline result to another gap and grasp; it is one saved episode,
+not two independent physical insertions. Its original visual result said
+outside, while the later operator review judged the released key inside.
+The parameterized reproducer and 10 mm report are
+`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_observation_return_axial_20261029.py`
+and `probe_observation_return_axial_gap10_20261029.json` beside it. As for
+5 mm, no raised-view photograph or corrected physical insertion exists.
+
+The runtime now accumulates the **measured socket-axis displacement** of
+each held XY shift into its observation-height estimate. If a lateral
+trajectory ends slightly higher or lower than commanded, the next image
+projection and return move use that measured height. This fixes a bookkeeping
+error without adding a new motion threshold or failure condition.
+
 Keep `20195` and the current 5 mm socket. At the preinsert hold, collect raw
 four-view images while deliberately exposing the key end in **two calibrated
 oblique views** (camera angle or collision-checked axial yaw gauge). Compare

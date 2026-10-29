@@ -229,7 +229,9 @@ def test_same_trial_xy_reobserves_and_replans_from_final_hold(
         path = runner._attempt_dir / "shift.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"measured_increment_socket_m":
-                                    [.0035, 0.]}), encoding="utf-8")
+                                    [.0035, 0.],
+                                    "measured_axis_increment_socket_m": 0.}),
+                        encoding="utf-8")
         return path
 
     def handoff(**kwargs):
@@ -416,10 +418,11 @@ def test_raised_xy_correction_reobserves_then_returns_for_axial(
         path.parent.mkdir(parents=True, exist_ok=True)
         measured_xy = ([.0035, 0.] if kwargs.get("axis_increment_socket_m", 0.) == 0.
                        else [0., 0.])
+        measured_axis = (.002 if kwargs.get("axis_increment_socket_m", 0.) == 0.
+                         else kwargs["axis_increment_socket_m"])
         path.write_text(json.dumps({
             "measured_increment_socket_m": measured_xy,
-            "measured_axis_increment_socket_m":
-                kwargs.get("axis_increment_socket_m", 0.),
+            "measured_axis_increment_socket_m": measured_axis,
         }), encoding="utf-8")
         return path
 
@@ -434,9 +437,9 @@ def test_raised_xy_correction_reobserves_then_returns_for_axial(
     monkeypatch.setattr(live_task_handlers, "write_raw_camera_capture",
                         lambda *_args, **_kwargs: None)
     bound._refine_current_hold(runner)
-    assert measured_heights == [0., .04, .04]
+    assert measured_heights == [0., .04, .042]
     assert [row.get("axis_increment_socket_m", 0.) for row in motions] == [
-        .04, 0., -.04]
+        .04, 0., -.042]
     np.testing.assert_allclose(motions[1]["increment_socket_m"], [.004, 0.])
     np.testing.assert_allclose(handed["total_xy_m"], [.0035, 0.])
     np.testing.assert_allclose(handed["residual_xy_m"], [-.0005, 0.])

@@ -370,6 +370,7 @@ class LiveTaskHandlers:
             shift_result = json.loads(shift.read_text(encoding="utf-8"))
             measured_step = shift_result["measured_increment_socket_m"]
             total = [a + b for a, b in zip(total, measured_step)]
+            axis_raise += shift_result["measured_axis_increment_socket_m"]
             predicted_residual = [a + b for a, b in zip(
                 current_residual, measured_step)]
             current = runner.current_decision()
