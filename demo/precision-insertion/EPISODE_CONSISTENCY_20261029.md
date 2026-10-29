@@ -258,6 +258,41 @@ using raw pixel difference. Arm motion, lighting, and the patterned board
 dominated the difference, so a static-background subtraction is not a key
 segmentation result either. This probe did not change the runtime.
 
+As a further diagnostic, forcing the `26053248` colour-track point onto the
+nominal 85 mm tip-height plane would request 34.4 mm and 53.8 mm socket-frame
+XY corrections in the **two physically successful nominal insertions**.
+Those large false corrections are a direct counterexample to treating a
+visible shaft pixel as the distal-face centre or promoting a single-view
+planar hypothesis to an immediate correction. They were never sent to the
+robot.
+
+### Shaft-axis alternative tested on the same frames
+
+The distal face can be hidden while part of the cylindrical side remains
+visible. We fitted an image line through each candidate side mask and solved
+for the socket-frame XY position where the two back-projected line planes
+meet the nominal 85 mm pre-insertion tip-height plane. This method uses the
+shaft axis rather than claiming to observe the hidden face centre. Its
+read-only replay gave 2.87 and 1.54 mm from nominal on the two successful
+`20195` frames, compared with 20.63 and 13.85 mm on the two displaced
+`20096` frames. The first displaced case had a separately estimated
+25.6 mm tip residual, so the axis-line method detects a gross offset there.
+
+These four numbers do **not** validate a correction policy. In the successful
+frames, the two key masks were selected manually from different prompt
+routes: projected-region SAM3 on `25322642`, and Qwen-box SAM3 on
+`26053248`. The former has only a small visible shaft patch with a fitted
+aspect ratio of 1.21-1.50. Eroding or dilating those masks by 3-5 pixels
+changed the second success's estimated XY from `[+7.74,+7.40]` to
+`[-12.67,-16.98]` mm. Its original `[+1.50,-0.34]` mm estimate is therefore
+not precise enough for an automatic millimetre-scale command. In the second
+displaced case, the axis-line magnitude (13.85 mm) also disagreed with the
+recorded distal-tip estimate (32.0 mm), which may reflect mask identity,
+orientation, or end-centre error; the saved frames do not resolve which.
+The script and strict JSON replay are `probe_two_view_shaft_axis_20261029.*`
+in the same development evidence directory. No robot command or runtime
+estimator change was made.
+
 The reproducible saved-frame scripts, JSON replies, masks, and contact
 sheets are grouped under
 `~/precision_insertion_project/development/zerodex_capture4/reviews/method_probe_20261029/`
