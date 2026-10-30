@@ -198,12 +198,13 @@ def test_transfer_reuses_only_same_attempt_lift_pixels(tmp_path, monkeypatch):
     assert runner.events[0][1]["after_lift_live_capture"] is None
 
 
-@pytest.mark.parametrize("second,predicted", [
-    ([.0005, 0.], False),
-    (None, True),
+@pytest.mark.parametrize("second,predicted,tracking", [
+    ([.0005, 0.], False, None),
+    (None, True, None),
+    (None, True, "lost"),
 ])
 def test_same_trial_xy_reobserves_and_replans_from_final_hold(
-        tmp_path, monkeypatch, second, predicted):
+        tmp_path, monkeypatch, second, predicted, tracking):
     bound, runner, *_ = _handler(tmp_path)
     runner._attempt_dir = tmp_path / "attempts" / runner.active_attempt.attempt_id
     bound._preinsert_bundle = tmp_path / "first_preinsert"
@@ -225,7 +226,8 @@ def test_same_trial_xy_reobserves_and_replans_from_final_hold(
             "inlier_cameras": (["front", "side"] if correction is not None
                                else []),
             "xy_correction_socket_m": correction,
-        }}
+        }, **({"temporal_feedback": {"status": tracking}}
+              if correction is None and tracking is not None else {})}
 
     def shift(**kwargs):
         seen.append(("shift", kwargs["increment_socket_m"]))

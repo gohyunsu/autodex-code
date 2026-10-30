@@ -329,9 +329,16 @@ class LiveTaskHandlers:
                 if self.same_trial_axis_tolerance_rad is not None else
                 {"status": "axis_disabled"})
             if (choice["status"] == "not_metric_multiview" and
-                    predicted_residual is not None and
-                    observed.get("temporal_feedback", {}).get("status") !=
-                    "lost"):
+                    predicted_residual is not None):
+                # A new visual association is useful for correcting the
+                # previous estimate, but it is not required to finish a move
+                # that was already grounded metrically.  The completed FR3
+                # displacement is measured after every held-key command, so
+                # propagate the last metric residual through that motion when
+                # the next photograph cannot identify the same face.  This
+                # keeps the loop moving toward its existing target without
+                # inventing another image measurement or adding a
+                # perception-only stop condition.
                 predicted_error = float(np.linalg.norm(predicted_residual))
                 step_fraction = min(1., self.same_trial_max_step_m /
                                     max(predicted_error, 1e-12))
@@ -366,15 +373,6 @@ class LiveTaskHandlers:
                           indent=2, sort_keys=True, allow_nan=False)
                 stream.write("\n")
             observations.append(report)
-            if (observed.get("temporal_feedback", {}).get("status") == "lost"
-                    and choice["status"] == "not_metric_multiview"):
-                runner.record_failure(
-                    "perception_unreliable",
-                    timestamp_s=self.decision_time(),
-                    evidence_refs={"temporal_feedback": str(report),
-                                   "preinsert_snapshot": str(
-                                       self._preinsert_bundle / "manifest.json")})
-                return
             if axis_choice["status"] == "tilt":
                 # Correct orientation first. Tilting about the observed key
                 # tip leaves its lateral position unchanged; the mandatory

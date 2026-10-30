@@ -190,10 +190,11 @@ The optional same-episode mode runs after the existing after-lift/preinsert
 visual arrival check. It observes the saved, undistorted preinsert frames with
 Qwen's native-pixel axis points or Qwen-box/SAM3 half-ellipse key-face points.
 Calibrated views yield the key-face centre and an XY correction in the frozen
-socket frame. A metric result from at least two cameras is used for each held
-motion. The controller follows one cuRobo-planned lateral path of at most
-10 mm, **without opening the Inspire hand**, then captures new frames and
-repeats the same measurement. The repeat has no default count cutoff.
+socket frame. A metric result from at least two cameras starts the held
+correction. The controller follows a direct damped-Jacobian lateral
+continuation of at most 3 mm between photographs, **without opening the
+Inspire hand**, then captures new frames and repeats the same measurement.
+The repeat has no default count cutoff.
 
 When the measured lateral error is at or below the configured tolerance, the
 runner rebuilds the held-key target using that visual XY residual and the
@@ -1460,18 +1461,22 @@ movement is consistent with that prediction. A coherent observation updates
 the predicted XY position; a camera switch additionally requires agreement
 with the previous 3D estimate. The first snapshot is retained as a motion
 anchor so a static socket rim cannot be tracked through many individually
-small moves. When no face follows the held-key motion, the attempt records
-`perception_unreliable` instead of issuing another XY command or claiming an
-insertion. This is an object-association rule; it does not add a new
-insertion-success criterion.
+small moves. If the new photograph cannot associate the same face, it is not
+accepted as another image measurement. The loop instead propagates the last
+metric residual through the completed, measured FR3 displacement and finishes
+the already-grounded correction before replanning insertion. Thus a missing
+follow-up association neither invents a visual point nor adds a
+perception-only stop condition. If the first photograph has no metric result,
+the unchanged nominal insertion route remains available.
 
 Offline replay of this attempt's saved images and measured moves tracked
 camera `25322642` through observations 000→001, 001→002, and 002→003, then
-identified 003→004 as a lost key-face track. This verifies the decision logic
-on that recorded sequence. The new 3 mm/Jacobian-continuation execution route
-has not yet been physically tested. A single-view planar estimate still assumes
-the key tip remains at its planned height; this assumption cannot correct
-unknown key-in-hand tilt or slip by itself.
+identified 003→004 as a lost key-face track. The lost observation is now
+retained as diagnostic evidence while the last valid metric residual is
+propagated through measured wrist motion. The new 3 mm/Jacobian-continuation
+execution route has not yet been physically tested. A single-view planar
+estimate still assumes the key tip remains at its planned height; this
+assumption cannot correct unknown key-in-hand tilt or slip by itself.
 
 ### Fixed-grasp key-axis alignment
 
