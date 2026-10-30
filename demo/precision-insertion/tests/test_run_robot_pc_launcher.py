@@ -34,6 +34,40 @@ def test_run_launcher_forwards_xy_update_weight(tmp_path):
     assert lines[lines.index("--same-trial-observation-yaw-deg") + 1] == "60"
 
 
+def test_zerodex_run_keeps_control_and_episode_outputs_out_of_assets(tmp_path):
+    demo = Path(__file__).resolve().parents[1]
+    root = demo.parents[1]
+    stage = (tmp_path / "runtime/active_shared_data/AutoDex" /
+             "precision_insertion/zerodex_capture4")
+    stage.mkdir(parents=True)
+    for name in ("launch.json", "recipient_gap5_endpoint_catalog.json",
+                 "franka_runtime.json"):
+        (stage / name).write_text("{}\n", encoding="utf-8")
+    fake_planner = tmp_path / "fake_planner"
+    fake_planner.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\"\n", encoding="utf-8")
+    fake_planner.chmod(0o755)
+    run_root = tmp_path / "runs/zerodex_capture4"
+    env = dict(
+        os.environ, PRECISION_REPO_ROOT=str(root),
+        PRECISION_STAGE_ROOT=str(stage), PRECISION_GAP_MM="5",
+        PRECISION_RUN_OUTPUT_ROOT=str(run_root),
+        PRECISION_RUN_TAG="20261030_test_run",
+        PRECISION_CHECK_PY=sys.executable,
+        PRECISION_PLANNER_PY=str(fake_planner))
+    completed = subprocess.run(
+        ["bash", str(demo / "run_robot_pc.sh"), "--run"],
+        env=env, capture_output=True, text=True, check=True)
+    lines = completed.stdout.splitlines()
+    output = Path(lines[lines.index("--output-dir") + 1])
+    assert output == (run_root / "precision-insertion/inspire" /
+                      "precision_key_cylinder_r15_h80/_pipeline_runs" /
+                      "20261030_test_run")
+    assert (run_root / "_control/20261030_test_run" /
+            "launch_20261030_test_run.json").is_file()
+    assert not (stage / "runs").exists()
+
+
 def test_zerodex_launcher_provides_demo_collision_compat(tmp_path):
     demo = Path(__file__).resolve().parents[1]
     root = demo.parents[1]

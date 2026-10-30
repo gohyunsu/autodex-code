@@ -22,6 +22,13 @@ import time
 HERE = Path(__file__).resolve().parent
 
 
+def recording_receipt_directory(root: Path, run_id: str) -> Path:
+    """Keep lightweight recorder references beside runs, never in assets."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", run_id):
+        raise ValueError("run ID must be path-safe")
+    return Path(root).expanduser().resolve() / run_id
+
+
 def _ssh(host: str, port: str, command: str, *, check: bool = True):
     return subprocess.run(
         ["ssh", "-p", port, "-o", "BatchMode=yes", host,
@@ -66,7 +73,10 @@ def _stop_recorder(*, host: str, port: str, remote_dir: Path) -> dict | None:
 def run(mode: str) -> int:
     if mode not in ("--run", "--plan-only"):
         raise ValueError("expected --run or --plan-only")
-    stage = Path(os.environ["PRECISION_STAGE_ROOT"]).expanduser().resolve()
+    receipt_root = Path(os.environ.get(
+        "PRECISION_RECORDING_RECEIPT_ROOT",
+        str(Path(os.environ["PRECISION_RUN_OUTPUT_ROOT"]) /
+            "_recording_receipts")))
     host = os.environ.get("PRECISION_CAPTURE4_SSH_HOST", "capture4@147.46.219.136")
     port = os.environ.get("PRECISION_CAPTURE4_SSH_PORT", "77")
     remote_home = Path(os.environ.get("PRECISION_CAPTURE4_HOME", "/home/capture4"))
@@ -80,7 +90,7 @@ def run(mode: str) -> int:
         raise ValueError("PRECISION_RUN_TAG must be a path-safe run ID")
     day = datetime.now().strftime("%Y%m%d")
     remote_dir = adapter / "recordings" / day / run_tag
-    receipt_dir = stage / "runs" / "recordings" / run_tag
+    receipt_dir = recording_receipt_directory(receipt_root, run_tag)
     receipt_dir.mkdir(parents=True, exist_ok=False)
     env = {**os.environ, "PRECISION_RUN_TAG": run_tag}
     code_commit = os.environ.get("PRECISION_CODE_COMMIT")

@@ -13,6 +13,7 @@ export PRECISION_SHARED_ROOT=${PRECISION_SHARED_ROOT:-$PRECISION_NAS_PROJECT_ROO
 # This profile never reads or writes the old ~/shared_data/AutoDex tree.
 export PRECISION_STAGE_ROOT=${PRECISION_STAGE_ROOT:-$PRECISION_SHARED_ROOT/AutoDex/precision_insertion/zerodex_capture4}
 export PRECISION_RUN_OUTPUT_ROOT=${PRECISION_RUN_OUTPUT_ROOT:-$PRECISION_NAS_PROJECT_ROOT/runs/zerodex_capture4}
+export PRECISION_RECORDING_RECEIPT_ROOT=${PRECISION_RECORDING_RECEIPT_ROOT:-$PRECISION_RUN_OUTPUT_ROOT/_recording_receipts}
 export PRECISION_PARADEX_ROOT=${PRECISION_PARADEX_ROOT:-$HOME/precision_insertion_project/vendor/paradex}
 export PRECISION_DEV_ROOT=${PRECISION_DEV_ROOT:-$PRECISION_NAS_PROJECT_ROOT/development/zerodex_capture4}
 export PRECISION_TIMING_LOCAL_ROOT=${PRECISION_TIMING_LOCAL_ROOT:-/tmp/precision-insertion-timing}

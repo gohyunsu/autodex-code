@@ -49,6 +49,7 @@ LABEL_MODE=${PRECISION_LABEL_MODE:-vlm_only}
 LAUNCH_TEMPLATE=${PRECISION_LAUNCH_TEMPLATE:-$STAGE/launch.json}
 CATALOG=${PRECISION_ENDPOINT_CATALOG:-$STAGE/recipient_gap${GAP_MM}_endpoint_catalog.json}
 ROBOT=${PRECISION_ROBOT_CONFIG:-$STAGE/franka_runtime.json}
+RUN_OUTPUT_ROOT=${PRECISION_RUN_OUTPUT_ROOT:-}
 for required in "$LAUNCH_TEMPLATE" "$CATALOG" "$ROBOT"; do
   if [[ ! -f "$required" ]]; then
     echo "active recipient-stage input is missing: $required" >&2
@@ -74,6 +75,7 @@ if scene_mode == "board_free":
     record["table_surface_z_m"] = float(table_z)
     for key in ("board_id", "minimum_board_corners", "board_capture_phase"):
         record.pop(key, None)
+record["evidence_dir"] = str(Path(sys.argv[2]).with_suffix(".evidence"))
 Path(sys.argv[2]).write_text(json.dumps(record), encoding="utf-8")
 PY
   "$CHECK_PY" demo/precision-insertion/run_live.py --preflight \
@@ -83,7 +85,15 @@ PY
 fi
 
 RUN_TAG=${PRECISION_RUN_TAG:-"$(date +%Y%m%d_%H%M%S_%N)_$$"}
-LAUNCH_DIR="$STAGE/runs/live_${SCENE_MODE}_gap${GAP_MM}"
+PIPELINE_OUTPUT_DIR=
+if [[ -n "$RUN_OUTPUT_ROOT" ]]; then
+  LAUNCH_DIR="$RUN_OUTPUT_ROOT/_control/$RUN_TAG"
+  PIPELINE_OUTPUT_DIR="$RUN_OUTPUT_ROOT/precision-insertion/inspire/precision_key_cylinder_r15_h80/_pipeline_runs/$RUN_TAG"
+  mkdir -p "$(dirname -- "$PIPELINE_OUTPUT_DIR")"
+else
+  # Legacy AutoDex invocation retains its original stage-local launch path.
+  LAUNCH_DIR="$STAGE/runs/live_${SCENE_MODE}_gap${GAP_MM}"
+fi
 mkdir -p "$LAUNCH_DIR"
 LAUNCH="$LAUNCH_DIR/launch_$RUN_TAG.json"
 "$CHECK_PY" - "$LAUNCH_TEMPLATE" "$LAUNCH" "$RUN_TAG" "$GAP_MM" \
@@ -130,6 +140,9 @@ if [[ "$MODE" == --run && "$PRECISION_XY_ESTIMATOR" == tracked_tip ]]; then
 fi
 EXTRA_ARGS=()
 EXTRA_ARGS+=(--label-mode "$LABEL_MODE")
+if [[ -n "$PIPELINE_OUTPUT_DIR" ]]; then
+  EXTRA_ARGS+=(--output-dir "$PIPELINE_OUTPUT_DIR")
+fi
 if [[ -n ${PRECISION_MAX_STEPS:-} ]]; then
   EXTRA_ARGS+=(--max-steps "$PRECISION_MAX_STEPS")
 fi

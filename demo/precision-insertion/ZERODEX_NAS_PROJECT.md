@@ -141,10 +141,14 @@ recorder for camera `26053248`, then run the pipeline. The recorder reads
 the existing camera shared memory without claiming the camera. It writes a
 full-resolution 10 fps MJPG AVI, source frame IDs and read timestamps to
 `/home/capture4/precision_insertion_capture4_20261027/recordings/YYYYMMDD/RUN_ID/video/`.
-The local PC writes `runs/recordings/RUN_ID/recording_ref.json` under its
-ZeroDex stage. A recording failure is visible there but does not change the
-pipeline's grasp or insertion decisions. The capture4 recorder is deployed
-once with `manage_zerodex_capture4_services.py deploy`.
+The local PC writes
+`runs/zerodex_capture4/_recording_receipts/RUN_ID/recording_ref.json`.
+A recording failure is visible there but does not change the pipeline's grasp
+or insertion decisions. Launch files and socket-session evidence for the same
+ID live under `runs/zerodex_capture4/_control/RUN_ID`; the episode ledger uses
+that same ID below the normal `_pipeline_runs` tree. None of these mutable
+files is written into `assets/` or `runtime/active_shared_data/`. The capture4
+recorder is deployed once with `manage_zerodex_capture4_services.py deploy`.
 
 **No full-video NAS upload happens while the pipeline runs.** The main-PC run
 ledger and small snapshots are written to the NAS project during the trial;
@@ -155,7 +159,7 @@ After the pipeline exits, use:
 
 ```bash
 python3 demo/precision-insertion/upload_zerodex_recording.py \
-  --receipt /mnt/paradex2/hyunsu/precision_insertion/runtime/active_shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/recordings/RUN_ID/recording_ref.json
+  --receipt /mnt/paradex2/hyunsu/precision_insertion/runs/zerodex_capture4/_recording_receipts/RUN_ID/recording_ref.json
 ```
 
 The uploader copies the finished recording into
