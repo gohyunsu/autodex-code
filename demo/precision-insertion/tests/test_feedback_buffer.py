@@ -193,6 +193,37 @@ def test_sampler_recovers_after_one_unaligned_arm_hand_pair():
         assert sampler.state_for_observation(_observation()).sample_timestamp_s == 100.02
 
 
+def test_sampler_waits_for_feedback_just_after_camera_response():
+    buffer = _buffer(max_key_state_skew_s=.5)
+    release = threading.Event()
+    first = threading.Event()
+    calls = 0
+
+    def reader():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            first.set()
+            return _state(100.)
+        if not release.is_set():
+            raise FrankaStateUnavailable("next feedback sample pending")
+        return _state(100.04 + (calls - 2) * .02)
+
+    with RobotFeedbackSampler(buffer, reader, period_s=.001) as sampler:
+        sampler.wait_until_ready(timeout_s=1.)
+        assert first.is_set()
+        result = []
+        query = threading.Thread(
+            target=lambda: result.append(
+                sampler.state_for_observation(_observation())))
+        query.start()
+        assert query.is_alive()
+        release.set()
+        query.join(timeout=1.)
+        assert not query.is_alive()
+        assert result[0].sample_timestamp_s == 100.04
+
+
 def test_held_object_command_gap_does_not_reject_stationary_exposure():
     buffer = _buffer()
     for timestamp in (100., 100.02, 100.04):

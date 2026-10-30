@@ -108,6 +108,12 @@ class ExposureStateBuffer:
                 raise ValueError("robot feedback timestamps did not advance")
             self._samples.append(frozen)
 
+    def has_sample_at_or_after(self, timestamp_s: float) -> bool:
+        """Whether sampling has caught up with a completed camera request."""
+        with self._lock:
+            return bool(self._samples and
+                        self._samples[-1].sample_timestamp_s >= timestamp_s)
+
     def state_for_observation(
         self, observation: KeyPoseObservation,
     ) -> LiveRobotState:
@@ -299,6 +305,20 @@ class RobotFeedbackSampler:
             raise RuntimeError("feedback sampling failed") from self._failure
         if self._stop.is_set() or not self._thread.is_alive():
             raise RuntimeError("feedback sampler is not running")
+        # The camera response can arrive just before the next feedback sample.
+        # Wait only for that sample, using the existing camera/state skew
+        # allowance; the usual case returns immediately.
+        deadline = time.monotonic() + self.buffer.max_key_state_skew_s
+        upper = observation.acquisition_interval_s[1]
+        while not self.buffer.has_sample_at_or_after(upper):
+            if self._failure is not None:
+                raise RuntimeError("feedback sampling failed") from self._failure
+            if self._stop.is_set() or not self._thread.is_alive():
+                raise RuntimeError("feedback sampler is not running")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            self._stop.wait(min(self.period_s, remaining))
         state = self.buffer.state_for_observation(observation)
         if self._failure is not None:
             raise RuntimeError("feedback sampling failed") from self._failure
