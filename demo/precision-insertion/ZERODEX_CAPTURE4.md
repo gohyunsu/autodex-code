@@ -2,14 +2,23 @@
 
 ## Current restart state (2026-10-30)
 
-Robot and Inspire hand were powered off after the 5 mm socket was remeasured.
-The new session evidence is
-`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/camera_only/socket_remeasure_20261030_03/socket_evidence`.
-With the robot off, a camera-only rerun admitted the upright key in three
-views and found 108 endpoint-eligible upright grasps. The static `--check`
-also passed (126 catalogued, 114 eligible across both tabletop poses). These
-checks do not establish a new robot pickup or insertion after the key-prompt
-change. Run outputs and active assets now stay under the independent
+The moved 5 mm socket was measured again with the key absent. All four
+capture4 views produced a socket mask and the board-constrained body fit
+saved the robot-frame socket centre at approximately
+`(0.688378, 0.042290, 0.062958) m`. The current session evidence is
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/camera_only/socket_remeasure_20261030_04/socket_evidence`.
+Do not reuse the older `_03` bundle after this fixture move.
+
+The held-key Jacobian continuation now accepts the runtime's detached-key
+collision world (fixed table and socket, with the carried key checked by the
+separate held-geometry audit). Local Qwen construction is also serialized
+after cuRobo CUDA-graph warmup, avoiding concurrent allocations that
+invalidated graph capture. The complete demo test suite passed after these
+changes (`1448 passed, 5 skipped`); commits `ed66e16` and `e830af1` are on
+`feat/zerodex-precision-insertion`. This is code-level evidence, not a claim
+that a post-fix physical insertion has completed.
+
+Run outputs and active assets stay under the independent
 `/mnt/paradex2/hyunsu/precision_insertion` project; the capture4 camera
 installation remains the explicit external dependency.
 
@@ -20,7 +29,7 @@ the key upright on the board, use:
 ```bash
 cd /home/hyunsu/autodex-code
 export PRECISION_GAP_MM=5
-export PRECISION_REUSE_SESSION_EVIDENCE=/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/camera_only/socket_remeasure_20261030_03/socket_evidence
+export PRECISION_REUSE_SESSION_EVIDENCE=/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/camera_only/socket_remeasure_20261030_04/socket_evidence
 export PRECISION_KEY_ALREADY_PLACED=1
 export PRECISION_LABEL_MODE=manual
 bash demo/precision-insertion/run_zerodex_capture4.sh --check
