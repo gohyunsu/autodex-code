@@ -15,6 +15,24 @@ import subprocess
 import tarfile
 
 
+def _package_already_copied(
+    package_path: Path, extract_to: str, asset_paths: set[str],
+) -> bool:
+    """The bundle may carry a directly copied socket and its restore TAR."""
+    object_name = Path(extract_to).name
+    prefix = f"assets/shared_data/{extract_to}/"
+    with tarfile.open(package_path, "r:") as archive:
+        for member in archive:
+            if not member.isfile():
+                continue
+            relative = member.name.removeprefix("./")
+            if relative.startswith(object_name + "/"):
+                relative = relative[len(object_name) + 1:]
+            if prefix + relative not in asset_paths:
+                return False
+    return True
+
+
 def _extract_socket_package(package_path: Path, target: Path) -> None:
     """Restore one handoff package into the FoundPose object layout."""
     target.mkdir(parents=True, exist_ok=True)
@@ -65,9 +83,13 @@ def install(bundle: Path, destination: Path,
     subprocess.run(["rsync", "-a", "--no-owner", "--no-group", "--no-perms",
                     str(bundle / "assets/shared_data") + "/",
                     str(shared) + "/"], check=True)
+    asset_paths = {row["path"] for row in manifest["assets"]}
     for package in manifest.get("asset_packages", []):
         target = shared / package["extract_to"]
-        _extract_socket_package(bundle / package["path"], target)
+        package_path = bundle / package["path"]
+        if not _package_already_copied(
+                package_path, package["extract_to"], asset_paths):
+            _extract_socket_package(package_path, target)
     original = manifest["source_shared_root"]
     for path in shared.rglob("*.json"):
         before = path.read_text(encoding="utf-8")
@@ -84,6 +106,7 @@ def install(bundle: Path, destination: Path,
         "#!/usr/bin/env bash\n"
         f"export PRECISION_REPO_ROOT={repo}\n"
         f"export PRECISION_CODE_COMMIT={code_commit}\n"
+        f"export PRECISION_SHARED_ROOT={shared}\n"
         f"export PRECISION_STAGE_ROOT={stage}\n"
         f"export PRECISION_PARADEX_ROOT={destination / 'paradex'}\n"
         f"export PRECISION_SAM_CHECKPOINT={shared / 'AutoDex/weights/sam3/sam3.pt'}\n"

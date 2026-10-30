@@ -7,10 +7,10 @@ code; the old AutoDex experiment directory is not this project's archive.
 | Path under project root | Contents |
 | --- | --- |
 | `code/` | Exact tracked AutoDex fork and ParaDex source archives, with commits and SHA256 in `PROJECT_MANIFEST.json` |
-| `assets/shared_data/` | Object meshes, all six cylindrical sockets, key FoundPose representation, v8 grasps, reset candidates, scenes, fixture geometry, Qwen, SAM3, capture4 calibration, launch/catalog templates, robot dependency bundle |
+| `assets/shared_data/` | Object meshes, all six cylindrical sockets, key and extracted 5 mm socket FoundPose representations, v8 grasps, reset candidates, scenes, fixture geometry, Qwen, SAM3, capture4 calibration, launch/catalog templates, robot dependency bundle |
 | `runtime/active_shared_data/` | Active path-correct `AssetPaths` tree: heavy files link into `assets/shared_data`, small JSON files contain project-local paths. This is the live `PRECISION_SHARED_ROOT`. |
 | `runtime/session_inputs/` | Frozen input JSON for the 2026-10-30 socket remeasurement. Retained because its evidence ledger records these exact paths. |
-| `restore/foundpose_packages/` | Six socket FoundPose installation TARs; the installer extracts them into `shared_data/AutoDex/foundpose_assets/`. Live episodes do not read these packages. |
+| `restore/foundpose_packages/` | Six socket FoundPose installation TARs. The installer extracts a socket only when its complete representation is absent from copied assets. Live episodes do not read these packages. |
 | `assets/capture4_cache/` | capture4's offline SAM3 Hugging Face cache and two DINOv2 checkpoints |
 | `assets/capture4_foundationpose/` | FoundPose weights formerly reached through capture4's old absolute symlink |
 | `rigs/zerodex_capture4/runtime` | Project-local link to the capture4 calibration, robot profile and launch/catalog templates in `assets/shared_data` |
@@ -96,7 +96,10 @@ bash demo/precision-insertion/run_zerodex_capture4.sh --check
 ```
 
 The installer copies assets to local storage and rewrites old absolute
-`shared_data` paths in JSON catalogs, scenes and launch profiles. It extracts
+`shared_data` paths in JSON catalogs, scenes and launch profiles. Its profile
+sets `PRECISION_SHARED_ROOT` to the restored copy. The complete 5 mm socket
+representation is copied once; other socket packages are extracted as needed.
+It extracts
 the two code archives, restores ParaDex `system/current` into the local
 checkout, and writes an explicit machine profile. It does not
 install the operating system, NVIDIA driver, Python environments, RT kernel,
