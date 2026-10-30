@@ -9,6 +9,7 @@ robot controller or trial-motion policy is constructed here.
 
 from __future__ import annotations
 
+from concurrent.futures import Future
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 import math
@@ -137,7 +138,7 @@ def open_live_precision_session(
     reuse_session_evidence_dir: Path | None = None,
     initial_preferred_candidate: tuple[str, str, str] | None = None,
     excluded_candidates: tuple[tuple[str, str, str], ...] = (),
-    begin_pre_socket_warmup: Callable[[], None] | None = None,
+    begin_pre_socket_warmup: Callable[[], Future | None] | None = None,
 ) -> Iterator[LivePrecisionSession]:
     """Capture once, open the bound ledger, and retain camera connections.
 
@@ -191,11 +192,12 @@ def open_live_precision_session(
         with timed("startup.saved_session_verify", phase="startup", kind="io"):
             saved_session = load_reused_socket_session(
                 launch=launch, evidence_dir=reuse_session_evidence_dir)
+    provisional_warmup = None
     if begin_pre_socket_warmup is not None:
         # The provisional table/socket world contains no measured socket pose.
         # Start its independent cuRobo worker while the stock initial home
         # command parks the arm; the measured world is installed after capture.
-        begin_pre_socket_warmup()
+        provisional_warmup = begin_pre_socket_warmup()
     # Stock AutoDex free-space home is appropriate only before the session's
     # first exposure, not after a failed insertion or tabletop release.
     with timed("startup.clear_view", phase="startup", kind="motion"):
@@ -215,6 +217,13 @@ def open_live_precision_session(
                     "board_constrained_body")
         warm_object = (launch.mode.key_object if warm_key else
                        launch.mode.socket_object)
+        # cuRobo captures CUDA graphs while installing its provisional world.
+        # Renderer tensor allocation cannot run during that capture. The
+        # warmup still overlaps the clear-view move and camera transport.
+        if provisional_warmup is not None:
+            with timed("startup.planner_provisional_world_warmup_wait",
+                       phase="startup", kind="wait"):
+                provisional_warmup.result()
         with timed(("startup.key_renderer_warmup" if warm_key else
                     "startup.socket_renderer_warmup"), phase="startup"):
             prepare_precision_silhouette(
@@ -273,7 +282,7 @@ def run_live_precision_session(
     launch_snapshot=None,
     initial_preferred_candidate: tuple[str, str, str] | None = None,
     excluded_candidates: tuple[tuple[str, str, str], ...] = (),
-    begin_pre_socket_warmup: Callable[[], None] | None = None,
+    begin_pre_socket_warmup: Callable[[], Future | None] | None = None,
 ) -> ActionLoopResult:
     """Keep the one ChArUco/socket camera session open across trial actions.
 

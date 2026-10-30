@@ -12,8 +12,10 @@ trial settings, not calibration or physical performance measurements.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+import time
 
 from precision_insertion.grounded_alignment import AlignmentLimits
 from precision_insertion.config import CYLINDER_RADIAL_GAPS_MM
@@ -78,11 +80,32 @@ def _key_capture() -> dict:
     }
 
 
-def _unknown_transfer_recovery(_runner, _decision):
-    # No stock AutoDex method can infer where a key went after an unobserved
-    # controller abort or slip. Preserve the attempt for supervised recovery.
-    raise RuntimeError(
-        "key state is unknown after transfer; supervised recovery is required")
+def _unknown_transfer_recovery(runner, _decision, *, clear_view):
+    """Continue the session after the operator resolves an unknown key state.
+
+    A stopped transfer cannot establish whether the key is still held. Let
+    the operator remove it, then use the usual empty-hand clear-view motion
+    and fresh key observation rather than terminating the action loop.
+    """
+    answer = input(
+        "[recovery] Remove the key from the hand/socket, place it upright "
+        "on the board, and leave the socket fixed. Type yes when done: ")
+    if answer.strip().lower() not in {"yes", "y"}:
+        raise RuntimeError("operator has not completed the key return")
+    clear_view.prepare_initial()
+    path = Path(runner._attempt_dir) / "supervised_transfer_reset.json"
+    with path.open("x", encoding="utf-8") as stream:
+        json.dump({
+            "schema": "precision_insertion_supervised_reset_v1",
+            "attempt_id": runner.active_attempt.attempt_id,
+            "method": "supervised_manual_return",
+            "reviewed_by": "operator",
+            "completed_at_s": time.time(),
+            "socket_clear": True,
+            "hand_open": True,
+        }, stream, indent=2)
+        stream.write("\n")
+    return path
 
 
 def configure(core, live, options) -> dict:
@@ -205,6 +228,8 @@ def configure(core, live, options) -> dict:
                     retry.max_grasp_translation_drift_m),
                 "same_trial_xy_tolerance_m": getattr(
                     options, "same_trial_xy_tolerance_m", None),
+                "same_trial_max_step_m": getattr(
+                    options, "same_trial_max_step_m", .003),
                 "same_trial_observation_raise_m": getattr(
                     options, "same_trial_observation_raise_m", 0.),
                 "same_trial_observation_lateral_m": getattr(
@@ -240,7 +265,9 @@ def configure(core, live, options) -> dict:
             },
             "transfer_recovery": {
                 "key_prompt": KEY_PROMPT,
-                "recover_to_tabletop": _unknown_transfer_recovery,
+                "recover_to_tabletop": lambda runner, decision:
+                    _unknown_transfer_recovery(
+                        runner, decision, clear_view=live.clear_view),
                 "capture_parameters": capture,
                 "landing_parameters": landing,
             },

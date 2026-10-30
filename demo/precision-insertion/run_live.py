@@ -104,6 +104,9 @@ def main(argv: list[str] | None = None) -> int:
              "held correction within this episode; insert after the measured "
              "residual is at or below this socket-frame threshold")
     parser.add_argument(
+        "--same-trial-max-step-mm", type=float, default=3.,
+        help="maximum XY movement between pre-insertion photographs (default: 3 mm)")
+    parser.add_argument(
         "--same-trial-observation-raise-mm", type=float, default=0.,
         help="if the first preinsert view has no metric XY point, temporarily "
              "raise the held key along the socket axis, recapture, then "
@@ -188,6 +191,7 @@ def main(argv: list[str] | None = None) -> int:
         same_trial_xy_tolerance_m=(
             None if args.same_trial_xy_tolerance_mm is None else
             args.same_trial_xy_tolerance_mm / 1000.),
+        same_trial_max_step_m=args.same_trial_max_step_mm / 1000.,
         same_trial_observation_raise_m=(
             args.same_trial_observation_raise_mm / 1000.),
         same_trial_observation_lateral_m=(

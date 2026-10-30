@@ -135,6 +135,7 @@ if [[ -n ${PRECISION_MAX_STEPS:-} ]]; then
 fi
 if [[ -n ${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM:-} ]]; then
   EXTRA_ARGS+=(--same-trial-xy-tolerance-mm "$PRECISION_SAME_TRIAL_XY_TOLERANCE_MM")
+  EXTRA_ARGS+=(--same-trial-max-step-mm "${PRECISION_SAME_TRIAL_MAX_STEP_MM:-3}")
 fi
 if [[ -n ${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM:-} &&
       -n ${PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM:-} ]]; then

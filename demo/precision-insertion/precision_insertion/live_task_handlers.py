@@ -34,6 +34,9 @@ from .same_trial_xy import (
     plan_and_execute_shift,
     plan_corrected_axial_handoff, rank_lateral_observation_offsets,
 )
+from .same_trial_visual_feedback import update_held_key_xy
+from .assets import AssetPaths
+from .world import validated_frozen_socket_pose
 
 
 @dataclass
@@ -79,6 +82,7 @@ class LiveTaskHandlers:
     xy_estimator: str = "vlm"
     sam_segmentor: object | None = None
     same_trial_xy_tolerance_m: float | None = None
+    same_trial_max_step_m: float = .003
     same_trial_max_shifts: int | None = None
     same_trial_observation_raise_m: float = 0.
     same_trial_observation_lateral_m: float = 0.
@@ -238,6 +242,19 @@ class LiveTaskHandlers:
         lateral_attempt_index = 0
         observation_yaw_attempted = False
         xy_shift_count = 0
+        previous_observation = None
+        previous_motion = None
+        previous_camera_id = None
+        previous_xy = None
+        anchor_observation = None
+        temporal_feedback_enabled = self.xy_estimator == "sam_half_ellipse"
+        if temporal_feedback_enabled:
+            key_radius_m = float(json.loads(AssetPaths(
+                Path(runner.shared_root), runner.mode).task_geometry.read_text(
+                    encoding="utf-8"))["key_radius_m"])
+            socket_robot = validated_frozen_socket_pose(
+                mode=runner.mode, shared_root=runner.shared_root,
+                calibration=runner.calibration)
         for index in count():
             with timed("trial.same_trial_xy_measure", phase="trial",
                        kind="vlm", attempt_id=attempt.attempt_id):
@@ -252,13 +269,59 @@ class LiveTaskHandlers:
                     xy_estimator=self.xy_estimator,
                     sam_segmentor=self.sam_segmentor,
                     capture=capture)
+            if temporal_feedback_enabled and previous_motion is not None:
+                feedback = update_held_key_xy(
+                    previous=previous_observation, current=observed,
+                    measured_xy_socket_m=previous_motion[
+                        "measured_increment_socket_m"],
+                    measured_axis_socket_m=previous_motion[
+                        "measured_axis_increment_socket_m"],
+                    calibration=runner.calibration.record,
+                    socket_robot=socket_robot,
+                    previous_camera_id=previous_camera_id,
+                    previous_xy_socket_m=previous_xy,
+                    key_radius_m=key_radius_m,
+                    anchor=anchor_observation,
+                    cumulative_xy_socket_m=total,
+                    cumulative_axis_socket_m=axis_raise)
+                observed["temporal_feedback"] = feedback
+                if (feedback["status"] == "tracked" and
+                        observed["alignment"]["status"] !=
+                        "diagnostic_metric_xy_correction"):
+                    estimate = feedback["fused_xy_socket_m"]
+                    observed["alignment"].update({
+                        "status": "diagnostic_planar_xy_hypothesis",
+                        "reason": "measured_held_motion_consistent_face",
+                        "xy_source": "temporal_motion_fused_planar_xy",
+                        "inlier_cameras": [feedback["camera_id"]],
+                        "tip_socket_m": [*estimate, observed["alignment"][
+                            "nominal_tip_z_socket_m"]],
+                        "xy_correction_socket_m":
+                            [-estimate[0], -estimate[1]],
+                        "xy_correction_norm_m": float(
+                            np.linalg.norm(estimate)),
+                    })
+                elif (feedback["status"] == "lost" and
+                      observed["alignment"]["status"] !=
+                      "diagnostic_metric_xy_correction"):
+                    observed["alignment"].update({
+                        "status": "abstain",
+                        "reason": "temporal_key_motion_inconsistent",
+                        "xy_source": "none", "inlier_cameras": [],
+                        "tip_socket_m": None,
+                        "xy_correction_socket_m": None,
+                    })
             choice = choose_xy_move(
                 observed["alignment"],
-                tolerance_m=self.same_trial_xy_tolerance_m)
+                tolerance_m=self.same_trial_xy_tolerance_m,
+                max_step_m=self.same_trial_max_step_m)
             if (choice["status"] == "not_metric_multiview" and
-                    predicted_residual is not None):
+                    predicted_residual is not None and
+                    observed.get("temporal_feedback", {}).get("status") !=
+                    "lost"):
                 predicted_error = float(np.linalg.norm(predicted_residual))
-                step_fraction = min(1., .010 / max(predicted_error, 1e-12))
+                step_fraction = min(1., self.same_trial_max_step_m /
+                                    max(predicted_error, 1e-12))
                 choice = {
                     "status": ("aligned" if predicted_error <=
                                self.same_trial_xy_tolerance_m else "shift"),
@@ -289,6 +352,14 @@ class LiveTaskHandlers:
                           indent=2, sort_keys=True, allow_nan=False)
                 stream.write("\n")
             observations.append(report)
+            if observed.get("temporal_feedback", {}).get("status") == "lost":
+                runner.record_failure(
+                    "perception_unreliable",
+                    timestamp_s=self.decision_time(),
+                    evidence_refs={"temporal_feedback": str(report),
+                                   "preinsert_snapshot": str(
+                                       self._preinsert_bundle / "manifest.json")})
+                return
             returned_lateral_this_iteration = False
             if observation_lateral_offset is not None:
                 metric = choice["status"] in {"aligned", "shift"}
@@ -336,7 +407,8 @@ class LiveTaskHandlers:
                 returned_lateral_this_iteration = True
                 if metric:
                     predicted_error = float(np.linalg.norm(predicted_residual))
-                    step_fraction = min(1., .010 / max(predicted_error, 1e-12))
+                    step_fraction = min(1., self.same_trial_max_step_m /
+                                        max(predicted_error, 1e-12))
                     choice = {
                         "status": ("aligned" if predicted_error <=
                                    self.same_trial_xy_tolerance_m else "shift"),
@@ -489,7 +561,8 @@ class LiveTaskHandlers:
                 else:
                     final_residual = [-value for value in observed[
                         "alignment"]["xy_correction_socket_m"]]
-                    residual_source = "current_metric_multiview"
+                    residual_source = choice.get(
+                        "source", "current_metric_multiview")
                 break
             if choice["status"] == "not_metric_multiview":
                 # No XY observation was available. Replan from the measured
@@ -570,6 +643,15 @@ class LiveTaskHandlers:
             axis_raise += shift_result["measured_axis_increment_socket_m"]
             predicted_residual = [a + b for a, b in zip(
                 current_residual, measured_step)]
+            if temporal_feedback_enabled:
+                if anchor_observation is None:
+                    anchor_observation = observed
+                previous_observation = observed
+                previous_motion = shift_result
+                previous_camera_id = (observed["alignment"].get(
+                    "inlier_cameras") or [None])[0]
+                previous_xy = [-value for value in observed["alignment"][
+                    "xy_correction_socket_m"]]
             current = runner.current_decision()
             raw, capture = self._capture(
                 runner=runner, decision=current,

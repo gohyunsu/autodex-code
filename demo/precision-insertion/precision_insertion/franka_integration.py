@@ -636,7 +636,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                 install_curobo_planner_compat()
                 core.planner._set_motion_world(provisional)
 
-        warmup_pool.submit(context.run, prewarm)
+        return warmup_pool.submit(context.run, prewarm)
 
     def begin_fixed_world_warmup(live):
         nonlocal warmup_pool, warmup_future

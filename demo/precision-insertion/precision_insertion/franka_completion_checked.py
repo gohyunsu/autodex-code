@@ -16,6 +16,7 @@ key physically reached the socket depth.
 from __future__ import annotations
 
 import math
+import re
 import time
 from functools import lru_cache
 
@@ -73,15 +74,33 @@ class CompletionCheckedFrankaMixin:
         self.follow_tol = min(original_follow_tol,
                               self.completion_max_path_error_rad)
         self._ramp_hand = defer_ramp
+        terminal_reference_stall = False
+        self._precision_transfer_tail = None
         try:
-            result = super()._follow(
-                path, hand_traj, speed=speed,
-                abort_on_contact=(abort_on_contact or
-                                  bool(getattr(self, "_holding_object", False))),
-                stop_wrench_z=stop_wrench_z,
-                slowdown_wrist_target=slowdown_wrist_target,
-                slowdown_wrist_references=slowdown_wrist_references,
-                proximity_hand_traj=proximity_hand_traj)
+            try:
+                result = super()._follow(
+                    path, hand_traj, speed=speed,
+                    abort_on_contact=(abort_on_contact or
+                                      bool(getattr(self, "_holding_object", False))),
+                    stop_wrench_z=stop_wrench_z,
+                    slowdown_wrist_target=slowdown_wrist_target,
+                    slowdown_wrist_references=slowdown_wrist_references,
+                    proximity_hand_traj=proximity_hand_traj)
+            except RuntimeError as exc:
+                # A transfer may reach its final time reference while the FR3
+                # still has a small joint residual. The following camera and
+                # operator checkpoint judges whether the held key is over the
+                # socket; an exact joint endpoint is not the task outcome.
+                # Stock has already stopped the stream before this exception.
+                match = re.fullmatch(
+                    r"FR3 stream incomplete \(stalled reference\) at waypoint (\d+)/(\d+)",
+                    str(exc))
+                if (getattr(self, "_precision_held_stage", None) != "transfer" or
+                        match is None or int(match.group(1)) != len(path) - 1 or
+                        int(match.group(2)) != len(path)):
+                    raise
+                terminal_reference_stall = True
+                result = None
         finally:
             self.land_tol = original_land_tol
             self.follow_tol = original_follow_tol
@@ -111,6 +130,15 @@ class CompletionCheckedFrankaMixin:
         endpoint_error = float(np.linalg.norm(measured - path[-1, :7]))
         max_velocity = float(np.max(np.abs(velocity)))
         arm_error = bool(self.arm.is_error())
+        if terminal_reference_stall:
+            if arm_error:
+                raise RuntimeError("FR3 transfer stopped with arm error")
+            self._precision_transfer_tail = {
+                "completion_mode": "final_reference_stalled_visual_checkpoint",
+                "terminal_joint_error_l2_rad": endpoint_error,
+                "terminal_goal_reached": False,
+            }
+            return result
         if arm_error or endpoint_error > self.completion_max_path_error_rad:
             raise RuntimeError(
                 "FR3 stream did not finish at a measured stationary endpoint "

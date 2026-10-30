@@ -22,6 +22,8 @@ export PRECISION_LABEL_MODE=${PRECISION_LABEL_MODE:-manual}
 # ZeroDex runs reobserve and correct XY at pre-insertion by default. An
 # explicitly empty value disables this mode for a baseline run.
 export PRECISION_SAME_TRIAL_XY_TOLERANCE_MM=${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM-2.5}
+# Take a new image after each short held-key correction.
+export PRECISION_SAME_TRIAL_MAX_STEP_MM=${PRECISION_SAME_TRIAL_MAX_STEP_MM-3}
 # A straight raise still leaves the downward-facing key tip hidden in all
 # four calibrated views of the saved 5/10 mm holds. Keep this extra motion
 # opt-in until a raised live snapshot demonstrates a usable metric point.

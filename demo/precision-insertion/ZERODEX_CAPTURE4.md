@@ -1388,3 +1388,68 @@ or general VLM accuracy result. Source records are under
 `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/` as
 `bench_saved_qwen_box_batch_20261029.json` and
 `replay_saved_xy_batch_20261029.json`.
+
+## 2026-10-30 transfer tail and interrupted-trial recovery
+
+The 5 mm trial `20261030_181133_506159` reached the last of 187 transfer
+references with a measured 0.069 rad joint L2 residual. The stock follower
+stopped its stream and reported a final-reference stall before the preinsert
+camera checkpoint. The operator observed the key still held above the socket.
+The precision wrapper now treats **only** a stopped, error-free transfer at
+its final reference as arrival at the visual checkpoint. It records the
+residual and `terminal_goal_reached=false` in the measured controller trace;
+the following camera and manual/VLM transfer label still decides whether the
+key is over the socket. A stall at an earlier reference remains an execution
+failure. This is not evidence of exact endpoint arrival or insertion.
+
+If an interrupted transfer leaves the key state unknown, the action loop now
+asks the operator to remove the key from the hand or socket and place it
+upright on the board. After an explicit `yes`, the normal empty-hand
+clear-view motion and fresh key perception resume the session. The operator
+return is logged as `supervised_manual_return`; no held-key pose is inferred
+from the aborted path. The fresh-socket startup also waits for provisional
+cuRobo CUDA graph capture to finish before creating the silhouette renderer.
+The warmup still overlaps the initial clear-view move and camera connection.
+
+## 2026-10-30 same-trial XY approach and motion feedback
+
+The 5 mm session `20261030_185316_167127`, attempt
+`e25a811732ae42a2acaada6452586549`, was manually labelled as a successful
+lift and transfer. It did **not** reach insertion. The prior controller made
+ten held-key XY moves, each up to 10 mm, because each SAM face-centre snapshot was
+treated as a fresh independent face-centre estimate. The saved observations
+changed selected camera and XY direction repeatedly. From observation 003
+to 004, the two available face centres moved 35 and 67 original pixels away
+from the locations predicted by the measured FR3 movement. The operator
+reported that the key was on the board when the run was stopped. The saved
+images alone do not establish the exact instant at which it left the hand.
+
+The ZeroDex live profile now requests at most **3 mm between photographs**
+(`PRECISION_SAME_TRIAL_MAX_STEP_MM`, default 3). Each requested XY displacement
+is planned through targets spaced no more than 1.5 mm apart. Each cuRobo
+query starts from the preceding target's solved joint endpoint. If the
+resulting wrist path leaves the target-spacing corridor or travels away from
+the target, the planner tries 0.75 mm targets; it never executes the detour.
+The full concatenated path still goes through the existing held-key/hand
+collision audit before Franka execution. This is a local approach planner;
+it does not reset the IK seed to the home configuration.
+
+After each move, the measured FR3 socket-frame displacement predicts where
+the same key-face centre should appear in each calibrated view. The next
+Qwen/SAM ellipse is associated with the previous face only if its image
+movement is consistent with that prediction. A coherent observation updates
+the predicted XY position; a camera switch additionally requires agreement
+with the previous 3D estimate. The first snapshot is retained as a motion
+anchor so a static socket rim cannot be tracked through many individually
+small moves. When no face follows the held-key motion, the attempt records
+`perception_unreliable` instead of issuing another XY command or claiming an
+insertion. This is an object-association rule; it does not add a new
+insertion-success criterion.
+
+Offline replay of this attempt's saved images and measured moves tracked
+camera `25322642` through observations 000→001, 001→002, and 002→003, then
+identified 003→004 as a lost key-face track. This verifies the decision logic
+on that recorded sequence. The new 3 mm/local-segment execution route has
+not yet been physically tested. A single-view planar estimate still assumes
+the key tip remains at its planned height; this assumption cannot correct
+unknown key-in-hand tilt or slip by itself.

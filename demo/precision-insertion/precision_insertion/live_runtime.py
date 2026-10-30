@@ -36,6 +36,7 @@ class RunLiveOptions:
     annotator: str | None = None
     xy_update_weight: float = 1.0
     same_trial_xy_tolerance_m: float | None = None
+    same_trial_max_step_m: float = .003
     same_trial_observation_raise_m: float = 0.
     same_trial_observation_lateral_m: float = 0.
     same_trial_observation_yaw_rad: float = 0.
@@ -63,7 +64,7 @@ class LiveRuntimeIntegration:
     close: Callable[[], None]
     begin_fixed_world_warmup: Callable[[LivePrecisionSession], Future] | None = None
     key_capture_overlaps_warmup: bool = False
-    begin_pre_socket_warmup: Callable[[], None] | None = None
+    begin_pre_socket_warmup: Callable[[], Future | None] | None = None
 
 
 def _wait_for_fixed_world_warmup(
@@ -258,6 +259,9 @@ def run_integrated_live_session(
             not math.isfinite(options.same_trial_xy_tolerance_m) or
             options.same_trial_xy_tolerance_m <= 0):
         raise ValueError("same-trial XY tolerance must be positive metres")
+    if (not math.isfinite(options.same_trial_max_step_m) or
+            options.same_trial_max_step_m <= 0):
+        raise ValueError("same-trial XY step must be positive metres")
     if (not math.isfinite(options.same_trial_observation_raise_m) or
             options.same_trial_observation_raise_m < 0 or
             (options.same_trial_observation_raise_m > 0 and

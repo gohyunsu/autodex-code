@@ -287,6 +287,7 @@ class FrankaMeasuredLiftAdapter:
             stage=stage)
         self._active = True
         self.executor.arm = observer
+        self.executor._precision_held_stage = stage
         failure: Exception | None = None
         stop_ack: dict | None = None
         try:
@@ -301,6 +302,7 @@ class FrankaMeasuredLiftAdapter:
             failure = exc
         finally:
             self.executor.arm = original_arm
+            self.executor._precision_held_stage = None
             self._active = False
             if failure is not None:
                 try:
@@ -328,6 +330,8 @@ class FrankaMeasuredLiftAdapter:
             "status": "completed" if failure is None else "aborted",
             "limits": vars(self.limits), "samples": observer.samples,
             "stop_acknowledgement": stop_ack,
+            "terminal_follow": getattr(
+                self.executor, "_precision_transfer_tail", None),
             "error": None if failure is None else {
                 "type": type(failure).__name__, "message": str(failure)},
         }

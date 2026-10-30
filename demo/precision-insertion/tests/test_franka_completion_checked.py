@@ -238,6 +238,32 @@ def test_held_motion_requests_reflex_abort_in_stock_follower(monkeypatch):
     assert seen == [True]
 
 
+def test_transfer_final_reference_stall_reaches_visual_checkpoint(monkeypatch):
+    def final_stall(self, path, _hand, **_kwargs):
+        assert self.arm.stop_streaming()["type"] == "success"
+        raise RuntimeError(
+            f"FR3 stream incomplete (stalled reference) at waypoint "
+            f"{len(path) - 1}/{len(path)}")
+
+    monkeypatch.setattr(_Stock, "_follow", final_stall)
+    goal = np.full(7, .2)
+    arm = _Arm(goal - .02)
+    executor = _wrapper(arm)
+    executor._holding_object = True
+    executor._precision_held_stage = "transfer"
+    executor._follow(np.vstack([np.zeros(7), goal]),
+                     np.full((2, 6), 500.))
+    assert executor._precision_transfer_tail["terminal_goal_reached"] is False
+    assert executor._precision_transfer_tail["terminal_joint_error_l2_rad"] > .04
+    assert arm.moves == []
+    assert executor.ramps == []
+
+    executor._precision_held_stage = "lift"
+    with pytest.raises(RuntimeError, match="stalled reference"):
+        executor._follow(np.vstack([np.zeros(7), goal]),
+                         np.full((2, 6), 500.))
+
+
 def test_blocking_move_reports_daemon_reflex_instead_of_target_error():
     try:
         from src.execution.franka_executor import FrankaExecutor

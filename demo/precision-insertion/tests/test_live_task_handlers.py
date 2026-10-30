@@ -97,6 +97,9 @@ def _handler(tmp_path, enabled=True):
         release_and_clear=lambda *_args: tmp_path / "release.json",
         enable_robot_motion=enabled,
         decision_time=lambda: 20.)
+    # Existing handler scenarios exercise the previous 10 mm step contract.
+    # The live ZeroDex profile now requests 3 mm through RunLiveOptions.
+    bound.same_trial_max_step_m = .010
     return bound, runner, first, final
 
 

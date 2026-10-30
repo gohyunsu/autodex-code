@@ -15,6 +15,25 @@ from precision_insertion.live_transfer_recovery import (  # noqa: E402
 from precision_insertion.session_policy import SessionDecision  # noqa: E402
 
 
+def test_unknown_transfer_can_return_to_fresh_key_capture(tmp_path, monkeypatch):
+    from robot_pc_stages import _unknown_transfer_recovery
+
+    calls = []
+    clear_view = SimpleNamespace(
+        prepare_initial=lambda: calls.append("empty_hand_clear_view"))
+    runner = SimpleNamespace(
+        _attempt_dir=tmp_path,
+        active_attempt=SimpleNamespace(attempt_id="trial"))
+    monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
+    path = _unknown_transfer_recovery(
+        runner, None, clear_view=clear_view)
+    record = json.loads(path.read_text())
+    assert calls == ["empty_hand_clear_view"]
+    assert record["schema"] == "precision_insertion_supervised_reset_v1"
+    assert record["attempt_id"] == "trial"
+    assert record["hand_open"] is True
+
+
 def test_automatic_return_eligibility_requires_visible_rigid_hold(tmp_path):
     sources = {}
     for name in ("trajectory_feedback", "safety", "grasp_state"):

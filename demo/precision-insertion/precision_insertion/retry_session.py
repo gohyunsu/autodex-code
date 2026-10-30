@@ -1356,6 +1356,28 @@ def _compute_sam_half_ellipse_alignment(
         max_reprojection_px=alignment_limits.max_reprojection_px,
         min_parallax_deg=alignment_limits.min_parallax_deg,
         max_nominal_tip_height_error_m=max_nominal_tip_height_error_m)
+    if alignment["status"] == "abstain" and views:
+        # Two masks can each fit a clean half ellipse yet correspond to
+        # different parts of a partly occluded key. Their triangulation is
+        # then unusable. Under this cylinder mode's fixed tip-height
+        # assumption, use the clearest single observed face ray on that
+        # height plane and reobserve after one bounded XY move.
+        candidates = [
+            (float(record["sam_half_ellipse"]["boundary_median_abs_error_px"]),
+             view.frame.camera_id, view)
+            for view, record, _mask in measured
+            if view is not None and record.get("sam_half_ellipse") is not None
+        ]
+        if candidates:
+            _quality, _camera, best = min(candidates)
+            planar = tracked_tip_xy_alignment(
+                [best], nominal_tip_z_socket_m=float(nominal_tip[2]),
+                search_index=search_index,
+                max_reprojection_px=alignment_limits.max_reprojection_px,
+                min_parallax_deg=alignment_limits.min_parallax_deg,
+                max_nominal_tip_height_error_m=max_nominal_tip_height_error_m)
+            if planar["status"] == "diagnostic_planar_xy_hypothesis":
+                alignment = planar
     alignment.update(
         estimator="sam3_half_ellipse_key_face_proxy",
         sam_half_ellipse_views=[record for _view, record, _mask in measured],
