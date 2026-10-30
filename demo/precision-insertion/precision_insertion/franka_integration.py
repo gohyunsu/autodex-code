@@ -352,7 +352,13 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             **({"classification_image_size": image_size}
                if image_size is not None else {}))
 
+    # cuRobo records CUDA graphs during the provisional-world warmup.  A
+    # simultaneous local Qwen weight load allocates on the same CUDA context
+    # and invalidates that capture.  Keep startup overlap when planner prewarm
+    # is disabled, but serialize Qwen behind the graph warmup otherwise.  The
+    # backend is still constructed by ``components`` before the first trial.
     if (os.environ.get("PRECISION_PRELOAD_VLM") == "1" and
+            os.environ.get("PRECISION_PREWARM_FIXED_WORLD") != "1" and
             vlm["mode"] == "local" and
             options.launch_snapshot is not None):
         launch = options.launch_snapshot

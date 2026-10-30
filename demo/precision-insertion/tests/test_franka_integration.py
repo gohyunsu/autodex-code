@@ -153,6 +153,38 @@ def test_zerodex_local_qwen_load_overlaps_startup_and_is_reused(
                       "qwen_load_finished", "assembled", "core_closed"]
 
 
+def test_local_qwen_load_waits_when_curobo_graph_prewarm_is_enabled(
+        monkeypatch, tmp_path):
+    monkeypatch.setenv("PRECISION_PRELOAD_VLM", "1")
+    monkeypatch.setenv("PRECISION_PREWARM_FIXED_WORLD", "1")
+    backend = object()
+    loads = []
+    core = SimpleNamespace(
+        clear_view=object(), planner=object(), read_state=lambda: None,
+        sampler=None, close=lambda: None)
+    monkeypatch.setattr(franka_integration, "open_franka_core", lambda _: core)
+    module = ModuleType("robot_pc_stages")
+    module.configure = lambda *_: {"shared": {}, "stages": {}}
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setattr(
+        franka_integration, "load_vlm_backend",
+        lambda **_: (loads.append("qwen") or backend))
+    monkeypatch.setattr(
+        franka_integration, "assemble_live_components",
+        lambda _live, **kwargs: (kwargs["shared"]["backend"],))
+    launch = SimpleNamespace(
+        image_hw=(1536, 2048), shared_root=tmp_path,
+        camera_ids={"camera_a"})
+    options = replace(_options(tmp_path, _config()), launch_snapshot=launch)
+
+    integration = franka_integration.factory(options)
+    assert loads == []
+    live = SimpleNamespace(cameras=SimpleNamespace(launch=launch))
+    assert integration.build_components(live) == (backend,)
+    assert loads == ["qwen"]
+    integration.close()
+
+
 @pytest.mark.parametrize("override", [False, True])
 def test_franka_integration_reuses_checked_core_for_pickup_unless_overridden(
         monkeypatch, tmp_path, override):
