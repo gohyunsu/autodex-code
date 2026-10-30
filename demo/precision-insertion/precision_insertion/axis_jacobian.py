@@ -128,9 +128,8 @@ def _plan_jacobian_linear_stroke(
             f"linear stroke target differs from {request_description}")
     if (not isinstance(scene_cfg, dict) or
             not isinstance(scene_cfg.get("mesh"), dict) or
-            "fixture_socket" not in scene_cfg["mesh"] or
-            "target" not in scene_cfg["mesh"]):
-        raise ValueError("linear stroke needs the fresh key and frozen socket world")
+            "fixture_socket" not in scene_cfg["mesh"]):
+        raise ValueError("linear stroke needs the frozen socket world")
 
     def code(suffix: str) -> str:
         return f"{failure_prefix}_{suffix}"
@@ -429,9 +428,8 @@ def _plan_jacobian_pose_waypoints(
         raise ValueError("pose continuation needs finite FR3/Inspire states")
     if (not isinstance(scene_cfg, dict) or
             not isinstance(scene_cfg.get("mesh"), dict) or
-            "fixture_socket" not in scene_cfg["mesh"] or
-            "target" not in scene_cfg["mesh"]):
-        raise ValueError("pose continuation needs the fresh key and socket world")
+            "fixture_socket" not in scene_cfg["mesh"]):
+        raise ValueError("pose continuation needs the frozen socket world")
     opts = options or _default_options_for_arm(n_arm)
 
     def failure(code: str, detail: str | None = None, *, geometric=None,

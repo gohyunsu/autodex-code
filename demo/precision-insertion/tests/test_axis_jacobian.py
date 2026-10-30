@@ -144,6 +144,22 @@ def test_short_linear_correction_uses_previous_solution_and_stays_collinear(
         for row in result.step_records)
 
 
+def test_short_linear_correction_accepts_detached_key_world(solver_stubs):
+    """Held-key worlds intentionally contain the socket but no target mesh."""
+    planner = _Planner()
+    start = np.zeros(13)
+    reference = planner.fk_wrist(start)
+    target = reference.copy()
+    target[0, 3] = .001
+    result = axis_jacobian.plan_jacobian_linear_stroke(
+        planner, start, reference, target,
+        direction_robot=np.array([1., 0., 0.]),
+        scene_cfg={"mesh": {"fixture_socket": {}}},
+        expected_travel_m=.001, step_m=.001)
+    assert result.success
+    assert planner.world == {"mesh": {"fixture_socket": {}}}
+
+
 def test_smooth_dls_biases_update_toward_previous_joint_increment():
     jacobian = np.zeros((6, 2))
     jacobian[0, 0] = 1.0
@@ -193,6 +209,20 @@ def test_tip_axis_alignment_rotates_about_tip_and_keeps_hand_fixed(
         np.broadcast_to(start[7:], result.trajectory[:, 7:].shape))
     np.testing.assert_allclose(
         planner.fk_wrist(result.trajectory[-1]), goals[-1], atol=1e-3)
+
+
+def test_tip_axis_alignment_accepts_detached_key_world(solver_stubs):
+    planner = _PosePlanner()
+    start = np.zeros(13)
+    start[:3] = [.10, -.03, .25]
+    wrist = planner.fk_wrist(start)
+    result = axis_jacobian.plan_jacobian_tip_axis_alignment(
+        planner, start, wrist, pivot_robot=np.array([.12, -.02, .17]),
+        translation_robot=np.zeros(3),
+        tilt_rotvec_robot=np.array([0., np.deg2rad(1.), 0.]),
+        scene_cfg={"mesh": {"fixture_socket": {}}})
+    assert result.success
+    assert planner.world == {"mesh": {"fixture_socket": {}}}
 
 
 def test_tilted_axis_rejects_bad_request_and_dense_collision(
