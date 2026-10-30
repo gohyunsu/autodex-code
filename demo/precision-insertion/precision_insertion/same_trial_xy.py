@@ -1,7 +1,7 @@
 """Observe, plan and execute held-key XY alignment in the *current* trial.
 
 The key stays grasped. Each image estimates the key-face centre in the frozen
-socket frame; a cuRobo lateral move is followed by another image. The final
+socket frame; a local Jacobian lateral move is followed by another image. The final
 axial path is replanned from the measured corrected hold, never replayed from
 the original pre-insertion joint state.
 """
@@ -21,6 +21,7 @@ import numpy as np
 from PIL import Image
 
 from .assets import AssetPaths
+from .axis_jacobian import plan_jacobian_linear_stroke
 from .endpoint import screen_grasp_endpoint
 from .geometry import validate_se3
 from .grounded_alignment import AlignmentLimits
@@ -228,56 +229,6 @@ def _held_wrist_goal(start_wrist: np.ndarray, key_origin_robot: np.ndarray,
     return goal
 
 
-def _plan_local_xy_segments(*, planner, start_q: np.ndarray,
-                            start_wrist: np.ndarray, goal_wrist: np.ndarray,
-                            scene: dict, held_hand: np.ndarray,
-                            max_segment_m: float = .0015,
-                            timing_phase: str) -> tuple[np.ndarray | None, int, str | None]:
-    """Seed each short Cartesian target with the preceding solution.
-
-    One cuRobo endpoint request can choose a long joint-space detour for a
-    small XY translation.  Here every target lies on the requested wrist
-    line and each query starts from the previous segment endpoint.  The
-    caller still audits the concatenated exact trajectory before execution.
-    """
-    delta = goal_wrist[:3, 3] - start_wrist[:3, 3]
-    n = max(1, math.ceil(float(np.linalg.norm(delta)) / max_segment_m))
-    current_q = np.asarray(start_q, float)
-    pieces = []
-    for step in range(1, n + 1):
-        target = start_wrist.copy()
-        target[:3, 3] += delta * (step / n)
-        query = planner.plan_cartesian_pose(
-            current_q, target, scene_cfg=scene,
-            include_obj_obstacle=False, return_result=True, lock_hand=True,
-            timing_phase=timing_phase)
-        if not query.success or query.trajectory is None:
-            return None, step, "held_xy_local_segment_unreachable"
-        segment = _path(query.trajectory, "same-trial held XY segment",
-                        current_q, held_hand)
-        actual_start = planner.fk_wrist(current_q)[:3, 3]
-        target_delta = target[:3, 3] - actual_start
-        target_distance = float(np.linalg.norm(target_delta))
-        if target_distance > 0:
-            direction = target_delta / target_distance
-            positions = np.stack([
-                planner.fk_wrist(q)[:3, 3] for q in segment])
-            displacement = positions - actual_start
-            progress = displacement @ direction
-            cross_track = np.linalg.norm(
-                displacement - progress[:, None] * direction, axis=1)
-            # The path must stay in the corridor defined by its local target
-            # spacing. A cuRobo endpoint plan that first travels away from
-            # the target is not an XY approach, even if its endpoint is good.
-            if (progress.min() < -max_segment_m or
-                    progress.max() > target_distance + max_segment_m or
-                    cross_track.max() > max_segment_m):
-                return None, step, "held_xy_local_segment_detour"
-        pieces.append(segment if step == 1 else segment[1:])
-        current_q = segment[-1]
-    return np.concatenate(pieces), n, None
-
-
 def rank_lateral_observation_offsets(*, runner, current_xy_socket_m,
                                      axis_raise_m: float,
                                      component_m: float) -> list[dict]:
@@ -433,20 +384,22 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
     pure_xy = (np.linalg.norm(increment) > 0 and
                axis_increment_socket_m == 0. and
                yaw_increment_socket_rad == 0.)
+    linear_plan_timing = None
+    planning_backend = "curobo_endpoint"
     if pure_xy:
-        trajectory = None
-        segment_count = 0
-        failed_status = "held_xy_local_segment_unreachable"
-        for spacing in (.0015, .00075):
-            trajectory, segment_count, failed_status = _plan_local_xy_segments(
-                planner=planner, start_q=start.full_q,
-                start_wrist=start_wrist, goal_wrist=goal, scene=scene,
-                held_hand=start.full_q[7:], max_segment_m=spacing,
-                timing_phase="precision_insertion_same_trial_xy")
-            if trajectory is not None:
-                break
-        if trajectory is None:
-            unavailable(failed_status)
+        delta = goal[:3, 3] - start_wrist[:3, 3]
+        distance = float(np.linalg.norm(delta))
+        query = plan_jacobian_linear_stroke(
+            planner, start.full_q, start_wrist, goal,
+            direction_robot=delta / distance, scene_cfg=scene,
+            expected_travel_m=distance, step_m=min(.001, distance))
+        if not query.success or query.trajectory is None:
+            unavailable(query.failure_code or "held_xy_linear_unreachable")
+        trajectory = _path(query.trajectory, "same-trial held XY",
+                           start.full_q, start.full_q[7:])
+        segment_count = len(query.step_records)
+        linear_plan_timing = query.timing
+        planning_backend = "damped_jacobian_linear"
     else:
         query = planner.plan_cartesian_pose(
             start.full_q, goal, scene_cfg=scene,
@@ -513,6 +466,8 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
         "key_xy_socket_m": residual.tolist(),
         "residual_source": residual_source,
         "cartesian_target_segments": segment_count,
+        "planning_backend": planning_backend,
+        "linear_plan_timing": linear_plan_timing,
         "sampled_geometry_clear": True,
         "collision_screen_distances_m": distances,
         "trajectory_path": str(path),

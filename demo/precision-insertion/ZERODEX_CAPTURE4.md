@@ -1426,13 +1426,18 @@ images alone do not establish the exact instant at which it left the hand.
 
 The ZeroDex live profile now requests at most **3 mm between photographs**
 (`PRECISION_SAME_TRIAL_MAX_STEP_MM`, default 3). Each requested XY displacement
-is planned through targets spaced no more than 1.5 mm apart. Each cuRobo
-query starts from the preceding target's solved joint endpoint. If the
-resulting wrist path leaves the target-spacing corridor or travels away from
-the target, the planner tries 0.75 mm targets; it never executes the detour.
-The full concatenated path still goes through the existing held-key/hand
-collision audit before Franka execution. This is a local approach planner;
-it does not reset the IK seed to the home configuration.
+is represented by collinear Cartesian waypoints spaced no more than **1 mm**
+apart. A damped numerical-Jacobian continuation solves every waypoint from
+the preceding accepted FR3 joint state; it does not invoke MotionGen or reset
+the IK seed between waypoints. The resulting joint path is retimed once and
+checked as one path, then goes through the existing held-key/hand collision
+audit before Franka execution. Thus a visual correction moves directly toward
+the requested XY target instead of accepting a long endpoint-planner detour.
+`same_trial_xy/shifts/*/report.json` records
+`planning_backend=damped_jacobian_linear`, the number of Cartesian waypoints,
+and `linear_plan_timing` for direct comparison with the former cuRobo endpoint
+route. This local continuation is used only for pure XY correction; larger
+observation-pose changes and yaw changes retain the existing endpoint planner.
 
 After each move, the measured FR3 socket-frame displacement predicts where
 the same key-face centre should appear in each calibrated view. The next
@@ -1449,7 +1454,7 @@ insertion-success criterion.
 Offline replay of this attempt's saved images and measured moves tracked
 camera `25322642` through observations 000→001, 001→002, and 002→003, then
 identified 003→004 as a lost key-face track. This verifies the decision logic
-on that recorded sequence. The new 3 mm/local-segment execution route has
-not yet been physically tested. A single-view planar estimate still assumes
+on that recorded sequence. The new 3 mm/Jacobian-continuation execution route
+has not yet been physically tested. A single-view planar estimate still assumes
 the key tip remains at its planned height; this assumption cannot correct
 unknown key-in-hand tilt or slip by itself.

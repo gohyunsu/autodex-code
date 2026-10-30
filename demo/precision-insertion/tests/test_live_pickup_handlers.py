@@ -67,7 +67,7 @@ def _handler(tmp_path, *, enabled=True):
         live=SimpleNamespace(opened=SimpleNamespace(runner=runner)),
         planner=planner, executor=executor, read_state=lambda: next(states),
         motion_interlock=lambda: True,
-        pickup_limits=PickupExecutionLimits(.5, .05, .05, .02, 20., .05),
+        pickup_limits=PickupExecutionLimits(.5, .05, .05, .02, 20.),
         lift_bounds=bounds, path_limits=path_limits,
         measured_lift_parameters=LIMITS, enable_robot_motion=enabled,
         attempt_id_factory=lambda: "attempt_001",

@@ -18,8 +18,7 @@ from precision_insertion.guarded_axial_handoff import (  # noqa: E402
 )
 from precision_insertion.same_trial_xy import (  # noqa: E402
     CorrectedAxialPlanUnavailable, HeldXYPlanUnavailable,
-    _alignment_frame_inputs, _held_wrist_goal, _plan_local_xy_segments,
-    _shifted_targets,
+    _alignment_frame_inputs, _held_wrist_goal, _shifted_targets,
     choose_xy_move,
 )
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
@@ -56,63 +55,6 @@ def test_same_trial_move_requires_metric_multiview_and_caps_one_motion():
     assert choose_xy_move({**metric,
                            "xy_correction_socket_m": [.001, -.001]},
                           tolerance_m=.0025)["status"] == "aligned"
-
-
-def test_short_xy_plan_seeds_each_collinear_target_from_previous_endpoint():
-    calls = []
-
-    class Planner:
-        def fk_wrist(self, q):
-            pose = np.eye(4)
-            pose[0, 3] = q[0]
-            return pose
-
-        def plan_cartesian_pose(self, start, goal, **_kwargs):
-            calls.append((float(start[0]), float(goal[0, 3])))
-            end = np.asarray(start, float).copy()
-            end[0] = goal[0, 3]
-            return SimpleNamespace(success=True,
-                                   trajectory=np.stack([start, end]))
-
-    start_q = np.zeros(13)
-    start_pose = np.eye(4)
-    goal = np.eye(4)
-    goal[0, 3] = .003
-    path, count, failure = _plan_local_xy_segments(
-        planner=Planner(), start_q=start_q, start_wrist=start_pose,
-        goal_wrist=goal, scene={}, held_hand=start_q[7:],
-        timing_phase="test")
-    assert count == 2
-    assert failure is None
-    np.testing.assert_allclose(path[:, 0], [0., .0015, .003])
-    assert calls == [(0., .0015), (.0015, .003)]
-
-
-def test_short_xy_plan_rejects_joint_path_that_first_moves_away():
-    class Planner:
-        def fk_wrist(self, q):
-            pose = np.eye(4)
-            pose[0, 3] = q[0]
-            return pose
-
-        def plan_cartesian_pose(self, start, goal, **_kwargs):
-            detour = start.copy()
-            detour[0] -= .01
-            end = start.copy()
-            end[0] = goal[0, 3]
-            return SimpleNamespace(
-                success=True, trajectory=np.stack([start, detour, end]))
-
-    start = np.zeros(13)
-    goal = np.eye(4)
-    goal[0, 3] = .003
-    path, count, reason = _plan_local_xy_segments(
-        planner=Planner(), start_q=start, start_wrist=np.eye(4),
-        goal_wrist=goal, scene={}, held_hand=start[7:],
-        timing_phase="test")
-    assert path is None
-    assert count == 1
-    assert reason == "held_xy_local_segment_detour"
 
 
 def test_lateral_observation_ranking_uses_each_calibrated_camera(
@@ -262,11 +204,14 @@ def test_held_xy_plan_failure_keeps_key_held_for_reverse_return(
         _preflight=SimpleNamespace(trial_scene={}),
         _postlift_preflight=SimpleNamespace(targets=SimpleNamespace(
             T_robot_key_preinsert=pose)))
-    planner = SimpleNamespace(
-        fk_wrist=lambda _q: pose,
-        plan_cartesian_pose=lambda *_args, **_kwargs: SimpleNamespace(
+    planner = SimpleNamespace(fk_wrist=lambda _q: pose)
+    monkeypatch.setattr(
+        same_trial, "plan_jacobian_linear_stroke",
+        lambda *_args, **_kwargs: SimpleNamespace(
             success=collision,
-            trajectory=(np.zeros((2, 13)) if collision else None)))
+            trajectory=(np.zeros((2, 13)) if collision else None),
+            failure_code=(None if collision else "linear_unreachable"),
+            step_records=([{}] if collision else []), timing={}))
     monkeypatch.setattr(same_trial, "validated_frozen_socket_pose",
                         lambda **_kwargs: pose)
     monkeypatch.setattr(same_trial, "build_held_scene_from_trial",
@@ -288,6 +233,71 @@ def test_held_xy_plan_failure_keeps_key_held_for_reverse_return(
     assert report["scope"] == "failed_plan_no_xy_command"
     assert report["measured_start"]["full_q"] == [0.] * 13
     assert not (tmp_path / "same_trial_xy" / "shifts").exists()
+
+
+def test_held_xy_uses_one_local_jacobian_plan_and_records_backend(
+        tmp_path, monkeypatch):
+    import precision_insertion.same_trial_xy as same_trial
+
+    pose = np.eye(4)
+    start_q = np.zeros(13)
+    end_q = start_q.copy()
+    end_q[0] = .002
+    trajectory = np.stack((start_q, end_q))
+    states = iter((
+        LiveRobotState(start_q, np.zeros(7), 20., 20., 10., 20.,
+                       np.zeros(6), np.zeros(6), 0., np.zeros(6)),
+        LiveRobotState(end_q, np.zeros(7), 20., 20., 10., 20.,
+                       np.zeros(6), np.zeros(6), 0., np.zeros(6)),
+    ))
+
+    def fk(q):
+        wrist = pose.copy()
+        wrist[0, 3] = q[0]
+        return wrist
+
+    calls = []
+
+    def linear(*args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(
+            success=True, trajectory=trajectory, failure_code=None,
+            step_records=[{}, {}], timing={"total_s": .01})
+
+    runner = SimpleNamespace(
+        active_attempt=SimpleNamespace(
+            attempt_id="a1", candidate_id="table/0/42"),
+        _attempt_dir=tmp_path, shared_root=tmp_path, mode=object(),
+        calibration=object(), _preflight=SimpleNamespace(trial_scene={}),
+        _postlift_preflight=SimpleNamespace(targets=SimpleNamespace(
+            T_robot_key_preinsert=pose)))
+    monkeypatch.setattr(same_trial, "validated_frozen_socket_pose",
+                        lambda **_kwargs: pose)
+    monkeypatch.setattr(same_trial, "build_held_scene_from_trial",
+                        lambda **_kwargs: {})
+    monkeypatch.setattr(same_trial, "plan_jacobian_linear_stroke", linear)
+    monkeypatch.setattr(same_trial, "_path",
+                        lambda *_args, **_kwargs: trajectory)
+    monkeypatch.setattr(same_trial, "_audit_held_geometry_samples",
+                        lambda **_kwargs: ([], {}, None))
+    monkeypatch.setattr(same_trial, "verify_transfer_controller_result",
+                        lambda *_args, **_kwargs: (10., 11., {}))
+    report_path = same_trial.plan_and_execute_shift(
+        runner=runner, planner=SimpleNamespace(fk_wrist=fk),
+        adapter=SimpleNamespace(
+            follow_transfer=lambda *_args, **_kwargs: {}),
+        read_state=lambda: next(states), motion_interlock=lambda: True,
+        limits=SimpleNamespace(max_execution_duration_s=5.),
+        path_limits=SimpleNamespace(minimum_hand_clearance_m=0.),
+        increment_socket_m=(.002, 0.), residual_socket_m=(0., 0.),
+        residual_source="current_metric_multiview", index=0)
+    assert len(calls) == 1
+    assert calls[0][1]["step_m"] == .001
+    assert calls[0][1]["expected_travel_m"] == pytest.approx(.002)
+    report = json.loads(report_path.read_text())
+    assert report["planning_backend"] == "damped_jacobian_linear"
+    assert report["cartesian_target_segments"] == 2
+    assert report["linear_plan_timing"] == {"total_s": .01}
 
 
 def test_observation_raise_moves_wrist_on_socket_axis_and_records_feedback(

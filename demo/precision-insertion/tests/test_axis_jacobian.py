@@ -101,6 +101,36 @@ def test_held_axis_reference_is_not_retimed_below_executor_speed(
     assert limits == {"velocity": 1.2, "acceleration": 4.0}
 
 
+def test_short_linear_correction_uses_previous_solution_and_stays_collinear(
+        solver_stubs):
+    planner = _Planner()
+    start = np.zeros(13)
+    start[7:] = .3
+    reference = planner.fk_wrist(start)
+    direction = np.array([.6, .8, 0.])
+    target = reference.copy()
+    target[:3, 3] += .003 * direction
+    result = axis_jacobian.plan_jacobian_linear_stroke(
+        planner, start, reference, target, direction_robot=direction,
+        scene_cfg={"mesh": {"fixture_socket": {}, "target": {}}},
+        expected_travel_m=.003, step_m=.001)
+    assert result.success
+    assert result.direction == "linear"
+    assert len(result.step_records) == 3
+    assert all(row["stage"] == "linear_waypoint"
+               for row in result.step_records)
+    np.testing.assert_allclose(
+        result.trajectory[:, 7:],
+        np.broadcast_to(start[7:], result.trajectory[:, 7:].shape))
+    displacement = result.trajectory[:, :3] - start[:3]
+    cross_track = np.linalg.norm(
+        displacement - (displacement @ direction)[:, None] * direction,
+        axis=1)
+    assert np.max(cross_track) < 1e-6
+    assert result.validation["final_travel_m"] == pytest.approx(
+        .003, abs=.00025)
+
+
 def test_tilted_axis_rejects_bad_request_and_dense_collision(
         solver_stubs, monkeypatch):
     planner, start, reference, target, axis = _request()
