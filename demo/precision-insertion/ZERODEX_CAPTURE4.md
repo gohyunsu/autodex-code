@@ -174,16 +174,17 @@ undistortion of the original images on every held shift. Saved-scene replay
 still verifies and reads the PNGs. Each observation records `frame_source`
 so timings can distinguish the two paths.
 
-## Same-episode XY alignment and the current 5 mm socket
+## Same-episode XY alignment and the 5 mm socket
 
-The physical board currently holds a **5 mm radial-gap cylinder socket** and
-no key. The previous 10 mm socket pose and its session evidence belong to a
-different fixture state. The next 5 mm session must use a fresh socket capture:
-the ZeroDex launcher now defaults to `PRECISION_GAP_MM=5`; leave
-`PRECISION_REUSE_SESSION_EVIDENCE` unset. Set `PRECISION_GAP_MM` explicitly
-when another socket replaces it.
-`--check` is file-only and already reports 114 eligible straight-mount
-candidates for this gap; it does not confirm the new physical socket pose.
+At the 2026-10-27 fixture change, the board held a **5 mm radial-gap cylinder
+socket** without a key. The earlier 10 mm socket pose belonged to a different
+fixture state, so that first 5 mm session required a fresh socket capture.
+The 5 mm socket was measured again on 2026-10-30; follow the current restart
+instructions at the top of this page to reuse that later evidence while the
+fixture has not moved. The launcher defaults to `PRECISION_GAP_MM=5`; set the
+gap explicitly when another socket replaces it. `--check` is file-only and
+reports 114 eligible straight-mount candidates for this gap; it does not
+confirm the physical socket pose.
 
 The optional same-episode mode runs after the existing after-lift/preinsert
 visual arrival check. It observes the saved, undistorted preinsert frames with
@@ -398,7 +399,7 @@ start the adapter if another experiment owns the cameras.
 
 ## Local profile and assets
 
-- Profile: `/home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4`
+- Profile: `/mnt/paradex2/hyunsu/precision_insertion/runtime/active_shared_data/AutoDex/precision_insertion/zerodex_capture4`
 - Launch: `launch.json` (current 5 mm socket, board 9, one fixed socket
   capture, four cameras). `launch_gap20_saved_replay.json` preserves the old
   20 mm scene for its recorded-image replay.
@@ -407,14 +408,13 @@ start the adapter if another experiment owns the cameras.
   loaded only by the ZeroDex integration factory, never by stock AutoDex
 - Straight-mount cylinder catalogs: `recipient_gap{1,3,5,10,15,20}_endpoint_catalog_straight.json`
 - Franka/Inspire mount: `autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf`
-- Local Qwen weights: `/home/hyunsu/shared_data/AutoDex/models/Qwen3-VL-2B-Instruct`
+- Qwen weights: `/mnt/paradex2/hyunsu/precision_insertion/runtime/active_shared_data/AutoDex/models/Qwen3-VL-2B-Instruct`
 - SAM3 for main-PC XY masks: the machine profile resolves
-  `PRECISION_SAM_CHECKPOINT` to
+  `PRECISION_SAM_CHECKPOINT` to the verified local cache
+  `~/precision_insertion_project/cache/models/sam3.pt` when present, or to
   `/mnt/paradex2/hyunsu/precision_insertion/assets/shared_data/AutoDex/weights/sam3/sam3.pt`.
-  This is a standalone project copy with the manifest SHA-256, not the
-  `/home/hyunsu/shared_data/AutoDex/weights` symlink into the shared NAS
-  AutoDex tree. An explicit `PRECISION_SAM_CHECKPOINT` can still select a
-  faster local copy when disk space is available.
+  Both copies are project-owned and have the same manifest SHA-256; the old
+  shared NAS AutoDex tree is not used.
 - Local silhouette renderer: `nvdiffrast v0.3.3` and FoundationPose imports
   in `/home/hyunsu/.venvs/precision-vlm`. The ZeroDex launcher exports the
   existing CUDA 12.1 toolkit and PyTorch-bundled header paths for first-use
@@ -588,7 +588,9 @@ the CAD wall, base flange, and whole-body silhouettes. It backprojects at
 the selected region's height rather than assuming every mask depicts the
 wall. Per-view region choice, IoUs and board-XY disagreement are saved as
 diagnostics; no additional acceptance threshold was introduced. The
-current-scene pose still needs a new lit socket-only capture.
+The 2026-10-30 socket-only capture is now the current saved baseline while
+the board, fixture and camera geometry remain unchanged; see the restart
+instructions above.
 
 The launch uses all four serials `26053248`, `25322639`, `25305462`,
 `25322642`. General VLM and same-trial XY observations use four views;
