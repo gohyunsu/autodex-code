@@ -230,7 +230,19 @@ from model initialization or GPU cache effects. No robot motion was involved.
 With Franka and Inspire off, the current 5 mm `--check` completed without
 opening either device: 126 catalogued grasps, 114 endpoint-eligible grasps,
 four configured capture4 cameras, and the project-owned NAS paths above. A
-walk of the project tree found 94 symlinks, zero broken targets, and zero
+repeat of the same static command for every cylinder gap also completed:
+
+| Radial gap (mm) | Catalogued | Endpoint-eligible |
+| ---: | ---: | ---: |
+| 1 | 126 | 111 |
+| 3 | 126 | 111 |
+| 5 | 126 | 114 |
+| 10 | 126 | 114 |
+| 15 | 126 | 113 |
+| 20 | 126 | 111 |
+
+These counts are file/catalog checks, not a new trajectory or physical pass.
+A walk of the project tree found 94 symlinks, zero broken targets, and zero
 targets outside `/mnt/paradex2/hyunsu/precision_insertion`. A scan following
 those links found 136 JSON files containing historical absolute paths:
 126 `simulation_validation.json` records, two reset source records, two
