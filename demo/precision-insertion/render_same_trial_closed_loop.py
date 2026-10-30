@@ -24,7 +24,6 @@ FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 CANVAS = (1920, 1080)
 PANEL = 438
 PANEL_Y = 170
-PANEL_X = (42, 506, 970, 1434)
 LANCZOS = getattr(Image, "Resampling", Image).LANCZOS
 
 
@@ -34,6 +33,15 @@ def read(path: Path) -> dict:
 
 def font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(FONT_BOLD if bold else FONT, size)
+
+
+def panel_positions(count: int) -> list[int]:
+    if count <= 0:
+        raise ValueError("visualization needs at least one camera")
+    gap = 26
+    width = count*PANEL + (count-1)*gap
+    left = (CANVAS[0]-width)//2
+    return [left+i*(PANEL+gap) for i in range(count)]
 
 
 def local(xy, crop):
@@ -164,7 +172,8 @@ def convergence_plot(observations: list[dict], current: int) -> Image.Image:
 
 
 def compose(observations: list[dict], index: int, run_dir: Path,
-            fixture_root: Path | None, shift: dict | None) -> Image.Image:
+            fixture_root: Path | None, shift: dict | None,
+            excluded_cameras: set[str]) -> Image.Image:
     observation = observations[index]
     canvas = Image.new("RGB", CANVAS, PANEL_BACKGROUND)
     draw = ImageDraw.Draw(canvas)
@@ -191,9 +200,10 @@ def compose(observations: list[dict], index: int, run_dir: Path,
 
     records = {r["camera_id"]: r
                for r in observation["alignment"]["sam_half_ellipse_views"]}
-    cameras = sorted(records)
+    cameras = [camera for camera in sorted(records)
+               if camera not in excluded_cameras]
     raw = Path(observation["raw_bundle"]) / "images"
-    for x, camera in zip(PANEL_X, cameras):
+    for x, camera in zip(panel_positions(len(cameras)), cameras):
         panel = draw_panel(raw/f"{camera}.png", records[camera], camera,
                            observation, run_dir, fixture_root)
         canvas.paste(panel, (x, PANEL_Y))
@@ -219,12 +229,14 @@ def compose(observations: list[dict], index: int, run_dir: Path,
     return canvas
 
 
-def final_frame(attempt_dir: Path) -> Image.Image | None:
+def final_frame(attempt_dir: Path,
+                excluded_cameras: set[str]) -> Image.Image | None:
     roots = sorted((attempt_dir/"raw_captures"/"final_clear_view").glob("*/images"))
     if not roots:
         return None
     root = roots[-1]
-    cameras = sorted(p.stem for p in root.glob("*.png"))
+    cameras = [p.stem for p in sorted(root.glob("*.png"))
+               if p.stem not in excluded_cameras]
     if not cameras:
         return None
     canvas = Image.new("RGB", CANVAS, PANEL_BACKGROUND)
@@ -232,7 +244,7 @@ def final_frame(attempt_dir: Path) -> Image.Image | None:
     draw.text((42, 30), "Insertion result", font=font(38, bold=True), fill="#ffffff")
     draw.text((42, 84), "released key is inside the socket (manual + saved-image label)",
               font=font(24), fill="#dce5ed")
-    for x, camera in zip(PANEL_X, cameras):
+    for x, camera in zip(panel_positions(len(cameras)), cameras):
         image = Image.open(root/f"{camera}.png").convert("RGB")
         # Preserve the complete camera frame for the result; the correction
         # frames above use the recorded 512 px estimator crop.
@@ -259,9 +271,12 @@ def main() -> None:
                         help="Directory containing frozen_session_calibration.json")
     parser.add_argument("--fixture-root", type=Path)
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--exclude-camera", action="append", default=[],
+                        help="Omit one camera from the rendered grids only")
     args = parser.parse_args()
     attempt = args.attempt_dir.resolve()
     run_dir = args.session_run_dir.resolve()
+    excluded_cameras = set(args.exclude_camera)
     output = (args.output_dir.resolve() if args.output_dir else
               attempt/"visualizations"/"closed_loop_multiview")
     output.mkdir(parents=True, exist_ok=True)
@@ -277,7 +292,8 @@ def main() -> None:
     for index, observation in enumerate(observations):
         shift_index = index if index < len(observations)-1 else index+1
         shift = shifts.get(shift_index)
-        frame = compose(observations, index, run_dir, args.fixture_root, shift)
+        frame = compose(observations, index, run_dir, args.fixture_root, shift,
+                        excluded_cameras)
         path = output/f"iteration_{index:02d}.png"
         frame.save(path)
         frames.append(frame)
@@ -295,7 +311,7 @@ def main() -> None:
             "inlier_cameras": observation["alignment"].get("inlier_cameras", []),
             "estimator_reason": observation["alignment"]["reason"],
         })
-    final = final_frame(attempt)
+    final = final_frame(attempt, excluded_cameras)
     if final is not None:
         final_path = output/"insertion_result.png"
         final.save(final_path)
@@ -308,6 +324,7 @@ def main() -> None:
         "scope": "saved physical episode evidence; no robot command",
         "attempt_dir": str(attempt),
         "session_run_dir": str(run_dir),
+        "excluded_cameras": sorted(excluded_cameras),
         "gif": str(gif),
         "final_result_frame": None if final is None else str(final_path),
         "iterations": records,
