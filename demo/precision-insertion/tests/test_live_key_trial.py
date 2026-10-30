@@ -237,6 +237,52 @@ def test_initial_visual_capture_overlaps_key_candidate_planning(
         "save_visual_done")
 
 
+def test_pose_only_key_capture_retries_socket_mask_as_key(tmp_path, monkeypatch):
+    arguments, events, _ = _setup(tmp_path, monkeypatch)
+    prompts = []
+    failed = []
+    def collect(**kwargs):
+        prompts.append(kwargs["key_prompt"])
+        return KeyCaptureInput(
+            "key_001", 25 + len(prompts), kwargs["key_prompt"],
+            {}, {}, {}, {}, "camera_acquisition", {}, tmp_path / "unused")
+    original_admit = trial.admit_key_capture
+    def admit(**kwargs):
+        if len(prompts) == 1:
+            raise ValueError(
+                "too few key views remain after fixed-socket mask exclusion")
+        return original_admit(**kwargs)
+    # _setup's admission stub expects no actual SAM/FoundPose data.
+    monkeypatch.setattr(trial, "collect_key_capture", collect)
+    monkeypatch.setattr(trial, "admit_key_capture", admit)
+    monkeypatch.setattr(trial, "write_failed_key_pose_capture",
+                        lambda _capture, path, reason: failed.append(
+                            (path, reason)))
+    monkeypatch.setattr(trial, "write_key_pose_artifacts",
+                        lambda _capture, _observation, path: path.mkdir())
+    key_args = {name: arguments[name] for name in (
+        "runner", "init_orchestrator", "acquisition_metadata_for_request",
+        "capture_root", "capture_id",
+        "calibrated_camera_ids", "intrinsics_full", "extrinsics_full",
+        "image_hw", "key_prompt", "view_limits",
+        "maximum_multiview_center_error_mm",
+        "maximum_multiview_angle_error_deg",
+        "maximum_socket_mask_overlap_fraction", "socket_projection_dilation_px",
+        "minimum_refinement_iou", "capture_timeout_s", "image_write_timeout_s")
+        if name in arguments}
+    key_args["output"] = arguments["key_evidence_dir"]
+    key_args["pose_only"] = True
+    key_args["silhouette_iterations"] = 100
+    key_args["silhouette_loss_threshold"] = 0.003
+    key_args["request_id_factory"] = None
+    key_args["registered_key_assistance"] = None
+    trial._capture_admitted_key(**key_args)
+    assert prompts == ["white precision key, excluding white socket",
+                       "small white solid peg"]
+    assert len(failed) == 1
+    assert "fixed-socket mask exclusion" in failed[0][1]
+
+
 def test_reset_landing_reuses_same_camera_key_capture_without_grasp_preflight(
         tmp_path, monkeypatch):
     arguments, events, _ = _setup(tmp_path, monkeypatch)

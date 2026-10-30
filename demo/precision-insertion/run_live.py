@@ -13,6 +13,7 @@ from datetime import datetime
 import json
 import logging
 import math
+import os
 from pathlib import Path
 import re
 import sys
@@ -54,7 +55,10 @@ def default_run_output(launch_config: Path, exp_name: str) -> Path:
         raise ValueError("launch config needs an explicit socket/key mode")
     mode = select_mode(record["mode"].get("family"),
                        record["mode"].get("gap_mm"))
-    object_root = (Path.home() / "shared_data" / "AutoDex" / "experiment" /
+    project_runs = os.environ.get("PRECISION_RUN_OUTPUT_ROOT")
+    object_root = (Path(project_runs).expanduser() / exp_name / "inspire" /
+                   mode.key_object if project_runs else
+                   Path.home() / "shared_data" / "AutoDex" / "experiment" /
                    exp_name / "inspire" / mode.key_object)
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     return object_root / "_pipeline_runs" / run_id
@@ -67,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--exp-name", "--exp_name", default="precision-insertion",
                         help="AutoDex experiment name (default: precision-insertion)")
     parser.add_argument("--output-dir", type=Path,
-                        help="new run directory; defaults to stock AutoDex experiment hierarchy")
+                        help="new run directory; ZeroDex profile defaults to the NAS project runs tree")
     parser.add_argument("--integration",
                         help="importable AutoDex-PC module:factory")
     parser.add_argument("--preflight", action="store_true",

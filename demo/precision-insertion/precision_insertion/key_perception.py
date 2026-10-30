@@ -881,6 +881,52 @@ def write_key_pose_artifacts(
     return target
 
 
+def write_failed_key_pose_capture(
+    capture: KeyCaptureInput, output_dir: Path, reason: str,
+) -> Path:
+    """Keep the same-request SAM masks when tabletop admission fails.
+
+    Pose-only capture normally avoids full-frame PNG transfer. Keeping these
+    small masks and payload summaries costs no time on successful trials and
+    identifies a socket selected as the key on a failed trial.
+    """
+    target = Path(output_dir).expanduser().resolve()
+    target.mkdir(parents=True, exist_ok=False)
+    masks_dir = target / "masks"
+    masks_dir.mkdir()
+    views = {}
+    for serial in sorted(capture.masks):
+        entry = capture.masks[serial]
+        raw_mask = entry.get("mask")
+        mask = (np.asarray(raw_mask, dtype=np.uint8) if raw_mask is not None
+                else np.empty(0, dtype=np.uint8))
+        if mask.ndim == 2 and mask.size:
+            if not cv2.imwrite(str(masks_dir / f"{_safe_id(serial, 'key camera ID')}.png"),
+                               mask * 255):
+                raise OSError(f"failed to write key mask for {serial}")
+        pose = capture.poses.get(serial, {})
+        views[serial] = {
+            "mask_pixels": int(np.count_nonzero(mask)) if mask.ndim == 2 else 0,
+            "frame_id": entry.get("frame_id"),
+            "pose_ok": bool(pose.get("ok")),
+            "quality": float(pose["quality"])
+            if pose.get("quality") is not None else None,
+            "inliers": int(pose["inliers"])
+            if pose.get("inliers") is not None else None,
+            "pose_world": np.asarray(pose["pose_world"]).tolist()
+            if pose.get("pose_world") is not None else None,
+        }
+    (target / "report.json").write_text(json.dumps({
+        "capture_id": capture.capture_id,
+        "request_id": capture.request_id,
+        "prompt": capture.prompt,
+        "reason": reason,
+        "frame_evidence": capture.frame_evidence,
+        "views": views,
+    }, indent=2), encoding="utf-8")
+    return target
+
+
 def verify_key_capture_artifacts(output_dir: Path) -> dict:
     """Recheck a saved key bundle's bytes and frame-to-pose binding."""
     root = Path(output_dir).expanduser().resolve()

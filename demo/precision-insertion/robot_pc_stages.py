@@ -23,7 +23,7 @@ from precision_insertion.pickup_execution import PickupExecutionLimits
 from precision_insertion.retry_session import RetrySessionLimits
 
 
-KEY_PROMPT = "white plastic cylindrical key"
+KEY_PROMPT = "small white solid peg"
 
 
 def _tabletop_pose_error_deg() -> float:

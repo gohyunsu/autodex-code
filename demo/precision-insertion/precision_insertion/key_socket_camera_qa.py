@@ -26,7 +26,7 @@ from .silhouette_compat import prepare_key_silhouette
 
 
 SCHEMA = "precision_insertion_camera_only_key_socket_qa_v1"
-DEFAULT_KEY_PROMPT = "white plastic cylindrical key"
+DEFAULT_KEY_PROMPT = "small white solid peg"
 
 
 def _sha(path: Path) -> str:

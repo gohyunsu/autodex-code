@@ -6,11 +6,16 @@ precision_profile_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 precision_profile_root=$(cd -- "$precision_profile_dir/../../.." && pwd)
 
 export PRECISION_REPO_ROOT=${PRECISION_REPO_ROOT:-$precision_profile_root}
-export PRECISION_STAGE_ROOT=${PRECISION_STAGE_ROOT:-$HOME/shared_data/AutoDex/precision_insertion/zerodex_capture4}
-export PRECISION_PARADEX_ROOT=${PRECISION_PARADEX_ROOT:-$HOME/precision_insertion_project/vendor/paradex}
-export PRECISION_DEV_ROOT=${PRECISION_DEV_ROOT:-$HOME/precision_insertion_project/development/zerodex_capture4}
-export PRECISION_TIMING_LOCAL_ROOT=${PRECISION_TIMING_LOCAL_ROOT:-$PRECISION_DEV_ROOT/timing}
+export PRECISION_LOCAL_PROJECT_ROOT=${PRECISION_LOCAL_PROJECT_ROOT:-$HOME/precision_insertion_project}
 export PRECISION_NAS_PROJECT_ROOT=${PRECISION_NAS_PROJECT_ROOT:-/mnt/paradex2/hyunsu/precision_insertion}
+export PRECISION_SHARED_ROOT=${PRECISION_SHARED_ROOT:-$PRECISION_NAS_PROJECT_ROOT/runtime/active_shared_data}
+# The AutoDex directory name inside this project is the v8 asset schema.
+# This profile never reads or writes the old ~/shared_data/AutoDex tree.
+export PRECISION_STAGE_ROOT=${PRECISION_STAGE_ROOT:-$PRECISION_SHARED_ROOT/AutoDex/precision_insertion/zerodex_capture4}
+export PRECISION_RUN_OUTPUT_ROOT=${PRECISION_RUN_OUTPUT_ROOT:-$PRECISION_NAS_PROJECT_ROOT/runs/zerodex_capture4}
+export PRECISION_PARADEX_ROOT=${PRECISION_PARADEX_ROOT:-$HOME/precision_insertion_project/vendor/paradex}
+export PRECISION_DEV_ROOT=${PRECISION_DEV_ROOT:-$PRECISION_NAS_PROJECT_ROOT/development/zerodex_capture4}
+export PRECISION_TIMING_LOCAL_ROOT=${PRECISION_TIMING_LOCAL_ROOT:-/tmp/precision-insertion-timing}
 # Continue the human-reviewed episode collection on this rig. VLM answers are
 # still stored beside manual labels; callers can explicitly choose vlm_only.
 export PRECISION_LABEL_MODE=${PRECISION_LABEL_MODE:-manual}

@@ -21,7 +21,8 @@ from .calibration import validate_session_camera_calibration
 from .clear_view import ClearViewForPerception
 from .key_perception import (
     KeyPoseObservation, admit_key_capture,
-    write_key_capture_artifacts, write_key_pose_artifacts,
+    write_failed_key_pose_capture, write_key_capture_artifacts,
+    write_key_pose_artifacts,
 )
 from .initial_visual import (
     register_pending_initial_visual, write_initial_visual_capture,
@@ -148,45 +149,64 @@ def _capture_admitted_key(
         intrinsics_undist=init_orchestrator.intrinsics_undist,
         extrinsics_full=init_orchestrator.extrinsics,
         calibrated_camera_ids=calibrated_camera_ids)
-    with timed("key.capture", phase="key", kind="camera",
-               capture_id=capture_id, camera_count=len(calibrated_camera_ids)):
-        capture = collect_key_capture(
-            init_orchestrator=init_orchestrator,
-            key_object=runner.mode.key_object, capture_id=capture_id,
-            key_prompt=key_prompt, capture_root=root.resolve(),
-            calibrated_camera_ids=calibrated_camera_ids,
-            acquisition_metadata_for_request=acquisition_metadata_for_request,
-            timeout_s=float(capture_timeout_s),
-            image_write_timeout_s=float(image_write_timeout_s),
-            request_id_factory=request_id_factory,
-            pose_only=pose_only)
+    # A transient SAM3 socket-as-key mask should not end an otherwise ready
+    # trial. Only retry the specific insufficient-view result, and only for
+    # pose-only capture so no saved source-frame directory is reused.
+    prompts = [key_prompt]
     if pose_only:
-        capture = replace(capture, capture_dir=output)
-    derivation = None
-    if registered_key_assistance is not None:
-        capture, derivation = derive_registered_key_capture(
-            capture=capture, assistance=registered_key_assistance,
-            intrinsics_undist=init_orchestrator.intrinsics_undist,
-            extrinsics_full=init_orchestrator.extrinsics,
-            key_object=runner.mode.key_object)
-        diagnostic_dir = write_registered_key_diagnostic(
-            capture=capture, derivation_report=derivation)
-        verify_registered_key_diagnostic(diagnostic_dir)
-    with timed("key.pose_admission", phase="key"):
-        observation = admit_key_capture(
-            capture=capture, init_orchestrator=init_orchestrator,
-            mode=runner.mode, shared_root=runner.shared_root,
-            calibration=runner.calibration,
-            calibrated_camera_ids=calibrated_camera_ids,
-            view_limits=view_limits,
-            maximum_multiview_center_error_mm=maximum_multiview_center_error_mm,
-            maximum_multiview_angle_error_deg=maximum_multiview_angle_error_deg,
-            maximum_socket_mask_overlap_fraction=(
-                maximum_socket_mask_overlap_fraction),
-            socket_projection_dilation_px=socket_projection_dilation_px,
-            minimum_refinement_iou=minimum_refinement_iou,
-            silhouette_iterations=silhouette_iterations,
-            silhouette_loss_threshold=silhouette_loss_threshold)
+        prompts.append("white plastic cylindrical key" if key_prompt ==
+                       "small white solid peg" else "small white solid peg")
+    for attempt, prompt in enumerate(prompts):
+        with timed("key.capture", phase="key", kind="camera",
+                   capture_id=capture_id, camera_count=len(calibrated_camera_ids),
+                   attempt=attempt + 1):
+            capture = collect_key_capture(
+                init_orchestrator=init_orchestrator,
+                key_object=runner.mode.key_object, capture_id=capture_id,
+                key_prompt=prompt, capture_root=root.resolve(),
+                calibrated_camera_ids=calibrated_camera_ids,
+                acquisition_metadata_for_request=acquisition_metadata_for_request,
+                timeout_s=float(capture_timeout_s),
+                image_write_timeout_s=float(image_write_timeout_s),
+                request_id_factory=request_id_factory,
+                pose_only=pose_only)
+        if pose_only:
+            capture = replace(capture, capture_dir=output)
+        derivation = None
+        if registered_key_assistance is not None:
+            capture, derivation = derive_registered_key_capture(
+                capture=capture, assistance=registered_key_assistance,
+                intrinsics_undist=init_orchestrator.intrinsics_undist,
+                extrinsics_full=init_orchestrator.extrinsics,
+                key_object=runner.mode.key_object)
+            diagnostic_dir = write_registered_key_diagnostic(
+                capture=capture, derivation_report=derivation)
+            verify_registered_key_diagnostic(diagnostic_dir)
+        try:
+            with timed("key.pose_admission", phase="key", attempt=attempt + 1):
+                observation = admit_key_capture(
+                    capture=capture, init_orchestrator=init_orchestrator,
+                    mode=runner.mode, shared_root=runner.shared_root,
+                    calibration=runner.calibration,
+                    calibrated_camera_ids=calibrated_camera_ids,
+                    view_limits=view_limits,
+                    maximum_multiview_center_error_mm=maximum_multiview_center_error_mm,
+                    maximum_multiview_angle_error_deg=maximum_multiview_angle_error_deg,
+                    maximum_socket_mask_overlap_fraction=(
+                        maximum_socket_mask_overlap_fraction),
+                    socket_projection_dilation_px=socket_projection_dilation_px,
+                    minimum_refinement_iou=minimum_refinement_iou,
+                    silhouette_iterations=silhouette_iterations,
+                    silhouette_loss_threshold=silhouette_loss_threshold)
+            break
+        except ValueError as exc:
+            if not pose_only or "too few key views remain" not in str(exc):
+                raise
+            write_failed_key_pose_capture(
+                capture, output.parent / f"{output.name}_admission_{attempt + 1}",
+                str(exc))
+            if attempt + 1 == len(prompts):
+                raise
     if observation.phase != "tabletop":
         raise ValueError("key capture requires a tabletop observation")
     with timed("key.evidence_write", phase="key", kind="io"):

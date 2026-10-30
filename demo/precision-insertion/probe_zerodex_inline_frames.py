@@ -35,6 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--launch-config", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     parser.add_argument("--target", choices=("key", "socket"), default="key")
+    parser.add_argument("--prompt", help="override the SAM3 text prompt for camera-only comparison")
     parser.add_argument("--pose-only", action="store_true",
                         help="request masks/FoundPose without source PNGs")
     parser.add_argument("--with-pose-images", action="store_true",
@@ -53,8 +54,8 @@ def main(argv: list[str] | None = None) -> int:
     output.mkdir(parents=True)
     object_name = (launch.mode.key_object if args.target == "key"
                    else launch.mode.socket_object)
-    prompt = ("white plastic cylindrical key" if args.target == "key"
-              else launch.socket_prompt)
+    prompt = args.prompt or ("white plastic cylindrical key" if args.target == "key"
+                             else launch.socket_prompt)
     paths = AssetPaths(launch.shared_root, launch.mode)
     with open_autodex_camera_stream(
             launch.pc_list, capture_ips=launch.capture_ips,

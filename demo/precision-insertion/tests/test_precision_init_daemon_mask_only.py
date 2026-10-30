@@ -107,8 +107,8 @@ def test_capture4_maps_main_pc_asset_paths_without_changing_inference(monkeypatc
     daemon = adapter.PrecisionInitDaemon.__new__(adapter.PrecisionInitDaemon)
     info = {
         "obj_name": "key",
-        "mesh_path": "~/shared_data/object_processing/key/raw_mesh/key.obj",
-        "assets_root": "~/shared_data/AutoDex/foundpose_assets/key",
+        "mesh_path": "/mnt/paradex2/hyunsu/precision_insertion/runtime/active_shared_data/object_processing/key/raw_mesh/key.obj",
+        "assets_root": "/mnt/paradex2/hyunsu/precision_insertion/runtime/active_shared_data/AutoDex/foundpose_assets/key",
     }
     daemon.cmd_receiver = SimpleNamespace(event_info={"init": info})
     daemon.mode = "live"

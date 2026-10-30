@@ -57,11 +57,15 @@ class PrecisionInitDaemon(InitDaemon):
         info = self.cmd_receiver.event_info.get("init", {}) or {}
         capture_asset_root = os.environ.get("PRECISION_CAPTURE_ASSET_ROOT")
         if capture_asset_root:
-            for field in ("mesh_path", "assets_root"):
-                source = info.get(field)
-                if isinstance(source, str) and source.startswith("~/shared_data/"):
-                    info[field] = str(Path(capture_asset_root) /
-                                      source[len("~/shared_data/"):])
+            # The main PC may use either local or NAS-project paths. FoundPose
+            # on capture4 always consumes its own warm object cache by name.
+            obj_name = info["obj_name"]
+            cache = Path(capture_asset_root)
+            info["mesh_path"] = str(
+                cache / "object_processing" / obj_name / "raw_mesh" /
+                f"{obj_name}.obj")
+            info["assets_root"] = str(
+                cache / "AutoDex" / "foundpose_assets" / obj_name)
         if info.get("skip_foundpose") is True:
             # Stock initialization already skips a loaded object-specific
             # estimator. A named no-op keeps its camera/undistortion setup

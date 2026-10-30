@@ -8,6 +8,8 @@ code; the old AutoDex experiment directory is not this project's archive.
 | --- | --- |
 | `code/` | Exact tracked AutoDex fork and ParaDex source archives, with commits and SHA256 in `PROJECT_MANIFEST.json` |
 | `assets/shared_data/` | Object meshes, all six cylindrical sockets, key FoundPose representation, v8 grasps, reset candidates, scenes, fixture geometry, Qwen, SAM3, capture4 calibration, launch/catalog templates, robot dependency bundle |
+| `runtime/active_shared_data/` | Active path-correct `AssetPaths` tree: heavy files link into `assets/shared_data`, small JSON files contain project-local paths. This is the live `PRECISION_SHARED_ROOT`. |
+| `runtime/session_inputs/` | Frozen input JSON for the 2026-10-30 socket remeasurement. Retained because its evidence ledger records these exact paths. |
 | `restore/foundpose_packages/` | Six socket FoundPose installation TARs; the installer extracts them into `shared_data/AutoDex/foundpose_assets/`. Live episodes do not read these packages. |
 | `assets/capture4_cache/` | capture4's offline SAM3 Hugging Face cache and two DINOv2 checkpoints |
 | `assets/capture4_foundationpose/` | FoundPose weights formerly reached through capture4's old absolute symlink |
@@ -15,11 +17,16 @@ code; the old AutoDex experiment directory is not this project's archive.
 | `rigs/zerodex_capture4/main_pc_system/current/` | ParaDex system configuration snapshot for this PC's robot adapter |
 | `rigs/zerodex_capture4/capture4_source_20261028.tar.gz` | capture4 perception source snapshot for our namespaced adapter |
 | `environments/` | Local planner and capture4 Python package lists |
-| `runs/zerodex_capture4/YYYY/MM/DD/RUN_ID/` | Post-run uploaded full-resolution camera recording, frame ID index, log and run receipt |
+| `runs/zerodex_capture4/precision-insertion/inspire/KEY/_pipeline_runs/RUN_ID/` | Main-PC pipeline ledger, snapshots, timing, labels and planning results written directly to the project NAS. |
+| `runs/zerodex_capture4/YYYY/MM/DD/RUN_ID/` | Separately uploaded full-resolution camera recording, frame ID index and run receipt. |
 | `development/zerodex_capture4/` | Camera, planning, timing and implementation diagnostics collected after development work; never read by the live pipeline |
 | `PROJECT_MANIFEST.json` | Code commits, asset paths, sizes and SHA256 hashes |
 
-The live pipeline consumes `assets/shared_data` and the selected rig profile.
+The live pipeline consumes `runtime/active_shared_data` and the selected rig profile.
+Create or refresh this compact tree with
+`python3 demo/precision-insertion/link_zerodex_nas_runtime.py` after adding
+assets to `assets/shared_data`. The command rewrites project paths in small
+JSON files and links large immutable directories without copying model data.
 `restore/`, `code/`, and `environments/` are for installation and reproduction;
 `runs/` and `development/` contain outputs and are never input asset roots.
 
@@ -28,6 +35,10 @@ gap sizes 1, 3, 5, 10, 15 and 20 mm for the cylindrical key. The current
 launcher selects 5 mm by default. The archived square-mode code remains in
 the source snapshot; square hardware assets are outside this ZeroDex run
 profile.
+All six socket representations are preserved as TARs in `restore/`.
+The active NAS tree currently has the 5 mm representation extracted for the
+current fixture. Extract the selected socket TAR before changing gap, or use
+`install_project.py` when restoring the complete bundle on another PC.
 Development output rules and the migration of earlier scattered diagnostics
 are described in `development/README.md`.
 
@@ -115,11 +126,16 @@ ZeroDex stage. A recording failure is visible there but does not change the
 pipeline's grasp or insertion decisions. The capture4 recorder is deployed
 once with `manage_zerodex_capture4_services.py deploy`.
 
-**No NAS upload happens while the pipeline runs.** After it exits, use:
+**No full-video NAS upload happens while the pipeline runs.** The main-PC run
+ledger and small snapshots are written to the NAS project during the trial;
+the camera video remains on capture4 until the separate upload command. The
+high-frequency timing trace is written to `/tmp/precision-insertion-timing`
+during the run and copied once beside the NAS run ledger on orderly exit.
+After the pipeline exits, use:
 
 ```bash
 python3 demo/precision-insertion/upload_zerodex_recording.py \
-  --receipt /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/recordings/RUN_ID/recording_ref.json
+  --receipt /mnt/paradex2/hyunsu/precision_insertion/runtime/active_shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/recordings/RUN_ID/recording_ref.json
 ```
 
 The uploader copies the finished recording into
@@ -127,6 +143,42 @@ The uploader copies the finished recording into
 recorder manifest, and writes `run_manifest.json`. It is never invoked by
 the runtime wrapper. A long session therefore does not add upload traffic to
 camera inference or robot planning.
+
+## Restart on the current kds-Z790 rig
+
+The 2026-10-30 5 mm socket-only measurement is saved under
+`development/zerodex_capture4/camera_only/socket_remeasure_20261030_03/socket_evidence`.
+Its accepted cameras were `25322639`, `25322642`, and `26053248`, with the
+socket center at approximately `(0.72148, 0.03303, 0.06292)` m in the robot
+frame. Reuse this evidence only while the board/socket and camera geometry
+have not moved. The key may be placed at a new tabletop location.
+
+The latest robot-free preflight command is:
+
+```bash
+cd /home/hyunsu/autodex-code
+PRECISION_GAP_MM=5 bash demo/precision-insertion/run_zerodex_capture4.sh --check
+```
+
+The check passed with 126 catalogued, 114 endpoint-eligible candidates. It
+checks files and catalog structure; it does not certify a Franka trajectory
+or physical insertion. The current env profile sends run outputs to this
+project's `runs/zerodex_capture4` tree. A new live session still needs the
+robot, hand, FCI daemon and namespaced camera services running; no robot
+motion is part of the static check.
+
+Two 2026-10-30 live attempts ended before grasp. The first exposed a
+capture4 asset-path mapping error after the NAS migration; the namespaced
+`precision_init_daemon.py` now resolves key mesh and FoundPose representation
+from its local cache by object name, and its focused tests pass. The second
+received four camera responses but rejected the key capture because too few
+views remained after excluding a SAM mask that covered the known socket.
+Camera-only probes showed that the old prompt sometimes selects the hollow
+socket as the key. `small white solid peg` selected the actual key in three
+views of the same tabletop layout. This is now the primary key prompt, with
+one alternate-prompt recapture only when the first capture has too few views.
+The failed request's same-frame masks are saved for diagnosis. This change
+has not yet been tested in a new robot episode.
 
 ## Current camera-only evidence
 
