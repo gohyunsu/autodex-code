@@ -67,8 +67,6 @@ def link_runtime(project: Path) -> dict[str, object]:
                     dst.unlink(missing_ok=True)
                     dst.symlink_to(src)
                 linked += 1
-    (target / "AutoDex/precision_insertion/zerodex_capture4/runs").mkdir(
-        parents=True, exist_ok=True)
     return {"source": str(source), "runtime": str(target),
             "linked_directories": linked_dirs, "linked_files": linked,
             "rewritten_json_files": copied}

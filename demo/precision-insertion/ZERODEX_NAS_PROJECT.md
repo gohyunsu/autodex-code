@@ -156,6 +156,24 @@ encoding and writing the full-resolution frame repeatedly. This changes only
 storage I/O, not perception admission or task outcomes. The capture4
 recorder is deployed once with `manage_zerodex_capture4_services.py deploy`.
 
+Pre-separation outputs that once lived beside static launch assets were moved
+to `development/zerodex_capture4/legacy_runtime_mutables`. The original paths
+are relative symlinks, so historical reports remain readable without keeping
+the bytes in the runtime asset view. The migration is recorded in
+`development/zerodex_capture4/RUNTIME_MUTABLE_MIGRATION.json`. Re-running
+`link_zerodex_nas_runtime.py` no longer creates a mutable `runs/` directory
+inside `runtime/active_shared_data`.
+
+A file-access trace of `run_zerodex_capture4.sh --check` on 2026-10-30
+observed 196 NAS pathname operations over 40 unique resolved prefixes/files.
+All asset files were below `/mnt/paradex2/hyunsu/precision_insertion`; the
+only `/mnt/paradex2` operations were ancestor-directory `lstat` calls made by
+path resolution. No old `/home/hyunsu/shared_data/AutoDex` or
+`/home/robot/shared_data` path was opened. The project asset/runtime views had
+93 symlinks, zero broken targets, and zero targets outside the project root.
+This proves the static preflight path scope, not every future live callback;
+live traces should be checked again after the next full episode.
+
 **No full-video NAS upload happens while the pipeline runs.** The main-PC run
 ledger and small snapshots are written to the NAS project during the trial;
 the camera video remains on capture4 until the separate upload command. The
