@@ -35,9 +35,12 @@ gap sizes 1, 3, 5, 10, 15 and 20 mm for the cylindrical key. The current
 launcher selects 5 mm by default. The archived square-mode code remains in
 the source snapshot; square hardware assets are outside this ZeroDex run
 profile.
-All six socket representations are preserved as TARs in `restore/`.
-The active NAS tree currently has the 5 mm representation extracted for the
-current fixture. Extract the selected socket TAR before changing gap, or use
+All six complete socket representations are preserved as TARs in `restore/`.
+The active NAS tree has the 5 mm `repre.pth` and most templates, but an
+interrupted extraction left that optional socket template directory
+incomplete. The current socket route uses masks and a board-constrained body
+fit, not socket FoundPose representation. Extract the selected TAR completely
+before switching to a socket FoundPose route or changing gap, or use
 `install_project.py` when restoring the complete bundle on another PC.
 Development output rules and the migration of earlier scattered diagnostics
 are described in `development/README.md`.
@@ -178,7 +181,12 @@ socket as the key. `small white solid peg` selected the actual key in three
 views of the same tabletop layout. This is now the primary key prompt, with
 one alternate-prompt recapture only when the first capture has too few views.
 The failed request's same-frame masks are saved for diagnosis. This change
-has not yet been tested in a new robot episode.
+has not yet been tested in a new robot episode. A camera-only end-to-end run
+with the powered-off robot reused the frozen socket session and admitted the
+upright key on three cameras (`25322639`, `25322642`, `26053248`) using the
+new prompt, classified tabletop pose `000`, and found 108 endpoint-eligible
+candidates. Its report is in
+`development/zerodex_capture4/camera_only/key_admission_primary_prompt_retry_20261030/report.json`.
 
 ## Current camera-only evidence
 
