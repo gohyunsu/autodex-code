@@ -194,6 +194,16 @@ new prompt, classified tabletop pose `000`, and found 108 endpoint-eligible
 candidates. Its report is in
 `development/zerodex_capture4/camera_only/key_admission_primary_prompt_retry_20261030/report.json`.
 
+The local Qwen checkpoint in this NAS project's active asset view was also
+replayed against the six saved, independently reviewed released-key cases.
+The three-view aggregate matched all six visual labels (three inside, three
+outside); individual cameras scored 5/6, 6/6 and 6/6. The input manifest and
+output are both in this project's `development/zerodex_capture4/reviews/`:
+`released_vlm_dataset_20261029/manifest_six.json` and
+`nas_vlm_replay_20261030/evaluation_six.json`. This checks the archived visual
+label route and NAS model path, not a new physical insertion or generalization
+to unseen scenes.
+
 ## Current camera-only evidence
 
 The 5 mm socket-only clean session is locally saved under
