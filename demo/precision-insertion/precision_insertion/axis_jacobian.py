@@ -365,6 +365,240 @@ def plan_jacobian_linear_stroke(
         joint_increment_smoothness=joint_increment_smoothness)
 
 
+def _tip_axis_waypoints(
+    start_wrist_pose: np.ndarray, *, pivot_robot: np.ndarray,
+    translation_robot: np.ndarray, tilt_rotvec_robot: np.ndarray,
+    translation_step_m: float, rotation_step_rad: float,
+) -> list[np.ndarray]:
+    """Interpolate a screw-free tilt about the key tip plus linear XY.
+
+    The key tip is the rotation centre, so correcting shaft tilt does not
+    introduce the lateral tip motion that a wrist-centred rotation would.
+    Translation and rotation share the same interpolation parameter and end
+    exactly at the requested pose.
+    """
+    start = np.asarray(start_wrist_pose, dtype=np.float64)
+    pivot = np.asarray(pivot_robot, dtype=np.float64)
+    translation = np.asarray(translation_robot, dtype=np.float64)
+    rotvec = np.asarray(tilt_rotvec_robot, dtype=np.float64)
+    if (start.shape != (4, 4) or pivot.shape != (3,) or
+            translation.shape != (3,) or rotvec.shape != (3,) or
+            not all(np.all(np.isfinite(value)) for value in (
+                start, pivot, translation, rotvec)) or
+            not math.isfinite(translation_step_m) or
+            translation_step_m <= 0 or
+            not math.isfinite(rotation_step_rad) or
+            rotation_step_rad <= 0):
+        raise ValueError("tip-axis waypoints need finite poses and positive steps")
+    distance = float(np.linalg.norm(translation))
+    angle = float(np.linalg.norm(rotvec))
+    if distance == 0. and angle == 0.:
+        raise ValueError("tip-axis correction cannot be empty")
+    count = max(1, int(math.ceil(distance / translation_step_m)),
+                int(math.ceil(angle / rotation_step_rad)))
+    arm_from_pivot = start[:3, 3] - pivot
+    goals = []
+    for index in range(1, count + 1):
+        alpha = index / count
+        turn = Rotation.from_rotvec(alpha * rotvec).as_matrix()
+        goal = start.copy()
+        goal[:3, :3] = turn @ start[:3, :3]
+        goal[:3, 3] = (pivot + turn @ arm_from_pivot +
+                       alpha * translation)
+        goals.append(goal)
+    return goals
+
+
+def _plan_jacobian_pose_waypoints(
+    planner, start_full_qpos: np.ndarray, start_wrist_pose: np.ndarray,
+    goals: list[np.ndarray], *, scene_cfg: dict,
+    options: JacobianStrokeOptions | None,
+    joint_increment_smoothness: float,
+) -> JacobianStrokeResult:
+    """Solve a short ordered Cartesian pose path from prior accepted joints."""
+    started = perf_counter()
+    start = np.asarray(start_full_qpos, dtype=np.float64)
+    reference = np.asarray(start_wrist_pose, dtype=np.float64)
+    n_arm = int(planner._n_arm)
+    if (n_arm != 7 or start.shape != (13,) or not np.isfinite(start).all() or
+            reference.shape != (4, 4) or not np.isfinite(reference).all() or
+            not goals or any(np.asarray(goal).shape != (4, 4) or
+                             not np.isfinite(goal).all() for goal in goals) or
+            not math.isfinite(joint_increment_smoothness) or
+            joint_increment_smoothness < 0):
+        raise ValueError("pose continuation needs finite FR3/Inspire states")
+    if (not isinstance(scene_cfg, dict) or
+            not isinstance(scene_cfg.get("mesh"), dict) or
+            "fixture_socket" not in scene_cfg["mesh"] or
+            "target" not in scene_cfg["mesh"]):
+        raise ValueError("pose continuation needs the fresh key and socket world")
+    opts = options or _default_options_for_arm(n_arm)
+
+    def failure(code: str, detail: str | None = None, *, geometric=None,
+                checked=None, records=None) -> JacobianStrokeResult:
+        return JacobianStrokeResult(
+            False, None, None, geometric, checked, "tip_axis_alignment",
+            0., code, detail, records or [],
+            timing={"total_s": perf_counter() - started})
+
+    planner._set_motion_world(_fixed_world_cfg(scene_cfg))
+    start_fk = planner.fk_wrist(start.astype(np.float32))
+    if (np.linalg.norm(start_fk[:3, 3] - reference[:3, 3]) >
+            opts.request_start_position_tolerance_m or
+            _rotation_error(start_fk, reference) >
+            opts.request_start_orientation_tolerance_rad):
+        return failure("pose_start_pose_mismatch")
+    valid, status = _check_state(planner, start.astype(np.float32))
+    if not valid:
+        return failure("pose_start_robot_collision", status)
+    lower, upper = _joint_bounds(planner, 13)
+    hand = start[n_arm:].copy()
+    previous = start.copy()
+    geometric = [start.astype(np.float32)]
+    checked = [start.astype(np.float32)]
+    records = []
+    for index, goal in enumerate(goals, start=1):
+        q = previous.copy()
+        prior_increment = (previous[:n_arm] - np.asarray(
+            geometric[-2], dtype=np.float64)[:n_arm]
+                           if len(geometric) >= 2 else np.zeros(n_arm))
+        predicted_arm = np.clip(previous[:n_arm] + prior_increment,
+                                lower[:n_arm], upper[:n_arm])
+        converged = False
+        reason = "pose_jacobian_residual_not_converged"
+        joint_limit_hit = False
+        for iteration in range(1, opts.max_iterations + 1):
+            error = _pose_error(goal, planner.fk_wrist(q.astype(np.float32)))
+            if (np.linalg.norm(error[:3]) <= opts.position_tolerance_m and
+                    np.linalg.norm(error[3:]) <=
+                    opts.orientation_tolerance_rad):
+                converged = True
+                break
+            jacobian = numerical_wrist_jacobian(
+                planner.fk_wrist, q, n_arm, opts.finite_difference_rad)
+            try:
+                update, _, _ = _smooth_weighted_dls_step(
+                    jacobian, error, opts.damping,
+                    opts.rotation_weight_m_per_rad,
+                    predicted_arm - q[:n_arm], joint_increment_smoothness)
+            except np.linalg.LinAlgError:
+                reason = "pose_jacobian_dls_failed"
+                break
+            update = np.clip(update, -opts.max_joint_step_rad,
+                             opts.max_joint_step_rad)
+            proposed = q[:n_arm] + update
+            q[:n_arm] = np.clip(proposed, lower[:n_arm], upper[:n_arm])
+            joint_limit_hit |= bool(np.any(abs(proposed-q[:n_arm]) > 1e-10))
+            q[n_arm:] = hand
+        else:
+            iteration = opts.max_iterations
+        if not converged and joint_limit_hit:
+            reason = "pose_jacobian_joint_limit"
+        if (converged and np.linalg.norm(q[:n_arm] - previous[:n_arm]) >
+                opts.max_waypoint_delta_rad):
+            converged, reason = False, "pose_jacobian_branch_jump"
+        segment = None
+        collision_detail = None
+        if converged:
+            segment = _segment_samples(
+                previous, q, n_arm=n_arm, hand=hand,
+                max_joint_delta=opts.max_segment_joint_delta_rad)
+            valid, status, collision_batch = _check_states_batch(
+                planner, segment[1:])
+            if not np.all(valid):
+                converged, reason = False, "pose_segment_robot_collision"
+                first = int(np.flatnonzero(~valid)[0])
+                collision_detail = {
+                    "curobo_status": status,
+                    "first_invalid_segment_sample": first + 1,
+                    "first_invalid_full_q": segment[first+1].tolist(),
+                    "collision_batch": collision_batch,
+                }
+        record = {
+            "stage": "tip_axis_waypoint", "index": index,
+            "T_robot_hand_goal": np.asarray(goal).tolist(),
+            "success": converged,
+            "failure_code": None if converged else reason,
+            "iterations": iteration, "joint_limit_hit": joint_limit_hit,
+            "segment_samples": 0 if segment is None else len(segment)-1,
+            "joint_increment_smoothness": joint_increment_smoothness,
+            "prior_increment_norm_rad": float(np.linalg.norm(prior_increment)),
+        }
+        if collision_detail is not None:
+            record["collision_detail"] = collision_detail
+        records.append(record)
+        if not converged:
+            return failure(reason, geometric=np.stack(geometric),
+                           checked=np.stack(checked), records=records)
+        checked.extend(segment[1:])
+        geometric.append(q.astype(np.float32))
+        previous = q
+
+    geometric_array = np.stack(geometric).astype(np.float32)
+    checked_array = np.stack(checked).astype(np.float32)
+    velocity, acceleration = _arm_execution_limits(n_arm)
+    velocity *= opts.held_object_speed_scale
+    acceleration *= opts.held_object_speed_scale
+    try:
+        arm, times, retime = _retime_c2(
+            checked_array[:, :n_arm], velocity_limit=velocity,
+            acceleration_limit=acceleration, options=opts)
+    except RuntimeError as exc:
+        return failure("pose_execution_retime_failed", str(exc),
+                       geometric=geometric_array, checked=checked_array,
+                       records=records)
+    trajectory = np.concatenate([
+        arm, np.broadcast_to(hand.astype(np.float32), (len(arm), len(hand)))],
+        axis=1).astype(np.float32)
+    valid, status, collision = _check_states_batch(planner, trajectory)
+    if not np.all(valid):
+        return failure("pose_execution_robot_collision", status,
+                       geometric=geometric_array, checked=checked_array,
+                       records=records)
+    final_pose = planner.fk_wrist(trajectory[-1])
+    final_goal = np.asarray(goals[-1])
+    position_error = float(np.linalg.norm(
+        final_pose[:3, 3] - final_goal[:3, 3]))
+    rotation_error = float(_rotation_error(final_pose, final_goal))
+    if (position_error > opts.position_tolerance_m or
+            rotation_error > opts.orientation_tolerance_rad):
+        return failure("pose_execution_geometric_deviation",
+                       geometric=geometric_array, checked=checked_array,
+                       records=records)
+    return JacobianStrokeResult(
+        True, trajectory, times, geometric_array, checked_array,
+        "tip_axis_alignment", 0., None, None, records,
+        validation={
+            "collision_batch": collision, "retime": retime,
+            "final_position_error_m": position_error,
+            "final_orientation_error_rad": rotation_error,
+            "hand_fixed": bool(np.allclose(
+                trajectory[:, n_arm:], hand, atol=1e-7)),
+        }, timing={"total_s": perf_counter() - started})
+
+
+def plan_jacobian_tip_axis_alignment(
+    planner, start_full_qpos: np.ndarray, start_wrist_pose: np.ndarray, *,
+    pivot_robot: np.ndarray, translation_robot: np.ndarray,
+    tilt_rotvec_robot: np.ndarray, scene_cfg: dict,
+    translation_step_m: float = .001,
+    rotation_step_rad: float = math.radians(1.),
+    options: JacobianStrokeOptions | None = None,
+    joint_increment_smoothness: float = DEFAULT_JOINT_INCREMENT_SMOOTHNESS,
+) -> JacobianStrokeResult:
+    """Align the held cylinder tip/axis without changing Inspire joints."""
+    goals = _tip_axis_waypoints(
+        start_wrist_pose, pivot_robot=pivot_robot,
+        translation_robot=translation_robot,
+        tilt_rotvec_robot=tilt_rotvec_robot,
+        translation_step_m=translation_step_m,
+        rotation_step_rad=rotation_step_rad)
+    return _plan_jacobian_pose_waypoints(
+        planner, start_full_qpos, start_wrist_pose, goals,
+        scene_cfg=scene_cfg, options=options,
+        joint_increment_smoothness=joint_increment_smoothness)
+
+
 def _axis_metrics(poses: np.ndarray, reference: np.ndarray,
                   axis: np.ndarray) -> dict[str, np.ndarray]:
     delta = poses[:, :3, 3] - reference[None, :3, 3]

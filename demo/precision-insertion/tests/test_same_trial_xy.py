@@ -6,9 +6,11 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import cv2
 import numpy as np
 from PIL import Image
 import pytest
+from scipy.spatial.transform import Rotation
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -19,7 +21,7 @@ from precision_insertion.guarded_axial_handoff import (  # noqa: E402
 from precision_insertion.same_trial_xy import (  # noqa: E402
     CorrectedAxialPlanUnavailable, HeldXYPlanUnavailable,
     _alignment_frame_inputs, _held_wrist_goal, _shifted_targets,
-    choose_xy_move,
+    choose_key_axis_move, choose_xy_move,
 )
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
@@ -55,6 +57,36 @@ def test_same_trial_move_requires_metric_multiview_and_caps_one_motion():
     assert choose_xy_move({**metric,
                            "xy_correction_socket_m": [.001, -.001]},
                           tolerance_m=.0025)["status"] == "aligned"
+
+
+def test_cylinder_axis_move_removes_only_tilt_and_keeps_tip_pivot():
+    angle = np.deg2rad(8.)
+    axis = np.array([np.sin(angle), 0., -np.cos(angle)])
+    alignment = {
+        "inlier_cameras": ["a", "b", "c"],
+        "tip_socket_m": [.004, -.002, .05],
+        "insertion_axis_socket": axis.tolist(),
+        "estimator": "sam3_tip_and_shaft_axis",
+    }
+    choice = choose_key_axis_move(
+        alignment, tolerance_rad=np.deg2rad(1.),
+        max_step_rad=np.deg2rad(3.))
+    assert choice["status"] == "tilt"
+    assert choice["axis_error_deg"] == pytest.approx(8.)
+    assert np.linalg.norm(choice["tilt_rotvec_socket_rad"]) == pytest.approx(
+        np.deg2rad(3.))
+    rotated = (cv2.Rodrigues(np.asarray(
+        choice["tilt_rotvec_socket_rad"]))[0] @ axis)
+    assert np.rad2deg(np.arccos(np.clip(-rotated[2], -1., 1.))) == pytest.approx(5.)
+
+    pivot = np.array([.2, .3, .4])
+    wrist = np.eye(4)
+    wrist[:3, 3] = pivot + [.04, -.01, .08]
+    pivot_in_hand = np.linalg.inv(wrist) @ np.r_[pivot, 1.]
+    goal = _held_wrist_goal(
+        wrist, pivot, np.eye(4), np.zeros(2), 0., 0.,
+        choice["tilt_rotvec_socket_rad"])
+    np.testing.assert_allclose((goal @ pivot_in_hand)[:3], pivot, atol=1e-12)
 
 
 def test_lateral_observation_ranking_uses_each_calibrated_camera(
@@ -298,6 +330,72 @@ def test_held_xy_uses_one_local_jacobian_plan_and_records_backend(
     assert report["planning_backend"] == "damped_jacobian_linear"
     assert report["cartesian_target_segments"] == 2
     assert report["linear_plan_timing"] == {"total_s": .01}
+
+
+def test_held_axis_alignment_uses_tip_pivot_jacobian_and_fixed_hand(
+        tmp_path, monkeypatch):
+    import precision_insertion.same_trial_xy as same_trial
+
+    start_q = np.zeros(13)
+    start_q[7:] = .25
+    end_q = start_q.copy()
+    end_q[4] = np.deg2rad(2.)
+    trajectory = np.stack((start_q, end_q))
+    states = iter((
+        LiveRobotState(start_q, np.zeros(7), 20., 20., 10., 20.,
+                       np.zeros(6), np.zeros(6), 0., np.zeros(6)),
+        LiveRobotState(end_q, np.zeros(7), 20., 20., 10., 20.,
+                       np.zeros(6), np.zeros(6), 0., np.zeros(6)),
+    ))
+
+    def fk(q):
+        pose = np.eye(4)
+        pose[:3, 3] = [.1, 0., .3]
+        pose[:3, :3] = Rotation.from_rotvec(
+            [0., np.asarray(q)[4], 0.]).as_matrix()
+        return pose
+
+    calls = []
+    def align(*args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(
+            success=True, trajectory=trajectory, failure_code=None,
+            step_records=[{}, {}], timing={"total_s": .02})
+
+    runner = SimpleNamespace(
+        active_attempt=SimpleNamespace(
+            attempt_id="a1", candidate_id="table/0/42"),
+        _attempt_dir=tmp_path, shared_root=tmp_path, mode=object(),
+        calibration=object(), _preflight=SimpleNamespace(trial_scene={}),
+        _postlift_preflight=SimpleNamespace(targets=SimpleNamespace(
+            T_robot_key_preinsert=np.eye(4))))
+    monkeypatch.setattr(same_trial, "validated_frozen_socket_pose",
+                        lambda **_kwargs: np.eye(4))
+    monkeypatch.setattr(same_trial, "build_held_scene_from_trial",
+                        lambda **_kwargs: {})
+    monkeypatch.setattr(same_trial, "plan_jacobian_tip_axis_alignment", align)
+    monkeypatch.setattr(same_trial, "_path",
+                        lambda *_args, **_kwargs: trajectory)
+    monkeypatch.setattr(same_trial, "_audit_held_geometry_samples",
+                        lambda **_kwargs: ([], {}, None))
+    monkeypatch.setattr(same_trial, "verify_transfer_controller_result",
+                        lambda *_args, **_kwargs: (10., 11., {}))
+    report_path = same_trial.plan_and_execute_shift(
+        runner=runner, planner=SimpleNamespace(fk_wrist=fk),
+        adapter=SimpleNamespace(follow_transfer=lambda *_args, **_kwargs: {}),
+        read_state=lambda: next(states), motion_interlock=lambda: True,
+        limits=SimpleNamespace(max_execution_duration_s=5.),
+        path_limits=SimpleNamespace(minimum_hand_clearance_m=0.),
+        increment_socket_m=(0., 0.), residual_socket_m=(.003, -.002),
+        residual_source="current_metric_tip_and_axis", index=0,
+        tilt_rotvec_socket_rad=(0., np.deg2rad(2.), 0.),
+        observed_tip_socket_m=(.003, -.002, .05))
+    assert len(calls) == 1
+    np.testing.assert_allclose(calls[0][1]["pivot_robot"], [.003, -.002, .05])
+    np.testing.assert_allclose(calls[0][1]["translation_robot"], 0.)
+    report = json.loads(report_path.read_text())
+    assert report["planning_backend"] == "damped_jacobian_tip_axis"
+    assert report["tilt_rotvec_socket_rad"][1] == pytest.approx(np.deg2rad(2.))
 
 
 def test_observation_raise_moves_wrist_on_socket_axis_and_records_feedback(

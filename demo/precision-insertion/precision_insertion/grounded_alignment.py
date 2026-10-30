@@ -607,6 +607,80 @@ def _line_axis(views: Sequence[GroundedLineView]) -> tuple[np.ndarray, float]:
     return axis, plane_angle
 
 
+def estimate_projected_axis(
+    views: Sequence[GroundedLineView], *, minimum_views: int = 3,
+) -> dict:
+    """Recover a cylinder axis independently of its apparent face centre.
+
+    A projected shaft line and its camera centre define an interpretation
+    plane. The 3D cylinder axis is the intersection direction of two such
+    planes. SAM face centres are intentionally not part of this fit: under
+    oblique viewing and partial hand occlusion their apparent centres are
+    useful tip proxies but are not exact projections of one common 3D point.
+
+    With three or more views, enumerate the minimal two-plane solutions and
+    choose the one with the smallest total sine residual over every observed
+    plane. This is a threshold-free robust fit, not a new motion rejection
+    criterion. With fewer views the caller can continue its existing XY-only
+    loop without changing the grasp.
+    """
+    if type(minimum_views) is not int or minimum_views < 2:
+        raise ValueError("projected axis needs at least two views")
+    if len({v.frame.camera_id for v in views}) != len(views):
+        raise ValueError("projected axis needs distinct camera IDs")
+    admitted = []
+    for view in views:
+        frame = view.frame
+        _K(frame.intrinsics)
+        validate_se3(frame.T_camera_socket, name="T_camera_socket")
+        if view.axis_line_uv_px is None:
+            continue
+        p, q = view.axis_line_uv_px
+        if any(len(point) != 2 or
+               not all(math.isfinite(float(x)) for x in point)
+               for point in (p, q)):
+            raise ValueError("projected axis line needs finite pixels")
+        if math.dist(p, q) < 8.:
+            continue
+        admitted.append(view)
+    if len(admitted) < minimum_views:
+        return _abstain(
+            "insufficient_projected_axis_views",
+            visible_cameras=[v.frame.camera_id for v in admitted])
+
+    normals = {view.frame.camera_id: _line_geometry(view)[1]
+               for view in admitted}
+    candidates = []
+    for pair in combinations(admitted, 2):
+        try:
+            axis, plane_angle = _line_axis(pair)
+        except (ValueError, np.linalg.LinAlgError):
+            continue
+        residuals = {
+            view.frame.camera_id:
+                abs(float(normals[view.frame.camera_id] @ axis))
+            for view in admitted}
+        candidates.append((sum(value * value for value in residuals.values()),
+                           axis, plane_angle, pair, residuals))
+    if not candidates:
+        return _abstain("projected_axis_planes_are_degenerate")
+    score, axis, plane_angle, pair, residuals = min(
+        candidates, key=lambda value: value[0])
+    tilt_deg = math.degrees(math.acos(float(np.clip(-axis[2], -1., 1.))))
+    return {
+        "schema": "precision_insertion_projected_axis_v1",
+        "status": "diagnostic_metric_axis",
+        "reason": "minimum_residual_projected_axis_planes",
+        "insertion_axis_socket": axis.tolist(),
+        "axis_tilt_deg": tilt_deg,
+        "axis_plane_pair_cameras": [v.frame.camera_id for v in pair],
+        "visible_axis_cameras": [v.frame.camera_id for v in admitted],
+        "axis_plane_angle_deg": float(plane_angle),
+        "axis_plane_sine_residual": residuals,
+        "axis_plane_squared_residual_sum": float(score),
+    }
+
+
 def _tip_fit(views: Sequence[GroundedLineView]) -> tuple[np.ndarray, np.ndarray]:
     # _dlt only needs frame and the named tip coordinate.
     seed_pair = max(combinations(views, 2), key=lambda pair: math.degrees(
@@ -652,6 +726,7 @@ def _line_solution(views: Sequence[GroundedLineView], span_m: float
 def estimate_grounded_line_alignment(
     views: Sequence[GroundedLineView], *, socket_rim_z_m: float,
     verification_depth_m: float, limits: AlignmentLimits,
+    allow_axis_correction: bool = False,
 ) -> dict:
     """Triangulate a tip and back-project 2D axis lines to a 3D direction.
 
@@ -726,7 +801,7 @@ def estimate_grounded_line_alignment(
     if max(errors) > limits.max_reprojection_px:
         return _abstain("tip_or_axis_line_reprojection_exceeds_limit")
     tilt_deg = math.degrees(math.acos(float(np.clip(-axis[2], -1, 1))))
-    if tilt_deg > limits.max_axis_tilt_deg:
+    if tilt_deg > limits.max_axis_tilt_deg and not allow_axis_correction:
         return _abstain("axis_tilt_requires_reorientation_not_xy",
                         axis_tilt_deg=tilt_deg)
     # The line direction needs no physical second landmark. A virtual 20 mm
@@ -735,7 +810,7 @@ def estimate_grounded_line_alignment(
     mean, entry, depth = _mean_axis_error(
         x, socket_rim_z_m, verification_depth_m)
     sweep = float(np.linalg.norm(entry - depth))
-    if sweep > limits.max_20mm_axis_sweep_m:
+    if sweep > limits.max_20mm_axis_sweep_m and not allow_axis_correction:
         return _abstain("axis_sweep_cannot_be_fixed_by_xy",
                         axis_sweep_m=sweep)
     # Numerical propagation of commissioned pixel noise through tip DLT/LS
@@ -773,7 +848,8 @@ def estimate_grounded_line_alignment(
     simultaneous_95 = math.sqrt(float(chi2.ppf(0.95, df=2)))
     uncertainty_95 = simultaneous_95 * math.sqrt(
         float(np.linalg.eigvalsh(cov_xy).max()))
-    if uncertainty_95 > limits.max_lateral_uncertainty_95_m:
+    if (uncertainty_95 > limits.max_lateral_uncertainty_95_m and
+            not allow_axis_correction):
         return _abstain("lateral_uncertainty_exceeds_budget",
                         lateral_uncertainty_95_m=uncertainty_95)
     advice = _continuous_xy_advice(mean, cov_xy)
@@ -795,14 +871,21 @@ def estimate_grounded_line_alignment(
         "lateral_uncertainty_95_m": uncertainty_95,
         **advice,
     }
-    if advice["increment_squared_error_improvement_lower_95_m2"] <= 0:
+    if allow_axis_correction:
+        details["axis_correction_enabled"] = True
+        details["axis_diagnostic_exceeds_previous_xy_only_limit"] = bool(
+            tilt_deg > limits.max_axis_tilt_deg or
+            sweep > limits.max_20mm_axis_sweep_m)
+    if (advice["increment_squared_error_improvement_lower_95_m2"] <= 0 and
+            not allow_axis_correction):
         return _abstain("continuous_xy_correction_not_confident", **{
             k: v for k, v in details.items() if k not in (
                 "xy_correction_socket_m", "bounded_xy_increment_socket_m")})
     return {
         "schema": "precision_insertion_grounded_alignment_v2",
         "status": "diagnostic_metric_xy_correction",
-        "reason": "confident_lateral_reduction", **details,
+        "reason": ("metric_tip_axis_solution" if allow_axis_correction else
+                   "confident_lateral_reduction"), **details,
         "scope": "read_only_metric_diagnostic_not_robot_motion",
         "robot_ready": False,
     }

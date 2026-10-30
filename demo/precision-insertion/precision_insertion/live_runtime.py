@@ -37,6 +37,8 @@ class RunLiveOptions:
     xy_update_weight: float = 1.0
     same_trial_xy_tolerance_m: float | None = None
     same_trial_max_step_m: float = .003
+    same_trial_axis_tolerance_rad: float | None = None
+    same_trial_max_tilt_step_rad: float = math.radians(3.)
     same_trial_observation_raise_m: float = 0.
     same_trial_observation_lateral_m: float = 0.
     same_trial_observation_yaw_rad: float = 0.
@@ -262,6 +264,14 @@ def run_integrated_live_session(
     if (not math.isfinite(options.same_trial_max_step_m) or
             options.same_trial_max_step_m <= 0):
         raise ValueError("same-trial XY step must be positive metres")
+    if (options.same_trial_axis_tolerance_rad is not None and
+            (not math.isfinite(options.same_trial_axis_tolerance_rad) or
+             options.same_trial_axis_tolerance_rad <= 0 or
+             options.same_trial_xy_tolerance_m is None)):
+        raise ValueError("axis convergence needs positive radians and same-trial XY")
+    if (not math.isfinite(options.same_trial_max_tilt_step_rad) or
+            options.same_trial_max_tilt_step_rad <= 0):
+        raise ValueError("same-trial tilt step must be positive radians")
     if (not math.isfinite(options.same_trial_observation_raise_m) or
             options.same_trial_observation_raise_m < 0 or
             (options.same_trial_observation_raise_m > 0 and

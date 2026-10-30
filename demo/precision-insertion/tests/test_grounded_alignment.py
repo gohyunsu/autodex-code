@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion.grounded_alignment import (  # noqa: E402
     AlignmentLimits, GroundedView, GroundedLineView,
     estimate_grounded_alignment, estimate_grounded_line_alignment,
+    estimate_projected_axis,
     observe_grounded_key_axis, observe_grounded_cylinder_axis,
     resolve_xy_only_cylinder_alignment,
 )
@@ -289,6 +290,29 @@ def test_cylinder_tip_plus_visible_axis_line_needs_no_second_physical_point():
         pytest.approx(np.linalg.norm(result["xy_correction_socket_m"])))
     assert result["mean_error_xy_m"] == pytest.approx(tip[:2], abs=1e-6)
     assert len(result["inlier_cameras"]) == 4
+
+
+def test_projected_axis_is_independent_of_apparent_tip_centres():
+    axis = np.array([.08, -.04, -.99598795])
+    rows = _line_rig(np.array([.0018, -.0002, .09]), axis)
+    shifted = [GroundedLineView(
+        row.frame,
+        (row.tip_uv_px[0] + 20. * index,
+         row.tip_uv_px[1] - 13. * index),
+        row.axis_line_uv_px)
+        for index, row in enumerate(rows)]
+    result = estimate_projected_axis(shifted, minimum_views=3)
+    assert result["status"] == "diagnostic_metric_axis"
+    assert result["insertion_axis_socket"] == pytest.approx(
+        axis / np.linalg.norm(axis), abs=1e-6)
+    assert len(result["visible_axis_cameras"]) == 4
+
+
+def test_projected_axis_needs_three_views_for_robust_automatic_correction():
+    rows = _line_rig(np.array([0., 0., .09]), np.array([0., 0., -1.]))
+    result = estimate_projected_axis(rows[:2], minimum_views=3)
+    assert result["status"] == "abstain"
+    assert result["reason"] == "insufficient_projected_axis_views"
 
 
 def test_cylinder_line_proposes_continuous_submillimetre_correction():

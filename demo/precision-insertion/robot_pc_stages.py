@@ -13,6 +13,7 @@ trial settings, not calibration or physical performance measurements.
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 import time
@@ -230,6 +231,10 @@ def configure(core, live, options) -> dict:
                     options, "same_trial_xy_tolerance_m", None),
                 "same_trial_max_step_m": getattr(
                     options, "same_trial_max_step_m", .003),
+                "same_trial_axis_tolerance_rad": getattr(
+                    options, "same_trial_axis_tolerance_rad", None),
+                "same_trial_max_tilt_step_rad": getattr(
+                    options, "same_trial_max_tilt_step_rad", math.radians(3.)),
                 "same_trial_observation_raise_m": getattr(
                     options, "same_trial_observation_raise_m", 0.),
                 "same_trial_observation_lateral_m": getattr(

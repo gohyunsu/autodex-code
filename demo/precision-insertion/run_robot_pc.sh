@@ -136,6 +136,12 @@ fi
 if [[ -n ${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM:-} ]]; then
   EXTRA_ARGS+=(--same-trial-xy-tolerance-mm "$PRECISION_SAME_TRIAL_XY_TOLERANCE_MM")
   EXTRA_ARGS+=(--same-trial-max-step-mm "${PRECISION_SAME_TRIAL_MAX_STEP_MM:-3}")
+  if [[ -n ${PRECISION_SAME_TRIAL_AXIS_TOLERANCE_DEG:-} ]]; then
+    EXTRA_ARGS+=(--same-trial-axis-tolerance-deg \
+      "$PRECISION_SAME_TRIAL_AXIS_TOLERANCE_DEG")
+    EXTRA_ARGS+=(--same-trial-max-tilt-step-deg \
+      "${PRECISION_SAME_TRIAL_MAX_TILT_STEP_DEG:-3}")
+  fi
 fi
 if [[ -n ${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM:-} &&
       -n ${PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM:-} ]]; then

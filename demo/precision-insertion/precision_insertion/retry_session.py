@@ -32,7 +32,7 @@ from .frame_provenance import image_sha256, verify_frame_provenance
 from .geometry import validate_se3
 from .grounded_alignment import (
     AlignmentLimits, GroundedLineView, estimate_grounded_alignment,
-    estimate_grounded_line_alignment,
+    estimate_grounded_line_alignment, estimate_projected_axis,
     observe_grounded_key_axis,
     observe_grounded_cylinder_axis, observe_grounded_cylinder_axis_cropped,
     resolve_xy_only_cylinder_alignment,
@@ -90,6 +90,21 @@ def _require_any_xy_vlm_response(observations: Sequence) -> None:
         raise RuntimeError(
             "XY VLM backend unavailable for every selected camera: "
             + ", ".join(cameras))
+
+
+def _with_independent_projected_axis(
+    alignment: Mapping, views: Sequence[GroundedLineView], *, source: str,
+) -> dict:
+    """Attach shaft direction without coupling it to apparent face centres."""
+    axis = estimate_projected_axis(views, minimum_views=3)
+    if axis["status"] != "diagnostic_metric_axis":
+        return dict(alignment)
+    return dict(
+        alignment,
+        insertion_axis_socket=axis["insertion_axis_socket"],
+        axis_tilt_deg=axis["axis_tilt_deg"],
+        axis_observation=axis,
+        xy_source=source)
 
 
 def _preinsert_xy_cameras(frame_rows: Mapping, capture: Mapping,
@@ -922,6 +937,9 @@ def _compute_grounded_alignment(
             max_reprojection_px=alignment_limits.max_reprojection_px,
             min_parallax_deg=alignment_limits.min_parallax_deg,
             max_nominal_tip_height_error_m=max_nominal_tip_height_error_m)
+        alignment = _with_independent_projected_axis(
+            alignment, grounded,
+            source="vlm_tip_plus_independent_shaft_axis")
     alignment = dict(
         alignment, estimator_limits=asdict(alignment_limits),
         grounding_input=("lossless_raw_roi" if roi_xyxy_by_camera is not None
@@ -1270,8 +1288,15 @@ def _compute_sam_half_ellipse_alignment(
         record.update(admitted=True, reason="observed_sam_half_ellipse")
         calibrated = CalibratedXYFrame(
             camera, frame.timestamp_s, frame.image, T_camera_socket, K)
+        center = np.asarray(fit["center_full_px"], dtype=float)
+        axis_px = np.asarray(fit["axis_unit_full_px"], dtype=float)
+        # Only the image line matters to the calibrated 3D plane fit; the
+        # 32-pixel span makes it numerically explicit while remaining inside
+        # the local shaft evidence returned by the same SAM mask.
+        shaft_line = (tuple(center - 16. * axis_px),
+                      tuple(center + 16. * axis_px))
         return GroundedLineView(
-            calibrated, tuple(fit["center_full_px"]), None), record, mask_png
+            calibrated, tuple(center), shaft_line), record, mask_png
 
     def sufficient(completed: Mapping[int, tuple]) -> bool:
         views = [completed[index][0] for index in sorted(completed)
@@ -1356,6 +1381,10 @@ def _compute_sam_half_ellipse_alignment(
         max_reprojection_px=alignment_limits.max_reprojection_px,
         min_parallax_deg=alignment_limits.min_parallax_deg,
         max_nominal_tip_height_error_m=max_nominal_tip_height_error_m)
+    if callable(getattr(alignment_limits, "validate", None)):
+        alignment = _with_independent_projected_axis(
+            alignment, views,
+            source="sam3_tip_plus_independent_shaft_axis")
     if alignment["status"] == "abstain" and views:
         # Two masks can each fit a clean half ellipse yet correspond to
         # different parts of a partly occluded key. Their triangulation is
@@ -1654,6 +1683,9 @@ def assess_grounded_xy_diagnostic(
             max_reprojection_px=alignment_limits.max_reprojection_px,
             min_parallax_deg=alignment_limits.min_parallax_deg,
             max_nominal_tip_height_error_m=limits.max_grasp_translation_drift_m)
+        alignment = _with_independent_projected_axis(
+            alignment, grounded,
+            source="vlm_tip_plus_independent_shaft_axis")
     # The session runner applies the configured weight to the next attempt.
     alignment = dict(
         alignment, estimator_limits=asdict(alignment_limits),

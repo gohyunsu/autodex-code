@@ -107,6 +107,13 @@ def main(argv: list[str] | None = None) -> int:
         "--same-trial-max-step-mm", type=float, default=3.,
         help="maximum XY movement between pre-insertion photographs (default: 3 mm)")
     parser.add_argument(
+        "--same-trial-axis-tolerance-deg", type=float,
+        help="within-episode cylindrical key-axis convergence target; this "
+             "controls reobservation, not insertion admission")
+    parser.add_argument(
+        "--same-trial-max-tilt-step-deg", type=float, default=3.,
+        help="maximum wrist tilt between pre-insertion photographs (default: 3 deg)")
+    parser.add_argument(
         "--same-trial-observation-raise-mm", type=float, default=0.,
         help="if the first preinsert view has no metric XY point, temporarily "
              "raise the held key along the socket axis, recapture, then "
@@ -192,6 +199,11 @@ def main(argv: list[str] | None = None) -> int:
             None if args.same_trial_xy_tolerance_mm is None else
             args.same_trial_xy_tolerance_mm / 1000.),
         same_trial_max_step_m=args.same_trial_max_step_mm / 1000.,
+        same_trial_axis_tolerance_rad=(
+            None if args.same_trial_axis_tolerance_deg is None else
+            math.radians(args.same_trial_axis_tolerance_deg)),
+        same_trial_max_tilt_step_rad=math.radians(
+            args.same_trial_max_tilt_step_deg),
         same_trial_observation_raise_m=(
             args.same_trial_observation_raise_mm / 1000.),
         same_trial_observation_lateral_m=(

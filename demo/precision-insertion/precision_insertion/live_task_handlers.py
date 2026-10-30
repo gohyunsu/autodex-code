@@ -30,7 +30,7 @@ from .transfer_execution import execute_bound_held_transfer
 from .timing_profile import timed
 from .same_trial_xy import (
     CorrectedAxialPlanUnavailable, HeldXYPlanUnavailable,
-    choose_xy_move, measure_preinsert_xy,
+    choose_key_axis_move, choose_xy_move, measure_preinsert_xy,
     plan_and_execute_shift,
     plan_corrected_axial_handoff, rank_lateral_observation_offsets,
 )
@@ -83,6 +83,8 @@ class LiveTaskHandlers:
     sam_segmentor: object | None = None
     same_trial_xy_tolerance_m: float | None = None
     same_trial_max_step_m: float = .003
+    same_trial_axis_tolerance_rad: float | None = None
+    same_trial_max_tilt_step_rad: float = np.deg2rad(3.)
     same_trial_max_shifts: int | None = None
     same_trial_observation_raise_m: float = 0.
     same_trial_observation_lateral_m: float = 0.
@@ -319,6 +321,13 @@ class LiveTaskHandlers:
                 observed["alignment"],
                 tolerance_m=self.same_trial_xy_tolerance_m,
                 max_step_m=self.same_trial_max_step_m)
+            axis_choice = (
+                choose_key_axis_move(
+                    observed["alignment"],
+                    tolerance_rad=self.same_trial_axis_tolerance_rad,
+                    max_step_rad=self.same_trial_max_tilt_step_rad)
+                if self.same_trial_axis_tolerance_rad is not None else
+                {"status": "axis_disabled"})
             if (choice["status"] == "not_metric_multiview" and
                     predicted_residual is not None and
                     observed.get("temporal_feedback", {}).get("status") !=
@@ -351,6 +360,7 @@ class LiveTaskHandlers:
             report.parent.mkdir(parents=True, exist_ok=True)
             with report.open("x", encoding="utf-8") as stream:
                 json.dump({**observed, "choice": choice,
+                           "axis_choice": axis_choice,
                            **({"lateral_viewpoint_ranking": lateral_viewpoints}
                               if lateral_viewpoints is not None else {})}, stream,
                           indent=2, sort_keys=True, allow_nan=False)
@@ -365,6 +375,55 @@ class LiveTaskHandlers:
                                    "preinsert_snapshot": str(
                                        self._preinsert_bundle / "manifest.json")})
                 return
+            if axis_choice["status"] == "tilt":
+                # Correct orientation first. Tilting about the observed key
+                # tip leaves its lateral position unchanged; the mandatory
+                # recapture then supplies the XY correction for that new axis.
+                current_residual = np.asarray(
+                    axis_choice["tip_socket_m"][:2], dtype=float)
+                try:
+                    with timed("trial.same_trial_axis_motion", phase="trial",
+                               kind="motion", attempt_id=attempt.attempt_id):
+                        tilted = plan_and_execute_shift(
+                            runner=runner, planner=self.planner,
+                            adapter=self.transfer_adapter,
+                            read_state=self.read_state,
+                            motion_interlock=self.motion_interlock,
+                            limits=self.transfer_limits,
+                            path_limits=self.path_limits,
+                            increment_socket_m=(0., 0.),
+                            residual_socket_m=current_residual,
+                            residual_source="current_metric_tip_and_axis",
+                            current_axis_raise_socket_m=axis_raise,
+                            tilt_rotvec_socket_rad=axis_choice[
+                                "tilt_rotvec_socket_rad"],
+                            observed_tip_socket_m=axis_choice["tip_socket_m"],
+                            observed_axis_socket=axis_choice[
+                                "observed_axis_socket"],
+                            index=index, action_tag="axis_alignment")
+                except HeldXYPlanUnavailable as exc:
+                    runner.record_failure(
+                        "preinsert_path_unavailable",
+                        timestamp_s=self.decision_time(),
+                        evidence_refs={
+                            "axis_alignment_plan_failure": str(exc.report_path),
+                            "preinsert_snapshot": str(
+                                self._preinsert_bundle / "manifest.json"),
+                        })
+                    return
+                shifts.append(tilted)
+                motion = json.loads(tilted.read_text(encoding="utf-8"))
+                measured_step = np.asarray(
+                    motion["measured_increment_socket_m"], dtype=float)
+                total = (np.asarray(total) + measured_step).tolist()
+                axis_raise += motion["measured_axis_increment_socket_m"]
+                predicted_residual = (current_residual + measured_step).tolist()
+                current = runner.current_decision()
+                raw, capture = self._capture(
+                    runner=runner, decision=current,
+                    callback=self.capture_preinsert, phase="preinsert")
+                self._preinsert_bundle = raw
+                continue
             returned_lateral_this_iteration = False
             if observation_lateral_offset is not None:
                 metric = choice["status"] in {"aligned", "shift"}
@@ -624,6 +683,14 @@ class LiveTaskHandlers:
                                              "current_metric_multiview"),
                             axis_increment_socket_m=axis_step,
                             current_axis_raise_socket_m=axis_raise,
+                            observed_tip_socket_m=(
+                                axis_choice.get("tip_socket_m") if
+                                axis_choice["status"] == "axis_aligned" else
+                                None),
+                            observed_axis_socket=(
+                                axis_choice.get("observed_axis_socket") if
+                                axis_choice["status"] == "axis_aligned" else
+                                None),
                             index=index, action_tag=route_tag)
                     except HeldXYPlanUnavailable as exc:
                         failure = exc

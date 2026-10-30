@@ -21,7 +21,9 @@ import numpy as np
 from PIL import Image
 
 from .assets import AssetPaths
-from .axis_jacobian import plan_jacobian_linear_stroke
+from .axis_jacobian import (
+    plan_jacobian_linear_stroke, plan_jacobian_tip_axis_alignment,
+)
 from .endpoint import screen_grasp_endpoint
 from .geometry import validate_se3
 from .grounded_alignment import AlignmentLimits
@@ -98,6 +100,58 @@ def choose_xy_move(alignment: dict, *, tolerance_m: float,
     step = correction * min(1., max_step_m / error)
     return {"status": "shift", "xy_error_m": error,
             "increment_socket_m": step.tolist(), "source": source}
+
+
+def choose_key_axis_move(alignment: dict, *, tolerance_rad: float,
+                         max_step_rad: float) -> dict:
+    """Choose the symmetry-reduced cylinder tilt correction.
+
+    Axial yaw is deliberately absent: for the cylindrical key it does not
+    change the insertion geometry.  A valid multi-view shaft estimate gives
+    the minimal socket-frame rotation that maps the observed key axis onto
+    the insertion direction ``-Z``.  The step bound only discretizes the
+    closed-loop motion; it is not an admission/failure threshold.
+    """
+    if (not math.isfinite(tolerance_rad) or tolerance_rad <= 0 or
+            not math.isfinite(max_step_rad) or max_step_rad <= 0):
+        raise ValueError("axis tolerance and step must be positive radians")
+    cameras = alignment.get("inlier_cameras")
+    axis = np.asarray(alignment.get("insertion_axis_socket"), dtype=float)
+    tip = np.asarray(alignment.get("tip_socket_m"), dtype=float)
+    if (not isinstance(cameras, list) or len(set(cameras)) < 2 or
+            axis.shape != (3,) or tip.shape != (3,) or
+            not np.all(np.isfinite(axis)) or not np.all(np.isfinite(tip)) or
+            np.linalg.norm(axis) <= 1e-9):
+        return {"status": "axis_unobserved", "axis_error_rad": None,
+                "tilt_rotvec_socket_rad": None, "tip_socket_m": None}
+    axis /= np.linalg.norm(axis)
+    target = np.array([0., 0., -1.])
+    cross = np.cross(axis, target)
+    sine = float(np.linalg.norm(cross))
+    cosine = float(np.clip(axis @ target, -1., 1.))
+    angle = math.atan2(sine, cosine)
+    if angle <= tolerance_rad:
+        rotvec = np.zeros(3)
+        status = "axis_aligned"
+    elif sine > 1e-9:
+        rotvec = cross / sine * min(angle, max_step_rad)
+        status = "tilt"
+    else:
+        # A 180-degree flip is not expected after the upright pickup, but the
+        # minimum rotation is underdetermined. Do not invent an axis here;
+        # the ordinary XY route remains usable.
+        return {"status": "axis_unobserved", "axis_error_rad": angle,
+                "tilt_rotvec_socket_rad": None,
+                "tip_socket_m": tip.tolist()}
+    return {
+        "status": status,
+        "axis_error_rad": angle,
+        "axis_error_deg": math.degrees(angle),
+        "tilt_rotvec_socket_rad": rotvec.tolist(),
+        "tip_socket_m": tip.tolist(),
+        "observed_axis_socket": axis.tolist(),
+        "source": alignment.get("estimator", "multiview_tip_and_axis"),
+    }
 
 
 def _alignment_frame_inputs(
@@ -217,9 +271,15 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
 def _held_wrist_goal(start_wrist: np.ndarray, key_origin_robot: np.ndarray,
                      socket: np.ndarray, increment_socket_m: np.ndarray,
                      axis_increment_socket_m: float,
-                     yaw_increment_socket_rad: float) -> np.ndarray:
-    """Rotate the held wrist about the nominal key origin, then translate it."""
-    turn, _ = cv2.Rodrigues(socket[:3, 2] * yaw_increment_socket_rad)
+                     yaw_increment_socket_rad: float,
+                     tilt_rotvec_socket_rad=(0., 0., 0.)) -> np.ndarray:
+    """Rotate the fixed grasp about the observed key tip, then translate it."""
+    tilt = np.asarray(tilt_rotvec_socket_rad, dtype=float)
+    if tilt.shape != (3,) or not np.all(np.isfinite(tilt)):
+        raise ValueError("held-key tilt needs a finite socket-frame rotvec")
+    rotvec_robot = (socket[:3, :3] @ tilt +
+                    socket[:3, 2] * yaw_increment_socket_rad)
+    turn, _ = cv2.Rodrigues(rotvec_robot)
     goal = start_wrist.copy()
     goal[:3, :3] = turn @ start_wrist[:3, :3]
     goal[:3, 3] = (
@@ -326,8 +386,11 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
                            axis_increment_socket_m: float = 0.,
                            current_axis_raise_socket_m: float = 0.,
                            yaw_increment_socket_rad: float = 0.,
+                           tilt_rotvec_socket_rad=(0., 0., 0.),
+                           observed_tip_socket_m=None,
+                           observed_axis_socket=None,
                            action_tag: str = "") -> Path:
-    """Move the rigidly held key in socket XY/Z or yaw around its axis."""
+    """Move the rigidly held key while leaving all Inspire joints fixed."""
     increment = np.asarray(increment_socket_m, dtype=float)
     if increment.shape != (2,) or not np.all(np.isfinite(increment)):
         raise ValueError("held XY increment must contain two finite metres")
@@ -335,6 +398,16 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
             math.isfinite(current_axis_raise_socket_m) and
             math.isfinite(yaw_increment_socket_rad)):
         raise ValueError("held axis translation and yaw must be finite")
+    tilt = np.asarray(tilt_rotvec_socket_rad, dtype=float)
+    if tilt.shape != (3,) or not np.all(np.isfinite(tilt)):
+        raise ValueError("held key tilt must contain three finite radians")
+    observed_axis = (None if observed_axis_socket is None else
+                     np.asarray(observed_axis_socket, dtype=float))
+    if (observed_axis is not None and
+            (observed_axis.shape != (3,) or
+             not np.all(np.isfinite(observed_axis)) or
+             np.linalg.norm(observed_axis) <= 1e-9)):
+        raise ValueError("observed key axis needs three finite components")
     start = read_state()
     if not isinstance(start, LiveRobotState):
         raise TypeError("same-trial shift needs measured FR3/Inspire state")
@@ -349,11 +422,9 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
     key_at_hold = runner._postlift_preflight.targets.T_robot_key_preinsert.copy()
     key_at_hold[:3, 3] += (socket[:3, :2] @ residual +
                            socket[:3, 2] * current_axis_raise_socket_m)
-    held_relation = np.linalg.inv(key_at_hold) @ start_wrist
-    key_in_hand = np.linalg.inv(held_relation)
-
     def unavailable(status: str) -> None:
-        action = ("_yaw" if yaw_increment_socket_rad else
+        action = ("_tilt" if np.linalg.norm(tilt) else
+                  "_yaw" if yaw_increment_socket_rad else
                   "_axis" if axis_increment_socket_m else "")
         report = _write(
             Path(runner._attempt_dir) / "same_trial_xy" / "plan_failures" /
@@ -367,6 +438,9 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
                 "increment_socket_m": increment.tolist(),
                 "axis_increment_socket_m": axis_increment_socket_m,
                 "yaw_increment_socket_rad": yaw_increment_socket_rad,
+                "tilt_rotvec_socket_rad": tilt.tolist(),
+                "observed_tip_socket_m": observed_tip_socket_m,
+                "observed_axis_socket": observed_axis_socket,
                 "current_axis_raise_socket_m": current_axis_raise_socket_m,
                 "residual_socket_xy_m": residual.tolist(),
                 "residual_source": residual_source,
@@ -374,16 +448,42 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
             })
         raise HeldXYPlanUnavailable(report, status)
 
-    pivot = key_at_hold[:3, 3]
+    if observed_tip_socket_m is None:
+        pivot = key_at_hold[:3, 3]
+    else:
+        tip_socket = np.asarray(observed_tip_socket_m, dtype=float)
+        if tip_socket.shape != (3,) or not np.all(np.isfinite(tip_socket)):
+            raise ValueError("observed key tip needs three finite socket metres")
+        pivot = (socket @ np.r_[tip_socket, 1.])[:3]
+    if observed_axis is not None:
+        observed_axis /= np.linalg.norm(observed_axis)
+        target_axis = np.array([0., 0., -1.])
+        cross = np.cross(observed_axis, target_axis)
+        sine = float(np.linalg.norm(cross))
+        cosine = float(np.clip(observed_axis @ target_axis, -1., 1.))
+        if sine > 1e-9:
+            full_rotvec_socket = cross / sine * math.atan2(sine, cosine)
+            full_turn_robot, _ = cv2.Rodrigues(
+                socket[:3, :3] @ full_rotvec_socket)
+            # ``full_turn_robot`` maps the observed shaft to the nominal
+            # insertion shaft. Invert it about the observed tip to recover
+            # the current key pose used by the rigid held-object path audit.
+            key_at_hold[:3, :3] = (
+                full_turn_robot.T @ key_at_hold[:3, :3])
+            key_at_hold[:3, 3] = (
+                pivot + full_turn_robot.T @ (key_at_hold[:3, 3] - pivot))
+    held_relation = np.linalg.inv(key_at_hold) @ start_wrist
     goal = _held_wrist_goal(
         start_wrist, pivot, socket, increment,
-        axis_increment_socket_m, yaw_increment_socket_rad)
+        axis_increment_socket_m, yaw_increment_socket_rad, tilt)
     scene = build_held_scene_from_trial(
         trial_scene=runner._preflight.trial_scene,
         calibration=runner.calibration)
     pure_xy = (np.linalg.norm(increment) > 0 and
                axis_increment_socket_m == 0. and
-               yaw_increment_socket_rad == 0.)
+               yaw_increment_socket_rad == 0. and
+               np.linalg.norm(tilt) == 0.)
+    tip_axis_correction = bool(np.linalg.norm(tilt) > 0.)
     linear_plan_timing = None
     planning_backend = "curobo_endpoint"
     if pure_xy:
@@ -400,6 +500,21 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
         segment_count = len(query.step_records)
         linear_plan_timing = query.timing
         planning_backend = "damped_jacobian_linear"
+    elif tip_axis_correction:
+        translation = (socket[:3, :2] @ increment +
+                       socket[:3, 2] * axis_increment_socket_m)
+        query = plan_jacobian_tip_axis_alignment(
+            planner, start.full_q, start_wrist,
+            pivot_robot=pivot, translation_robot=translation,
+            tilt_rotvec_robot=socket[:3, :3] @ tilt,
+            scene_cfg=scene)
+        if not query.success or query.trajectory is None:
+            unavailable(query.failure_code or "held_tip_axis_unreachable")
+        trajectory = _path(query.trajectory, "same-trial held tip/axis",
+                           start.full_q, start.full_q[7:])
+        segment_count = len(query.step_records)
+        linear_plan_timing = query.timing
+        planning_backend = "damped_jacobian_tip_axis"
     else:
         query = planner.plan_cartesian_pose(
             start.full_q, goal, scene_cfg=scene,
@@ -450,9 +565,13 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
         raise
     end_wrist = validate_se3(planner.fk_wrist(end.full_q),
                              name="measured lateral end FK")
-    measured_key_delta = (end_wrist @ key_in_hand)[:3, 3] - pivot
+    pivot_in_hand = np.linalg.inv(start_wrist) @ np.r_[pivot, 1.]
+    measured_key_delta = (end_wrist @ pivot_in_hand)[:3] - pivot
     measured_increment = socket[:3, :2].T @ measured_key_delta
     measured_axis_increment = float(socket[:3, 2] @ measured_key_delta)
+    measured_turn = socket[:3, :3].T @ (
+        end_wrist[:3, :3] @ start_wrist[:3, :3].T) @ socket[:3, :3]
+    measured_rotvec_socket = cv2.Rodrigues(measured_turn)[0].reshape(3)
     return _write(folder / "report.json", {
         "schema": "precision_insertion_same_trial_xy_shift_v2",
         "attempt_id": runner.active_attempt.attempt_id,
@@ -461,6 +580,10 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
         "measured_increment_socket_m": measured_increment.tolist(),
         "axis_increment_socket_m": axis_increment_socket_m,
         "yaw_increment_socket_rad": yaw_increment_socket_rad,
+        "tilt_rotvec_socket_rad": tilt.tolist(),
+        "measured_rotvec_socket_rad": measured_rotvec_socket.tolist(),
+        "observed_tip_socket_m": observed_tip_socket_m,
+        "observed_axis_socket": observed_axis_socket,
         "measured_axis_increment_socket_m": measured_axis_increment,
         "current_axis_raise_socket_m": current_axis_raise_socket_m,
         "key_xy_socket_m": residual.tolist(),

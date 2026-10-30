@@ -1458,3 +1458,39 @@ on that recorded sequence. The new 3 mm/Jacobian-continuation execution route
 has not yet been physically tested. A single-view planar estimate still assumes
 the key tip remains at its planned height; this assumption cannot correct
 unknown key-in-hand tilt or slip by itself.
+
+### Fixed-grasp key-axis alignment
+
+The same-trial loop now treats the cylindrical key as a symmetry-reduced
+4-DoF insertion state: lower-face centre `x/y` plus two shaft-tilt components.
+The Inspire command is unchanged throughout correction; axial cylinder yaw is
+not controlled because it does not change the insertion geometry.
+
+The default SAM3 half-ellipse estimator already fits the observed cylinder
+long direction in each admitted view. The fit now retains that image line.
+Two calibrated lines determine a 3D shaft mathematically; automatic correction
+waits for three parallel view results so one imperfect silhouette does not
+decide the wrist tilt. Their interpretation planes determine the shaft, while
+the apparent face centres independently triangulate the key tip. This
+separation matters because a partly occluded ellipse centre is not an exact
+copy of one 3D surface point in every view. No additional VLM request is
+introduced. When the shaft is outside the configured convergence target, the
+controller:
+
+1. computes the minimum socket-frame rotation from the observed shaft to the
+   measured socket `-Z` insertion direction;
+2. caps only that single motion step, not the episode or insertion decision;
+3. rotates the Franka wrist about the observed key tip using 1-degree local
+   Jacobian waypoints, with the Inspire joints fixed;
+4. captures a new pre-insertion image set and repeats; and
+5. performs the existing direct XY correction only after the axis step, then
+   replans the normal socket-axis insertion from the measured corrected state.
+
+`PRECISION_SAME_TRIAL_AXIS_TOLERANCE_DEG` (ZeroDex default 2) is a
+reobservation/convergence target, not a new grasp or insertion rejection
+criterion. `PRECISION_SAME_TRIAL_MAX_TILT_STEP_DEG` (default 3) controls the
+motion between photographs. Emptying the tolerance variable disables tilt
+alignment and leaves the prior XY route unchanged. Shift reports identify the
+new backend as `damped_jacobian_tip_axis` and save requested/measured
+socket-frame rotation vectors. This route has software tests but still needs a
+new physical ZeroDex episode before its experimental performance is claimed.

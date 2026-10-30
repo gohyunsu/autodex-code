@@ -5,6 +5,7 @@ import sys
 
 import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from precision_insertion import axis_jacobian  # noqa: E402
@@ -23,6 +24,14 @@ class _Planner:
     def fk_wrist(self, q):
         pose = np.eye(4)
         pose[:3, 3] = np.asarray(q)[:3]
+        return pose
+
+
+class _PosePlanner(_Planner):
+    def fk_wrist(self, q):
+        pose = np.eye(4)
+        pose[:3, 3] = np.asarray(q)[:3]
+        pose[:3, :3] = Rotation.from_rotvec(np.asarray(q)[3:6]).as_matrix()
         return pose
 
 
@@ -148,6 +157,42 @@ def test_smooth_dls_biases_update_toward_previous_joint_increment():
     np.testing.assert_allclose(stock, 0.0)
     assert smooth[0] > 0 and smooth[1] < 0
     assert np.linalg.norm(smooth - preferred) < np.linalg.norm(preferred)
+
+
+def test_tip_axis_alignment_rotates_about_tip_and_keeps_hand_fixed(
+        solver_stubs):
+    planner = _PosePlanner()
+    start = np.zeros(13)
+    start[:3] = [.10, -.03, .25]
+    start[7:] = .4
+    wrist = planner.fk_wrist(start)
+    pivot = np.array([.12, -.02, .17])
+    translation = np.array([.002, -.001, 0.])
+    rotvec = np.array([0., np.deg2rad(3.), 0.])
+    goals = axis_jacobian._tip_axis_waypoints(
+        wrist, pivot_robot=pivot, translation_robot=translation,
+        tilt_rotvec_robot=rotvec, translation_step_m=.001,
+        rotation_step_rad=np.deg2rad(1.))
+    pivot_in_hand = np.linalg.inv(wrist) @ np.r_[pivot, 1.]
+    for index, goal in enumerate(goals, start=1):
+        alpha = index / len(goals)
+        np.testing.assert_allclose(
+            (goal @ pivot_in_hand)[:3], pivot + alpha * translation,
+            atol=1e-12)
+
+    result = axis_jacobian.plan_jacobian_tip_axis_alignment(
+        planner, start, wrist, pivot_robot=pivot,
+        translation_robot=translation, tilt_rotvec_robot=rotvec,
+        scene_cfg={"mesh": {"fixture_socket": {}, "target": {}}},
+        translation_step_m=.001, rotation_step_rad=np.deg2rad(1.))
+    assert result.success
+    assert len(result.step_records) == 3
+    assert result.validation["hand_fixed"] is True
+    np.testing.assert_allclose(
+        result.trajectory[:, 7:],
+        np.broadcast_to(start[7:], result.trajectory[:, 7:].shape))
+    np.testing.assert_allclose(
+        planner.fk_wrist(result.trajectory[-1]), goals[-1], atol=1e-3)
 
 
 def test_tilted_axis_rejects_bad_request_and_dense_collision(

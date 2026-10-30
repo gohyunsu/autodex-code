@@ -352,6 +352,12 @@ def distal_key_mask_half_ellipse(
     residual = fit.x[0]+fit.x[1]*shape-boundary
     return {
         "center_full_px": center.tolist(),
+        # Unit image direction from the rear of the cylinder toward its
+        # distal face.  Together with the fitted face centre this is a 2D
+        # projection of the cylinder shaft; calibrated views can intersect
+        # the corresponding interpretation planes to recover the 3D key
+        # axis without asking the VLM for another landmark.
+        "axis_unit_full_px": axis.tolist(),
         "ellipse_full_px": [point.tolist() for point in ellipse],
         "distal_boundary_samples_full_px": [point.tolist() for point in samples],
         "major_radius_px": radius,
