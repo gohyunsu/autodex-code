@@ -129,6 +129,25 @@ def test_short_linear_correction_uses_previous_solution_and_stays_collinear(
     assert np.max(cross_track) < 1e-6
     assert result.validation["final_travel_m"] == pytest.approx(
         .003, abs=.00025)
+    assert all(
+        row["joint_increment_smoothness"]
+        == axis_jacobian.DEFAULT_JOINT_INCREMENT_SMOOTHNESS
+        for row in result.step_records)
+
+
+def test_smooth_dls_biases_update_toward_previous_joint_increment():
+    jacobian = np.zeros((6, 2))
+    jacobian[0, 0] = 1.0
+    jacobian[1, 1] = 1.0
+    error = np.zeros(6)
+    preferred = np.array([.08, -.04])
+    stock, _, _ = axis_jacobian._smooth_weighted_dls_step(
+        jacobian, error, .02, .1, preferred, 0.0)
+    smooth, _, _ = axis_jacobian._smooth_weighted_dls_step(
+        jacobian, error, .02, .1, preferred, .02)
+    np.testing.assert_allclose(stock, 0.0)
+    assert smooth[0] > 0 and smooth[1] < 0
+    assert np.linalg.norm(smooth - preferred) < np.linalg.norm(preferred)
 
 
 def test_tilted_axis_rejects_bad_request_and_dense_collision(

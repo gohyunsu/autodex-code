@@ -21,6 +21,54 @@ from autodex.planner.jacobian_stroke import (
 )
 
 
+# The smoothness term uses the same numerical scale as the stock DLS damping.
+# It is an optimization preference, not an execution/failure threshold: setting
+# it to zero reproduces the stock minimum-norm DLS update exactly.
+DEFAULT_JOINT_INCREMENT_SMOOTHNESS = 2.0e-2
+
+
+def _smooth_weighted_dls_step(
+    jacobian: np.ndarray,
+    error: np.ndarray,
+    damping: float,
+    rotation_weight: float,
+    preferred_update: np.ndarray,
+    smoothness: float,
+) -> tuple[np.ndarray, float, float]:
+    """Solve one DLS step while preferring the preceding joint increment.
+
+    The solved local objective is
+
+    ``||W(J dq - e)||^2 + damping^2 ||dq||^2
+       + smoothness^2 ||dq - dq_pref||^2``.
+
+    ``dq_pref`` points from the current iterate to the constant-increment
+    extrapolation of the two preceding accepted Cartesian waypoints.  Thus the
+    extra term removes joint-branch chatter without changing the requested
+    Cartesian waypoint or introducing another success/failure condition.
+    """
+    if smoothness == 0:
+        return _weighted_dls_step(
+            jacobian, error, damping, rotation_weight)
+    weights = np.array([
+        1.0, 1.0, 1.0,
+        rotation_weight, rotation_weight, rotation_weight,
+    ])
+    weighted_jacobian = weights[:, None] * jacobian
+    weighted_error = weights * error
+    regularizer = damping**2 + smoothness**2
+    hessian = (weighted_jacobian.T @ weighted_jacobian
+               + regularizer * np.eye(jacobian.shape[1]))
+    rhs = (weighted_jacobian.T @ weighted_error
+           + smoothness**2 * np.asarray(preferred_update, dtype=np.float64))
+    delta_q = np.linalg.solve(hessian, rhs)
+    singular = np.linalg.svd(weighted_jacobian, compute_uv=False)
+    minimum = float(singular[-1]) if len(singular) else 0.0
+    condition = (float(singular[0] / minimum)
+                 if minimum > 1.0e-12 else float("inf"))
+    return delta_q, minimum, condition
+
+
 def _fixed_world_cfg(scene_cfg: dict) -> dict:
     # The planner module imports cuRobo, so defer that import until an actual
     # planning request. File-only audits and unit tests remain importable.
@@ -35,6 +83,7 @@ def _plan_jacobian_linear_stroke(
     step_m: float, options: JacobianStrokeOptions | None,
     failure_prefix: str, result_direction: str, waypoint_stage: str,
     request_description: str,
+    joint_increment_smoothness: float,
 ) -> JacobianStrokeResult:
     """Follow collinear waypoints, seeding each from the preceding joints.
 
@@ -56,7 +105,9 @@ def _plan_jacobian_linear_stroke(
             direction.shape != (3,) or not np.isfinite(direction).all() or
             not np.isclose(np.linalg.norm(direction), 1.0, atol=1e-5) or
             not math.isfinite(expected_travel_m) or expected_travel_m <= 0 or
-            not math.isfinite(step_m) or not 0 < step_m <= 0.005):
+            not math.isfinite(step_m) or not 0 < step_m <= 0.005 or
+            not math.isfinite(joint_increment_smoothness) or
+            joint_increment_smoothness < 0):
         raise ValueError("linear stroke needs a fixed pose, unit direction and <=5 mm steps")
     opts = replace(options or _default_options_for_arm(n_arm), step_m=step_m)
     if (any(not math.isfinite(float(value)) for value in vars(opts).values()) or
@@ -117,6 +168,15 @@ def _plan_jacobian_linear_stroke(
         goal = reference.copy()
         goal[:3, 3] += distance * direction
         q = previous.copy()
+        if len(geometric) >= 2:
+            prior_increment = (
+                previous[:n_arm]
+                - np.asarray(geometric[-2], dtype=np.float64)[:n_arm])
+        else:
+            prior_increment = np.zeros(n_arm, dtype=np.float64)
+        predicted_arm = np.clip(
+            previous[:n_arm] + prior_increment,
+            lower[:n_arm], upper[:n_arm])
         converged = False
         reason = code("jacobian_residual_not_converged")
         joint_limit_hit = False
@@ -130,9 +190,15 @@ def _plan_jacobian_linear_stroke(
             jacobian = numerical_wrist_jacobian(
                 planner.fk_wrist, q, n_arm, opts.finite_difference_rad)
             try:
-                update, _, _ = _weighted_dls_step(
+                # Penalize deviation of the *next waypoint node* from a
+                # constant-increment extrapolation.  Recomputing this vector
+                # after every nonlinear iteration avoids repeatedly adding the
+                # entire preceding increment.
+                preferred_update = predicted_arm - q[:n_arm]
+                update, _, _ = _smooth_weighted_dls_step(
                     jacobian, error, opts.damping,
-                    opts.rotation_weight_m_per_rad)
+                    opts.rotation_weight_m_per_rad,
+                    preferred_update, joint_increment_smoothness)
             except np.linalg.LinAlgError:
                 reason = code("jacobian_dls_failed")
                 break
@@ -183,6 +249,15 @@ def _plan_jacobian_linear_stroke(
             "success": converged, "failure_code": None if converged else reason,
             "iterations": iteration, "joint_limit_hit": joint_limit_hit,
             "segment_samples": 0 if segment is None else len(segment) - 1,
+            "joint_increment_smoothness": joint_increment_smoothness,
+            "prior_increment_norm_rad": float(np.linalg.norm(prior_increment)),
+            "accepted_increment_norm_rad": (
+                float(np.linalg.norm(q[:n_arm] - previous[:n_arm]))
+                if converged else None),
+            "increment_change_norm_rad": (
+                float(np.linalg.norm(
+                    (q[:n_arm] - previous[:n_arm]) - prior_increment))
+                if converged else None),
         }
         if collision_detail is not None:
             record["collision_detail"] = collision_detail
@@ -248,6 +323,7 @@ def plan_jacobian_axis_stroke(
     target_wrist_pose: np.ndarray, *, axis_robot: np.ndarray,
     scene_cfg: dict, expected_travel_m: float,
     step_m: float, options: JacobianStrokeOptions | None = None,
+    joint_increment_smoothness: float = DEFAULT_JOINT_INCREMENT_SMOOTHNESS,
 ) -> JacobianStrokeResult:
     """Follow the frozen socket axis from the preceding accepted joints."""
     return _plan_jacobian_linear_stroke(
@@ -256,7 +332,8 @@ def plan_jacobian_axis_stroke(
         expected_travel_m=expected_travel_m, step_m=step_m,
         options=options, failure_prefix="axis",
         result_direction="socket_axis", waypoint_stage="axial_waypoint",
-        request_description="frozen socket-axis line")
+        request_description="frozen socket-axis line",
+        joint_increment_smoothness=joint_increment_smoothness)
 
 
 def plan_jacobian_linear_stroke(
@@ -264,6 +341,7 @@ def plan_jacobian_linear_stroke(
     target_wrist_pose: np.ndarray, *, direction_robot: np.ndarray,
     scene_cfg: dict, expected_travel_m: float,
     step_m: float = .001, options: JacobianStrokeOptions | None = None,
+    joint_increment_smoothness: float = DEFAULT_JOINT_INCREMENT_SMOOTHNESS,
 ) -> JacobianStrokeResult:
     """Generate one short, direct Cartesian correction without MotionGen.
 
@@ -283,7 +361,8 @@ def plan_jacobian_linear_stroke(
         expected_travel_m=expected_travel_m, step_m=step_m,
         options=options, failure_prefix="linear",
         result_direction="linear", waypoint_stage="linear_waypoint",
-        request_description="requested Cartesian line")
+        request_description="requested Cartesian line",
+        joint_increment_smoothness=joint_increment_smoothness)
 
 
 def _axis_metrics(poses: np.ndarray, reference: np.ndarray,
