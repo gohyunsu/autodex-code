@@ -73,16 +73,37 @@ def configured_capture_io_workers() -> int:
     return configured_workers
 
 
-def write_png_jobs(jobs: list[tuple[str, Path, np.ndarray, str]], *,
-                   phase: str) -> tuple[list[tuple[str, str, str]], int]:
-    """Use the production PNG worker setting for a batch of identified frames."""
+def write_png_jobs(
+    jobs: list[tuple[str, Path, np.ndarray, str] |
+               tuple[str, Path, np.ndarray, str, Path | None]], *,
+    phase: str,
+) -> tuple[list[tuple[str, str, str]], int]:
+    """Persist a batch, hard-linking an identical saved PNG when supplied.
+
+    Inline capture already persists each full-resolution source frame.  Key
+    evidence and registered-ROI diagnostics may point at those exact pixels;
+    linking the existing file avoids encoding and writing the same image to
+    the NAS two or three times.  A different filesystem simply uses the
+    ordinary encoder, so this is an I/O optimization rather than an
+    admission condition.
+    """
     if not jobs:
         raise ValueError("PNG batch needs images")
     def write_one(job):
-        camera, path, image, source = job
-        with timed("evidence.png_write_hash", phase="evidence", kind="io",
-                   camera_id=camera, capture_phase=phase, source=source):
-            return camera, source, _write_png_hash(path, image)
+        camera, path, image, source = job[:4]
+        existing = job[4] if len(job) == 5 else None
+        linkable = (existing is not None and existing.is_file() and
+                    existing.stat().st_dev == path.parent.stat().st_dev)
+        event = ("evidence.png_link_hash" if linkable else
+                 "evidence.png_write_hash")
+        with timed(event, phase="evidence", kind="io", camera_id=camera,
+                   capture_phase=phase, source=source):
+            if linkable:
+                os.link(existing, path)
+                digest = _sha(existing)
+            else:
+                digest = _write_png_hash(path, image)
+            return camera, source, digest
 
     configured_workers = configured_capture_io_workers()
     workers = min(configured_workers, len(jobs))

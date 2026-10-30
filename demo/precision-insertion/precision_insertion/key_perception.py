@@ -760,12 +760,20 @@ def write_key_capture_artifacts(
     for serial, image in sorted(capture.images_bgr.items()):
         safe = _safe_id(serial, "key camera ID")
         image_path = image_dir / f"{safe}.png"
-        png_jobs.append((serial, image_path, image, "undistorted"))
+        source_image = capture.capture_dir / "images" / f"{safe}.png"
+        png_jobs.append(
+            (serial, image_path, image, "undistorted", source_image))
         if serial in capture.masks:
             mask_entry = capture.masks[serial]
             mask = np.asarray(mask_entry["mask"], dtype=np.uint8) * 255
             mask_path = mask_dir / f"{safe}.png"
-            png_jobs.append((serial, mask_path, mask, "mask"))
+            source_mask = None
+            if derivation_report is not None:
+                candidate = (capture.capture_dir / "registered_key_roi" /
+                             "masks" / f"{safe}.png")
+                if candidate.is_file():
+                    source_mask = candidate
+            png_jobs.append((serial, mask_path, mask, "mask", source_mask))
             payloads["mask_metadata"][serial] = {
                 key: value for key, value in mask_entry.items() if key != "mask"}
         if serial in capture.poses:

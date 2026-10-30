@@ -263,7 +263,8 @@ def bootstrap_session(
 
 
 def _write_png(path: Path, image: np.ndarray) -> str:
-    encoded, payload = cv2.imencode(".png", image)
+    encoded, payload = cv2.imencode(
+        ".png", image, [cv2.IMWRITE_PNG_COMPRESSION, 1])
     if not encoded:
         raise OSError(f"failed to write image {path}")
     data = payload.tobytes()

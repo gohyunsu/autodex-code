@@ -280,12 +280,16 @@ def write_registered_key_diagnostic(
         "derivation": derivation_report,
         "mask_metadata": {}, "pose_payloads": {},
     }
+    from .raw_camera_capture import write_png_jobs
+
+    image_jobs = []
     for serial, image in sorted(capture.images_bgr.items()):
         safe = _safe_id(serial, "key camera ID")
         image_path = images_dir / f"{safe}.png"
         mask_path = masks_dir / f"{safe}.png"
-        files[str(image_path.relative_to(target))] = _write_png(
-            image_path, image)
+        source_image = capture.capture_dir / "images" / f"{safe}.png"
+        image_jobs.append(
+            (serial, image_path, image, "registered_undistorted", source_image))
         mask = capture.masks[serial]
         files[str(mask_path.relative_to(target))] = _write_png(
             mask_path, np.asarray(mask["mask"], dtype=np.uint8) * 255)
@@ -296,6 +300,10 @@ def write_registered_key_diagnostic(
             pose["pose_world"] = np.asarray(pose["pose_world"],
                                             dtype=float).tolist()
         payloads["pose_payloads"][serial] = pose
+    image_results, _ = write_png_jobs(
+        image_jobs, phase="registered_key_diagnostic")
+    for serial, _, digest in image_results:
+        files[f"images/{serial}.png"] = digest
     board_path = target / "board_config.json"
     with board_path.open("xb") as stream:
         stream.write(raw)

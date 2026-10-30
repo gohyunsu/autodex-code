@@ -147,7 +147,13 @@ A recording failure is visible there but does not change the pipeline's grasp
 or insertion decisions. Launch files and socket-session evidence for the same
 ID live under `runs/zerodex_capture4/_control/RUN_ID`; the episode ledger uses
 that same ID below the normal `_pipeline_runs` tree. None of these mutable
-files is written into `assets/` or `runtime/active_shared_data/`. The capture4
+files is written into `assets/` or `runtime/active_shared_data/`. Same-request
+inline source frames and registered-ROI diagnostics are grouped under
+`runs/zerodex_capture4/_control/RUN_ID/raw_captures`; the launch file binds
+that directory explicitly. Evidence bundles hard-link an already persisted
+identical PNG when both paths are on the project filesystem, rather than
+encoding and writing the full-resolution frame repeatedly. This changes only
+storage I/O, not perception admission or task outcomes. The capture4
 recorder is deployed once with `manage_zerodex_capture4_services.py deploy`.
 
 **No full-video NAS upload happens while the pipeline runs.** The main-PC run

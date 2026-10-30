@@ -1160,6 +1160,20 @@ time. New timing spans split integration module import from construction in
 future runs. The saved second-run pickup report attributes 22.80 s of its
 26.08 s first candidate plan to initial cuRobo world setup.
 
+The 2026-10-30 run `20261030_181133_506159` provides a later two-attempt
+breakdown. Its 349.96 s session includes 186.93 s of explicit human label
+waiting, so that number is not autonomous pipeline latency. The main
+non-motion costs were 20.82 s provisional cuRobo warmup, 11.67 s for twelve
+pickup plans, 7.47 s for three FoundPose requests, and 32.10 s cumulative
+worker time for 24 PNG writes. The latter corresponded to roughly 7.4 s wall
+time per parallel batch and 10.84 s across three key evidence saves. The
+inline source frame, registered-ROI diagnostic, and key evidence contained
+the same full-resolution pixels. The runtime now stores the source once and
+hard-links it into the later evidence bundles on the same NAS filesystem;
+registered masks are likewise reused. This optimization adds no rejection
+threshold. Its live wall-time improvement must be measured in the next run;
+unit tests establish pixel/hash identity and inode reuse, not NAS throughput.
+
 ## Hand state after reconnecting the same cable
 
 After the operator disconnected and reconnected the same Inspire cable,

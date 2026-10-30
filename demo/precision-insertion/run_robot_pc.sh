@@ -95,18 +95,28 @@ else
   LAUNCH_DIR="$STAGE/runs/live_${SCENE_MODE}_gap${GAP_MM}"
 fi
 mkdir -p "$LAUNCH_DIR"
+CAPTURE_ROOT="$LAUNCH_DIR/raw_captures"
+mkdir -p "$CAPTURE_ROOT"
+# Board registration is profile-local. Keep one tiny board description next
+# to this run's raw captures instead of sending captures back into the static
+# runtime asset directory.
+if [[ -f "$STAGE/charuco_board9.json" ]]; then
+  cp -f "$STAGE/charuco_board9.json" "$CAPTURE_ROOT/charuco_board9.json"
+fi
 LAUNCH="$LAUNCH_DIR/launch_$RUN_TAG.json"
 "$CHECK_PY" - "$LAUNCH_TEMPLATE" "$LAUNCH" "$RUN_TAG" "$GAP_MM" \
-  "${PRECISION_REUSE_SESSION_EVIDENCE:-}" "$LAUNCH_DIR" "$SCENE_MODE" "$TABLE_SURFACE_Z_M" <<'PY'
+  "${PRECISION_REUSE_SESSION_EVIDENCE:-}" "$LAUNCH_DIR" "$SCENE_MODE" "$TABLE_SURFACE_Z_M" \
+  "$CAPTURE_ROOT" <<'PY'
 import json
 from pathlib import Path
 import sys
 
 template, output, run_tag = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 gap_mm, reused_evidence, launch_dir = int(sys.argv[4]), sys.argv[5], Path(sys.argv[6])
-scene_mode, table_z = sys.argv[7:9]
+scene_mode, table_z, capture_root = sys.argv[7:10]
 record = json.loads(template.read_text(encoding="utf-8"))
 record["mode"] = {"family": "cylinder", "gap_mm": gap_mm}
+record["capture_root"] = capture_root
 record["scene_mode"] = scene_mode
 record["socket_perception_mode"] = ("ignore_sil_loss" if scene_mode == "board_free"
                                     else "board_constrained_body")

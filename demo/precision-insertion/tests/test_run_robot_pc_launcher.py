@@ -1,5 +1,6 @@
 """The launcher forwards the configured XY gain to the live CLI."""
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -63,8 +64,13 @@ def test_zerodex_run_keeps_control_and_episode_outputs_out_of_assets(tmp_path):
     assert output == (run_root / "precision-insertion/inspire" /
                       "precision_key_cylinder_r15_h80/_pipeline_runs" /
                       "20261030_test_run")
-    assert (run_root / "_control/20261030_test_run" /
-            "launch_20261030_test_run.json").is_file()
+    launch_path = (run_root / "_control/20261030_test_run" /
+                   "launch_20261030_test_run.json")
+    assert launch_path.is_file()
+    launch = json.loads(launch_path.read_text(encoding="utf-8"))
+    assert Path(launch["capture_root"]) == (
+        run_root / "_control/20261030_test_run/raw_captures")
+    assert Path(launch["capture_root"]).is_dir()
     assert not (stage / "runs").exists()
 
 
