@@ -196,6 +196,19 @@ continuation of at most 3 mm between photographs, **without opening the
 Inspire hand**, then captures new frames and repeats the same measurement.
 The repeat has no default count cutoff.
 
+For repeat photographs, the four in-memory undistorted frames enter the
+Qwen/SAM3 estimator immediately while their original and undistorted lossless
+PNGs are persisted to the project NAS on one background capture-save worker.
+The writer still performs the complete provenance/pixel check, and the loop
+joins that exact write before accepting the observation or issuing the next
+robot command. No image, hash or manifest is omitted. In the recorded
+`20261030_185316_167127` run, 14 PNG batches took 11.27 s of wall time
+(0.805 s/batch) while 11 same-trial estimator calls took 14.79 s
+(1.345 s/call); the new ordering is intended to overlap these costs. The
+actual saved-frame latency reduction must be measured on the next physical
+episode. `evidence.pending_capture_write_wait` reports only the unhidden
+writer tail.
+
 When the measured lateral error is at or below the configured tolerance, the
 runner rebuilds the held-key target using that visual XY residual and the
 current measured Franka wrist. It plans a new Jacobian socket-axis stroke and

@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 import sys
+from threading import Event
 from types import SimpleNamespace
 
 import numpy as np
@@ -155,6 +156,31 @@ def test_transfer_hold_then_guarded_20mm_and_vlm_label(tmp_path, monkeypatch):
     assert runner.events[-1][1]["final_bundle"] == (
         capture_root / "final_clear_view" / "final_001")
     assert runner.current_decision().action == "session_success"
+
+
+def test_deferred_same_trial_capture_does_not_wait_for_nas_writer(
+        tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    started = Event()
+    release = Event()
+
+    def slow_writer(_capture, output, *, phase):
+        assert phase == "preinsert"
+        started.set()
+        assert release.wait(timeout=2.)
+        return output
+
+    monkeypatch.setattr(live_task_handlers, "write_raw_camera_capture",
+                        slow_writer)
+    output, capture, pending = bound._capture_deferred(
+        runner=runner, decision=runner.current_decision(),
+        callback=bound.capture_preinsert, phase="preinsert")
+    assert capture.capture_id == "preinsert_001"
+    assert started.wait(timeout=1.)
+    assert pending.future.done() is False
+    release.set()
+    assert pending.finish() == output
+    assert pending.future.done() is True
 
 
 def test_preinsert_refs_use_canonical_episode_paths(tmp_path, monkeypatch):

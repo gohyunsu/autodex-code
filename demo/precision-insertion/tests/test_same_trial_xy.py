@@ -25,6 +25,7 @@ from precision_insertion.same_trial_xy import (  # noqa: E402
 )
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
+from precision_insertion.frame_provenance import image_sha256  # noqa: E402
 from precision_insertion.retry_session import (  # noqa: E402
     _cylinder_tip_and_rois, _nominal_key_for_xy_capture,
 )
@@ -141,14 +142,19 @@ def test_live_xy_measurement_reuses_just_saved_pixels(tmp_path, monkeypatch):
 
     frames = {"100": np.zeros((3, 4, 3), dtype=np.uint8),
               "200": np.ones((3, 4, 3), dtype=np.uint8)}
+    evidence = {camera: {
+        "frame_id": index,
+        "image_sha256": image_sha256(frames[camera]),
+        "timestamp_s": 1., "max_error_s": .001,
+        "timestamp_method": "hardware_exposure",
+        "clock_domain": "unix_utc",
+    } for index, camera in enumerate(frames, 1)}
     raw = RawCameraCapture(
         capture_id="current", request_id=17, images_bgr=frames,
-        frame_ids={"100": 1, "200": 2}, acquisition_metadata={})
-    (tmp_path / "manifest.json").write_text(json.dumps({
-        "phase": "preinsert", "capture_id": "current", "request_id": 17,
-        "frame_evidence": {"100": {"timestamp_s": 1.0},
-                           "200": {"timestamp_s": 1.0}},
-    }), encoding="utf-8")
+        frame_ids={"100": 1, "200": 2},
+        acquisition_metadata={"request_id": 17,
+                              "source": "camera_acquisition",
+                              "frames": evidence})
     monkeypatch.setattr(same_trial, "verify_raw_camera_capture",
                         lambda *_args, **_kwargs: (_ for _ in ()).throw(
                             AssertionError("live path reread saved PNGs")))

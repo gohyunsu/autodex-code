@@ -25,6 +25,7 @@ from .axis_jacobian import (
     plan_jacobian_linear_stroke, plan_jacobian_tip_axis_alignment,
 )
 from .endpoint import screen_grasp_endpoint
+from .frame_provenance import verify_frame_metadata
 from .geometry import validate_se3
 from .grounded_alignment import AlignmentLimits
 from .live_robot_state import LiveRobotState
@@ -169,16 +170,17 @@ def _alignment_frame_inputs(
             images[camera] = image
         return report["frame_evidence"], images
 
-    # write_raw_camera_capture has already verified the exposure identity and
-    # persisted these exact images. Re-reading eight PNGs and replaying four
-    # undistort operations on every same-trial shift adds no new observation.
-    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
-    if (manifest.get("phase") != "preinsert" or
-            manifest.get("capture_id") != capture.capture_id or
-            manifest.get("request_id") != capture.request_id or
-            set(manifest.get("frame_evidence", {})) != set(capture.images_bgr)):
-        raise ValueError("live preinsert frames differ from saved capture")
-    return manifest["frame_evidence"], dict(capture.images_bgr)
+    # The lossless original/undistorted PNG write may still be running on the
+    # NAS. Use the exact in-memory pixels immediately. The producer metadata
+    # is checked without hashing the same decoded arrays a second time; the
+    # concurrent writer performs the complete pixel/provenance verification,
+    # and the caller joins it before accepting this observation or moving.
+    rows = verify_frame_metadata(
+        capture.acquisition_metadata, request_id=capture.request_id,
+        frame_ids=capture.frame_ids)
+    if set(rows) != set(capture.images_bgr):
+        raise ValueError("live preinsert frames differ from capture metadata")
+    return rows, dict(capture.images_bgr)
 
 
 def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
@@ -188,7 +190,8 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
                          nominal_key_axis_raise_socket_m: float = 0.,
                          xy_estimator: str = "vlm",
                          sam_segmentor=None,
-                         capture: RawCameraCapture | None = None) -> dict:
+                         capture: RawCameraCapture | None = None,
+                         pending_capture_write=None) -> dict:
     """Call the existing calibrated multiview tip/axis estimator on raw PNGs."""
     bundle = Path(raw_bundle).expanduser().resolve()
     rows, images = _alignment_frame_inputs(bundle, capture)
@@ -246,6 +249,10 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
         mask_records = []
     else:
         raise ValueError("same-trial XY supports vlm or sam_half_ellipse")
+    if pending_capture_write is not None:
+        if Path(pending_capture_write.output).resolve() != bundle:
+            raise ValueError("pending capture writer belongs to another bundle")
+        pending_capture_write.finish()
     return {
         "schema": "precision_insertion_same_trial_xy_observation_v1",
         "attempt_id": runner.active_attempt.attempt_id,

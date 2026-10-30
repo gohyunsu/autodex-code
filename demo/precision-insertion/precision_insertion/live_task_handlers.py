@@ -7,6 +7,8 @@ from the AutoDex PC; this module does not emulate physical motion or sensors.
 
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from itertools import count
 import json
@@ -37,6 +39,42 @@ from .same_trial_xy import (
 from .same_trial_visual_feedback import update_held_key_xy
 from .assets import AssetPaths
 from .world import validated_frozen_socket_pose
+
+
+_CAPTURE_WRITE_POOL = ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="precision-capture-save")
+
+
+@dataclass
+class _PendingCaptureWrite:
+    """One lossless NAS save overlapped with in-memory VLM/SAM inference."""
+
+    output: Path
+    future: Future
+    _finished: bool = False
+
+    def finish(self) -> Path:
+        if not self._finished:
+            with timed("evidence.pending_capture_write_wait", phase="evidence",
+                       kind="io"):
+                saved = Path(self.future.result()).resolve()
+            if saved != self.output:
+                raise ValueError("background capture writer returned another path")
+            self._finished = True
+        return self.output
+
+
+def _begin_capture_write(
+    capture: RawCameraCapture, output: Path, *, phase: str,
+) -> _PendingCaptureWrite:
+    context = copy_context()
+
+    def persist() -> Path:
+        write_raw_camera_capture(capture, output, phase=phase)
+        return output
+
+    return _PendingCaptureWrite(
+        output, _CAPTURE_WRITE_POOL.submit(context.run, persist))
 
 
 @dataclass
@@ -114,7 +152,7 @@ class LiveTaskHandlers:
             raise ValueError(f"{action} has no bound selected attempt")
         return attempt
 
-    def _capture(
+    def _request_capture(
         self, *, runner, decision, callback, phase: str,
     ) -> tuple[Path, RawCameraCapture]:
         with timed(f"trial.{phase}_capture", phase="trial", kind="camera",
@@ -129,9 +167,25 @@ class LiveTaskHandlers:
         output = (Path(runner.output_dir) / "attempts" /
                   attempt.attempt_id / "raw_captures" / phase /
                   capture.capture_id).resolve()
+        return output, capture
+
+    def _capture(
+        self, *, runner, decision, callback, phase: str,
+    ) -> tuple[Path, RawCameraCapture]:
+        output, capture = self._request_capture(
+            runner=runner, decision=decision, callback=callback, phase=phase)
         write_raw_camera_capture(capture, output, phase=phase)
         # Downstream checkpoint readers perform the one required disk read.
         return output, capture
+
+    def _capture_deferred(
+        self, *, runner, decision, callback, phase: str,
+    ) -> tuple[Path, RawCameraCapture, _PendingCaptureWrite]:
+        """Start persistence while the current pixels enter GPU inference."""
+        output, capture = self._request_capture(
+            runner=runner, decision=decision, callback=callback, phase=phase)
+        return output, capture, _begin_capture_write(
+            capture, output, phase=phase)
 
     def transfer_and_observe(self, runner, decision: SessionDecision) -> None:
         attempt = self._require(runner, decision,
@@ -251,6 +305,7 @@ class LiveTaskHandlers:
         anchor_observation = None
         anchor_xy_motion = None
         anchor_axis_motion = None
+        pending_capture_write = None
         temporal_feedback_enabled = self.xy_estimator == "sam_half_ellipse"
         if temporal_feedback_enabled:
             key_radius_m = float(json.loads(AssetPaths(
@@ -272,7 +327,11 @@ class LiveTaskHandlers:
                     nominal_key_axis_raise_socket_m=axis_raise,
                     xy_estimator=self.xy_estimator,
                     sam_segmentor=self.sam_segmentor,
-                    capture=capture)
+                    capture=capture,
+                    pending_capture_write=pending_capture_write)
+            if pending_capture_write is not None:
+                pending_capture_write.finish()
+                pending_capture_write = None
             if temporal_feedback_enabled and previous_motion is not None:
                 feedback = update_held_key_xy(
                     previous=previous_observation, current=observed,
@@ -417,7 +476,7 @@ class LiveTaskHandlers:
                 axis_raise += motion["measured_axis_increment_socket_m"]
                 predicted_residual = (current_residual + measured_step).tolist()
                 current = runner.current_decision()
-                raw, capture = self._capture(
+                raw, capture, pending_capture_write = self._capture_deferred(
                     runner=runner, decision=current,
                     callback=self.capture_preinsert, phase="preinsert")
                 self._preinsert_bundle = raw
@@ -520,7 +579,7 @@ class LiveTaskHandlers:
                     total = [a + b for a, b in zip(
                         total, motion["measured_increment_socket_m"])]
                     current = runner.current_decision()
-                    raw, capture = self._capture(
+                    raw, capture, pending_capture_write = self._capture_deferred(
                         runner=runner, decision=current,
                         callback=self.capture_preinsert, phase="preinsert")
                     self._preinsert_bundle = raw
@@ -560,7 +619,7 @@ class LiveTaskHandlers:
                                  observation_lateral_offset).tolist()
                         axis_raise += motion["measured_axis_increment_socket_m"]
                         current = runner.current_decision()
-                        raw, capture = self._capture(
+                        raw, capture, pending_capture_write = self._capture_deferred(
                             runner=runner, decision=current,
                             callback=self.capture_preinsert, phase="preinsert")
                         self._preinsert_bundle = raw
@@ -609,7 +668,7 @@ class LiveTaskHandlers:
                             motion["measured_increment_socket_m"])]
                     axis_raise += motion["measured_axis_increment_socket_m"]
                     current = runner.current_decision()
-                    raw, capture = self._capture(
+                    raw, capture, pending_capture_write = self._capture_deferred(
                         runner=runner, decision=current,
                         callback=self.capture_preinsert, phase="preinsert")
                     self._preinsert_bundle = raw
@@ -727,7 +786,7 @@ class LiveTaskHandlers:
                 previous_xy = [-value for value in observed["alignment"][
                     "xy_correction_socket_m"]]
             current = runner.current_decision()
-            raw, capture = self._capture(
+            raw, capture, pending_capture_write = self._capture_deferred(
                 runner=runner, decision=current,
                 callback=self.capture_preinsert, phase="preinsert")
             self._preinsert_bundle = raw
