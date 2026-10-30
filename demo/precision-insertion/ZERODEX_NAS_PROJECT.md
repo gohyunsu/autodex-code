@@ -52,6 +52,11 @@ The live ZeroDex profile reads no NAS path outside
 `/mnt/paradex2/hyunsu/precision_insertion`. This PC imports ParaDex from a
 project-owned local checkout with a copied `system/current`; it does not
 follow the old `/home/hyunsu/paradex/system/current` link into NAS `/paradex`.
+The launcher resolves every configured asset, catalog, robot profile,
+reused-session and output path before use. A path that resolves anywhere
+below `/mnt/paradex2` is admitted only below `/mnt/paradex2/hyunsu`; local
+copies below `/home/hyunsu` remain valid. This is a storage namespace
+contract, not a grasp, planning, perception, or insertion rejection rule.
 On capture4, the existing `/home/capture4/paradex` installation remains an
 explicit exception for camera acquisition and shared-memory reading. Our
 FoundPose/SAM3 source and weights use the namespaced capture4 adapter and this

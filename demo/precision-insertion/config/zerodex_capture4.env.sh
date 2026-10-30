@@ -7,6 +7,11 @@ precision_profile_root=$(cd -- "$precision_profile_dir/../../.." && pwd)
 
 export PRECISION_REPO_ROOT=${PRECISION_REPO_ROOT:-$precision_profile_root}
 export PRECISION_LOCAL_PROJECT_ROOT=${PRECISION_LOCAL_PROJECT_ROOT:-$HOME/precision_insertion_project}
+# This rig's NAS namespace is fixed rather than caller-overridable. Local
+# restored copies are still allowed because they do not resolve below this
+# NAS mount.
+export PRECISION_NAS_MOUNT_ROOT=/mnt/paradex2
+export PRECISION_ALLOWED_NAS_ROOT=/mnt/paradex2/hyunsu
 export PRECISION_NAS_PROJECT_ROOT=${PRECISION_NAS_PROJECT_ROOT:-/mnt/paradex2/hyunsu/precision_insertion}
 export PRECISION_SHARED_ROOT=${PRECISION_SHARED_ROOT:-$PRECISION_NAS_PROJECT_ROOT/runtime/active_shared_data}
 # The AutoDex directory name inside this project is the v8 asset schema.

@@ -74,6 +74,34 @@ def test_zerodex_run_keeps_control_and_episode_outputs_out_of_assets(tmp_path):
     assert not (stage / "runs").exists()
 
 
+def test_zerodex_profile_rejects_only_nas_paths_outside_hyunsu(tmp_path):
+    demo = Path(__file__).resolve().parents[1]
+    root = demo.parents[1]
+    common = dict(
+        os.environ, PRECISION_REPO_ROOT=str(root),
+        PRECISION_ALLOWED_NAS_ROOT="/mnt/paradex2/hyunsu",
+        PRECISION_NAS_MOUNT_ROOT="/mnt/paradex2",
+        PRECISION_CHECK_PY=sys.executable,
+        PRECISION_PLANNER_PY=sys.executable)
+
+    outside = subprocess.run(
+        ["bash", str(demo / "run_robot_pc.sh"), "--check"],
+        env={**common,
+             "PRECISION_STAGE_ROOT": "/mnt/paradex2/another_user/stage"},
+        capture_output=True, text=True)
+    assert outside.returncode == 2
+    assert "outside the allowed NAS namespace" in outside.stderr
+
+    allowed = subprocess.run(
+        ["bash", str(demo / "run_robot_pc.sh"), "--check"],
+        env={**common,
+             "PRECISION_STAGE_ROOT": "/mnt/paradex2/hyunsu/missing-stage"},
+        capture_output=True, text=True)
+    assert allowed.returncode == 2
+    assert "outside the allowed NAS namespace" not in allowed.stderr
+    assert "active cylindrical recipient stage is missing" in allowed.stderr
+
+
 def test_zerodex_launcher_provides_demo_collision_compat(tmp_path):
     demo = Path(__file__).resolve().parents[1]
     root = demo.parents[1]

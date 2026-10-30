@@ -3,6 +3,7 @@
 # manage_robot_pc_services.sh; this script never starts or stops a service.
 set -Eeuo pipefail
 
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=${PRECISION_REPO_ROOT:-/home/robot/autodex-precision-insertion}
 STAGE=${PRECISION_STAGE_ROOT:-}
 PY=${PRECISION_PLANNER_PY:-/home/robot/anaconda3/envs/planner/bin/python}
@@ -11,6 +12,8 @@ MODE=${1:---run}
 GAP_MM=${PRECISION_GAP_MM:-20}
 SCENE_MODE=${PRECISION_SCENE_MODE:-charuco_board}
 TABLE_SURFACE_Z_M=${PRECISION_TABLE_SURFACE_Z_M:-}
+
+source "$SCRIPT_DIR/config/nas_namespace.sh"
 
 case "$GAP_MM" in
   1|3|5|10|15|20) ;;
@@ -31,6 +34,7 @@ if [[ -z "$STAGE" ]]; then
   echo "PRECISION_STAGE_ROOT must name the active cylindrical recipient stage" >&2
   exit 2
 fi
+precision_require_allowed_nas_path PRECISION_STAGE_ROOT "$STAGE"
 if [[ ! -d "$STAGE" ]]; then
   echo "active cylindrical recipient stage is missing: $STAGE" >&2
   exit 2
@@ -50,6 +54,12 @@ LAUNCH_TEMPLATE=${PRECISION_LAUNCH_TEMPLATE:-$STAGE/launch.json}
 CATALOG=${PRECISION_ENDPOINT_CATALOG:-$STAGE/recipient_gap${GAP_MM}_endpoint_catalog.json}
 ROBOT=${PRECISION_ROBOT_CONFIG:-$STAGE/franka_runtime.json}
 RUN_OUTPUT_ROOT=${PRECISION_RUN_OUTPUT_ROOT:-}
+precision_require_allowed_nas_path PRECISION_LAUNCH_TEMPLATE "$LAUNCH_TEMPLATE"
+precision_require_allowed_nas_path PRECISION_ENDPOINT_CATALOG "$CATALOG"
+precision_require_allowed_nas_path PRECISION_ROBOT_CONFIG "$ROBOT"
+precision_require_allowed_nas_path PRECISION_RUN_OUTPUT_ROOT "$RUN_OUTPUT_ROOT"
+precision_require_allowed_nas_path PRECISION_REUSE_SESSION_EVIDENCE \
+  "${PRECISION_REUSE_SESSION_EVIDENCE:-}"
 for required in "$LAUNCH_TEMPLATE" "$CATALOG" "$ROBOT"; do
   if [[ ! -f "$required" ]]; then
     echo "active recipient-stage input is missing: $required" >&2

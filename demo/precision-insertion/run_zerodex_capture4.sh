@@ -12,6 +12,15 @@ if [[ -n ${PRECISION_SYSTEM_PROFILE:-} ]]; then
   source "$PRECISION_SYSTEM_PROFILE"
 fi
 source "$SCRIPT_DIR/config/zerodex_capture4.env.sh"
+source "$SCRIPT_DIR/config/nas_namespace.sh"
+for precision_path_var in \
+  PRECISION_NAS_PROJECT_ROOT PRECISION_SHARED_ROOT PRECISION_STAGE_ROOT \
+  PRECISION_RUN_OUTPUT_ROOT PRECISION_RECORDING_RECEIPT_ROOT \
+  PRECISION_DEV_ROOT PRECISION_SAM_CHECKPOINT; do
+  precision_require_allowed_nas_path \
+    "$precision_path_var" "${!precision_path_var:-}"
+done
+unset precision_path_var
 export PRECISION_GAP_MM=${PRECISION_GAP_MM:-5}
 export PRECISION_XY_ESTIMATOR=${PRECISION_XY_ESTIMATOR:-sam_half_ellipse}
 export PRECISION_TABLETOP_POSE_ERROR_DEG=${PRECISION_TABLETOP_POSE_ERROR_DEG:-20}

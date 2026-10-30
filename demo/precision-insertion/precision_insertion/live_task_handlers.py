@@ -7,8 +7,6 @@ from the AutoDex PC; this module does not emulate physical motion or sensors.
 
 from __future__ import annotations
 
-from concurrent.futures import Future, ThreadPoolExecutor
-from contextvars import copy_context
 from dataclasses import dataclass, field
 from itertools import count
 import json
@@ -38,43 +36,8 @@ from .same_trial_xy import (
 )
 from .same_trial_visual_feedback import update_held_key_xy
 from .assets import AssetPaths
+from .capture_persistence import PendingCaptureWrite, begin_capture_write
 from .world import validated_frozen_socket_pose
-
-
-_CAPTURE_WRITE_POOL = ThreadPoolExecutor(
-    max_workers=1, thread_name_prefix="precision-capture-save")
-
-
-@dataclass
-class _PendingCaptureWrite:
-    """One lossless NAS save overlapped with in-memory VLM/SAM inference."""
-
-    output: Path
-    future: Future
-    _finished: bool = False
-
-    def finish(self) -> Path:
-        if not self._finished:
-            with timed("evidence.pending_capture_write_wait", phase="evidence",
-                       kind="io"):
-                saved = Path(self.future.result()).resolve()
-            if saved != self.output:
-                raise ValueError("background capture writer returned another path")
-            self._finished = True
-        return self.output
-
-
-def _begin_capture_write(
-    capture: RawCameraCapture, output: Path, *, phase: str,
-) -> _PendingCaptureWrite:
-    context = copy_context()
-
-    def persist() -> Path:
-        write_raw_camera_capture(capture, output, phase=phase)
-        return output
-
-    return _PendingCaptureWrite(
-        output, _CAPTURE_WRITE_POOL.submit(context.run, persist))
 
 
 @dataclass
@@ -180,12 +143,12 @@ class LiveTaskHandlers:
 
     def _capture_deferred(
         self, *, runner, decision, callback, phase: str,
-    ) -> tuple[Path, RawCameraCapture, _PendingCaptureWrite]:
+    ) -> tuple[Path, RawCameraCapture, PendingCaptureWrite]:
         """Start persistence while the current pixels enter GPU inference."""
         output, capture = self._request_capture(
             runner=runner, decision=decision, callback=callback, phase=phase)
-        return output, capture, _begin_capture_write(
-            capture, output, phase=phase)
+        return output, capture, begin_capture_write(
+            capture, output, phase=phase, writer=write_raw_camera_capture)
 
     def transfer_and_observe(self, runner, decision: SessionDecision) -> None:
         attempt = self._require(runner, decision,
