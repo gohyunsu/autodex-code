@@ -187,10 +187,14 @@ def tracked_tip_xy_alignment(
 ) -> dict:
     """Convert corresponding visible key tips into bounded next-trial XY.
 
-    With three or more views, use one robust multi-view fit. This avoids a
-    misleading two-view hypothesis winning solely because both points have a
-    small pixel residual. One or two usable views retain their explicit
-    planar or triangulated hypotheses; no consistent tip means no XY advice.
+    With three or more views, first use one robust multi-view fit. This avoids
+    a misleading two-view hypothesis winning solely because both points have a
+    small pixel residual. If the visible partial-face centres are not the same
+    triangulable 3D point, intersect every valid camera ray with the commanded
+    tip-height plane and robustly fuse those XY hypotheses. This fallback uses
+    all available cameras and never blacklists a camera serial. One or two
+    usable views retain their explicit planar or triangulated hypotheses; no
+    visible tip means no XY advice.
     """
     def fallback(selected):
         proposal = resolve_xy_only_cylinder_alignment(
@@ -210,9 +214,76 @@ def tracked_tip_xy_alignment(
             "nominal_tip_z_socket_m": float(nominal_tip_z_socket_m),
             "tip_socket_m": None,
         }
+
+    def robust_planar_fallback(selected, *, tracker_reason: str):
+        """Fuse calibrated ray/known-height intersections without depth claims.
+
+        A partly occluded circular face can yield a slightly different proxy
+        centre in each camera, so forcing those pixels to triangulate as one
+        3D point is sometimes inappropriate. The pre-insertion controller does
+        know the commanded tip height. Equal-weight geometric median fusion on
+        that plane is invariant to socket-frame XY rotation and has the usual
+        50% breakdown point; unlike the former fallback, contour smoothness in
+        one image cannot by itself select the wrist command.
+        """
+        hypotheses = []
+        for view in selected:
+            one = fallback([view])
+            point = one.get("tip_socket_m")
+            if (one.get("status") != "diagnostic_planar_xy_hypothesis" or
+                    not isinstance(point, list) or len(point) != 3):
+                continue
+            xy = np.asarray(point[:2], dtype=float)
+            if np.all(np.isfinite(xy)):
+                hypotheses.append((view.frame.camera_id, xy))
+        if len(hypotheses) < 2:
+            return None
+
+        points = np.stack([xy for _camera, xy in hypotheses])
+        # Weiszfeld's algorithm for the geometric median. The tolerance is
+        # numerical only; it neither accepts nor rejects a camera observation.
+        centre = np.mean(points, axis=0)
+        for _ in range(64):
+            distances = np.linalg.norm(points - centre, axis=1)
+            nearest = int(np.argmin(distances))
+            if distances[nearest] <= 1e-12:
+                centre = points[nearest].copy()
+                break
+            weights = 1. / distances
+            updated = np.sum(points * weights[:, None], axis=0) / np.sum(weights)
+            if np.linalg.norm(updated - centre) <= 1e-12:
+                centre = updated
+                break
+            centre = updated
+
+        correction = -centre
+        magnitude = float(np.linalg.norm(correction))
+        increment = correction * min(
+            1., NEXT_TRIAL_XY_MAX_STEP_M / max(magnitude, 1e-12))
+        return {
+            "status": "diagnostic_planar_xy_hypothesis",
+            "reason": "robust_multiview_nominal_tip_height_plane",
+            "xy_source": "robust_multiview_nominal_tip_height_plane",
+            "estimator": "tracked_visible_key_tip",
+            "inlier_cameras": [camera for camera, _xy in hypotheses],
+            "nominal_tip_z_socket_m": float(nominal_tip_z_socket_m),
+            "tip_socket_m": [float(centre[0]), float(centre[1]),
+                             float(nominal_tip_z_socket_m)],
+            "xy_correction_socket_m": correction.tolist(),
+            "bounded_xy_increment_socket_m": increment.tolist(),
+            "xy_correction_norm_m": magnitude,
+            "increment_norm_m": float(np.linalg.norm(increment)),
+            "tracker_reason": tracker_reason,
+            "planar_hypotheses_socket_xy_m": {
+                camera: xy.tolist() for camera, xy in hypotheses},
+        }
     if len(views) < 3:
         return dict(fallback(views), estimator="tracked_visible_key_tip")
     if _parallax(views) < min_parallax_deg:
+        planar = robust_planar_fallback(
+            views, tracker_reason="insufficient_camera_parallax")
+        if planar is not None:
+            return planar
         return dict(fallback(views), estimator="tracked_visible_key_tip",
                     tracker_reason="insufficient_camera_parallax")
 
@@ -307,6 +378,9 @@ def tracked_tip_xy_alignment(
     if accepted is None:
         reason = ("triangulation_at_infinity" if seed is None else
                   "no_consistent_multiview_tip")
+        planar = robust_planar_fallback(views, tracker_reason=reason)
+        if planar is not None:
+            return planar
         report = dict(fallback([]), estimator="tracked_visible_key_tip",
                       tracker_reason=reason)
         if fit is not None and fit.success and np.all(np.isfinite(fit.x)):

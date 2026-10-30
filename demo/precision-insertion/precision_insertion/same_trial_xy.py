@@ -87,7 +87,7 @@ def choose_xy_move(alignment: dict, *, tolerance_m: float,
     status = alignment.get("status")
     n_views = (len(set(inliers)) if isinstance(inliers, list) else 0)
     if not ((status == "diagnostic_metric_xy_correction" and n_views >= 2) or
-            (status == "diagnostic_planar_xy_hypothesis" and n_views == 1)):
+            (status == "diagnostic_planar_xy_hypothesis" and n_views >= 1)):
         return {"status": "not_metric_multiview", "xy_error_m": None,
                 "increment_socket_m": None}
     correction = np.asarray(alignment.get("xy_correction_socket_m"), dtype=float)

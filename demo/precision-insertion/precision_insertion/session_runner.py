@@ -3281,7 +3281,8 @@ class SessionRunner:
                 "multiview_tip_and_axis",
                 "multiview_tip_xy_vertical_axis_assumption"},
             "diagnostic_planar_xy_hypothesis": {
-                "single_view_nominal_tip_height_plane"},
+                "single_view_nominal_tip_height_plane",
+                "robust_multiview_nominal_tip_height_plane"},
             "diagnostic_exploratory_xy_step": {
                 "no_metric_measurement_exploratory_search"},
         }
@@ -3292,7 +3293,7 @@ class SessionRunner:
                 (diagnostic.status == "diagnostic_exploratory_xy_step" and
                  len(inliers) != 0) or
                 (diagnostic.status == "diagnostic_planar_xy_hypothesis" and
-                 len(inliers) != 1) or
+                 len(inliers) < 1) or
                 (diagnostic.status == "diagnostic_metric_xy_correction" and
                  len(inliers) < 2)):
             raise ValueError("grounded diagnostic status and XY source disagree")

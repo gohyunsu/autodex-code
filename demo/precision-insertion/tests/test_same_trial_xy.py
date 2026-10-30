@@ -52,6 +52,17 @@ def test_same_trial_move_requires_metric_multiview_and_caps_one_motion():
     }, tolerance_m=.0025)
     assert planar["status"] == "shift"
     assert planar["source"] == "single_view_nominal_tip_height_plane"
+    robust_planar = choose_xy_move({
+        **metric, "status": "diagnostic_planar_xy_hypothesis",
+        "inlier_cameras": ["cam1", "cam2", "cam3"],
+        "xy_source": "robust_multiview_nominal_tip_height_plane",
+        "xy_correction_socket_m": [-.004, .003],
+    }, tolerance_m=.0025, max_step_m=.003)
+    assert robust_planar["status"] == "shift"
+    assert robust_planar["source"] == (
+        "robust_multiview_nominal_tip_height_plane")
+    assert np.linalg.norm(robust_planar["increment_socket_m"]) == pytest.approx(
+        .003)
     short = choose_xy_move(metric, tolerance_m=.0025, max_step_m=.003)
     np.testing.assert_allclose(
         np.linalg.norm(short["increment_socket_m"]), .003)

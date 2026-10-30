@@ -112,7 +112,7 @@ def test_bad_tip_view_does_not_shift_the_multiview_xy_point(outlier_px):
     np.testing.assert_allclose(result["tip_socket_m"], key_tip, atol=1e-6)
 
 
-def test_pair_seed_does_not_turn_two_good_views_and_one_bad_view_into_metric():
+def test_two_good_views_and_one_bad_view_use_robust_known_height_fallback():
     key_tip = np.array([.010, -.005, 1.])
     K = np.array([[1000., 0., 1024.], [0., 1000., 768.], [0., 0., 1.]])
     views = []
@@ -130,8 +130,12 @@ def test_pair_seed_does_not_turn_two_good_views_and_one_bad_view_into_metric():
         views, nominal_tip_z_socket_m=1., search_index=0,
         max_reprojection_px=4., min_parallax_deg=1.,
         max_nominal_tip_height_error_m=.01)
-    assert result["status"] != "diagnostic_metric_xy_correction"
-    assert result["inlier_cameras"] == []
+    assert result["status"] == "diagnostic_planar_xy_hypothesis"
+    assert result["xy_source"] == (
+        "robust_multiview_nominal_tip_height_plane")
+    assert result["inlier_cameras"] == ["0", "1", "2"]
+    np.testing.assert_allclose(result["tip_socket_m"], key_tip, atol=1e-6)
+    assert result["tracker_reason"] == "no_consistent_multiview_tip"
 
 
 def test_nearly_parallel_tip_views_do_not_claim_metric_depth():

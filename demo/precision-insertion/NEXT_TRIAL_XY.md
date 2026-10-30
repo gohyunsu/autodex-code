@@ -35,16 +35,23 @@ worker; clean session shutdown releases that model before the next session.
 - One visible tip: intersect its calibrated camera ray with the **commanded
   nominal pre-insertion tip-height plane**. This supplies XY but does not
   measure tip depth.
+- Three or more visible tips that do not triangulate as one physical point:
+  intersect every valid calibrated ray with that same commanded plane and
+  fuse the socket-frame XY hypotheses with an equal-weight geometric median.
+  This remains a planar hypothesis, uses every available camera without a
+  serial blacklist, and prevents the smoothest single mask from deciding the
+  wrist command by itself.
 - No usable tip: do **not** report a fabricated measurement or abstain from
   the trial loop. The Qwen landmark mode can record an explicitly named
   deterministic 2 mm XY search step; it is exploration, not triangulation.
   The SAM half-ellipse and temporal tracking modes instead record that XY
   advice was unavailable and continue without a fabricated point.
 
-The diagnostic status is `diagnostic_metric_xy_correction` for a multi-view
-measurement, `diagnostic_planar_xy_hypothesis` for a single-view ray intersected
-with the commanded height plane, or `diagnostic_exploratory_xy_step` when no
-usable tip was observed. `next_trial_xy_advice.json` and the attempt event
+The diagnostic status is `diagnostic_metric_xy_correction` for a triangulated
+multi-view measurement, `diagnostic_planar_xy_hypothesis` for one or more rays
+intersected with the commanded height plane, or
+`diagnostic_exploratory_xy_step` when no usable tip was observed.
+`next_trial_xy_advice.json` and the attempt event
 retain this status, the exact `xy_source`, and the supporting camera IDs. An
 exploratory step has no supporting camera and must never be described as a
 measured XY residual.
