@@ -108,8 +108,8 @@ From the repository root, with the local Qwen weights installed:
 
 ```bash
 ~/.venvs/precision-vlm/bin/python demo/precision-insertion/evaluate_saved_vlm.py \
-  --manifest ~/precision_insertion_project/development/zerodex_capture4/reviews/released_vlm_dataset_20261029/manifest_six.json \
-  --model-id ~/shared_data/AutoDex/models/Qwen3-VL-2B-Instruct \
+  --manifest /mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/released_vlm_dataset_20261029/manifest_six.json \
+  --model-id /mnt/paradex2/hyunsu/precision_insertion/runtime/active_shared_data/AutoDex/models/Qwen3-VL-2B-Instruct \
   --max-input-width 768 --max-input-height 576 \
   --output /tmp/released_v5_replay.json --profile
 ```

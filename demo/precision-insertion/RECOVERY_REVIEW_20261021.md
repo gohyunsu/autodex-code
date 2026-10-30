@@ -129,7 +129,7 @@ Replanning the existing held-key return from the original pre-insertion hold
 also returned `held_transfer_unreachable` at endpoint IK. Thus simply
 reversing the three shifts and calling the old return planner does not solve
 this saved attempt. The direct return failure is reproducible with
-`~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/probe_preinsert_return.py`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/probe_preinsert_return.py`.
 
 A second offline route reversed the archived three XY paths, transfer and
 lift while keeping the measured held Inspire joints fixed. Four short linear

@@ -19,7 +19,8 @@ code; the old AutoDex experiment directory is not this project's archive.
 | `environments/` | Local planner and capture4 Python package lists |
 | `runs/zerodex_capture4/precision-insertion/inspire/KEY/_pipeline_runs/RUN_ID/` | Main-PC pipeline ledger, snapshots, timing, labels and planning results written directly to the project NAS. |
 | `runs/zerodex_capture4/YYYY/MM/DD/RUN_ID/` | Separately uploaded full-resolution camera recording, frame ID index and run receipt. |
-| `development/zerodex_capture4/` | Camera, planning, timing and implementation diagnostics collected after development work; never read by the live pipeline |
+| `development/zerodex_capture4/` | Camera, planning, timing and implementation diagnostics written directly to NAS; never read by the live pipeline |
+| `development/LOCAL_MIGRATION_20261030.json` | Receipt for the byte-verified migration of earlier local diagnostics; the old local development path is a compatibility symlink |
 | `PROJECT_MANIFEST.json` | Code commits, asset paths, sizes and SHA256 hashes |
 
 The live pipeline consumes `runtime/active_shared_data` and the selected rig profile.

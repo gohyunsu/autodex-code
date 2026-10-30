@@ -5,7 +5,7 @@ Franka and Inspire hand were off during the analysis. A `result.json` visual
 success flag is **not** an independent ground-truth annotation: four of the
 six released-key trials disagree with the later human review. The human
 review and its exact image hashes are in
-`~/precision_insertion_project/development/zerodex_capture4/reviews/released_vlm_dataset_20261029/manifest_six.json`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/released_vlm_dataset_20261029/manifest_six.json`.
 
 | Attempt | Grasp | Original result | Human review of released key | Preinsert XY |
 | --- | --- | --- | --- | --- |
@@ -74,7 +74,7 @@ rim on `25305462`/`25322642` and white robot components on `25322639`.
 All eight views produced a confident mask with a positive box, so SAM3's
 score alone cannot identify the correct object. The exact masks, overlays,
 per-view scores and reproducible script are under
-`~/precision_insertion_project/development/zerodex_capture4/reviews/sam_box_prompt_20261029/`
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/sam_box_prompt_20261029/`
 and `probe_sam_box_prompt_20261029.py` beside that directory. A verified
 74-file mirror of the probe, images and script is under
 `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/sam_box_prompt_20261029/`.
@@ -144,7 +144,7 @@ correctness was 24/30 for `25305462` and 30/30 for each of `25322639` and
 `26053248`. These are repeated images of **six** episodes across three
 session-calibration hashes, not 30 independent episodes. The raw answers,
 crop coordinates, and replay code are in
-`~/precision_insertion_project/development/zerodex_capture4/reviews/vlm_label_eval_20261029/perturbation_probe.json`
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/vlm_label_eval_20261029/perturbation_probe.json`
 and `probe_final_crop_jitter.py` beside it.
 
 ## What is not yet consistent
@@ -158,7 +158,7 @@ and `probe_final_crop_jitter.py` beside it.
   `NO` in all four cameras even though the operator labeled the lift held and
   subsequent preinsert frames yielded three-view key points. Its lift crop
   and full-frame grids are `0c787032.png` and `0c787032_full.jpg` under
-  `~/precision_insertion_project/development/zerodex_capture4/reviews/lift_crop_audit_20261029/`.
+  `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/lift_crop_audit_20261029/`.
   A static hand crop can miss or hide the key.
 - The current after-lift/preinsert coarse VLM prompt answered
   `coarse_match` even on archived duplicated empty-hand frames used as
@@ -311,7 +311,7 @@ new failure condition.
 
 The reproducible saved-frame scripts, JSON replies, masks, and contact
 sheets are grouped under
-`~/precision_insertion_project/development/zerodex_capture4/reviews/method_probe_20261029/`
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/method_probe_20261029/`
 and mirrored below
 `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/method_probe_20261029/`.
 The source episodes remain the original read-only evidence. The robot and
@@ -355,7 +355,7 @@ The probe assumes the nominal key/hand transform, ignores real key slip,
 key/self and socket occlusion, and does not run Qwen or SAM on a yaw-180
 photo. It supports testing a different wrist orientation but does **not**
 justify selecting one automatically yet. The reproducible scripts and JSON
-are under `~/precision_insertion_project/development/zerodex_capture4/reviews/yaw_gauge_20261029/`.
+are under `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/yaw_gauge_20261029/`.
 
 The evidence-backed operating method remains: prefer the physically
 successful `20195` grasp and nominal 5 mm insertion; at the pre-insertion
@@ -440,7 +440,7 @@ photographs*, no trajectory was executed, and no force/contact outcome was
 observed. These results isolate the visual correspondence problem from a
 general inability to plan a corrected `20195` descent. Reproducer and
 per-offset JSON are under
-`~/precision_insertion_project/development/zerodex_capture4/reviews/corrected_path_20195_20261029/`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/corrected_path_20195_20261029/`.
 The three files have SHA256-matched copies at
 `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/corrected_path_20195_20261029/`.
 
@@ -451,7 +451,7 @@ measured world took **13.19 s** (13.18 s plus 0.005 s). The provisional world
 already performs the expensive cuRobo initialization, so replacing that
 sequence does not establish a latency benefit. The proposed runtime edit was
 removed. Exact probe records are under
-`~/precision_insertion_project/development/zerodex_capture4/reviews/warmup_saved_socket_20261029/`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/warmup_saved_socket_20261029/`.
 Its three files have SHA256-matched copies at the corresponding
 `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/warmup_saved_socket_20261029/` path.
 
@@ -486,7 +486,7 @@ mask confusion while the fingers could still hide the key. The audit also
 assumes the nominal key-in-hand transform; it does not establish the actual
 post-squeeze relation or a successful insertion from the raised pose. The
 reproducer and exact eight-row report are in
-`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_observation_raise_plan_20261029.{py,json}`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/probe_observation_raise_plan_20261029.{py,json}`.
 The same two files are SHA256-matched under
 `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/observation_raise_20261029/`.
 
@@ -511,7 +511,7 @@ The additional read-only return replay planned a 20 or 40 mm upward move and
 then planned back to the original pre-insertion wrist from the raised plan's
 endpoint. All **8/8** raise/return pairs passed cuRobo and the sampled
 full-key/whole-hand world audit. The exact script and per-attempt results are
-`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_observation_raise_return_20261029.{py,json}`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/probe_observation_raise_return_20261029.{py,json}`.
 For the two physically inserted `20195` attempts, a further replay began at
 each **returned joint state**, screened the full hand/key at the 20 mm
 endpoint, and planned the socket-axis Jacobian descent with the same sampled
@@ -520,7 +520,7 @@ This closes an offline planning gap between the observation action and the
 subsequent insertion path; it does not prove that the raised photograph gives
 a better key-tip estimate or that the real robot completes the route. The
 script and four-row result are
-`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_observation_return_axial_20261029.{py,json}`;
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/probe_observation_return_axial_20261029.{py,json}`;
 both have copies under
 `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/`.
 
@@ -534,7 +534,7 @@ extends the offline result to another gap and grasp; it is one saved episode,
 not two independent physical insertions. Its original visual result said
 outside, while the later operator review judged the released key inside.
 The parameterized reproducer and 10 mm report are
-`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_observation_return_axial_20261029.py`
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/probe_observation_return_axial_20261029.py`
 and `probe_observation_return_axial_gap10_20261029.json` beside it. As for
 5 mm, no raised-view photograph or corrected physical insertion exists.
 
@@ -581,7 +581,7 @@ yaw cannot be planned, it retains the current held pose and continues through
 the existing return/insertion route. No rotated live image exists yet, so
 no tested angle is established as a visibility improvement or a physical
 closed-loop insertion. Read-only reproducer and exact JSON are under
-`~/precision_insertion_project/development/zerodex_capture4/reviews/` as
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/` as
 `probe_raise_yaw_return_axial_20261029.*` and
 `probe_gap10_direct_yaw_20261029.*`.
 
@@ -596,7 +596,7 @@ existing collision-only path removes that repeated diagnostic scan from XY
 correction while retaining the collision decision. It does not justify
 removing exact distances from other preflights that use their margins. The
 read-only benchmark and its four timings are under
-`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_saved_xy_audit_cost_20261029.*`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/probe_saved_xy_audit_cost_20261029.*`.
 
 ### 10 mm saved-image key-tip replay
 
@@ -616,7 +616,7 @@ supports the same conclusion as the 5 mm successes: changing prompt wording
 or trusting one visible white patch cannot replace a view where the actual
 distal end is exposed. The read-only script, four camera responses, masks and
 timing record are
-`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_gap10_saved_preinsert_xy_20261029.*`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/probe_gap10_saved_preinsert_xy_20261029.*`.
 Rejecting every near-zero minor radius was tested and **not adopted**: it
 removed one camera from each of the four `9542c1bd` feedback steps and made
 all four previously metric estimates unobservable. Those steps had reduced
@@ -670,7 +670,7 @@ Read-only cuRobo replay with the saved FR3/Inspire joints checks the sequence
 raise 40 mm → temporary lateral observation → return lateral → return height
 → screen the 20 mm endpoint → plan the socket-axis descent. The exact
 per-attempt results and reproducer are
-`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_lateral_observation_return_axial_20261029.{py,json}`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/probe_lateral_observation_return_axial_20261029.{py,json}`.
 All **20/20** combinations of four tested offsets and five archived held
 states passed that nominal planning sequence: two human-confirmed 5 mm
 insertions with grasp `20195`, two corrected-but-not-inserted 5 mm attempts
@@ -750,7 +750,7 @@ replan now uses the collision-only form; nominal and post-lift preflights
 retain exact margins where their callers use them. This replay measures the
 audit substep on saved trajectories, not an end-to-end physical time saving.
 The script, report and log are
-`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_corrected_audit_distance_cost_20261029.*`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/probe_corrected_audit_distance_cost_20261029.*`.
 Their NAS copies under
 `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/corrected_audit_distance_20261029/`
 were checked against the local report SHA256.

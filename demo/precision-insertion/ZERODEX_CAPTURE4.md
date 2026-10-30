@@ -338,7 +338,7 @@ human ground truth. Four bundles needed a retry batch. This was an image-only
 replay with the local Qwen3-VL-2B; it did not send camera or robot commands.
 The reproducible
 script and per-view results are in
-`~/precision_insertion_project/development/zerodex_capture4/reviews/`
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/`
 as `replay_lift_finger_retry_20261030.{py,json}`.
 
 System-specific runtime defaults are in the ZeroDex machine profile and can be
@@ -448,15 +448,15 @@ start the adapter if another experiment owns the cameras.
   The current asynchronous worker was checked separately without hardware:
   thread submission returned in 0.003 s while SAM3 became ready in 8.76 s.
   Reproducer and result are together in
-  `~/precision_insertion_project/development/zerodex_capture4/reviews/probe_sam_submit_20261029.{py,json}`.
+  `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/probe_sam_submit_20261029.{py,json}`.
   An offline main-PC GPU load of SAM3 and Qwen in parallel took 9.38 s wall
   (9.38 s SAM3, 5.15 s Qwen; warm local/NAS caches); its record is
-  `~/precision_insertion_project/development/zerodex_capture4/reviews/sam_qwen_concurrent_load_20261029.json`.
+  `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/sam_qwen_concurrent_load_20261029.json`.
   A separate offline stress test initialized SAM3, Qwen and the 5 mm cuRobo
   world concurrently. All three became resident without an out-of-memory
   error: 25.12 s wall, 14,441 MiB total GPU memory used at completion.
   Reproducer and result:
-  `~/precision_insertion_project/development/zerodex_capture4/reviews/probe_concurrent_models_20261029.{py,json}`.
+  `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/probe_concurrent_models_20261029.{py,json}`.
   Startup overlap with the actual camera session has not yet been measured
   live.
 - The capture4 profile uses
@@ -480,7 +480,7 @@ start the adapter if another experiment owns the cameras.
   Fresh-scene planning still checks the chosen candidate and falls through
   to the remaining eligible grasps if it fails. `208` has not been physically
   grasped in this rig. The saved-scene replay and its source script are in
-  `~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/preflight_candidate_208.json`.
+  `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/preflight_candidate_208.json`.
   The matching `candidate_priority_review_20261029.json` lists the 108
   eligible upright candidates and distinguishes the 11 with archived
   post-squeeze fidelity measurements from those without one.
@@ -500,7 +500,7 @@ start the adapter if another experiment owns the cameras.
   planning joins that measured-world update; later trials reuse the planner.
   An offline GPU probe initialized the provisional world in 23.68 s and
   updated it to the saved measured world in 0.014 s. Its record is
-  `~/precision_insertion_project/development/zerodex_capture4/reviews/probe_early_curobo_warmup_20261029.json`.
+  `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/probe_early_curobo_warmup_20261029.json`.
   The 2026-10-28 live
   attempt spent 21.97 s in the first v8 pickup's cuRobo world setup while
   the camera request took 2.26 s. The net live saving still needs measurement
@@ -537,7 +537,7 @@ start the adapter if another experiment owns the cameras.
   PyTorch reserved 9.24 GiB after both were resident. It opened no robot or
   camera connection. This supports overlapping those two initializations on
   this PC; it does not include SAM3 or establish live end-to-end latency.
-  Reproducer and JSON: `~/precision_insertion_project/development/zerodex_capture4/reviews/probe_concurrent_qwen_curobo_20261029.{py,json}`.
+  Reproducer and JSON: `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/probe_concurrent_qwen_curobo_20261029.{py,json}`.
 - In the saved `20261028_233043_399147` live timing trace, the first
   `capture_fresh_key` action took 31.66 s. This included 2.57 s for camera/key
   capture, 11.31 s for candidate preflight, and a **17.62 s wait for the
@@ -1320,7 +1320,7 @@ The estimated XY correction decreased from 32.0 mm to 1.27 mm. Camera
 socket while the key moved and was excluded as a 123 px reprojection outlier.
 The other three views contributed to the 3D fit. All four images with the
 last detected point and nominal projection are in the development review at
-`~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/preinsert_after_three_shifts_four_view_grid.png`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/preinsert_after_three_shifts_four_view_grid.png`.
 Recomputing those four saved observations from the three inlier cameras
 yielded metric XY in all four; compared with the archived four-view robust
 fit, the XY coordinate difference was below 0.7 mm per axis. These four
@@ -1349,7 +1349,7 @@ planner passed a saved-scene offline audit for this attempt (513 held-path
 samples and 103 open-hand clear-view samples); the robot has not executed this
 recovery route. No collision check was disabled or relaxed.
 An offline obstacle-attribution and exact-hand-mesh replay is saved under
-`~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/collision_attribution_20261029.json`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/collision_attribution_20261029.json`.
 The corrected key still fits the 5 mm socket, but the measured thumb tip
 intersects the socket at the intended 20 mm endpoint. The same-trial handoff
 now reuses the project's exact endpoint screen on the corrected held relation
@@ -1383,6 +1383,6 @@ replay of the first snapshot gave the same three triangulation inlier views;
 the resulting XY correction differed by 0.0043 mm. These are offline timing
 and one-snapshot geometric comparisons, not a new measured live-loop latency
 or general VLM accuracy result. Source records are under
-`~/precision_insertion_project/development/zerodex_capture4/reviews/` as
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/` as
 `bench_saved_qwen_box_batch_20261029.json` and
 `replay_saved_xy_batch_20261029.json`.

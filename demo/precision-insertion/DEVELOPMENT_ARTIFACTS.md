@@ -1,15 +1,17 @@
 # Precision insertion development artifacts
 
-The ZeroDex capture4 project keeps diagnostic outputs under one local root:
-
-`/home/hyunsu/precision_insertion_project/development/zerodex_capture4/`
-
-The matching NAS archive is
+The canonical ZeroDex capture4 diagnostic root is
 `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/`.
-These are development outputs. Runtime inputs live under the NAS project's
-`assets/`, and recorded episodes live under `runs/`.
+The ZeroDex machine profile writes new diagnostics there directly. The older
+`/home/hyunsu/precision_insertion_project/development/zerodex_capture4/`
+path is a compatibility symlink for saved references from earlier experiments.
+On 2026-10-30, all 2,701 local regular files were copied and checked against
+the NAS bytes before the redundant local copy was removed. The receipt is
+`/mnt/paradex2/hyunsu/precision_insertion/development/LOCAL_MIGRATION_20261030.json`.
+Runtime source assets live under the NAS project's `assets/`, the active asset
+view under `runtime/active_shared_data/`, and recorded episodes under `runs/`.
 
-| Local folder | Contents |
+| Folder under the diagnostic root | Contents |
 | --- | --- |
 | `camera_only/` | New camera-only runs and their timing reports |
 | `timing/` | New run timing profiles |
@@ -19,19 +21,11 @@ These are development outputs. Runtime inputs live under the NAS project's
 | `legacy_tmp/YYYYMMDD/` | Earlier local logs, JSON, images and temporary timing results |
 | `MIGRATION_MANIFEST.json` | Original and canonical path for each moved artifact |
 
-Run `organize_zerodex_development.py` once to move existing diagnostics. It
-leaves symlinks at their old paths so saved evidence and reports containing
-absolute paths still open. It keeps `session_evidence`, `recordings`, and the
-current clean 5 mm socket session in the runtime stage.
-
-After development work, publish without adding NAS I/O to the pipeline:
-
-```bash
-source demo/precision-insertion/config/zerodex_capture4.env.sh
-rsync -a --no-owner --no-group --no-perms \
-  "$PRECISION_DEV_ROOT/" \
-  "$PRECISION_NAS_PROJECT_ROOT/development/zerodex_capture4/"
-```
+`organize_zerodex_development.py` is a one-time migration tool for older
+runtime-stage and `/tmp` diagnostics. It leaves symlinks at those old paths
+for saved evidence. New development output needs no post-run copy because
+`PRECISION_DEV_ROOT` already points into the NAS project. Full recordings are
+still uploaded separately after a run.
 
 New camera-only runs default to `camera_only/`; timing defaults to `timing/`.
 Other diagnostic tools that require an explicit `--output-dir` should use a

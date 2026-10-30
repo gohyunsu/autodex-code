@@ -142,7 +142,7 @@ geometry alone is also inadequate. Rank by image geometry, then test arm
 reachability and held geometry before using an observation action.
 
 The probe scripts and exact numerical results are under
-`~/precision_insertion_project/development/zerodex_capture4/reviews/`:
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/`:
 `probe_face_visibility_20261029`,
 `probe_tilt_observation_return_axial_20261029`, and
 `probe_tilt_face_occlusion_20261029` (`.py` and `.json`; the planning probe

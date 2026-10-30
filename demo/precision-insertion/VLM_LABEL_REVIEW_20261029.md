@@ -113,11 +113,11 @@ It uses no model, camera, or robot and adds no work to the live path. Example:
 ```bash
 python demo/precision-insertion/export_saved_vlm_inputs.py \
   --report /path/to/attempt/preinsert_assessments/000/report.json \
-  --output-dir ~/precision_insertion_project/development/zerodex_capture4/reviews/my_preinsert_review
+  --output-dir /mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/my_preinsert_review
 ```
 
 The three-stage saved-frame audit is under
-`~/precision_insertion_project/development/zerodex_capture4/reviews/vlm_input_audit_20261029/`:
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/vlm_input_audit_20261029/`:
 `lift_9542c1bd`, `preinsert_9542c1bd`, `preinsert_focused_9542c1bd`,
 `final_30e9cd0b`, and `final_30cbe1f3`. The first preinsert report used full
 frames; the focused report is an offline replay of the later crop policy. All submitted image
@@ -164,15 +164,15 @@ crop only. This is an offline visual-label evaluation; it never opens a camera
 or robot connection.
 
 The reviewed four-case manifest and separate visual annotations are in
-`~/precision_insertion_project/development/zerodex_capture4/reviews/released_vlm_dataset_20261029/`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/released_vlm_dataset_20261029/`.
 Run from the repository root with the local model already installed:
 
 ```bash
 ~/.venvs/precision-vlm/bin/python demo/precision-insertion/evaluate_saved_vlm.py \
-  --manifest ~/precision_insertion_project/development/zerodex_capture4/reviews/released_vlm_dataset_20261029/manifest.json \
-  --model-id ~/shared_data/AutoDex/models/Qwen3-VL-2B-Instruct \
+  --manifest /mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/released_vlm_dataset_20261029/manifest.json \
+  --model-id /mnt/paradex2/hyunsu/precision_insertion/runtime/active_shared_data/AutoDex/models/Qwen3-VL-2B-Instruct \
   --max-input-width 768 --max-input-height 576 \
-  --output ~/precision_insertion_project/development/zerodex_capture4/reviews/released_vlm_dataset_20261029/new_evaluation.json --profile
+  --output /mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/released_vlm_dataset_20261029/new_evaluation.json --profile
 ```
 
 The local Qwen replay on 2026-10-29 classified all four reviewed final
@@ -196,7 +196,7 @@ eight archived views: four from a 5 mm socket session and four from a 10 mm
 session. Qwen answered `OUTSIDE` in all eight. The source frames, projection
 paths, crop rectangles, exact input crops, answers, contact sheet, and replay
 script are in
-`~/precision_insertion_project/development/zerodex_capture4/reviews/socket_only_negative_probe_20261029/`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/socket_only_negative_probe_20261029/`.
 These are setup photographs, not eight additional released-key episodes.
 The 10 mm side views `25305462` and `25322642` are overexposed; their empty
 socket answers do not show that an inserted key would be visible there.
@@ -237,14 +237,14 @@ two-image VLM decisions: `30cbe1f3`, `c6141471`, and `dc5958a9` say
 socket; `30e9cd0b` says `observed_failure` although the key visibly occupies
 the opening. These historical records are immutable execution evidence,
 not visual ground truth. Use the separate per-case human annotation JSONs in
-`~/precision_insertion_project/development/zerodex_capture4/reviews/released_vlm_dataset_20261029/`
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/released_vlm_dataset_20261029/`
 and the current final-only replay when comparing VLM labels. Neither the
 annotation nor the replay independently verifies 20 mm depth.
 
 These are four visually reviewed episodes, not a measured generalization rate. The first short-prompt probe is `precision_insertion_project/development/zerodex_capture4/reviews/vlm_prompt_probe_20261029.json`. An exact replay through the revised runtime observer with **all three originally selected cameras** produced the correct aggregate label on all four episodes: `vlm_released_runtime_replay_20261029.json`. Camera `25305462` answered `OUTSIDE` for the observed inside case, but the other two answered `INSIDE`, giving a 2-of-3 majority. The saved raw bundles also include `25322642`; a separate replay found that it answered `OUTSIDE` on the inside case, yielding a 2-to-2 tie if all four were used. Those fourth-view results are in `vlm_released_fourth_view_replay_20261029.json`. The capture4 profile now selects the reviewed three views **for the final label only**; four-view XY grounding and other stages are unchanged. Each full episode report is under `shared_data/AutoDex/experiment/precision-insertion/inspire/precision_key_cylinder_r15_h80/attempt_<full-id>/released_insertion_assessments/000/report.json`.
 
 The three final input crops and Qwen tokens for all four saved episodes are
-collected in `~/precision_insertion_project/development/zerodex_capture4/reviews/vlm_final_crop_grid_20261029.png`.
+collected in `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/vlm_final_crop_grid_20261029.png`.
 
 An offline camera-selection probe ranked the four views by projected socket
 area and chose the largest three. On the reviewed inside case, Qwen returned
@@ -336,7 +336,7 @@ cameras returned the visually reviewed class on all four episodes, and all
 four new reports passed the checkpoint verifier. The source frames, ROI and
 hash are unchanged; the input resize is recorded as policy
 `final_socket_crop_token_v2`. Saved v1 reports remain verifiable. Review data:
-`~/precision_insertion_project/development/zerodex_capture4/reviews/vlm_final_small_view_scale_20261029.json`
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/vlm_final_small_view_scale_20261029.json`
 and `.../vlm_released_v2_checkpoint_replay_20261029/summary.json`. Four cases
 from one camera layout are insufficient to estimate general accuracy.
 
@@ -344,22 +344,22 @@ A saved-frame batch probe passed the same three final crops to one Qwen
 `infer_many` call. The four episode labels matched the independent calls, but
 warm batch inference occupied 0.19–0.20 s versus roughly 0.21 s for the three
 warm independent calls. The production per-camera calls remain in place.
-Probe: `~/precision_insertion_project/development/zerodex_capture4/reviews/vlm_final_batch_probe_20261029.json`.
+Probe: `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/vlm_final_batch_probe_20261029.json`.
 
 The fourth capture4 view was retested with the v2 minimum-size crop on the
 same four saved episodes. It still answered `OUTSIDE` for the visibly inserted
 key while answering `OUTSIDE` for the three empty sockets. Upscaling does not
 justify adding it to the final-label vote. Its crop coordinates and tokens
 are saved in
-`~/precision_insertion_project/development/zerodex_capture4/reviews/vlm_final_fourth_view_v2_probe_20261029.json`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/vlm_final_fourth_view_v2_probe_20261029.json`.
 
 ## Pipeline review
 
 - Socket-only capture and board-constrained socket pose come before key perception. The measured pose is frozen for repeated attempts and projected into each camera for key exclusion and final VLM ROI. The current crop is therefore location-adaptive, not a fixed pixel rectangle.
 - In these four saved episodes the lift checkpoint recorded `grasp_success=true`, but only one camera was listed as a confirming close hand view in each. The preinsert checkpoint recorded `coarse_match` in all four. These labels describe the pictured moment and gross arrival; they do not establish that the key will remain held or enter the socket. The ZeroDex launcher currently waits 2 s at the lifted hold before its lift snapshot.
-- An eight-attempt read-only lift-crop audit reproduced the live 650 px hand-centered crop from the archived joint samples, undistorted camera calibration, and raw after-lift PNGs. The four-view crop sheets, per-view ROIs, and the generating script are together under `~/precision_insertion_project/development/zerodex_capture4/reviews/lift_crop_audit_20261029/`. In the saved capture4 lift record, `evidence_views` lists cameras with an evaluated image; `confirming_views` lists cameras whose Qwen response was `YES`. The six recorded `held` labels had one or two confirming cameras, whereas the two recorded misses had none. White finger shells can resemble the white key in a side view, so these model labels should not be described as six independently human-verified grasps. The crop is recomputed from each exposure's measured joints; the 650 px side is fixed, but its location moves with the hand and camera projection.
+- An eight-attempt read-only lift-crop audit reproduced the live 650 px hand-centered crop from the archived joint samples, undistorted camera calibration, and raw after-lift PNGs. The four-view crop sheets, per-view ROIs, and the generating script are together under `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/lift_crop_audit_20261029/`. In the saved capture4 lift record, `evidence_views` lists cameras with an evaluated image; `confirming_views` lists cameras whose Qwen response was `YES`. The six recorded `held` labels had one or two confirming cameras, whereas the two recorded misses had none. White finger shells can resemble the white key in a side view, so these model labels should not be described as six independently human-verified grasps. The crop is recomputed from each exposure's measured joints; the 650 px side is fixed, but its location moves with the hand and camera projection.
 - The active cylinder path uses the same-trial preinsert XY loop. Its four-camera metric grounding is separate from the final VLM label. The next-trial accumulated offset remains a separate retry path; do not apply one to the other implicitly.
-- A saved-frame transfer prompt audit showed that the current Qwen3-VL-2B `coarse_match` response is biased: it answered `coarse_match` on all 12 original and all 12 focused positive-camera pairs from four recorded episodes. As a diagnostic hard negative, the two known empty-hand lift frames were duplicated as the two temporal images; all six full-frame and all six focused pairs still answered `coarse_match`. The duplicated frames are **not real transfer failures**, but demonstrate that the coarse pair prompt cannot presently be relied upon to catch a key dropped during transfer. A simpler one-image YES/NO prompt had unstable answers on the positive captures and one false positive on a known empty-hand lift. We therefore kept the existing coarse arrival class semantics, added only the raw-pixel focus, and did not promote this stage to proof of a held key. The first real transfer-loss images need manual labels for a meaningful classifier evaluation. Offline inputs, answers and comparison images are under `~/precision_insertion_project/development/zerodex_capture4/reviews/preinsert_vlm_crop_20261029/`.
+- A saved-frame transfer prompt audit showed that the current Qwen3-VL-2B `coarse_match` response is biased: it answered `coarse_match` on all 12 original and all 12 focused positive-camera pairs from four recorded episodes. As a diagnostic hard negative, the two known empty-hand lift frames were duplicated as the two temporal images; all six full-frame and all six focused pairs still answered `coarse_match`. The duplicated frames are **not real transfer failures**, but demonstrate that the coarse pair prompt cannot presently be relied upon to catch a key dropped during transfer. A simpler one-image YES/NO prompt had unstable answers on the positive captures and one false positive on a known empty-hand lift. We therefore kept the existing coarse arrival class semantics, added only the raw-pixel focus, and did not promote this stage to proof of a held key. The first real transfer-loss images need manual labels for a meaningful classifier evaluation. Offline inputs, answers and comparison images are under `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/preinsert_vlm_crop_20261029/`.
 - A further single-camera probe used the clearest saved hand view (`25322639`) and asked either whether the narrow key appeared in both frames (`BOTH/ONLY1/ONLY2/NEITHER/UNCLEAR`) or whether it was held in the second frame (`YES/NO/UNCLEAR`). At both 384×288 and 768×576, Qwen answered `NEITHER` or `NO` on all four real preinsert pairs **and** both duplicated empty-hand controls. Thus the alternative wording simply reversed the all-positive bias; higher classification resolution did not repair it. Exact prompts, saved-frame references, crop rectangles and responses are in `probe_temporal_tokens_{384,768}.json` in the same development folder. These controls are not actual transfer-loss episodes, so neither prompt has a defensible transfer-failure accuracy estimate. The production prompt was not changed on this evidence.
 - A read-only two-side-view montage probe (`transfer_multiview_probe_20261029.py` and `.json` in the development review folder) combined cameras `25305462` and `25322642` at 1024×512 per time point. Both short prompts began with `UNCLEAR` for all four saved positive transfers and both duplicated empty-hand controls; some responses continued with explanatory text despite the requested one-word answer. Multi-view packaging alone did not yield a usable transfer label, so the live input and prompt remain unchanged. These six examples still do not include a recorded transfer-loss pair.
 - A fingertip-centered crop was also tried for the *lift* classifier on seven saved lift episodes. It changed one known miss view from `NO` to `YES`, so the lift classifier and its established wrist-centered crop were left unchanged. The fingertip projection is used only to frame the transfer-pair images; it is not a new grasp-success label.
@@ -412,7 +412,7 @@ final-image question returned 11 `UNCLEAR` and 1 `NO_PEG`; the temporal
 question returned 12 `NO_PEG`. The six duplicate controls returned 4
 `UNCLEAR`/2 `NO_PEG` and 5 `NO_PEG`/1 noncanonical response, respectively.
 The exact inputs, crop rectangles, hashes, prompts, and replies are in
-`~/precision_insertion_project/development/zerodex_capture4/reviews/transfer_per_view_probe_20261029.{py,json}`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/transfer_per_view_probe_20261029.{py,json}`.
 Neither short prompt can replace the live label on this evidence. The
 controls are not real transfer failures, and the recorded positive transfers
 do not provide independent ground truth for key retention at every exposure.
@@ -465,7 +465,7 @@ samples passed the existing sampled collision and cuRobo queries; its open-hand
 clear-view plan had 103 samples. This recovery is now connected to the session
 decision loop, but hand opening, landing and continuous physical execution
 have not been tested. The exact sources and replay result are in
-`~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/`;
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/`;
 see `RECOVERY_REVIEW_20261021.md` for the implementation and limits.
 
 The three executed XY shift archives in attempt `9542c1bd` contain 67, 64
@@ -492,7 +492,7 @@ key's end-for-end symmetry, the reversed key center was about 3.7 mm in X,
 differed by 1.34 degrees. A fresh visual landing check and the existing
 original-pose restoration would still be needed after release. No reverse
 motion command was installed or sent. Audit JSON:
-`~/precision_insertion_project/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/reverse_executed_path_collision_audit_20261029.json`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/attempt_9542c1bd6c174baa9cc8a7f5b3a03211/reverse_executed_path_collision_audit_20261029.json`.
 
 The final socket VLM crop now has policy `final_socket_crop_token_v3`. If a
 measured socket projects partly beyond an image edge, the new policy crops
@@ -511,7 +511,7 @@ adopted. The minimally changed prompt retained the visual labels on all
 four reviewed episodes: three empty sockets `OUTSIDE`, one inserted key
 `INSIDE` by two of three cameras. The exact probe inputs, prompts, tokens,
 and crop rectangles are saved as
-`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_final_occupancy_prompt.py`
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/probe_final_occupancy_prompt.py`
 and `.json`. Legacy v1–v3 reports verify with their recorded original prompt;
 the new prompt applies only to new v4 reports. These four examples do not
 establish performance at a new socket position or under changed lighting.
@@ -539,7 +539,7 @@ four visually reviewed episodes and three selected cameras, the model answered
 `OUTSIDE` on all 12 pairs, including all three views of the visibly inserted
 episode `30e9cd0b`. This temporal pair therefore cannot replace the current
 final-only input. The read-only script, image hashes, ROIs, prompt and replies
-are in `~/precision_insertion_project/development/zerodex_capture4/reviews/
+are in `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/
 probe_socket_baseline_pair_20261029.{py,json}`. The original socket-only
 capture remains useful for measuring the socket, but the model's answer does
 not become more reliable merely by adding that image.
@@ -599,7 +599,7 @@ microbenchmarks, not full pipeline latency measurements.
 Each view's raw token, crop hash and prompt remain separately recorded, so
 the existing checkpoint verifier can still replay the majority vote. The
 probe and individual timing values are in
-`~/precision_insertion_project/development/zerodex_capture4/reviews/
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/
 probe_final_gpu_batch_20261029.{py,json}` and
 `probe_production_final_batch_vs_serial_20261029.{py,json}`. Two full saved
 checkpoint replays, one inserted and one outside, also wrote and verified
@@ -651,7 +651,7 @@ failure rule was changed based on this timing review.
 
 The archived production inputs for eight lift, six pre-insertion, and four
 released-key checkpoints are collected under
-`~/precision_insertion_project/development/zerodex_capture4/reviews/vlm_presence_crop_20261029/`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/vlm_presence_crop_20261029/`.
 
 The six archived pre-insertion transfers were also replayed through the
 **current** measured-hand plus session-socket crop policy, rather than the

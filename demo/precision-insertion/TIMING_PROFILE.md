@@ -81,7 +81,7 @@ took 21.10 s. The planner's own job was slower under overlap (16.79 versus
 measurement without camera or robot traffic, so it does not establish a live
 startup speedup. It gives no reason to serialize the current model preloads.
 The probe and raw results are grouped under
-`~/precision_insertion_project/development/zerodex_capture4/reviews/probe_gpu_startup_*_20261029.*`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/probe_gpu_startup_*_20261029.*`.
 
 Future runs now nest `cleanup.planner_warmup_join`, `cleanup.vlm_load_join`,
 `cleanup.vlm_backend_close`, `cleanup.sam_roi_close`,
@@ -451,7 +451,7 @@ the remaining box edge moved 5.12 crop pixels. Replaying both answer sets
 through the production SAM3/geometry code returned the same status
 (`abstain`), no metric XY, and identical per-view reasons in both episodes.
 The raw Qwen answers and times are in
-`~/precision_insertion_project/development/zerodex_capture4/reviews/qwen_split_quartet_20195_20261029.json`.
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/qwen_split_quartet_20195_20261029.json`.
 The local batch-capable backend now asks all four key-box questions in one
 batch even when SAM still tests the preferred three views first. The fourth
 SAM view is still used only when the first three do not yield metric XY.
@@ -463,7 +463,7 @@ at least 0.9996 against serial inference. Its warm four-view runtime was
 0.63 s versus 0.68 s serial. That approximately 0.05 s gain does not yet
 justify changing the worker protocol and mask provenance. These read-only
 probes and their JSON results are under
-`~/precision_insertion_project/development/zerodex_capture4/reviews/`
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/`
 as `probe_qwen_key_box_batch_20261029`,
 `probe_grounding_batch_geometry_20261029`, and
 `probe_sam_roi_batch_20261029`.

@@ -13,7 +13,7 @@ reorientation pickup or release was executed in the trials below.
   AutoDex silhouette fitting and placed on the measured board plane. A fresh
   camera-only run classified it as v8 pose `001` with six gap-5 insertion
   candidates. Its evidence is at
-  `/home/hyunsu/precision_insertion_project/development/zerodex_capture4/camera_only_side_down_fixed_20261028_2300`.
+  `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/camera_only_side_down_fixed_20261028_2300`.
 - With `upright_cylinder_only=true`, a separate launch template routed pose
   `001` to directed `001→000` reorientation. The first planning run found no
   release site because the selector searched only the original key center
@@ -55,7 +55,7 @@ any pickup. For example:
 
 ```bash
 PRECISION_GAP_MM=5 \
-PRECISION_LAUNCH_TEMPLATE=/home/hyunsu/precision_insertion_project/development/zerodex_capture4/stand_fallen_key/launch_upright_only_gap5.json \
+PRECISION_LAUNCH_TEMPLATE=/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/stand_fallen_key/launch_upright_only_gap5.json \
 PRECISION_REUSE_SESSION_EVIDENCE=/home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/socket_session_gap5_clean_20261028/socket_evidence \
 PRECISION_KEY_ALREADY_PLACED=1 \
 PRECISION_MAX_STEPS=2 \
