@@ -224,3 +224,29 @@ in `20261028_212003_949258273_183682` with the NAS asset root, versus
 reports selected pose `000` and found 108 eligible catalog candidates. This
 is an observed end-to-end request-time comparison; it does not isolate file I/O
 from model initialization or GPU cache effects. No robot motion was involved.
+
+## 2026-10-30 powered-off audit
+
+With Franka and Inspire off, the current 5 mm `--check` completed without
+opening either device: 126 catalogued grasps, 114 endpoint-eligible grasps,
+four configured capture4 cameras, and the project-owned NAS paths above. A
+walk of the project tree found 94 symlinks, zero broken targets, and zero
+targets outside `/mnt/paradex2/hyunsu/precision_insertion`. A scan following
+those links found 136 JSON files containing historical absolute paths:
+126 `simulation_validation.json` records, two reset source records, two
+FoundPose template metadata files, three FoundPose summaries, two onboarding
+provenance files, and one generation marker. These are retained source or
+onboarding metadata, not launch/profile paths. The live candidate loader
+reads the simulation validation status and file hashes, without opening its
+`source_candidate` value; the capture4 FoundPose wrapper points at the
+project-cached `repre.pth`. This static audit does not prove every live file
+open, so external-path independence still needs a complete runtime trace.
+No camera, planning, or robot trial was part of this audit.
+
+The most recent saved failed-start timing trace is
+`runs/zerodex_capture4/precision-insertion/inspire/precision_key_cylinder_r15_h80/_pipeline_runs/20261030_151321_204391.timing/timing_summary.json`.
+Its camera FoundPose request took 3.92 s. SAM3 loading (9.85 s), Qwen
+loading (6.28 s), and provisional cuRobo world warmup (18.74 s) overlapped
+other startup or camera work; their inclusive durations must not be added
+to infer session wall time. This attempt stopped at key pose admission before
+pickup, so the trace cannot establish closed-loop or insertion latency.
