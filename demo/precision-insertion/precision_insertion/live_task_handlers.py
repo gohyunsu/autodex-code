@@ -247,6 +247,8 @@ class LiveTaskHandlers:
         previous_camera_id = None
         previous_xy = None
         anchor_observation = None
+        anchor_xy_motion = None
+        anchor_axis_motion = None
         temporal_feedback_enabled = self.xy_estimator == "sam_half_ellipse"
         if temporal_feedback_enabled:
             key_radius_m = float(json.loads(AssetPaths(
@@ -282,8 +284,10 @@ class LiveTaskHandlers:
                     previous_xy_socket_m=previous_xy,
                     key_radius_m=key_radius_m,
                     anchor=anchor_observation,
-                    cumulative_xy_socket_m=total,
-                    cumulative_axis_socket_m=axis_raise)
+                    cumulative_xy_socket_m=(
+                        np.asarray(total) - anchor_xy_motion),
+                    cumulative_axis_socket_m=(
+                        axis_raise - anchor_axis_motion))
                 observed["temporal_feedback"] = feedback
                 if (feedback["status"] == "tracked" and
                         observed["alignment"]["status"] !=
@@ -352,7 +356,8 @@ class LiveTaskHandlers:
                           indent=2, sort_keys=True, allow_nan=False)
                 stream.write("\n")
             observations.append(report)
-            if observed.get("temporal_feedback", {}).get("status") == "lost":
+            if (observed.get("temporal_feedback", {}).get("status") == "lost"
+                    and choice["status"] == "not_metric_multiview"):
                 runner.record_failure(
                     "perception_unreliable",
                     timestamp_s=self.decision_time(),
@@ -646,6 +651,10 @@ class LiveTaskHandlers:
             if temporal_feedback_enabled:
                 if anchor_observation is None:
                     anchor_observation = observed
+                    anchor_xy_motion = (np.asarray(total) -
+                                        np.asarray(measured_step))
+                    anchor_axis_motion = (axis_raise - shift_result[
+                        "measured_axis_increment_socket_m"])
                 previous_observation = observed
                 previous_motion = shift_result
                 previous_camera_id = (observed["alignment"].get(
