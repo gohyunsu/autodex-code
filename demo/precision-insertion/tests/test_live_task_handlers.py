@@ -224,6 +224,25 @@ def test_transfer_reuses_only_same_attempt_lift_pixels(tmp_path, monkeypatch):
     assert runner.events[0][1]["after_lift_live_capture"] is None
 
 
+def test_confirmed_preinsert_notifies_recorder_before_same_trial_refinement(
+        tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    order = []
+    bound.same_trial_xy_tolerance_m = .0025
+    bound.on_preinsert_confirmed = (
+        lambda attempt_id, candidate_id:
+        order.append(("record", attempt_id, candidate_id)))
+    monkeypatch.setattr(live_task_handlers, "execute_bound_held_transfer",
+                        lambda **_kwargs: None)
+    monkeypatch.setattr(live_task_handlers, "write_raw_camera_capture",
+                        lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bound, "_refine_current_hold",
+                        lambda *_args, **_kwargs: order.append(("refine",)))
+    bound.transfer_and_observe(runner, runner.current_decision())
+    assert order == [
+        ("record", "attempt_001", "table/0/3"), ("refine",)]
+
+
 @pytest.mark.parametrize("second,predicted,tracking", [
     ([.0005, 0.], False, None),
     (None, True, None),
@@ -289,6 +308,82 @@ def test_same_trial_xy_reobserves_and_replans_from_final_hold(
         "last_metric_plus_completed_held_motion" if predicted else
         "current_metric_multiview")
     assert bound._same_trial_handoff == tmp_path / "corrected_handoff.json"
+
+
+def test_multiple_predicted_steps_keep_last_metric_temporal_reference(
+        tmp_path, monkeypatch):
+    """Regression: an absent point after step two is not iterated as None."""
+    bound, runner, *_ = _handler(tmp_path)
+    runner._attempt_dir = tmp_path / "attempts" / runner.active_attempt.attempt_id
+    bound._preinsert_bundle = tmp_path / "first_preinsert"
+    bound.planner = object()
+    bound.path_limits = object()
+    bound.alignment_limits = object()
+    bound.same_trial_tip_height_error_m = .01
+    bound.same_trial_xy_tolerance_m = .001
+    bound.same_trial_max_step_m = .003
+    bound.xy_estimator = "sam_half_ellipse"
+    geometry = tmp_path / "task_geometry.json"
+    geometry.write_text(json.dumps({"key_radius_m": .015}), encoding="utf-8")
+    runner.mode = "cylinder"
+    runner.shared_root = tmp_path
+    runner.calibration = SimpleNamespace(record={})
+    corrections = iter(([.009, 0.], None, None, None))
+    feedback_steps = []
+    shift_index = 0
+    handed = {}
+
+    def measure(**_kwargs):
+        correction = next(corrections)
+        return {"alignment": {
+            "status": ("diagnostic_planar_xy_hypothesis" if correction
+                       is not None else "abstain"),
+            "inlier_cameras": (["front"] if correction is not None else []),
+            "xy_correction_socket_m": correction,
+            "sam_half_ellipse_views": [],
+            "nominal_tip_z_socket_m": .04,
+        }}
+
+    def feedback(**kwargs):
+        feedback_steps.append(kwargs["measured_xy_socket_m"])
+        return {"status": "lost", "reason": "test"}
+
+    def shift(**kwargs):
+        nonlocal shift_index
+        increment = np.asarray(kwargs["increment_socket_m"], float)
+        path = (runner._attempt_dir / "shifts" /
+                f"{shift_index:03d}.json")
+        shift_index += 1
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "measured_increment_socket_m": increment.tolist(),
+            "measured_axis_increment_socket_m": 0.,
+        }), encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(live_task_handlers, "measure_preinsert_xy", measure)
+    monkeypatch.setattr(live_task_handlers, "update_held_key_xy", feedback)
+    monkeypatch.setattr(
+        live_task_handlers, "AssetPaths",
+        lambda *_args, **_kwargs: SimpleNamespace(task_geometry=geometry))
+    monkeypatch.setattr(
+        live_task_handlers, "validated_frozen_socket_pose",
+        lambda **_kwargs: np.eye(4))
+    monkeypatch.setattr(live_task_handlers, "plan_and_execute_shift", shift)
+    monkeypatch.setattr(live_task_handlers, "plan_corrected_axial_handoff",
+                        lambda **kwargs: (handed.update(kwargs) or
+                                          tmp_path / "handoff.json"))
+    monkeypatch.setattr(live_task_handlers, "write_raw_camera_capture",
+                        lambda *_args, **_kwargs: None)
+    bound._refine_current_hold(runner)
+    assert len(feedback_steps) == 3
+    np.testing.assert_allclose(feedback_steps[0], [.003, 0.])
+    np.testing.assert_allclose(feedback_steps[1], [.006, 0.])
+    np.testing.assert_allclose(feedback_steps[2], [.009, 0.])
+    np.testing.assert_allclose(handed["total_xy_m"], [.009, 0.])
+    np.testing.assert_allclose(handed["residual_xy_m"], [0., 0.])
+    assert handed["residual_source"] == (
+        "last_metric_plus_completed_held_motion")
 
 
 def test_corrected_plan_failure_records_stop_without_insertion(tmp_path, monkeypatch):
@@ -481,6 +576,7 @@ def test_temporary_lateral_view_is_removed_before_insertion(
     bound.same_trial_xy_tolerance_m = .0025
     bound.same_trial_observation_raise_m = .04
     bound.same_trial_observation_lateral_m = .03
+    bound.same_trial_observation_lateral_attempts = 2
     corrections = iter((None, None, [-.03, .03], None))
     actions = []
 
@@ -551,6 +647,7 @@ def test_lateral_metric_correction_uses_returned_hold_without_extra_inference(
     bound.same_trial_xy_tolerance_m = .0025
     bound.same_trial_observation_raise_m = .04
     bound.same_trial_observation_lateral_m = .03
+    bound.same_trial_observation_lateral_attempts = 2
     corrections = iter((None, None, [-.038, .03], None))
     moves = []
     handoff = {}
@@ -610,6 +707,7 @@ def test_lateral_observation_tries_next_view_without_repeating_returned_image(
     bound.same_trial_xy_tolerance_m = .0025
     bound.same_trial_observation_raise_m = .04
     bound.same_trial_observation_lateral_m = .03
+    bound.same_trial_observation_lateral_attempts = 2
     corrections = iter((None, None, None, [.03, .03], None))
     moves = []
     measurements = []

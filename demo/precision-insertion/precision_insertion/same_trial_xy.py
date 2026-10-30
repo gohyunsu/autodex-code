@@ -657,6 +657,22 @@ def plan_corrected_axial_handoff(*, runner, planner,
             not np.all(np.isfinite(total)) or
             not np.all(np.isfinite(residual))):
         raise ValueError("same-trial XY values must contain finite metres")
+    alignment_observed = not residual_source.startswith("nominal_")
+    alignment_record = {
+        "alignment_status": (
+            "observed_closed_loop" if alignment_observed else
+            "unobserved_default_nominal"),
+        # The net measured wrist motion is physical evidence even when the
+        # key end was not observed.  Keep it separate from an XY correction.
+        "net_held_motion_socket_xy_m": total.tolist(),
+        "total_xy_correction_socket_m": (
+            total.tolist() if alignment_observed else None),
+        "final_residual_socket_xy_m": (
+            residual.tolist() if alignment_observed else None),
+        "default_nominal_offset_socket_xy_m": (
+            None if alignment_observed else residual.tolist()),
+        "residual_source": residual_source,
+    }
     socket = validated_frozen_socket_pose(
         mode=runner.mode, shared_root=runner.shared_root,
         calibration=runner.calibration)
@@ -695,9 +711,7 @@ def plan_corrected_axial_handoff(*, runner, planner,
             "candidate_id": runner.active_attempt.candidate_id,
             "status": "corrected_20mm_endpoint_rejected",
             "measured_start": state.to_record(),
-            "total_xy_correction_socket_m": total.tolist(),
-            "final_residual_socket_xy_m": residual.tolist(),
-            "residual_source": residual_source,
+            **alignment_record,
             "targets": targets.to_record(),
             "endpoint": endpoint,
             "planning": None,
@@ -719,9 +733,7 @@ def plan_corrected_axial_handoff(*, runner, planner,
             "candidate_id": runner.active_attempt.candidate_id,
             "status": planned.status,
             "measured_start": state.to_record(),
-            "total_xy_correction_socket_m": total.tolist(),
-            "final_residual_socket_xy_m": residual.tolist(),
-            "residual_source": residual_source,
+            **alignment_record,
             "targets": targets.to_record(),
             "endpoint": endpoint,
             "planning": planned.to_record(),
@@ -751,10 +763,11 @@ def plan_corrected_axial_handoff(*, runner, planner,
         "target_depth_m": runner.mode.target_depth_m,
         "measured_start": state.to_record(),
         "decision_timestamp_s": time.time(),
-        "total_xy_correction_socket_m": total.tolist(),
-        "final_residual_socket_xy_m": residual.tolist(),
-        "residual_source": residual_source,
-        "held_relation_scope": "observed_key_XY_and_measured_wrist_with_nominal_key_orientation",
+        **alignment_record,
+        "held_relation_scope": (
+            "observed_key_XY_and_measured_wrist_with_nominal_key_orientation"
+            if alignment_observed else
+            "default_nominal_key_pose_and_measured_wrist_no_observed_key_tip"),
         "inserted_key_pose_robot": targets.T_robot_key_verification.tolist(),
         "targets": targets.to_record(),
         "endpoint": endpoint,

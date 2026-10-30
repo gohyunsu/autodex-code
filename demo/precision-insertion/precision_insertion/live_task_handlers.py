@@ -89,7 +89,9 @@ class LiveTaskHandlers:
     same_trial_max_shifts: int | None = None
     same_trial_observation_raise_m: float = 0.
     same_trial_observation_lateral_m: float = 0.
+    same_trial_observation_lateral_attempts: int = 1
     same_trial_observation_yaw_rad: float = 0.
+    on_preinsert_confirmed: Callable[[str, str], None] | None = None
     after_lift_capture_provider: (
         Callable[[], tuple[str, RawCameraCapture] | None] | None) = None
     decision_time: Callable[[], float] = time.time
@@ -232,6 +234,9 @@ class LiveTaskHandlers:
         if checkpoint.preinsert_reached is True:
             self._preinsert_bundle = raw
             self._preinsert_attempt_id = attempt.attempt_id
+            if self.on_preinsert_confirmed is not None:
+                self.on_preinsert_confirmed(
+                    attempt.attempt_id, attempt.candidate_id)
             if self.same_trial_xy_tolerance_m is not None:
                 self._refine_current_hold(runner, capture=capture)
 
@@ -377,14 +382,15 @@ class LiveTaskHandlers:
                 }
             lateral_viewpoints = None
             if (choice["status"] == "not_metric_multiview" and
-                    predicted_residual is None and axis_raise > 0 and
+                    predicted_residual is None and
                     self.same_trial_observation_lateral_m > 0 and
                     not observation_lateral_attempted):
                 lateral_viewpoints = rank_lateral_observation_offsets(
                     runner=runner, current_xy_socket_m=total,
                     axis_raise_m=axis_raise,
                     component_m=self.same_trial_observation_lateral_m)
-                lateral_pending = list(lateral_viewpoints)
+                lateral_pending = list(lateral_viewpoints[
+                    :self.same_trial_observation_lateral_attempts])
             report = folder / "observations" / f"{index:03d}.json"
             report.parent.mkdir(parents=True, exist_ok=True)
             with report.open("x", encoding="utf-8") as stream:
@@ -742,12 +748,34 @@ class LiveTaskHandlers:
                                         np.asarray(measured_step))
                     anchor_axis_motion = (axis_raise - shift_result[
                         "measured_axis_increment_socket_m"])
-                previous_observation = observed
-                previous_motion = shift_result
-                previous_camera_id = (observed["alignment"].get(
-                    "inlier_cameras") or [None])[0]
-                previous_xy = [-value for value in observed["alignment"][
-                    "xy_correction_socket_m"]]
+                correction = observed["alignment"].get(
+                    "xy_correction_socket_m")
+                if correction is not None:
+                    # A fresh image-grounded point becomes the next temporal
+                    # reference.  This includes a coherently tracked point.
+                    previous_observation = observed
+                    previous_motion = shift_result
+                    previous_camera_id = (observed["alignment"].get(
+                        "inlier_cameras") or [None])[0]
+                    previous_xy = [-value for value in correction]
+                elif previous_motion is not None:
+                    # The current image did not identify a key end, but the
+                    # robot completed another measured continuation of the
+                    # last metric target.  Keep that last image association
+                    # and accumulate wrist motion from it instead of turning
+                    # an absent image point into a zero-valued observation.
+                    previous_motion = {
+                        **previous_motion,
+                        "measured_increment_socket_m": (
+                            np.asarray(previous_motion[
+                                "measured_increment_socket_m"], float) +
+                            np.asarray(measured_step, float)).tolist(),
+                        "measured_axis_increment_socket_m": float(
+                            previous_motion[
+                                "measured_axis_increment_socket_m"] +
+                            shift_result[
+                                "measured_axis_increment_socket_m"]),
+                    }
             current = runner.current_decision()
             raw, capture, pending_capture_write = self._capture_deferred(
                 runner=runner, decision=current,

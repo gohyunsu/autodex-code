@@ -43,6 +43,12 @@ export PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM=${PRECISION_SAME_TRIAL_OBSERVAT
 # found. Sixty degrees planned in saved 5 and 10 mm episodes; live visibility
 # is unknown, so keep it off until a photographed A/B comparison is intended.
 export PRECISION_SAME_TRIAL_OBSERVATION_YAW_DEG=${PRECISION_SAME_TRIAL_OBSERVATION_YAW_DEG-0}
+# If the key end is not measurable above the socket, make one short active
+# observation move in the socket plane.  The direction is ranked from all
+# calibrated cameras for key/rim pixel separation; the key returns before
+# insertion.  This is an observation action, not a random insertion search.
+export PRECISION_SAME_TRIAL_OBSERVATION_LATERAL_MM=${PRECISION_SAME_TRIAL_OBSERVATION_LATERAL_MM-10}
+export PRECISION_SAME_TRIAL_OBSERVATION_LATERAL_ATTEMPTS=${PRECISION_SAME_TRIAL_OBSERVATION_LATERAL_ATTEMPTS-1}
 export PRECISION_EXTRA_PYTHONPATH=${PRECISION_EXTRA_PYTHONPATH:-$precision_profile_root/demo/precision-insertion/compat}
 export PRECISION_PLANNER_PY=${PRECISION_PLANNER_PY:-$HOME/.venvs/precision-vlm/bin/python}
 export PRECISION_CHECK_PY=${PRECISION_CHECK_PY:-$PRECISION_PLANNER_PY}

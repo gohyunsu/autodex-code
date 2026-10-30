@@ -82,12 +82,19 @@ def arrow(draw: ImageDraw.ImageDraw, start, end, color: str = XY_SHIFT) -> None:
     draw.polygon(polygon, fill=color, outline=MARKER_OUTLINE)
 
 
-def mask_overlay(panel: Image.Image, record: dict, crop: list[int]) -> Image.Image:
+def mask_overlay(panel: Image.Image, record: dict, crop: list[int],
+                 observation: dict) -> Image.Image:
     path = record.get("mask_file")
     roi = record.get("roi_within_crop")
-    if not path or not roi or not Path(path).is_file():
+    if path:
+        source = Path(path)
+        if not source.is_absolute():
+            source = Path(observation["raw_bundle"]) / path
+    else:
+        source = None
+    if source is None or not roi or not source.is_file():
         return panel
-    mask = np.asarray(Image.open(path).convert("L")) > 0
+    mask = np.asarray(Image.open(source).convert("L")) > 0
     x0, y0, x1, y1 = map(int, roi)
     if mask.shape != (y1-y0, x1-x0):
         return panel
@@ -101,7 +108,7 @@ def draw_panel(image_path: Path, record: dict, camera: str, observation: dict,
                run_dir: Path, fixture_root: Path | None) -> Image.Image:
     crop = list(map(int, record["crop_xyxy"]))
     panel = Image.open(image_path).convert("RGB").crop(tuple(crop))
-    panel = mask_overlay(panel, record, crop)
+    panel = mask_overlay(panel, record, crop, observation)
     draw = ImageDraw.Draw(panel)
 
     # Frozen session socket geometry.
@@ -109,13 +116,28 @@ def draw_panel(image_path: Path, record: dict, camera: str, observation: dict,
     draw.line(ring + ring[:1], fill=SOCKET_POSE, width=4)
     P, _socket, _calibration = camera_projection(run_dir, camera)
     alignment = observation["alignment"]
-    tip = np.asarray(alignment["tip_socket_m"], dtype=float)
+    raw_tip = alignment.get("tip_socket_m")
+    tip = (None if raw_tip is None else np.asarray(raw_tip, dtype=float))
     entry_z = float(alignment["socket_entry_plane_z_m"])
     axis_a = local(point(P, (0., 0., entry_z)), crop)
-    axis_b = local(point(P, (0., 0., max(entry_z+.10, tip[2]+.025))), crop)
+    axis_top = entry_z + .10 if tip is None else max(entry_z+.10, tip[2]+.025)
+    axis_b = local(point(P, (0., 0., axis_top)), crop)
     draw.line((axis_a, axis_b), fill=SOCKET_POSE, width=4)
-    axis_same_z = local(point(P, (0., 0., tip[2])), crop)
-    cross(draw, axis_same_z, AXIS_TARGET)
+
+    # Qwen's key proposal is part of the saved estimator evidence.  Red means
+    # that the proposal overlapped the frozen socket projection and was
+    # therefore identified as a socket/key association error by the runtime.
+    box = record.get("qwen_box_crop_px")
+    if box is not None:
+        confusion = record.get("reason") == "key_box_matches_frozen_socket"
+        draw.rectangle(tuple(float(v) for v in box),
+                       outline="#ff4d5e" if confusion else "#ffb347", width=4)
+    rear = record.get("planned_rear_full_px")
+    nominal = record.get("nominal_tip_full_px")
+    if rear is not None and nominal is not None:
+        rear_local, nominal_local = local(rear, crop), local(nominal, crop)
+        draw.line((rear_local, nominal_local), fill="#75a7ff", width=3)
+        dot(draw, nominal_local, "#75a7ff", radius=6)
 
     fit = record.get("sam_half_ellipse")
     if fit is not None:
@@ -128,20 +150,29 @@ def draw_panel(image_path: Path, record: dict, camera: str, observation: dict,
     # The magenta point is the fused socket-frame key-tip estimate.  The
     # orange arrow ends at the immediate waypoint actually requested in this
     # iteration, not at the full residual-to-axis target.
-    fused = local(point(P, tip), crop)
-    dot(draw, fused, KEY_PROXY, radius=7)
-    increment = np.asarray(observation["choice"]["increment_socket_m"],
-                           dtype=float)
-    waypoint = tip.copy()
-    waypoint[:2] += increment
-    projected_waypoint = local(point(P, waypoint), crop)
-    arrow(draw, fused, projected_waypoint)
+    increment_raw = observation["choice"].get("increment_socket_m")
+    if tip is not None:
+        axis_same_z = local(point(P, (0., 0., tip[2])), crop)
+        cross(draw, axis_same_z, AXIS_TARGET)
+        fused = local(point(P, tip), crop)
+        dot(draw, fused, KEY_PROXY, radius=7)
+        if increment_raw is not None:
+            increment = np.asarray(increment_raw, dtype=float)
+            waypoint = tip.copy()
+            waypoint[:2] += increment
+            projected_waypoint = local(point(P, waypoint), crop)
+            arrow(draw, fused, projected_waypoint)
 
     used = camera in alignment.get("inlier_cameras", [])
-    status = "used" if used else ("observed" if fit is not None else "no face")
+    reason = record.get("reason", "unknown").replace("_", " ")
+    status = "used" if used else ("observed" if fit is not None else reason)
     draw.rounded_rectangle((8, 8, 247, 50), radius=10,
                            fill=(9, 19, 30, 215))
-    draw.text((20, 16), f"{camera}  |  {status}", font=font(21, bold=used),
+    label = f"{camera}  |  {status}"
+    if len(label) > 38:
+        label = f"{camera}  |  {record.get('reason', 'no face')}"
+    draw.text((20, 16), label, font=font(17 if len(label) > 25 else 21,
+                                        bold=used),
               fill=("#ffffff" if used else "#cbd5df"))
     return panel.resize((PANEL, PANEL), LANCZOS)
 
@@ -150,18 +181,34 @@ def convergence_plot(observations: list[dict], current: int) -> Image.Image:
     width, height = 1090, 300
     image = Image.new("RGB", (width, height), "#0b131d")
     draw = ImageDraw.Draw(image)
-    errors = [float(o["choice"]["xy_error_m"])*1000. for o in observations]
+    errors = [None if o["choice"].get("xy_error_m") is None else
+              float(o["choice"]["xy_error_m"])*1000. for o in observations]
+    if not any(value is not None for value in errors):
+        draw.text((45, 75), "No metric key-tip estimate", font=font(32, bold=True),
+                  fill="#ffb347")
+        draw.text((45, 132),
+                  "No XY correction was applied in this observation.",
+                  font=font(24), fill="#e5edf4")
+        draw.text((45, 184),
+                  "The nominal pre-insertion pose was used for descent.",
+                  font=font(22), fill="#aebbc7")
+        return image
     x0, y0, x1, y1 = 78, 32, width-30, height-52
     draw.line((x0, y1, x1, y1), fill="#5b6875", width=2)
     draw.line((x0, y0, x0, y1), fill="#5b6875", width=2)
-    maximum = max(errors)*1.08
+    finite = [value for value in errors if value is not None]
+    maximum = max(finite)*1.08
     points = []
-    for i, value in enumerate(errors):
+    valid_rows = [(i, value) for i, value in enumerate(errors)
+                  if value is not None]
+    for valid_index, (i, value) in enumerate(valid_rows):
         x = x0 + (x1-x0)*(i/max(1, len(errors)-1))
         y = y1 - (y1-y0)*(value/maximum)
-        points.append((x, y))
-    draw.line(points, fill="#7fa8ff", width=4)
-    for i, ((x, y), value) in enumerate(zip(points, errors)):
+        points.append((i, x, y, value))
+    if len(points) > 1:
+        draw.line([(x, y) for _i, x, y, _value in points],
+                  fill="#7fa8ff", width=4)
+    for i, x, y, value in points:
         color = XY_SHIFT if i == current else KEY_PROXY
         dot(draw, (x, y), color, radius=7 if i == current else 5)
         draw.text((x-26, y-31), f"{value:.2f}", font=font(17), fill="#ffffff")
@@ -178,22 +225,27 @@ def compose(observations: list[dict], index: int, run_dir: Path,
     canvas = Image.new("RGB", CANVAS, PANEL_BACKGROUND)
     draw = ImageDraw.Draw(canvas)
     choice = observation["choice"]
-    increment = np.asarray(choice["increment_socket_m"], dtype=float)*1000.
+    increment_raw = choice.get("increment_socket_m")
+    increment = (None if increment_raw is None else
+                 np.asarray(increment_raw, dtype=float)*1000.)
     inliers = observation["alignment"].get("inlier_cameras", [])
     draw.text((42, 28), f"Closed-loop iteration {index}", font=font(38, bold=True),
               fill="#ffffff")
     measured = (None if shift is None else
                 np.asarray(shift["measured_increment_socket_m"], dtype=float)*1000.)
-    move_text = (f"commanded XY  ({increment[0]:+.2f}, {increment[1]:+.2f}) mm"
+    move_text = ("commanded XY  unavailable"
+                 if increment is None else
+                 f"commanded XY  ({increment[0]:+.2f}, {increment[1]:+.2f}) mm"
                  if measured is None else
                  f"commanded / measured XY  ({increment[0]:+.2f}, {increment[1]:+.2f}) / "
                  f"({measured[0]:+.2f}, {measured[1]:+.2f}) mm")
     if index == len(observations)-1 and shift is not None:
         move_text += (f"     axial-height restore  "
                       f"{shift['measured_axis_increment_socket_m']*1000.:+.2f} mm")
+    error = choice.get("xy_error_m")
+    error_text = ("not observed" if error is None else f"{error*1000.:.2f} mm")
     draw.text((42, 82),
-              f"estimated XY error  {choice['xy_error_m']*1000.:.2f} mm"
-              f"     {move_text}",
+              f"estimated XY error  {error_text}     {move_text}",
               font=font(23), fill="#dce5ed")
     draw.text((42, 120), f"estimator views  {', '.join(inliers)}",
               font=font(18), fill="#aebbc7")
@@ -242,7 +294,15 @@ def final_frame(attempt_dir: Path,
     canvas = Image.new("RGB", CANVAS, PANEL_BACKGROUND)
     draw = ImageDraw.Draw(canvas)
     draw.text((42, 30), "Insertion result", font=font(38, bold=True), fill="#ffffff")
-    draw.text((42, 84), "released key is inside the socket (manual + saved-image label)",
+    result_path = attempt_dir / "result.json"
+    result = read(result_path) if result_path.is_file() else {}
+    insertion_success = result.get("labels", {}).get("insertion_success")
+    result_text = ("released key is inside the socket (manual label)"
+                   if insertion_success is True else
+                   "released key is outside the socket (manual label)"
+                   if insertion_success is False else
+                   "released-key result is not labelled")
+    draw.text((42, 84), result_text,
               font=font(24), fill="#dce5ed")
     for x, camera in zip(panel_positions(len(cameras)), cameras):
         image = Image.open(root/f"{camera}.png").convert("RGB")
@@ -257,9 +317,13 @@ def final_frame(attempt_dir: Path,
         tile_draw.text((20, 16), camera, font=font(21, bold=True), fill="#ffffff")
         canvas.paste(tile, (x, PANEL_Y))
     draw.rounded_rectangle((42, 690, 1878, 930), radius=24, fill="#0b131d")
-    draw.text((86, 738), "SESSION SUCCESS", font=font(48, bold=True),
-              fill=OBSERVED_KEY)
-    draw.text((86, 815), "The planned axial insertion, release, clear-view capture, and final label completed.",
+    outcome = ("INSERTION SUCCESS" if insertion_success is True else
+               "INSERTION FAILED" if insertion_success is False else
+               "INSERTION RESULT UNKNOWN")
+    draw.text((86, 738), outcome, font=font(48, bold=True),
+              fill=OBSERVED_KEY if insertion_success is True else "#ff6b6b")
+    draw.text((86, 815),
+              "The hand was released and the final clear-view images were saved.",
               font=font(25), fill="#e5edf4")
     return canvas
 
@@ -301,9 +365,12 @@ def main() -> None:
             "iteration": index,
             "image": str(path),
             "raw_bundle": observation["raw_bundle"],
-            "xy_error_mm": observation["choice"]["xy_error_m"]*1000.,
-            "command_socket_xy_mm": (np.asarray(
-                observation["choice"]["increment_socket_m"])*1000.).tolist(),
+            "xy_error_mm": (None if observation["choice"].get("xy_error_m")
+                            is None else
+                            observation["choice"]["xy_error_m"]*1000.),
+            "command_socket_xy_mm": (None if observation["choice"].get(
+                "increment_socket_m") is None else (np.asarray(
+                observation["choice"]["increment_socket_m"])*1000.).tolist()),
             "measured_socket_xy_mm": None if shift is None else (
                 np.asarray(shift["measured_increment_socket_m"])*1000.).tolist(),
             "measured_axis_increment_mm": None if shift is None else (

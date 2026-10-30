@@ -185,6 +185,8 @@ if [[ -n ${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM:-} &&
       -n ${PRECISION_SAME_TRIAL_OBSERVATION_LATERAL_MM:-} ]]; then
   EXTRA_ARGS+=(--same-trial-observation-lateral-mm \
     "$PRECISION_SAME_TRIAL_OBSERVATION_LATERAL_MM")
+  EXTRA_ARGS+=(--same-trial-observation-lateral-attempts \
+    "${PRECISION_SAME_TRIAL_OBSERVATION_LATERAL_ATTEMPTS:-1}")
 fi
 if [[ -n ${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM:-} &&
       -n ${PRECISION_SAME_TRIAL_OBSERVATION_YAW_DEG:-} ]]; then

@@ -1535,3 +1535,52 @@ alignment and leaves the prior XY route unchanged. Shift reports identify the
 new backend as `damped_jacobian_tip_axis` and save requested/measured
 socket-frame rotation vectors. This route has software tests but still needs a
 new physical ZeroDex episode before its experimental performance is claimed.
+
+## 2026-10-30 recording scope and lost-observation continuation
+
+`run_zerodex_recorded.py` no longer records the complete perception, grasp,
+lift, and transfer sequence. The normal pipeline starts first. After the
+operator or VLM accepts the transfer checkpoint, `preinsert_reached=true` is
+persisted and a small local marker is emitted. Only then does the wrapper
+start camera `26053248` on capture4. The marker contains the attempt and
+candidate IDs, and the recording receipt stores both the marker and the
+recording start time. The marker is local to the kds-Z790 PC: SSH startup,
+capture4 disk I/O, and later NAS upload remain outside the robot action
+thread. A run that never reaches an accepted pre-insertion hold therefore
+creates no episode video. NAS upload remains an explicit post-run command.
+
+At the user's request, 47 timestamp-named full-run recording directories
+created by this precision-insertion pipeline were removed from capture4
+(21,198,813,619 bytes). The verified successful fixed-grasp recording was
+retained at:
+
+```text
+/home/capture4/precision_insertion_capture4_20261027/recordings/20261030/
+  20261030_222800_220645_219060
+```
+
+That run used `table/0/20195` and its structured result records
+`insertion_success=true`. Named recorder smoke and diagnostic directories
+were retained because they are not full episode recordings. No unrelated
+capture4 files were changed.
+
+Live attempt `20261030_234038_050666_244163` confirmed grasp and transfer with
+`table/0/20195`. Its first pre-insertion image produced a single-view planar
+correction. After two direct 3 mm wrist continuations the image association
+was lost. The former code correctly propagated the last residual once, but
+then replaced its temporal reference with the unobserved frame and attempted
+to iterate `xy_correction_socket_m=None`; the run stopped before insertion.
+The loop now keeps the last metric image reference and accumulates every
+completed measured wrist displacement from that reference until a new
+image-grounded point is available. Missing observations are not converted to
+zero-valued tip measurements and do not introduce an extra stop condition.
+This exact multi-step loss branch is covered by a regression test. Physical
+revalidation is intentionally pending because the robot and hand were turned
+off after the experiment.
+
+When the first pre-insertion image has no measurable key end, the report uses
+`alignment_status=unobserved_default_nominal`. The correction and residual
+fields remain `null`; the unchanged nominal offset is recorded separately.
+If enabled by the ZeroDex profile, one calibrated camera-ranked lateral
+observation action can be attempted before choosing that nominal route. It is
+an observation motion, not an insertion search or an added acceptance gate.

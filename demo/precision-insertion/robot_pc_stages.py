@@ -29,6 +29,37 @@ from precision_insertion.retry_session import RetrySessionLimits
 KEY_PROMPT = "small white solid peg"
 
 
+def _preinsert_recording_marker():
+    """Return an optional local event callback for the ZeroDex recorder.
+
+    The marker path is supplied only by the ZeroDex recording wrapper.  It is
+    intentionally a local control file: capture4 recording must not put NAS
+    I/O or remote process management on the robot action thread.
+    """
+    raw = os.environ.get("PRECISION_PREINSERT_CONFIRMED_MARKER", "").strip()
+    if not raw:
+        return None
+    target = Path(raw).expanduser().resolve()
+
+    def notify(attempt_id: str, candidate_id: str) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+        try:
+            with temporary.open("x", encoding="utf-8") as stream:
+                json.dump({
+                    "schema": "precision_insertion_preinsert_confirmed_v1",
+                    "attempt_id": attempt_id,
+                    "candidate_id": candidate_id,
+                    "confirmed_at_unix_ns": time.time_ns(),
+                }, stream, sort_keys=True)
+                stream.write("\n")
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    return notify
+
+
 def _tabletop_pose_error_deg() -> float:
     """Keep AutoDex's 10-degree setting unless a profile selects another one."""
     return float(os.environ.get("PRECISION_TABLETOP_POSE_ERROR_DEG", "10"))
@@ -133,6 +164,7 @@ def configure(core, live, options) -> dict:
     motion = _motion_limits()
     capture = _key_capture()
     tabletop_pose_error_deg = _tabletop_pose_error_deg()
+    recording_marker = _preinsert_recording_marker()
     stationary = {
         "max_arm_hand_skew_s": .10,
         "max_hand_command_error_raw": 30.,
@@ -239,8 +271,12 @@ def configure(core, live, options) -> dict:
                     options, "same_trial_observation_raise_m", 0.),
                 "same_trial_observation_lateral_m": getattr(
                     options, "same_trial_observation_lateral_m", 0.),
+                "same_trial_observation_lateral_attempts": getattr(
+                    options, "same_trial_observation_lateral_attempts", 1),
                 "same_trial_observation_yaw_rad": getattr(
                     options, "same_trial_observation_yaw_rad", 0.),
+                **({"on_preinsert_confirmed": recording_marker}
+                   if recording_marker is not None else {}),
                 "transfer_commissioning_path": None,
                 "preinsert_parameters": {
                     "max_capture_skew_s": 10.,

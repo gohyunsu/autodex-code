@@ -41,6 +41,7 @@ class RunLiveOptions:
     same_trial_max_tilt_step_rad: float = math.radians(3.)
     same_trial_observation_raise_m: float = 0.
     same_trial_observation_lateral_m: float = 0.
+    same_trial_observation_lateral_attempts: int = 1
     same_trial_observation_yaw_rad: float = 0.
     init_ports: tuple[int, int, int] | None = None
     stop_after_planning: bool = False
@@ -280,8 +281,11 @@ def run_integrated_live_session(
     if (not math.isfinite(options.same_trial_observation_lateral_m) or
             options.same_trial_observation_lateral_m < 0 or
             (options.same_trial_observation_lateral_m > 0 and
-             options.same_trial_observation_raise_m <= 0)):
-        raise ValueError("lateral observation needs an enabled observation raise")
+             options.same_trial_xy_tolerance_m is None)):
+        raise ValueError("lateral observation needs an enabled same-trial XY target")
+    if (type(options.same_trial_observation_lateral_attempts) is not int or
+            options.same_trial_observation_lateral_attempts < 1):
+        raise ValueError("lateral observation attempts must be a positive integer")
     if (not math.isfinite(options.same_trial_observation_yaw_rad) or
             (options.same_trial_observation_yaw_rad != 0. and
              options.same_trial_xy_tolerance_m is None)):
