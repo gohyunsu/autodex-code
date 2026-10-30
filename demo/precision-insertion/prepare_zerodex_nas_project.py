@@ -117,6 +117,15 @@ def refresh_code(*, nas_root: Path, paradex_repo: Path) -> dict:
     asset_updates = [
         nas_root / "assets/shared_data/AutoDex/foundpose_assets"
         / KEY / name for name in ("summary.json", "reference_intrinsics.json")]
+    socket_root = nas_root / "assets/shared_data/AutoDex/foundpose_assets"
+    socket_prefixes = tuple(
+        f"assets/shared_data/AutoDex/foundpose_assets/precision_socket_cylinder_gap_{gap:02d}mm/"
+        for gap in GAPS)
+    for gap in GAPS:
+        extracted = socket_root / f"precision_socket_cylinder_gap_{gap:02d}mm"
+        if extracted.is_dir():
+            asset_updates.extend(path for path in sorted(extracted.rglob("*"))
+                                 if path.is_file())
     if foundation.is_dir():
         asset_updates.extend(path for path in sorted(foundation.rglob("*"))
                              if path.is_file())
@@ -126,7 +135,8 @@ def refresh_code(*, nas_root: Path, paradex_repo: Path) -> dict:
                for path in asset_updates if path.is_file()}
     manifest["assets"] = sorted(
         {**{row["path"]: row for row in manifest["assets"]
-             if not row["path"].startswith("assets/packages/foundpose/")},
+             if not row["path"].startswith("assets/packages/foundpose/")
+             and not row["path"].startswith(socket_prefixes)},
          **updates}.values(),
         key=lambda row: row["path"])
     manifest["asset_file_count"] = len(manifest["assets"])

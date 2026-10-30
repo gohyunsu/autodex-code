@@ -15,6 +15,24 @@ import subprocess
 import tarfile
 
 
+def _extract_socket_package(package_path: Path, target: Path) -> None:
+    """Restore one handoff package into the FoundPose object layout."""
+    target.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(package_path, "r:") as archive:
+        # The source handoff wraps only models/ in an extra object-name
+        # directory. Flatten it so models/, templates/, and object_repre/
+        # share the same FoundPose object root.
+        wrapped_models = f"./{target.name}/"
+        members = []
+        for member in archive:
+            if member.name == f"./{target.name}":
+                continue
+            if member.name.startswith(wrapped_models):
+                member.name = "./" + member.name[len(wrapped_models):]
+            members.append(member)
+        archive.extractall(target, members=members)
+
+
 def install(bundle: Path, destination: Path,
             *, capture4_nas_root: str) -> dict:
     bundle = bundle.expanduser().resolve()
@@ -49,9 +67,7 @@ def install(bundle: Path, destination: Path,
                     str(shared) + "/"], check=True)
     for package in manifest.get("asset_packages", []):
         target = shared / package["extract_to"]
-        target.mkdir(parents=True, exist_ok=True)
-        with tarfile.open(bundle / package["path"], "r:") as archive:
-            archive.extractall(target)
+        _extract_socket_package(bundle / package["path"], target)
     original = manifest["source_shared_root"]
     for path in shared.rglob("*.json"):
         before = path.read_text(encoding="utf-8")

@@ -36,12 +36,14 @@ launcher selects 5 mm by default. The archived square-mode code remains in
 the source snapshot; square hardware assets are outside this ZeroDex run
 profile.
 All six complete socket representations are preserved as TARs in `restore/`.
-The active NAS tree has the 5 mm `repre.pth` and most templates, but an
-interrupted extraction left that optional socket template directory
-incomplete. The current socket route uses masks and a board-constrained body
-fit, not socket FoundPose representation. Extract the selected TAR completely
-before switching to a socket FoundPose route or changing gap, or use
-`install_project.py` when restoring the complete bundle on another PC.
+The 5 mm representation is also fully extracted in the active NAS asset tree:
+all 2,402 archive files are present at the expected sizes and `repre.pth`
+matches its provenance SHA256. The current socket route uses masks and a
+board-constrained body fit; it does not load socket FoundPose. Extract the
+selected TAR before switching another gap to a socket FoundPose route, or use
+`install_project.py` when restoring the complete bundle on another PC. The
+installer flattens the handoff TAR's extra `models/` wrapper into the canonical
+FoundPose object layout.
 Development output rules and the migration of earlier scattered diagnostics
 are described in `development/README.md`.
 
