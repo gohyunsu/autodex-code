@@ -324,17 +324,22 @@ class SessionRunner:
         """Keep a compact stock-style result next to the append-only states."""
         assert self._attempt_dir is not None
         observed = attempt.labels["insertion_success"]
+        reset = attempt.labels["reset_success"]
+        status = (
+            "observed_success" if observed is True else
+            "observed_failure" if observed is False else
+            "planning_stopped_before_insertion" if
+            attempt.failure_code == "preinsert_path_unavailable" else
+            "recovered_for_next_attempt" if reset is True else
+            "reset_failed" if reset is False else
+            "in_progress")
         record = {
             "schema": "precision_insertion_episode_result_v1",
             "episode_id": attempt.attempt_id,
             "exp_name": getattr(self, "exp_name", None),
             "attempt_type": ("repose" if attempt.candidate_id is None
                              else "insertion"),
-            "status": ("observed_success" if observed is True else
-                       "observed_failure" if observed is False else
-                       "planning_stopped_before_insertion" if
-                       attempt.failure_code == "preinsert_path_unavailable" else
-                       "in_progress"),
+            "status": status,
             "success": observed,
             "failure_code": attempt.failure_code,
             "candidate_id": attempt.candidate_id,

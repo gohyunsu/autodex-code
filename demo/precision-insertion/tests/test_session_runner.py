@@ -73,6 +73,39 @@ def test_saved_episode_distinguishes_plan_stop_from_insertion_verdict(tmp_path):
     assert result["labels"]["insertion_success"] is None
 
 
+def test_saved_episode_marks_completed_recovery_without_insertion_verdict(
+        tmp_path):
+    runner = object.__new__(session_runner.SessionRunner)
+    runner._attempt_dir = tmp_path / "attempt_1"
+    runner._attempt_dir.mkdir()
+    runner._episode_root = None
+    runner.output_dir = tmp_path
+    runner.mode = MODE
+    session = {
+        "schema": "precision_insertion_session_calibration_v1",
+        "mode": {"family": MODE.family, "gap_mm": MODE.gap_mm,
+                 "key_object": MODE.key_object,
+                 "socket_object": MODE.socket_object},
+    }
+    attempt = begin_attempt(
+        attempt_id="attempt_1", mode=MODE, session_record=session,
+        candidate_id="table/0/3", tabletop_pose_stem="000",
+        xy_offset_socket_m=(0., 0.), started_at_s=1.)
+    attempt.record_stage(
+        "grasp_success", False, timestamp_s=2.,
+        evidence_refs={"vlm_observation": "lift.json"})
+    attempt.record_stage(
+        "reset_success", True, timestamp_s=3.,
+        evidence_refs={"key_pose": "reset_key.json"})
+    state = runner._attempt_dir / "state.json"
+    state.write_text("{}\n", encoding="utf-8")
+    runner._save_episode_result(attempt, state)
+    result = json.loads((runner._attempt_dir / "result.json").read_text())
+    assert result["status"] == "recovered_for_next_attempt"
+    assert result["success"] is None
+    assert result["labels"]["reset_success"] is True
+
+
 def test_transfer_decision_skips_repeated_deep_archive_verification(
         tmp_path, monkeypatch):
     class NominalPlan:
