@@ -215,8 +215,13 @@ def test_side_down_cylinder_uses_stock_pose_and_measured_board_support(
     mesh.write_text("".join(
         f"v {x} {y} {z}\n" for x in (-0.015, 0.015)
         for y in (-0.015, 0.015) for z in (0., 0.08)))
+    # The upright hypothesis is evaluated even for a raw side-down pose,
+    # but a poor mask fit must leave the lying-key pose unchanged.
     monkeypatch.setattr(board_socket_fit, "fit_board_socket_body",
-                        lambda **_: pytest.fail("upright fit used for lying key"))
+                        lambda **_: (np.eye(4), {
+                            "mean_body_iou": 0.2,
+                            "per_view_iou": {camera: 0.2 for camera in CAMERAS},
+                        }))
     observation = admit_key_capture(
         capture=capture, init_orchestrator=SelectorStub(mode.key_object),
         mode=mode, shared_root=tmp_path, calibration=session,
@@ -231,6 +236,48 @@ def test_side_down_cylinder_uses_stock_pose_and_measured_board_support(
     assert observation.selection["tabletop_axis_layout"] == "side_down"
     assert observation.selection["board_support_offset_m"] == pytest.approx(0.005)
     assert observation.pose_world[2, 3] == pytest.approx(0.015)
+
+
+def test_raw_side_down_cylinder_can_select_board_supported_upright_pose(
+        tmp_path, monkeypatch):
+    from precision_insertion import board_socket_fit
+
+    mode = select_mode("cylinder", 10)
+    raw_pose = np.eye(4)
+    raw_pose[:3, :3] = np.array([[0., 0., 1.],
+                                [0., 1., 0.],
+                                [-1., 0., 0.]])
+    capture = _capture({camera: raw_pose for camera in CAMERAS}, tmp_path)
+    session = replace(_session(tmp_path, mode),
+                      board={"T_robot_board": np.eye(4).tolist()})
+    symmetry = (tmp_path / "object_processing" / mode.key_object /
+                "processed_data" / "info" / "symmetry.json")
+    symmetry.parent.mkdir(parents=True, exist_ok=True)
+    symmetry.write_text(json.dumps({
+        "type": "Dinf", "center": [0, 0, 0.04],
+        "axes": [{"axis": [0, 0, 1], "fold": "inf"},
+                 {"axis": [1, 0, 0], "fold": 2}]}))
+    fitted = np.eye(4)
+    fitted[0, 3] = 0.1
+    monkeypatch.setattr(board_socket_fit, "fit_board_socket_body",
+                        lambda **_: (fitted, {
+                            "mean_body_iou": 0.9,
+                            "per_view_iou": {camera: 0.9 for camera in CAMERAS},
+                        }))
+    observation = admit_key_capture(
+        capture=capture, init_orchestrator=SelectorStub(mode.key_object),
+        mode=mode, shared_root=tmp_path, calibration=session,
+        calibrated_camera_ids=set(CAMERAS),
+        view_limits=SocketViewLimits(50, 0.5, 10, 2, 0.02),
+        maximum_multiview_center_error_mm=2.0,
+        maximum_multiview_angle_error_deg=5.0,
+        maximum_socket_mask_overlap_fraction=0.1,
+        socket_projection_dilation_px=0,
+        minimum_refinement_iou=0.5)
+    assert observation.selection["method"] == "board_constrained_key_body"
+    assert observation.selection["tabletop_axis_layout"] == "upright"
+    assert observation.selection["stock_axis_layout"] == "side_down"
+    assert observation.pose_world[0, 3] == pytest.approx(0.1)
 
 
 def test_square_key_uses_agreeing_iou_selected_pose_and_full_capture_interval(

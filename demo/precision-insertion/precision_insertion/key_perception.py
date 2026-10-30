@@ -400,12 +400,12 @@ def _admit_key_capture_common(
     if stock_tabletop_cylinder and "T_robot_board" in calibration.board:
         tabletop_layout = _tabletop_cylinder_axis_layout(
             poses, calibration=calibration, axis_local=axis)
+    stock_tabletop_layout = tabletop_layout
     board_fit = None
-    if tabletop_layout == "upright":
-        # For a tabletop cylinder, the measured board supplies the vertical
-        # axis and the exact CAD body supplies the silhouette. Compare this
-        # geometric estimate with stock FoundPose using the same mask IoU;
-        # no new absolute score threshold is introduced.
+    if stock_tabletop_cylinder and "T_robot_board" in calibration.board:
+        # Raw FoundPose axes can disagree even when the key is visibly
+        # upright. Fit the board-supported upright body for either raw class,
+        # then select the shape that explains the acquired masks better.
         from .board_socket_fit import fit_board_socket_body
         try:
             fitted_pose, fit = fit_board_socket_body(
@@ -430,6 +430,7 @@ def _admit_key_capture_common(
         raw_iou = raw_diagnostics.get("best_iou")
         raw_iou = float(raw_iou) if raw_iou is not None else float("-inf")
         if board_fit[1]["mean_body_iou"] >= raw_iou:
+            tabletop_layout = "upright"
             pose = board_fit[0]
             per_view_iou = board_fit[1]["per_view_iou"]
             board_selected = max(per_view_iou, key=per_view_iou.__getitem__)
@@ -439,6 +440,7 @@ def _admit_key_capture_common(
                 "sil_skipped": True,
                 "board_body_fit": board_fit[1],
                 "stock_initial_iou": raw_iou,
+                "stock_axis_layout": stock_tabletop_layout,
             }
         else:
             pose, diagnostics = init_orchestrator.refine_from_payloads(
@@ -509,6 +511,7 @@ def _admit_key_capture_common(
         "sil_skipped": diagnostics.get("sil_skipped", False),
         "board_body_fit": diagnostics.get("board_body_fit"),
         "stock_initial_iou": diagnostics.get("stock_initial_iou"),
+        "stock_axis_layout": diagnostics.get("stock_axis_layout"),
         "tabletop_axis_layout": diagnostics.get("tabletop_axis_layout"),
         "board_support_offset_m": diagnostics.get("board_support_offset_m"),
     }
