@@ -57,6 +57,17 @@ explicit exception for camera acquisition and shared-memory reading. Our
 FoundPose/SAM3 source and weights use the namespaced capture4 adapter and this
 project's assets. No shared capture4 source is modified.
 
+A 2026-10-30 file-open trace of the **5 mm `--check` path** recorded 2,935
+successful opens, including 19 opens of 14 distinct project paths. It opened
+no NAS file outside this project and no old `~/shared_data` file; resolving
+the opened project paths also stayed inside the project. This establishes the
+static preflight's file dependencies, not those of a live camera/robot run.
+On capture4, the namespaced cache contains the key representation at
+`cache/shared_data/AutoDex/foundpose_assets/precision_key_cylinder_r15_h80/object_repre/v1/precision_key_cylinder_r15_h80/1/repre.pth`
+and raw meshes for all six socket gaps. The current board-constrained socket
+measurement does not load a socket representation. The trace and summary are
+kept under `development/zerodex_capture4/audits/filesystem/`.
+
 ## Build or refresh the project bundle
 
 Run after committing code changes:
