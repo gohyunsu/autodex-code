@@ -1,5 +1,38 @@
 # ZeroDex capture4 profile (kds-Z790)
 
+## Current restart state (2026-10-30)
+
+Robot and Inspire hand were powered off after the 5 mm socket was remeasured.
+The new session evidence is
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/camera_only/socket_remeasure_20261030_03/socket_evidence`.
+With the robot off, a camera-only rerun admitted the upright key in three
+views and found 108 endpoint-eligible upright grasps. The static `--check`
+also passed (126 catalogued, 114 eligible across both tabletop poses). These
+checks do not establish a new robot pickup or insertion after the key-prompt
+change. Run outputs and active assets now stay under the independent
+`/mnt/paradex2/hyunsu/precision_insertion` project; the capture4 camera
+installation remains the explicit external dependency.
+
+If the board, socket, and camera geometry have not moved, start the robot,
+hand, FCI daemon, and namespaced capture4 services as described below. With
+the key upright on the board, use:
+
+```bash
+cd /home/hyunsu/autodex-code
+export PRECISION_GAP_MM=5
+export PRECISION_REUSE_SESSION_EVIDENCE=/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/camera_only/socket_remeasure_20261030_03/socket_evidence
+export PRECISION_KEY_ALREADY_PLACED=1
+export PRECISION_LABEL_MODE=manual
+bash demo/precision-insertion/run_zerodex_capture4.sh --check
+bash demo/precision-insertion/run_zerodex_capture4.sh --run
+```
+
+The final command moves the robot. If the socket or board moved, unset
+`PRECISION_REUSE_SESSION_EVIDENCE`, remove the key for a new socket-only
+measurement, and then place the key for the following trial. The detailed NAS
+layout, recording upload command, and known limits are in
+[ZERODEX_NAS_PROJECT.md](ZERODEX_NAS_PROJECT.md).
+
 The current four-camera closed-loop route follows the measured cumulative
 socket-frame XY motion when it frames the next Qwen key box or native-pixel
 key-axis ROI. The original post-lift target alone is no longer reused after
