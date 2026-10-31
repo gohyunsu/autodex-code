@@ -758,13 +758,16 @@ nvidia-smi
 ```
 
 The unchanged daemon can then be started from a dedicated terminal; leave it
-open until the pipeline session finishes:
+open until the pipeline session finishes. The launcher only resolves the
+profile-local NAS paths and execs that daemon:
 
 ```bash
-sudo env LD_LIBRARY_PATH=/home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/robot_deps/prefix/usr/lib/x86_64-linux-gnu:/home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/robot_deps/prefix/usr/lib \
-  /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/robot_deps/restored/home/robot/paradex/cpp/franka_daemon/build/franka_daemon \
-  172.16.1.11 --command_port 5555 --state_port 5556
+cd /home/hyunsu/autodex-code
+sudo bash demo/precision-insertion/run_zerodex_franka_daemon.sh
 ```
+
+`bash demo/precision-insertion/run_zerodex_franka_daemon.sh --print` shows the
+resolved command without connecting to the robot.
 
 Wait for `[READY] Daemon ready, waiting for commands...`. The socket session
 already captured with camera-only mode must be recaptured if the fixture has
