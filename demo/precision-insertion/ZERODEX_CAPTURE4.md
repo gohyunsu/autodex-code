@@ -962,7 +962,7 @@ the effect on a complete episode has not been measured.
 
 The physical socket in this earlier live setup was the **10 mm radial-gap**
 variant. That record used `PRECISION_GAP_MM=10`; this selects its own endpoint catalog and
-socket mesh. The ZeroDex `launch.json` now sets
+socket mesh. The historical ZeroDex `launch.json` used
 `board_fit_camera_ids = [26053248, 25322639, 25322642]`. All four capture4
 images are still acquired and available for socket/key perception. The subset
 applies only to ChArUco triangulation: on the current board, camera
@@ -970,6 +970,10 @@ applies only to ChArUco triangulation: on the current board, camera
 cameras fitted 41 corners with median reprojection 0.275 px and board rigid-fit
 RMS 0.675 mm. No reprojection threshold was changed. The diagnostic source
 frames are under `/tmp/precision_gap10_board_diag_20261028/`.
+The current profile no longer encodes this serial-specific exclusion. It
+passes all four views to the existing per-corner reprojection refit, then lets
+the socket-only fit select a fresh per-capture centre-inlier set as documented
+in the 2026-10-31 section.
 
 The first integrated 10 mm `--plan-only` session froze the socket in
 `zerodex_capture4/runs/live_charuco_board_gap10/session_evidence_20261028_135908_048797173_21840/`.
@@ -1347,7 +1351,7 @@ probe, so its `pose_ok: false` fields do not evaluate FoundPose accuracy.
 ## 2026-10-28 four-view same-trial XY execution
 
 The ZeroDex launcher captures all four capture4 cameras and defaults to the
-Qwen-box + SAM3 half-ellipse key-face estimator for XY. It now computes the
+Qwen-box + SAM3 half-ellipse key-face estimator for XY. This historical run computed the
 tip from `25305462`, `25322639`, and `25322642` first. Only when those views
 do not yield a consistent three-view metric point does it run Qwen/SAM3 on
 `26053248`. `PRECISION_XY_PREFERRED_CAMERA_IDS` changes the priority order;
@@ -1368,6 +1372,9 @@ yielded metric XY in all four; compared with the archived four-view robust
 fit, the XY coordinate difference was below 0.7 mm per axis. These four
 images are one held-grasp trajectory, so this supports the camera priority
 for the current fixture but does not establish general 3-view accuracy.
+The current launcher no longer fixes that three-view priority: it orders all
+capture4 cameras and processes the socket-pose inliers selected in the current
+session.
 
 No insertion command was sent. Offline replay from the saved final joint
 state and frozen collision world reproduced `axial_waypoint_unreachable`:

@@ -73,11 +73,15 @@ export PRECISION_CAPTURE4_PROJECT_ROOT=${PRECISION_CAPTURE4_PROJECT_ROOT:-$PRECI
 export PRECISION_ZERODEX_FR3_FCI_IP=${PRECISION_ZERODEX_FR3_FCI_IP:-172.16.1.11}
 export PRECISION_ZERODEX_DAEMON_HOST=${PRECISION_ZERODEX_DAEMON_HOST:-127.0.0.1}
 export PRECISION_CAPTURE4_CAMERA_IDS=${PRECISION_CAPTURE4_CAMERA_IDS:-26053248,25322639,25305462,25322642}
-export PRECISION_BOARD_FIT_CAMERA_IDS=${PRECISION_BOARD_FIT_CAMERA_IDS:-26053248,25322639,25322642}
+# Feed all commissioned cameras into ChArUco triangulation. That estimator
+# already refits each corner after reprojection outlier removal; the later
+# socket-only fit independently records its per-capture centre inliers. Do not
+# encode a permanent camera blacklist in the machine profile.
+export PRECISION_BOARD_FIT_CAMERA_IDS=${PRECISION_BOARD_FIT_CAMERA_IDS:-$PRECISION_CAPTURE4_CAMERA_IDS}
 export PRECISION_VLM_CAMERA_IDS=${PRECISION_VLM_CAMERA_IDS:-26053248,25322639,25305462,25322642}
-# Four saved same-trial snapshots agreed on these three key-face views.
-# The fourth view is processed only when the first three do not yield metric XY.
-export PRECISION_XY_PREFERRED_CAMERA_IDS=${PRECISION_XY_PREFERRED_CAMERA_IDS:-25305462,25322639,25322642}
+# Ordering is no longer a fixed three-camera choice. Each session's
+# socket-pose inliers select the actual endpoint views before Qwen/SAM work.
+export PRECISION_XY_PREFERRED_CAMERA_IDS=${PRECISION_XY_PREFERRED_CAMERA_IDS:-$PRECISION_CAPTURE4_CAMERA_IDS}
 export PRECISION_PREINSERT_AUDIT_OVERLAY=${PRECISION_PREINSERT_AUDIT_OVERLAY:-0}
 # Six reviewed released-key episodes (five with a 5 mm socket, one with a
 # 10 mm socket) replayed correctly with this three-view A/B vote. XY

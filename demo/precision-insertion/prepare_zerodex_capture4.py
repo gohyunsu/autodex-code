@@ -15,11 +15,11 @@ from pathlib import Path
 import shutil
 
 
-# On the current board, 25305462 contributes a repeatable ~4 px corner-8
-# mismatch. Use the other three only for board triangulation; retain all four
-# for socket/key perception and three selected views for VLM.
+# Use all cameras as inputs. ChArUco fitting removes per-corner reprojection
+# outliers, and the socket-only fit records a fresh per-capture inlier set.
+# Camera serials are therefore never permanently blacklisted by this profile.
 CAMERAS = ("26053248", "25322639", "25305462", "25322642")
-BOARD_FIT_CAMERAS = ("26053248", "25322639", "25322642")
+BOARD_FIT_CAMERAS = CAMERAS
 
 
 def _serials(value: str) -> tuple[str, ...]:
