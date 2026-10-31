@@ -142,13 +142,22 @@ for debugging. Existing reports with overlay PNGs remain verifiable. This
 change has been checked with saved 5 mm cylinder frames; live latency has not
 yet been measured after the change.
 
-If the corrected 20 mm endpoint cannot be planned while the key remains
-held, `corrected_hold_recovery.py` reads this attempt's executed XY, transfer
-and lift archives, checks their reversed route with the existing planner,
-then uses the same Franka follower to return and open the hand. A fresh
-clear-view key capture and the existing reset/repose path restore the original
-tabletop pose and location. Saved-state planning replay passed; this recovery
-motion has not yet been tested on the physical robot.
+After closed-loop alignment, the corrected axial handoff first screens and
+plans the canonical 20 mm endpoint. If the hand/socket endpoint or sampled
+held path cannot pass, the same measured hold is rebuilt for a 10 mm endpoint
+and planned once. The handoff records the requested and effective depths plus
+both attempt reports, so release and outcome labelling use the path that was
+actually executed. This is a pre-motion geometric/path fallback; a physical
+force stop during an already executing stroke retains the normal ascent and
+recovery route rather than silently changing depth. Offline grasp admission
+still requires the canonical 20 mm endpoint.
+
+If neither corrected endpoint can be planned while the key remains held,
+`corrected_hold_recovery.py` reads this attempt's executed XY, transfer and
+lift archives, checks their reversed route with the existing planner, then
+uses the same Franka follower to return and open the hand. A fresh clear-view
+key capture and the existing reset/repose path restore the original tabletop
+pose and location.
 
 The vendored cuRobo `world_mesh.py` contains three unconditional tensor
 debug prints. Tensor formatting aborts CUDA graph capture during planner
@@ -1471,8 +1480,8 @@ from the locations predicted by the measured FR3 movement. The operator
 reported that the key was on the board when the run was stopped. The saved
 images alone do not establish the exact instant at which it left the hand.
 
-The ZeroDex live profile now requests at most **3 mm between photographs**
-(`PRECISION_SAME_TRIAL_MAX_STEP_MM`, default 3). Each requested XY displacement
+The ZeroDex live profile now requests at most **10 mm between photographs**
+(`PRECISION_SAME_TRIAL_MAX_STEP_MM`, default 10). Each requested XY displacement
 is represented by collinear Cartesian waypoints spaced no more than **1 mm**
 apart. A damped numerical-Jacobian continuation solves every waypoint from
 the preceding accepted FR3 joint state; it does not invoke MotionGen or reset

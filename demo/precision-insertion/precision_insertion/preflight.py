@@ -296,7 +296,7 @@ def plan_held_transfer_and_axial(
                          targets.T_robot_hand_preinsert, limits):
             return result("transfer_goal_residual", transfer=transfer)
 
-    travel = targets.preinsert_clearance_m + targets.mode.target_depth_m
+    travel = targets.preinsert_clearance_m + targets.target_depth_m
     count = int(math.ceil(travel / step))
     if count < 1:
         raise ValueError("insertion travel is invalid")

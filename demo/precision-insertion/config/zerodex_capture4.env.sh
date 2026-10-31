@@ -28,8 +28,9 @@ export PRECISION_LABEL_MODE=${PRECISION_LABEL_MODE:-manual}
 # ZeroDex runs reobserve and correct XY at pre-insertion by default. An
 # explicitly empty value disables this mode for a baseline run.
 export PRECISION_SAME_TRIAL_XY_TOLERANCE_MM=${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM-2.5}
-# Take a new image after each short held-key correction.
-export PRECISION_SAME_TRIAL_MAX_STEP_MM=${PRECISION_SAME_TRIAL_MAX_STEP_MM-3}
+# Take a new image after each held-key correction; one correction may move up
+# to 10 mm, while the loop has no cumulative XY cap.
+export PRECISION_SAME_TRIAL_MAX_STEP_MM=${PRECISION_SAME_TRIAL_MAX_STEP_MM-10}
 # Align the symmetry-reduced cylinder axis in the same photograph/move/
 # rephotograph loop. These values are convergence and motion-step settings,
 # not extra grasp/insertion rejection criteria.

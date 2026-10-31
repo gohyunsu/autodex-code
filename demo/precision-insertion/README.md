@@ -91,6 +91,13 @@ from the board-9 `robot_pc_stages:configure` motion interlock. Its ten stages
 and camera callbacks now assemble offline. The built-in release callback
 needs the existing path-audit limits and is not a measured key-depth test.
 
+For the ZeroDex capture4 closed-loop route, 20 mm remains the offline grasp
+admission and first runtime target. When the corrected 20 mm hand/socket
+endpoint or sampled held path cannot be planned, the runtime rebuilds the
+same measured hold at 10 mm and tries that axial path once. The handoff stores
+the effective depth and the final visual `inside_socket` label uses it. This
+does not reinterpret a physical force stop as a planning collision.
+
 For the complete AutoDex-PC execution entry point and required integration
 module, see [LIVE_RUNTIME.md](LIVE_RUNTIME.md). `run_live.py` keeps all
 precision-specific robot-loop code under this demo; stock AutoDex execution

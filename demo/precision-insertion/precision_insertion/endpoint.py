@@ -233,8 +233,9 @@ def screen_grasp_endpoint(
     hand_poses_override: dict[str, np.ndarray] | None = None,
     override_source: str | None = None,
     cylinder_yaw_gauge_socket_rad: float = 0.0,
+    verification_depth_m: float | None = None,
 ) -> dict[str, Any]:
-    """Screen CAD key/socket fit and Inspire links at one aligned 20 mm pose.
+    """Screen CAD key/socket fit and Inspire links at one aligned depth pose.
 
     `candidate_dir` may be a staged BODex candidate or v8 candidate. This
     function does not verify simulated grasp stability; callers must combine
@@ -280,7 +281,20 @@ def screen_grasp_endpoint(
     if missing:
         raise FileNotFoundError("missing endpoint input: " + ", ".join(missing))
     geometry = json.loads(files["task_geometry"].read_text(encoding="utf-8"))
-    T_socket_key_nominal = validate_task_geometry(geometry, mode)
+    canonical = validate_task_geometry(geometry, mode)
+    depth = (mode.target_depth_m if verification_depth_m is None else
+             float(verification_depth_m))
+    if (not math.isfinite(depth) or depth <= 0 or
+            depth > mode.target_depth_m + 1e-9):
+        raise ValueError("verification depth must be positive and within CAD target")
+    entry = validate_se3(geometry["T_socket_key_entry"],
+                         name="T_socket_key_entry")
+    direction = np.asarray(geometry["insertion_direction_socket"], dtype=float)
+    T_socket_key_nominal = entry.copy()
+    T_socket_key_nominal[:3, 3] += depth * direction
+    if math.isclose(depth, mode.target_depth_m, rel_tol=0, abs_tol=1e-9):
+        if not np.allclose(T_socket_key_nominal, canonical, atol=1e-8, rtol=0):
+            raise ValueError("canonical endpoint target changed")
     T_socket_key = T_socket_key_nominal.copy()
     if yaw != 0.0:
         c, s = math.cos(yaw), math.sin(yaw)
@@ -349,7 +363,7 @@ def screen_grasp_endpoint(
         "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
                  "key_object": mode.key_object,
                  "socket_object": mode.socket_object},
-        "verification_depth_m": mode.target_depth_m,
+        "verification_depth_m": depth,
         "xy_offset_socket_m": offset.tolist(),
         "cylinder_yaw_gauge_socket_rad": yaw,
         "minimum_required_hand_clearance_m": minimum_hand_clearance_m,
@@ -360,7 +374,9 @@ def screen_grasp_endpoint(
             "AutoDex default Inspire squeeze_level=2; measured hardware pose must be checked online"
             if hand_poses_override is None else
             "explicit supplied hand/key state; source authenticity is checked by the caller"),
-        "hand_socket_clear_at_20mm": hand_pass,
+        "hand_socket_clear_at_target": hand_pass,
+        **({"hand_socket_clear_at_20mm": hand_pass}
+           if math.isclose(depth, .020, rel_tol=0, abs_tol=1e-9) else {}),
         "endpoint_pass": not key_fit["colliding"] and hand_pass,
         "method": ("Coal triangle-surface collision/distance plus validated analytic cylinder-solid vertex containment"
                    if mode.family == "cylinder" else

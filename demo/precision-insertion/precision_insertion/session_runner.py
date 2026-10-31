@@ -2771,6 +2771,7 @@ class SessionRunner:
         decision_timestamp_s: float, max_phase_skew_s: float,
         minimum_visual_views: int = 2, label_mode: str = "vlm_only",
         manual_annotation: dict | None = None,
+        target_depth_m: float | None = None,
     ) -> dict:
         """Label the released key from final socket views.
 
@@ -2811,10 +2812,12 @@ class SessionRunner:
                     Path(handoff["final_preinsert_bundle_path"]).resolve() !=
                     preinsert_root):
                 raise ValueError("released-key label used another pre-insertion snapshot")
+        effective_depth = (self.mode.target_depth_m if target_depth_m is None
+                           else float(target_depth_m))
         report = assess_released_insertion_checkpoint(
             attempt_id=self._attempt.attempt_id,
             candidate_id=self._attempt.candidate_id,
-            target_depth_m=self.mode.target_depth_m,
+            target_depth_m=effective_depth,
             session_calibration_sha256=self.session_sha256,
             initial_key_bundle=initial_root,
             preinsert_bundle=preinsert_root, final_bundle=final_bundle,

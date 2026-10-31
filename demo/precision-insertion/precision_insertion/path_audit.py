@@ -435,7 +435,8 @@ def audit_held_joint_paths(
         T_key_hand=targets.T_key_hand,
         xy_offset_socket_m=targets.xy_offset_socket_m,
         cylinder_yaw_gauge_socket_rad=(
-            targets.cylinder_yaw_gauge_socket_rad))
+            targets.cylinder_yaw_gauge_socket_rad),
+        target_depth_m=targets.target_depth_m)
     for name in ("T_robot_hand_preinsert", "T_robot_hand_entry",
                  "T_robot_hand_verification", "T_robot_key_verification"):
         if not np.allclose(getattr(refreshed, name), getattr(targets, name),
@@ -475,7 +476,7 @@ def audit_held_joint_paths(
         raise ValueError("transfer does not reach pre-insertion hand target")
     if not _poses_match(wrist["descent"][-1], targets.T_robot_hand_verification,
                         limits):
-        raise ValueError("descent does not reach 20 mm hand target")
+        raise ValueError("descent does not reach insertion-depth hand target")
 
     # These are rigid key/hand model metrics, not a measurement of the key
     # after physical squeeze. Persist them separately from the Boolean audit
@@ -491,7 +492,7 @@ def audit_held_joint_paths(
         "axial_progress_from_preinsert_m": final_axial_progress,
         "rigid_model_depth_past_entry_m": (
             final_axial_progress - targets.preinsert_clearance_m),
-        "nominal_target_depth_m": mode.target_depth_m,
+        "nominal_target_depth_m": targets.target_depth_m,
         "lateral_from_socket_axis_m": final_lateral,
         "hand_target_translation_error_m": float(np.linalg.norm(
             final_hand[:3, 3] -
@@ -504,7 +505,7 @@ def audit_held_joint_paths(
     failures: list[dict] = []
     axis = targets.insertion_axis_robot
     origin = targets.T_robot_hand_preinsert[:3, 3]
-    full_depth = targets.preinsert_clearance_m + mode.target_depth_m
+    full_depth = targets.preinsert_clearance_m + targets.target_depth_m
     progress_previous = -float("inf")
     for stage, path in stages.items():
         for i in range(1, len(path)):

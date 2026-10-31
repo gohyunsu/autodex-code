@@ -55,12 +55,12 @@ def _write(path: Path, record: dict) -> Path:
 
 
 class CorrectedAxialPlanUnavailable(RuntimeError):
-    """A saved corrected 20 mm plan failed before insertion motion."""
+    """Both corrected insertion-depth plans failed before insertion motion."""
 
     def __init__(self, report_path: Path, status: str):
         self.report_path = Path(report_path)
         self.status = status
-        super().__init__(f"corrected 20 mm plan failed: {status}")
+        super().__init__(f"corrected insertion plan failed: {status}")
 
 
 class HeldXYPlanUnavailable(RuntimeError):
@@ -764,65 +764,83 @@ def plan_corrected_axial_handoff(*, runner, planner,
     measured_wrist = validate_se3(planner.fk_wrist(state.full_q),
                                   name="corrected measured wrist FK")
     relation = np.linalg.inv(provisional.T_robot_key_preinsert) @ measured_wrist
-    targets = build_rigid_insertion_targets(
-        mode=runner.mode, shared_root=runner.shared_root,
-        calibration=runner.calibration, T_key_hand=relation,
-        xy_offset_socket_m=provisional.xy_offset_socket_m,
-        cylinder_yaw_gauge_socket_rad=original.cylinder_yaw_gauge_socket_rad)
     folder = (Path(runner._attempt_dir) / "guarded_axial_handoffs" /
               f"{runner._guarded_axial_index:03d}")
     folder.mkdir(parents=True, exist_ok=False)
     candidate_dir = (AssetPaths(runner.shared_root, runner.mode).candidate_dir /
                      Path(*runner._preflight.selected_candidate_key))
-    endpoint = screen_grasp_endpoint(
-        shared_root=runner.shared_root, mode=runner.mode,
-        candidate_dir=candidate_dir,
-        minimum_hand_clearance_m=path_limits.minimum_hand_clearance_m,
-        xy_offset_socket_m=targets.xy_offset_socket_m,
-        T_key_hand_override=relation,
-        hand_poses_override={"measured_hold": state.full_q[7:]},
-        override_source="same_trial_corrected_XY_measured_wrist",
-        cylinder_yaw_gauge_socket_rad=targets.cylinder_yaw_gauge_socket_rad)
-    if not np.allclose(endpoint["T_socket_key_tested"],
-                       np.linalg.inv(socket) @ targets.T_robot_key_verification,
-                       atol=1e-8, rtol=0):
-        raise ValueError("corrected endpoint and axial goal differ")
-    if endpoint["endpoint_pass"] is not True:
+    depth_attempts = []
+
+    def attempt_depth(depth_m: float):
+        targets = build_rigid_insertion_targets(
+            mode=runner.mode, shared_root=runner.shared_root,
+            calibration=runner.calibration, T_key_hand=relation,
+            xy_offset_socket_m=provisional.xy_offset_socket_m,
+            cylinder_yaw_gauge_socket_rad=(
+                original.cylinder_yaw_gauge_socket_rad),
+            target_depth_m=depth_m)
+        endpoint = screen_grasp_endpoint(
+            shared_root=runner.shared_root, mode=runner.mode,
+            candidate_dir=candidate_dir,
+            minimum_hand_clearance_m=path_limits.minimum_hand_clearance_m,
+            xy_offset_socket_m=targets.xy_offset_socket_m,
+            T_key_hand_override=relation,
+            hand_poses_override={"measured_hold": state.full_q[7:]},
+            override_source="same_trial_corrected_XY_measured_wrist",
+            cylinder_yaw_gauge_socket_rad=(
+                targets.cylinder_yaw_gauge_socket_rad),
+            verification_depth_m=depth_m)
+        if not np.allclose(
+                endpoint["T_socket_key_tested"],
+                np.linalg.inv(socket) @ targets.T_robot_key_verification,
+                atol=1e-8, rtol=0):
+            raise ValueError("corrected endpoint and axial goal differ")
+        if endpoint["endpoint_pass"] is not True:
+            return targets, endpoint, None, "endpoint_rejected"
+        planned = plan_held_transfer_and_axial(
+            planner=planner, trial_scene=runner._preflight.trial_scene,
+            shared_root=runner.shared_root, calibration=runner.calibration,
+            targets=targets, start_q=state.full_q,
+            held_hand_q=state.full_q[7:], held_hand_source="measured",
+            limits=path_limits, axial_waypoint_step_m=.005,
+            start_at_preinsert=True, exact_distances=False)
+        if not planned.sampled_planning_pass or planned.axial_trajectory is None:
+            return targets, endpoint, planned, planned.status
+        return targets, endpoint, planned, "sampled_planning_pass"
+
+    requested_depth = runner.mode.target_depth_m
+    targets, endpoint, planned, status = attempt_depth(requested_depth)
+    depth_attempts.append({
+        "target_depth_m": requested_depth, "status": status,
+        "endpoint_pass": endpoint["endpoint_pass"],
+        "planning": None if planned is None else planned.to_record(),
+    })
+    fallback_depth = .010
+    if status != "sampled_planning_pass":
+        targets, endpoint, planned, status = attempt_depth(fallback_depth)
+        depth_attempts.append({
+            "target_depth_m": fallback_depth, "status": status,
+            "endpoint_pass": endpoint["endpoint_pass"],
+            "planning": None if planned is None else planned.to_record(),
+        })
+    if status != "sampled_planning_pass" or planned is None:
+        failed_depth = depth_attempts[-1]["target_depth_m"]
         failure = _write(folder / "plan_failure.json", {
             "schema": "precision_insertion_same_trial_axial_plan_failure_v1",
             "attempt_id": runner.active_attempt.attempt_id,
             "candidate_id": runner.active_attempt.candidate_id,
-            "status": "corrected_20mm_endpoint_rejected",
+            "status": f"corrected_{int(failed_depth * 1000)}mm_{status}",
             "measured_start": state.to_record(),
             **alignment_record,
             "targets": targets.to_record(),
             "endpoint": endpoint,
-            "planning": None,
+            "planning": None if planned is None else planned.to_record(),
+            "depth_attempts": depth_attempts,
             "scope": "failed_plan_no_insertion_command",
         })
-        raise CorrectedAxialPlanUnavailable(
-            failure, "corrected_20mm_endpoint_rejected")
-    planned = plan_held_transfer_and_axial(
-        planner=planner, trial_scene=runner._preflight.trial_scene,
-        shared_root=runner.shared_root, calibration=runner.calibration,
-        targets=targets, start_q=state.full_q,
-        held_hand_q=state.full_q[7:], held_hand_source="measured",
-        limits=path_limits, axial_waypoint_step_m=.005,
-        start_at_preinsert=True, exact_distances=False)
-    if not planned.sampled_planning_pass or planned.axial_trajectory is None:
-        failure = _write(folder / "plan_failure.json", {
-            "schema": "precision_insertion_same_trial_axial_plan_failure_v1",
-            "attempt_id": runner.active_attempt.attempt_id,
-            "candidate_id": runner.active_attempt.candidate_id,
-            "status": planned.status,
-            "measured_start": state.to_record(),
-            **alignment_record,
-            "targets": targets.to_record(),
-            "endpoint": endpoint,
-            "planning": planned.to_record(),
-            "scope": "failed_plan_no_insertion_command",
-        })
-        raise CorrectedAxialPlanUnavailable(failure, planned.status)
+        raise CorrectedAxialPlanUnavailable(failure, status)
+    used_fallback = not math.isclose(
+        targets.target_depth_m, requested_depth, rel_tol=0, abs_tol=1e-9)
     archive = folder / "planned_trajectories.npz"
     np.savez_compressed(archive, axial=planned.axial_trajectory)
     report = _write(folder / "report.json", {
@@ -843,7 +861,14 @@ def plan_corrected_axial_handoff(*, runner, planner,
         "axial_start_q": planned.axial_trajectory[0].tolist(),
         "axial_end_q": planned.axial_trajectory[-1].tolist(),
         "axial_sample_count": len(planned.axial_trajectory),
-        "target_depth_m": runner.mode.target_depth_m,
+        "target_depth_m": targets.target_depth_m,
+        "requested_target_depth_m": requested_depth,
+        "depth_fallback": {
+            "used": used_fallback,
+            "fallback_target_depth_m": fallback_depth,
+            "trigger": (depth_attempts[0]["status"] if used_fallback else None),
+            "attempts": depth_attempts,
+        },
         "measured_start": state.to_record(),
         "decision_timestamp_s": time.time(),
         **alignment_record,
@@ -892,6 +917,32 @@ def verify_same_trial_axial_handoff(path: Path) -> dict:
         raise ValueError("same-trial axial archive changed")
     with np.load(archive, allow_pickle=False) as arrays:
         axial = np.asarray(arrays["axial"], dtype=float)
+    # Reports produced before the runtime fallback always represented the
+    # canonical 20 mm target and did not repeat its depth at the top level.
+    # Keep those immutable episode records replayable.
+    if "target_depth_m" in record:
+        depth = float(record.get("target_depth_m", float("nan")))
+        supported_depth = any(math.isclose(
+            depth, expected, rel_tol=0, abs_tol=1e-9)
+            for expected in (.010, .020))
+        fallback = record.get("depth_fallback")
+        expected_fallback = math.isclose(
+            depth, .010, rel_tol=0, abs_tol=1e-9)
+        target_depth = record.get("targets", {}).get(
+            "effective_target_depth_m")
+        endpoint_depth = record.get("endpoint", {}).get(
+            "verification_depth_m")
+        if (not supported_depth or
+                type(target_depth) not in (int, float) or
+                not math.isclose(target_depth, depth, rel_tol=0,
+                                 abs_tol=1e-9) or
+                type(endpoint_depth) not in (int, float) or
+                not math.isclose(endpoint_depth, depth, rel_tol=0,
+                                 abs_tol=1e-9) or
+                not isinstance(fallback, dict) or
+                fallback.get("used") is not expected_fallback):
+            raise ValueError(
+                "same-trial axial handoff has inconsistent target depth")
     if (axial.shape != (record["axial_sample_count"], 13) or
             not np.array_equal(axial[0], record["axial_start_q"]) or
             not np.array_equal(axial[-1], record["axial_end_q"]) or

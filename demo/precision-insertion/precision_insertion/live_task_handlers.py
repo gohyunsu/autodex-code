@@ -978,10 +978,18 @@ class LiveTaskHandlers:
             raise RuntimeError(
                 "insertion ended without a verified force-stop ascent; "
                 "supervised recovery is required")
+        # The real executor has already replay-verified this report.  The
+        # fallback depth belongs to the path that was actually executed, not
+        # to the session's canonical 20 mm task mode.
+        handoff_source = Path(handoff)
+        effective_target_depth_m = .020
+        if handoff_source.is_file():
+            effective_target_depth_m = float(json.loads(
+                handoff_source.read_text(encoding="utf-8"))["target_depth_m"])
         metric = Path(execution["metric_record"]["path"])
         if not callable(self.release_and_clear):
             raise RuntimeError(
-                "20 mm insertion needs a commissioned release_and_clear callback")
+                "insertion needs a commissioned release_and_clear callback")
         with timed("trial.release_and_clear", phase="trial", kind="motion",
                    attempt_id=attempt.attempt_id):
             release_path = Path(self.release_and_clear(
@@ -1013,6 +1021,7 @@ class LiveTaskHandlers:
                 final_capture=final_capture,
                 backend=self.backend,
                 decision_timestamp_s=decision_at,
+                target_depth_m=effective_target_depth_m,
                 label_mode=self.label_mode,
                 manual_annotation=request_annotation(
                     mode=self.label_mode, provider=self.manual_label_provider,

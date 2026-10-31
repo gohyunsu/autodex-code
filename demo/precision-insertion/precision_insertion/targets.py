@@ -43,6 +43,13 @@ class InsertionTargets:
     preinsert_clearance_m: float
     cylinder_yaw_gauge_socket_rad: float = 0.0
 
+    @property
+    def target_depth_m(self) -> float:
+        """Return the represented depth past entry, including runtime fallback."""
+        delta = (self.T_robot_key_verification[:3, 3] -
+                 self.T_robot_key_entry[:3, 3])
+        return round(float(np.dot(delta, self.insertion_axis_robot)), 12)
+
     def to_record(self) -> dict:
         return {
             "schema": "precision_insertion_rigid_targets_v1",
@@ -67,6 +74,7 @@ class InsertionTargets:
             "cylinder_yaw_gauge_socket_rad": (
                 self.cylinder_yaw_gauge_socket_rad),
             "preinsert_clearance_m": self.preinsert_clearance_m,
+            "effective_target_depth_m": self.target_depth_m,
             "robot_ready": False,
         }
 
@@ -76,6 +84,7 @@ def build_rigid_insertion_targets(
     T_key_hand: np.ndarray,
     xy_offset_socket_m: tuple[float, float] = (0.0, 0.0),
     cylinder_yaw_gauge_socket_rad: float = 0.0,
+    target_depth_m: float | None = None,
 ) -> InsertionTargets:
     """Compose CAD key targets with the frozen socket and one fixed grasp.
 
@@ -102,13 +111,22 @@ def build_rigid_insertion_targets(
     geometry = json.loads(geometry_bytes)
     if not isinstance(geometry, dict):
         raise ValueError("task geometry must be a JSON object")
-    verification = validate_task_geometry(geometry, mode)
+    canonical_verification = validate_task_geometry(geometry, mode)
     entry = validate_se3(geometry.get("T_socket_key_entry"),
                          name="T_socket_key_entry")
     preinsert = validate_se3(geometry.get("T_socket_key_preinsert"),
                              name="T_socket_key_preinsert")
     direction = np.asarray(geometry["insertion_direction_socket"],
                            dtype=np.float64)
+    depth = mode.target_depth_m if target_depth_m is None else float(target_depth_m)
+    if (not math.isfinite(depth) or depth <= 0 or
+            depth > mode.target_depth_m + 1e-9):
+        raise ValueError("target depth must be positive and no deeper than CAD verification")
+    verification = entry.copy()
+    verification[:3, 3] += depth * direction
+    if math.isclose(depth, mode.target_depth_m, rel_tol=0, abs_tol=1e-9):
+        if not np.allclose(verification, canonical_verification, atol=1e-8, rtol=0):
+            raise ValueError("canonical verification target changed")
     clearance = float(geometry.get("preinsert_clearance_m", float("nan")))
     if (not math.isfinite(clearance) or clearance <= 0 or
             not np.allclose(direction[:2], [0.0, 0.0], atol=1e-8) or

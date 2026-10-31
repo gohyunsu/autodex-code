@@ -654,6 +654,89 @@ def test_corrected_axial_screens_measured_hand_endpoint_before_planning(
     failure = json.loads((tmp_path / "attempt/guarded_axial_handoffs/000/plan_failure.json").read_text())
     assert stopped.value.report_path == (
         tmp_path / "attempt/guarded_axial_handoffs/000/plan_failure.json")
-    assert stopped.value.status == "corrected_20mm_endpoint_rejected"
-    assert failure["status"] == "corrected_20mm_endpoint_rejected"
-    assert failure["endpoint"]["hand_socket_clear_at_20mm"] is False
+    assert stopped.value.status == "endpoint_rejected"
+    assert failure["status"] == "corrected_10mm_endpoint_rejected"
+    assert [row["target_depth_m"] for row in failure["depth_attempts"]] == [
+        .020, .010]
+    assert all(row["endpoint_pass"] is False
+               for row in failure["depth_attempts"])
+
+
+def test_corrected_axial_falls_back_from_20mm_collision_to_10mm(
+        tmp_path, monkeypatch):
+    import precision_insertion.same_trial_xy as same_trial
+
+    mode = select_mode("cylinder", 5)
+    pose = np.eye(4)
+
+    def targets_for_depth(**kwargs):
+        depth = kwargs["target_depth_m"]
+        verification = pose.copy()
+        verification[2, 3] = -depth
+        return InsertionTargets(
+            mode, "a" * 64, "b" * 64, pose, pose, pose, verification,
+            pose, pose, verification, np.array([0., 0., -1.]),
+            (0., 0.), .03)
+
+    state = SimpleNamespace(
+        full_q=np.zeros(13), to_record=lambda: {"full_q": [0.] * 13})
+    attempt = tmp_path / "attempt"
+    attempt.mkdir()
+    postlift = tmp_path / "postlift.json"
+    preinsert = tmp_path / "preinsert.json"
+    final = tmp_path / "final"
+    final.mkdir()
+    for path in (postlift, preinsert, final / "manifest.json"):
+        path.write_text("{}", encoding="utf-8")
+    runner = SimpleNamespace(
+        mode=mode, shared_root=tmp_path, calibration=None,
+        _attempt_dir=attempt, _guarded_axial_index=0,
+        _postlift_preflight=SimpleNamespace(targets=targets_for_depth(
+            target_depth_m=.020)),
+        _postlift_report_path=postlift, _preinsert_report_path=preinsert,
+        _preflight=SimpleNamespace(
+            selected_candidate_key=("table", "0", "42"), trial_scene={}),
+        active_attempt=SimpleNamespace(
+            attempt_id="attempt_1", candidate_id="table/0/42"),
+        session_sha256="c" * 64,
+    )
+    monkeypatch.setattr(same_trial, "validated_frozen_socket_pose",
+                        lambda **_kwargs: pose)
+    monkeypatch.setattr(same_trial, "build_rigid_insertion_targets",
+                        targets_for_depth)
+
+    def endpoint(**kwargs):
+        depth = kwargs["verification_depth_m"]
+        target = targets_for_depth(target_depth_m=depth)
+        return {
+            "endpoint_pass": depth == .010,
+            "verification_depth_m": depth,
+            "T_socket_key_tested":
+                target.T_robot_key_verification.tolist(),
+        }
+
+    monkeypatch.setattr(same_trial, "screen_grasp_endpoint", endpoint)
+    axial = np.stack((np.zeros(13), np.ones(13) * .001))
+    planned = SimpleNamespace(
+        status="sampled_planning_pass", sampled_planning_pass=True,
+        axial_trajectory=axial,
+        to_record=lambda: {
+            "sampled_planning_pass": True,
+            "sampled_held_path_audit": {"sampled_clear": True}},
+    )
+    monkeypatch.setattr(same_trial, "plan_held_transfer_and_axial",
+                        lambda **_kwargs: planned)
+    report_path = same_trial.plan_corrected_axial_handoff(
+        runner=runner, planner=SimpleNamespace(fk_wrist=lambda _q: pose),
+        path_limits=SimpleNamespace(minimum_hand_clearance_m=0.),
+        read_state=lambda: state, total_xy_m=(0., 0.),
+        residual_xy_m=(0., 0.), residual_source="metric_multiview",
+        observations=[], shifts=[], final_preinsert_bundle=final)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["target_depth_m"] == .010
+    assert report["requested_target_depth_m"] == .020
+    assert report["depth_fallback"]["used"] is True
+    assert report["depth_fallback"]["trigger"] == "endpoint_rejected"
+    assert [row["status"] for row in report["depth_fallback"]["attempts"]] == [
+        "endpoint_rejected", "sampled_planning_pass"]
+    assert verify_guarded_axial_handoff(report_path)["target_depth_m"] == .010

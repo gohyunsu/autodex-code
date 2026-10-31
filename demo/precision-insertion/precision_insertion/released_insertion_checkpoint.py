@@ -204,8 +204,9 @@ def assess_released_insertion_checkpoint(
 ) -> dict:
     """Create the released-key task label while retaining controller metrics."""
     _safe_id(attempt_id, "attempt ID")
-    if not math.isclose(target_depth_m, .020, rel_tol=0, abs_tol=1e-9):
-        raise ValueError("released insertion target must be 20 mm")
+    if not any(math.isclose(target_depth_m, depth, rel_tol=0, abs_tol=1e-9)
+               for depth in (.010, .020)):
+        raise ValueError("released insertion target must be 10 or 20 mm")
     limits = (max_phase_skew_s,)
     if (not all(math.isfinite(float(value)) and float(value) > 0
                 for value in limits) or
@@ -353,6 +354,10 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
             report.get("visual", {}).get("stage") !=
             "released_insertion_visual"):
         raise ValueError("invalid released insertion checkpoint")
+    if not any(math.isclose(
+            float(report.get("target_depth_m", float("nan"))), depth,
+            rel_tol=0, abs_tol=1e-9) for depth in (.010, .020)):
+        raise ValueError("released insertion target is not 10 or 20 mm")
     initial_root = Path(report["initial_key_bundle"])
     preinsert_root = Path(report["preinsert_bundle"])
     final_root = Path(report["final_bundle"])
