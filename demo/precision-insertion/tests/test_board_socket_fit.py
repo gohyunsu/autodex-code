@@ -118,6 +118,34 @@ def test_two_flange_only_views_use_flange_height_not_wall_midpoint(tmp_path):
     assert min(diagnostic["per_view_iou"].values()) > .98
 
 
+def test_socket_pose_excludes_only_current_capture_center_outlier(tmp_path):
+    mesh = tmp_path / "socket.obj"
+    mesh.write_text("\n".join(
+        f"v {r * np.cos(a)} {r * np.sin(a)} {z}"
+        for r, z in ((.06, 0), (.06, .005), (.04, .005), (.04, .055))
+        for a in np.linspace(0, 2 * np.pi, 36, endpoint=False)) + "\n")
+    K = np.array([[850, 0, 400], [0, 850, 300], [0, 0, 1.0]])
+    eyes = ((.24, -.28, .42), (-.30, -.20, .40),
+            (.27, .30, .44), (-.29, .25, .41))
+    cameras = {f"cam_{i}": _camera(np.array(eye))
+               for i, eye in enumerate(eyes)}
+    masks = {camera: _disk_mask(E, K, .04, .005, .055)
+             for camera, E in cameras.items()}
+    shifted = np.zeros_like(masks["cam_3"])
+    shifted[:, 55:] = masks["cam_3"][:, :-55]
+    masks["cam_3"] = shifted
+    pose, diagnostic = fit_board_socket_body(
+        masks=masks, intrinsics_undist={name: K for name in cameras},
+        extrinsics_camera_world=cameras, c2r=np.eye(4),
+        board_pose_robot=np.diag([1.0, -1.0, -1.0, 1.0]),
+        raw_mesh=mesh)
+    assert diagnostic["socket_pose_inlier_camera_ids"] == [
+        "cam_0", "cam_1", "cam_2"]
+    assert diagnostic["socket_pose_excluded_camera_ids"] == ["cam_3"]
+    assert diagnostic["per_view_center_residual_mm"]["cam_3"] > 10
+    assert np.linalg.norm(pose[:3, 3]) < .003
+
+
 def test_whole_body_masks_select_both_socket_regions(tmp_path):
     mesh = tmp_path / "socket.obj"
     mesh.write_text("\n".join(

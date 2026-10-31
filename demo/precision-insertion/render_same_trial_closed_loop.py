@@ -348,9 +348,23 @@ def main() -> None:
         (attempt/"same_trial_xy"/"observations").glob("*.json"))]
     if not observations:
         raise ValueError("attempt has no same-trial XY observations")
+    # New runs bind endpoint estimation to the socket-pose inliers selected
+    # during this session's socket-only measurement. Use that same view set
+    # in the review GIF; explicit CLI exclusions remain available for replay
+    # of older evidence that predates the recorded selection.
+    socket_selection = observations[0].get(
+        "socket_geometry_view_selection", {})
+    excluded_cameras.update(socket_selection.get(
+        "excluded_camera_ids", []))
 
     shift_paths = sorted((attempt/"same_trial_xy"/"shifts").glob("*/report.json"))
-    shifts = {int(path.parent.name): read(path) for path in shift_paths}
+    # Active-observation runs also contain descriptive auxiliary moves such
+    # as ``000_lateral_0`` and ``001_post_lateral_correction``.  The frame
+    # grid associates only the canonical, numeric correction following each
+    # observation; keep the auxiliary reports on disk without trying to cast
+    # their names to iteration numbers.
+    shifts = {int(path.parent.name): read(path) for path in shift_paths
+              if path.parent.name.isdigit()}
     frames = []
     records = []
     for index, observation in enumerate(observations):
@@ -392,6 +406,7 @@ def main() -> None:
         "attempt_dir": str(attempt),
         "session_run_dir": str(run_dir),
         "excluded_cameras": sorted(excluded_cameras),
+        "socket_geometry_view_selection": socket_selection,
         "gif": str(gif),
         "final_result_frame": None if final is None else str(final_path),
         "iterations": records,

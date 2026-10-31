@@ -314,9 +314,9 @@ def test_same_trial_xy_reobserves_and_replans_from_final_hold(
     assert bound._same_trial_handoff == tmp_path / "corrected_handoff.json"
 
 
-def test_multiple_predicted_steps_keep_last_metric_temporal_reference(
+def test_unverified_single_view_probe_returns_to_nominal_when_tracking_lost(
         tmp_path, monkeypatch):
-    """Regression: an absent point after step two is not iterated as None."""
+    """A planar single-view hypothesis must not drive blind correction steps."""
     bound, runner, *_ = _handler(tmp_path)
     runner._attempt_dir = tmp_path / "attempts" / runner.active_attempt.attempt_id
     bound._preinsert_bundle = tmp_path / "first_preinsert"
@@ -332,7 +332,7 @@ def test_multiple_predicted_steps_keep_last_metric_temporal_reference(
     runner.mode = "cylinder"
     runner.shared_root = tmp_path
     runner.calibration = SimpleNamespace(record={})
-    corrections = iter(([.009, 0.], None, None, None))
+    corrections = iter(([.009, 0.], None))
     feedback_steps = []
     shift_index = 0
     handed = {}
@@ -380,14 +380,12 @@ def test_multiple_predicted_steps_keep_last_metric_temporal_reference(
     monkeypatch.setattr(live_task_handlers, "write_raw_camera_capture",
                         lambda *_args, **_kwargs: None)
     bound._refine_current_hold(runner)
-    assert len(feedback_steps) == 3
+    assert len(feedback_steps) == 1
     np.testing.assert_allclose(feedback_steps[0], [.003, 0.])
-    np.testing.assert_allclose(feedback_steps[1], [.006, 0.])
-    np.testing.assert_allclose(feedback_steps[2], [.009, 0.])
-    np.testing.assert_allclose(handed["total_xy_m"], [.009, 0.])
+    np.testing.assert_allclose(handed["total_xy_m"], [0., 0.])
     np.testing.assert_allclose(handed["residual_xy_m"], [0., 0.])
     assert handed["residual_source"] == (
-        "last_metric_plus_completed_held_motion")
+        "nominal_after_unverified_single_view_probe")
 
 
 def test_corrected_plan_failure_records_stop_without_insertion(tmp_path, monkeypatch):

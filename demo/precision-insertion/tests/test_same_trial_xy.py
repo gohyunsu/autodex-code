@@ -22,6 +22,7 @@ from precision_insertion.same_trial_xy import (  # noqa: E402
     CorrectedAxialPlanUnavailable, HeldXYPlanUnavailable,
     _alignment_frame_inputs, _held_wrist_goal, _shifted_targets,
     choose_key_axis_move, choose_xy_move,
+    socket_consistent_alignment_cameras,
 )
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
@@ -69,6 +70,31 @@ def test_same_trial_move_requires_metric_multiview_and_caps_one_motion():
     assert choose_xy_move({**metric,
                            "xy_correction_socket_m": [.001, -.001]},
                           tolerance_m=.0025)["status"] == "aligned"
+
+
+def test_endpoint_views_reuse_session_socket_pose_inliers():
+    record = {"socket_capture_refinements": [{"stock_selection": {
+        "body_fit": {
+            "socket_pose_inlier_camera_ids": ["a", "b", "d"],
+            "per_view_center_residual_mm": {
+                "a": .47, "b": .52, "c": 13.85, "d": .54},
+        }}}]}
+    selected = socket_consistent_alignment_cameras(
+        record, ["a", "b", "c", "d"])
+    assert selected["selected_camera_ids"] == ["a", "b", "d"]
+    assert selected["excluded_camera_ids"] == ["c"]
+    assert selected["method"] == "session_socket_pose_inliers"
+
+
+def test_legacy_socket_residuals_select_relative_outlier_without_blacklist():
+    record = {"socket_capture_refinements": [{"stock_selection": {
+        "body_fit": {"per_view_center_residual_mm": {
+            "a": .47, "b": .52, "c": 13.85, "d": .54},
+        }}}]}
+    selected = socket_consistent_alignment_cameras(
+        record, ["a", "b", "c", "d"])
+    assert selected["selected_camera_ids"] == ["a", "b", "d"]
+    assert selected["excluded_camera_ids"] == ["c"]
 
 
 def test_cylinder_axis_move_removes_only_tilt_and_keeps_tip_pivot():

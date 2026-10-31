@@ -183,6 +183,83 @@ def _alignment_frame_inputs(
     return rows, dict(capture.images_bgr)
 
 
+def socket_consistent_alignment_cameras(
+    calibration_record: dict, camera_ids,
+) -> dict:
+    """Select this session's geometrically consistent socket views.
+
+    The camera serial is never blacklisted.  Instead, aggregate the socket
+    centre residual saved by the board-constrained fit and remove only a
+    relative robust outlier for this session.  The 10% median scale floor
+    prevents tiny numerical MAD values from dropping otherwise equivalent
+    cameras.  This ranks endpoint evidence; it is not a session failure gate.
+    """
+    available = list(dict.fromkeys(map(str, camera_ids)))
+    refinements = calibration_record.get("socket_capture_refinements", [])
+    if refinements:
+        latest_body_fit = refinements[-1].get(
+            "stock_selection", {}).get("body_fit", {})
+        pose_inliers = latest_body_fit.get("socket_pose_inlier_camera_ids")
+        if isinstance(pose_inliers, list):
+            selected = [camera for camera in available
+                        if camera in set(map(str, pose_inliers))]
+            if len(selected) >= 2:
+                scores = latest_body_fit.get(
+                    "per_view_center_residual_mm", {})
+                return {
+                    "method": "session_socket_pose_inliers",
+                    "selected_camera_ids": selected,
+                    "excluded_camera_ids": [camera for camera in available
+                                            if camera not in selected],
+                    "per_view_socket_center_residual_mm": {
+                        camera: float(value) for camera, value in scores.items()
+                        if camera in available},
+                    "scope": "endpoint_view_selection_from_socket_pose_fit",
+                }
+    by_camera: dict[str, list[float]] = {camera: [] for camera in available}
+    for refinement in refinements:
+        body_fit = refinement.get("stock_selection", {}).get("body_fit", {})
+        for camera, value in body_fit.get(
+                "per_view_center_residual_mm", {}).items():
+            if camera in by_camera:
+                try:
+                    residual = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(residual) and residual >= 0:
+                    by_camera[camera].append(residual)
+    scores = {camera: float(np.median(values))
+              for camera, values in by_camera.items() if values}
+    if len(scores) < 3:
+        return {
+            "method": "all_views_socket_residual_unavailable",
+            "selected_camera_ids": available,
+            "excluded_camera_ids": [],
+            "per_view_socket_center_residual_mm": scores,
+        }
+    values = np.asarray(list(scores.values()), dtype=float)
+    median = float(np.median(values))
+    mad = float(np.median(np.abs(values-median)))
+    robust_scale = max(1.4826*mad, .1*max(median, 1e-9))
+    cutoff = median + 3.*robust_scale
+    selected = [camera for camera in available
+                if camera not in scores or scores[camera] <= cutoff]
+    if len(selected) < 2:
+        selected = sorted(available, key=lambda camera: scores.get(
+            camera, float("inf")))[:2]
+    excluded = [camera for camera in available if camera not in selected]
+    return {
+        "method": "session_socket_center_median_mad_cluster",
+        "selected_camera_ids": selected,
+        "excluded_camera_ids": excluded,
+        "per_view_socket_center_residual_mm": scores,
+        "median_residual_mm": median,
+        "mad_residual_mm": mad,
+        "selection_cutoff_mm": cutoff,
+        "scope": "endpoint_view_selection_not_camera_blacklist",
+    }
+
+
 def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
                          alignment_limits: AlignmentLimits,
                          index: int, nominal_tip_height_error_m: float,
@@ -196,8 +273,13 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
     bundle = Path(raw_bundle).expanduser().resolve()
     rows, images = _alignment_frame_inputs(bundle, capture)
     cameras = assessment_cameras(rows)
+    socket_view_selection = socket_consistent_alignment_cameras(
+        runner.calibration.record, cameras)
+    selected_cameras = set(socket_view_selection["selected_camera_ids"])
     frames = []
     for camera in cameras:
+        if camera not in selected_cameras:
+            continue
         image = images[camera]
         frames.append(LabeledFrame(
             camera, "preinsert_hold", rows[camera]["timestamp_s"],
@@ -269,6 +351,7 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
             map(float, nominal_key_xy_shift_socket_m)),
         "nominal_key_axis_raise_socket_m": float(
             nominal_key_axis_raise_socket_m),
+        "socket_geometry_view_selection": socket_view_selection,
         "sam_mask_files": mask_records,
         "alignment": alignment,
         "vlm_observations": [item.to_record() for item in observations],

@@ -274,6 +274,13 @@ class LiveTaskHandlers:
         anchor_observation = None
         anchor_xy_motion = None
         anchor_axis_motion = None
+        # A single-view tip-height-plane estimate is an image-grounded probe,
+        # not yet a metrically confirmed correction.  Remember the measured
+        # hold before each such probe so that one inconsistent follow-up image
+        # returns only that probe and continues with the nominal insertion.
+        # Multi-view corrections retain the existing measured-motion
+        # continuation behavior.
+        unverified_planar_origin = None
         pending_capture_write = None
         temporal_feedback_enabled = self.xy_estimator == "sam_half_ellipse"
         if temporal_feedback_enabled:
@@ -345,10 +352,32 @@ class LiveTaskHandlers:
                         "tip_socket_m": None,
                         "xy_correction_socket_m": None,
                     })
+            planar_probe_confirmed = (
+                unverified_planar_origin is not None and (
+                    observed["alignment"]["status"] ==
+                    "diagnostic_metric_xy_correction" or
+                    observed.get("temporal_feedback", {}).get("status") ==
+                    "tracked"))
+            if planar_probe_confirmed:
+                unverified_planar_origin = None
+            return_unverified_planar = (
+                unverified_planar_origin is not None and
+                not planar_probe_confirmed)
             choice = choose_xy_move(
                 observed["alignment"],
                 tolerance_m=self.same_trial_xy_tolerance_m,
                 max_step_m=self.same_trial_max_step_m)
+            if return_unverified_planar:
+                origin_xy, origin_axis = unverified_planar_origin
+                choice = {
+                    "status": "return_unverified_planar_probe",
+                    "xy_error_m": None,
+                    "increment_socket_m": (
+                        np.asarray(origin_xy, dtype=float) -
+                        np.asarray(total, dtype=float)).tolist(),
+                    "axis_increment_socket_m": float(origin_axis-axis_raise),
+                    "source": "single_view_probe_not_reobserved",
+                }
             axis_choice = (
                 choose_key_axis_move(
                     observed["alignment"],
@@ -402,6 +431,51 @@ class LiveTaskHandlers:
                           indent=2, sort_keys=True, allow_nan=False)
                 stream.write("\n")
             observations.append(report)
+            if choice["status"] == "return_unverified_planar_probe":
+                increment = np.asarray(choice["increment_socket_m"], float)
+                axis_increment = float(choice["axis_increment_socket_m"])
+                if (np.linalg.norm(increment) > 1e-9 or
+                        abs(axis_increment) > 1e-9):
+                    try:
+                        with timed("trial.same_trial_unverified_probe_return",
+                                   phase="trial", kind="motion",
+                                   attempt_id=attempt.attempt_id):
+                            returned = plan_and_execute_shift(
+                                runner=runner, planner=self.planner,
+                                adapter=self.transfer_adapter,
+                                read_state=self.read_state,
+                                motion_interlock=self.motion_interlock,
+                                limits=self.transfer_limits,
+                                path_limits=self.path_limits,
+                                increment_socket_m=increment,
+                                residual_socket_m=(0., 0.),
+                                residual_source=(
+                                    "nominal_after_unverified_single_view_probe"),
+                                axis_increment_socket_m=axis_increment,
+                                current_axis_raise_socket_m=axis_raise,
+                                index=index,
+                                action_tag="unverified_planar_probe_return")
+                    except HeldXYPlanUnavailable as exc:
+                        runner.record_failure(
+                            "preinsert_path_unavailable",
+                            timestamp_s=self.decision_time(),
+                            evidence_refs={
+                                "unverified_probe_return_plan_failure": str(
+                                    exc.report_path),
+                                "preinsert_snapshot": str(
+                                    self._preinsert_bundle / "manifest.json"),
+                            })
+                        return
+                    shifts.append(returned)
+                    motion = json.loads(returned.read_text(encoding="utf-8"))
+                    total = (np.asarray(total, float) + np.asarray(
+                        motion["measured_increment_socket_m"], float)).tolist()
+                    axis_raise += motion["measured_axis_increment_socket_m"]
+                final_residual = [0., 0.]
+                residual_source = (
+                    "nominal_after_unverified_single_view_probe")
+                unverified_planar_origin = None
+                break
             if axis_choice["status"] == "tilt":
                 # Correct orientation first. Tilting about the observed key
                 # tip leaves its lateral position unchanged; the mandatory
@@ -672,6 +746,10 @@ class LiveTaskHandlers:
                 raise RuntimeError(
                     "same-trial XY did not reach its configured target")
             step = choice["increment_socket_m"]
+            planar_probe_origin = (
+                (np.asarray(total, dtype=float).copy(), float(axis_raise))
+                if observed["alignment"]["status"] ==
+                "diagnostic_planar_xy_hypothesis" else None)
             current_residual = (
                 predicted_residual if choice.get("source") in {
                     "last_metric_plus_completed_held_motion",
@@ -742,6 +820,8 @@ class LiveTaskHandlers:
             axis_raise += shift_result["measured_axis_increment_socket_m"]
             predicted_residual = [a + b for a, b in zip(
                 current_residual, measured_step)]
+            if planar_probe_origin is not None:
+                unverified_planar_origin = planar_probe_origin
             if temporal_feedback_enabled:
                 if anchor_observation is None:
                     anchor_observation = observed
