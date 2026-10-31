@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Callable
 
@@ -55,6 +56,14 @@ def run_camera_only(
         # the exact per-run socket mode beside the camera-only evidence.
         launch_record = json.loads(Path(launch_config).read_text(encoding="utf-8"))
         launch_record["mode"] = {"family": "cylinder", "gap_mm": gap_mm}
+        camera_ids = tuple(value.strip() for value in os.environ.get(
+            "PRECISION_CAPTURE4_CAMERA_IDS", "").split(",") if value.strip())
+        board_fit_camera_ids = tuple(value.strip() for value in os.environ.get(
+            "PRECISION_BOARD_FIT_CAMERA_IDS", "").split(",") if value.strip())
+        if camera_ids:
+            launch_record["camera_ids"] = list(camera_ids)
+        if board_fit_camera_ids:
+            launch_record["board_fit_camera_ids"] = list(board_fit_camera_ids)
         launch_config = output / "launch.json"
         with launch_config.open("x", encoding="utf-8") as stream:
             json.dump(launch_record, stream, indent=2, sort_keys=True,

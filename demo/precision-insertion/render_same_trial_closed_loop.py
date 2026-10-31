@@ -252,8 +252,9 @@ def compose(observations: list[dict], index: int, run_dir: Path,
 
     records = {r["camera_id"]: r
                for r in observation["alignment"]["sam_half_ellipse_views"]}
+    inlier_set = set(inliers)
     cameras = [camera for camera in sorted(records)
-               if camera not in excluded_cameras]
+               if camera in inlier_set and camera not in excluded_cameras]
     raw = Path(observation["raw_bundle"]) / "images"
     for x, camera in zip(panel_positions(len(cameras)), cameras):
         panel = draw_panel(raw/f"{camera}.png", records[camera], camera,
@@ -406,6 +407,7 @@ def main() -> None:
         "attempt_dir": str(attempt),
         "session_run_dir": str(run_dir),
         "excluded_cameras": sorted(excluded_cameras),
+        "endpoint_iteration_views": "inliers_only",
         "socket_geometry_view_selection": socket_selection,
         "gif": str(gif),
         "final_result_frame": None if final is None else str(final_path),

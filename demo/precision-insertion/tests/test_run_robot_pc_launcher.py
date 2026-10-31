@@ -35,6 +35,37 @@ def test_run_launcher_forwards_xy_update_weight(tmp_path):
     assert lines[lines.index("--same-trial-observation-yaw-deg") + 1] == "60"
 
 
+def test_run_launcher_applies_current_camera_profile_to_effective_launch(tmp_path):
+    demo = Path(__file__).resolve().parents[1]
+    root = demo.parents[1]
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "launch.json").write_text(json.dumps({
+        "camera_ids": ["cam0", "cam1", "cam2", "cam3"],
+        "board_fit_camera_ids": ["cam0", "cam1", "cam3"],
+    }), encoding="utf-8")
+    (stage / "recipient_gap20_endpoint_catalog.json").write_text(
+        "{}\n", encoding="utf-8")
+    (stage / "franka_runtime.json").write_text("{}\n", encoding="utf-8")
+    fake_planner = tmp_path / "fake_planner"
+    fake_planner.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n", encoding="utf-8")
+    fake_planner.chmod(0o755)
+    run_root = tmp_path / "runs"
+    env = dict(
+        os.environ, PRECISION_REPO_ROOT=str(root),
+        PRECISION_STAGE_ROOT=str(stage), PRECISION_CHECK_PY=sys.executable,
+        PRECISION_PLANNER_PY=str(fake_planner),
+        PRECISION_RUN_OUTPUT_ROOT=str(run_root), PRECISION_RUN_TAG="profile",
+        PRECISION_CAPTURE4_CAMERA_IDS="cam0,cam1,cam2,cam3",
+        PRECISION_BOARD_FIT_CAMERA_IDS="cam0,cam1,cam2,cam3")
+    subprocess.run(["bash", str(demo / "run_robot_pc.sh"), "--run"],
+                   env=env, capture_output=True, text=True, check=True)
+    effective = json.loads((run_root / "_control/profile/launch_profile.json").read_text(
+        encoding="utf-8"))
+    assert effective["camera_ids"] == ["cam0", "cam1", "cam2", "cam3"]
+    assert effective["board_fit_camera_ids"] == ["cam0", "cam1", "cam2", "cam3"]
+
+
 def test_zerodex_run_keeps_control_and_episode_outputs_out_of_assets(tmp_path):
     demo = Path(__file__).resolve().parents[1]
     root = demo.parents[1]
