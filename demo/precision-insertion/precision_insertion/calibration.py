@@ -693,8 +693,8 @@ def calibrate_session(
         board = {"source": "configured_table_surface",
                  "table_surface_z_m": float(table_surface_z_m)}
     elif measured_board is None:
-        from src.execution.charuco_tabletop import measure_tabletop_from_images
-        board = measure_tabletop_from_images(
+        from .board_view_selection import measure_tabletop_with_view_selection
+        board = measure_tabletop_with_view_selection(
             board_images_bgr, intrinsics_full, extrinsics_full, c2r_matrix,
             board_id=board_id, minimum_board_corners=minimum_board_corners)
     else:

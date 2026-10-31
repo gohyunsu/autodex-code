@@ -18,6 +18,7 @@ from typing import Callable, Mapping
 import numpy as np
 
 from .assets import AssetPaths
+from .board_view_selection import measure_tabletop_with_view_selection
 from .calibration import SessionCalibration, load_session_calibration
 from .config import TaskMode
 from .geometry import validate_se3
@@ -189,9 +190,8 @@ def start_precision_session(
                 calibrated_camera_ids=calibrated_camera_ids,
                 acquisition_metadata_for_request=acquisition_metadata_for_request,
                 timeout_s=float(board_timeout_s), request_id_factory=next_request_id)
-        from src.execution.charuco_tabletop import measure_tabletop_from_images
         with timed("board.charuco_fit", phase="board"):
-            measured_board = measure_tabletop_from_images(
+            measured_board = measure_tabletop_with_view_selection(
                 (board.images_bgr if board_fit_camera_ids is None else
                  {serial: board.images_bgr[serial]
                   for serial in board_fit_camera_ids}),
