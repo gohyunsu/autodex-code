@@ -29,14 +29,14 @@ from precision_insertion.retry_session import RetrySessionLimits
 KEY_PROMPT = "small white solid peg"
 
 
-def _preinsert_recording_marker():
+def _recording_event_marker(*, environment: str, schema: str):
     """Return an optional local event callback for the ZeroDex recorder.
 
-    The marker path is supplied only by the ZeroDex recording wrapper.  It is
+    The marker path is supplied only by the ZeroDex recording wrapper. It is
     intentionally a local control file: capture4 recording must not put NAS
     I/O or remote process management on the robot action thread.
     """
-    raw = os.environ.get("PRECISION_PREINSERT_CONFIRMED_MARKER", "").strip()
+    raw = os.environ.get(environment, "").strip()
     if not raw:
         return None
     target = Path(raw).expanduser().resolve()
@@ -47,7 +47,7 @@ def _preinsert_recording_marker():
         try:
             with temporary.open("x", encoding="utf-8") as stream:
                 json.dump({
-                    "schema": "precision_insertion_preinsert_confirmed_v1",
+                    "schema": schema,
                     "attempt_id": attempt_id,
                     "candidate_id": candidate_id,
                     "confirmed_at_unix_ns": time.time_ns(),
@@ -58,6 +58,18 @@ def _preinsert_recording_marker():
             temporary.unlink(missing_ok=True)
 
     return notify
+
+
+def _preinsert_recording_marker():
+    return _recording_event_marker(
+        environment="PRECISION_PREINSERT_CONFIRMED_MARKER",
+        schema="precision_insertion_preinsert_confirmed_v1")
+
+
+def _release_clear_recording_marker():
+    return _recording_event_marker(
+        environment="PRECISION_RELEASE_CLEAR_COMPLETED_MARKER",
+        schema="precision_insertion_release_clear_completed_v1")
 
 
 def _tabletop_pose_error_deg() -> float:
@@ -165,6 +177,7 @@ def configure(core, live, options) -> dict:
     capture = _key_capture()
     tabletop_pose_error_deg = _tabletop_pose_error_deg()
     recording_marker = _preinsert_recording_marker()
+    recording_stop_marker = _release_clear_recording_marker()
     stationary = {
         "max_arm_hand_skew_s": .10,
         "max_hand_command_error_raw": 30.,
@@ -277,6 +290,8 @@ def configure(core, live, options) -> dict:
                     options, "same_trial_observation_yaw_rad", 0.),
                 **({"on_preinsert_confirmed": recording_marker}
                    if recording_marker is not None else {}),
+                **({"on_release_and_clear_completed": recording_stop_marker}
+                   if recording_stop_marker is not None else {}),
                 "transfer_commissioning_path": None,
                 "preinsert_parameters": {
                     "max_capture_skew_s": 10.,

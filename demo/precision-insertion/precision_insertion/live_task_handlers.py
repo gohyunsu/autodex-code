@@ -92,6 +92,7 @@ class LiveTaskHandlers:
     same_trial_observation_lateral_attempts: int = 1
     same_trial_observation_yaw_rad: float = 0.
     on_preinsert_confirmed: Callable[[str, str], None] | None = None
+    on_release_and_clear_completed: Callable[[str, str], None] | None = None
     after_lift_capture_provider: (
         Callable[[], tuple[str, RawCameraCapture] | None] | None) = None
     decision_time: Callable[[], float] = time.time
@@ -905,6 +906,9 @@ class LiveTaskHandlers:
                    attempt_id=attempt.attempt_id):
             release_path = Path(self.release_and_clear(
                 self.live, runner, decision, execution)).expanduser().resolve()
+        if self.on_release_and_clear_completed is not None:
+            self.on_release_and_clear_completed(
+                attempt.attempt_id, attempt.candidate_id)
         verify_post_insertion_release(
             release_path, attempt_id=attempt.attempt_id,
             candidate_id=attempt.candidate_id,

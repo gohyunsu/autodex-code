@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run ZeroDex and record one view after transfer is confirmed.
+"""Record one view from confirmed transfer through hand recovery.
 
 This wrapper never writes to NAS. Use upload_zerodex_recording.py only after
 the pipeline exits. The recorder reads the existing camera shared memory and
@@ -96,9 +96,12 @@ def run(mode: str) -> int:
         "PRECISION_RECORDING_TRIGGER_ROOT", "/tmp/precision-insertion-recording"))
     trigger_root.mkdir(parents=True, exist_ok=True)
     trigger = trigger_root / f"{run_tag}.preinsert.json"
-    trigger.unlink(missing_ok=True)
+    stop_trigger = trigger_root / f"{run_tag}.release_clear.json"
+    for marker in (trigger, stop_trigger):
+        marker.unlink(missing_ok=True)
     env = {**os.environ, "PRECISION_RUN_TAG": run_tag,
-           "PRECISION_PREINSERT_CONFIRMED_MARKER": str(trigger)}
+           "PRECISION_PREINSERT_CONFIRMED_MARKER": str(trigger),
+           "PRECISION_RELEASE_CLEAR_COMPLETED_MARKER": str(stop_trigger)}
     code_commit = os.environ.get("PRECISION_CODE_COMMIT")
     if code_commit is None:
         result = subprocess.run(
@@ -107,17 +110,21 @@ def run(mode: str) -> int:
         code_commit = result.stdout.strip() if result.returncode == 0 else None
     start_ns = time.time_ns()
     recorder_started = False
+    recorder_was_started = False
     recording_error = None
     recording_manifest = None
     recording_started_ns = None
+    recording_stopped_ns = None
     recording_trigger = None
+    recording_stop_trigger = None
+    recording_stop_reason = None
     exit_code = 1
     try:
         pipeline = subprocess.Popen(
             ["bash", str(HERE / "run_robot_pc.sh"), mode], env=env)
         while True:
             status = pipeline.poll()
-            if not recorder_started and trigger.is_file():
+            if not recorder_was_started and trigger.is_file():
                 recording_trigger = json.loads(
                     trigger.read_text(encoding="utf-8"))
                 try:
@@ -126,6 +133,7 @@ def run(mode: str) -> int:
                         remote_home=remote_home, remote_dir=remote_dir,
                         camera_id=camera_id)
                     recorder_started = True
+                    recorder_was_started = True
                     recording_started_ns = time.time_ns()
                     print(
                         "[recording] capture4 local after confirmed transfer: "
@@ -138,6 +146,21 @@ def run(mode: str) -> int:
                     # not a motion gate; the physical pipeline keeps running.
                     recorder_started = False
                     trigger.unlink(missing_ok=True)
+            if recorder_started and stop_trigger.is_file():
+                recording_stop_trigger = json.loads(
+                    stop_trigger.read_text(encoding="utf-8"))
+                try:
+                    recording_manifest = _stop_recorder(
+                        host=host, port=port, remote_dir=remote_dir)
+                    if recording_manifest is None:
+                        recording_error = "recorder did not write a manifest"
+                except (OSError, subprocess.CalledProcessError,
+                        ValueError) as exc:
+                    recording_error = str(exc)
+                recorder_started = False
+                recording_stopped_ns = time.time_ns()
+                recording_stop_reason = "release_and_clear_completed"
+                print("[recording] stopped after hand recovery", flush=True)
             if status is not None:
                 exit_code = status
                 break
@@ -151,16 +174,23 @@ def run(mode: str) -> int:
                     recording_error = "recorder did not write a manifest"
             except (OSError, subprocess.CalledProcessError, ValueError) as exc:
                 recording_error = str(exc)
+            recorder_started = False
+            recording_stopped_ns = time.time_ns()
+            recording_stop_reason = "pipeline_exit"
         receipt = {
             "schema": "precision_insertion_zerodex_recording_receipt_v1",
             "rig": "zerodex_capture4", "mode": mode, "run_id": run_tag,
             "camera_id": camera_id, "remote_host": host,
             "remote_directory": (str(remote_dir)
-                                 if recorder_started else None),
+                                 if recorder_was_started else None),
             "started_unix_ns": start_ns, "ended_unix_ns": time.time_ns(),
-            "recording_policy": "after_preinsert_reached_true",
+            "recording_policy": (
+                "after_preinsert_until_release_and_clear_completed"),
             "recording_trigger": recording_trigger,
             "recording_started_unix_ns": recording_started_ns,
+            "recording_stop_trigger": recording_stop_trigger,
+            "recording_stopped_unix_ns": recording_stopped_ns,
+            "recording_stop_reason": recording_stop_reason,
             "pipeline_exit_code": exit_code,
             "code_commit": code_commit,
             "recording": recording_manifest,
@@ -172,7 +202,8 @@ def run(mode: str) -> int:
             encoding="utf-8")
         print(f"[recording] receipt: {receipt_dir / 'recording_ref.json'}",
               flush=True)
-        trigger.unlink(missing_ok=True)
+        for marker in (trigger, stop_trigger):
+            marker.unlink(missing_ok=True)
     return exit_code
 
 

@@ -61,19 +61,38 @@ def test_recording_starts_only_after_preinsert_marker(
                 }), encoding="utf-8")
                 events.append("preinsert_confirmed")
                 return None
+            if self.polls == 2:
+                marker = Path(self.env[
+                    "PRECISION_RELEASE_CLEAR_COMPLETED_MARKER"])
+                marker.write_text(json.dumps({
+                    "schema": "precision_insertion_release_clear_completed_v1",
+                    "attempt_id": "attempt_1",
+                    "candidate_id": "table/0/20195",
+                    "confirmed_at_unix_ns": 20,
+                }), encoding="utf-8")
+                events.append("release_clear_completed")
+                return None
             return 0
 
     monkeypatch.setattr(module.subprocess, "Popen", Pipeline)
     monkeypatch.setattr(module, "_start_recorder",
                         lambda **_kwargs: events.append("recorder_started"))
-    monkeypatch.setattr(module, "_stop_recorder", lambda **_kwargs: {
-        "video": "26053248.avi", "frame_count": 1})
+    monkeypatch.setattr(
+        module, "_stop_recorder",
+        lambda **_kwargs: (events.append("recorder_stopped") or {
+            "video": "26053248.avi", "frame_count": 1}))
     monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
     assert module.run("--run") == 0
     assert events == [
-        "pipeline_started", "preinsert_confirmed", "recorder_started"]
+        "pipeline_started", "preinsert_confirmed", "recorder_started",
+        "release_clear_completed", "recorder_stopped"]
     receipt = json.loads((receipt_root / "20261030_123456_test" /
                           "recording_ref.json").read_text())
-    assert receipt["recording_policy"] == "after_preinsert_reached_true"
+    assert receipt["recording_policy"] == (
+        "after_preinsert_until_release_and_clear_completed")
     assert receipt["recording_trigger"]["candidate_id"] == "table/0/20195"
     assert receipt["recording_started_unix_ns"] is not None
+    assert receipt["recording_stop_trigger"]["candidate_id"] == (
+        "table/0/20195")
+    assert receipt["recording_stopped_unix_ns"] is not None
+    assert receipt["recording_stop_reason"] == "release_and_clear_completed"

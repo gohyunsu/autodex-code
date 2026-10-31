@@ -1549,6 +1549,17 @@ capture4 disk I/O, and later NAS upload remain outside the robot action
 thread. A run that never reaches an accepted pre-insertion hold therefore
 creates no episode video. NAS upload remains an explicit post-run command.
 
+As of 2026-10-31, the matching stop event is the completion of
+`release_and_clear`: the hand has opened and the arm/hand clear-view recovery
+has reached its recorded endpoint. The robot thread writes only a second
+local marker. The wrapper stops capture4 asynchronously at that marker, while
+the final clear-view snapshot and manual/VLM result processing continue
+without waiting for recorder shutdown. If a run exits before that event, the
+wrapper stops the active recorder during process cleanup. The receipt records
+both event payloads, exact start/stop timestamps, and whether stop was caused
+by `release_and_clear_completed` or pipeline exit. Each run can start the
+recorder at most once.
+
 At the user's request, 47 timestamp-named full-run recording directories
 created by this precision-insertion pipeline were removed from capture4
 (21,198,813,619 bytes). The verified successful fixed-grasp recording was
