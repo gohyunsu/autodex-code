@@ -1584,13 +1584,10 @@ correction. After two direct 3 mm wrist continuations the image association
 was lost. The former code correctly propagated the last residual once, but
 then replaced its temporal reference with the unobserved frame and attempted
 to iterate `xy_correction_socket_m=None`; the run stopped before insertion.
-The loop now keeps the last metric image reference and accumulates every
-completed measured wrist displacement from that reference until a new
-image-grounded point is available. Missing observations are not converted to
-zero-valued tip measurements and do not introduce an extra stop condition.
-This exact multi-step loss branch is covered by a regression test. Physical
-revalidation is intentionally pending because the robot and hand were turned
-off after the experiment.
+The intermediate implementation kept the last image reference and accumulated
+completed wrist displacement. The 2026-10-31 review below supersedes that
+policy for an unverified *single-view* planar seed. Missing observations are
+still never converted to zero-valued tip measurements.
 
 When the first pre-insertion image has no measurable key end, the report uses
 `alignment_status=unobserved_default_nominal`. The correction and residual
@@ -1598,3 +1595,45 @@ fields remain `null`; the unchanged nominal offset is recorded separately.
 If enabled by the ZeroDex profile, one calibrated camera-ranked lateral
 observation action can be attempted before choosing that nominal route. It is
 an observation motion, not an insertion search or an added acceptance gate.
+
+## 2026-10-31 socket-view consistency and single-view probe semantics
+
+Physical attempt `attempt_c88fb57b9e0e4a38bdccad579d8a7106` grasped and
+transferred `table/0/20195`, but insertion failed. The first direct hold image
+had no consistent key tip. A lateral observation then produced one planar
+tip hypothesis from camera `26053248` with a reported 44.27 mm XY residual.
+Every following snapshot rejected the temporal association, yet the previous
+implementation propagated measured wrist motion until its internal residual
+reached 0.97 mm. It therefore displayed convergence without repeated visual
+confirmation. The measured net XY motion was approximately
+`(-20.24, -31.08) mm`; this was dead reckoning from a single-view seed, not
+closed-loop image convergence.
+
+The session socket evidence independently showed per-view centre residuals
+of 13.85 mm for `25305462` and 0.47--0.54 mm for the other three cameras.
+Socket-only fitting now forms a relative median/MAD centre cluster for every
+capture and computes `T_robot_socket` from that capture's inliers. It records
+`socket_pose_inlier_camera_ids`, excluded IDs, all raw per-view residuals and
+the selection calculation. Camera serials are never blacklisted: a later
+socket-only measurement recomputes the set. The same-trial endpoint estimator
+reuses the recorded socket-pose inliers, while the lossless raw capture still
+contains all camera frames. Review GIFs use that same inlier set by default.
+
+A single-view nominal-tip-height-plane estimate is now treated as a probe
+hypothesis. It may command one bounded step. The next snapshot must either
+track the same key face under the measured motion or provide a genuine
+multi-view estimate before another correction is applied. If it does neither,
+only that probe step is returned and the ordinary nominal insertion continues.
+This is not a perception failure gate: it prevents an unverified image point
+from driving a long open-loop correction while preserving the requested
+default completion path. A metrically grounded multi-view residual retains
+the existing measured-motion continuation behavior.
+
+Replaying the saved socket centres through the new inlier median excludes
+`25305462` and changes the old four-view median socket centre by approximately
+0.47 mm in the board plane. Thus the camera inconsistency mattered, but it
+does not explain the failed run's 30 mm-scale correction by itself. The
+single-view continuation was the dominant control-policy defect addressed by
+this revision. The precision-insertion test suite passes with 1454 tests and
+5 environment-dependent skips; a new physical socket-only measurement is
+required before claiming live validation of the revised pose.
