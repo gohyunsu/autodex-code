@@ -45,11 +45,12 @@ def main(argv: list[str] | None = None) -> int:
           f"{summary['vlm_inference_cumulative_s']:.3f}s cumulative, "
           f"{summary['vlm_inference_occupied_s']:.3f}s occupied, "
           f"{summary['vlm_inference_overlap_s']:.3f}s overlap")
-    print("\nOperation                         count  inclusive_s     self_s")
+    print("\nOperation                                        count  inclusive  occupied  overlap      self")
     for name, group in sorted(summary["groups"].items(),
                               key=lambda item: item[1]["self_s"], reverse=True):
-        print(f"{name[:33]:33} {group['count']:5d} "
-              f"{group['inclusive_s']:12.3f} {group['self_s']:10.3f}")
+        print(f"{name[:48]:48} {group['count']:5d} "
+              f"{group['inclusive_s']:10.3f} {group['occupied_s']:9.3f} "
+              f"{group['overlap_s']:8.3f} {group['self_s']:9.3f}")
     print("\nPhase                              occupied_s  self_work_s  cumulative_s")
     for phase, row in sorted(summary["phases"].items(),
                              key=lambda item: item[1]["occupied_s"],

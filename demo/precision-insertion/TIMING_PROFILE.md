@@ -14,7 +14,10 @@ sibling `.../_pipeline_runs/RUN_ID.timing/` containing:
 - `events.jsonl`: append-only stock trace; individual start/end records,
   monotonic duration and UTC timestamps for synchronization.
 - `timing_summary.json`: spans in execution order and per-operation `count`,
-  `inclusive_s`, `self_s` and failure count. Each span also records direct
+  `inclusive_s`, `occupied_s`, `overlap_s`, `self_s` and failure count.
+  Repeated operations such as parallel PNG writers can therefore show their
+  additive work separately from the union of wall-clock intervals. Each span
+  also records direct
   `child_cumulative_s`, `child_occupied_s` and `child_overlap_s`. Additive
   machine-readable `phases`, `kinds`, `attempts` and `ordered_actions`
   distinguish cumulative worker time from occupied wall time. The same-trial
@@ -98,8 +101,10 @@ recorded code version, not the later `3c87fd9` single-view-probe fix.
 
 The 60.93 s shown by summing all `evidence.png_write_hash` workers is not an
 extra 60.93 s session delay: full-resolution source and undistorted images are
-encoded in parallel. Their occupied I/O contribution is already represented
-by the 17.55 s union above, and part of it overlaps other work. The immediate
+encoded in parallel. Recomputing this saved trace with the current reporter
+gives 12.29 s occupied for those 60 workers, with 48.64 s of worker overlap.
+The occupied contribution of **all** I/O kinds is 17.55 s, and part of it
+overlaps other work. The immediate
 latency priorities remain avoiding unnecessary physical correction steps and
 operator wait. Local Qwen placement is already fast enough in this trace that
 moving all label inference to capture4 would not recover a comparable amount

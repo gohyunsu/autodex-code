@@ -165,7 +165,6 @@ def summarize_events(events_path: Path) -> dict:
             children[row["parent_id"]].append((
                 row["start_pipeline_s"], row["end_pipeline_s"]))
     exclusive_intervals: dict[str, list[tuple[float, float]]] = {}
-    groups: dict[str, dict] = {}
     for row in completed:
         clipped = [
             (max(row["start_pipeline_s"], start),
@@ -189,17 +188,6 @@ def summarize_events(events_path: Path) -> dict:
         row["child_cumulative_s"] = round(cumulative, 9)
         row["child_overlap_s"] = round(max(0.0, cumulative - covered), 9)
         row["self_s"] = round(max(0.0, row["duration_s"] - covered), 9)
-        group = groups.setdefault(row["name"], {
-            "count": 0, "inclusive_s": 0.0, "self_s": 0.0,
-            "failures": 0})
-        group["count"] += 1
-        group["inclusive_s"] += row["duration_s"]
-        group["self_s"] += row["self_s"]
-        group["failures"] += row["outcome"] != "success"
-    for group in groups.values():
-        group["inclusive_s"] = round(group["inclusive_s"], 9)
-        group["self_s"] = round(group["self_s"], 9)
-
     indexed = {row["span_id"]: row for row in completed}
     for row in completed:
         parent = row
@@ -239,6 +227,12 @@ def summarize_events(events_path: Path) -> dict:
             buckets[str(row[field])].append(row)
         return {key: aggregate(rows, exclusive=exclusive)
                 for key, rows in sorted(buckets.items())}
+
+    groups = aggregate_by("name")
+    for group in groups.values():
+        # Keep the established public name while adding the wall-time union
+        # and overlap needed to interpret repeated/parallel operations.
+        group["inclusive_s"] = group.pop("cumulative_s")
 
     attempt_rows: dict[str, list[dict]] = defaultdict(list)
     for row in completed:
@@ -335,7 +329,7 @@ def summarize_events(events_path: Path) -> dict:
             0.0, envelope - human_wall), 9),
         "unfinished_span_count": len(starts),
         "unfinished_spans": [row["name"] for row in starts.values()],
-        "groups": dict(sorted(groups.items())),
+        "groups": groups,
         "phases": aggregate_by("phase"),
         "kinds": aggregate_by("kind", exclusive=True),
         "attempts": attempts,

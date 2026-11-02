@@ -33,6 +33,9 @@ def test_profile_groups_nested_spans_without_double_counting(tmp_path):
     assert (directory / "manifest.json").is_file()
     assert summary["unfinished_span_count"] == 0
     assert summary["groups"]["vlm.infer"]["count"] == 1
+    assert summary["groups"]["vlm.infer"]["occupied_s"] == (
+        summary["groups"]["vlm.infer"]["inclusive_s"])
+    assert summary["groups"]["vlm.infer"]["overlap_s"] == 0
     assert summary["groups"]["live.session"]["self_s"] <= (
         summary["groups"]["live.session"]["inclusive_s"])
     assert next(row for row in summary["spans"] if row["name"] ==
@@ -134,6 +137,9 @@ def test_parallel_view_spans_retain_parent_and_union_overlap(tmp_path):
     assert batch["parent_id"] == parent["span_id"]
     assert all(row["parent_id"] == batch["span_id"] for row in infer)
     assert summary["vlm_inference_overlap_s"] > 0
+    assert summary["groups"]["vlm.infer"]["occupied_s"] < (
+        summary["groups"]["vlm.infer"]["inclusive_s"])
+    assert summary["groups"]["vlm.infer"]["overlap_s"] > 0
     assert summary["kinds"]["computation"]["overlap_s"] > 0
     assert batch["child_overlap_s"] > 0
     assert batch["child_cumulative_s"] > batch["child_occupied_s"]
@@ -149,6 +155,8 @@ def test_report_can_show_nested_elapsed_and_parallel_work(tmp_path, capsys):
                     pass
     assert report_timing.main([str(timing_directory(output)), "--tree"]) == 0
     printed = capsys.readouterr().out
+    assert "occupied" in printed
+    assert "overlap" in printed
     assert "Hierarchy (inclusive" in printed
     assert "    socket.body_multiview_median" in printed
     assert "child work" in printed
