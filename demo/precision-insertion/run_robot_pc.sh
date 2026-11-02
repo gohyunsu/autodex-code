@@ -101,7 +101,9 @@ Path(sys.argv[2]).write_text(json.dumps(record), encoding="utf-8")
 PY
   "$CHECK_PY" demo/precision-insertion/run_live.py --preflight \
     --launch-config "$CHECK_LAUNCH" --endpoint-catalog "$CATALOG" \
-    --robot-config "$ROBOT" --xy-estimator "$PRECISION_XY_ESTIMATOR"
+    --robot-config "$ROBOT" --xy-estimator "$PRECISION_XY_ESTIMATOR" \
+    --same-trial-alignment-source \
+    "${PRECISION_SAME_TRIAL_ALIGNMENT_SOURCE:-endpoint}"
   exit
 fi
 
@@ -173,6 +175,7 @@ PY
 echo "[pipeline] using existing camera, perception and Franka services"
 echo "[pipeline] VLM camera IDs: $PRECISION_VLM_CAMERA_IDS"
 echo "[pipeline] failed-trial XY estimator: $PRECISION_XY_ESTIMATOR"
+echo "[pipeline] same-trial alignment source: ${PRECISION_SAME_TRIAL_ALIGNMENT_SOURCE:-endpoint}"
 echo "[pipeline] next-trial XY update weight: $XY_UPDATE_WEIGHT"
 if [[ "$MODE" == --run && "$PRECISION_XY_ESTIMATOR" == tracked_tip ]]; then
   bash demo/precision-insertion/manage_robot_pc_services.sh check-tracker

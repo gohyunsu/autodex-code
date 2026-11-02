@@ -88,6 +88,27 @@ def test_live_cli_rejects_implicit_stock_init_ports_before_motion(
     assert "explicit frame-bound init daemon ports" in capsys.readouterr().err
 
 
+def test_live_static_preflight_forwards_alignment_source(
+        monkeypatch, tmp_path, capsys):
+    observed = {}
+
+    def inspect(**kwargs):
+        observed.update(kwargs)
+        return {"schema": "test"}
+
+    monkeypatch.setattr(run_live, "inspect_live_inputs", inspect)
+    assert run_live.main([
+        "--preflight",
+        "--launch-config", str(tmp_path / "launch.json"),
+        "--endpoint-catalog", str(tmp_path / "catalog.json"),
+        "--xy-estimator", "sam_half_ellipse",
+        "--same-trial-alignment-source", "partial_shape",
+    ]) == 0
+    assert observed["xy_estimator"] == "sam_half_ellipse"
+    assert observed["same_trial_alignment_source"] == "partial_shape"
+    assert json.loads(capsys.readouterr().out)["schema"] == "test"
+
+
 def test_default_exp_path_uses_independent_project_runs(monkeypatch, tmp_path):
     mode = select_mode("cylinder", 20)
     launch = tmp_path / "launch.json"
@@ -183,6 +204,14 @@ def test_static_preflight_reads_v8_files_without_opening_robot(
     }
     assert report["robot_ready"] is False
     assert report["xy_estimator"] == "vlm"
+    assert report["same_trial_alignment_source"] == "endpoint"
+    with pytest.raises(ValueError, match="needs the SAM half-ellipse"):
+        live_runtime.inspect_live_inputs(
+            launch_config_path=launch_path,
+            endpoint_catalog_path=catalog_path,
+            robot_config_path=robot_path,
+            xy_estimator="vlm",
+            same_trial_alignment_source="partial_shape")
 
     distributed = json.loads(robot_path.read_text(encoding="utf-8"))
     worker = {
@@ -214,8 +243,10 @@ def test_static_preflight_reads_v8_files_without_opening_robot(
     monkeypatch.setenv("PRECISION_SAM_CHECKPOINT", str(sam_checkpoint))
     sam_report = live_runtime.inspect_live_inputs(
         launch_config_path=launch_path, endpoint_catalog_path=catalog_path,
-        robot_config_path=robot_path, xy_estimator="sam_half_ellipse")
+        robot_config_path=robot_path, xy_estimator="sam_half_ellipse",
+        same_trial_alignment_source="partial_shape")
     assert sam_report["xy_estimator"] == "sam_half_ellipse"
+    assert sam_report["same_trial_alignment_source"] == "partial_shape"
     assert sam_report["sam_roi_inputs"]["checkpoint"] == str(sam_checkpoint)
     assert sam_report["sam_roi_inputs"]["checkpoint_size_bytes"] == len(
         b"saved model placeholder")

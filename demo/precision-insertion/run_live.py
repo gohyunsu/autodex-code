@@ -194,7 +194,8 @@ def main(argv: list[str] | None = None) -> int:
             launch_config_path=args.launch_config,
             endpoint_catalog_path=args.endpoint_catalog,
             robot_config_path=args.robot_config,
-            xy_estimator=args.xy_estimator)
+            xy_estimator=args.xy_estimator,
+            same_trial_alignment_source=args.same_trial_alignment_source)
         report["exp_name"] = args.exp_name
         print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
         return 0

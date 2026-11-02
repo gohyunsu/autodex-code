@@ -132,10 +132,17 @@ def inspect_live_inputs(
     *, launch_config_path: Path, endpoint_catalog_path: Path,
     robot_config_path: Path | None = None,
     xy_estimator: str = "vlm",
+    same_trial_alignment_source: str = "endpoint",
 ) -> dict:
     """Check current v8 inputs without cameras, CUDA or robot construction."""
     if xy_estimator not in {"vlm", "tracked_tip", "sam_half_ellipse"}:
         raise ValueError("unknown failed-trial XY estimator")
+    if same_trial_alignment_source not in {"endpoint", "partial_shape"}:
+        raise ValueError("unknown same-trial alignment source")
+    if (same_trial_alignment_source == "partial_shape" and
+            xy_estimator != "sam_half_ellipse"):
+        raise ValueError(
+            "partial-shape alignment needs the SAM half-ellipse estimator")
     stage_policy_path = os.environ.get("PRECISION_STAGE_POLICY", "").strip()
     config_sources = {
         "launch_config": Path(launch_config_path),
@@ -192,6 +199,7 @@ def inspect_live_inputs(
         "stage_policy": None,
         "final_vlm_view_policy": None,
         "xy_estimator": xy_estimator,
+        "same_trial_alignment_source": same_trial_alignment_source,
         "sam_roi_inputs": None,
         "scope": "static_files_only_no_camera_cuda_or_robot_connection",
         "robot_ready": False,
