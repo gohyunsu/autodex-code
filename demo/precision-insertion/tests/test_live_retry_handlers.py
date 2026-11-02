@@ -114,3 +114,86 @@ def test_optional_xy_diagnostic_records_model_outage(
     assert events[0]["reason"] == reason
     report = events[0]["retry_assessment_path"]
     assert f'"reason": "{reason}"' in report.read_text()
+
+
+@pytest.mark.parametrize("error,reason", [
+    (ValueError("saved preinsert cameras are insufficient"),
+     "xy_diagnostic_invalid_input"),
+    (RuntimeError("unexpected local inference failure"),
+     "xy_diagnostic_runtime_error"),
+])
+def test_optional_xy_diagnostic_error_does_not_block_recovery(
+        tmp_path, error, reason):
+    decision = SessionDecision(
+        "assess_saved_preinsert_xy", "failed", "table/0/1")
+    events = []
+
+    class Runner:
+        mode = SimpleNamespace(family="cylinder")
+        active_attempt = SimpleNamespace(
+            attempt_id="attempt_1", candidate_id="table/0/1")
+        _postlift_report_path = tmp_path / "postlift.json"
+        _attempt_dir = tmp_path
+        _retry_assessment_index = 0
+
+        def current_decision(self):
+            return decision
+
+        def prepare_saved_preinsert_xy_diagnostic(self, **_kwargs):
+            raise error
+
+        def record_xy_retry_unavailable(self, **kwargs):
+            events.append(kwargs)
+
+    runner = Runner()
+    handler = live_retry_handlers.LiveGroundedRetryHandlers(
+        live=SimpleNamespace(opened=SimpleNamespace(runner=runner)),
+        backend=object(), retry_limits=object(), alignment_limits=object(),
+        diagnostic_parameters={}, decision_time=lambda: 10.0)
+    handler.assess_for_next_trial(runner, decision)
+    assert len(events) == 1
+    assert events[0]["reason"] == reason
+    saved = events[0]["retry_assessment_path"].read_text()
+    assert f'"reason": "{reason}"' in saved
+    assert f'"error_type": "{type(error).__name__}"' in saved
+
+
+def test_xy_advice_validation_error_does_not_block_recovery(tmp_path):
+    decision = SessionDecision(
+        "assess_saved_preinsert_xy", "failed", "table/0/1")
+    events = []
+
+    class Runner:
+        mode = SimpleNamespace(family="cylinder")
+        active_attempt = SimpleNamespace(
+            attempt_id="attempt_1", candidate_id="table/0/1")
+        _postlift_report_path = tmp_path / "postlift.json"
+        _attempt_dir = tmp_path
+        _retry_assessment_index = 0
+
+        def current_decision(self):
+            return decision
+
+        def prepare_saved_preinsert_xy_diagnostic(self, **_kwargs):
+            report = tmp_path / "xy_retry_assessments/000/report.json"
+            report.parent.mkdir(parents=True)
+            report.write_text('{"status":"saved"}', encoding="utf-8")
+            self._retry_assessment_index += 1
+            return SimpleNamespace(status="diagnostic_planar_xy_hypothesis")
+
+        def record_next_trial_xy_advice(self, **_kwargs):
+            raise ValueError("saved XY source schema is unsupported")
+
+        def record_xy_retry_unavailable(self, **kwargs):
+            events.append(kwargs)
+
+    runner = Runner()
+    handler = live_retry_handlers.LiveGroundedRetryHandlers(
+        live=SimpleNamespace(opened=SimpleNamespace(runner=runner)),
+        backend=object(), retry_limits=object(), alignment_limits=object(),
+        diagnostic_parameters={}, decision_time=lambda: 10.0)
+    handler.assess_for_next_trial(runner, decision)
+    assert len(events) == 1
+    assert events[0]["reason"] == "xy_advice_validation_failed"
+    assert events[0]["retry_assessment_path"].name == (
+        "advice_unavailable.json")

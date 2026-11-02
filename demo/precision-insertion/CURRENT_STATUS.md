@@ -18,6 +18,7 @@ Last audited: **2026-11-03**, with the robot, hand and cameras off.
 | Full action loop | The active profile supplies all ten stage handlers: key planning, pickup, lift, held relation, transfer/insertion, retry diagnosis, held return, transfer recovery, repose planning and repose execution. |
 | Same-trial correction | Pre-insertion capture, metric endpoint/partial-shape observation, bounded wrist correction, recapture and measured-motion feedback run before the first insertion stroke. The active profile permits a 10 mm per-update step and has no cumulative XY cap. |
 | Insertion execution | The corrected hold is replanned along the measured socket axis. If the corrected 20 mm endpoint/path is unavailable, the profile tries the configured 10 mm axial fallback. |
+| Failed-attempt recovery | A released insertion failure first reuses its saved pre-insertion image for next-attempt XY advice, then perceives and restores the released key to the original tabletop pose. Model, saved-input or advice-validation errors are recorded as unavailable diagnostics and cannot suppress that recovery. |
 | Labels | Manual collection stores the independent Qwen result too. Grasp, pre-insertion arrival, descent-time tip entry and released-key `inside_socket` outcome remain separate fields. |
 | Storage | Runtime JSON and environment variables resolve NAS paths only below `/mnt/paradex2/hyunsu/precision_insertion`; repeated-use model caches and source checkout remain local. Capture4 acquisition is the documented external ParaDex exception. |
 | Timing | Nested spans cover startup, perception, planning, motion, camera, VLM, evidence writes, human waits and cleanup. Overlap-aware occupied time prevents parallel PNG writes from being counted as serial latency. |
@@ -29,7 +30,7 @@ Last audited: **2026-11-03**, with the robot, hand and cameras off.
   NAS reference outside `/mnt/paradex2/hyunsu`.
 - The source-boundary audit reports zero stock-entrypoint changes and zero
   unexpected shared-runtime changes.
-- The complete demo test suite last passed with **1547 passed, 5 skipped**.
+- The complete demo test suite last passed with **1550 passed, 5 skipped**.
 - Real 5 mm-gap episodes exercised the full pickup/transfer/insertion/release
   route. In particular, attempts
   `attempt_3c8ff1b830d347a2b8c45aa7ae1a5363` and

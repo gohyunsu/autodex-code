@@ -89,8 +89,12 @@ preinsert frames for next-trial XY diagnosis. The diagnosis never moves the
 held key or treats the force stop itself as a measured XY error. Use
 `PRECISION_XY_ESTIMATOR=sam_half_ellipse` to select the Qwen-box/SAM3 tip
 estimator; the launcher still defaults to `vlm`. If no tip can be measured,
-it records an unavailable diagnostic and applies no XY update. The active
-cylinder route does not require a separate contact-controller commissioning
+it records an unavailable diagnostic and applies no XY update. The cylinder
+action applies the same nonblocking rule to a saved-image/model or
+advice-validation error: it preserves the exact error artifact and continues
+the already released key into original-pose recovery rather than ending the
+action loop before reset. This adds no motion permission or acceptance gate.
+The active route does not require a separate contact-controller commissioning
 record. A normal stroke uses the built-in `StockSocketRelease` callback: it preplans
 full hand opening, reversal of the audited socket-axis path, and a stock
 clear-view retract using the frozen socket world. It opens the hand only

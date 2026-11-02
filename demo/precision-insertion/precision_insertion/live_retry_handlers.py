@@ -44,6 +44,27 @@ class LiveGroundedRetryHandlers:
             reason=reason, retry_assessment_path=report,
             timestamp_s=self.decision_time())
 
+    def _record_diagnostic_error(
+        self, runner, decision: SessionDecision, *, reason: str,
+        report: Path, error: Exception,
+    ) -> None:
+        """Persist optional-diagnostic failure and continue key recovery.
+
+        The key has already been released before this handler runs.  A saved
+        pre-insertion image analysis failure must therefore not strand the
+        released key or skip the attempt's restore-to-start operation.
+        """
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(json.dumps({
+            "schema": "precision_insertion_xy_diagnostic_unavailable_v1",
+            "attempt_id": runner.active_attempt.attempt_id,
+            "candidate_id": decision.candidate_id,
+            "reason": reason,
+            "error_type": type(error).__name__,
+            "error": str(error),
+        }, indent=2) + "\n", encoding="utf-8")
+        self._unavailable(runner, reason, report)
+
     def assess_for_next_trial(self, runner, decision: SessionDecision) -> None:
         self._require(runner, decision, "assess_saved_preinsert_xy")
         if runner._postlift_report_path is None:
@@ -69,16 +90,15 @@ class LiveGroundedRetryHandlers:
             elif "SAM3 ROI" in message:
                 backend_outage = "sam_backend_unavailable"
             else:
-                raise
-            diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
-            diagnostic_path.write_text(json.dumps({
-                "schema": "precision_insertion_xy_diagnostic_unavailable_v1",
-                "attempt_id": runner.active_attempt.attempt_id,
-                "candidate_id": decision.candidate_id,
-                "reason": backend_outage,
-                "error": str(exc),
-            }, indent=2) + "\n", encoding="utf-8")
-            self._unavailable(runner, backend_outage, diagnostic_path)
+                backend_outage = "xy_diagnostic_runtime_error"
+            self._record_diagnostic_error(
+                runner, decision, reason=backend_outage,
+                report=diagnostic_path, error=exc)
+            return
+        except ValueError as exc:
+            self._record_diagnostic_error(
+                runner, decision, reason="xy_diagnostic_invalid_input",
+                report=diagnostic_path, error=exc)
             return
         if diagnostic.status not in {
                 "diagnostic_metric_xy_correction",
@@ -89,9 +109,15 @@ class LiveGroundedRetryHandlers:
                 "tracked_tip_unavailable" if self.xy_estimator == "tracked_tip"
                 else "sam_half_ellipse_unavailable"), diagnostic_path)
             return
-        runner.record_next_trial_xy_advice(
-            diagnostic=diagnostic, diagnostic_report_path=diagnostic_path,
-            timestamp_s=self.decision_time())
+        try:
+            runner.record_next_trial_xy_advice(
+                diagnostic=diagnostic, diagnostic_report_path=diagnostic_path,
+                timestamp_s=self.decision_time())
+        except ValueError as exc:
+            unavailable = diagnostic_path.with_name("advice_unavailable.json")
+            self._record_diagnostic_error(
+                runner, decision, reason="xy_advice_validation_failed",
+                report=unavailable, error=exc)
         # A fresh pickup in the next attempt consumes this cumulative update.
 
     def handlers(self) -> dict[str, ActionHandler]:
