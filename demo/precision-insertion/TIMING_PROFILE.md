@@ -63,6 +63,27 @@ python3 demo/precision-insertion/report_timing.py \
   --tree
 ```
 
+For repeated experiments, aggregate completed traces and keep human annotation
+wait separate:
+
+```bash
+python3 demo/precision-insertion/summarize_timing_runs.py \
+  --timing-root /mnt/paradex2/hyunsu/precision_insertion/runs/zerodex_capture4/precision-insertion/inspire/precision_key_cylinder_r15_h80/_pipeline_runs \
+  --candidate-id table/0/20195 \
+  --output /tmp/precision-timing-runs.json
+```
+
+The multi-run report gives median, IQR and p90 for the total instrumented
+envelope, automatic (non-human) envelope, phases, resource kinds, operations
+and action boundaries. It lists incomplete traces but excludes them from
+statistics unless `--include-incomplete` is explicitly supplied. Operation
+`occupied_s` is the union of overlapping spans; `self_s` is exclusive work.
+It also reports the exact runtime-configuration SHA256 saved by current runs.
+If `mixed_runtime_configurations` is true, do not present the pooled latency as
+one experimental condition; select one identity with
+`--runtime-configuration-sha256`. Historical traces without that manifest
+field are explicitly grouped as `unrecorded_legacy`.
+
 ## ZeroDex capture4: two successful 5 mm episodes (2026-10-29)
 
 The archived traces for `20261029_131932_872369` and
