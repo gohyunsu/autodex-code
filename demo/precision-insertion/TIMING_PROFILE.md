@@ -33,7 +33,12 @@ sibling `.../_pipeline_runs/RUN_ID.timing/` containing:
   imports, argument parsing and output-path setup that happen before the
   ordinary trace opens; the last prevents that bootstrap cost from silently
   disappearing from end-to-end latency reports.
-- Stock trace `manifest.json` and `timeline.json`.
+- Stock trace `manifest.json` and `timeline.json`. The manifest additionally
+  records the Git revision, a non-secret allowlist of effective
+  `PRECISION_*` runtime settings, and SHA256 identities for selected policy
+  files. Repeated experiments can therefore be compared against the exact
+  code and configuration that produced them without recording API keys or the
+  rest of the process environment.
 
 The sibling location means startup failures can be timed even if no session
 ledger was opened. On the robot PC, after a live attempt:

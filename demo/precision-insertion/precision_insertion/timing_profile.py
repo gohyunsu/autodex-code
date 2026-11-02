@@ -11,6 +11,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,34 @@ _TRACE: ContextVar[PipelineTrace | None] = ContextVar(
     "precision_insertion_timing_trace", default=None)
 _PARENT: ContextVar[str | None] = ContextVar(
     "precision_insertion_timing_parent", default=None)
+
+_RECORDED_ENVIRONMENT = (
+    "PRECISION_SYSTEM_PROFILE", "PRECISION_EXPERIMENT_PROFILE",
+    "PRECISION_STAGE_POLICY", "PRECISION_CANDIDATE_POLICY_PROFILE",
+    "PRECISION_GAP_MM", "PRECISION_XY_ESTIMATOR", "PRECISION_LABEL_MODE",
+    "PRECISION_TABLETOP_POSE_ERROR_DEG", "PRECISION_POST_LIFT_SETTLE_S",
+    "PRECISION_PREINSERT_AUDIT_OVERLAY", "PRECISION_PRELOAD_VLM",
+    "PRECISION_PREWARM_FIXED_WORLD", "PRECISION_FINAL_VLM_VIEW_COUNT",
+    "PRECISION_FINAL_VLM_CAMERA_IDS", "PRECISION_VLM_CAMERA_IDS",
+    "PRECISION_CAPTURE4_CAMERA_IDS", "PRECISION_BOARD_FIT_CAMERA_IDS",
+    "PRECISION_XY_PREFERRED_CAMERA_IDS",
+    "PRECISION_SAME_TRIAL_XY_TOLERANCE_MM",
+    "PRECISION_SAME_TRIAL_MAX_STEP_MM",
+    "PRECISION_SAME_TRIAL_AXIS_TOLERANCE_DEG",
+    "PRECISION_SAME_TRIAL_MAX_TILT_STEP_DEG",
+    "PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM",
+    "PRECISION_SAME_TRIAL_OBSERVATION_LATERAL_MM",
+    "PRECISION_SAME_TRIAL_OBSERVATION_LATERAL_ATTEMPTS",
+    "PRECISION_SAME_TRIAL_OBSERVATION_YAW_DEG",
+    "PRECISION_INTEGRATION_FACTORY", "PRECISION_ENDPOINT_CATALOG",
+    "PRECISION_ROBOT_CONFIG", "PRECISION_SAM_CHECKPOINT",
+    "PRECISION_VLM_MODEL_ID", "PRECISION_NAS_PROJECT_ROOT",
+    "PRECISION_SHARED_ROOT", "PRECISION_RUN_OUTPUT_ROOT",
+)
+_RECORDED_FILE_ENVIRONMENT = (
+    "PRECISION_SYSTEM_PROFILE", "PRECISION_EXPERIMENT_PROFILE",
+    "PRECISION_STAGE_POLICY", "PRECISION_CANDIDATE_POLICY_PROFILE",
+)
 
 
 @dataclass
@@ -45,6 +74,77 @@ def _active_timing_directory(run_output_dir: Path) -> Path:
         return timing_directory(run_output_dir)
     root = Path(local_root).expanduser().resolve()
     return root / timing_directory(run_output_dir).name
+
+
+def _git_revision() -> dict | None:
+    """Read HEAD without spawning Git on the live startup path."""
+    root = Path(__file__).resolve()
+    repository = next((parent for parent in root.parents
+                       if (parent / ".git").exists()), None)
+    if repository is None:
+        return None
+    marker = repository / ".git"
+    if marker.is_file():
+        line = marker.read_text(encoding="utf-8").strip()
+        if not line.startswith("gitdir: "):
+            return None
+        git_dir = (repository / line.removeprefix("gitdir: ")).resolve()
+    else:
+        git_dir = marker
+    head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+    reference = head.removeprefix("ref: ") if head.startswith("ref: ") else None
+    revision = head if reference is None else None
+    if reference is not None:
+        loose = git_dir / reference
+        if loose.is_file():
+            revision = loose.read_text(encoding="utf-8").strip()
+        else:
+            packed = git_dir / "packed-refs"
+            if packed.is_file():
+                for line in packed.read_text(encoding="utf-8").splitlines():
+                    if line and not line.startswith(("#", "^")):
+                        value, name = line.split(" ", 1)
+                        if name == reference:
+                            revision = value
+                            break
+    if revision is None:
+        return None
+    return {
+        "repository_root": str(repository), "revision": revision,
+        "reference": reference,
+        "scope": "head_revision_only_worktree_not_scanned",
+    }
+
+
+def _runtime_configuration() -> dict:
+    environment = {name: os.environ[name] for name in _RECORDED_ENVIRONMENT
+                   if name in os.environ}
+    inputs = {}
+    for name in _RECORDED_FILE_ENVIRONMENT:
+        raw = environment.get(name)
+        if not raw:
+            continue
+        path = Path(raw).expanduser().resolve(strict=False)
+        if path.is_file():
+            inputs[name] = {
+                "path": str(path),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+    return {
+        "schema": "precision_insertion_runtime_configuration_v1",
+        "environment": environment,
+        "input_files": inputs,
+        "code": _git_revision(),
+        "scope": "allowlisted_nonsecret_configuration_no_hardware_access",
+    }
+
+
+def _augment_trace_manifest(destination: Path) -> None:
+    path = destination / "manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["runtime_configuration"] = _runtime_configuration()
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8")
 
 
 @contextmanager
@@ -79,6 +179,7 @@ def profile_run(
         _PARENT.reset(parent_token)
         _TRACE.reset(token)
         trace.close(outcome=profile.outcome)
+        _augment_trace_manifest(destination)
         summary = summarize_events(destination / "events.jsonl")
         if process_started_ns is not None:
             pre_profile_s = (profile_opened_ns - process_started_ns) / 1e9

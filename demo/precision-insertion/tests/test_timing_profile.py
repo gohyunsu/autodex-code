@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -173,6 +174,29 @@ def test_profile_keeps_failure_trace(tmp_path):
     assert summary["groups"]["socket.capture"]["failures"] == 1
     manifest = json.loads((directory / "manifest.json").read_text())
     assert manifest["status"] == "failure"
+
+
+def test_profile_manifest_records_reproducible_nonsecret_configuration(
+        tmp_path, monkeypatch):
+    policy = tmp_path / "stage_policy.json"
+    policy.write_text('{"post_lift_settle_s": 2.0}\n', encoding="utf-8")
+    monkeypatch.setenv("PRECISION_STAGE_POLICY", str(policy))
+    monkeypatch.setenv("PRECISION_FINAL_VLM_VIEW_COUNT", "3")
+    monkeypatch.setenv("GEMINI_API_KEY", "must-not-be-recorded")
+
+    with profile_run(tmp_path / "run"):
+        pass
+
+    manifest = json.loads(
+        (timing_directory(tmp_path / "run") / "manifest.json").read_text(
+            encoding="utf-8"))
+    config = manifest["runtime_configuration"]
+    assert config["environment"]["PRECISION_FINAL_VLM_VIEW_COUNT"] == "3"
+    assert "GEMINI_API_KEY" not in config["environment"]
+    assert config["input_files"]["PRECISION_STAGE_POLICY"]["sha256"] == (
+        hashlib.sha256(policy.read_bytes()).hexdigest())
+    assert config["scope"] == (
+        "allowlisted_nonsecret_configuration_no_hardware_access")
 
 
 def test_profile_can_record_nonexception_terminal_status(tmp_path):

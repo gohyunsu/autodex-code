@@ -18,6 +18,7 @@ if [[ -n ${PRECISION_EXPERIMENT_PROFILE:-} ]]; then
   if [[ $precision_experiment_profile != /* ]]; then
     precision_experiment_profile="$SCRIPT_DIR/config/experiments/$precision_experiment_profile"
   fi
+  export PRECISION_EXPERIMENT_PROFILE=$precision_experiment_profile
   source "$precision_experiment_profile"
   unset precision_experiment_profile
 fi
@@ -44,6 +45,7 @@ if [[ -n ${PRECISION_CANDIDATE_POLICY_PROFILE:-} ]]; then
   if [[ $precision_candidate_policy != /* ]]; then
     precision_candidate_policy="$SCRIPT_DIR/config/candidate_policies/$precision_candidate_policy"
   fi
+  export PRECISION_CANDIDATE_POLICY_PROFILE=$precision_candidate_policy
   source "$precision_candidate_policy"
   unset precision_candidate_policy
 fi
