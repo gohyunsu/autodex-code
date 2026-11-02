@@ -8,6 +8,7 @@ and frozen session calibration.  It never connects to a camera or robot.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import math
 from pathlib import Path
@@ -121,6 +122,104 @@ def _bound_session_run(attempt: Path) -> Path:
     return preflight.parents[2]
 
 
+def _finite_stats(values: list[float]) -> dict:
+    """Return descriptive evidence without creating a control threshold."""
+    finite = sorted(float(value) for value in values
+                    if math.isfinite(float(value)))
+    if not finite:
+        return {"count": 0, "minimum": None, "median": None,
+                "maximum": None}
+    middle = len(finite) // 2
+    median = (finite[middle] if len(finite) % 2 else
+              (finite[middle - 1] + finite[middle]) / 2.)
+    return {
+        "count": len(finite),
+        "minimum": finite[0],
+        "median": median,
+        "maximum": finite[-1],
+    }
+
+
+def _batch_summary(attempts: list[dict]) -> dict:
+    """Summarize the last valid saved fit for each physical attempt.
+
+    An attempt can end with an iteration that has only one observable view.
+    For that reason, this report retains both the final iteration status and
+    the last earlier iteration that had a multiview shape fit.  The values are
+    offline correlations with human labels, never live admission criteria.
+    """
+    rows = []
+    iteration_statuses = Counter()
+    for attempt in attempts:
+        iterations = attempt["review"]["iterations"]
+        iteration_statuses.update(
+            str(row["partial_shape_alignment"].get("status"))
+            for row in iterations)
+        fitted = [row for row in iterations
+                  if row["partial_shape_alignment"].get("status") ==
+                  "diagnostic_partial_shape_pose"]
+        last = fitted[-1] if fitted else None
+        fit = last["partial_shape_alignment"] if last is not None else {}
+        tip = fit.get("tip_socket_m")
+        xy_mm = ([float(tip[0]) * 1000., float(tip[1]) * 1000.]
+                 if isinstance(tip, list) and len(tip) == 3 else None)
+        per_view = fit.get("per_view")
+        if not isinstance(per_view, list):
+            per_view = []
+        rows.append({
+            "attempt_id": attempt["attempt_id"],
+            "candidate_id": attempt.get("candidate_id"),
+            "execution_status": attempt.get("status"),
+            "iteration_count": len(iterations),
+            "final_iteration_shape_status": (
+                iterations[-1]["partial_shape_alignment"].get("status")
+                if iterations else None),
+            "last_valid_fit_iteration": (
+                last["iteration"] if last is not None else None),
+            "last_valid_tip_xy_mm": xy_mm,
+            "last_valid_tip_xy_norm_mm": (
+                math.hypot(*xy_mm) if xy_mm is not None else None),
+            "last_valid_axis_tilt_deg": fit.get("axis_tilt_deg"),
+            "last_valid_camera_ids": fit.get("camera_ids", []),
+            "last_valid_max_center_residual_px": (
+                max(float(view["center_residual_norm_px"])
+                    for view in per_view) if per_view else None),
+            "last_valid_max_axis_residual_deg": (
+                max(float(view["shaft_orientation_residual_deg"])
+                    for view in per_view) if per_view else None),
+        })
+
+    by_status = []
+    for status in sorted({str(row["execution_status"]) for row in rows}):
+        selected = [row for row in rows
+                    if str(row["execution_status"]) == status]
+        fitted = [row for row in selected
+                  if row["last_valid_tip_xy_norm_mm"] is not None]
+        by_status.append({
+            "execution_status": status,
+            "attempt_count": len(selected),
+            "attempts_with_valid_multiview_shape_fit": len(fitted),
+            "last_valid_tip_xy_norm_mm": _finite_stats([
+                row["last_valid_tip_xy_norm_mm"] for row in fitted]),
+            "last_valid_axis_tilt_deg": _finite_stats([
+                row["last_valid_axis_tilt_deg"] for row in fitted
+                if row["last_valid_axis_tilt_deg"] is not None]),
+        })
+    return {
+        "attempt_count": len(rows),
+        "attempts_with_any_valid_multiview_shape_fit": sum(
+            row["last_valid_fit_iteration"] is not None for row in rows),
+        "iteration_shape_status_counts": dict(sorted(
+            iteration_statuses.items())),
+        "by_execution_status": by_status,
+        "attempt_last_fit_rows": rows,
+        "interpretation": (
+            "Offline saved-evidence summary only. The last valid fit can "
+            "precede the final iteration and is not an insertion-success "
+            "criterion or a robot command."),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
@@ -169,6 +268,7 @@ def main() -> None:
             "attempt_root": str(root),
             "robust_pixel_scale": args.robust_pixel_scale,
             "attempts": attempts,
+            "summary": _batch_summary(attempts),
         }
         count = len(attempts)
     output = args.output.expanduser().resolve()

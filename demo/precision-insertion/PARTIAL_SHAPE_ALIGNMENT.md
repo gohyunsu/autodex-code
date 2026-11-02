@@ -85,6 +85,13 @@ last fitted XY values were approximately `(0.8, 1.0) mm` and
 `(26.0, 22.6) mm` with mutually inconsistent shaft directions. These values
 are correlations in saved evidence, not physical key-pose ground truth.
 
+The batch report now includes a `summary` block.  For every attempt it keeps
+the final iteration status and, separately, the last earlier iteration with a
+valid multiview fit.  This distinction matters when the last view becomes
+occluded after an otherwise measurable sequence.  It also groups the saved
+XY norm and axis tilt by the recorded physical outcome.  No statistic in this
+block is read by the live controller or converted into a new execution gate.
+
 Before promoting this estimate to live control:
 
 1. recalibrate the capture4 cameras;
