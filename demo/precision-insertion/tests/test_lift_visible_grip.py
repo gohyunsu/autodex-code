@@ -10,8 +10,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.lift_visible_grip import (  # noqa: E402
-    HAND_FOCUS, CAMERAS, CAPTURE4_SCHEMA, _hand_roi, _hand_transform,
-    observe_visible_grip, verify_visible_grip,
+    HAND_FOCUS, HAND_PROMPT, CAMERAS, CAPTURE4_SCHEMA, _hand_roi,
+    _hand_transform, observe_visible_grip, verify_visible_grip,
 )
 from precision_insertion.observer import LabeledFrame  # noqa: E402
 
@@ -161,6 +161,45 @@ def test_capture4_straight_mount_batches_three_hand_crops(tmp_path):
     assert visual.aggregation["camera_ids"] == list(selected)
     assert visual.aggregation["execution_mode"] == "single_gpu_batch"
     assert len(backend.calls) == 1 and len(backend.calls[0]) == 3
+    assert visual.parsed["class"] == "held"
+    verify_visible_grip(visual.to_record(), set(selected), tmp_path,
+                        calibration=calibration, joint_q=joints)
+
+
+def test_capture4_distributed_batch_routes_each_view_by_camera(tmp_path):
+    selected = ("26053248", "25322639", "25305462")
+    calibration, joints, _ = _geometry()
+    for camera in selected:
+        calibration["camera_calibration"]["intrinsics_full"][camera] = (
+            calibration["camera_calibration"]["intrinsics_full"][CAMERAS[0]])
+        calibration["camera_calibration"]["extrinsics_full"][camera] = (
+            calibration["camera_calibration"]["extrinsics_full"][CAMERAS[0]])
+    straight_urdf = (Path(__file__).resolve().parents[3] / "autodex" /
+                     "planner/src/curobo/content/assets/robot" /
+                     "fr3_inspire_description/fr3_inspire.urdf")
+
+    class RemoteBatchAnswers:
+        visible_grip_camera_ids = selected
+        independent_remote_inference = True
+
+        def __init__(self):
+            self.prompts = []
+
+        def infer_many(self, requests):
+            self.prompts = [prompt for _, prompt in requests]
+            return ["YES", "YES", "NO"]
+
+    frames = [LabeledFrame(camera, phase, float(stamp),
+                           Image.new("RGB", (100, 100), "white"))
+              for camera in selected
+              for phase, stamp in (("before_grasp", 1), ("after_lift", 2))]
+    backend = RemoteBatchAnswers()
+    visual = observe_visible_grip(
+        backend, frames, tmp_path, calibration=calibration,
+        joint_q=joints, robot_urdf=straight_urdf)
+    assert backend.prompts == [f"Camera {camera}. {HAND_PROMPT}"
+                               for camera in selected]
+    assert visual.aggregation["execution_mode"] == "distributed_host_batch"
     assert visual.parsed["class"] == "held"
     verify_visible_grip(visual.to_record(), set(selected), tmp_path,
                         calibration=calibration, joint_q=joints)

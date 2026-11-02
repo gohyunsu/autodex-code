@@ -58,6 +58,13 @@ def _vote(answer: str) -> bool | None:
     return True if value == "YES" else False if value == "NO" else None
 
 
+def _batch_prompt(backend: ImageVLM, camera: str, prompt: str) -> str:
+    """Bind remote batch requests to cameras without changing local prompts."""
+    if getattr(backend, "independent_remote_inference", False):
+        return f"Camera {camera}. {prompt}"
+    return prompt
+
+
 def _mask_roi(mask_path: Path, image_size: tuple[int, int]) -> tuple[int, ...]:
     with Image.open(mask_path) as source:
         mask = source.convert("L")
@@ -334,16 +341,21 @@ def observe_visible_grip(
                        stage="post_lift", camera_id="multiple",
                        camera_ids=list(selected), image_count=len(selected),
                        model=getattr(backend, "model", None)):
-                answers = backend.infer_many(
-                    [(prepared, prompt) for prepared, _, _, _ in inputs])
+                request_prompts = [
+                    _batch_prompt(backend, camera, prompt)
+                    for camera in selected]
+                answers = backend.infer_many([
+                    (prepared, request_prompt)
+                    for (prepared, _, _, _), request_prompt
+                    in zip(inputs, request_prompts)])
         elapsed = time.perf_counter() - started
         if len(answers) != len(selected):
             raise RuntimeError("lift VLM batch returned the wrong number of views")
         rows = [_hand_row(
             camera, paired["after_lift", camera], answer, transform, roi,
-            pixel, elapsed, prompt=prompt)
-            for camera, (prepared, transform, roi, pixel), answer
-            in zip(selected, inputs, answers)]
+            pixel, elapsed, prompt=request_prompt)
+            for camera, (prepared, transform, roi, pixel), answer,
+            request_prompt in zip(selected, inputs, answers, request_prompts)]
     else:
         rows = map_view_calls(
             backend, list(selected),
@@ -369,9 +381,13 @@ def observe_visible_grip(
                            stage="post_lift_finger_retry", camera_id="multiple",
                            camera_ids=list(selected), image_count=len(selected),
                            model=getattr(backend, "model", None)):
+                    retry_prompts = [
+                        _batch_prompt(backend, camera, HAND_PROMPT)
+                        for camera in selected]
                     retry_answers = backend.infer_many([
-                        (prepared, HAND_PROMPT)
-                        for prepared, _, _, _ in retry_inputs])
+                        (prepared, request_prompt)
+                        for (prepared, _, _, _), request_prompt
+                        in zip(retry_inputs, retry_prompts)])
             retry_latency_s = time.perf_counter() - retry_started
             if len(retry_answers) != len(selected):
                 raise RuntimeError("lift retry VLM batch returned wrong view count")
@@ -379,9 +395,10 @@ def observe_visible_grip(
                 camera, paired["after_lift", camera], answer, transform,
                 roi, pixel, retry_latency_s,
                 method="measured_fr3_inspire_fingertip_fk_and_undistorted_camera",
-                prompt=HAND_PROMPT)
-                for camera, (prepared, transform, roi, pixel), answer
-                in zip(selected, retry_inputs, retry_answers)]
+                prompt=request_prompt)
+                for camera, (prepared, transform, roi, pixel), answer,
+                request_prompt in zip(
+                    selected, retry_inputs, retry_answers, retry_prompts)]
         else:
             retry_rows = map_view_calls(
                 backend, list(selected),
@@ -409,7 +426,10 @@ def observe_visible_grip(
                                         "crop_side_px": FINGER_CROP_SIDE}}
                if retry_rows is not None else {}),
             **({"camera_ids": list(selected)} if selected != CAMERAS else {}),
-            **({"execution_mode": "single_gpu_batch",
+            **({"execution_mode": (
+                    "distributed_host_batch"
+                    if getattr(backend, "independent_remote_inference", False)
+                    else "single_gpu_batch"),
                 "batch_latency_s": rows[0]["latency_s"]} if batched else {}),
             "calibration_sha256": _digest(calibration),
             "robot_urdf": str(robot_urdf),
@@ -475,6 +495,7 @@ def verify_visible_grip(visual: dict, cameras: set[str],
                 if schema in {CAPTURE4_SCHEMA_V3, CAPTURE4_SCHEMA} else None)
     historical_consensus = schema in {SCHEMA, CAPTURE4_SCHEMA_V3}
     expected_prompt = HAND_PROMPT_V3 if historical_consensus else HAND_PROMPT
+    routed_batch = aggregation.get("execution_mode") == "distributed_host_batch"
     if (not isinstance(selected, list) or len(selected) < 2 or
             len(set(selected)) != len(selected) or
             not set(selected) <= cameras or
@@ -498,7 +519,9 @@ def verify_visible_grip(visual: dict, cameras: set[str],
                       if item.startswith(f"after_lift/{camera}@")), None)
         if order is None or row.get("image_order") != [order]:
             raise ValueError("visible grip image order changed")
-        if (row.get("prompt") != expected_prompt or
+        row_prompt = (f"Camera {camera}. {expected_prompt}"
+                      if routed_batch else expected_prompt)
+        if (row.get("prompt") != row_prompt or
                 not isinstance(row.get("raw_answer"), str) or
                 row.get("yes") is not _vote(row["raw_answer"])):
             raise ValueError("visible grip prompt or answer changed")
@@ -540,13 +563,15 @@ def verify_visible_grip(visual: dict, cameras: set[str],
         _, focus = _hand_and_finger_focus(joint_q, robot_urdf)
         for row in retry_rows:
             camera = row["camera_id"]
+            row_prompt = (f"Camera {camera}. {expected_prompt}"
+                          if routed_batch else expected_prompt)
             order = next((item for item in visual.get("image_order", [])
                           if item.startswith(f"after_lift/{camera}@")), None)
             transform = row.get("input_transform", {})
             crop = row.get("crop", {})
             size = crop.get("original_image_size_wh")
             if (order is None or row.get("image_order") != [order] or
-                    row.get("prompt") != expected_prompt or
+                    row.get("prompt") != row_prompt or
                     not isinstance(row.get("raw_answer"), str) or
                     row.get("yes") is not _vote(row["raw_answer"]) or
                     transform.get("max_size") !=

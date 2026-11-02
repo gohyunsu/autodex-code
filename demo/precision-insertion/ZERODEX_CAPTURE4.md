@@ -174,6 +174,15 @@ source/output runtime configurations, and the exact camera-to-worker mapping.
 Model weights remain in the separately managed project asset tree and are not
 duplicated into the worker package.
 
+The lift v4 first pass and optional fingertip retry keep one four-view batch
+on that shared capture4 worker.  Each request now carries its camera ID in the
+prompt envelope (`Camera <serial>.`) so the distributed router can bind the
+image to the correct worker channel; the classification question itself is
+unchanged.  Reports record `distributed_host_batch` and the exact routed
+prompt per view.  The verifier accepts that form only when the recorded
+execution mode is distributed, while historical local v3/v4 reports continue
+to replay with their original unprefixed prompts.
+
 Only an explicitly exported `PRECISION_ROBOT_CONFIG` selects this alternate
 backend. Keep the local backend for physical runs until a saved-checkpoint A/B
 test shows that model load plus PNG/SSH round trip is lower on the current
