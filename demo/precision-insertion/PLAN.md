@@ -1,8 +1,16 @@
 # Precision insertion demo implementation plan
 
-The demo will run on the AutoDex Franka and Inspire rig, with its current
-ParaDex camera system, v8 grasp contract, and `object_processing` geometry.
-It will have its own trial loop under `demo/precision-insertion/`; it will not
+The original implementation target was the AutoDex Franka/Inspire rig. The
+active deployment is now the kds-Z790 PC, the ZeroDex straight-mount
+Franka/Inspire robot and capture4's four-camera ParaDex acquisition service.
+It retains the v8 grasp contract and `object_processing` geometry without
+calling the AutoDex executable entry points. The current machine and storage
+contract is [`OPERATIONS.md`](OPERATIONS.md); the detailed active stage wiring
+is [`ACTION_LOOP.md`](ACTION_LOOP.md). Sections below preserve design
+rationale and offline evidence scope, but an old implementation TODO must not
+be read as the current deployment status.
+
+The demo has its own trial loop under `demo/precision-insertion/`; it does not
 call `src.execution.run_auto.main()` or add insertion behavior to the existing
 AutoDex entry points. A simulated grasp pass is not an insertion pass.
 
@@ -131,10 +139,17 @@ its goal; otherwise it fails closed. The original endpoint approximation may
 deviate from the socket axis, so `path_audit.py` rejects such paths. This is
 planning feasibility, not a complete continuous-swept/contact safety proof.
 The existing `FrankaExecutor.execute()` start check is bound to the original
-grasp-pose lift, so the new held-q lift cannot be supplied as a blind override.
-A demo execution adapter must revalidate the actual live state against the
-held-q path or replan after observing the grasp.
-There is still no robot-executable full-task preflight or guarded controller.
+grasp-pose lift, so the new held-q lift is not supplied as a blind override.
+The demo execution adapter revalidates the measured live state at each motion
+boundary and replans the held-object chain from that state. The active ZeroDex
+profile now binds robot-executable pickup, measured lift, transfer,
+same-trial pre-insertion correction, socket-axis descent, release/clear-view,
+and recovery handlers. Physical episodes have exercised this route, including
+successful released-key outcomes. That is implementation and experiment
+evidence, not a claim that every candidate, fixture pose, recovery direction,
+or contact condition has been validated. The immutable offline candidate
+catalogue remains only the grasp-plus-nominal-endpoint eligibility screen
+described below.
 
 ## What the existing v8 candidate pool proves
 

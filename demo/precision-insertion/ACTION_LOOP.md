@@ -84,13 +84,16 @@ to nominal BODex transfer. The external lift adapter and raw-camera producer
 remain robot-PC integration requirements.
 
 [`LiveHeldRelationHandlers`](precision_insertion/live_held_relation_handlers.py)
-connects the likely occluded-key branch. Its
+is the optional physical-calibration branch retained for non-cylinder/custom
+integrations. It is **not** the active ZeroDex cylinder route, which selects
+`LiveNominalRelationHandlers` explicitly in `robot_pc_stages.py`. In that
+optional branch, its
 `calibration_for_candidate(candidate_id)` callback must return the reviewed
 `precision_insertion_physical_grasp_calibration_v1` for **that** selected v8
 grasp and mode. The runner verifies its source samples, candidate and saved
-lift checkpoint before planning a bounded transfer. No such calibration
-has been found in the local shared assets, so this branch cannot yet advance
-on real data; a simulated squeeze transform is not an acceptable substitute.
+lift checkpoint before planning a bounded transfer. This calibration is not
+part of the active cylinder contract, and a simulated squeeze transform is
+not silently substituted for one.
 For a visible key, select `held_relation_route="observed"` in
 `assemble_live_components()`. Its separate handler captures the key after
 lift, aligns the measured wrist to the image exposure, and replans transfer
@@ -275,17 +278,17 @@ camera, planner, prompt and limit objects supplied above, for example
 `axial_waypoint_step_m`. The example deliberately requires
 `commissioned_pickup_executor`, `motion_interlock`,
 `pickup_execution_limits`, `measured_surface_deviation_bounds` and
-`commissioned_measured_lift_parameters` from the robot PC. Without them,
-omit `pickup.handlers()` and the loop stops at `execution_gate_required`.
-The subsequent transfer, guarded insertion, withdrawal, retry, reset and
-repose boundaries are now connected as handlers in the demo; their real
-controllers, independent execution logs and camera callbacks remain
-AutoDex-PC integration work. The judged grasp-miss clear-view
-reset is connected; the held-key return handler can be composed as shown
-below once its commissioned callbacks exist. Returning from
+`commissioned_measured_lift_parameters` from the robot PC. This code fragment
+documents the generic assembly API; omitting a stage intentionally stops it at
+the corresponding `needs_handler` boundary. The active ZeroDex cylinder
+profile does not use this partial example: `robot_pc_stages.py` supplies all
+ten handler configurations and `zerodex_franka_integration.py` binds the
+commissioned cameras, Franka/Inspire execution, release/clear-view and
+recovery callbacks. Returning from
 `run_live_precision_session()` closes the cameras and loses the in-memory
 runner, so `needs_handler` is a diagnostic stop, **not** a resumable paused
-trial. Supply the remaining handlers before starting a physical session.
+trial. A new machine integration must supply every handler before a physical
+session; the active ZeroDex profile already does so.
 A passing offline endpoint
 catalogue and synthetic plan are not physical-success evidence.
 
@@ -298,9 +301,10 @@ boundary. The [`failed-return evidence`](precision_insertion/failed_return_evide
 binds the plan and ordered external controller log; `observe_reset_landing()`
 then accepts a new camera-observed tabletop pose to label the reset. The
 [`LiveHeldReturnHandlers`](precision_insertion/live_recovery_handlers.py)
-joins these existing steps without a second camera or robot executor. It
-requires three operator-supplied numeric mappings (the key-capture view
-limits, `SessionRunner.prepare_failed_insertion_return()` return limits, and
+joins these existing steps without a second camera or robot executor. Its
+generic construction API requires three integration-supplied numeric mappings
+(the key-capture view limits,
+`SessionRunner.prepare_failed_insertion_return()` return limits, and
 `SessionRunner.observe_reset_landing()` landing limits), plus:
 
 ```python
