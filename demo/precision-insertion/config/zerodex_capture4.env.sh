@@ -23,6 +23,12 @@ export PRECISION_ROBOT_CONFIG=${PRECISION_ROBOT_CONFIG:-$PRECISION_STAGE_ROOT/fr
 export PRECISION_RUN_OUTPUT_ROOT=${PRECISION_RUN_OUTPUT_ROOT:-$PRECISION_NAS_PROJECT_ROOT/runs/zerodex_capture4}
 export PRECISION_RECORDING_RECEIPT_ROOT=${PRECISION_RECORDING_RECEIPT_ROOT:-$PRECISION_RUN_OUTPUT_ROOT/_recording_receipts}
 export PRECISION_PARADEX_ROOT=${PRECISION_PARADEX_ROOT:-$HOME/precision_insertion_project/vendor/paradex}
+# The live importer uses the project-owned ParaDex working tree above. The
+# reproducible NAS builder instead needs a real Git object database so it can
+# archive an exact commit. Keep those roles explicit: the vendor copy may
+# intentionally omit .git, and this source checkout is never added to the live
+# Python path by this profile.
+export PRECISION_PARADEX_SOURCE_REPO=${PRECISION_PARADEX_SOURCE_REPO:-$HOME/paradex}
 export PRECISION_DEV_ROOT=${PRECISION_DEV_ROOT:-$PRECISION_NAS_PROJECT_ROOT/development/zerodex_capture4}
 export PRECISION_TIMING_LOCAL_ROOT=${PRECISION_TIMING_LOCAL_ROOT:-/tmp/precision-insertion-timing}
 # Continue the human-reviewed episode collection on this rig. VLM answers are

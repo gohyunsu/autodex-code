@@ -144,6 +144,13 @@ recopying runtime assets:
 python3 demo/precision-insertion/prepare_zerodex_nas_project.py --refresh-code-only
 ```
 
+The machine profile deliberately separates the two ParaDex paths.
+`PRECISION_PARADEX_ROOT=~/precision_insertion_project/vendor/paradex` is the
+project-owned runtime import tree and may omit `.git` metadata.
+`PRECISION_PARADEX_SOURCE_REPO=~/paradex` is the Git checkout used only to
+produce the exact ParaDex source archive. The refresh command must not infer
+an archive commit from the runtime copy.
+
 Verify the resulting bundle without opening a camera, CUDA context or robot:
 
 ```bash
@@ -208,7 +215,8 @@ The installer copies assets to local storage and rewrites old absolute
 sets `PRECISION_SHARED_ROOT` to the restored copy. The complete 5 mm socket
 representation is copied once; other socket packages are extracted as needed.
 It extracts
-the two code archives, restores ParaDex `system/current` into the local
+the three code archives (`autodex-code`, `paradex`, and `nvdiffrast`), restores
+ParaDex `system/current` into the local
 checkout, and writes an explicit machine profile. It does not
 install the operating system, NVIDIA driver, Python environments, RT kernel,
 Franka FCI, or camera hardware. The saved calibration is valid for the

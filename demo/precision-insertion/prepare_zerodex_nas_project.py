@@ -327,9 +327,11 @@ def main() -> None:
                         default=nas_project_root())
     parser.add_argument("--paradex-repo", type=Path,
                         default=Path(os.environ.get(
-                            "PRECISION_PARADEX_ROOT",
-                            str(Path.home() /
-                                "precision_insertion_project/vendor/paradex"))))
+                            "PRECISION_PARADEX_SOURCE_REPO",
+                            str(Path.home() / "paradex"))),
+                        help=("Git checkout archived for reproducibility; "
+                              "this is separate from the possibly metadata-"
+                              "free PRECISION_PARADEX_ROOT used at runtime"))
     parser.add_argument(
         "--nvdiffrast-repo", type=Path,
         default=Path(os.environ.get(
