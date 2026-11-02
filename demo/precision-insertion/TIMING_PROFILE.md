@@ -136,6 +136,18 @@ operator wait. Local Qwen placement is already fast enough in this trace that
 moving all label inference to capture4 would not recover a comparable amount
 of time.
 
+This trace reused a frozen socket session but still spent 14.05 s building a
+provisional world and then waited 13.26 s for it before loading Qwen.  A
+provisional pose only hides work behind a *new* socket measurement; it carries
+no information needed when the measured collision world is already saved.
+The reused-session path now skips that provisional capture.  It starts the
+measured-world warmup after handler construction and keeps the existing
+capture-to-planning join, so fresh key perception overlaps the only world
+initialization that remains.  Fresh-socket sessions retain the prior overlap.
+This is a scheduling change only; candidate, collision, alignment and task
+labels are unchanged.  The expected 13.26 s reduction must be confirmed in a
+new live trace rather than reported as a measured speedup.
+
 The second saved run also spent 1.926 s in
 `planning.nominal_insertion > planning.held_path_audit >
 audit.minimum_distance_scan`, and 1.783 s in the nominal post-lift path

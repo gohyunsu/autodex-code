@@ -199,11 +199,19 @@ def open_live_precision_session(
     # renderer first, then let cuRobo graph capture overlap the remote socket
     # capture.  Other socket routes retain the original ordering because they
     # may render on the same CUDA context during measurement.
+    # A reused socket session already contains the measured collision world.
+    # Do not spend a serial CUDA-graph capture on a provisional socket pose in
+    # that case.  The measured-world warmup starts after handler construction
+    # and overlaps the fresh key capture at its capture->planning boundary.
+    # Fresh socket sessions retain the provisional warmup because their live
+    # board/body capture provides useful independent work to hide it behind.
+    use_provisional_warmup = (
+        begin_pre_socket_warmup is not None and saved_session is None)
     defer_provisional_warmup = (
+        use_provisional_warmup and
         getattr(launch, "socket_perception_mode", "iou") ==
         "board_constrained_body")
-    if (begin_pre_socket_warmup is not None and
-            not defer_provisional_warmup):
+    if use_provisional_warmup and not defer_provisional_warmup:
         # The provisional table/socket world contains no measured socket pose.
         # Start its independent cuRobo worker while the stock initial home
         # command parks the arm; the measured world is installed after capture.
@@ -241,8 +249,7 @@ def open_live_precision_session(
                 object_name=warm_object,
                 raw_mesh=AssetPaths(launch.shared_root, launch.mode).raw_mesh(
                     warm_object))
-        if (begin_pre_socket_warmup is not None and
-                defer_provisional_warmup):
+        if defer_provisional_warmup:
             # Renderer allocation is complete.  The following board/body
             # measurement is remote/CPU work, so it can hide cuRobo startup.
             provisional_warmup = begin_pre_socket_warmup()

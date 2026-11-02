@@ -266,7 +266,9 @@ def test_reused_socket_evidence_skips_live_board_and_socket_capture(
             launch_config_path=tmp_path / "launch.json",
             endpoint_catalog_path=catalog, run_output_dir=tmp_path / "new_run",
             max_xy_retries=None, clear_view=_clear_view(events),
-            reuse_session_evidence_dir=saved) as live:
+            reuse_session_evidence_dir=saved,
+            begin_pre_socket_warmup=lambda: pytest.fail(
+                "reused socket must skip provisional-world warmup")) as live:
         assert live.started.evidence_dir == saved
         assert live.started.socket_request_ids == (12,)
         assert live.started.board_request_id == (None if board_free else 11)

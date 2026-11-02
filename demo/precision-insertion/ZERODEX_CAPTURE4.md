@@ -665,6 +665,13 @@ start the adapter if another experiment owns the cameras.
   `PRECISION_PREWARM_FIXED_WORLD=0` for the former serial timing. No grasp,
   collision, or task-success criterion changes. `--check` and `--camera-only`
   do not perform this live planner warmup.
+  When `--reuse-session` supplies an already measured socket world, the
+  provisional world is now omitted altogether.  The measured-world warmup
+  starts after handler construction and joins only at the existing fresh-key
+  capture-to-planning boundary, so key perception can hide that one-time
+  initialization.  A 2026-11-02 reused-session trace had paid a 13.26 s
+  provisional-world wait before Qwen construction; this change removes the
+  redundant work but still needs a fresh live timing measurement.
 - In the two archived, human-confirmed 5 mm insertions, the provisional
   cuRobo warmup occupied pipeline seconds 6.93–32.79 and 3.12–32.63.
   The fixed-world wait occupied 11.90–32.80 and 11.60–32.64, respectively;
