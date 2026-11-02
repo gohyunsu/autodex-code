@@ -175,7 +175,7 @@ Model weights remain in the separately managed project asset tree and are not
 duplicated into the worker package.
 
 Every independent per-camera batch is bound to its camera before dispatch.
-The lift v4 first pass, optional fingertip retry, and released-key socket
+The lift v5 two-view consensus and released-key socket
 classification add a routing-only prompt envelope (`Camera <serial>.`) when
 the backend is distributed; their classification questions are unchanged.
 The pre-insertion closed-set and metric-grounding prompts already carry the
@@ -227,6 +227,20 @@ changed. Set `PRECISION_PREINSERT_AUDIT_OVERLAY=1` when an overlay is needed
 for debugging. Existing reports with overlay PNGs remain verifiable. This
 change has been checked with saved 5 mm cylinder frames; live latency has not
 yet been measured after the change.
+
+The capture4 launcher also sets `PRECISION_CHECKPOINT_RETAIN_ORIGINAL=0`.
+Every checkpoint still stores and hashes all four undistorted full-resolution
+images from which Qwen and the XY estimator select their views. It does not
+additionally store
+the four distorted source images, which are not model inputs. One saved 5 mm
+pre-insertion checkpoint occupied about 37 MB when both copies were retained;
+its four undistorted PNGs account for about 18 MB. Across the eight complete
+fixed-`table/0/20195` timing traces, PNG batch writing occupied a median
+10.08 s per run. The new setting therefore removes duplicate NAS bytes from
+the critical path, but its physical-run latency has not yet been measured.
+Set the value to `1` for a dedicated camera-undistortion derivation audit.
+Frozen calibration, exposure/frame metadata, and the actual undistorted VLM
+pixels remain in the ordinary run evidence.
 
 After closed-loop alignment, the corrected axial handoff first screens and
 plans the canonical 20 mm endpoint. If the hand/socket endpoint or sampled
@@ -450,24 +464,18 @@ saved-frame negative diagnostic found that Qwen's coarse-pair prompt can
 answer `coarse_match` even for an empty hand; use the stage as a coarse
 observation and inspect per-camera responses when collecting transfer losses.
 
-The local capture4 lift classifier keeps its 650-pixel measured-hand crop as
-the first pass. Only when **all** selected cameras answer `NO` does it make
-one more Qwen batch with 320-pixel crops around the measured Inspire
-thumb/index/middle fingertips. Two `YES` replies in that retry promote the
-visual result to `held`; one `YES` does not change the original result. The
-retry never overrides an existing positive first pass and adds no new grasp
-rejection. Both sets of raw replies, exact crop coordinates, and batch timing
-are saved in the lift record. On all 12 archived capture4 after-lift bundles,
-the production replay changed only the human-confirmed `0c787032` visual
-false negative: its original four `NO` replies became `held` after two
-fingertip `YES` replies. The other 11 visual classes were unchanged, including
-the three old `vlm_only` negative outcomes; those three have no independent
-human ground truth. Four bundles needed a retry batch. This was an image-only
-replay with the local Qwen3-VL-2B; it did not send camera or robot commands.
-The reproducible
-historical script and per-view results are in
-`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/`
-as `replay_lift_finger_retry_20261030.{py,json}`.
+The current capture4 lift classifier uses the 650-pixel measured-hand crop,
+the concise single-image question, and a two-camera consensus. Two or more
+independent `YES` replies mean `held`; one means `unobservable`; none means
+`miss`. It does not run the historical fingertip retry, whose small crop could
+mistake an empty fingertip gap, checkerboard, or white robot shell for the key.
+An exact production-path replay on the 15 saved human-labelled lift cases
+found 12/13 held keys and produced no false `held` result on the two saved
+misses. One true held case remained a visual miss. This is in-sample replay
+evidence, not live accuracy or a new execution gate; manual mode continues to
+store the VLM result while the human label controls execution. Full v3/v4/v5
+results and frozen inputs are under
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/lift_v5_replay_20261102/`.
 New evaluations should use the maintained
 `demo/precision-insertion/replay_saved_lift_vlm.py`; its `--verify-only` mode
 hash-verifies the complete saved dataset without loading a model, and its

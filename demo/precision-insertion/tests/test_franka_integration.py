@@ -555,8 +555,8 @@ def test_first_party_qwen_and_fresh_checkpoint_callbacks(monkeypatch, tmp_path):
     monkeypatch.setattr(franka_integration, "load_vlm_backend", load)
     captures = []
 
-    def make(*, phase, timeout_s):
-        captures.append((phase, timeout_s))
+    def make(*, phase, timeout_s, retain_original):
+        captures.append((phase, timeout_s, retain_original))
         return lambda *_: phase
 
     monkeypatch.setattr(franka_integration, "make_checkpoint_capture", make)
@@ -586,7 +586,8 @@ def test_first_party_qwen_and_fresh_checkpoint_callbacks(monkeypatch, tmp_path):
         "parallel_views": 1,
         "classification_image_size": (384, 288)}]
     assert len(captures) == 2
-    assert all(timeout == 6.0 for _phase, timeout in captures)
+    assert all(timeout == 6.0 for _phase, timeout, _retain in captures)
+    assert all(retain for _phase, _timeout, retain in captures)
 
 
 def test_zerodex_local_lift_uses_configured_visible_grip_views(monkeypatch, tmp_path):

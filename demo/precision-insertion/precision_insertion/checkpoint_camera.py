@@ -165,6 +165,7 @@ def make_checkpoint_capture(
     *, phase: str, timeout_s: float, key_prompt: str | None = None,
     image_write_timeout_s: float = 5.0,
     transport: str = "snapshot",
+    retain_original: bool = True,
 ) -> Callable:
     """Return the `(live, runner, decision)` callback used by live handlers."""
     if phase not in PHASES:
@@ -178,7 +179,8 @@ def make_checkpoint_capture(
     def capture(live, _runner, _decision) -> RawCameraCapture:
         if transport == "snapshot":
             return capture_snapshot_checkpoint_frames(
-                live, phase=phase, timeout_s=timeout_s)
+                live, phase=phase, timeout_s=timeout_s,
+                retain_original=retain_original)
         return capture_checkpoint_frames(
             live, phase=phase, key_prompt=key_prompt,
             timeout_s=timeout_s,

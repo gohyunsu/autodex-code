@@ -155,6 +155,7 @@ def _vlm_model_id(vlm: Mapping, shared_root: Path) -> str:
 
 def _with_checkpoint_captures(
     stages: Mapping, timeout_s: float, *, family: str | None = None,
+    retain_original: bool = True,
 ) -> dict:
     """Reuse one open camera session; every callback still takes fresh frames."""
     result = {name: dict(fields) for name, fields in stages.items()}
@@ -165,7 +166,8 @@ def _with_checkpoint_captures(
         for field, phase in captures.items():
             if field not in result[stage_name]:
                 result[stage_name][field] = make_checkpoint_capture(
-                    phase=phase, timeout_s=timeout_s)
+                    phase=phase, timeout_s=timeout_s,
+                    retain_original=retain_original)
     return result
 
 
@@ -438,9 +440,15 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
         family = getattr(getattr(getattr(
             getattr(live, "opened", None), "runner", None),
             "mode", None), "family", None)
+        retain_original_value = os.environ.get(
+            "PRECISION_CHECKPOINT_RETAIN_ORIGINAL", "1")
+        if retain_original_value not in {"0", "1"}:
+            raise ValueError(
+                "PRECISION_CHECKPOINT_RETAIN_ORIGINAL must be 0 or 1")
         stages = _with_checkpoint_captures(
             parameters["stages"], vlm["capture_timeout_s"],
-            family=family)
+            family=family,
+            retain_original=retain_original_value == "1")
         if family == "cylinder" and "retry" in stages:
             stages["retry"]["xy_estimator"] = options.xy_estimator
             if sam_segmentor is not None:

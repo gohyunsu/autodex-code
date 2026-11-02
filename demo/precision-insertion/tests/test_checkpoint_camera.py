@@ -134,6 +134,9 @@ def test_raw_snapshot_checkpoint_does_not_depend_on_key_pose(tmp_path):
     assert make_checkpoint_capture(
         phase="preinsert", timeout_s=2.0).__name__ == \
         "capture"
+    assert make_checkpoint_capture(
+        phase="preinsert", timeout_s=2.0,
+        retain_original=False).__name__ == "capture"
     with pytest.raises(ValueError, match="key-specific prompt"):
         make_checkpoint_capture(
             phase="preinsert", timeout_s=2.0, transport="init_key")

@@ -37,6 +37,10 @@ export PRECISION_PRELOAD_VLM=${PRECISION_PRELOAD_VLM:-1}
 # cuRobo world. Start that work while capture4 acquires/refines the next key.
 # A caller can set 0 for a measured serial-latency comparison.
 export PRECISION_PREWARM_FIXED_WORLD=${PRECISION_PREWARM_FIXED_WORLD:-1}
+# The undistorted checkpoint pixels are the VLM/XY inputs. Keeping the
+# distorted source copies too doubles live PNG traffic without changing any
+# model or motion decision. Opt in only for a camera derivation audit.
+export PRECISION_CHECKPOINT_RETAIN_ORIGINAL=${PRECISION_CHECKPOINT_RETAIN_ORIGINAL:-0}
 if [[ -z ${PRECISION_CANDIDATE_POLICY_PROFILE+x} && $PRECISION_GAP_MM == 5 ]]; then
   export PRECISION_CANDIDATE_POLICY_PROFILE="$SCRIPT_DIR/config/candidate_policies/cylinder_gap5.env.sh"
 fi

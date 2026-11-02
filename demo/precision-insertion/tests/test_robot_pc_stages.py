@@ -94,6 +94,22 @@ def test_capture4_profile_can_skip_unused_preinsert_renderer(monkeypatch):
     assert calls == []
 
 
+def test_checkpoint_capture_policy_is_forwarded(monkeypatch):
+    calls = []
+
+    def capture_factory(**kwargs):
+        calls.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        franka_integration, "make_checkpoint_capture", capture_factory)
+    stages = _with_checkpoint_captures(
+        {"lift": {}, "task": {}}, 7.5, retain_original=False)
+    assert set(stages) == {"lift", "task"}
+    assert len(calls) == 3
+    assert all(call["retain_original"] is False for call in calls)
+
+
 def test_board9_binding_reads_values_from_selected_stage_policy(
         tmp_path, monkeypatch):
     source = (Path(__file__).resolve().parents[1] / "config" /
