@@ -17,6 +17,10 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
+
+
+_PROCESS_STARTED_NS = time.perf_counter_ns()
 
 DEMO_DIR = Path(__file__).resolve().parent
 REPO_ROOT = DEMO_DIR.parents[1]
@@ -253,7 +257,8 @@ def main(argv: list[str] | None = None) -> int:
             json.dump(payload, stream, indent=2, sort_keys=True, allow_nan=False)
             stream.write("\n")
 
-    with profile_run(output_dir) as profile:
+    with profile_run(
+            output_dir, process_started_ns=_PROCESS_STARTED_NS) as profile:
         with timed("live.session", phase="session"):
             result = run_integrated_live_session(
                 options, integration_spec=args.integration,

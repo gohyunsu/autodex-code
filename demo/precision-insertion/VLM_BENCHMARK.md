@@ -111,6 +111,22 @@ reported target classes are `held`, `normal_appearance`, and `inside_socket`
 for lift, insertion appearance, and released-key tasks, respectively;
 they do **not** grant insertion motion or certify final task success.
 
+## Current capture4 replay evidence
+
+On 2026-11-02 the local Qwen cache was replayed on CPU against the six
+independently labeled released-key cases in
+`released_vlm_dataset_20261029/manifest_six.json` (manifest SHA-256
+`25ddd7b16230e26c25b93501690a3e91c4fde497a799f232aaba3e8ee3c8147f`).
+The exact production crop and voting code classified all three
+`inside_socket` and all three `outside_socket` cases correctly, with zero
+parse failures and zero inside false positives. Camera `25305462` had one
+inside false negative, while the configured multi-view result remained
+correct. This small six-case replay validates code-path execution; it is not
+a statistical performance claim and does not justify permanently excluding a
+camera. The measured CPU trace was 43.22 s end-to-end: 2.55 s model loading,
+2.47 s image loading and 35.14 s inference. A commissioned GPU replay is
+still required after the workstation's NVIDIA device nodes are restored.
+
 This tool checks only that the manifest *claims* independent review and
 timestamp provenance. It cannot prove reviewer independence, image capture
 time, calibration, or ground-truth correctness. Commission the dataset from

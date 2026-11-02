@@ -175,6 +175,27 @@ def test_profile_can_record_nonexception_terminal_status(tmp_path):
     assert manifest["status"] == "needs_handler"
 
 
+def test_profile_can_account_for_python_bootstrap_before_trace(tmp_path):
+    output = tmp_path / "boot_timing"
+    process_started_ns = time.perf_counter_ns()
+    time.sleep(.002)
+    with profile_run(output, process_started_ns=process_started_ns):
+        with timed("live.session", phase="session"):
+            time.sleep(.001)
+    summary = json.loads((timing_directory(output) /
+                          "timing_summary.json").read_text())
+    assert summary["python_pre_profile_s"] >= .001
+    assert summary["profile_body_s"] >= .001
+    assert summary["python_process_to_profile_body_end_s"] == pytest.approx(
+        summary["python_pre_profile_s"] + summary["profile_body_s"])
+
+
+def test_profile_rejects_invalid_python_bootstrap_marker(tmp_path):
+    with pytest.raises(ValueError, match="must precede"):
+        with profile_run(tmp_path / "bad", process_started_ns=0):
+            pass
+
+
 def test_timed_without_live_profile_is_noop():
     with timed("standalone", phase="test"):
         pass

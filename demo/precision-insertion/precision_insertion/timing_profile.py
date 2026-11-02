@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import time
 from typing import Iterator
 
 from autodex.pipeline_trace import PipelineTrace
@@ -47,8 +48,22 @@ def _active_timing_directory(run_output_dir: Path) -> Path:
 
 
 @contextmanager
-def profile_run(run_output_dir: Path) -> Iterator[RunProfile]:
-    """Keep a stock AutoDex trace open across startup, actions and cleanup."""
+def profile_run(
+    run_output_dir: Path, *, process_started_ns: int | None = None,
+) -> Iterator[RunProfile]:
+    """Keep one trace open across startup, actions and cleanup.
+
+    ``process_started_ns`` optionally records the untraced Python bootstrap
+    before the profile was opened. It must come from ``time.perf_counter_ns``
+    in the same process. This is timing metadata only; it neither adds a gate
+    nor changes session sequencing.
+    """
+    profile_opened_ns = time.perf_counter_ns()
+    if (process_started_ns is not None and
+            (type(process_started_ns) is not int or
+             process_started_ns <= 0 or
+             process_started_ns > profile_opened_ns)):
+        raise ValueError("process timing marker must precede profile startup")
     destination = _active_timing_directory(run_output_dir)
     trace = PipelineTrace(destination)
     profile = RunProfile(trace)
@@ -60,10 +75,18 @@ def profile_run(run_output_dir: Path) -> Iterator[RunProfile]:
         profile.outcome = "failure"
         raise
     finally:
+        profile_body_ended_ns = time.perf_counter_ns()
         _PARENT.reset(parent_token)
         _TRACE.reset(token)
         trace.close(outcome=profile.outcome)
         summary = summarize_events(destination / "events.jsonl")
+        if process_started_ns is not None:
+            pre_profile_s = (profile_opened_ns - process_started_ns) / 1e9
+            profile_body_s = (profile_body_ended_ns - profile_opened_ns) / 1e9
+            summary["python_pre_profile_s"] = round(pre_profile_s, 9)
+            summary["profile_body_s"] = round(profile_body_s, 9)
+            summary["python_process_to_profile_body_end_s"] = round(
+                pre_profile_s + profile_body_s, 9)
         (destination / "timing_summary.json").write_text(
             json.dumps(summary, indent=2, sort_keys=True) + "\n",
             encoding="utf-8")
