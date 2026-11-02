@@ -33,15 +33,21 @@ LEGACY_IMAGE_SIZE = {"24122734": 384, "25322638": 512}
 LEGACY_SCHEMA = "precision_insertion_visible_grip_v1"
 SCHEMA = "precision_insertion_visible_grip_v2"
 CAPTURE4_SCHEMA_V3 = "precision_insertion_visible_grip_v3"
-CAPTURE4_SCHEMA = "precision_insertion_visible_grip_v4"
+CAPTURE4_SCHEMA_V4 = "precision_insertion_visible_grip_v4"
+CAPTURE4_SCHEMA = "precision_insertion_visible_grip_v5"
 HAND_PROMPT_V3 = (
     "Is the small solid white cylindrical peg visibly held by the robot's "
     "black fingers in this image? The robot also has white finger shells. "
     "Reply only YES or NO.")
-HAND_PROMPT = (
+HAND_PROMPT_V4 = (
     "Ignore the white robot shells. Is a separate long straight beige-white "
     "cylinder visibly extending between the black fingertip pads? An empty "
     "gap or checkerboard alone means NO. Reply only YES or NO.")
+# Saved capture4 replay showed that the longer v4 wording rejected 12 of 13
+# human-positive lifts. The concise prompt preserves useful per-view evidence;
+# v5 differs from v3 by requiring two agreeing cameras and by not promoting
+# the ambiguous fingertip retry to a held label.
+HAND_PROMPT = HAND_PROMPT_V3
 HAND_CROP_SIDE = 650
 FINGER_CROP_SIDE = 320
 HAND_IMAGE_SIZE = 640
@@ -359,7 +365,7 @@ def observe_visible_grip(
     parsed = _hand_result(rows) if capture4 else _hand_result_v3(rows)
     retry_rows = None
     retry_latency_s = 0.
-    if (parsed["class"] == "miss" and
+    if (not capture4 and parsed["class"] == "miss" and
             getattr(backend, "supports_finger_focus_retry", False)):
         _, finger_focus = _hand_and_finger_focus(joint_q, robot_urdf)
         if batched:
@@ -486,9 +492,11 @@ def verify_visible_grip(visual: dict, cameras: set[str],
     schema = aggregation.get("schema")
     selected = (list(CAMERAS) if schema == SCHEMA else
                 aggregation.get("camera_ids")
-                if schema in {CAPTURE4_SCHEMA_V3, CAPTURE4_SCHEMA} else None)
+                if schema in {CAPTURE4_SCHEMA_V3, CAPTURE4_SCHEMA_V4,
+                              CAPTURE4_SCHEMA} else None)
     historical_consensus = schema in {SCHEMA, CAPTURE4_SCHEMA_V3}
-    expected_prompt = HAND_PROMPT_V3 if historical_consensus else HAND_PROMPT
+    expected_prompt = (HAND_PROMPT_V4 if schema == CAPTURE4_SCHEMA_V4
+                       else HAND_PROMPT_V3)
     routed_batch = aggregation.get("execution_mode") == "distributed_host_batch"
     if (not isinstance(selected, list) or len(selected) < 2 or
             len(set(selected)) != len(selected) or
@@ -545,6 +553,8 @@ def verify_visible_grip(visual: dict, cameras: set[str],
     retry = aggregation.get("finger_focus_retry")
     retry_rows = None
     if retry is not None:
+        if schema == CAPTURE4_SCHEMA:
+            raise ValueError("capture4 v5 does not use a fingertip retry")
         primary_result = (_hand_result_v3(rows) if historical_consensus
                           else _hand_result(rows))
         if (primary_result["class"] != "miss" or

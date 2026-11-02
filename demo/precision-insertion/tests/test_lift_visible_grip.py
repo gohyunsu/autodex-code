@@ -10,8 +10,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.lift_visible_grip import (  # noqa: E402
-    HAND_FOCUS, HAND_PROMPT, CAMERAS, CAPTURE4_SCHEMA, _hand_roi,
-    _hand_transform, observe_visible_grip, verify_visible_grip,
+    HAND_FOCUS, HAND_PROMPT, HAND_PROMPT_V4, CAMERAS, CAPTURE4_SCHEMA,
+    CAPTURE4_SCHEMA_V4, _hand_roi, _hand_transform, observe_visible_grip,
+    verify_visible_grip,
 )
 from precision_insertion.observer import LabeledFrame  # noqa: E402
 
@@ -165,6 +166,13 @@ def test_capture4_straight_mount_batches_three_hand_crops(tmp_path):
     verify_visible_grip(visual.to_record(), set(selected), tmp_path,
                         calibration=calibration, joint_q=joints)
 
+    historical_v4 = visual.to_record()
+    historical_v4["aggregation"]["schema"] = CAPTURE4_SCHEMA_V4
+    for row in historical_v4["aggregation"]["per_view"]:
+        row["prompt"] = HAND_PROMPT_V4
+    verify_visible_grip(historical_v4, set(selected), tmp_path,
+                        calibration=calibration, joint_q=joints)
+
 
 def test_capture4_distributed_batch_routes_each_view_by_camera(tmp_path):
     selected = ("26053248", "25322639", "25305462")
@@ -236,12 +244,7 @@ def test_capture4_one_yes_is_not_multiview_confirmation(tmp_path):
     assert visual.parsed["confirming_views"] == [selected[1]]
 
 
-@pytest.mark.parametrize("retry_answers,expected", [
-    (["YES", "YES", "NO"], "held"),
-    (["YES", "NO", "NO"], "miss"),
-])
-def test_capture4_all_no_retries_measured_fingertips(
-        tmp_path, retry_answers, expected):
+def test_capture4_all_no_does_not_promote_fingertip_retry(tmp_path):
     selected = ("26053248", "25322639", "25305462")
     calibration, joints, _ = _geometry()
     for camera in selected:
@@ -262,8 +265,7 @@ def test_capture4_all_no_retries_measured_fingertips(
 
         def infer_many(self, requests):
             self.calls.append(requests)
-            return (["NO"] * len(selected) if len(self.calls) == 1
-                    else retry_answers)
+            return ["NO"] * len(selected)
 
     frames = [LabeledFrame(camera, phase, float(stamp),
                            Image.new("RGB", (800, 800), "white"))
@@ -273,19 +275,8 @@ def test_capture4_all_no_retries_measured_fingertips(
     visual = observe_visible_grip(
         backend, frames, tmp_path, calibration=calibration,
         joint_q=joints, robot_urdf=straight_urdf)
-    assert len(backend.calls) == 2
-    assert visual.parsed["class"] == expected
-    assert (len(visual.parsed["confirming_views"]) == 2) == (expected == "held")
-    retry = visual.aggregation["finger_focus_retry"]
-    assert retry["crop_side_px"] == 320
-    assert all(row["crop"]["source_roi_xyxy"][2] -
-               row["crop"]["source_roi_xyxy"][0] == 320
-               for row in retry["per_view"])
-    record = visual.to_record()
-    verify_visible_grip(record, set(selected), tmp_path,
+    assert len(backend.calls) == 1
+    assert visual.parsed["class"] == "miss"
+    assert "finger_focus_retry" not in visual.aggregation
+    verify_visible_grip(visual.to_record(), set(selected), tmp_path,
                         calibration=calibration, joint_q=joints)
-    record["aggregation"]["finger_focus_retry"]["per_view"][0][
-        "crop"]["source_roi_xyxy"][0] += 1
-    with pytest.raises(ValueError, match="fingertip crop changed"):
-        verify_visible_grip(record, set(selected), tmp_path,
-                            calibration=calibration, joint_q=joints)

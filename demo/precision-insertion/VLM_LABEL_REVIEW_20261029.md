@@ -19,47 +19,52 @@ behavior from the current runtime. It evaluates only already-saved labels; it
 does not claim physical ground truth beyond the human annotation or rerun
 inference with a new prompt.
 
-## Live-label audit and capture4 lift v4 (2026-11-02)
+## Live-label audit and capture4 lift v5 (2026-11-02)
 
-The saved ZeroDex dataset currently contains 15 paired lift labels, 12 paired
+The saved ZeroDex dataset contains 15 paired lift labels, 12 paired
 pre-insertion labels, and 6 paired released-insertion labels. The old lift v3
-rule agrees with 13/15 human lift labels; both disagreements are false
-positives after the hand struck the upright key and left the hand empty. One
-false positive came from accepting one positive view. The other came from an
-all-negative wide crop followed by a positive fingertip retry: its retry crop
-contains only the empty black-fingertip gap, checkerboard, and white robot
-shells. A human-positive low-visibility case also needed that retry, so merely
-removing the retry would exchange a false positive for a false negative.
+rule agreed with 13/15 human lift labels, but both disagreements were false
+`held` decisions after the hand struck the upright key and remained empty.
+One was caused by accepting a single positive view. The other was promoted by
+a fingertip retry whose crop contained the empty fingertip gap, checkerboard,
+and white robot shells.
 
-New capture4 reports therefore use `precision_insertion_visible_grip_v4`:
+The strict v4 wording was replayed with local Qwen on the same 15 saved
+reports. It removed false `held` decisions but recognized only 1/13 actual
+held keys (12 false `miss` decisions), so it is not suitable for execution.
+Four paired/reference-image prompt variants were also rejected because they
+mostly or entirely answered `NOT_HELD` on the human-positive cases.
 
-- at least two cameras must independently answer YES for `held`;
-- one positive camera is `unobservable`, not a positive label;
-- the prompt describes the target as a separate long straight beige-white
-  cylinder extending between black pads, and explicitly assigns an empty gap,
-  checkerboard, or white robot shells to NO;
-- the fingertip retry remains available for low-visibility true grasps and
-  uses the same geometry-specific prompt.
+New capture4 reports therefore use `precision_insertion_visible_grip_v5`:
 
-The historical v3 prompt and one-view consensus remain in the verifier, so
-old immutable reports still replay exactly. The v4 prompt has not yet been
-rerun on the 15 saved lift cases because this PC's NVIDIA device nodes are
-currently unavailable. Manual mode continues to store both answers while the
-human annotation remains the execution label; v4 is not claimed as validated
-until that saved-image replay is completed.
+- submit the concise single-image v3 question on the measured 650 px hand ROI;
+- require at least two cameras to independently answer YES for `held`;
+- retain one positive camera as `unobservable`, not a positive label;
+- do not run or promote the ambiguous fingertip retry.
+
+An exact production-path replay of v5 on all 15 saved reports yielded 12/13
+human-positive lifts as `held`, one as `miss`, and the two human-negative lifts
+as `miss` and `unobservable`. Thus false `held` is 0/2 on this saved set. The
+aggregate exact-label agreement is 13/15 because `unobservable` is deliberately
+kept distinct from `miss`; among binary decisions it made one false negative
+and no false positive. This is an in-sample replay, not an out-of-sample
+accuracy claim or a live-robot validation. Manual mode continues to store both
+VLM and human answers while the human annotation controls execution.
+
+The verifier retains the historical v3 and v4 prompts and policies so old
+immutable reports remain auditable with their original semantics.
 
 The reusable replay entry point is now
 `replay_saved_lift_vlm.py`, rather than the dated NAS one-off script. Its
 source-only pass verified all 15 reports against their PNG bytes, capture
 manifests, five frozen session calibrations and measured joint records. The
-result is
+source-only audit is
 `development/zerodex_capture4/reviews/lift_v4_replay_inputs_20261102.json`
 under the project NAS root (SHA256
 `e40ac2c50ca24091a4a8edfd29e131356bf5db53030b9ed411fa3f4f90344ddb`):
-13 human `held` and two human `miss` cases. After restoring local CUDA device
-nodes, run the same command without `--verify-only` and choose a new output
-path; it will load the runtime-configured backend once and replay the current
-v4 prompt, crops, retry and consensus on those exact sources.
+13 human `held` and two human `miss` cases. The dated v4 and current v5 GPU
+replays, prompt probes, timing traces, and hashes are grouped under
+`development/zerodex_capture4/reviews/lift_v5_replay_20261102/`.
 
 ```bash
 source demo/precision-insertion/config/zerodex_capture4.env.sh
@@ -68,7 +73,7 @@ PYTHONPATH="$PWD/demo/precision-insertion:$PWD" \
   --attempt-root \
     "$PRECISION_RUN_OUTPUT_ROOT/precision-insertion/inspire/precision_key_cylinder_r15_h80" \
   --runtime-config "$PRECISION_ROBOT_CONFIG" \
-  --output "$PRECISION_DEV_ROOT/reviews/lift_v4_replay_$(date +%Y%m%d_%H%M%S).json"
+  --output "$PRECISION_DEV_ROOT/reviews/lift_v5_replay_$(date +%Y%m%d_%H%M%S).json"
 ```
 
 The four-case sections below document the earlier v4 final prompt and 384 px

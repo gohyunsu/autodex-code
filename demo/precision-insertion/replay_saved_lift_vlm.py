@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay capture4 lift v4 on immutable saved attempts; never open hardware.
+"""Replay the current capture4 lift policy on saved attempts; never open hardware.
 
 The input is the ordinary ZeroDex attempt root and the runtime JSON that will
 be used for the next experiment.  Every historical lift report is verified
@@ -175,7 +175,7 @@ def run(args: argparse.Namespace) -> dict:
     with timed("replay.lift_sources_verify", phase="replay", kind="io"):
         cases, ceiling = _verified_cases(attempt_root)
     common = {
-        "schema": "precision_insertion_saved_lift_v4_replay_v1",
+        "schema": "precision_insertion_saved_lift_current_replay_v1",
         "attempt_root": str(attempt_root),
         "runtime_config": str(runtime_config),
         "runtime_config_sha256": config_sha256,
