@@ -30,7 +30,7 @@ Last audited: **2026-11-03**, with the robot, hand and cameras off.
   NAS reference outside `/mnt/paradex2/hyunsu`.
 - The source-boundary audit reports zero stock-entrypoint changes and zero
   unexpected shared-runtime changes.
-- The complete demo test suite last passed with **1551 passed, 5 skipped**.
+- The complete demo test suite last passed with **1552 passed, 5 skipped**.
 - Real 5 mm-gap episodes exercised the full pickup/transfer/insertion/release
   route. In particular, attempts
   `attempt_3c8ff1b830d347a2b8c45aa7ae1a5363` and
