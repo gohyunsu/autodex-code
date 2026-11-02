@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.visual_views import (  # noqa: E402
     assessment_cameras, final_assessment_cameras,
-    final_cameras_with_visible_socket,
+    final_cameras_with_visible_socket, final_view_policy,
 )
 from precision_insertion.camera_selection import (  # noqa: E402
     limit_ranked_camera_selection, socket_consistent_alignment_cameras,
@@ -49,6 +49,23 @@ def test_final_label_defaults_to_existing_views(monkeypatch):
     monkeypatch.setenv("PRECISION_VLM_CAMERA_IDS", "100,200,300")
     assert final_assessment_cameras({"100", "200", "300"}) == [
         "100", "200", "300"]
+
+
+def test_final_view_policy_reports_dynamic_or_explicit_selection(monkeypatch):
+    monkeypatch.delenv("PRECISION_FINAL_VLM_CAMERA_IDS", raising=False)
+    monkeypatch.setenv("PRECISION_FINAL_VLM_VIEW_COUNT", "3")
+    assert final_view_policy() == {
+        "method": "session_socket_pose_inliers",
+        "view_count": 3,
+        "ranking": "ascending_session_socket_center_residual_mm",
+        "scope": "configuration_only_no_camera_access",
+    }
+    monkeypatch.setenv("PRECISION_FINAL_VLM_CAMERA_IDS", "300,100,200")
+    assert final_view_policy() == {
+        "method": "explicit_camera_ids",
+        "camera_ids": ["300", "100", "200"],
+        "scope": "configuration_only_no_camera_access",
+    }
 
 
 def test_saved_replay_uses_recorded_final_views_even_with_other_profile(monkeypatch):

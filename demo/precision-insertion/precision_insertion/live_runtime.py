@@ -189,6 +189,7 @@ def inspect_live_inputs(
                 stem == "000")],
         "robot_config": None,
         "stage_policy": None,
+        "final_vlm_view_policy": None,
         "xy_estimator": xy_estimator,
         "sam_roi_inputs": None,
         "scope": "static_files_only_no_camera_cuda_or_robot_connection",
@@ -223,6 +224,8 @@ def inspect_live_inputs(
                 policy.alignment_limits.minimum_views),
             "scope": "static_configuration_only_no_hardware_import",
         }
+    from .visual_views import final_view_policy
+    result["final_vlm_view_policy"] = final_view_policy()
     if xy_estimator == "sam_half_ellipse":
         from .franka_integration import _sam_runtime_paths
 

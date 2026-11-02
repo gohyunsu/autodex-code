@@ -167,6 +167,12 @@ def test_static_preflight_reads_v8_files_without_opening_robot(
     assert report["stage_policy"]["preinsert_render_audit_overlay"] is False
     assert report["stage_policy"]["scope"] == (
         "static_configuration_only_no_hardware_import")
+    assert report["final_vlm_view_policy"] == {
+        "method": "session_socket_pose_inliers",
+        "view_count": 3,
+        "ranking": "ascending_session_socket_center_residual_mm",
+        "scope": "configuration_only_no_camera_access",
+    }
     assert report["robot_config"]["vlm"] == {
         "mode": "local",
         "configured_model_id": None,

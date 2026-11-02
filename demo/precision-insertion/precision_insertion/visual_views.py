@@ -6,6 +6,39 @@ import os
 from collections.abc import Iterable
 
 
+def final_view_policy() -> dict:
+    """Return the live final-label selection policy without camera access."""
+    configured = os.environ.get("PRECISION_FINAL_VLM_CAMERA_IDS", "").strip()
+    if configured:
+        selected = [item.strip() for item in configured.split(",")]
+        if (len(selected) < 2 or len(selected) > 5 or
+                len(set(selected)) != len(selected) or
+                any(not item.isdecimal() for item in selected)):
+            raise ValueError(
+                "PRECISION_FINAL_VLM_CAMERA_IDS needs two to five "
+                "distinct camera IDs")
+        return {
+            "method": "explicit_camera_ids",
+            "camera_ids": selected,
+            "scope": "configuration_only_no_camera_access",
+        }
+    raw_count = os.environ.get("PRECISION_FINAL_VLM_VIEW_COUNT", "3")
+    try:
+        count = int(raw_count)
+    except ValueError as exc:
+        raise ValueError(
+            "PRECISION_FINAL_VLM_VIEW_COUNT must be an integer") from exc
+    if not 2 <= count <= 5:
+        raise ValueError(
+            "PRECISION_FINAL_VLM_VIEW_COUNT must be from two to five")
+    return {
+        "method": "session_socket_pose_inliers",
+        "view_count": count,
+        "ranking": "ascending_session_socket_center_residual_mm",
+        "scope": "configuration_only_no_camera_access",
+    }
+
+
 def assessment_cameras(available: Iterable[str]) -> list[str]:
     """Use all views offline, or the configured live camera selection."""
     cameras = sorted(set(available))

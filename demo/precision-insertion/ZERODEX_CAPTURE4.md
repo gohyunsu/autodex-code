@@ -692,6 +692,8 @@ position; no VLM pixel rectangle is fixed across sessions. Selection affects
 only the final visual vote, not four-camera XY grounding or robot motion.
 `PRECISION_FINAL_VLM_VIEW_COUNT` defaults to 3. An explicit
 `PRECISION_FINAL_VLM_CAMERA_IDS` remains available for a controlled replay.
+`run_zerodex_capture4.sh --check` reports which of these two policies is
+active without opening a camera or loading a model.
 A saved-frame probe that ranked views by projected socket *area* misclassified
 an inside case, so area is deliberately not the ranking metric; calibrated
 socket-centre residual is. See
