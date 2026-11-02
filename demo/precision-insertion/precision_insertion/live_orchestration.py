@@ -194,7 +194,16 @@ def open_live_precision_session(
             saved_session = load_reused_socket_session(
                 launch=launch, evidence_dir=reuse_session_evidence_dir)
     provisional_warmup = None
-    if begin_pre_socket_warmup is not None:
+    # The ZeroDex board-constrained socket route does not invoke the local
+    # CUDA silhouette renderer while measuring the socket.  Warm its key
+    # renderer first, then let cuRobo graph capture overlap the remote socket
+    # capture.  Other socket routes retain the original ordering because they
+    # may render on the same CUDA context during measurement.
+    defer_provisional_warmup = (
+        getattr(launch, "socket_perception_mode", "iou") ==
+        "board_constrained_body")
+    if (begin_pre_socket_warmup is not None and
+            not defer_provisional_warmup):
         # The provisional table/socket world contains no measured socket pose.
         # Start its independent cuRobo worker while the stock initial home
         # command parks the arm; the measured world is installed after capture.
@@ -232,6 +241,11 @@ def open_live_precision_session(
                 object_name=warm_object,
                 raw_mesh=AssetPaths(launch.shared_root, launch.mode).raw_mesh(
                     warm_object))
+        if (begin_pre_socket_warmup is not None and
+                defer_provisional_warmup):
+            # Renderer allocation is complete.  The following board/body
+            # measurement is remote/CPU work, so it can hide cuRobo startup.
+            provisional_warmup = begin_pre_socket_warmup()
         with timed("startup.camera_stream_open", phase="startup", kind="io"):
             if os.environ.get("PRECISION_ATTACH_CAMERAS") == "1":
                 resources.enter_context(attach_running_autodex_camera_stream(
@@ -265,6 +279,13 @@ def open_live_precision_session(
                 excluded_candidates=excluded_candidates,
                 upright_cylinder_only=getattr(
                     launch, "upright_cylinder_only", True))
+        if provisional_warmup is not None and defer_provisional_warmup:
+            # Join only after all socket capture and ledger work that is
+            # independent of the planner.  Handler construction may load a
+            # local VLM on the same CUDA context, so it starts after this join.
+            with timed("startup.planner_provisional_world_warmup_wait",
+                       phase="startup", kind="wait"):
+                provisional_warmup.result()
         yield LivePrecisionSession(started, opened, cameras, clear_view)
     finally:
         with timed("cleanup.camera_resources", phase="cleanup", kind="io"):

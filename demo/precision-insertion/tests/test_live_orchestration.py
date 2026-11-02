@@ -160,6 +160,49 @@ def test_board_constrained_socket_prewarms_key_not_unused_socket_renderer(
     assert "socket_renderer_warmup" not in events
 
 
+def test_board_constrained_socket_overlaps_planner_warmup_with_capture(
+        tmp_path, monkeypatch):
+    events = []
+    launch = _patch_camera_lifetime(monkeypatch, events)
+    launch.mode.key_object = "precision_key_cylinder_r15_h80"
+    launch.socket_perception_mode = "board_constrained_body"
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text("{}", encoding="utf-8")
+
+    class Warmup:
+        def result(self):
+            events.append("planner_warmup_join")
+
+    def begin_warmup():
+        events.append("planner_warmup_started")
+        return Warmup()
+
+    monkeypatch.setattr(
+        orchestration, "prepare_precision_silhouette",
+        lambda **_kwargs: events.append("key_renderer_warmup"))
+    monkeypatch.setattr(
+        orchestration, "open_verified_session",
+        lambda **_kwargs: (events.append("ledger_open") or
+                           SimpleNamespace(runner="same_runner")))
+    with orchestration.open_live_precision_session(
+            launch_config_path=tmp_path / "launch.json",
+            endpoint_catalog_path=catalog, run_output_dir=tmp_path / "new_run",
+            max_xy_retries=None, clear_view=_clear_view(events),
+            begin_pre_socket_warmup=begin_warmup):
+        events.append("session_yielded")
+
+    assert events.index("key_renderer_warmup") < events.index(
+        "planner_warmup_started")
+    assert events.index("planner_warmup_started") < events.index(
+        "socket_frozen")
+    assert events.index("socket_frozen") < events.index(
+        "planner_warmup_join")
+    assert events.index("ledger_open") < events.index(
+        "planner_warmup_join")
+    assert events.index("planner_warmup_join") < events.index(
+        "session_yielded")
+
+
 def test_live_session_reuses_already_validated_launch(
         tmp_path, monkeypatch):
     events = []

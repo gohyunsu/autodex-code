@@ -618,12 +618,20 @@ start the adapter if another experiment owns the cameras.
   of `table/0/20096` for a controlled comparison.
 - The ZeroDex launcher sets `PRECISION_PREWARM_FIXED_WORLD=1` for both newly
   placed and already placed keys. The planner initializes a **provisional**
-  table/socket cuRobo world in a background thread concurrently with the
-  initial clear-view motion, then capture4 opening and socket measurement.
-  This world is used only to initialize cuRobo; it is never used for a motion
-  plan. Once the measured session world exists, the same worker replaces the
-  provisional poses with the measured table/socket poses. Candidate
-  planning joins that measured-world update; later trials reuse the planner.
+  table/socket cuRobo world in a background thread. For the current
+  `board_constrained_body` socket route, the one-time key-renderer allocation
+  finishes first, then cuRobo graph capture overlaps capture4 stream startup,
+  socket capture, and board/body fitting. This route does not invoke the local
+  CUDA silhouette renderer while measuring the socket. Silhouette-based
+  socket modes retain the earlier serialize-before-render ordering because
+  they use that same CUDA context during measurement.
+  The provisional world is used only to initialize cuRobo; it is never used
+  for a motion plan. Startup joins it after the socket ledger opens and before
+  local Qwen construction, avoiding simultaneous weight allocation during
+  CUDA graph capture. Once the measured session world exists, the same worker
+  replaces the provisional poses with the measured table/socket poses. Key
+  capture overlaps that measured-world update; candidate planning joins it,
+  and later trials reuse the planner.
   An offline GPU probe initialized the provisional world in 23.68 s and
   updated it to the saved measured world in 0.014 s. Its record is
   `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/probe_early_curobo_warmup_20261029.json`.
@@ -645,18 +653,19 @@ start the adapter if another experiment owns the cameras.
   span after this join was below the recorded millisecond resolution. The
   current live catalog path validates its session identity and hashes one
   small URDF at opening; it does not rescan all candidate files on each
-  trial. These historical traces predate the later change that starts the
-  provisional worker before initial clear-view, so they cannot measure that
-  change's net saving. Avoid removing the existing overlap based on the wait
-  span alone; compare new live critical-path timestamps when the rig runs.
+  trial. These historical traces predate the current board/body scheduling
+  above, so they cannot measure its net saving. Compare new live critical-path
+  timestamps when the rig runs; the change adds no criterion or fallback.
 - Two human-confirmed 5 mm insertions on 2026-10-29 showed initial clear-view
   durations of 4.49 s and 0.55 s. Their provisional cuRobo initialization
   took 25.86 s and 29.51 s and previously started only after clear-view.
-  Beginning that independent worker immediately before the stock free-space
-  `home(clear_view=True)` can overlap at most those 4.49 s/0.55 s portions;
-  the actual end-to-end saving has not yet been measured on the robot. The
-  initial home still finishes before any camera exposure. This is a startup
-  scheduling change, with no new label, grasp, or collision criterion.
+  That earlier revision began the independent worker before the stock
+  free-space `home(clear_view=True)` and could overlap at most those
+  4.49 s/0.55 s portions. The current board/body route instead overlaps the
+  worker with socket capture after renderer allocation; its actual end-to-end
+  saving has not yet been measured on the robot. The initial home still
+  finishes before any camera exposure. This is a startup scheduling change,
+  with no new label, grasp, or collision criterion.
 - A separate offline concurrent-load probe on this RTX 3090 initialized the
   exact 5 mm provisional table/socket world and local Qwen3-VL-2B in parallel:
   cuRobo took 24.72 s, Qwen took 4.73 s, combined wall time was 24.72 s, and
@@ -1569,9 +1578,11 @@ asks the operator to remove the key from the hand or socket and place it
 upright on the board. After an explicit `yes`, the normal empty-hand
 clear-view motion and fresh key perception resume the session. The operator
 return is logged as `supervised_manual_return`; no held-key pose is inferred
-from the aborted path. The fresh-socket startup also waits for provisional
-cuRobo CUDA graph capture to finish before creating the silhouette renderer.
-The warmup still overlaps the initial clear-view move and camera connection.
+from the aborted path. In silhouette-based socket modes the fresh-socket
+startup waits for provisional cuRobo CUDA graph capture before creating the
+silhouette renderer. The current ZeroDex board/body mode instead warms the key
+renderer first and overlaps cuRobo initialization with remote socket capture,
+as described above.
 
 ## 2026-10-30 same-trial XY approach and motion feedback
 
