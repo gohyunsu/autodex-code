@@ -263,6 +263,23 @@ Manual labels should be the primary evaluation reference while Qwen is being
 validated. Save the independent VLM output, then report agreement, confusion
 matrix and failure examples instead of silently replacing human labels.
 
+The reproducible saved-label audit is:
+
+```bash
+python3 demo/precision-insertion/summarize_live_labels.py \
+  --attempt-root "$PRECISION_RUN_OUTPUT_ROOT/precision-insertion/inspire/precision_key_cylinder_r15_h80"
+```
+
+As of 2026-11-03, it finds 15 paired lift labels (13/15 agreement, with two
+false-positive `held` decisions), 12 paired transfer labels (12/12, but every
+human label is positive), and six paired final labels (two true positives and
+four true negatives). These figures describe the decisions saved during the
+original episodes, not a replay of a newer prompt. The summary normalizes only
+camera serials and capture timestamps when grouping semantic prompts and keeps
+the exact full-prompt digests for provenance. The sample size and class balance
+are insufficient for an automatic-label accuracy claim; they define the
+negative examples that the next controlled collection must add.
+
 ## 7. Required figures
 
 1. **System and frames:** one uncluttered view of robot, cameras, key, socket,

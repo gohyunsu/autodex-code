@@ -8,6 +8,7 @@ from collections import Counter
 import hashlib
 import json
 from pathlib import Path
+import re
 
 
 ASSESSMENTS = {
@@ -22,7 +23,20 @@ def _latest_report(attempt: Path, directory: str) -> Path | None:
     return reports[-1] if reports else None
 
 
-def _visual_policy(report: dict) -> tuple[str, str | None]:
+def _prompt_digest(prompts: list[str]) -> str | None:
+    unique = sorted(set(prompts))
+    return (hashlib.sha256(json.dumps(
+        unique, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+            if unique else None)
+
+
+def _semantic_prompt(prompt: str) -> str:
+    """Remove capture identity while preserving the model instruction."""
+    normalized = re.sub(r"@\d+(?:\.\d+)?", "@<TIME>", prompt)
+    return re.sub(r"\b\d{8}\b", "<CAMERA_ID>", normalized)
+
+
+def _visual_policy(report: dict) -> tuple[str, str | None, str | None]:
     visual = report.get("visual")
     if not isinstance(visual, dict):
         visual = {}
@@ -54,11 +68,12 @@ def _visual_policy(report: dict) -> tuple[str, str | None]:
                 collect(child)
 
     collect(visual)
-    unique = sorted(set(prompts))
-    digest = (hashlib.sha256(json.dumps(
-        unique, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
-              if unique else None)
-    return policy, digest
+    # Image-order text and per-view prompts embed capture timestamps/camera
+    # serials. Those values bind provenance but do not change the instruction.
+    # Keep a full digest while grouping evaluations by a normalized semantic
+    # digest that preserves the rest of every prompt.
+    semantic_prompts = [_semantic_prompt(prompt) for prompt in prompts]
+    return policy, _prompt_digest(semantic_prompts), _prompt_digest(prompts)
 
 
 def _agreement(rows: list[dict]) -> dict:
@@ -74,6 +89,9 @@ def _agreement(rows: list[dict]) -> dict:
     prompt_sha256_values = sorted({str(row["prompt_sha256"])
                                    for row in rows
                                    if row.get("prompt_sha256")})
+    full_prompt_sha256_values = sorted({str(row["full_prompt_sha256"])
+                                        for row in rows
+                                        if row.get("full_prompt_sha256")})
     return {
         "saved_assessments": len(rows),
         "manual_labels": sum(type(row["manual_value"]) is bool
@@ -86,6 +104,7 @@ def _agreement(rows: list[dict]) -> dict:
         "prompt_sha256": (prompt_sha256_values[0]
                           if len(prompt_sha256_values) == 1 else None),
         "prompt_sha256_values": prompt_sha256_values,
+        "full_prompt_sha256_values": full_prompt_sha256_values,
         "confusion": {
             "true_positive": confusion[("positive", "positive")],
             "true_negative": confusion[("negative", "negative")],
@@ -116,7 +135,8 @@ def summarize(attempt_root: Path) -> dict:
             vlm_value = vlm.get("value") if isinstance(vlm, dict) else None
             if type(manual_value) is not bool and type(vlm_value) is not bool:
                 continue
-            visual_policy, prompt_sha256 = _visual_policy(report)
+            visual_policy, prompt_sha256, full_prompt_sha256 = (
+                _visual_policy(report))
             rows.append({
                 "attempt_id": attempt.name,
                 "candidate_id": result.get("candidate_id"),
@@ -130,6 +150,7 @@ def summarize(attempt_root: Path) -> dict:
                                 if isinstance(manual, dict) else ""),
                 "visual_policy": visual_policy,
                 "prompt_sha256": prompt_sha256,
+                "full_prompt_sha256": full_prompt_sha256,
                 "report": str(report_path),
             })
 
@@ -146,7 +167,7 @@ def summarize(attempt_root: Path) -> dict:
             }
         stages[stage] = {**_agreement(selected), "policies": policies}
     return {
-        "schema": "precision_insertion_saved_label_summary_v2",
+        "schema": "precision_insertion_saved_label_summary_v3",
         "attempt_root": str(root),
         "attempts_scanned": len(attempts),
         "stages": stages,

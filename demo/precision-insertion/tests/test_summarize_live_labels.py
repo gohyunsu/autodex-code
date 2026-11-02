@@ -87,3 +87,25 @@ def test_summary_does_not_mix_historical_vlm_policies(tmp_path):
     assert old["confusion"]["false_positive"] == 1
     assert new["accuracy"] == 1.0
     assert new["confusion"]["true_negative"] == 1
+
+
+def test_dynamic_image_manifest_does_not_split_semantic_prompt(tmp_path):
+    for attempt, timestamp in (("attempt_one", "100.0"),
+                               ("attempt_two", "200.0")):
+        path = (tmp_path / attempt / "lift_assessments/000/report.json")
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({
+            "manual_annotation": {"value": True, "note": ""},
+            "vlm_label": {"value": True, "class": "held"},
+            "visual": {
+                "schema": "visible_grip_v3",
+                "manifest": {"prompt": (
+                    "Images are supplied in this exact order:\n"
+                    f"1: after_lift/camera@{timestamp}")},
+                "views": [{"prompt": "Is the peg held? Reply YES or NO."}],
+            },
+        }), encoding="utf-8")
+
+    stage = summarize(tmp_path)["stages"]["grasp_success"]
+    assert len(stage["prompt_sha256_values"]) == 1
+    assert len(stage["full_prompt_sha256_values"]) == 2

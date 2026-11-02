@@ -11,13 +11,25 @@ python3 demo/precision-insertion/summarize_live_labels.py \
 The report separates grasp, pre-insertion transport, and released insertion
 labels and records TP/TN/FP/FN plus the source report for every comparison.
 It also stratifies every stage by the recorded visual-policy schema and lists
-the exact prompt SHA256 values found within each policy. Dynamic camera/frame
-labels can change an exact hash without changing the policy, so hashes remain
-audit provenance rather than metric buckets. Do not quote pooled accuracy when
-multiple policies are present: the per-policy rows distinguish historical
-behavior from the current runtime. It evaluates only already-saved labels; it
-does not claim physical ground truth beyond the human annotation or rerun
-inference with a new prompt.
+both a semantic prompt SHA256 and the exact full-prompt SHA256 values found
+within each policy. The semantic digest normalizes only capture timestamps and
+camera serials, while the full digests bind the original input provenance.
+Do not quote pooled accuracy when multiple semantic prompts or policies are
+present: the per-policy rows distinguish historical behavior from the current
+runtime. It evaluates only already-saved labels; it does not claim physical
+ground truth beyond the human annotation or rerun inference with a new prompt.
+
+The 2026-11-03 file-only audit scanned 16 attempts. The contemporaneously
+saved decisions contain 15 paired lift labels (13/15 agreement: 13 true
+positives and two false positives), 12 paired pre-insertion labels (12/12,
+all human-positive), and six paired released-insertion labels (6/6: two true
+positives and four true negatives). Each stage has one semantic prompt digest;
+the lift and pre-insertion records have distinct full digests because their
+camera/time manifests differ by episode. These are small, in-sample and
+strongly imbalanced sets. In particular, the pre-insertion set contains no
+human-negative transport example, so 12/12 does not establish slip-detection
+performance. The lift false positives remain evidence that manual mode should
+continue to save both labels while the human answer controls data collection.
 
 ## Live-label audit and capture4 lift v5 (2026-11-02)
 
