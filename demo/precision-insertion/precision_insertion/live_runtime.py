@@ -37,6 +37,7 @@ class RunLiveOptions:
     robot_config_path: Path | None = None
     label_mode: str = "vlm_only"
     xy_estimator: str = "vlm"
+    same_trial_alignment_source: str = "endpoint"
     annotator: str | None = None
     xy_update_weight: float = 1.0
     same_trial_xy_tolerance_m: float | None = None
@@ -337,6 +338,12 @@ def run_integrated_live_session(
         raise ValueError("current cylinder live loop needs vlm_only or manual labels")
     if options.xy_estimator not in {"vlm", "tracked_tip", "sam_half_ellipse"}:
         raise ValueError("unknown next-trial XY estimator")
+    if options.same_trial_alignment_source not in {"endpoint", "partial_shape"}:
+        raise ValueError("unknown same-trial alignment source")
+    if (options.same_trial_alignment_source == "partial_shape" and
+            options.xy_estimator != "sam_half_ellipse"):
+        raise ValueError(
+            "partial-shape alignment needs the SAM half-ellipse estimator")
     if options.same_trial_xy_tolerance_m is not None and (
             not math.isfinite(options.same_trial_xy_tolerance_m) or
             options.same_trial_xy_tolerance_m <= 0):

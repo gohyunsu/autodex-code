@@ -215,6 +215,8 @@ def configure(core, live, options) -> dict:
                     retry.max_grasp_translation_drift_m),
                 "same_trial_xy_tolerance_m": getattr(
                     options, "same_trial_xy_tolerance_m", None),
+                "same_trial_alignment_source": getattr(
+                    options, "same_trial_alignment_source", "endpoint"),
                 "same_trial_max_step_m": getattr(
                     options, "same_trial_max_step_m", .003),
                 "same_trial_axis_tolerance_rad": getattr(

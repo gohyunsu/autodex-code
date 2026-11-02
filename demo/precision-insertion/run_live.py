@@ -110,6 +110,12 @@ def main(argv: list[str] | None = None) -> int:
              "held correction within this episode; insert after the measured "
              "residual is at or below this socket-frame threshold")
     parser.add_argument(
+        "--same-trial-alignment-source",
+        choices=("endpoint", "partial_shape"), default="endpoint",
+        help="use the distal endpoint/temporal estimate, or prefer the "
+             "multiview partial-cylinder pose and fall back to endpoint "
+             "when visible shaft geometry is insufficient")
+    parser.add_argument(
         "--same-trial-max-step-mm", type=float, default=3.,
         help="maximum XY movement between pre-insertion photographs (default: 3 mm)")
     parser.add_argument(
@@ -222,6 +228,7 @@ def main(argv: list[str] | None = None) -> int:
         robot_config_path=args.robot_config,
         label_mode=args.label_mode, annotator=args.annotator,
         xy_estimator=args.xy_estimator,
+        same_trial_alignment_source=args.same_trial_alignment_source,
         same_trial_xy_tolerance_m=(
             None if args.same_trial_xy_tolerance_mm is None else
             args.same_trial_xy_tolerance_mm / 1000.),

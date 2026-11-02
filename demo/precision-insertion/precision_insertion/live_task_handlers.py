@@ -33,6 +33,7 @@ from .same_trial_xy import (
     choose_key_axis_move, choose_xy_move, measure_preinsert_xy,
     plan_and_execute_shift,
     plan_corrected_axial_handoff, rank_lateral_observation_offsets,
+    select_same_trial_alignment,
 )
 from .same_trial_visual_feedback import update_held_key_xy
 from .assets import AssetPaths
@@ -81,6 +82,7 @@ class LiveTaskHandlers:
     alignment_limits: object | None = None
     same_trial_tip_height_error_m: float | None = None
     xy_estimator: str = "vlm"
+    same_trial_alignment_source: str = "endpoint"
     sam_segmentor: object | None = None
     same_trial_xy_tolerance_m: float | None = None
     same_trial_max_step_m: float = .003
@@ -356,6 +358,8 @@ class LiveTaskHandlers:
                         "tip_socket_m": None,
                         "xy_correction_socket_m": None,
                     })
+            observed["alignment"] = select_same_trial_alignment(
+                observed["alignment"], source=self.same_trial_alignment_source)
             # A temporal match proves that an image feature followed the
             # commanded wrist motion; it does not prove that the feature is
             # the key tip rather than a repeatedly selected socket edge.

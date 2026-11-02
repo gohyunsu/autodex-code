@@ -21,7 +21,7 @@ from precision_insertion.guarded_axial_handoff import (  # noqa: E402
 from precision_insertion.same_trial_xy import (  # noqa: E402
     CorrectedAxialPlanUnavailable, HeldXYPlanUnavailable,
     _alignment_frame_inputs, _held_wrist_goal, _shifted_targets,
-    choose_key_axis_move, choose_xy_move,
+    choose_key_axis_move, choose_xy_move, select_same_trial_alignment,
     socket_consistent_alignment_cameras,
 )
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
@@ -70,6 +70,44 @@ def test_same_trial_move_requires_metric_multiview_and_caps_one_motion():
     assert choose_xy_move({**metric,
                            "xy_correction_socket_m": [.001, -.001]},
                           tolerance_m=.0025)["status"] == "aligned"
+
+
+def test_partial_shape_control_preserves_endpoint_and_falls_back_without_stop():
+    endpoint = {
+        "status": "diagnostic_planar_xy_hypothesis",
+        "reason": "endpoint_reason", "xy_source": "endpoint",
+        "inlier_cameras": ["a"],
+        "tip_socket_m": [.02, -.01, .04],
+        "xy_correction_socket_m": [-.02, .01],
+        "partial_shape_alignment": {
+            "status": "diagnostic_partial_shape_pose",
+            "camera_ids": ["a", "b"],
+            "tip_socket_m": [.004, -.003, .04],
+            "insertion_axis_socket": [.1, 0., -.995],
+            "xy_correction_socket_m": [-.004, .003],
+        },
+    }
+    shape = select_same_trial_alignment(endpoint, source="partial_shape")
+    assert shape["alignment_selection"]["selected"] == "partial_shape"
+    assert shape["alignment_selection"]["preserved_endpoint"]["reason"] == (
+        "endpoint_reason")
+    assert shape["inlier_cameras"] == ["a", "b"]
+    np.testing.assert_allclose(shape["xy_correction_socket_m"], [-.004, .003])
+    np.testing.assert_allclose(np.linalg.norm(
+        shape["insertion_axis_socket"]), 1.)
+
+    missing = {**endpoint, "partial_shape_alignment": {
+        "status": "insufficient_multiview_shape_geometry",
+        "camera_ids": ["a"],
+    }}
+    fallback = select_same_trial_alignment(missing, source="partial_shape")
+    assert fallback["status"] == endpoint["status"]
+    assert fallback["xy_correction_socket_m"] == [-.02, .01]
+    assert fallback["alignment_selection"] == {
+        "requested": "partial_shape",
+        "selected": "endpoint_or_temporal",
+        "reason": "partial_shape_unavailable",
+    }
 
 
 def test_endpoint_views_reuse_session_socket_pose_inliers():

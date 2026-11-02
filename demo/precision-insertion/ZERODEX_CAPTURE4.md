@@ -235,9 +235,13 @@ additionally store
 the four distorted source images, which are not model inputs. One saved 5 mm
 pre-insertion checkpoint occupied about 37 MB when both copies were retained;
 its four undistorted PNGs account for about 18 MB. Across the eight complete
-fixed-`table/0/20195` timing traces, PNG batch writing occupied a median
-10.08 s per run. The new setting therefore removes duplicate NAS bytes from
-the critical path, but its physical-run latency has not yet been measured.
+fixed-`table/0/20195` timing traces, image persistence was a repeated cost.
+In the latest complete trace, 16 PNG batches occupied 12.30 s in aggregate,
+with a 0.375 s per-batch median; background writers left only 0.001 s total in
+`evidence.pending_capture_write_wait`. The new setting therefore removes
+duplicate NAS bytes and shortens the synchronous initial/final checkpoint
+writes, while the repeated closed-loop writes were already almost completely
+overlapped with inference. Its physical-run latency has not yet been measured.
 Set the value to `1` for a dedicated camera-undistortion derivation audit.
 Frozen calibration, exposure/frame metadata, and the actual undistorted VLM
 pixels remain in the ordinary run evidence.
@@ -319,16 +323,18 @@ Qwen's native-pixel axis points or Qwen-box/SAM3 half-ellipse key-face points.
 Calibrated views yield the key-face centre and an XY correction in the frozen
 socket frame. A metric result from at least two cameras starts the held
 correction. The controller follows a direct damped-Jacobian lateral
-continuation of at most 3 mm between photographs, **without opening the
+continuation of at most 10 mm between photographs, **without opening the
 Inspire hand**, then captures new frames and repeats the same measurement.
 The repeat has no default count cutoff.
 
 For repeat photographs, the four in-memory undistorted frames enter the
-Qwen/SAM3 estimator immediately while their original and undistorted lossless
-PNGs are persisted to the project NAS on one background capture-save worker.
+Qwen/SAM3 estimator immediately while their four undistorted lossless PNGs
+are persisted to the project NAS on one background capture-save worker.
 The writer still performs the complete provenance/pixel check, and the loop
 joins that exact write before accepting the observation or issuing the next
-robot command. No image, hash or manifest is omitted. In the recorded
+robot command. Every actual estimator input, hash and manifest is retained;
+the distorted acquisition copy is disabled in the capture4 profile and can
+be restored with `PRECISION_CHECKPOINT_RETAIN_ORIGINAL=1`. In the recorded
 `20261030_185316_167127` run, 14 PNG batches took 11.27 s of wall time
 (0.805 s/batch) while 11 same-trial estimator calls took 14.79 s
 (1.345 s/call); the new ordering is intended to overlap these costs. The
@@ -351,6 +357,28 @@ residual is predicted, then continues the
 same loop. It never treats a one-view planar estimate as a new measurement;
 that route produced a false 35.7 mm correction in a physically inserted
 10 mm episode.
+
+The SAM half-ellipse path also records a symmetry-reduced partial-cylinder
+fit beside the endpoint estimate. For every usable calibrated view it combines
+the visible distal-face centre with the projected shaft direction and robustly
+fits `(x, y, tilt_x, tilt_y)` in image space. Cylinder yaw is deliberately
+absent because it is not observable and does not change insertion geometry.
+The default live controller still keeps this diagnostic and follows the
+endpoint/measurement-motion route above. An offline replay of 12 physical attempts
+found a valid multi-view shape fit in six. The two human-labelled successes
+ended with 1.32/5.87 mm XY norms and 0.73/3.27 degree tilts; the two labelled
+failures with valid fits ended at 34.46/44.27 mm and 54.94/33.93 degrees. Two
+unfinished attempts lay between them. This is promising but too small and too
+partially observable to replace the controller. The immutable review is at
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/partial_shape_alignment_20261102/all_attempts.json`.
+The appropriate next control experiment is a selectable shape-first estimator
+that falls back to the existing endpoint/temporal path when fewer than two
+views expose usable shaft geometry; lack of a shape fit must not become a new
+task failure condition. That path is implemented as
+`PRECISION_SAME_TRIAL_ALIGNMENT_SOURCE=partial_shape`; the commissioned
+default remains `endpoint` until a controlled physical A/B run is recorded.
+Every observation stores `alignment_selection`, including the preserved
+endpoint result and whether the shape fit or fallback drove the motion.
 
 ZeroDex runs now enable the same-episode XY loop by default with a 2.5 mm
 centering target. This is a pre-insertion correction target, not the final
@@ -481,6 +509,15 @@ New evaluations should use the maintained
 hash-verifies the complete saved dataset without loading a model, and its
 ordinary mode replays the current runtime-configured local or distributed
 backend without opening cameras or robot services.
+
+The other checkpoint label evidence is smaller. The saved pre-insertion set
+contains 12 human-positive transfers and the VLM marked all 12 positive, but
+there is no saved human-negative transfer in that set, so it does not measure
+failure discrimination. The current final socket-crop v5 classifier agrees
+with all six saved human insertion labels (two positive and four negative).
+These are small, in-sample audits. Manual mode therefore remains the data
+collection default and stores the VLM result beside, rather than in place of,
+the human label.
 
 System-specific runtime defaults are in the ZeroDex machine profile and can be
 overridden without editing the shared AutoDex executor:

@@ -104,6 +104,73 @@ def choose_xy_move(alignment: dict, *, tolerance_m: float,
             "increment_socket_m": step.tolist(), "source": source}
 
 
+def select_same_trial_alignment(alignment: dict, *, source: str) -> dict:
+    """Select endpoint/temporal or partial-cylinder pose for live control.
+
+    The SAM observation already contains both estimates from the same pixels.
+    ``partial_shape`` promotes a valid multiview cylinder fit to the ordinary
+    XY/axis interface. If the fit is unavailable, the endpoint/temporal
+    result is returned unchanged; missing shaft geometry is therefore not a
+    new execution stop or task-failure condition.
+    """
+    if source not in {"endpoint", "partial_shape"}:
+        raise ValueError(
+            "same-trial alignment source must be endpoint or partial_shape")
+    selected = dict(alignment)
+    if source == "endpoint":
+        selected["alignment_selection"] = {
+            "requested": source, "selected": "endpoint_or_temporal",
+            "reason": "configured_endpoint_source",
+        }
+        return selected
+    shape = alignment.get("partial_shape_alignment")
+    if (not isinstance(shape, dict) or
+            shape.get("status") != "diagnostic_partial_shape_pose"):
+        selected["alignment_selection"] = {
+            "requested": source, "selected": "endpoint_or_temporal",
+            "reason": "partial_shape_unavailable",
+        }
+        return selected
+    cameras = shape.get("camera_ids")
+    tip = np.asarray(shape.get("tip_socket_m"), dtype=float)
+    axis = np.asarray(shape.get("insertion_axis_socket"), dtype=float)
+    correction = np.asarray(
+        shape.get("xy_correction_socket_m"), dtype=float)
+    axis_norm = float(np.linalg.norm(axis))
+    if (not isinstance(cameras, list) or len(set(cameras)) < 2 or
+            tip.shape != (3,) or axis.shape != (3,) or
+            correction.shape != (2,) or not np.all(np.isfinite(tip)) or
+            not np.all(np.isfinite(axis)) or
+            not np.all(np.isfinite(correction)) or axis_norm <= 1e-9):
+        selected["alignment_selection"] = {
+            "requested": source, "selected": "endpoint_or_temporal",
+            "reason": "partial_shape_record_incomplete",
+        }
+        return selected
+    selected.update({
+        "status": "diagnostic_metric_xy_correction",
+        "reason": "multiview_partial_cylinder_image_fit",
+        "xy_source": "partial_cylinder_image_fit",
+        "estimator": "sam3_partial_cylinder_image_fit",
+        "inlier_cameras": list(cameras),
+        "tip_socket_m": tip.tolist(),
+        "insertion_axis_socket": (axis / axis_norm).tolist(),
+        "xy_correction_socket_m": correction.tolist(),
+        "xy_correction_norm_m": float(np.linalg.norm(correction)),
+        "alignment_selection": {
+            "requested": source, "selected": "partial_shape",
+            "reason": "valid_multiview_partial_shape_pose",
+            "preserved_endpoint": {
+                key: alignment.get(key) for key in (
+                    "status", "reason", "xy_source", "estimator",
+                    "inlier_cameras", "tip_socket_m",
+                    "insertion_axis_socket", "xy_correction_socket_m")
+            },
+        },
+    })
+    return selected
+
+
 def choose_key_axis_move(alignment: dict, *, tolerance_rad: float,
                          max_step_rad: float) -> dict:
     """Choose the symmetry-reduced cylinder tilt correction.
