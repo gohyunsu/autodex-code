@@ -72,6 +72,34 @@ run in parallel; that sum is not checkpoint wall time. The writer already uses
 lossless PNG compression level 1 and local parallel I/O. Changing its format
 or skipping evidence is not justified by the cumulative number.
 
+## Fresh full closed-loop trace (2026-11-02)
+
+Run `20261102_173401_957672_634321` is the first complete trace here with the
+new phase/kind/action hierarchy and a multi-step same-trial loop. It used
+`table/0/20195`; grasp and transfer were manually accepted, while smooth tip
+entry and final insertion were labelled failed. The timing describes that
+recorded code version, not the later `3c87fd9` single-view-probe fix.
+
+| Quantity | Measured time | Interpretation |
+| --- | ---: | --- |
+| Instrumented wall envelope | 228.06 s | Entire profiled session. |
+| Manual review occupied time | 99.24 s | Four operator answers; kept separate from autonomous latency. |
+| Pipeline excluding manual review | 128.82 s | Relevant automatic wall-time baseline. |
+| Robot motion occupied time | 56.24 s | Pickup/lift/transfer, three XY steps, insertion, release and clear-view return. |
+| Computation occupied time | 27.88 s | Includes model/planner startup and CPU/GPU work. |
+| I/O occupied time | 17.55 s | Union of overlapping evidence writes, not their additive worker time. |
+| VLM inference | 4.01 s | Eight calls; not the dominant source of wall latency. |
+| Same-trial alignment | 21.33 s | Four measurements, three XY motions, an observation return and axial replan. |
+
+The 60.93 s shown by summing all `evidence.png_write_hash` workers is not an
+extra 60.93 s session delay: full-resolution source and undistorted images are
+encoded in parallel. Their occupied I/O contribution is already represented
+by the 17.55 s union above, and part of it overlaps other work. The immediate
+latency priorities remain avoiding unnecessary physical correction steps and
+operator wait. Local Qwen placement is already fast enough in this trace that
+moving all label inference to capture4 would not recover a comparable amount
+of time.
+
 The second saved run also spent 1.926 s in
 `planning.nominal_insertion > planning.held_path_audit >
 audit.minimum_distance_scan`, and 1.783 s in the nominal post-lift path

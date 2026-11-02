@@ -1653,10 +1653,12 @@ reuses the recorded socket-pose inliers, while the lossless raw capture still
 contains all camera frames. Review GIFs use that same inlier set by default.
 
 A single-view nominal-tip-height-plane estimate is now treated as a probe
-hypothesis. It may command one bounded step. The next snapshot must either
-track the same key face under the measured motion or provide a genuine
-multi-view estimate before another correction is applied. If it does neither,
-only that probe step is returned and the ordinary nominal insertion continues.
+hypothesis. It may command one bounded step. Tracking the same image feature
+after that move is useful association evidence, but it does not prove that the
+feature is the key tip rather than a repeatedly selected rim or silhouette
+edge. The next snapshot must therefore provide a genuine multi-view 3D tip
+before another correction is applied. Otherwise the full probe displacement
+is returned and the ordinary nominal insertion continues.
 This is not a perception failure gate: it prevents an unverified image point
 from driving a long open-loop correction while preserving the requested
 default completion path. A metrically grounded multi-view residual retains
@@ -1670,3 +1672,28 @@ single-view continuation was the dominant control-policy defect addressed by
 this revision. The precision-insertion test suite passes with 1454 tests and
 5 environment-dependent skips; a new physical socket-only measurement is
 required before claiming live validation of the revised pose.
+
+### 2026-11-02 single-view temporal-tracking counterexample
+
+Attempt `attempt_3a18d70727a14fe1a7be58cf8ce8e8a5` provides the concrete
+counterexample that motivated the stricter probe rule. Its first image used
+only `26053248` and estimated an 83.94 mm planar residual. The controller then
+executed three approximately 10 mm steps. Observations 001 and 002 reported
+`temporal_motion_fused_planar_xy`, but their camera hypotheses disagreed:
+`26053248` remained roughly 64--73 mm on one side of the socket while
+`25322642` placed the detected face roughly 21--26 mm on the other side. No
+multi-view tip was triangulated. Observation 003 finally lost the track, but
+the code version used for that physical run returned only its last 10 mm step,
+leaving about 20 mm of unverified displacement before insertion. The operator
+labelled grasp and transfer successful, final insertion failed, and the new
+smooth tip-entry label was false.
+
+Commit `3c87fd9` was made after that run. The current loop stores the complete
+pre-probe XY and axial hold, permits one bounded observation move, and either
+promotes a newly triangulated multi-view tip or returns to that exact hold.
+Temporal association alone can no longer accumulate further single-view
+steps. Missing endpoint evidence is still not written as a zero measurement
+and still does not terminate the episode; it selects the unchanged nominal
+insertion route requested for this experiment. This correction has unit and
+full-suite coverage but still requires the next live episode for physical
+validation.
