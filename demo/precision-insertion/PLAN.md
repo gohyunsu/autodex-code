@@ -8,25 +8,47 @@ AutoDex entry points. A simulated grasp pass is not an insertion pass.
 
 ## Legacy code boundary
 
-`main` at `448732d` is the original-file reference. The 18 pre-existing files
-changed by this feature branch have been restored to that tree; the previous
-implementation remains recoverable at `archive/precision-pre-isolation`.
-The duplicated fixture test and its old execution-side helper were replaced
-by the local `tests/test_fixture_world.py`, `geometry.py`, and `world.py`.
-An isolation check must continue to assert an empty `git diff main...HEAD`
-for **all 18** original paths, not just the three execution entry points.
+`main` at `448732d` is the original-file reference. The AutoDex entry points
+`src/execution/run_auto.py`, `run_pipeline.py`, and `scene_cfg.py`, the global
+robot pose constants, and the shared Jacobian speed defaults are restored to
+that tree. The previous implementation remains recoverable at
+`archive/precision-pre-isolation`. The duplicated fixture test and its old
+execution-side helper were replaced by local `tests/test_fixture_world.py`,
+`geometry.py`, and `world.py`.
+
+Four low-level integration surfaces still differ from `main` and form an
+explicit adapter boundary: `autodex/perception/init_orchestrator.py`,
+`autodex/planner/planner.py`, `src/execution/charuco_tabletop.py`, and
+`src/execution/franka_executor.py`. Their optional interfaces are described
+below. Existing callers keep their original defaults. New precision-specific
+runtime policy must remain in this demo; extending this allowlist requires a
+documented dependency and regression coverage rather than an incidental edit.
 New feature files elsewhere in the branch, including `autodex/tasks` and the
-asset-generation scripts, are still historical/offline utilities; they are
-not the new robot runner. Any feature-specific runtime policy they contain
-must be migrated into this demo before robot mode is exposed.
+asset-generation scripts, are historical/offline utilities and are not the
+ZeroDex robot runner.
 
 | Former shared-file modification | Demo ownership / migration gate |
 | --- | --- |
 | `run_auto.py`, `run_pipeline.py`, `scene_cfg.py` | Independent CLI, state machine, ChArUco-then-socket calibration, and local scene builder; never import their entry-point side effects. |
-| `autodex/planner/planner.py` and `autodex/utils/symmetry.py` | Use the unchanged public planner with explicit candidates; keep cylinder symmetry local. The changed cuRobo `update_world` list contract must be tested against the installed version and handled in a demo adapter or a pinned compatible environment, not patched globally. |
+| `autodex/planner/planner.py` and `autodex/utils/symmetry.py` | Cylinder symmetry remains local. The planner has one optional `robot_urdf_path` constructor input so the ZeroDex straight-mount URDF can be selected without changing its YAML or planning algorithms; omission preserves the stock path. |
 | `reorient.py`, `view_reorient.py`, `gen_all.py`, `gen_scene.py` | Demo-owned native-v8 directed transition catalog, preflight, execution and visualization. Do not treat old legacy-index cells as native-v8. |
 | `BODex/generate.py`, `run_sim_filter.py`, and the five vendored cuRobo files | Keep their original behavior. Place precision-specific generation configuration, evidence normalization, and any needed compatibility shim under the demo; re-run simulator parity tests before promoting a candidate. |
 | `plan_test.py`, `exp.py` | Demo-only debugging and visual evidence; not a physical-success gate. |
+
+The remaining shared adapter surface is intentionally narrow:
+
+| Shared adapter | Precision dependency | Compatibility contract |
+| --- | --- | --- |
+| `InitOrchestrator.init_object(mask_only=...)` | Socket body fitting needs SAM without loading/running FoundPose. | Default `False` preserves stock initialization; capture requests still use the same calibrated images. |
+| `GraspPlanner(..., robot_urdf_path=...)` | Select the commissioned straight FR3/Inspire mount from the ZeroDex profile. | Default `None` preserves the YAML URDF and all planning settings. |
+| `measure_tabletop_from_images(..., board_id, minimum_board_corners)` | ZeroDex capture4 uses ChArUco board 9 and can triangulate the visible, board-spanning subset. | Defaults remain board 11 and all 54 corners. |
+| `FrankaExecutor` parameterization and stream helpers | Apply the selected link8-to-hand transform, completion feedback, measured stream progress and task-owned speed profile through the existing ParaDex Franka daemon. | AutoDex entry points are unchanged; the precision integration passes the optional values explicitly. |
+
+`follow_progress.py`, `reset_scene.py`, and `stream_timing.py` are small pure
+helpers imported only by the executor adapter. They do not provide a second
+pipeline entry point. A future move to a separate package should preserve
+saved-episode replay and robot trace parity before replacing this validated
+adapter boundary.
 
 The `scene_cfg.py` change contains two useful behaviors, but neither must live
 in that shared file: (1) the cylindrical key is authored along local z, not

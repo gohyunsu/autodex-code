@@ -127,8 +127,9 @@ this change passes **1226 passed, 5 skipped**.
 
 `run_auto.py`, `run_pipeline.py`, `scene_cfg.py`, and `executor/real.py` are byte-identical in the two local
 checkouts. `autodex/planner/planner.py` differs by one constructor option:
-the precision checkout may inject a robot URDF path for the right-angle
-FR3/Inspire mount. This makes the planning model selection explicit; it does
+the precision checkout may inject the robot URDF path selected by the runtime
+profile (the ZeroDex profile uses the straight FR3/Inspire mount). This makes
+the planning model selection explicit; it does
 not change stock planning algorithms. Tests in `test_candidates.py`,
 `test_targets.py`, and `test_next_trial_xy.py` cover the object-local wrist
 convention, a tilted socket axis, cylinder yaw, and socket-frame correction.
@@ -144,7 +145,7 @@ increment becomes `R_robot_socket @ [dx, dy, 0]` in robot coordinates.
 
 The FR3 executor is a separate comparison: `src/execution/franka_executor.py`
 is **not** byte-identical to stock. Its precision-branch changes inject the
-right-angle `O_T_EE`/link8-to-hand transform, retain stock's 0.40 near-object/held-object
+profile-selected `O_T_EE`/link8-to-hand transform, retain stock's 0.40 near-object/held-object
 speed scale as one configured value, and advance its streamed joint reference
 using measured tick time. The streaming command period remains the stock
 default of 20 ms (50 Hz). `follow_progress.py` keeps the reference moving
