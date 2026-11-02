@@ -50,6 +50,20 @@ pipeline entry point. A future move to a separate package should preserve
 saved-episode replay and robot trace parity before replacing this validated
 adapter boundary.
 
+The versioned `config/source_boundary.json` is the machine-readable form of
+this contract. Run the following development audit after rebasing or touching
+shared AutoDex code:
+
+```bash
+python3 demo/precision-insertion/audit_source_boundary.py
+```
+
+It compares the checkout with the declared original-file baseline, reports
+the reviewed adapters and historical inactive branch files separately, and
+returns nonzero for a changed stock entry point or an unreviewed shared
+runtime edit. It is deliberately not called by the live launcher and cannot
+stop a robot episode.
+
 The `scene_cfg.py` change contains two useful behaviors, but neither must live
 in that shared file: (1) the cylindrical key is authored along local z, not
 the historical can local y, so tabletop snapping must use asset symmetry;

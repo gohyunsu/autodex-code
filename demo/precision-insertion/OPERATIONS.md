@@ -37,6 +37,11 @@ adapter surfaces and three executor helper modules still live outside this
 demo; [PLAN.md](PLAN.md) is their exact allowlist and compatibility contract.
 Do not describe the branch as byte-identical to stock AutoDex, and do not add
 another shared-file dependency without updating that boundary and its tests.
+Audit it without opening cameras or robot devices:
+
+```bash
+python3 demo/precision-insertion/audit_source_boundary.py
+```
 
 ## Before a run
 

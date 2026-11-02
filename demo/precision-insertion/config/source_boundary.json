@@ -1,0 +1,28 @@
+{
+  "schema": "precision_insertion_source_boundary_v1",
+  "baseline_commit": "448732d9e9cbdaa0c3300de2a477562419d016d7",
+  "stock_entrypoints": [
+    "src/execution/run_auto.py",
+    "src/execution/run_pipeline.py",
+    "src/execution/scene_cfg.py"
+  ],
+  "shared_runtime_allowlist": [
+    "autodex/perception/init_orchestrator.py",
+    "autodex/planner/planner.py",
+    "src/execution/charuco_tabletop.py",
+    "src/execution/follow_progress.py",
+    "src/execution/franka_executor.py",
+    "src/execution/reset_scene.py",
+    "src/execution/stream_timing.py"
+  ],
+  "known_inactive_branch_paths": [
+    "autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire_oct12_mount.urdf"
+  ],
+  "known_inactive_branch_prefixes": [
+    "autodex/tasks/"
+  ],
+  "shared_runtime_prefixes": [
+    "autodex/",
+    "src/execution/"
+  ]
+}
