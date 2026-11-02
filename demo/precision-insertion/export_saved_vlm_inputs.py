@@ -16,6 +16,10 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 
+LANCZOS = (Image.Resampling.LANCZOS
+           if hasattr(Image, "Resampling") else Image.LANCZOS)
+
+
 def _rgb_hash(image: Image.Image) -> str:
     return hashlib.sha256(image.tobytes()).hexdigest()
 
@@ -84,8 +88,7 @@ def _input_image(path: Path, roi, crop_hash, transform: dict) -> Image.Image:
             _rgb_hash(rgb) != transform["source_rgb_sha256"]):
         raise ValueError(f"saved VLM source pixels changed: {path}")
     size = tuple(transform["input_size"])
-    prepared = (rgb if rgb.size == size else
-                rgb.resize(size, Image.Resampling.LANCZOS))
+    prepared = rgb if rgb.size == size else rgb.resize(size, LANCZOS)
     if _rgb_hash(prepared) != transform["input_rgb_sha256"]:
         raise ValueError(f"saved VLM resized pixels changed: {path}")
     return prepared
