@@ -67,6 +67,33 @@ trials. Save and reuse one session calibration record and record its digest in
 every episode. Existing successful logs with different socket-session digests
 cannot by themselves establish grasp inconsistency.
 
+The saved-evidence audit is reproducible with:
+
+```bash
+python3 demo/precision-insertion/summarize_repeatability.py \
+  --attempt-root "$PRECISION_RUN_OUTPUT_ROOT/precision-insertion/inspire/precision_key_cylinder_r15_h80" \
+  --candidate-id table/0/20195
+```
+
+The tool groups attempts by candidate, session-calibration digest, task family
+and gap. It verifies whether the nominal pre-insertion wrist target was
+identical inside each group, reports measured wrist endpoint error separately,
+and admits a key-tip value to metric statistics only when at least two cameras
+support a result explicitly recorded as metric. Single-view fixed-height
+hypotheses remain visible as diagnostics but are excluded from key-pose
+statistics. It does not subtract the wrist norm from the tip residual and call
+the result object-in-hand error: that requires an independently observed key
+pose (or at least a consistent tip and axis), not two scalar error magnitudes.
+
+As of 2026-11-02, candidate `table/0/20195` has ten saved first-preinsert
+reports split across four socket-session calibration digests. The largest
+single-session group has four attempts with an identical nominal wrist target;
+its median measured wrist translation error is 2.22 mm and median rotation
+error is 0.83 degrees. None of those four attempts has a valid multi-view
+metric key tip. This is useful controller-repeatability evidence, but it is not
+yet evidence for the magnitude of object-in-hand variation. New controlled
+trials must supply the latter.
+
 ## 4. Implemented same-trial correction
 
 The current ZeroDex capture4 profile uses the following pipeline:
@@ -184,7 +211,7 @@ matrix and failure examples instead of silently replacing human labels.
 4. **Closed-loop sequence:** iteration 0…K with tip center, socket center,
    correction arrow and measured residual. Add a small plot of XY residual and
    tilt versus iteration under the images.
-5. **Outcome funnel:** counts and conditional percentages at the eight stages.
+5. **Outcome funnel:** counts and conditional percentages at the nine stages.
 6. **Latency:** median/IQR stacked bars for perception, planning, motion,
    VLM/SAM, evidence I/O and human wait. Plot human wait separately.
 7. **Failure taxonomy:** representative miss/slip, transfer loss, endpoint
