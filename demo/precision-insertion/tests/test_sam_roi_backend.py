@@ -516,7 +516,7 @@ def test_remote_sam_tip_uses_first_metric_quorum_or_later_views(
 
 
 @pytest.mark.parametrize("one_bad", [False, True])
-def test_capture4_batches_boxes_and_segments_until_policy_quorum(
+def test_capture4_batches_boxes_and_segments_until_requested_quorum(
     tmp_path, monkeypatch, one_bad,
 ):
     monkeypatch.setattr(
@@ -605,6 +605,43 @@ def test_capture4_batches_boxes_and_segments_until_policy_quorum(
     assert len(alignment["camera_selection"]["processed_camera_ids"]) == (
         3 if one_bad else 2)
     assert alignment["camera_selection"]["required_metric_views"] == 2
+    assert alignment["camera_selection"]["quorum_alignment_source"] == "endpoint"
+
+    if not one_bad:
+        shape_view_counts = []
+
+        def fit_shape(views, **_kwargs):
+            shape_view_counts.append(len(views))
+            if len(views) < 3:
+                return {"status": "insufficient_multiview_shape_geometry"}
+            return {
+                "status": "diagnostic_partial_shape_pose",
+                "jacobian_rank": 4,
+                "axis_tilt_deg": 1.5,
+                "camera_ids": [view.camera_id for view in views],
+            }
+
+        monkeypatch.setattr(
+            retry_session, "estimate_partial_cylinder_alignment", fit_shape)
+        shape_segmentor = MaskBackend()
+        _hash, shape_alignment, _masks = (
+            retry_session._compute_sam_half_ellipse_alignment(
+                mode=mode, root=tmp_path, calibration=SimpleNamespace(
+                    record={"c2r": np.eye(4).tolist()}),
+                postlift_file=postlift, frames=frames, frame_rows=rows,
+                backend=BoxBackend(), sam_segmentor=shape_segmentor,
+                intrinsics_full=intrinsics, extrinsics_full=extrinsics,
+                alignment_limits=SimpleNamespace(
+                    max_reprojection_px=5., min_parallax_deg=1.,
+                    minimum_views=2, max_axis_tilt_deg=10.),
+                search_index=0, max_nominal_tip_height_error_m=.03,
+                quorum_alignment_source="partial_shape"))
+        assert shape_segmentor.calls == ["cam_a", "cam_b", "cam_c"]
+        assert shape_view_counts == [2, 3, 3]
+        assert (shape_alignment["partial_shape_alignment"]["status"] ==
+                "diagnostic_partial_shape_pose")
+        assert (shape_alignment["camera_selection"]["quorum_alignment_source"] ==
+                "partial_shape")
 
 
 def test_sam_roi_mask_bytes_are_saved_with_the_xy_diagnostic(tmp_path):

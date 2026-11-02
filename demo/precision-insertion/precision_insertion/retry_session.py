@@ -1118,8 +1118,12 @@ def _compute_sam_half_ellipse_alignment(
     max_nominal_tip_height_error_m: float,
     nominal_key_xy_shift_socket_m: Sequence[float] = (0., 0.),
     nominal_key_axis_raise_socket_m: float = 0.,
+    quorum_alignment_source: str = "endpoint",
 ) -> tuple[str, dict, dict[str, bytes]]:
     """Qwen box then stock SAM3 on the same saved, undistorted frame ROI."""
+    if quorum_alignment_source not in {"endpoint", "partial_shape"}:
+        raise ValueError(
+            "SAM view quorum source must be endpoint or partial_shape")
     geometry_bytes = AssetPaths(root, mode).task_geometry.read_bytes()
     geometry = json.loads(geometry_bytes)
     socket = validated_frozen_socket_pose(
@@ -1312,11 +1316,56 @@ def _compute_sam_half_ellipse_alignment(
         return GroundedLineView(
             calibrated, tuple(center), shaft_line), record, mask_png
 
+    def shape_alignment(measured_rows: Sequence[tuple]) -> dict:
+        shape_views = []
+        for view, record, _mask in measured_rows:
+            if view is None or record.get("visible_shape_profile") is None:
+                continue
+            weights = partial_shape_measurement_weights(
+                record["sam_half_ellipse"], record["visible_shape_profile"])
+            record["partial_shape_weights"] = weights
+            if (weights["distal_center_weight"] +
+                    weights["shaft_axis_weight"] <= 0.):
+                continue
+            first, second = view.axis_line_uv_px
+            shape_views.append(PartialCylinderView(
+                camera_id=view.frame.camera_id,
+                intrinsics=np.asarray(view.frame.intrinsics, dtype=float),
+                T_camera_socket=np.asarray(
+                    view.frame.T_camera_socket, dtype=float),
+                distal_center_uv_px=tuple(view.tip_uv_px),
+                shaft_axis_uv=tuple(
+                    np.asarray(second, dtype=float) -
+                    np.asarray(first, dtype=float)),
+                distal_center_weight=weights["distal_center_weight"],
+                shaft_axis_weight=weights["shaft_axis_weight"]))
+        with timed("xy_retry.partial_shape_alignment", phase="xy_retry",
+                   kind="optimization", view_count=len(shape_views)):
+            return estimate_partial_cylinder_alignment(
+                shape_views,
+                nominal_tip_z_socket_m=float(nominal_tip[2]),
+                key_length_m=tip_z,
+                initial_xy_socket_m=nominal_tip[:2])
+
+    def usable_partial_shape(shape: Mapping) -> bool:
+        return (
+            shape.get("status") == "diagnostic_partial_shape_pose" and
+            shape.get("jacobian_rank") == 4 and
+            isinstance(shape.get("axis_tilt_deg"), (int, float)) and
+            math.isfinite(float(shape["axis_tilt_deg"])) and
+            float(shape["axis_tilt_deg"]) <=
+            alignment_limits.max_axis_tilt_deg)
+
     def sufficient(completed: Mapping[int, tuple]) -> bool:
-        views = [completed[index][0] for index in sorted(completed)
-                 if completed[index][0] is not None]
+        measured_rows = [completed[index] for index in sorted(completed)]
+        views = [row[0] for row in measured_rows if row[0] is not None]
         if len(views) < required_views:
             return False
+        if quorum_alignment_source == "partial_shape":
+            if not usable_partial_shape(shape_alignment(measured_rows)):
+                return False
+            metric_quorum.set()
+            return True
         trial = tracked_tip_xy_alignment(
             views, nominal_tip_z_socket_m=float(nominal_tip[2]),
             search_index=search_index,
@@ -1372,6 +1421,7 @@ def _compute_sam_half_ellipse_alignment(
             "method": ("explicit_camera_priority" if preferred else
                        "session_ranked_minimum_view_quorum"),
             "required_metric_views": required_views,
+            "quorum_alignment_source": quorum_alignment_source,
             "preferred_camera_ids": list(preferred),
             "processed_camera_ids": [row[1]["camera_id"] for row in measured],
             "fallback_camera_ids": [frame.camera_id for frame in fallback],
@@ -1411,34 +1461,7 @@ def _compute_sam_half_ellipse_alignment(
     # cylinder's symmetry-reduced (x, y, tilt_x, tilt_y) pose.  The default
     # endpoint profile records it for replay; the explicit partial-shape A/B
     # profile may select it later without running a second segmentation.
-    shape_views = []
-    for view, record, _mask in measured:
-        if view is None or record.get("visible_shape_profile") is None:
-            continue
-        weights = partial_shape_measurement_weights(
-            record["sam_half_ellipse"], record["visible_shape_profile"])
-        record["partial_shape_weights"] = weights
-        if (weights["distal_center_weight"] +
-                weights["shaft_axis_weight"] <= 0.):
-            continue
-        first, second = view.axis_line_uv_px
-        shape_views.append(PartialCylinderView(
-            camera_id=view.frame.camera_id,
-            intrinsics=np.asarray(view.frame.intrinsics, dtype=float),
-            T_camera_socket=np.asarray(
-                view.frame.T_camera_socket, dtype=float),
-            distal_center_uv_px=tuple(view.tip_uv_px),
-            shaft_axis_uv=tuple(
-                np.asarray(second, dtype=float) -
-                np.asarray(first, dtype=float)),
-            distal_center_weight=weights["distal_center_weight"],
-            shaft_axis_weight=weights["shaft_axis_weight"]))
-    with timed("xy_retry.partial_shape_alignment", phase="xy_retry",
-               kind="optimization", view_count=len(shape_views)):
-        partial_shape = estimate_partial_cylinder_alignment(
-            shape_views, nominal_tip_z_socket_m=float(nominal_tip[2]),
-            key_length_m=tip_z,
-            initial_xy_socket_m=nominal_tip[:2])
+    partial_shape = shape_alignment(measured)
     alignment = tracked_tip_xy_alignment(
         views, nominal_tip_z_socket_m=float(nominal_tip[2]),
         search_index=search_index,

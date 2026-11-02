@@ -389,6 +389,15 @@ promotion additionally requires a full-rank four-parameter image Jacobian and
 uses the existing stage-policy `alignment_limits.max_axis_tilt_deg` as the
 commissioned model range. A fit outside that range falls back rather than
 stopping the trial; the original diagnostic fit remains saved for review.
+View acquisition follows the requested estimator rather than one global
+camera count. The endpoint controller stops SAM processing at the first
+session-ranked two-view metric quorum. The explicit partial-shape profile
+adds the next ranked socket-pose inlier until it obtains an observable
+four-parameter shape fit or exhausts the available views; if that never
+happens, the already computed endpoint/temporal result remains the controller
+input. Qwen boxes for the available local views are still decoded in one GPU
+batch, so adding a view costs another SAM ROI pass rather than another Qwen
+model pass.
 The 2026-11-02 replay selected partial shape for 14 of 57 observations,
 reported unavailable geometry for 39, and kept four 33.9--55.3 degree
 occlusion fits diagnostic-only. Its machine-readable report is
@@ -398,7 +407,8 @@ ZeroDex runs now enable the same-episode XY loop by default with a 2.5 mm
 centering target. This is a pre-insertion correction target, not the final
 insertion-success label. Set `PRECISION_SAME_TRIAL_XY_TOLERANCE_MM=''` to run
 the earlier open-loop baseline, or set another value for a different target.
-If the first four-view hold cannot yield a metric XY point, the ZeroDex
+If the pre-insertion hold cannot yield a metric XY point from the available
+session-ranked views, the ZeroDex
 profile continues toward the existing nominal insertion target by default.
 Set `PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM=40` to opt into a temporary
 raise along the measured socket axis, recapture and another estimator call.

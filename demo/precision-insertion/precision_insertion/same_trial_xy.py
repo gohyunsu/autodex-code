@@ -295,6 +295,7 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
                          nominal_key_xy_shift_socket_m=(0., 0.),
                          nominal_key_axis_raise_socket_m: float = 0.,
                          xy_estimator: str = "vlm",
+                         alignment_source: str = "endpoint",
                          sam_segmentor=None,
                          capture: RawCameraCapture | None = None,
                          pending_capture_write=None) -> dict:
@@ -328,7 +329,8 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
             alignment_limits=alignment_limits, search_index=index,
             max_nominal_tip_height_error_m=nominal_tip_height_error_m,
             nominal_key_xy_shift_socket_m=nominal_key_xy_shift_socket_m,
-            nominal_key_axis_raise_socket_m=nominal_key_axis_raise_socket_m)
+            nominal_key_axis_raise_socket_m=nominal_key_axis_raise_socket_m,
+            quorum_alignment_source=alignment_source)
         observations = []
         mask_records = []
         if masks:

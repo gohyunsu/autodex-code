@@ -96,7 +96,12 @@ trials must supply the latter.
 
 ## 4. Implemented same-trial correction
 
-The current ZeroDex capture4 profile uses the following pipeline:
+The base ZeroDex capture4 profile keeps the endpoint/temporal controller as
+its default. The controlled
+`fixed_grasp_partial_shape_alignment_5mm.env.sh` profile selects the joint
+partial-cylinder fit described below and falls back to the same endpoint path
+when visible shape is insufficient. Both profiles use the following shared
+pipeline:
 
 1. Undistort each camera frame with its calibrated map.
 2. Project the nominal held-key axis to obtain a per-view crop. The crop is
@@ -106,9 +111,12 @@ The current ZeroDex capture4 profile uses the following pipeline:
 4. Run SAM3 on the padded Qwen ROI and fit the distal half ellipse of the
    cylindrical key mask. Its center is the observed bottom-face proxy and its
    local line is an axis cue.
-5. Select views using the current session's socket-pose inliers, then use
-   calibrated rays and the socket frame to estimate the key tip and axis.
-   Measured-motion temporal feedback links consecutive observations.
+5. Rank views using the current session's socket-pose inliers. The default
+   endpoint profile stops at the first two-view metric quorum. The partial-
+   shape profile adds ranked views until the symmetry-reduced `(x, y,
+   tilt_x, tilt_y)` fit is observable or the views are exhausted; unavailable
+   shape falls back without ending the trial. Measured-motion temporal
+   feedback links consecutive endpoint observations.
 6. Compute socket-frame translation
    `delta_xy = - observed_tip_xy`. The configured convergence target is
    2.5 mm and one commanded increment is capped at 10 mm; there is no

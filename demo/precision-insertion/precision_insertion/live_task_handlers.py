@@ -308,6 +308,7 @@ class LiveTaskHandlers:
                     nominal_key_xy_shift_socket_m=total,
                     nominal_key_axis_raise_socket_m=axis_raise,
                     xy_estimator=self.xy_estimator,
+                    alignment_source=self.same_trial_alignment_source,
                     sam_segmentor=self.sam_segmentor,
                     capture=capture,
                     pending_capture_write=pending_capture_write)
