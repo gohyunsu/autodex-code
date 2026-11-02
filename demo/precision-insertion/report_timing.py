@@ -36,6 +36,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"trace: {events}")
     print(f"completed spans: {len(spans)}; unfinished: "
           f"{summary['unfinished_span_count']}")
+    print(f"instrumented span envelope: {summary['span_envelope_s']:.3f}s")
     print("VLM inference: "
           f"{summary['vlm_inference_cumulative_s']:.3f}s cumulative, "
           f"{summary['vlm_inference_occupied_s']:.3f}s occupied, "
@@ -45,13 +46,26 @@ def main(argv: list[str] | None = None) -> int:
                               key=lambda item: item[1]["self_s"], reverse=True):
         print(f"{name[:33]:33} {group['count']:5d} "
               f"{group['inclusive_s']:12.3f} {group['self_s']:10.3f}")
-    by_phase = defaultdict(float)
-    for row in spans:
-        by_phase[row["phase"]] += row["self_s"]
-    print("\nPhase                              work_s (overlap possible)")
-    for phase, seconds in sorted(by_phase.items(),
-                                 key=lambda item: item[1], reverse=True):
-        print(f"{phase[:33]:33} {seconds:11.3f}")
+    print("\nPhase                              occupied_s  self_work_s  cumulative_s")
+    for phase, row in sorted(summary["phases"].items(),
+                             key=lambda item: item[1]["occupied_s"],
+                             reverse=True):
+        print(f"{phase[:33]:33} {row['occupied_s']:10.3f} "
+              f"{row['self_s']:12.3f} {row['cumulative_s']:13.3f}")
+
+    print("\nKind (exclusive work)              occupied_s       work_s  overlap_s")
+    for kind, row in sorted(summary["kinds"].items(),
+                            key=lambda item: item[1]["occupied_s"],
+                            reverse=True):
+        print(f"{kind[:33]:33} {row['occupied_s']:10.3f} "
+              f"{row['cumulative_s']:12.3f} {row['overlap_s']:10.3f}")
+
+    if summary["attempts"]:
+        print("\nAttempt                            candidate            occupied_s  spans")
+        for attempt, row in summary["attempts"].items():
+            candidate = ",".join(row["candidate_ids"]) or "unknown"
+            print(f"{attempt[:34]:34} {candidate[:20]:20} "
+                  f"{row['occupied_s']:10.3f} {row['count']:6d}")
 
     indexed = {row["span_id"]: row for row in spans}
     if args.tree:
@@ -68,7 +82,8 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             attrs = row["attributes"]
             detail = ", ".join(f"{key}={attrs[key]}" for key in
-                               ("camera_id", "capture_id", "candidate_id")
+                               ("iteration", "camera_id", "capture_id",
+                                "candidate_id")
                                if key in attrs)
             print(f"{'  ' * depth}{row['name']}"
                   f" [{row['duration_s']:.3f}, {row['self_s']:.3f}, "

@@ -239,7 +239,10 @@ class LiveTaskHandlers:
                 self.on_preinsert_confirmed(
                     attempt.attempt_id, attempt.candidate_id)
             if self.same_trial_xy_tolerance_m is not None:
-                self._refine_current_hold(runner, capture=capture)
+                with timed("trial.same_trial_alignment", phase="trial",
+                           kind="closed_loop",
+                           attempt_id=attempt.attempt_id):
+                    self._refine_current_hold(runner, capture=capture)
 
     def _refine_current_hold(
         self, runner, *, capture: RawCameraCapture | None = None,
@@ -292,7 +295,8 @@ class LiveTaskHandlers:
                 calibration=runner.calibration)
         for index in count():
             with timed("trial.same_trial_xy_measure", phase="trial",
-                       kind="vlm", attempt_id=attempt.attempt_id):
+                       kind="vlm", attempt_id=attempt.attempt_id,
+                       iteration=index):
                 observed = measure_preinsert_xy(
                     runner=runner, raw_bundle=self._preinsert_bundle,
                     backend=self.backend,
@@ -757,7 +761,8 @@ class LiveTaskHandlers:
                 [-value for value in observed["alignment"][
                     "xy_correction_socket_m"]])
             with timed("trial.same_trial_xy_motion", phase="trial",
-                       kind="motion", attempt_id=attempt.attempt_id):
+                       kind="motion", attempt_id=attempt.attempt_id,
+                       iteration=index):
                 action = ("post_lateral_correction"
                           if returned_lateral_this_iteration else "")
                 # If one XY step reaches the observed target, return from the
@@ -865,7 +870,8 @@ class LiveTaskHandlers:
         if axis_raise != 0.:
             with timed("trial.same_trial_observation_return",
                        phase="trial", kind="motion",
-                       attempt_id=attempt.attempt_id):
+                       attempt_id=attempt.attempt_id,
+                       iteration=index + 1):
                 try:
                     returned = plan_and_execute_shift(
                         runner=runner, planner=self.planner,
@@ -903,7 +909,8 @@ class LiveTaskHandlers:
             self._preinsert_bundle = raw
         if final_residual is not None:
             with timed("trial.same_trial_axial_replan", phase="planning",
-                       kind="planning", attempt_id=attempt.attempt_id):
+                       kind="planning", attempt_id=attempt.attempt_id,
+                       iteration=index):
                 try:
                     self._same_trial_handoff = plan_corrected_axial_handoff(
                         runner=runner, planner=self.planner,

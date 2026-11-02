@@ -88,8 +88,11 @@ def run_session_actions(
         handler = handlers.get(decision.action)
         if handler is None:
             return ActionLoopResult("needs_handler", decision, tuple(visited))
+        active_attempt = getattr(runner, "active_attempt", None)
+        attempt_id = getattr(active_attempt, "attempt_id", None)
         with timed(f"action.{decision.action}", phase="trial",
-                   kind="action", candidate_id=decision.candidate_id):
+                   kind="action", candidate_id=decision.candidate_id,
+                   attempt_id=attempt_id):
             handler(runner, decision)
         after = runner.current_decision()
         if not isinstance(after, SessionDecision):

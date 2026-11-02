@@ -37,8 +37,43 @@ def test_profile_groups_nested_spans_without_double_counting(tmp_path):
         summary["groups"]["live.session"]["inclusive_s"])
     assert next(row for row in summary["spans"] if row["name"] ==
                 "socket.capture")["attributes"]["capture_index"] == 0
+    session = next(row for row in summary["spans"]
+                   if row["name"] == "live.session")
+    assert summary["span_envelope_s"] >= session["duration_s"]
+    assert summary["phases"]["session"]["occupied_s"] == pytest.approx(
+        session["duration_s"])
+    assert summary["kinds"]["computation"]["count"] == 3
+    assert summary["root_span_ids"] == [session["span_id"]]
     assert summarize_events(directory / "events.jsonl") == summary
     assert not output.exists()
+
+
+def test_summary_groups_attempts_and_ordered_actions(tmp_path):
+    output = tmp_path / "attempt_run"
+    with profile_run(output):
+        with timed("action.await_lift_observation", phase="trial",
+                   kind="action", attempt_id="attempt_7",
+                   candidate_id="table/0/20195"):
+            with timed("trial.lift_motion", phase="trial", kind="motion",
+                       attempt_id="attempt_7", iteration=0):
+                time.sleep(.001)
+
+    summary = json.loads((timing_directory(output) /
+                          "timing_summary.json").read_text())
+    attempt = summary["attempts"]["attempt_7"]
+    assert attempt["candidate_ids"] == ["table/0/20195"]
+    assert attempt["count"] == 2
+    assert attempt["occupied_s"] > 0
+    assert attempt["phases"]["trial"]["count"] == 2
+    action = summary["ordered_actions"][0]
+    assert action["name"] == "action.await_lift_observation"
+    assert action["attempt_id"] == "attempt_7"
+    assert action["candidate_id"] == "table/0/20195"
+    child = next(row for row in summary["spans"]
+                 if row["name"] == "trial.lift_motion")
+    assert child["effective_attempt_id"] == "attempt_7"
+    assert child["effective_candidate_id"] == "table/0/20195"
+    assert child["attributes"]["iteration"] == 0
 
 
 def test_parallel_view_spans_retain_parent_and_union_overlap(tmp_path):
@@ -69,6 +104,7 @@ def test_parallel_view_spans_retain_parent_and_union_overlap(tmp_path):
     assert batch["parent_id"] == parent["span_id"]
     assert all(row["parent_id"] == batch["span_id"] for row in infer)
     assert summary["vlm_inference_overlap_s"] > 0
+    assert summary["kinds"]["computation"]["overlap_s"] > 0
     assert batch["child_overlap_s"] > 0
     assert batch["child_cumulative_s"] > batch["child_occupied_s"]
     assert parent["self_s"] < parent["duration_s"]

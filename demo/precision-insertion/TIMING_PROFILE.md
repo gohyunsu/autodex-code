@@ -15,7 +15,11 @@ sibling `.../_pipeline_runs/RUN_ID.timing/` containing:
   monotonic duration and UTC timestamps for synchronization.
 - `timing_summary.json`: spans in execution order and per-operation `count`,
   `inclusive_s`, `self_s` and failure count. Each span also records direct
-  `child_cumulative_s`, `child_occupied_s` and `child_overlap_s`.
+  `child_cumulative_s`, `child_occupied_s` and `child_overlap_s`. Additive
+  machine-readable `phases`, `kinds`, `attempts` and `ordered_actions`
+  distinguish cumulative worker time from occupied wall time. The same-trial
+  loop has an enclosing `trial.same_trial_alignment` span; its observation,
+  motion and axial-replan children carry their loop `iteration`.
 - Stock trace `manifest.json` and `timeline.json`.
 
 The sibling location means startup failures can be timed even if no session
@@ -31,12 +35,14 @@ python3 demo/precision-insertion/report_timing.py \
 ```
 
 For the separate ZeroDex capture4 checkout on `kds-Z790`, use its local
-evidence root instead. This command was run on the saved 5 mm insertion trace:
+evidence root instead. The current NAS project is independent of the legacy
+shared-data tree:
 
 ```bash
 cd /home/hyunsu/autodex-code
 python3 demo/precision-insertion/report_timing.py \
-  /home/hyunsu/shared_data/AutoDex/experiment/precision-insertion/inspire/precision_key_cylinder_r15_h80/_pipeline_runs/20261029_132835_069139.timing
+  /mnt/paradex2/hyunsu/precision_insertion/runs/zerodex_capture4/precision-insertion/inspire/precision_key_cylinder_r15_h80/_pipeline_runs/RUN_ID.timing \
+  --tree
 ```
 
 ## ZeroDex capture4: two successful 5 mm episodes (2026-10-29)

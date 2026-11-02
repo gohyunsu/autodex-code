@@ -99,7 +99,14 @@ def timed(name: str, *, phase: str, kind: str = "computation",
 
 
 def summarize_events(events_path: Path) -> dict:
-    """Summarize completed spans, unioning overlapping direct child intervals."""
+    """Summarize completed spans without confusing work time with latency.
+
+    ``inclusive_s``/``cumulative_s`` count every span and are useful for
+    resource accounting. ``occupied_s`` is the union of monotonic intervals
+    and therefore measures elapsed wall time even when camera, GPU and file
+    workers overlap.  The additive phase/kind/attempt aggregates make a live
+    run directly usable for experiment analysis without changing execution.
+    """
     def occupied(intervals: list[tuple[float, float]]) -> float:
         total, end = 0.0, float("-inf")
         for start, stop in sorted(intervals):
@@ -134,6 +141,7 @@ def summarize_events(events_path: Path) -> dict:
         if row["parent_id"] is not None:
             children[row["parent_id"]].append((
                 row["start_pipeline_s"], row["end_pipeline_s"]))
+    exclusive_intervals: dict[str, list[tuple[float, float]]] = {}
     groups: dict[str, dict] = {}
     for row in completed:
         clipped = [
@@ -144,6 +152,16 @@ def summarize_events(events_path: Path) -> dict:
             max(row["start_pipeline_s"], start)]
         covered = occupied(clipped)
         cumulative = sum(stop - start for start, stop in clipped)
+        gaps = []
+        cursor = row["start_pipeline_s"]
+        for start, stop in sorted(clipped):
+            start = max(start, cursor)
+            if start > cursor:
+                gaps.append((cursor, start))
+            cursor = max(cursor, stop)
+        if cursor < row["end_pipeline_s"]:
+            gaps.append((cursor, row["end_pipeline_s"]))
+        exclusive_intervals[row["span_id"]] = gaps
         row["child_occupied_s"] = round(covered, 9)
         row["child_cumulative_s"] = round(cumulative, 9)
         row["child_overlap_s"] = round(max(0.0, cumulative - covered), 9)
@@ -158,6 +176,90 @@ def summarize_events(events_path: Path) -> dict:
     for group in groups.values():
         group["inclusive_s"] = round(group["inclusive_s"], 9)
         group["self_s"] = round(group["self_s"], 9)
+
+    indexed = {row["span_id"]: row for row in completed}
+    for row in completed:
+        parent = row
+        effective_attempt = row["attempt_id"]
+        effective_candidate = row["attributes"].get("candidate_id")
+        while parent is not None and (
+                effective_attempt is None or effective_candidate is None):
+            if effective_attempt is None:
+                effective_attempt = parent["attempt_id"]
+            if effective_candidate is None:
+                effective_candidate = parent["attributes"].get("candidate_id")
+            parent = indexed.get(parent["parent_id"])
+        row["effective_attempt_id"] = effective_attempt
+        row["effective_candidate_id"] = effective_candidate
+
+    def aggregate(rows: list[dict], *, exclusive: bool = False) -> dict:
+        intervals = ([interval for row in rows
+                      for interval in exclusive_intervals[row["span_id"]]]
+                     if exclusive else
+                     [(row["start_pipeline_s"], row["end_pipeline_s"])
+                      for row in rows])
+        cumulative = sum(row["self_s"] if exclusive else row["duration_s"]
+                         for row in rows)
+        wall = occupied(intervals)
+        return {
+            "count": len(rows),
+            "cumulative_s": round(cumulative, 9),
+            "occupied_s": round(wall, 9),
+            "overlap_s": round(max(0.0, cumulative - wall), 9),
+            "self_s": round(sum(row["self_s"] for row in rows), 9),
+            "failures": sum(row["outcome"] != "success" for row in rows),
+        }
+
+    def aggregate_by(field: str, *, exclusive: bool = False) -> dict[str, dict]:
+        buckets: dict[str, list[dict]] = defaultdict(list)
+        for row in completed:
+            buckets[str(row[field])].append(row)
+        return {key: aggregate(rows, exclusive=exclusive)
+                for key, rows in sorted(buckets.items())}
+
+    attempt_rows: dict[str, list[dict]] = defaultdict(list)
+    for row in completed:
+        if row["effective_attempt_id"] is not None:
+            attempt_rows[str(row["effective_attempt_id"])].append(row)
+    attempts = {}
+    for attempt_id, rows in sorted(attempt_rows.items()):
+        candidates = sorted({str(row["effective_candidate_id"])
+                             for row in rows
+                             if row["effective_candidate_id"] is not None})
+        phase_rows: dict[str, list[dict]] = defaultdict(list)
+        for row in rows:
+            phase_rows[str(row["phase"])].append(row)
+        attempts[attempt_id] = {
+            **aggregate(rows),
+            "candidate_ids": candidates,
+            "start_pipeline_s": round(min(
+                row["start_pipeline_s"] for row in rows), 9),
+            "end_pipeline_s": round(max(
+                row["end_pipeline_s"] for row in rows), 9),
+            "phases": {phase: aggregate(items)
+                       for phase, items in sorted(phase_rows.items())},
+        }
+
+    ordered_actions = []
+    for row in sorted(completed, key=lambda item: item["start_pipeline_s"]):
+        if not row["name"].startswith("action."):
+            continue
+        ordered_actions.append({
+            "name": row["name"],
+            "attempt_id": row["effective_attempt_id"],
+            "candidate_id": row["effective_candidate_id"],
+            "outcome": row["outcome"],
+            "start_pipeline_s": row["start_pipeline_s"],
+            "end_pipeline_s": row["end_pipeline_s"],
+            "inclusive_s": row["duration_s"],
+            "self_s": row["self_s"],
+        })
+
+    if completed:
+        envelope_start = min(row["start_pipeline_s"] for row in completed)
+        envelope_end = max(row["end_pipeline_s"] for row in completed)
+    else:
+        envelope_start = envelope_end = 0.0
     inference = [row for row in completed if row["name"] == "vlm.infer"]
     inference_sum = sum(row["duration_s"] for row in inference)
     inference_wall = occupied([
@@ -170,8 +272,17 @@ def summarize_events(events_path: Path) -> dict:
         "vlm_inference_occupied_s": round(inference_wall, 9),
         "vlm_inference_overlap_s": round(max(0.0, inference_sum -
                                              inference_wall), 9),
+        "span_envelope_start_s": round(envelope_start, 9),
+        "span_envelope_end_s": round(envelope_end, 9),
+        "span_envelope_s": round(max(0.0, envelope_end-envelope_start), 9),
         "unfinished_span_count": len(starts),
         "unfinished_spans": [row["name"] for row in starts.values()],
         "groups": dict(sorted(groups.items())),
+        "phases": aggregate_by("phase"),
+        "kinds": aggregate_by("kind", exclusive=True),
+        "attempts": attempts,
+        "ordered_actions": ordered_actions,
+        "root_span_ids": [row["span_id"] for row in completed
+                          if row["parent_id"] is None],
         "spans": sorted(completed, key=lambda row: row["start_pipeline_s"]),
     }
