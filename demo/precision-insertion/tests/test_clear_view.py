@@ -19,23 +19,30 @@ from precision_insertion.repose_preflight import ReposeHeldPreflight  # noqa: E4
 from precision_insertion.repose_release import ReposeReleasePreflight  # noqa: E402
 
 
-def test_oct12_mount_clear_view_is_compact_and_points_palm_down():
+def test_oct12_mount_profile_pose_is_compact_and_points_palm_down():
     from yourdfpy import URDF
 
+    # This is the historical right-angle-mount profile pose.  It is kept
+    # local to this compatibility check; current ZeroDex runs load their
+    # measured straight-mount pose from clear_view_arm_q.json instead of
+    # mutating AutoDex's process-global FR3_CLEAR_VIEW default.
+    oct12_clear_view = FR3_INIT.copy()
+    oct12_clear_view[0] += CLEAR_VIEW_J0_OFFSET_RAD
+    oct12_clear_view[1:] = np.array([
+        -0.3248, -0.1545, -2.2500, 0.7929, 1.6115, -0.5782])
     mount = (Path(__file__).resolve().parents[3] / "autodex" / "planner" /
              "src" / "curobo" / "content" / "assets" / "robot" /
              "fr3_inspire_description" / "fr3_inspire_oct12_mount.urdf")
     robot = URDF.load(str(mount), build_scene_graph=True, load_meshes=False)
-    joints = np.r_[FR3_CLEAR_VIEW, INSPIRE_INIT]
+    joints = np.r_[oct12_clear_view, INSPIRE_INIT]
     robot.update_cfg(dict(zip((joint.name for joint in robot.actuated_joints),
                               joints)))
     hand = robot.get_transform("base_link", robot.base_link)
     tip = robot.get_transform("hand_tcp", robot.base_link)
     link7 = robot.get_transform("fr3_link7", robot.base_link)
-    original_clear = FR3_INIT.copy()
-    original_clear[0] += CLEAR_VIEW_J0_OFFSET_RAD
-    assert np.isclose(FR3_CLEAR_VIEW[0], original_clear[0])
-    assert abs(FR3_CLEAR_VIEW[3] - FR3_INIT[3]) < 0.10  # retain near-stock elbow bend
+    assert np.isclose(oct12_clear_view[0],
+                      FR3_INIT[0] + CLEAR_VIEW_J0_OFFSET_RAD)
+    assert abs(oct12_clear_view[3] - FR3_INIT[3]) < 0.10
     assert hand[1, 3] < -0.18 and hand[2, 3] > 0.45
     assert hand[2, 1] < -0.95  # Inspire palm normal in the robot base frame
     assert -hand[0, 2] > 0.8  # fingers still extend away from the robot
