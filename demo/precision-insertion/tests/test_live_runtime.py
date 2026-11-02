@@ -134,6 +134,9 @@ def test_static_preflight_reads_v8_files_without_opening_robot(
             "max_arm_velocity_rad_s": .05},
         "stages_factory": "static_robot_pc_stages:configure",
     }), encoding="utf-8")
+    vlm_cache = tmp_path / "qwen-cache"
+    vlm_cache.mkdir()
+    monkeypatch.setenv("PRECISION_VLM_MODEL_ID", str(vlm_cache))
     report = live_runtime.inspect_live_inputs(
         launch_config_path=launch_path, endpoint_catalog_path=catalog_path,
         robot_config_path=robot_path)
@@ -148,6 +151,14 @@ def test_static_preflight_reads_v8_files_without_opening_robot(
     assert report["robot_config"]["stage_factory_syntax_valid"] is True
     assert report["robot_config"]["stage_factory_module_on_path"] is False
     assert report["robot_config"]["stage_factory_imported"] is False
+    assert report["robot_config"]["vlm"] == {
+        "mode": "local",
+        "configured_model_id": None,
+        "effective_model_id": str(vlm_cache),
+        "environment_override": True,
+        "model_directory_exists": True,
+        "scope": "path_presence_only_no_cuda_model_load",
+    }
     assert report["robot_ready"] is False
     assert report["xy_estimator"] == "vlm"
 

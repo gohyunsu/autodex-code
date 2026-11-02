@@ -78,10 +78,15 @@ but outside `/mnt/paradex2/hyunsu` is rejected, while ordinary local paths
 remain valid. This is only the required project-storage boundary, not a grasp,
 planning, perception, insertion, or robot-outcome gate. The capture4 ParaDex
 camera exception described below is unchanged. Repeated-use latency caches may
-stay local: the SAM checkpoint under `~/precision_insertion_project/cache`, Python
-environments, the project-owned ParaDex checkout, and the temporary timing
-buffer under `/tmp`. Authoritative assets, run ledgers and development output
-remain in this NAS project.
+stay local: the SAM checkpoint and Qwen model under
+`~/precision_insertion_project/cache/models`, Python environments, the
+project-owned ParaDex checkout, and the temporary timing buffer under `/tmp`.
+The machine profile selects the local Qwen copy when it exists, while static
+preflight reports its effective path without loading CUDA. Authoritative
+assets, run ledgers and development output remain in this NAS project. The
+one-time copy receipt and file hashes live under
+`~/precision_insertion_project/cache/receipts`; hashes are not recomputed on
+the live action path.
 On capture4, the existing `/home/capture4/paradex` installation remains an
 explicit exception for camera acquisition and shared-memory reading. Our
 FoundPose/SAM3 source and weights use the namespaced capture4 adapter and this

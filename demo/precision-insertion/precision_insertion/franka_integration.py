@@ -17,6 +17,7 @@ import json
 import math
 import os
 from pathlib import Path
+import sys
 from typing import Mapping
 from uuid import uuid4
 
@@ -40,6 +41,7 @@ from .live_runtime import LiveRuntimeIntegration, RunLiveOptions
 from .labeling import terminal_label_provider
 from .distributed_qwen import DistributedQwenBackend
 from .observer import load_vlm_backend
+from .project_layout import local_project_root, nas_project_root
 from .runtime_assembly import assemble_live_components
 from .timing_profile import timed
 from .raw_camera_capture import RawCameraCapture
@@ -71,13 +73,17 @@ _TIP_CAMERA_PORT = 16951
 
 def _sam_runtime_paths() -> tuple[Path, Path]:
     """Resolve optional SAM inputs before constructing a command-capable FR3 core."""
-    python = Path(os.environ.get(
-        "PRECISION_SAM_PYTHON",
-        "/home/robot/anaconda3/envs/autodex/bin/python")).expanduser()
-    checkpoint = Path(os.environ.get(
-        "PRECISION_SAM_CHECKPOINT",
-        "/home/robot/shared_data/AutoDex/weights/sam3/sam3.pt"
-    )).expanduser()
+    python = Path(os.environ.get("PRECISION_SAM_PYTHON", sys.executable))
+    checkpoint_value = os.environ.get("PRECISION_SAM_CHECKPOINT")
+    if checkpoint_value is None:
+        checkpoint = local_project_root() / "cache/models/sam3.pt"
+        if not checkpoint.is_file():
+            checkpoint = (nas_project_root() /
+                          "assets/shared_data/AutoDex/weights/sam3/sam3.pt")
+    else:
+        checkpoint = Path(checkpoint_value)
+    python = python.expanduser()
+    checkpoint = checkpoint.expanduser()
     if not python.is_file() or not os.access(python, os.X_OK):
         raise FileNotFoundError(f"SAM3 Python is missing or not executable: {python}")
     if not checkpoint.is_file():
@@ -128,6 +134,15 @@ def _vlm_settings(value: object) -> dict:
             settings["mode"] == "gemini" and settings["model_id"] is None):
         raise ValueError("invalid VLM mode, model or checkpoint timeout")
     return settings
+
+
+def _vlm_model_id(vlm: Mapping, shared_root: Path) -> str:
+    """Select an optional repeated-use local cache before the JSON asset."""
+    override = os.environ.get("PRECISION_VLM_MODEL_ID", "").strip()
+    if override:
+        return override
+    return str(vlm["model_id"] or
+               shared_root / "AutoDex/models/Qwen3-VL-2B-Instruct")
 
 
 def _with_checkpoint_captures(
@@ -326,8 +341,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
         native_ceiling = (
             ((width + 31) // 32) * 32,
             ((height + 31) // 32) * 32)
-        model_id = (vlm["model_id"] or str(
-            launch.shared_root / "AutoDex/models/Qwen3-VL-2B-Instruct"))
+        model_id = _vlm_model_id(vlm, Path(launch.shared_root))
         image_size = (tuple(vlm["classification_image_size"])
                       if vlm["classification_image_size"] is not None
                       else None)

@@ -459,7 +459,12 @@ start the adapter if another experiment owns the cameras.
   loaded only by the ZeroDex integration factory, never by stock AutoDex
 - Straight-mount cylinder catalogs: `recipient_gap{1,3,5,10,15,20}_endpoint_catalog_straight.json`
 - Franka/Inspire mount: `autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf`
-- Qwen weights: `/mnt/paradex2/hyunsu/precision_insertion/runtime/active_shared_data/AutoDex/models/Qwen3-VL-2B-Instruct`
+- Qwen weights: the authoritative copy is
+  `/mnt/paradex2/hyunsu/precision_insertion/runtime/active_shared_data/AutoDex/models/Qwen3-VL-2B-Instruct`.
+  The ZeroDex profile prefers the byte-identical repeated-use cache at
+  `~/precision_insertion_project/cache/models/Qwen3-VL-2B-Instruct` through
+  `PRECISION_VLM_MODEL_ID`, avoiding a 4 GB NAS model read on each process
+  start. `--check` reports the effective model directory but does not load it.
 - SAM3 for main-PC XY masks: the machine profile resolves
   `PRECISION_SAM_CHECKPOINT` to the verified local cache
   `~/precision_insertion_project/cache/models/sam3.pt` when present, or to

@@ -60,6 +60,10 @@ if [[ -f $precision_local_sam ]]; then
   precision_default_sam=$precision_local_sam
 fi
 export PRECISION_SAM_CHECKPOINT=${PRECISION_SAM_CHECKPOINT:-$precision_default_sam}
+precision_local_qwen="$PRECISION_LOCAL_PROJECT_ROOT/cache/models/Qwen3-VL-2B-Instruct"
+if [[ -d $precision_local_qwen ]]; then
+  export PRECISION_VLM_MODEL_ID=${PRECISION_VLM_MODEL_ID:-$precision_local_qwen}
+fi
 export PRECISION_FR3_INSPIRE_URDF=${PRECISION_FR3_INSPIRE_URDF:-$precision_profile_root/autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf}
 # Resolve the planner's cuRobo copy before the BODex copy on this profile.
 export PRECISION_CUROBO_PYTHONPATH=${PRECISION_CUROBO_PYTHONPATH:-$precision_profile_root/autodex/planner/src}
@@ -101,4 +105,4 @@ for precision_header_dir in cuda_runtime cusparse cublas cusolver; do
     export CPATH="$precision_include${CPATH:+:$CPATH}"
   fi
 done
-unset precision_profile_dir precision_profile_root precision_cuda_headers precision_header_dir precision_include precision_local_sam precision_default_sam
+unset precision_profile_dir precision_profile_root precision_cuda_headers precision_header_dir precision_include precision_local_sam precision_default_sam precision_local_qwen

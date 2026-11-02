@@ -4,15 +4,17 @@ from pathlib import Path
 
 from precision_insertion.project_layout import (
     capture4_project_root, map_main_project_path_to_capture4,
-    nas_project_root, runtime_json_namespace_report,
+    local_project_root, nas_project_root, runtime_json_namespace_report,
     runtime_namespace_report,
 )
 
 
 def test_environment_selects_both_machine_views(monkeypatch):
     monkeypatch.setenv("PRECISION_NAS_PROJECT_ROOT", "/main/custom")
+    monkeypatch.setenv("PRECISION_LOCAL_PROJECT_ROOT", "/local/custom")
     monkeypatch.setenv("PRECISION_CAPTURE4_PROJECT_ROOT", "/capture/custom")
     assert nas_project_root() == Path("/main/custom")
+    assert local_project_root() == Path("/local/custom")
     assert capture4_project_root() == Path("/capture/custom")
     assert map_main_project_path_to_capture4(
         "/main/custom/runs/a.png") == Path("/capture/custom/runs/a.png")

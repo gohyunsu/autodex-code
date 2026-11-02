@@ -15,6 +15,7 @@ from typing import Iterator, Mapping
 
 DEFAULT_NAS_PROJECT_ROOT = Path(
     "/mnt/paradex2/hyunsu/precision_insertion")
+DEFAULT_LOCAL_PROJECT_ROOT = Path.home() / "precision_insertion_project"
 DEFAULT_CAPTURE4_PROJECT_ROOT = Path(
     "/home/capture4/shared_data/hyunsu/precision_insertion")
 
@@ -28,6 +29,7 @@ _RUNTIME_PATH_VARIABLES = (
     "PRECISION_ENDPOINT_CATALOG",
     "PRECISION_ROBOT_CONFIG",
     "PRECISION_SAM_CHECKPOINT",
+    "PRECISION_VLM_MODEL_ID",
     "PRECISION_LOCAL_PROJECT_ROOT",
     "PRECISION_TIMING_LOCAL_ROOT",
     "PRECISION_PARADEX_ROOT",
@@ -64,6 +66,14 @@ def nas_project_root(value: str | Path | None = None) -> Path:
     selected = (value if value is not None else
                 os.environ.get("PRECISION_NAS_PROJECT_ROOT",
                                str(DEFAULT_NAS_PROJECT_ROOT)))
+    return Path(selected).expanduser()
+
+
+def local_project_root(value: str | Path | None = None) -> Path:
+    """Return the configured main-PC cache and vendor root."""
+    selected = (value if value is not None else
+                os.environ.get("PRECISION_LOCAL_PROJECT_ROOT",
+                               str(DEFAULT_LOCAL_PROJECT_ROOT)))
     return Path(selected).expanduser()
 
 

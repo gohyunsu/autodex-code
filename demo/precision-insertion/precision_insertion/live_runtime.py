@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from importlib import import_module
 from importlib.machinery import PathFinder
 import math
+import os
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -205,11 +206,16 @@ def inspect_live_inputs(
             "scope": "file_presence_only_no_cuda_model_load",
         }
     if robot_config_path is not None:
-        from .franka_integration import load_franka_integration_config
+        from .franka_integration import (
+            _vlm_model_id, load_franka_integration_config,
+        )
 
         parsed = load_franka_integration_config(
             robot_config_path, import_stages=False)
         source = parsed["source"]
+        effective_vlm_model = Path(_vlm_model_id(
+            parsed["vlm"], Path(launch.shared_root))).expanduser().resolve(
+                strict=False)
         result["robot_config"] = {
             "path": str(source),
             "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
@@ -221,6 +227,15 @@ def inspect_live_inputs(
             "exposure_sampler_configured": parsed["sampling"] is not None,
             "held_motion_monitor_configured": (
                 parsed["held_motion_monitor"] is not None),
+            "vlm": {
+                "mode": parsed["vlm"]["mode"],
+                "configured_model_id": parsed["vlm"]["model_id"],
+                "effective_model_id": str(effective_vlm_model),
+                "environment_override": bool(
+                    os.environ.get("PRECISION_VLM_MODEL_ID", "").strip()),
+                "model_directory_exists": effective_vlm_model.is_dir(),
+                "scope": "path_presence_only_no_cuda_model_load",
+            },
         }
     return result
 

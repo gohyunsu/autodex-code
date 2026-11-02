@@ -39,6 +39,39 @@ def _config():
     }
 
 
+def test_sam_runtime_defaults_follow_independent_project_roots(
+        monkeypatch, tmp_path):
+    local = tmp_path / "local_project"
+    nas = tmp_path / "nas_project"
+    local_checkpoint = local / "cache/models/sam3.pt"
+    local_checkpoint.parent.mkdir(parents=True)
+    local_checkpoint.write_bytes(b"local")
+    monkeypatch.delenv("PRECISION_SAM_PYTHON", raising=False)
+    monkeypatch.delenv("PRECISION_SAM_CHECKPOINT", raising=False)
+    monkeypatch.setattr(franka_integration, "local_project_root", lambda: local)
+    monkeypatch.setattr(franka_integration, "nas_project_root", lambda: nas)
+    python, checkpoint = franka_integration._sam_runtime_paths()
+    assert python == Path(sys.executable).resolve()
+    assert checkpoint == local_checkpoint.resolve()
+
+    local_checkpoint.unlink()
+    nas_checkpoint = nas / "assets/shared_data/AutoDex/weights/sam3/sam3.pt"
+    nas_checkpoint.parent.mkdir(parents=True)
+    nas_checkpoint.write_bytes(b"nas")
+    _, checkpoint = franka_integration._sam_runtime_paths()
+    assert checkpoint == nas_checkpoint.resolve()
+
+
+def test_vlm_model_id_prefers_repeated_use_local_cache(monkeypatch, tmp_path):
+    configured = tmp_path / "configured-model"
+    cached = tmp_path / "cached-model"
+    settings = {"model_id": str(configured)}
+    monkeypatch.delenv("PRECISION_VLM_MODEL_ID", raising=False)
+    assert franka_integration._vlm_model_id(settings, tmp_path) == str(configured)
+    monkeypatch.setenv("PRECISION_VLM_MODEL_ID", str(cached))
+    assert franka_integration._vlm_model_id(settings, tmp_path) == str(cached)
+
+
 def test_obsolete_update_wait_is_ignored_in_existing_robot_config(tmp_path):
     old = _config()
     path = _options(tmp_path, old).robot_config_path
