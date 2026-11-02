@@ -216,10 +216,13 @@ def open_live_precision_session(
         # Start its independent cuRobo worker while the stock initial home
         # command parks the arm; the measured world is installed after capture.
         provisional_warmup = begin_pre_socket_warmup()
-    # Stock AutoDex free-space home is appropriate only before the session's
-    # first exposure, not after a failed insertion or tabletop release.
-    with timed("startup.clear_view", phase="startup", kind="motion"):
-        clear_view.prepare_initial()
+    if not defer_provisional_warmup:
+        # Stock AutoDex free-space home is appropriate only before the
+        # session's first exposure, not after a failed insertion or tabletop
+        # release. Non-board routes keep their original ordering because the
+        # provisional graph capture already began above.
+        with timed("startup.clear_view", phase="startup", kind="motion"):
+            clear_view.prepare_initial()
     resources = ExitStack()
     try:
         with timed("startup.camera_transport_open", phase="startup", kind="io"):
@@ -250,9 +253,13 @@ def open_live_precision_session(
                 raw_mesh=AssetPaths(launch.shared_root, launch.mode).raw_mesh(
                     warm_object))
         if defer_provisional_warmup:
-            # Renderer allocation is complete.  The following board/body
-            # measurement is remote/CPU work, so it can hide cuRobo startup.
+            # Renderer allocation is complete. Start graph capture before the
+            # existing clear-view move, then retain it through the following
+            # remote/CPU board-body measurement. This changes startup overlap,
+            # not the commanded pose or any admission criterion.
             provisional_warmup = begin_pre_socket_warmup()
+            with timed("startup.clear_view", phase="startup", kind="motion"):
+                clear_view.prepare_initial()
         with timed("startup.camera_stream_open", phase="startup", kind="io"):
             if os.environ.get("PRECISION_ATTACH_CAMERAS") == "1":
                 resources.enter_context(attach_running_autodex_camera_stream(

@@ -171,6 +171,13 @@ This is a scheduling change only; candidate, collision, alignment and task
 labels are unchanged.  The expected 13.26 s reduction must be confirmed in a
 new live trace rather than reported as a measured speedup.
 
+For a fresh board-constrained socket session, current startup first allocates
+the key renderer, then begins provisional cuRobo graph capture **before** the
+unchanged initial clear-view motion. Both that motion and the subsequent
+socket capture can therefore overlap planner warmup. Historical traces began
+the graph capture only after clear-view and cannot measure this scheduling
+change; its benefit likewise needs a new configuration-identified live trace.
+
 The second saved run also spent 1.926 s in
 `planning.nominal_insertion > planning.held_path_audit >
 audit.minimum_distance_scan`, and 1.783 s in the nominal post-lift path

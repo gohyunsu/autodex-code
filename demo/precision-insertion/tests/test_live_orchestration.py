@@ -194,6 +194,9 @@ def test_board_constrained_socket_overlaps_planner_warmup_with_capture(
     assert events.index("key_renderer_warmup") < events.index(
         "planner_warmup_started")
     assert events.index("planner_warmup_started") < events.index(
+        "home_clear_view")
+    assert events.index("home_clear_view") < events.index("stream_open")
+    assert events.index("planner_warmup_started") < events.index(
         "socket_frozen")
     assert events.index("socket_frozen") < events.index(
         "planner_warmup_join")
