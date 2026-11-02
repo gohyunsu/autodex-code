@@ -109,7 +109,14 @@ def _plan_jacobian_linear_stroke(
             not math.isfinite(joint_increment_smoothness) or
             joint_increment_smoothness < 0):
         raise ValueError("linear stroke needs a fixed pose, unit direction and <=5 mm steps")
-    opts = replace(options or _default_options_for_arm(n_arm), step_m=step_m)
+    # Precision execution already applies the held-object playback scale in
+    # FrankaExecutor.  Keep the demo's local Cartesian reference at the normal
+    # arm limits so the same reduction is not applied once by the retimer and
+    # again by the executor.  The shared AutoDex Jacobian default remains
+    # unchanged for callers outside this demo.
+    base_options = options or replace(
+        _default_options_for_arm(n_arm), held_object_speed_scale=1.0)
+    opts = replace(base_options, step_m=step_m)
     if (any(not math.isfinite(float(value)) for value in vars(opts).values()) or
             opts.finite_difference_rad <= 0 or opts.damping <= 0 or
             opts.max_iterations <= 0 or opts.max_joint_step_rad <= 0 or

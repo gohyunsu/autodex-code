@@ -218,13 +218,15 @@ by `test_follow_progress.py`, `test_reset_scene.py`, and the integration
 tests, but no saved-image replay can prove the robot's actual tracking or
 contact behavior.
 
-`autodex/planner/jacobian_stroke.py` also differs from stock: its FR3
-`held_object_speed_scale` default is 1.0 instead of 0.40. The numerical
-Jacobian, collision checks, and retimer are otherwise unchanged. This is a
-speed-policy correction in this separate checkout, not an insertion-specific
-geometry rule: both the stock vertical stroke used by lift/repose and the
-demo's socket-axis continuation use the same default. The FR3 executor still
-applies the 0.40 near-object/held playback scale once. The saved
+The shared `autodex/planner/jacobian_stroke.py` retains AutoDex's Franka
+default `held_object_speed_scale=0.40`. The demo-local
+`precision_insertion/axis_jacobian.py` explicitly overrides that retimer
+scale to 1.0 for socket-axis, held-XY and held-tip/axis continuation because
+the precision FR3 executor already applies the 0.40 held-object playback cap.
+This keeps the speed-policy correction local to the demo and applies the
+reduction once, without changing the shared vertical-stroke behavior. The
+numerical Jacobian and collision checks are reused from the shared module.
+The saved
 `20261020_094911_916554` run showed the previous planner-plus-executor
 reduction and the read-only replay in `TRIAL_20261020_094911.md` compares
 reference lengths; it does not measure post-change physical speed. The
