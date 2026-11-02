@@ -1014,10 +1014,36 @@ class LiveTaskHandlers:
         final, final_capture = self._capture(
             runner=runner, decision=decision,
             callback=self.capture_final, phase="final_clear_view")
-        decision_at = self.decision_time()
         initial = runner.initial_key_evidence_dir
         if initial is None:
             raise ValueError("released insertion lacks its initial key perception")
+        tip_annotation = request_annotation(
+            mode=self.label_mode, provider=self.manual_label_provider,
+            stage="tip_entry_success",
+            evidence_dirs=(self._preinsert_bundle, final),
+            attempt_id=attempt.attempt_id,
+            candidate_id=attempt.candidate_id)
+        if tip_annotation is not None:
+            runner.observe_diagnostic_label(
+                "tip_entry_success", tip_annotation["value"],
+                timestamp_s=self.decision_time(),
+                evidence_refs={
+                    "guarded_execution": str(metric),
+                    "release_execution": str(release_path),
+                    "preinsert_snapshot": str(
+                        self._preinsert_bundle / "manifest.json"),
+                    "final_clear_view": str(final / "manifest.json"),
+                },
+                detail={"manual_annotation": tip_annotation})
+        final_annotation = request_annotation(
+            mode=self.label_mode, provider=self.manual_label_provider,
+            stage="insertion_success",
+            evidence_dirs=(
+                (initial_visual_source(initial)[0], final)
+                if self.label_mode == "manual" else (final,)),
+            attempt_id=attempt.attempt_id,
+            candidate_id=attempt.candidate_id)
+        decision_at = self.decision_time()
         with timed("trial.final_label", phase="trial",
                    attempt_id=attempt.attempt_id):
             runner.prepare_released_insertion_label(
@@ -1030,14 +1056,7 @@ class LiveTaskHandlers:
                 decision_timestamp_s=decision_at,
                 target_depth_m=effective_target_depth_m,
                 label_mode=self.label_mode,
-                manual_annotation=request_annotation(
-                    mode=self.label_mode, provider=self.manual_label_provider,
-                    stage="insertion_success",
-                    evidence_dirs=(
-                        (initial_visual_source(initial)[0], final)
-                        if self.label_mode == "manual" else (final,)),
-                    attempt_id=attempt.attempt_id,
-                    candidate_id=attempt.candidate_id),
+                manual_annotation=final_annotation,
                 **dict(self.final_parameters))
 
     def handlers(self) -> dict[str, ActionHandler]:

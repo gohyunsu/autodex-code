@@ -15,6 +15,7 @@ from precision_insertion import live_task_handlers  # noqa: E402
 from precision_insertion.live_robot_state import LiveRobotState  # noqa: E402
 from precision_insertion.raw_camera_capture import RawCameraCapture  # noqa: E402
 from precision_insertion.session_policy import SessionDecision  # noqa: E402
+from precision_insertion.labeling import manual_annotation  # noqa: E402
 
 
 def _state():
@@ -70,6 +71,9 @@ class Runner:
     def prepare_released_insertion_label(self, **kwargs):
         self.events.append(("assess_insertion", kwargs))
         self.decision = SessionDecision("session_success", "observed_20mm", "table/0/3")
+
+    def observe_diagnostic_label(self, stage, value, **kwargs):
+        self.events.append(("diagnostic", stage, value, kwargs))
 
 
 def _handler(tmp_path, enabled=True):
@@ -160,6 +164,46 @@ def test_transfer_hold_then_guarded_20mm_and_vlm_label(tmp_path, monkeypatch):
     assert runner.events[-1][1]["final_bundle"] == (
         capture_root / "final_clear_view" / "final_001")
     assert runner.current_decision().action == "session_success"
+
+
+def test_manual_tip_entry_is_saved_before_final_outcome(tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    requested = []
+
+    def provider(stage, _evidence, _attempt, _candidate):
+        requested.append(stage)
+        return manual_annotation(
+            stage, False if stage == "tip_entry_success" else True,
+            "researcher", "rim contact" if stage == "tip_entry_success" else "")
+
+    bound.label_mode = "manual"
+    bound.manual_label_provider = provider
+    monkeypatch.setattr(live_task_handlers, "execute_bound_held_transfer",
+                        lambda **_kwargs: None)
+    monkeypatch.setattr(
+        live_task_handlers, "execute_bound_guarded_insertion",
+        lambda **_kwargs: {
+            "safety_abort": False, "grasp_held": True,
+            "metric_record": {"path": str(tmp_path / "metric.json")}})
+    monkeypatch.setattr(live_task_handlers, "write_raw_camera_capture",
+                        lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(live_task_handlers, "verify_post_insertion_release",
+                        lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(live_task_handlers, "initial_visual_source",
+                        lambda path: (path, "saved"))
+    bound.transfer_and_observe(runner, runner.current_decision())
+    bound.insert_and_observe(runner, runner.current_decision())
+    assert requested == [
+        "preinsert_reached", "tip_entry_success", "insertion_success"]
+    diagnostic_index = next(
+        i for i, row in enumerate(runner.events) if row[0] == "diagnostic")
+    final_index = next(
+        i for i, row in enumerate(runner.events)
+        if row[0] == "assess_insertion")
+    assert diagnostic_index < final_index
+    assert runner.events[diagnostic_index][1:3] == (
+        "tip_entry_success", False)
+    assert runner.events[final_index][1]["manual_annotation"]["value"] is True
 
 
 def test_deferred_same_trial_capture_does_not_wait_for_nas_writer(

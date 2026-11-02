@@ -68,6 +68,15 @@ def test_separate_stage_labels_and_fused_insertion_success(tmp_path):
     record.record_stage("preinsert_reached", True, timestamp_s=3.0,
                         evidence_refs=_transfer_refs())
     assert record.to_record()["insertion_success"] is None
+    record.record_diagnostic_label(
+        "tip_entry_success", False, timestamp_s=3.5,
+        evidence_refs={
+            "guarded_execution": "motion/guarded.json",
+            "release_execution": "motion/release.json",
+        }, detail={"manual_annotation": {
+            "stage": "tip_entry_success", "value": False,
+            "annotator": "researcher", "note": "entered while opening",
+        }})
     outcome = record.record_insertion_evidence(
         InsertionEvidence(
             vlm_class="normal_appearance",
@@ -82,7 +91,10 @@ def test_separate_stage_labels_and_fused_insertion_success(tmp_path):
     assert [payload[name] for name in (
         "grasp_success", "preinsert_reached", "insertion_success",
         "release_success", "reset_success")] == [True, True, True, None, None]
-    assert [event["event_index"] for event in payload["events"]] == [0, 1, 2]
+    assert payload["diagnostic_labels"] == {"tip_entry_success": False}
+    assert payload["events"][2]["scope"] == (
+        "diagnostic_only_not_session_outcome")
+    assert [event["event_index"] for event in payload["events"]] == [0, 1, 2, 3]
     path = tmp_path / "attempts" / "trial_001.json"
     record.write_new(path)
     assert json.loads(path.read_text())["session_calibration_sha256"] == (
@@ -107,6 +119,29 @@ def test_failed_grasp_does_not_falsely_mark_transfer_or_insertion():
     record.record_stage("reset_success", True, timestamp_s=4.0,
                         evidence_refs={"key_pose": "sensors/reset_pose.json"})
     assert record.to_record()["reset_success"] is True
+
+
+def test_tip_entry_label_cannot_replace_or_follow_final_outcome():
+    record = _record()
+    record.record_stage("grasp_success", True, timestamp_s=2.0,
+                        evidence_refs=_grasp_refs())
+    with pytest.raises(ValueError, match="observed hold"):
+        record.record_diagnostic_label(
+            "tip_entry_success", True, timestamp_s=2.1,
+            evidence_refs={"observation": "live"})
+    record.record_stage("preinsert_reached", True, timestamp_s=3.0,
+                        evidence_refs=_transfer_refs())
+    record.record_diagnostic_label(
+        "tip_entry_success", True, timestamp_s=3.5,
+        evidence_refs={"guarded_execution": "motion/guarded.json"})
+    assert record.labels["insertion_success"] is None
+    record.record_insertion_evidence(
+        InsertionEvidence("inside_socket", None, None, None, False, True),
+        timestamp_s=4.0, evidence_refs=_insertion_refs())
+    with pytest.raises(ValueError, match="already recorded"):
+        record.record_diagnostic_label(
+            "tip_entry_success", False, timestamp_s=4.1,
+            evidence_refs={"guarded_execution": "motion/guarded.json"})
 
 
 def test_insertion_requires_fusion_and_earlier_milestones():

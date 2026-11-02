@@ -17,12 +17,14 @@ from .timing_profile import timed
 
 LABEL_MODES = frozenset({"evidence_fused", "vlm_only", "manual"})
 STAGES = frozenset({"grasp_success", "preinsert_reached", "insertion_success"})
+DIAGNOSTIC_STAGES = frozenset({"tip_entry_success"})
+ANNOTATION_STAGES = STAGES | DIAGNOSTIC_STAGES
 
 
 def validate_annotation(stage: str, annotation: Mapping | None) -> dict | None:
     if annotation is None:
         return None
-    if (stage not in STAGES or not isinstance(annotation, Mapping) or
+    if (stage not in ANNOTATION_STAGES or not isinstance(annotation, Mapping) or
             set(annotation) != {"stage", "value", "annotator", "note"} or
             annotation["stage"] != stage or
             annotation["value"] is not None and
@@ -113,8 +115,17 @@ def terminal_label_provider(annotator: str) -> Callable:
         print(f"\nManual {stage}: {attempt_id} / {candidate_id}", flush=True)
         for directory in evidence_dirs:
             print(f"Inspect saved PNGs in {directory}", flush=True)
-        print("Judge the saved snapshot at capture time; a later slip is a separate event.",
-              flush=True)
+        if stage == "tip_entry_success":
+            print(
+                "Did the key tip enter the socket opening during guarded descent, "
+                "before the hand opened?", flush=True)
+            print(
+                "y = smooth entry before release; n = rim/wall contact or entry "
+                "only while opening; u = not observable.", flush=True)
+        else:
+            print(
+                "Judge the saved snapshot at capture time; a later slip is a "
+                "separate event.", flush=True)
         while True:
             answer = input("Label [y=yes, n=no, u=unknown]: ").strip().lower()
             if answer in {"y", "n", "u"}:

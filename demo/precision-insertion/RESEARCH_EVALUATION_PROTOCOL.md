@@ -146,14 +146,20 @@ denominator:
 5. endpoint/axis observation available;
 6. closed-loop target reached or loop ended by its configured budget;
 7. insertion stroke executed;
-8. key released inside the socket (`insertion_success`).
+8. key tip entered the socket during guarded descent, before opening the hand
+   (`tip_entry_success`, manual process-quality label);
+9. key released inside the socket (`insertion_success`, final task outcome).
 
 Report:
 
-- end-to-end success: stage 8 / all started physical trials;
+- end-to-end success: stage 9 / all started physical trials;
 - conditional grasp success: stage 3 / stage 2;
 - conditional transfer success: stage 4 / stage 3;
-- conditional insertion success: stage 8 / stage 7;
+- conditional smooth-entry success: stage 8 / stage 7;
+- conditional final task success: stage 9 / stage 7;
+- release-assisted entry: `tip_entry_success=false` and
+  `insertion_success=true`, reported separately rather than counted as smooth
+  insertion;
 - planning availability separately from physical failure;
 - Wilson confidence intervals for proportions.
 

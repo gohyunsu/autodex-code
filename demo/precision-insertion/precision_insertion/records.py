@@ -25,6 +25,7 @@ STAGES = (
     "release_success", "retreat_success", "reset_success",
     "reorient_success",
 )
+DIAGNOSTIC_STAGES = ("tip_entry_success",)
 PREREQUISITE = {
     "preinsert_reached": "grasp_success",
     "insertion_success": "preinsert_reached",
@@ -89,6 +90,8 @@ class AttemptRecord:
     wrist_correction_socket_m: tuple[float, float] = (0.0, 0.0)
     labels: dict[str, bool | None] = field(
         default_factory=lambda: {name: None for name in STAGES})
+    diagnostic_labels: dict[str, bool | None] = field(
+        default_factory=lambda: {name: None for name in DIAGNOSTIC_STAGES})
     events: list[dict] = field(default_factory=list)
     failure_code: str | None = None
     _pending_retry: bool = False
@@ -168,6 +171,51 @@ class AttemptRecord:
                     "label_mode": label_mode,
                     "manual_annotation": manual_annotation})
         return outcome
+
+    def record_diagnostic_label(
+        self, stage: str, status: bool | None, *, timestamp_s: float,
+        evidence_refs: Mapping[str, str], detail: dict | None = None,
+    ) -> None:
+        """Record a process-quality label without changing task outcome.
+
+        ``tip_entry_success`` distinguishes smooth entry during the guarded
+        descent from a key that only falls into the socket while the hand is
+        opening.  It intentionally has no prerequisite or policy entry in
+        ``session_policy`` and therefore cannot end or redirect a session.
+        """
+        if stage not in DIAGNOSTIC_STAGES:
+            raise ValueError(f"unknown diagnostic stage: {stage}")
+        if status is not None and type(status) is not bool:
+            raise ValueError("diagnostic status must be true, false, or unknown")
+        if self.diagnostic_labels[stage] is not None or any(
+                event["stage"] == stage for event in self.events):
+            raise ValueError(f"diagnostic stage already recorded: {stage}")
+        if (self.labels["preinsert_reached"] is not True or
+                any(event["stage"] == "insertion_success"
+                    for event in self.events)):
+            raise ValueError(
+                "tip-entry diagnostic needs the observed hold before the "
+                "final insertion label")
+        refs = dict(evidence_refs)
+        if (not refs or not all(
+                isinstance(key, str) and key and
+                isinstance(value, str) and value
+                for key, value in refs.items())):
+            raise ValueError("diagnostic label needs evidence references")
+        timestamp = _finite_time(timestamp_s)
+        if timestamp < self.started_at_s or (
+                self.events and timestamp < self.events[-1]["timestamp_s"]):
+            raise ValueError("attempt events must be in nondecreasing time order")
+        self.diagnostic_labels[stage] = status
+        self.events.append({
+            "event_index": len(self.events),
+            "timestamp_s": timestamp,
+            "stage": stage,
+            "value": status,
+            "evidence_refs": refs,
+            "detail": detail or {},
+            "scope": "diagnostic_only_not_session_outcome",
+        })
 
     def record_retry(
         self, decision: ChoiceDecision, *, timestamp_s: float,
@@ -442,6 +490,7 @@ class AttemptRecord:
             "xy_offset_socket_m": list(self.xy_offset_socket_m),
             "wrist_correction_socket_m": list(self.wrist_correction_socket_m),
             **self.labels,
+            "diagnostic_labels": dict(self.diagnostic_labels),
             "failure_code": self.failure_code,
             "events": list(self.events),
             "scope": "evidence_record_not_motion_authorization",

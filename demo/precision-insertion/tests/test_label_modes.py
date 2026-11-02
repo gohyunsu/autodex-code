@@ -45,6 +45,14 @@ def test_visual_policy_abstains_and_manual_requires_provenance():
         request_annotation(
             mode="manual", provider=None, stage="grasp_success",
             evidence_dirs=(), attempt_id="a", candidate_id="b")
+    diagnostic = manual_annotation(
+        "tip_entry_success", False, "researcher", "entered on release")
+    assert diagnostic["value"] is False
+    with pytest.raises(ValueError, match="unknown task-label stage"):
+        resolve_label(
+            stage="tip_entry_success", mode="manual",
+            visual_class="unobservable", fused_value=None,
+            fused_reason="not_a_task_outcome", annotation=diagnostic)
 
 
 def test_visual_insertion_label_is_not_a_metric_depth_claim():

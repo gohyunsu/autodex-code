@@ -362,6 +362,7 @@ class SessionRunner:
                                 if attempt.events else None),
             "event_count": len(attempt.events),
             "labels": dict(attempt.labels),
+            "diagnostic_labels": dict(attempt.diagnostic_labels),
             "latest_state": state_path.name,
             "latest_state_sha256": hashlib.sha256(state_path.read_bytes()).hexdigest(),
             "session_run": str(
@@ -1921,6 +1922,17 @@ class SessionRunner:
         return self._record(lambda row: row.record_stage(
             stage, status, timestamp_s=timestamp_s,
             evidence_refs=evidence_refs))
+
+    def observe_diagnostic_label(
+        self, stage: str, status: bool | None, *, timestamp_s: float,
+        evidence_refs: Mapping[str, str], detail: dict | None = None,
+    ) -> AttemptRecord:
+        """Persist a process-quality annotation without affecting policy."""
+        if self._attempt is not None and self._attempt.candidate_id is None:
+            raise ValueError("repose has no insertion-entry diagnostic")
+        return self._record(lambda row: row.record_diagnostic_label(
+            stage, status, timestamp_s=timestamp_s,
+            evidence_refs=evidence_refs, detail=detail))
 
     def prepare_failed_insertion_return(
         self, *, planner, withdrawn_state: LiveRobotState,

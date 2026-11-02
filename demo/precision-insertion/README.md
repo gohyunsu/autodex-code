@@ -96,6 +96,13 @@ from the board-9 `robot_pc_stages:configure` motion interlock. Its ten stages
 and camera callbacks now assemble offline. The built-in release callback
 needs the existing path-audit limits and is not a measured key-depth test.
 
+In manual-label experiments, the live handler additionally records
+`tip_entry_success` before the final task outcome. It asks whether the tip
+entered during the guarded descent before the hand opened. This diagnostic is
+stored under `diagnostic_labels` and never changes session policy. A trial may
+therefore have `tip_entry_success=false` but `insertion_success=true` when rim
+contact is followed by release-assisted entry.
+
 For the ZeroDex capture4 closed-loop route, 20 mm remains the offline grasp
 admission and first runtime target. When the corrected 20 mm hand/socket
 endpoint or sampled held path cannot be planned, the runtime rebuilds the

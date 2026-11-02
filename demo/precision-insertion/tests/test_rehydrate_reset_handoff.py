@@ -24,6 +24,7 @@ from precision_insertion.reset_candidates import (  # noqa: E402
 from rehydrate_reset_handoff import (  # noqa: E402
     _same_scene_semantics, rehydrate,
 )
+from rebind_installed_reset_evidence import rebind_installed  # noqa: E402
 
 
 MODE = select_mode("cylinder", 20)
@@ -42,6 +43,36 @@ def test_scene_roundoff_is_not_a_geometry_change():
     assert _same_scene_semantics(source, generated)
     generated["scene"]["cuboid"]["dims"][0] += 1e-6
     assert not _same_scene_semantics(source, generated)
+
+
+def test_rebinds_already_installed_seed_after_only_host_path_change(tmp_path):
+    source, target, incoming, _output, _audit, seed = _case(tmp_path)
+    prepare_v8_reorient_scenes(
+        shared_root=target, mode=MODE,
+        manifest_path=tmp_path / "target_scene_manifest.json",
+        heights_cm=(12,))
+    canonical = (target / "AutoDex/candidates/inspire/reset_12" / KEY /
+                 "reorient_12/0_1/7")
+    canonical.parent.mkdir(parents=True)
+    shutil.copytree(seed, canonical)
+    original_bytes = (canonical / "source_evidence.json").read_bytes()
+    report = rebind_installed(
+        source_shared_root=source,
+        source_origin_shared_root=source,
+        target_shared_root=target,
+        cells=("0_1",))
+    assert report["seeds"][0]["status"] == "verified_rebound"
+    assert (canonical / "source_evidence_original.json").read_bytes() == (
+        original_bytes)
+    scenes = _valid_scene_pair(
+        target, target / "object_processing" / KEY, MODE, 12, 0, 1)
+    _candidate_arrays(canonical, mode=MODE, cell="0_1", h_cm=12,
+                      scenes=scenes)
+    assert rebind_installed(
+        source_shared_root=source,
+        source_origin_shared_root=source,
+        target_shared_root=target,
+        cells=("0_1",)) == report
 
 
 def _case(tmp_path: Path):
