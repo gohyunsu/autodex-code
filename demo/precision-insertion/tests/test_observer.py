@@ -15,9 +15,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.observer import (  # noqa: E402
-    DEFAULT_LOCAL_VLM_MODEL_ID, HeldSceneView, LabeledFrame, XYView,
-    ZeroDexGeminiBackend,
-    LocalQwenBackend, ZeroDexLocalBackend, load_vlm_backend,
+    HeldSceneView, LabeledFrame, XYView, ZeroDexGeminiBackend,
+    LocalQwenBackend, ZeroDexLocalBackend, effective_local_vlm_model_id,
+    load_vlm_backend,
     observe_insertion_visual, observe_lift, observe_preinsert_hold_views,
     observe_preinsert_raw_views, observe_preinsert_temporal_views,
     observe_released_insertion_visual,
@@ -709,6 +709,20 @@ def test_local_loader_fails_before_model_download_without_cuda(monkeypatch):
         LocalQwenBackend.from_transformers(max_input_size=(1280, 720))
 
 
+def test_local_model_resolution_prefers_profile_then_repeat_cache(tmp_path):
+    assert effective_local_vlm_model_id(
+        environ={}, project_root=tmp_path) == "Qwen/Qwen3-VL-2B-Instruct"
+    cached = tmp_path / "cache/models/Qwen3-VL-2B-Instruct"
+    cached.mkdir(parents=True)
+    assert effective_local_vlm_model_id(
+        environ={}, project_root=tmp_path) == str(cached.resolve())
+    assert effective_local_vlm_model_id(
+        environ={"PRECISION_VLM_MODEL_ID": "/profile/qwen"},
+        project_root=tmp_path) == "/profile/qwen"
+    assert effective_local_vlm_model_id(
+        "explicit/qwen", environ={}, project_root=tmp_path) == "explicit/qwen"
+
+
 def test_local_loader_uses_first_party_qwen_without_gemini_or_resize(monkeypatch):
     loaded = []
     from precision_insertion import local_qwen
@@ -734,10 +748,11 @@ def test_local_loader_uses_first_party_qwen_without_gemini_or_resize(monkeypatch
         "require_cuda": False,
     }]
     assert backend.infer([_image()], "label") == '{"class":"held"}'
+    monkeypatch.setenv("PRECISION_VLM_MODEL_ID", "/local/qwen-cache")
     default_backend = load_vlm_backend(
         max_input_size=(16, 12), max_new_tokens=40, require_cuda=False)
     assert isinstance(default_backend, LocalQwenBackend)
-    assert loaded[-1]["model_id"] == DEFAULT_LOCAL_VLM_MODEL_ID
+    assert loaded[-1]["model_id"] == "/local/qwen-cache"
     with pytest.raises(ValueError, match="explicit model ID"):
         load_vlm_backend(mode="gemini", max_input_size=(16, 12))
     with pytest.raises(ValueError, match="mode must be gemini or local"):

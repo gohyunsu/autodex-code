@@ -1,4 +1,4 @@
-# Evaluate local or API VLM visual labels on saved AutoDex trials
+# Evaluate local or API VLM visual labels on saved trials
 
 `evaluate_saved_vlm.py` loads one VLM and replays multiple **paired,
 time-ordered, two-or-more-camera** trials through the same read-only lift and
@@ -92,8 +92,12 @@ export PYTHONPATH="$PWD/demo/precision-insertion:$HOME/realtime_vlm"
   --output /path/to/new_local_vlm_report.json
 ```
 
-Local `Qwen/Qwen3-VL-2B-Instruct` is the default; `--backend` and
-`--model-id` are optional for that case.
+The local resolver first uses `PRECISION_VLM_MODEL_ID`, then
+`~/precision_insertion_project/cache/models/Qwen3-VL-2B-Instruct`, and only
+then the upstream `Qwen/Qwen3-VL-2B-Instruct` ID. Thus the commissioned
+ZeroDex workstation reuses its local cache even when this replay command is
+run without sourcing the machine profile. `--backend` and `--model-id` are
+optional for that case, and the effective model path is stored in the report.
 `--backend gemini` uses the same manifest but additionally requires
 `--model-id`, `--allow-external-images`, `GEMINI_API_KEY` and the optional
 Gemini SDK.
@@ -110,5 +114,5 @@ they do **not** grant insertion motion or certify final task success.
 This tool checks only that the manifest *claims* independent review and
 timestamp provenance. It cannot prove reviewer independence, image capture
 time, calibration, or ground-truth correctness. Commission the dataset from
-real AutoDex camera and physical outcome records before using any resulting
-metrics to choose a runtime VLM or threshold.
+real camera and physical outcome records before using any resulting metrics
+to choose a runtime VLM or threshold.

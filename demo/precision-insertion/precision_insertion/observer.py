@@ -19,6 +19,7 @@ from typing import Protocol, Sequence
 
 from PIL import Image
 
+from .project_layout import local_project_root
 from .xy_voting import ViewVote, XYChoice, validate_choices
 from .timing_profile import timed
 from .view_parallel import map_view_calls, map_view_calls_until
@@ -29,7 +30,33 @@ class ImageVLM(Protocol):
 
 
 DEFAULT_LOCAL_VLM_MODEL_ID = "Qwen/Qwen3-VL-2B-Instruct"
+LOCAL_QWEN_CACHE_NAME = "Qwen3-VL-2B-Instruct"
 RELEASED_SOCKET_IMAGE_SIZE = (768, 576)
+
+
+def effective_local_vlm_model_id(
+    model_id: str | None = None, *, environ=None, project_root=None,
+) -> str:
+    """Resolve the repeat-use local Qwen cache before a remote model ID.
+
+    The machine profile normally exports ``PRECISION_VLM_MODEL_ID``. Saved
+    replay tools are also useful without sourcing that profile, so they use
+    the same local project cache before falling back to the upstream model ID.
+    Resolving this value never imports Transformers or opens CUDA.
+    """
+    if model_id is not None:
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise ValueError("local Qwen model ID must be a nonempty string")
+        return model_id
+    values = os.environ if environ is None else environ
+    override = values.get("PRECISION_VLM_MODEL_ID", "").strip()
+    if override:
+        return override
+    cached = (local_project_root(project_root) / "cache/models" /
+              LOCAL_QWEN_CACHE_NAME)
+    if cached.is_dir():
+        return str(cached.resolve())
+    return DEFAULT_LOCAL_VLM_MODEL_ID
 
 
 _CAMERA_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
@@ -396,8 +423,7 @@ def load_vlm_backend(
     if mode == "local":
         if parallel_views != 1:
             raise ValueError("single-GPU local Qwen does not support parallel views")
-        selected_model = (DEFAULT_LOCAL_VLM_MODEL_ID if model_id is None
-                          else model_id)
+        selected_model = effective_local_vlm_model_id(model_id)
         if max_input_size is None:
             raise ValueError("local mode needs original image-size ceiling")
         return LocalQwenBackend.from_transformers(

@@ -131,6 +131,7 @@ def test_gemini_batch_requires_explicit_external_image_consent(tmp_path):
 def test_benchmark_defaults_to_local_qwen(tmp_path, monkeypatch):
     manifest = _dataset(tmp_path / "dataset")
     loaded = []
+    monkeypatch.setenv("PRECISION_VLM_MODEL_ID", "/local/qwen-cache")
 
     class Backend:
         def infer(self, images, prompt):
@@ -148,9 +149,8 @@ def test_benchmark_defaults_to_local_qwen(tmp_path, monkeypatch):
     assert evaluate_saved_vlm.main([
         "--manifest", str(manifest), "--output", str(output)]) == 0
     assert loaded[0]["mode"] == "local"
-    assert loaded[0]["model_id"] is None
-    assert json.loads(output.read_text())["model_id"] == (
-        evaluate_saved_vlm.DEFAULT_LOCAL_VLM_MODEL_ID)
+    assert loaded[0]["model_id"] == "/local/qwen-cache"
+    assert json.loads(output.read_text())["model_id"] == "/local/qwen-cache"
 
 
 def test_saved_replay_profile_records_load_and_each_inference(tmp_path,

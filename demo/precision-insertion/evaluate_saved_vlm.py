@@ -27,7 +27,7 @@ if str(DEMO_DIR) not in sys.path:
     sys.path.insert(0, str(DEMO_DIR))
 
 from precision_insertion.observer import (  # noqa: E402
-    DEFAULT_LOCAL_VLM_MODEL_ID, LabeledFrame, load_vlm_backend,
+    LabeledFrame, effective_local_vlm_model_id, load_vlm_backend,
     observe_insertion_visual, observe_lift, observe_released_insertion_visual,
 )
 from precision_insertion.released_insertion_checkpoint import (  # noqa: E402
@@ -263,6 +263,8 @@ def main(argv: list[str] | None = None) -> int:
     output = args.output.expanduser().resolve()
     if output.exists():
         raise FileExistsError(f"benchmark report already exists: {output}")
+    selected_model_id = (effective_local_vlm_model_id(args.model_id)
+                         if args.backend == "local" else args.model_id)
     with (profile_run(output) if args.profile else nullcontext()):
         manifest_path = args.manifest.expanduser().resolve()
         with timed("replay.manifest_load", phase="replay", kind="io"):
@@ -271,7 +273,7 @@ def main(argv: list[str] | None = None) -> int:
             released_only = all(
                 case["task"] == "released_insertion_visual" for case in cases)
             backend = load_vlm_backend(
-                mode=args.backend, model_id=args.model_id,
+                mode=args.backend, model_id=selected_model_id,
                 max_input_size=(args.max_input_width, args.max_input_height),
                 max_new_tokens=args.max_new_tokens,
                 require_cuda=not args.allow_cpu,
@@ -322,8 +324,7 @@ def main(argv: list[str] | None = None) -> int:
             "manifest_path": str(manifest_path),
             "manifest_sha256": manifest_sha,
             "backend": args.backend,
-            "model_id": (args.model_id if args.model_id is not None else
-                         DEFAULT_LOCAL_VLM_MODEL_ID),
+            "model_id": selected_model_id,
             "released_input_policy": (
                 "final_socket_crop_token_v5" if released_only else None),
             "cases": rows, "summary": _summarize(rows),
