@@ -48,6 +48,29 @@ currently unavailable. Manual mode continues to store both answers while the
 human annotation remains the execution label; v4 is not claimed as validated
 until that saved-image replay is completed.
 
+The reusable replay entry point is now
+`replay_saved_lift_vlm.py`, rather than the dated NAS one-off script. Its
+source-only pass verified all 15 reports against their PNG bytes, capture
+manifests, five frozen session calibrations and measured joint records. The
+result is
+`development/zerodex_capture4/reviews/lift_v4_replay_inputs_20261102.json`
+under the project NAS root (SHA256
+`e40ac2c50ca24091a4a8edfd29e131356bf5db53030b9ed411fa3f4f90344ddb`):
+13 human `held` and two human `miss` cases. After restoring local CUDA device
+nodes, run the same command without `--verify-only` and choose a new output
+path; it will load the runtime-configured backend once and replay the current
+v4 prompt, crops, retry and consensus on those exact sources.
+
+```bash
+source demo/precision-insertion/config/zerodex_capture4.env.sh
+PYTHONPATH="$PWD/demo/precision-insertion:$PWD" \
+  "$PRECISION_PLANNER_PY" demo/precision-insertion/replay_saved_lift_vlm.py \
+  --attempt-root \
+    "$PRECISION_RUN_OUTPUT_ROOT/precision-insertion/inspire/precision_key_cylinder_r15_h80" \
+  --runtime-config "$PRECISION_ROBOT_CONFIG" \
+  --output "$PRECISION_DEV_ROOT/reviews/lift_v4_replay_$(date +%Y%m%d_%H%M%S).json"
+```
+
 The four-case sections below document the earlier v4 final prompt and 384 px
 crop. The current v5 method and six human-labeled ZeroDex episodes are in
 [SAVED_ZERODEX_VISION_REVIEW_20261029.md](SAVED_ZERODEX_VISION_REVIEW_20261029.md).

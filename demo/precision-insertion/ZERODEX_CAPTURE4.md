@@ -464,9 +464,14 @@ the three old `vlm_only` negative outcomes; those three have no independent
 human ground truth. Four bundles needed a retry batch. This was an image-only
 replay with the local Qwen3-VL-2B; it did not send camera or robot commands.
 The reproducible
-script and per-view results are in
+historical script and per-view results are in
 `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/`
 as `replay_lift_finger_retry_20261030.{py,json}`.
+New evaluations should use the maintained
+`demo/precision-insertion/replay_saved_lift_vlm.py`; its `--verify-only` mode
+hash-verifies the complete saved dataset without loading a model, and its
+ordinary mode replays the current runtime-configured local or distributed
+backend without opening cameras or robot services.
 
 System-specific runtime defaults are in the ZeroDex machine profile and can be
 overridden without editing the shared AutoDex executor:
