@@ -23,14 +23,17 @@ from precision_insertion.partial_shape_alignment import (
     PartialCylinderView, estimate_partial_cylinder_alignment,
     partial_shape_measurement_weights,
 )
+from precision_insertion.same_trial_xy import select_same_trial_alignment
 
 
 def read(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def review_attempt(attempt: Path, run: Path, *, robust_pixel_scale: float
-                   ) -> dict:
+def review_attempt(
+    attempt: Path, run: Path, *, robust_pixel_scale: float,
+    max_axis_tilt_deg: float,
+) -> dict:
     """Review one attempt using its immutable session calibration."""
     attempt = attempt.expanduser().resolve()
     run = run.expanduser().resolve()
@@ -95,6 +98,10 @@ def review_attempt(attempt: Path, run: Path, *, robust_pixel_scale: float
                 alignment["nominal_tip_z_socket_m"]),
             key_length_m=key_length_m,
             robust_pixel_scale=robust_pixel_scale)
+        selection = select_same_trial_alignment(
+            {**alignment, "partial_shape_alignment": result},
+            source="partial_shape",
+            max_axis_tilt_deg=max_axis_tilt_deg)["alignment_selection"]
         rows.append({
             "iteration": int(observation_file.stem),
             "source_observation": str(observation_file),
@@ -102,15 +109,17 @@ def review_attempt(attempt: Path, run: Path, *, robust_pixel_scale: float
             "endpoint_reason": alignment["reason"],
             "visible_shape_profiles": profiles,
             "partial_shape_alignment": result,
+            "partial_shape_control_selection": selection,
         })
 
     return {
-        "schema": "precision_insertion_saved_partial_shape_review_v1",
+        "schema": "precision_insertion_saved_partial_shape_review_v2",
         "scope": "saved_evidence_read_only_no_camera_or_robot_command",
         "attempt_dir": str(attempt),
         "session_run_dir": str(run),
         "key_length_m": key_length_m,
         "robust_pixel_scale": robust_pixel_scale,
+        "max_axis_tilt_deg": max_axis_tilt_deg,
         "iterations": rows,
     }
 
@@ -150,11 +159,18 @@ def _batch_summary(attempts: list[dict]) -> dict:
     """
     rows = []
     iteration_statuses = Counter()
+    control_selections = Counter()
+    fallback_reasons = Counter()
     for attempt in attempts:
         iterations = attempt["review"]["iterations"]
         iteration_statuses.update(
             str(row["partial_shape_alignment"].get("status"))
             for row in iterations)
+        for row in iterations:
+            selection = row["partial_shape_control_selection"]
+            control_selections[str(selection.get("selected"))] += 1
+            if selection.get("selected") != "partial_shape":
+                fallback_reasons[str(selection.get("reason"))] += 1
         fitted = [row for row in iterations
                   if row["partial_shape_alignment"].get("status") ==
                   "diagnostic_partial_shape_pose"]
@@ -211,6 +227,10 @@ def _batch_summary(attempts: list[dict]) -> dict:
             row["last_valid_fit_iteration"] is not None for row in rows),
         "iteration_shape_status_counts": dict(sorted(
             iteration_statuses.items())),
+        "iteration_control_selection_counts": dict(sorted(
+            control_selections.items())),
+        "iteration_control_fallback_reason_counts": dict(sorted(
+            fallback_reasons.items())),
         "by_execution_status": by_status,
         "attempt_last_fit_rows": rows,
         "interpretation": (
@@ -230,6 +250,10 @@ def main() -> None:
     parser.add_argument("--session-run-dir", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--robust-pixel-scale", type=float, default=8.)
+    parser.add_argument(
+        "--max-axis-tilt-deg", type=float, default=10.,
+        help=("Existing alignment-model range used by the live selector; "
+              "out-of-range fits remain diagnostic and fall back"))
     args = parser.parse_args()
 
     if args.attempt_dir is not None:
@@ -238,7 +262,8 @@ def main() -> None:
                if args.session_run_dir is not None else
                _bound_session_run(attempt))
         report = review_attempt(
-            attempt, run, robust_pixel_scale=args.robust_pixel_scale)
+            attempt, run, robust_pixel_scale=args.robust_pixel_scale,
+            max_axis_tilt_deg=args.max_axis_tilt_deg)
         count = len(report["iterations"])
     else:
         if args.session_run_dir is not None:
@@ -253,7 +278,8 @@ def main() -> None:
                 continue
             review = review_attempt(
                 attempt, _bound_session_run(attempt),
-                robust_pixel_scale=args.robust_pixel_scale)
+                robust_pixel_scale=args.robust_pixel_scale,
+                max_axis_tilt_deg=args.max_axis_tilt_deg)
             result = read(result_file)
             attempts.append({
                 "attempt_id": attempt.name,
@@ -263,10 +289,11 @@ def main() -> None:
                 "review": review,
             })
         report = {
-            "schema": "precision_insertion_saved_partial_shape_batch_v1",
+            "schema": "precision_insertion_saved_partial_shape_batch_v2",
             "scope": "saved_evidence_read_only_no_camera_or_robot_command",
             "attempt_root": str(root),
             "robust_pixel_scale": args.robust_pixel_scale,
+            "max_axis_tilt_deg": args.max_axis_tilt_deg,
             "attempts": attempts,
             "summary": _batch_summary(attempts),
         }

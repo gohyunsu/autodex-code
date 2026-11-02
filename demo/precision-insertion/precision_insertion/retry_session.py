@@ -1390,9 +1390,9 @@ def _compute_sam_half_ellipse_alignment(
     views = [view for view, _record, _mask in measured if view is not None]
     # Keep an image-space CAD fit beside the endpoint triangulation.  It uses
     # the visible distal centre *and* shaft direction, jointly optimizing the
-    # cylinder's symmetry-reduced (x, y, tilt_x, tilt_y) pose.  It is recorded
-    # for saved-episode validation first; the live controller below continues
-    # to use the commissioned endpoint path until that validation is complete.
+    # cylinder's symmetry-reduced (x, y, tilt_x, tilt_y) pose.  The default
+    # endpoint profile records it for replay; the explicit partial-shape A/B
+    # profile may select it later without running a second segmentation.
     shape_views = []
     for view, record, _mask in measured:
         if view is None or record.get("visible_shape_profile") is None:

@@ -231,6 +231,8 @@ def inspect_live_inputs(
                 policy.retry_limits.max_total_offset_m),
             "alignment_minimum_views": (
                 policy.alignment_limits.minimum_views),
+            "alignment_max_axis_tilt_deg": (
+                policy.alignment_limits.max_axis_tilt_deg),
             "scope": "static_configuration_only_no_hardware_import",
         }
     from .visual_views import final_view_policy

@@ -384,7 +384,15 @@ task failure condition. That path is implemented as
 `PRECISION_SAME_TRIAL_ALIGNMENT_SOURCE=partial_shape`; the commissioned
 default remains `endpoint` until a controlled physical A/B run is recorded.
 Every observation stores `alignment_selection`, including the preserved
-endpoint result and whether the shape fit or fallback drove the motion.
+endpoint result and whether the shape fit or fallback drove the motion. Live
+promotion additionally requires a full-rank four-parameter image Jacobian and
+uses the existing stage-policy `alignment_limits.max_axis_tilt_deg` as the
+commissioned model range. A fit outside that range falls back rather than
+stopping the trial; the original diagnostic fit remains saved for review.
+The 2026-11-02 replay selected partial shape for 14 of 57 observations,
+reported unavailable geometry for 39, and kept four 33.9--55.3 degree
+occlusion fits diagnostic-only. Its machine-readable report is
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/partial_shape_alignment_20261102/all_attempts_live_selection_v2.json`.
 
 ZeroDex runs now enable the same-episode XY loop by default with a 2.5 mm
 centering target. This is a pre-insertion correction target, not the final

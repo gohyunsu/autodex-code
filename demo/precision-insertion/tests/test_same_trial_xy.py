@@ -85,9 +85,12 @@ def test_partial_shape_control_preserves_endpoint_and_falls_back_without_stop():
             "tip_socket_m": [.004, -.003, .04],
             "insertion_axis_socket": [.1, 0., -.995],
             "xy_correction_socket_m": [-.004, .003],
+            "axis_tilt_deg": 5.74,
+            "jacobian_rank": 4,
         },
     }
-    shape = select_same_trial_alignment(endpoint, source="partial_shape")
+    shape = select_same_trial_alignment(
+        endpoint, source="partial_shape", max_axis_tilt_deg=10.)
     assert shape["alignment_selection"]["selected"] == "partial_shape"
     assert shape["alignment_selection"]["preserved_endpoint"]["reason"] == (
         "endpoint_reason")
@@ -100,7 +103,8 @@ def test_partial_shape_control_preserves_endpoint_and_falls_back_without_stop():
         "status": "insufficient_multiview_shape_geometry",
         "camera_ids": ["a"],
     }}
-    fallback = select_same_trial_alignment(missing, source="partial_shape")
+    fallback = select_same_trial_alignment(
+        missing, source="partial_shape", max_axis_tilt_deg=10.)
     assert fallback["status"] == endpoint["status"]
     assert fallback["xy_correction_socket_m"] == [-.02, .01]
     assert fallback["alignment_selection"] == {
@@ -108,6 +112,29 @@ def test_partial_shape_control_preserves_endpoint_and_falls_back_without_stop():
         "selected": "endpoint_or_temporal",
         "reason": "partial_shape_unavailable",
     }
+
+    high_tilt = {**endpoint, "partial_shape_alignment": {
+        **endpoint["partial_shape_alignment"], "axis_tilt_deg": 34.,
+    }}
+    fallback = select_same_trial_alignment(
+        high_tilt, source="partial_shape", max_axis_tilt_deg=10.)
+    assert fallback["status"] == endpoint["status"]
+    assert fallback["alignment_selection"] == {
+        "requested": "partial_shape",
+        "selected": "endpoint_or_temporal",
+        "reason": "partial_shape_outside_alignment_model_range",
+        "axis_tilt_deg": 34., "max_axis_tilt_deg": 10.,
+        "jacobian_rank": 4,
+    }
+
+    rank_deficient = {**endpoint, "partial_shape_alignment": {
+        **endpoint["partial_shape_alignment"], "jacobian_rank": 3,
+    }}
+    fallback = select_same_trial_alignment(
+        rank_deficient, source="partial_shape", max_axis_tilt_deg=10.)
+    assert fallback["alignment_selection"]["reason"] == (
+        "partial_shape_pose_unobservable")
+    assert fallback["alignment_selection"]["jacobian_rank"] == 3
 
 
 def test_endpoint_views_reuse_session_socket_pose_inliers():

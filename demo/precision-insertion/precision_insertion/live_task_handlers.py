@@ -359,7 +359,12 @@ class LiveTaskHandlers:
                         "xy_correction_socket_m": None,
                     })
             observed["alignment"] = select_same_trial_alignment(
-                observed["alignment"], source=self.same_trial_alignment_source)
+                observed["alignment"],
+                source=self.same_trial_alignment_source,
+                max_axis_tilt_deg=(
+                    self.alignment_limits.max_axis_tilt_deg
+                    if self.same_trial_alignment_source == "partial_shape"
+                    else None))
             # A temporal match proves that an image feature followed the
             # commanded wrist motion; it does not prove that the feature is
             # the key tip rather than a repeatedly selected socket edge.

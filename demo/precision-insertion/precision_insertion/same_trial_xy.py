@@ -104,7 +104,9 @@ def choose_xy_move(alignment: dict, *, tolerance_m: float,
             "increment_socket_m": step.tolist(), "source": source}
 
 
-def select_same_trial_alignment(alignment: dict, *, source: str) -> dict:
+def select_same_trial_alignment(
+    alignment: dict, *, source: str, max_axis_tilt_deg: float | None = None,
+) -> dict:
     """Select endpoint/temporal or partial-cylinder pose for live control.
 
     The SAM observation already contains both estimates from the same pixels.
@@ -116,6 +118,11 @@ def select_same_trial_alignment(alignment: dict, *, source: str) -> dict:
     if source not in {"endpoint", "partial_shape"}:
         raise ValueError(
             "same-trial alignment source must be endpoint or partial_shape")
+    if (source == "partial_shape" and
+            (max_axis_tilt_deg is None or
+             not math.isfinite(max_axis_tilt_deg) or
+             not 0 < max_axis_tilt_deg < 90)):
+        raise ValueError("partial-shape model range needs a finite tilt limit")
     selected = dict(alignment)
     if source == "endpoint":
         selected["alignment_selection"] = {
@@ -124,29 +131,55 @@ def select_same_trial_alignment(alignment: dict, *, source: str) -> dict:
         }
         return selected
     shape = alignment.get("partial_shape_alignment")
-    if (not isinstance(shape, dict) or
-            shape.get("status") != "diagnostic_partial_shape_pose"):
+
+    def fallback(reason: str, **evidence) -> dict:
         selected["alignment_selection"] = {
-            "requested": source, "selected": "endpoint_or_temporal",
-            "reason": "partial_shape_unavailable",
+            "requested": source,
+            "selected": "endpoint_or_temporal",
+            "reason": reason,
+            **evidence,
         }
         return selected
+
+    if (not isinstance(shape, dict) or
+            shape.get("status") != "diagnostic_partial_shape_pose"):
+        return fallback("partial_shape_unavailable")
     cameras = shape.get("camera_ids")
     tip = np.asarray(shape.get("tip_socket_m"), dtype=float)
     axis = np.asarray(shape.get("insertion_axis_socket"), dtype=float)
     correction = np.asarray(
         shape.get("xy_correction_socket_m"), dtype=float)
     axis_norm = float(np.linalg.norm(axis))
+    jacobian_rank = shape.get("jacobian_rank")
+    axis_tilt_deg = shape.get("axis_tilt_deg")
     if (not isinstance(cameras, list) or len(set(cameras)) < 2 or
             tip.shape != (3,) or axis.shape != (3,) or
             correction.shape != (2,) or not np.all(np.isfinite(tip)) or
             not np.all(np.isfinite(axis)) or
-            not np.all(np.isfinite(correction)) or axis_norm <= 1e-9):
-        selected["alignment_selection"] = {
-            "requested": source, "selected": "endpoint_or_temporal",
-            "reason": "partial_shape_record_incomplete",
-        }
-        return selected
+            not np.all(np.isfinite(correction)) or axis_norm <= 1e-9 or
+            type(jacobian_rank) is not int or
+            not isinstance(axis_tilt_deg, (int, float)) or
+            not math.isfinite(float(axis_tilt_deg))):
+        return fallback("partial_shape_record_incomplete")
+    # The four fitted variables are x, y, tilt_x and tilt_y.  A converged
+    # optimizer does not imply that those variables were observable; only a
+    # full-rank image Jacobian can supply a metric control target.  This is an
+    # estimator-identifiability check, not a task-success or safety gate.
+    if jacobian_rank < 4:
+        return fallback(
+            "partial_shape_pose_unobservable",
+            jacobian_rank=jacobian_rank, required_jacobian_rank=4)
+    # Reuse the already commissioned alignment-model range instead of adding
+    # another threshold.  Saved occlusion failures produced formally
+    # full-rank 34--55 degree fits; they are retained as diagnostics, while
+    # live control continues through the endpoint/temporal path.  The trial
+    # is not stopped.
+    if float(axis_tilt_deg) > max_axis_tilt_deg:
+        return fallback(
+            "partial_shape_outside_alignment_model_range",
+            axis_tilt_deg=float(axis_tilt_deg),
+            max_axis_tilt_deg=float(max_axis_tilt_deg),
+            jacobian_rank=jacobian_rank)
     selected.update({
         "status": "diagnostic_metric_xy_correction",
         "reason": "multiview_partial_cylinder_image_fit",
@@ -160,6 +193,9 @@ def select_same_trial_alignment(alignment: dict, *, source: str) -> dict:
         "alignment_selection": {
             "requested": source, "selected": "partial_shape",
             "reason": "valid_multiview_partial_shape_pose",
+            "axis_tilt_deg": float(axis_tilt_deg),
+            "max_axis_tilt_deg": float(max_axis_tilt_deg),
+            "jacobian_rank": jacobian_rank,
             "preserved_endpoint": {
                 key: alignment.get(key) for key in (
                     "status", "reason", "xy_source", "estimator",
