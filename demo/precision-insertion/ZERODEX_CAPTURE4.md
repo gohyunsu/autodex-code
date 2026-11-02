@@ -114,6 +114,20 @@ launcher or shared capture4 files.
 `prepare_zerodex_capture4.py` also accepts the profile's capture IP and
 four-camera/board-fit ID lists when rebuilding the local stage.
 
+The machine profile also selects
+[`config/zerodex_capture4_stage_policy.json`](config/zerodex_capture4_stage_policy.json)
+through `PRECISION_STAGE_POLICY`. This versioned document contains the
+current path-audit, motion-feedback, perception, landing and checkpoint
+values formerly embedded in `robot_pc_stages.py`; the factory now only wires
+those values into the existing stage implementations. Moving them did not
+add a new physical admission gate: for example, hand clearance remains zero,
+the board edge is not treated as the tabletop boundary, and cumulative XY
+correction remains uncapped. A changed rig policy should be copied to a new
+JSON file and selected in a system/experiment profile rather than patched
+into action code. Runtime choices such as same-trial XY tolerance and maximum
+correction step remain explicit launcher options because they define the
+experiment rather than the FR3/camera installation.
+
 The profile also supplies the namespaced camera service manager's remote
 asset root. For service commands in this checkout, load it in the calling
 shell first:

@@ -1,13 +1,13 @@
 """Cylinder wiring for the current precision-insertion FR3 pipeline.
 
-This factory only supplies limits and the live feedback gate. The existing
+This factory only supplies the live wiring around a versioned stage-policy
+document. The existing
 AutoDex v8 planner, camera session, completion-checked stock executor, local
 Qwen backend, force-stop insertion and stock reset callbacks are owned by
 ``precision_insertion.franka_integration``. Importing this file is non-moving.
 
-The values below are the operator-accepted 2026-10-13 proposal where it
-covered a field. Remaining perception and landing thresholds are provisional
-trial settings, not calibration or physical performance measurements.
+The selected policy records the operator-accepted settings and provisional
+perception/landing values. They are not calibration or measured performance.
 """
 
 from __future__ import annotations
@@ -18,15 +18,14 @@ import os
 from pathlib import Path
 import time
 
-from precision_insertion.grounded_alignment import AlignmentLimits
 from precision_insertion.config import CYLINDER_RADIAL_GAPS_MM
-from precision_insertion.lift_execution import LiftExecutionLimits
-from precision_insertion.path_audit import PathAuditLimits
 from precision_insertion.pickup_execution import PickupExecutionLimits
-from precision_insertion.retry_session import RetrySessionLimits
+from precision_insertion.stage_policy import load_zerodex_stage_policy
 
 
-KEY_PROMPT = "small white solid peg"
+# Compatibility for the camera-only entry point. The live factory reloads the
+# selected document, so a machine profile may choose another policy file.
+KEY_PROMPT = load_zerodex_stage_policy().key_prompt
 
 
 def _recording_event_marker(*, environment: str, schema: str):
@@ -72,56 +71,29 @@ def _release_clear_recording_marker():
         schema="precision_insertion_release_clear_completed_v1")
 
 
-def _tabletop_pose_error_deg() -> float:
+def _tabletop_pose_error_deg(policy=None) -> float:
     """Keep AutoDex's 10-degree setting unless a profile selects another one."""
-    return float(os.environ.get("PRECISION_TABLETOP_POSE_ERROR_DEG", "10"))
+    selected = policy or load_zerodex_stage_policy()
+    return float(os.environ.get(
+        "PRECISION_TABLETOP_POSE_ERROR_DEG",
+        str(selected.tabletop_pose_error_deg)))
 
 
-def _path_limits() -> PathAuditLimits:
-    # Accepted proposal; collision and exact-endpoint checks stay in v8.
-    result = PathAuditLimits(
-        max_joint_step_rad=.12,
-        max_wrist_step_m=.015,
-        max_wrist_rotation_deg=8.,
-        goal_position_tolerance_m=.005,
-        goal_rotation_tolerance_deg=5.,
-        axial_lateral_tolerance_m=.005,
-        axial_rotation_tolerance_deg=5.,
-        minimum_hand_clearance_m=0.,
-    )
-    result.validate()
-    return result
+def _path_limits(policy=None):
+    """Return the versioned path-audit values without adding another gate."""
+    return (policy or load_zerodex_stage_policy()).path_limits
 
 
-def _motion_limits() -> LiftExecutionLimits:
+def _motion_limits(policy=None):
     # Stock executor runs at its default speed. These bounds check feedback;
     # they do not change the executor's arm_speed_scale or traj_speed.
-    result = LiftExecutionLimits(
-        max_start_age_s=1., max_end_state_age_s=1.,
-        max_start_joint_error_rad=.02, max_end_joint_error_rad=.02,
-        max_hand_drift_raw=50., max_arm_hand_skew_s=.10,
-        max_hand_command_error_raw=30., max_arm_velocity_rad_s=.05,
-        max_execution_duration_s=90.,
-        max_watchdog_command_age_s=.2,
-        max_commissioning_record_age_s=86400.,
-    )
-    result.validate()
-    return result
+    return (policy or load_zerodex_stage_policy()).motion_limits
 
 
-def _key_capture() -> dict:
+def _key_capture(policy=None) -> dict:
     # Only admitted views are used; the current pipeline needs at least two.
     # The pose/mask thresholds are provisional for the first physical trial.
-    return {
-        "maximum_multiview_center_error_mm": 10.,
-        "maximum_multiview_angle_error_deg": 15.,
-        "maximum_socket_mask_overlap_fraction": .2,
-        "socket_projection_dilation_px": 2,
-        "minimum_refinement_iou": .5,
-        "max_key_state_skew_s": 5.,
-        "capture_timeout_s": 120.,
-        "image_write_timeout_s": 90.,
-    }
+    return dict((policy or load_zerodex_stage_policy()).key_capture)
 
 
 def _unknown_transfer_recovery(runner, _decision, *, clear_view):
@@ -172,78 +144,52 @@ def configure(core, live, options) -> dict:
         # Do not add a second FR3 read that can fail after that check passes.
         return options.enable_robot_motion is True
 
-    path = _path_limits()
-    motion = _motion_limits()
-    capture = _key_capture()
-    tabletop_pose_error_deg = _tabletop_pose_error_deg()
+    policy = load_zerodex_stage_policy()
+    path = _path_limits(policy)
+    motion = _motion_limits(policy)
+    capture = _key_capture(policy)
+    key_prompt = policy.key_prompt
+    tabletop_pose_error_deg = _tabletop_pose_error_deg(policy)
     recording_marker = _preinsert_recording_marker()
     recording_stop_marker = _release_clear_recording_marker()
-    stationary = {
-        "max_arm_hand_skew_s": .10,
-        "max_hand_command_error_raw": 30.,
-        "max_arm_velocity_rad_s": .05,
-    }
-    reset_geometry = {
-        "minimum_rest_socket_clearance_m": .005,
-        # The ChArUco interior is a calibration footprint, not the physical
-        # tabletop boundary; a hand or key may extend outside that polygon.
-        "minimum_board_edge_clearance_m": 0.,
-    }
+    stationary = dict(policy.stationary)
+    # The ChArUco interior is a calibration footprint, not the physical
+    # tabletop boundary; the versioned policy therefore keeps its edge
+    # clearance at zero.
+    reset_geometry = dict(policy.reset_geometry)
     landing = {
         "max_pose_error_deg": tabletop_pose_error_deg,
-        "max_return_center_shift_m": .03,
-        "support_tolerance_m": .005,
+        **policy.landing,
         **reset_geometry,
     }
     return_parameters = {
-        "release_height_m": 0.,
-        "minimum_release_key_clearance_m": .005,
-        "max_withdrawal_state_gap_s": 1.,
+        **policy.return_parameters,
         **reset_geometry, **stationary,
     }
-    retry = RetrySessionLimits(
-        max_state_skew_s=5., **stationary,
-        max_grasp_translation_drift_m=.01,
-        max_grasp_rotation_drift_deg=10.,
-        minimum_anchor_separation_px=3., crop_width_px=320,
-        max_frame_age_s=180., max_capture_skew_s=10.,
-        axial_waypoint_step_m=.005, path_limits=path,
-        max_total_offset_m=None,
-    )
-    retry.validate()
-    alignment = AlignmentLimits(
-        pixel_sigma_px=1., max_reprojection_px=3.,
-        min_parallax_deg=5., max_axis_tilt_deg=10.,
-        max_20mm_axis_sweep_m=.005,
-        max_lateral_uncertainty_95_m=.01,
-        systematic_lateral_sigma_m=.001,
-        cad_spacing_sigma_m=.001,
-        minimum_views=2,
-    )
-    alignment.validate()
+    retry = policy.retry_limits
+    alignment = policy.alignment_limits
 
     return {
         "shared": {"motion_interlock": motion_interlock},
         "held_relation_route": "nominal",
         "stages": {
             "key_planning": {
-                "key_prompt": KEY_PROMPT,
+                "key_prompt": key_prompt,
                 "limits": path,
                 "key_parameters": {
                     **capture, **stationary,
                     "max_pose_error_deg": tabletop_pose_error_deg,
-                    "axial_waypoint_step_m": .005,
+                    "axial_waypoint_step_m": policy.axial_waypoint_step_m,
                 },
             },
             "pickup": {
                 "pickup_limits": PickupExecutionLimits(
-                    max_start_age_s=1.,
-                    max_start_joint_error_rad=.02,
+                    **policy.pickup_limits,
                     **stationary),
                 "lift_bounds": None,
                 "path_limits": path,
                 "measured_lift_parameters": {
-                    "axial_waypoint_step_m": .005,
+                    "axial_waypoint_step_m": policy.axial_waypoint_step_m,
                     **stationary,
                 },
             },
@@ -251,17 +197,17 @@ def configure(core, live, options) -> dict:
                 "limits": motion,
                 "commissioning_record_path": None,
                 "post_lift_settle_s": float(os.environ.get(
-                    "PRECISION_POST_LIFT_SETTLE_S", "0")),
+                    "PRECISION_POST_LIFT_SETTLE_S",
+                    str(policy.post_lift_settle_s))),
                 "assessment_parameters": {
-                    "max_phase_skew_s": 10.,
-                    "minimum_visual_views": 2,
+                    **policy.lift_assessment,
                     **stationary,
                 },
             },
             "held_relation": {
                 "limits": path,
                 "parameters": {
-                    "axial_waypoint_step_m": .005,
+                    "axial_waypoint_step_m": policy.axial_waypoint_step_m,
                     **stationary,
                 },
             },
@@ -294,18 +240,16 @@ def configure(core, live, options) -> dict:
                    if recording_stop_marker is not None else {}),
                 "transfer_commissioning_path": None,
                 "preinsert_parameters": {
-                    "max_capture_skew_s": 10.,
-                    "max_joint_frame_skew_s": 5.,
+                    **policy.preinsert,
                     "render_audit_overlay": os.environ.get(
-                        "PRECISION_PREINSERT_AUDIT_OVERLAY", "1") != "0",
+                        "PRECISION_PREINSERT_AUDIT_OVERLAY",
+                        "1" if policy.preinsert["render_audit_overlay"] else
+                        "0") != "0",
                     **stationary,
                 },
                 "handoff_parameters": {},
                 "insertion_parameters": {},
-                "final_parameters": {
-                    "max_phase_skew_s": 10.,
-                    "minimum_visual_views": 2,
-                },
+                "final_parameters": dict(policy.final),
             },
             "retry": {
                 "retry_limits": retry,
@@ -313,14 +257,14 @@ def configure(core, live, options) -> dict:
                 "diagnostic_parameters": {},
             },
             "held_return": {
-                "key_prompt": KEY_PROMPT,
+                "key_prompt": key_prompt,
                 "limits": path,
                 "capture_parameters": capture,
                 "return_parameters": return_parameters,
                 "landing_parameters": landing,
             },
             "transfer_recovery": {
-                "key_prompt": KEY_PROMPT,
+                "key_prompt": key_prompt,
                 "recover_to_tabletop": lambda runner, decision:
                     _unknown_transfer_recovery(
                         runner, decision, clear_view=live.clear_view),
@@ -330,7 +274,7 @@ def configure(core, live, options) -> dict:
             "repose_planning": {
                 "path_limits": path,
                 "parameters": {
-                    "max_state_skew_s": 5.,
+                    **policy.repose,
                     "max_pose_error_deg": tabletop_pose_error_deg,
                     **({"reset_candidate_root": Path(
                         os.environ["PRECISION_RESET_CANDIDATE_ROOT"])}
@@ -340,11 +284,12 @@ def configure(core, live, options) -> dict:
                 },
             },
             "repose_execution": {
-                "key_prompt": KEY_PROMPT,
+                "key_prompt": key_prompt,
                 "capture_parameters": capture,
                 "landing_parameters": {
                     "max_pose_error_deg": tabletop_pose_error_deg,
-                    "support_tolerance_m": .005,
+                    "support_tolerance_m": policy.landing[
+                        "support_tolerance_m"],
                     **reset_geometry,
                 },
             },

@@ -6,6 +6,7 @@ precision_profile_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 precision_profile_root=$(cd -- "$precision_profile_dir/../../.." && pwd)
 
 export PRECISION_REPO_ROOT=${PRECISION_REPO_ROOT:-$precision_profile_root}
+export PRECISION_STAGE_POLICY=${PRECISION_STAGE_POLICY:-$precision_profile_root/demo/precision-insertion/config/zerodex_capture4_stage_policy.json}
 export PRECISION_LOCAL_PROJECT_ROOT=${PRECISION_LOCAL_PROJECT_ROOT:-$HOME/precision_insertion_project}
 # This rig's NAS namespace is fixed rather than caller-overridable. Local
 # restored copies are still allowed because they do not resolve below this

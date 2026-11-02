@@ -93,6 +93,24 @@ def test_capture4_profile_can_skip_unused_preinsert_renderer(monkeypatch):
     assert calls == []
 
 
+def test_board9_binding_reads_values_from_selected_stage_policy(
+        tmp_path, monkeypatch):
+    source = (Path(__file__).resolve().parents[1] / "config" /
+              "zerodex_capture4_stage_policy.json")
+    record = json.loads(source.read_text(encoding="utf-8"))
+    record["key_prompt"] = "profile-selected white cylinder"
+    record["axial_waypoint_step_m"] = .004
+    selected = tmp_path / "policy.json"
+    selected.write_text(json.dumps(record), encoding="utf-8")
+    monkeypatch.setenv("PRECISION_STAGE_POLICY", str(selected))
+    core, live, options, calls = _fixture(gap=5)
+    parameters = configure(core, live, options)
+    planning = parameters["stages"]["key_planning"]
+    assert planning["key_prompt"] == "profile-selected white cylinder"
+    assert planning["key_parameters"]["axial_waypoint_step_m"] == .004
+    assert calls == []
+
+
 @pytest.mark.parametrize("gap", [1, 3, 5, 10, 15, 20])
 def test_board9_binding_accepts_configured_cylinder_gaps_without_hardware(gap):
     core, live, options, calls = _fixture(gap=gap)

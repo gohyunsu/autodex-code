@@ -1,0 +1,99 @@
+{
+  "schema": "precision_insertion_zerodex_stage_policy_v1",
+  "key_prompt": "small white solid peg",
+  "tabletop_pose_error_deg": 10.0,
+  "post_lift_settle_s": 0.0,
+  "axial_waypoint_step_m": 0.005,
+  "path_limits": {
+    "max_joint_step_rad": 0.12,
+    "max_wrist_step_m": 0.015,
+    "max_wrist_rotation_deg": 8.0,
+    "goal_position_tolerance_m": 0.005,
+    "goal_rotation_tolerance_deg": 5.0,
+    "axial_lateral_tolerance_m": 0.005,
+    "axial_rotation_tolerance_deg": 5.0,
+    "minimum_hand_clearance_m": 0.0
+  },
+  "motion_limits": {
+    "max_start_age_s": 1.0,
+    "max_end_state_age_s": 1.0,
+    "max_start_joint_error_rad": 0.02,
+    "max_end_joint_error_rad": 0.02,
+    "max_hand_drift_raw": 50.0,
+    "max_arm_hand_skew_s": 0.1,
+    "max_hand_command_error_raw": 30.0,
+    "max_arm_velocity_rad_s": 0.05,
+    "max_execution_duration_s": 90.0,
+    "max_watchdog_command_age_s": 0.2,
+    "max_commissioning_record_age_s": 86400.0
+  },
+  "key_capture": {
+    "maximum_multiview_center_error_mm": 10.0,
+    "maximum_multiview_angle_error_deg": 15.0,
+    "maximum_socket_mask_overlap_fraction": 0.2,
+    "socket_projection_dilation_px": 2,
+    "minimum_refinement_iou": 0.5,
+    "max_key_state_skew_s": 5.0,
+    "capture_timeout_s": 120.0,
+    "image_write_timeout_s": 90.0
+  },
+  "stationary": {
+    "max_arm_hand_skew_s": 0.1,
+    "max_hand_command_error_raw": 30.0,
+    "max_arm_velocity_rad_s": 0.05
+  },
+  "reset_geometry": {
+    "minimum_rest_socket_clearance_m": 0.005,
+    "minimum_board_edge_clearance_m": 0.0
+  },
+  "landing": {
+    "max_return_center_shift_m": 0.03,
+    "support_tolerance_m": 0.005
+  },
+  "return_parameters": {
+    "release_height_m": 0.0,
+    "minimum_release_key_clearance_m": 0.005,
+    "max_withdrawal_state_gap_s": 1.0
+  },
+  "retry_limits": {
+    "max_state_skew_s": 5.0,
+    "max_grasp_translation_drift_m": 0.01,
+    "max_grasp_rotation_drift_deg": 10.0,
+    "minimum_anchor_separation_px": 3,
+    "crop_width_px": 320,
+    "max_frame_age_s": 180.0,
+    "max_capture_skew_s": 10.0,
+    "max_total_offset_m": null
+  },
+  "alignment_limits": {
+    "pixel_sigma_px": 1.0,
+    "max_reprojection_px": 3.0,
+    "min_parallax_deg": 5.0,
+    "max_axis_tilt_deg": 10.0,
+    "max_20mm_axis_sweep_m": 0.005,
+    "max_lateral_uncertainty_95_m": 0.01,
+    "systematic_lateral_sigma_m": 0.001,
+    "cad_spacing_sigma_m": 0.001,
+    "minimum_views": 2
+  },
+  "pickup_limits": {
+    "max_start_age_s": 1.0,
+    "max_start_joint_error_rad": 0.02
+  },
+  "lift_assessment": {
+    "max_phase_skew_s": 10.0,
+    "minimum_visual_views": 2
+  },
+  "preinsert": {
+    "max_capture_skew_s": 10.0,
+    "max_joint_frame_skew_s": 5.0,
+    "render_audit_overlay": true
+  },
+  "final": {
+    "max_phase_skew_s": 10.0,
+    "minimum_visual_views": 2
+  },
+  "repose": {
+    "max_state_skew_s": 5.0
+  }
+}
