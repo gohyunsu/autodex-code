@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarize one precision-insertion live run's stock AutoDex trace."""
+"""Summarize one precision-insertion live run's hierarchical trace."""
 
 from __future__ import annotations
 
@@ -37,6 +37,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"completed spans: {len(spans)}; unfinished: "
           f"{summary['unfinished_span_count']}")
     print(f"instrumented span envelope: {summary['span_envelope_s']:.3f}s")
+    print("human review: "
+          f"{summary['human_wait_occupied_s']:.3f}s occupied; "
+          "pipeline excluding human review: "
+          f"{summary['span_envelope_non_human_s']:.3f}s")
     print("VLM inference: "
           f"{summary['vlm_inference_cumulative_s']:.3f}s cumulative, "
           f"{summary['vlm_inference_occupied_s']:.3f}s occupied, "
@@ -66,6 +70,14 @@ def main(argv: list[str] | None = None) -> int:
             candidate = ",".join(row["candidate_ids"]) or "unknown"
             print(f"{attempt[:34]:34} {candidate[:20]:20} "
                   f"{row['occupied_s']:10.3f} {row['count']:6d}")
+
+    if summary["ordered_actions"]:
+        print("\nAction sequence                     elapsed_s    human_s automatic_s")
+        for action in summary["ordered_actions"]:
+            print(f"{action['name'][:35]:35} "
+                  f"{action['inclusive_s']:9.3f} "
+                  f"{action['human_wait_s']:10.3f} "
+                  f"{action['automatic_elapsed_s']:11.3f}")
 
     indexed = {row["span_id"]: row for row in spans}
     if args.tree:

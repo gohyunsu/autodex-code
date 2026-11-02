@@ -69,11 +69,41 @@ def test_summary_groups_attempts_and_ordered_actions(tmp_path):
     assert action["name"] == "action.await_lift_observation"
     assert action["attempt_id"] == "attempt_7"
     assert action["candidate_id"] == "table/0/20195"
+    assert action["human_wait_s"] == 0
+    assert action["automatic_elapsed_s"] == pytest.approx(
+        action["inclusive_s"])
     child = next(row for row in summary["spans"]
                  if row["name"] == "trial.lift_motion")
     assert child["effective_attempt_id"] == "attempt_7"
     assert child["effective_candidate_id"] == "table/0/20195"
     assert child["attributes"]["iteration"] == 0
+
+
+def test_summary_separates_human_wait_from_automatic_action_time(tmp_path):
+    output = tmp_path / "human_wait"
+    with profile_run(output):
+        with timed("live.session", phase="session"):
+            with timed("action.await_lift_observation", phase="trial",
+                       kind="action", attempt_id="attempt_8"):
+                with timed("trial.lift_motion", phase="trial", kind="motion"):
+                    time.sleep(.002)
+                with timed("label.manual_review_wait", phase="trial",
+                           kind="human"):
+                    time.sleep(.003)
+
+    summary = json.loads((timing_directory(output) /
+                          "timing_summary.json").read_text())
+    action = summary["ordered_actions"][0]
+    assert action["human_wait_s"] > 0
+    assert action["automatic_elapsed_s"] > 0
+    assert action["human_wait_s"] + action["automatic_elapsed_s"] == \
+        pytest.approx(action["inclusive_s"])
+    assert summary["human_wait_occupied_s"] > 0
+    assert summary["human_wait_cumulative_s"] >= \
+        summary["human_wait_occupied_s"]
+    assert (summary["human_wait_occupied_s"] +
+            summary["span_envelope_non_human_s"] ==
+            pytest.approx(summary["span_envelope_s"]))
 
 
 def test_parallel_view_spans_retain_parent_and_union_overlap(tmp_path):

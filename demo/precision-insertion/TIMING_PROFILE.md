@@ -20,6 +20,11 @@ sibling `.../_pipeline_runs/RUN_ID.timing/` containing:
   distinguish cumulative worker time from occupied wall time. The same-trial
   loop has an enclosing `trial.same_trial_alignment` span; its observation,
   motion and axial-replan children carry their loop `iteration`.
+  `human_wait_occupied_s` and `span_envelope_non_human_s` separate operator
+  annotation latency from the rest of the measured run. Every row in
+  `ordered_actions` likewise reports `human_wait_s` and
+  `automatic_elapsed_s`, so a thesis table can compare autonomous execution
+  without silently counting the time taken to answer a terminal prompt.
 - Stock trace `manifest.json` and `timeline.json`.
 
 The sibling location means startup failures can be timed even if no session

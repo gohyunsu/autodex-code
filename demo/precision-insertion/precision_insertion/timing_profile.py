@@ -1,8 +1,8 @@
-"""Run-scoped timing for the live demo, using stock AutoDex PipelineTrace.
+"""Run-scoped timing for the live precision-insertion pipeline.
 
 The trace is a sibling of the eventual run directory so startup failures and
 operator waits remain visible even when no session ledger is opened. Timings
-use PipelineTrace's monotonic clock; UTC is only for log correlation.
+reuse PipelineTrace's monotonic event format; UTC is only for log correlation.
 """
 
 from __future__ import annotations
@@ -240,10 +240,33 @@ def summarize_events(events_path: Path) -> dict:
                        for phase, items in sorted(phase_rows.items())},
         }
 
+    human_rows = [row for row in completed if row["kind"] == "human"]
+
+    def descendants(ancestor_id: str, rows: list[dict]) -> list[dict]:
+        """Return rows nested below one span without relying on list order."""
+        selected = []
+        for row in rows:
+            parent_id = row["parent_id"]
+            while parent_id is not None:
+                if parent_id == ancestor_id:
+                    selected.append(row)
+                    break
+                parent = indexed.get(parent_id)
+                parent_id = None if parent is None else parent["parent_id"]
+        return selected
+
     ordered_actions = []
     for row in sorted(completed, key=lambda item: item["start_pipeline_s"]):
         if not row["name"].startswith("action."):
             continue
+        action_human = descendants(row["span_id"], human_rows)
+        human_occupied = occupied([
+            (max(row["start_pipeline_s"], item["start_pipeline_s"]),
+             min(row["end_pipeline_s"], item["end_pipeline_s"]))
+            for item in action_human
+            if min(row["end_pipeline_s"], item["end_pipeline_s"]) >
+            max(row["start_pipeline_s"], item["start_pipeline_s"])
+        ])
         ordered_actions.append({
             "name": row["name"],
             "attempt_id": row["effective_attempt_id"],
@@ -253,6 +276,9 @@ def summarize_events(events_path: Path) -> dict:
             "end_pipeline_s": row["end_pipeline_s"],
             "inclusive_s": row["duration_s"],
             "self_s": row["self_s"],
+            "human_wait_s": round(human_occupied, 9),
+            "automatic_elapsed_s": round(max(
+                0.0, row["duration_s"] - human_occupied), 9),
         })
 
     if completed:
@@ -265,6 +291,11 @@ def summarize_events(events_path: Path) -> dict:
     inference_wall = occupied([
         (row["start_pipeline_s"], row["end_pipeline_s"])
         for row in inference])
+    human_sum = sum(row["duration_s"] for row in human_rows)
+    human_wall = occupied([
+        (row["start_pipeline_s"], row["end_pipeline_s"])
+        for row in human_rows])
+    envelope = max(0.0, envelope_end-envelope_start)
     return {
         "schema": "precision_insertion_timing_summary_v1",
         "clock": "time.perf_counter_ns",
@@ -274,7 +305,11 @@ def summarize_events(events_path: Path) -> dict:
                                              inference_wall), 9),
         "span_envelope_start_s": round(envelope_start, 9),
         "span_envelope_end_s": round(envelope_end, 9),
-        "span_envelope_s": round(max(0.0, envelope_end-envelope_start), 9),
+        "span_envelope_s": round(envelope, 9),
+        "human_wait_cumulative_s": round(human_sum, 9),
+        "human_wait_occupied_s": round(human_wall, 9),
+        "span_envelope_non_human_s": round(max(
+            0.0, envelope - human_wall), 9),
         "unfinished_span_count": len(starts),
         "unfinished_spans": [row["name"] for row in starts.values()],
         "groups": dict(sorted(groups.items())),
