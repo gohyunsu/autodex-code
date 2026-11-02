@@ -11,6 +11,9 @@ to that separate launch profile and should not be read as capture4 defaults.
 
 The current cylinder frame conventions and live gate audit are in
 [SYMMETRY_AND_LIVE_GATES.md](SYMMETRY_AND_LIVE_GATES.md).
+The occlusion-aware, symmetry-reduced image-space key fit and its saved-run
+replay command are in
+[PARTIAL_SHAPE_ALIGNMENT.md](PARTIAL_SHAPE_ALIGNMENT.md).
 The current active-route comparison with stock AutoDex and removed
 failure thresholds is in
 [FAILURE_GATE_AUDIT_20261017.md](FAILURE_GATE_AUDIT_20261017.md).

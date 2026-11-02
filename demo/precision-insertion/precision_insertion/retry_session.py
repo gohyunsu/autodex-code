@@ -45,11 +45,16 @@ from .held_key_tip import (
     KEY_BOX_PROMPT, KEY_MASK_PROMPT, distal_key_mask_half_ellipse,
     key_box_socket_bbox_overlap_fraction, padded_key_box_roi,
     parse_normalized_key_box, projected_key_axis_crop,
+    visible_cylinder_mask_profile,
 )
 from .key_perception import KeyPoseObservation, verify_key_capture_artifacts
 from .live_robot_state import LiveRobotState
 from .guarded_axial_handoff import _state_from_record
 from .observer import ImageVLM, LabeledFrame
+from .partial_shape_alignment import (
+    PartialCylinderView, estimate_partial_cylinder_alignment,
+    partial_shape_measurement_weights,
+)
 from .preinsert_checkpoint import verify_preinsert_checkpoint
 from .raw_camera_capture import verify_raw_camera_capture
 from .path_audit import PathAuditLimits
@@ -1288,6 +1293,11 @@ def _compute_sam_half_ellipse_alignment(
         if fit is None:
             record.update(admitted=False, reason="key_mask_end_unavailable")
             return None, record, mask_png
+        record["visible_shape_profile"] = visible_cylinder_mask_profile(
+            mask, axis_unit_full_px=fit["axis_unit_full_px"],
+            mask_origin_px=(x0+rx0, y0+ry0),
+            planned_axis_span_px=float(np.linalg.norm(
+                np.asarray(tip, dtype=float) - np.asarray(rear, dtype=float))))
         record.update(admitted=True, reason="observed_sam_half_ellipse")
         calibrated = CalibratedXYFrame(
             camera, frame.timestamp_s, frame.image, T_camera_socket, K)
@@ -1378,6 +1388,37 @@ def _compute_sam_half_ellipse_alignment(
             f"{source} unavailable for every selected camera: "
             + ", ".join(record["camera_id"] for _view, record, _mask in measured))
     views = [view for view, _record, _mask in measured if view is not None]
+    # Keep an image-space CAD fit beside the endpoint triangulation.  It uses
+    # the visible distal centre *and* shaft direction, jointly optimizing the
+    # cylinder's symmetry-reduced (x, y, tilt_x, tilt_y) pose.  It is recorded
+    # for saved-episode validation first; the live controller below continues
+    # to use the commissioned endpoint path until that validation is complete.
+    shape_views = []
+    for view, record, _mask in measured:
+        if view is None or record.get("visible_shape_profile") is None:
+            continue
+        weights = partial_shape_measurement_weights(
+            record["sam_half_ellipse"], record["visible_shape_profile"])
+        record["partial_shape_weights"] = weights
+        if (weights["distal_center_weight"] +
+                weights["shaft_axis_weight"] <= 0.):
+            continue
+        first, second = view.axis_line_uv_px
+        shape_views.append(PartialCylinderView(
+            camera_id=view.frame.camera_id,
+            intrinsics=np.asarray(view.frame.intrinsics, dtype=float),
+            T_camera_socket=np.asarray(
+                view.frame.T_camera_socket, dtype=float),
+            distal_center_uv_px=tuple(view.tip_uv_px),
+            shaft_axis_uv=tuple(
+                np.asarray(second, dtype=float) -
+                np.asarray(first, dtype=float)),
+            distal_center_weight=weights["distal_center_weight"],
+            shaft_axis_weight=weights["shaft_axis_weight"]))
+    partial_shape = estimate_partial_cylinder_alignment(
+        shape_views, nominal_tip_z_socket_m=float(nominal_tip[2]),
+        key_length_m=tip_z,
+        initial_xy_socket_m=nominal_tip[:2])
     alignment = tracked_tip_xy_alignment(
         views, nominal_tip_z_socket_m=float(nominal_tip[2]),
         search_index=search_index,
@@ -1412,6 +1453,7 @@ def _compute_sam_half_ellipse_alignment(
                 alignment = planar
     alignment.update(
         estimator="sam3_half_ellipse_key_face_proxy",
+        partial_shape_alignment=partial_shape,
         sam_half_ellipse_views=[record for _view, record, _mask in measured],
         grounding_input="same_saved_frame_qwen_box_and_sam3_roi_mask",
         socket_entry_plane_z_m=float(geometry["socket_entry_plane_z_m"]),

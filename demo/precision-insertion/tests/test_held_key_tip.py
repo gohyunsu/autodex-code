@@ -12,7 +12,7 @@ from precision_insertion.held_key_tip import (  # noqa: E402
     distal_key_mask_edge_midpoint, distal_key_mask_half_ellipse,
     padded_key_box_roi,
     parse_normalized_key_box, projected_key_axis_crop,
-    triangulate_tip_proxy,
+    triangulate_tip_proxy, visible_cylinder_mask_profile,
 )
 
 
@@ -117,3 +117,21 @@ def test_sam3_half_ellipse_ignores_disconnected_white_hand_patch():
     assert clean is not None and with_patch is not None
     assert np.allclose(clean["center_full_px"],
                        with_patch["center_full_px"], atol=1e-6)
+
+
+def test_visible_shape_profile_reports_occlusion_without_rejecting_view():
+    full = np.zeros((220, 120), dtype=np.uint8)
+    full[20:200, 35:85] = 255
+    occluded = full.copy()
+    occluded[85:145, 35:60] = 0
+    full_profile = visible_cylinder_mask_profile(
+        full, axis_unit_full_px=(0., 1.), planned_axis_span_px=180.)
+    occluded_profile = visible_cylinder_mask_profile(
+        occluded, axis_unit_full_px=(0., 1.), planned_axis_span_px=180.)
+    assert full_profile is not None and occluded_profile is not None
+    assert full_profile["visible_to_planned_axis_span"] > .95
+    assert occluded_profile["solidity"] < full_profile["solidity"]
+    assert occluded_profile["bounding_box_fill_fraction"] < \
+        full_profile["bounding_box_fill_fraction"]
+    # Occlusion is measured, not converted into a new pass/fail status.
+    assert "admitted" not in occluded_profile

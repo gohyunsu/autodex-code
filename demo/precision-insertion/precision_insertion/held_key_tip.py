@@ -367,6 +367,86 @@ def distal_key_mask_half_ellipse(
     }
 
 
+def visible_cylinder_mask_profile(
+    mask: np.ndarray, *, axis_unit_full_px: Sequence[float],
+    mask_origin_px: Sequence[float] = (0., 0.),
+    planned_axis_span_px: float | None = None,
+) -> dict | None:
+    """Describe how much cylindrical silhouette is actually visible.
+
+    The profile contains measurements, not an admission score.  Runtime view
+    selection and offline reviews can therefore distinguish a long side view,
+    an end-on circular view, and a concave hand-occluded fragment without a
+    camera-ID rule or a new task failure threshold.
+    """
+    binary = np.asarray(mask)
+    if binary.ndim != 2:
+        raise ValueError("visible cylinder profile needs a 2D mask")
+    count, labels, stats, _centers = cv2.connectedComponentsWithStats(
+        binary.astype(np.uint8), connectivity=8)
+    if count <= 1:
+        return None
+    component = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    ys, xs = np.nonzero(labels == component)
+    if len(xs) < 50:
+        return None
+    axis = np.asarray(axis_unit_full_px, dtype=float)
+    origin = np.asarray(mask_origin_px, dtype=float)
+    if (axis.shape != (2,) or origin.shape != (2,) or
+            not np.all(np.isfinite(axis)) or
+            not np.all(np.isfinite(origin)) or np.linalg.norm(axis) <= 1e-9):
+        raise ValueError("visible cylinder profile needs a finite image axis")
+    axis /= np.linalg.norm(axis)
+    lateral = np.array([-axis[1], axis[0]])
+    points = np.column_stack((xs, ys)).astype(float) + origin
+    axial = points @ axis
+    cross = points @ lateral
+    axial_low, axial_high = np.percentile(axial, (1., 99.))
+    cross_low, cross_high = np.percentile(cross, (2., 98.))
+    axial_span = float(axial_high - axial_low)
+    lateral_span = float(cross_high - cross_low)
+    local = np.column_stack((xs, ys)).astype(np.float32)
+    hull = cv2.convexHull(local)
+    hull_area = float(cv2.contourArea(hull))
+    component_area = int(len(xs))
+    x, y, width, height = cv2.boundingRect(local.astype(np.int32))
+    bbox_area = float(width * height)
+    # Report support along the shaft as occupied longitudinal bins.  This is
+    # useful for partial silhouettes: a hand may hide a contiguous band while
+    # leaving enough of both side boundaries for model fitting.
+    edges = np.linspace(axial_low, axial_high, 13)
+    occupied = []
+    widths = []
+    for start, end in zip(edges[:-1], edges[1:]):
+        selected = (axial >= start) & (axial < end)
+        occupied.append(bool(np.any(selected)))
+        widths.append(None if np.count_nonzero(selected) < 2 else
+                      float(np.percentile(cross[selected], 95.) -
+                            np.percentile(cross[selected], 5.)))
+    if planned_axis_span_px is not None and (
+            not math.isfinite(planned_axis_span_px) or planned_axis_span_px <= 0):
+        raise ValueError("planned image-axis span must be positive")
+    return {
+        "component_area_px": component_area,
+        "convex_hull_area_px": hull_area,
+        "solidity": (None if hull_area <= 0 else component_area / hull_area),
+        "bounding_box_xywh_roi_px": [int(x), int(y), int(width), int(height)],
+        "bounding_box_fill_fraction": (
+            None if bbox_area <= 0 else component_area / bbox_area),
+        "visible_axial_span_px": axial_span,
+        "visible_lateral_span_px": lateral_span,
+        "visible_aspect_ratio": (
+            None if lateral_span <= 1e-9 else axial_span / lateral_span),
+        "planned_axis_span_px": planned_axis_span_px,
+        "visible_to_planned_axis_span": (
+            None if planned_axis_span_px is None else
+            axial_span / planned_axis_span_px),
+        "occupied_axial_bin_fraction": float(np.mean(occupied)),
+        "axial_bin_widths_px": widths,
+        "source": "largest_sam_component_observed_shape_measurements",
+    }
+
+
 def triangulate_tip_proxy(
     observations: Sequence[tuple[str, np.ndarray, Sequence[float]]],
     *, robust_pixel_scale: float = 12.,
