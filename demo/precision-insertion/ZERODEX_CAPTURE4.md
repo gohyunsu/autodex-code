@@ -168,6 +168,12 @@ PRECISION_ROBOT_CONFIG="$PRECISION_STAGE_ROOT/franka_runtime_capture4_qwen.json"
   bash demo/precision-insertion/run_zerodex_capture4.sh --check
 ```
 
+The setup command also writes `runtime/qwen_worker/MANIFEST.json`. It lists the
+three active worker source files, their byte counts and SHA256 hashes, the
+source/output runtime configurations, and the exact camera-to-worker mapping.
+Model weights remain in the separately managed project asset tree and are not
+duplicated into the worker package.
+
 Only an explicitly exported `PRECISION_ROBOT_CONFIG` selects this alternate
 backend. Keep the local backend for physical runs until a saved-checkpoint A/B
 test shows that model load plus PNG/SSH round trip is lower on the current

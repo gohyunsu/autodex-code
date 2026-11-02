@@ -8,6 +8,7 @@ sharing a host are sent in one batch.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -21,6 +22,15 @@ WORKERS = {
     "25322649": ("capture5", "precision_qwen3_vl_2b"),
     "25305461": ("capture6", "precision_qwen3_vl_2b_cu128"),
 }
+
+
+def _file_record(path: Path, *, relative_to: Path | None = None) -> dict:
+    data = path.read_bytes()
+    return {
+        "path": str(path.relative_to(relative_to) if relative_to else path),
+        "bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -46,7 +56,9 @@ def main(argv: list[str] | None = None) -> None:
     source = REPO / "demo/precision-insertion/precision_insertion"
     package = args.worker_root / "precision_insertion"
     package.mkdir(parents=True, exist_ok=True)
-    for name in ("__init__.py", "local_qwen.py", "distributed_qwen_worker.py"):
+    active_files = ("__init__.py", "local_qwen.py",
+                    "distributed_qwen_worker.py")
+    for name in active_files:
         shutil.copy2(source / name, package / name)
 
     workers = ({
@@ -70,7 +82,27 @@ def main(argv: list[str] | None = None) -> None:
     })
     output_config.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n",
                              encoding="utf-8")
+    manifest = {
+        "schema": "precision_insertion_qwen_worker_stage_v1",
+        "scope": "active_worker_files_only_not_model_weights",
+        "worker_root": str(args.worker_root.resolve()),
+        "worker_files": [
+            _file_record(package / name, relative_to=args.worker_root)
+            for name in active_files
+        ],
+        "source_config": _file_record(source_config),
+        "output_config": _file_record(output_config),
+        "workers_config": (
+            _file_record(args.workers_json.resolve(strict=True))
+            if args.workers_json is not None else None),
+        "workers": workers,
+    }
+    manifest_path = args.worker_root / "MANIFEST.json"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8")
     print(output_config)
+    print(manifest_path)
     for camera, spec in workers.items():
         print(f"{spec.get('host')}: {camera}")
 

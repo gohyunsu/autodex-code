@@ -1,6 +1,7 @@
 """Distributed Qwen staging supports one host serving four cameras."""
 
 import json
+import hashlib
 from pathlib import Path
 import sys
 
@@ -35,5 +36,20 @@ def test_setup_uses_explicit_shared_host_mapping(tmp_path, capsys):
     assert record["vlm"]["mode"] == "distributed"
     assert record["vlm"]["workers"]["400"] == shared
     assert record["vlm"]["worker_root"] == str(worker_root)
-    assert (worker_root / "precision_insertion/distributed_qwen_worker.py").is_file()
-    assert str(output) in capsys.readouterr().out
+    worker = worker_root / "precision_insertion/distributed_qwen_worker.py"
+    assert worker.is_file()
+    manifest = json.loads(
+        (worker_root / "MANIFEST.json").read_text(encoding="utf-8"))
+    assert manifest["schema"] == "precision_insertion_qwen_worker_stage_v1"
+    assert manifest["workers"] == {
+        camera: shared for camera in ("100", "200", "300", "400")
+    }
+    declared = {row["path"]: row for row in manifest["worker_files"]}
+    relative = "precision_insertion/distributed_qwen_worker.py"
+    assert declared[relative]["sha256"] == hashlib.sha256(
+        worker.read_bytes()).hexdigest()
+    assert manifest["output_config"]["sha256"] == hashlib.sha256(
+        output.read_bytes()).hexdigest()
+    output_text = capsys.readouterr().out
+    assert str(output) in output_text
+    assert str(worker_root / "MANIFEST.json") in output_text
