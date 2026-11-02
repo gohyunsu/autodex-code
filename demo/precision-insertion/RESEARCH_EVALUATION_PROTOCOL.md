@@ -247,6 +247,15 @@ and seven proceeded to insertion without any metric endpoint. These are pilot
 accounting figures, not an ablation: sessions, candidates and historical
 policies are mixed unless the command is filtered further.
 
+Filtering the same corpus to the controlled candidate `table/0/20195` gives
+13 pickup starts, 10 human-positive grasps among 12 labeled lifts, 10/10
+positive pre-insertion holds after those grasps, seven guarded insertion
+execution records and two final inside-socket labels. Only one of those seven
+insertions has the newer smooth-entry annotation, and it is negative. Thus
+`2/7` is a pilot final-outcome count, not evidence for smooth insertion and
+not an estimator ablation. The next controlled collection must label
+`tip_entry_success` on every executed descent.
+
 The current final label is visual `inside_socket` after release. It is not an
 independent proof of exactly 20 mm depth. Use that wording in the thesis, or
 add an independent depth/fixture measurement before claiming depth success.
@@ -297,6 +306,23 @@ contains:
 Use occupied wall time for latency and cumulative time for compute/I/O work.
 Do not add inclusive parent and child durations. For experiments, report
 median/IQR/p90 across completed runs, plus counts of incomplete traces.
+
+Eight completed saved traces containing `table/0/20195` have a median total
+wall span of 352.34 s, of which the median occupied manual-review time is
+208.16 s and the median non-human envelope is 156.12 s. Median VLM inference
+occupancy is 3.36 s. In the runs where it appears, the median inclusive
+same-trial alignment operation is 21.33 s; provisional planner-world warmup
+is 16.26 s. These historical traces predate runtime-configuration hashing, so
+they are useful bottleneck evidence but cannot be treated as a controlled
+before/after latency comparison. New traces bind the code revision, profiles
+and configuration file hashes and should be grouped by that identity with:
+
+```bash
+python3 demo/precision-insertion/summarize_timing_runs.py \
+  --timing-root \
+    "$PRECISION_RUN_OUTPUT_ROOT/precision-insertion/inspire/precision_key_cylinder_r15_h80/_pipeline_runs" \
+  --candidate-id table/0/20195
+```
 
 ## 9. Suggested report structure
 
