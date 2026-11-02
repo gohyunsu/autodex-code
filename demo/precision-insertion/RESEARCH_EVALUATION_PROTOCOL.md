@@ -72,7 +72,9 @@ The saved-evidence audit is reproducible with:
 ```bash
 python3 demo/precision-insertion/summarize_repeatability.py \
   --attempt-root "$PRECISION_RUN_OUTPUT_ROOT/precision-insertion/inspire/precision_key_cylinder_r15_h80" \
-  --candidate-id table/0/20195
+  --candidate-id table/0/20195 \
+  --partial-shape-review \
+    "$PRECISION_DEV_ROOT/reviews/partial_shape_alignment_20261102/all_attempts_live_selection_v2.json"
 ```
 
 The tool groups attempts by candidate, session-calibration digest, task family
@@ -81,9 +83,13 @@ identical inside each group, reports measured wrist endpoint error separately,
 and admits a key-tip value to metric statistics only when at least two cameras
 support a result explicitly recorded as metric. Single-view fixed-height
 hypotheses remain visible as diagnostics but are excluded from key-pose
-statistics. It does not subtract the wrist norm from the tip residual and call
-the result object-in-hand error: that requires an independently observed key
-pose (or at least a consistent tip and axis), not two scalar error magnitudes.
+statistics. An optional batch-v2 partial-shape replay is joined by attempt ID
+and first observation. Full-rank diagnostic fits and the subset actually
+selected by the current live policy are reported separately, so the archived
+33.9--55.3 degree occlusion fits cannot silently enter the controller-selected
+summary. The tool does not subtract the wrist norm from the tip residual and
+call the result object-in-hand error: that requires composing the measured
+wrist and one consistent key pose, not subtracting two scalar magnitudes.
 
 As of 2026-11-02, candidate `table/0/20195` has ten saved first-preinsert
 reports split across four socket-session calibration digests. The largest

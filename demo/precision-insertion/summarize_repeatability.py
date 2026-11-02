@@ -47,6 +47,41 @@ def _digest(value: Any) -> str | None:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _partial_shape_attempts(
+    path: Path | None, *, attempt_root: Path,
+) -> tuple[dict[str, dict], dict | None]:
+    if path is None:
+        return {}, None
+    source = path.expanduser().resolve()
+    review = _load(source)
+    if (review.get("schema") != "precision_insertion_saved_partial_shape_batch_v2" or
+            not isinstance(review.get("attempts"), list)):
+        raise ValueError("partial-shape review needs the saved batch v2 schema")
+    recorded_root = review.get("attempt_root")
+    if (not isinstance(recorded_root, str) or
+            Path(recorded_root).expanduser().resolve() != attempt_root):
+        raise ValueError("partial-shape review belongs to another attempt root")
+    by_attempt = {}
+    for row in review["attempts"]:
+        if not isinstance(row, dict) or not isinstance(row.get("attempt_id"), str):
+            raise ValueError("partial-shape review has an invalid attempt row")
+        iterations = row.get("review", {}).get("iterations")
+        if not isinstance(iterations, list):
+            raise ValueError("partial-shape review lacks iteration records")
+        first = next((item for item in iterations
+                      if isinstance(item, dict) and item.get("iteration") == 0), None)
+        if first is not None:
+            by_attempt[row["attempt_id"]] = first
+    return by_attempt, {
+        "path": str(source), "sha256": _file_sha256(source),
+        "schema": review["schema"],
+    }
+
+
 def _quantile(values: list[float], fraction: float) -> float | None:
     if not values:
         return None
@@ -79,7 +114,56 @@ def _subtract_translation(measured: list[list[float]] | None,
     return [measured[index][3] - target[index][3] for index in range(3)]
 
 
-def _attempt_row(attempt: Path) -> dict[str, Any] | None:
+def _partial_shape_row(iteration: dict | None) -> dict[str, Any]:
+    if not isinstance(iteration, dict):
+        return {
+            "status": "not_replayed", "metric_observation": False,
+            "selected_for_live_control": False,
+            "selection_reason": None, "tip_socket_m": None,
+            "xy_residual_norm_m": None, "axis_tilt_deg": None,
+            "camera_ids": [], "jacobian_rank": None,
+        }
+    shape = iteration.get("partial_shape_alignment")
+    selection = iteration.get("partial_shape_control_selection")
+    if not isinstance(shape, dict):
+        shape = {}
+    if not isinstance(selection, dict):
+        selection = {}
+    cameras = shape.get("camera_ids")
+    cameras = ([str(camera) for camera in cameras]
+               if isinstance(cameras, list) else [])
+    tip = shape.get("tip_socket_m")
+    if (not isinstance(tip, list) or len(tip) != 3 or
+            any(not isinstance(value, (int, float)) or
+                not math.isfinite(float(value)) for value in tip)):
+        tip = None
+    else:
+        tip = [float(value) for value in tip]
+    tilt = shape.get("axis_tilt_deg")
+    tilt = (float(tilt) if isinstance(tilt, (int, float)) and
+            math.isfinite(float(tilt)) else None)
+    rank = shape.get("jacobian_rank")
+    metric = bool(
+        shape.get("status") == "diagnostic_partial_shape_pose" and
+        len(set(cameras)) >= 2 and tip is not None and tilt is not None and
+        type(rank) is int and rank == 4)
+    return {
+        "status": str(shape.get("status", "not_replayed")),
+        "metric_observation": metric,
+        "selected_for_live_control": selection.get("selected") == "partial_shape",
+        "selection_reason": selection.get("reason"),
+        "tip_socket_m": tip if metric else None,
+        "diagnostic_tip_socket_m": tip,
+        "xy_residual_norm_m": (
+            math.hypot(tip[0], tip[1]) if metric else None),
+        "axis_tilt_deg": tilt if metric else None,
+        "camera_ids": cameras,
+        "jacobian_rank": rank if type(rank) is int else None,
+    }
+
+
+def _attempt_row(attempt: Path, partial_shape: dict | None = None,
+                 ) -> dict[str, Any] | None:
     result = _load(attempt / "result.json")
     preinsert_path = _latest(attempt, "preinsert_assessments/*/report.json")
     preinsert = _load(preinsert_path)
@@ -162,6 +246,7 @@ def _attempt_row(attempt: Path) -> dict[str, Any] | None:
             "inlier_cameras": inlier_cameras,
             "source_report": str(observation_path) if observation else None,
         },
+        "first_preinsert_partial_shape": _partial_shape_row(partial_shape),
         "labels": {
             "grasp_success": labels.get("grasp_success"),
             "preinsert_reached": labels.get("preinsert_reached"),
@@ -185,6 +270,10 @@ def _group_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if row["wrist_endpoint"]["rotation_error_deg"] is not None]
     metric = [row["first_preinsert_key_tip"] for row in rows
               if row["first_preinsert_key_tip"]["metric_observation"]]
+    shapes = [row["first_preinsert_partial_shape"] for row in rows
+              if row["first_preinsert_partial_shape"]["metric_observation"]]
+    selected_shapes = [item for item in shapes
+                       if item["selected_for_live_control"]]
     targets = sorted({row["preinsert_target_sha256"] for row in rows
                       if row["preinsert_target_sha256"]})
     return {
@@ -203,21 +292,51 @@ def _group_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "metric_axis_tilt_deg": _stats([
             item["axis_tilt_deg"] for item in metric
             if item["axis_tilt_deg"] is not None]),
+        "partial_shape_metric_count": len(shapes),
+        "partial_shape_tip_x_mm": _stats([
+            item["tip_socket_m"][0] * 1000.0 for item in shapes]),
+        "partial_shape_tip_y_mm": _stats([
+            item["tip_socket_m"][1] * 1000.0 for item in shapes]),
+        "partial_shape_tip_xy_residual_mm": _stats([
+            item["xy_residual_norm_m"] * 1000.0 for item in shapes]),
+        "partial_shape_axis_tilt_deg": _stats([
+            item["axis_tilt_deg"] for item in shapes]),
+        "partial_shape_control_selected_count": len(selected_shapes),
+        "partial_shape_selected_tip_xy_residual_mm": _stats([
+            item["xy_residual_norm_m"] * 1000.0
+            for item in selected_shapes]),
+        "partial_shape_selected_axis_tilt_deg": _stats([
+            item["axis_tilt_deg"] for item in selected_shapes]),
+        "partial_shape_status_counts": dict(sorted(Counter(
+            row["first_preinsert_partial_shape"]["status"]
+            for row in rows).items())),
+        "partial_shape_control_selection_counts": dict(sorted(Counter(
+            ("selected" if row["first_preinsert_partial_shape"]
+             ["selected_for_live_control"] else "fallback_or_not_replayed")
+            for row in rows).items())),
         "first_tip_status_counts": dict(sorted(Counter(
             row["first_preinsert_key_tip"]["status"] for row in rows).items())),
         "interpretation": (
             "wrist error is robot FK versus the commanded preinsert target; "
-            "metric key-tip error is independent multi-view evidence. "
+            "endpoint and partial-shape key errors are separate independent "
+            "multi-view measurements. "
+            "A full-rank partial-shape fit remains diagnostic unless its "
+            "saved control selection says selected; selected-only statistics "
+            "are reported separately. "
             "Their difference is not reported as object-in-hand error because "
-            "the current tip-only observation is not a full key SE(3) pose."),
+            "that requires composing the measured wrist with one consistent "
+            "symmetry-reduced key pose, not subtracting scalar norms."),
     }
 
 
-def summarize(attempt_root: Path, candidate_id: str | None = None) -> dict[str, Any]:
+def summarize(attempt_root: Path, candidate_id: str | None = None,
+              partial_shape_review: Path | None = None) -> dict[str, Any]:
     root = attempt_root.expanduser().resolve()
+    partial_shapes, partial_shape_source = _partial_shape_attempts(
+        partial_shape_review, attempt_root=root)
     rows = []
     for attempt in sorted(path for path in root.glob("attempt_*") if path.is_dir()):
-        row = _attempt_row(attempt)
+        row = _attempt_row(attempt, partial_shapes.get(attempt.name))
         if row is not None and (candidate_id is None or
                                 row["candidate_id"] == candidate_id):
             rows.append(row)
@@ -240,6 +359,7 @@ def summarize(attempt_root: Path, candidate_id: str | None = None) -> dict[str, 
         "schema": "precision_insertion_repeatability_summary_v1",
         "attempt_root": str(root),
         "candidate_filter": candidate_id,
+        "partial_shape_review": partial_shape_source,
         "attempts_with_preinsert_measurement": len(rows),
         "groups": groups,
         "attempts": rows,
@@ -253,9 +373,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--attempt-root", required=True, type=Path)
     parser.add_argument("--candidate-id")
+    parser.add_argument(
+        "--partial-shape-review", type=Path,
+        help="optional saved batch-v2 replay joined by attempt and iteration 0")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    result = summarize(args.attempt_root, args.candidate_id)
+    result = summarize(
+        args.attempt_root, args.candidate_id, args.partial_shape_review)
     encoded = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

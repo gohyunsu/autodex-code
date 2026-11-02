@@ -83,3 +83,47 @@ def test_repeatability_detects_changed_nominal_target(tmp_path):
     group = summarize(tmp_path)["groups"][0]
     assert group["same_nominal_preinsert_target"] is False
     assert len(group["preinsert_target_sha256_values"]) == 2
+
+
+def test_repeatability_joins_first_partial_shape_without_mixing_endpoint(tmp_path):
+    _attempt(tmp_path, "attempt_a", wrist_mm=2.0, alignment={
+        "status": "diagnostic_planar_xy_hypothesis",
+        "tip_socket_m": [0.08, 0.01, 0.085],
+        "inlier_cameras": ["cam-a"],
+    })
+    review = tmp_path / "shape_review.json"
+    _write(review, {
+        "schema": "precision_insertion_saved_partial_shape_batch_v2",
+        "attempt_root": str(tmp_path.resolve()),
+        "attempts": [{
+            "attempt_id": "attempt_a",
+            "review": {"iterations": [{
+                "iteration": 0,
+                "partial_shape_alignment": {
+                    "status": "diagnostic_partial_shape_pose",
+                    "camera_ids": ["cam-a", "cam-b"],
+                    "tip_socket_m": [0.003, 0.004, 0.085],
+                    "axis_tilt_deg": 1.25,
+                    "jacobian_rank": 4,
+                },
+                "partial_shape_control_selection": {
+                    "selected": "partial_shape",
+                    "reason": "valid_multiview_partial_shape_pose",
+                },
+            }]},
+        }],
+    })
+    result = summarize(
+        tmp_path, "table/0/20195", partial_shape_review=review)
+    group = result["groups"][0]
+    assert group["metric_key_tip_count"] == 0
+    assert group["partial_shape_metric_count"] == 1
+    assert group["partial_shape_control_selected_count"] == 1
+    assert group["partial_shape_tip_xy_residual_mm"]["median"] == 5.0
+    assert group["partial_shape_selected_tip_xy_residual_mm"]["median"] == 5.0
+    assert group["partial_shape_axis_tilt_deg"]["median"] == 1.25
+    assert group["partial_shape_control_selection_counts"] == {"selected": 1}
+    assert result["partial_shape_review"]["path"] == str(review.resolve())
+    shape = result["attempts"][0]["first_preinsert_partial_shape"]
+    assert shape["metric_observation"] is True
+    assert shape["selected_for_live_control"] is True
