@@ -1415,10 +1415,12 @@ def _compute_sam_half_ellipse_alignment(
                 np.asarray(first, dtype=float)),
             distal_center_weight=weights["distal_center_weight"],
             shaft_axis_weight=weights["shaft_axis_weight"]))
-    partial_shape = estimate_partial_cylinder_alignment(
-        shape_views, nominal_tip_z_socket_m=float(nominal_tip[2]),
-        key_length_m=tip_z,
-        initial_xy_socket_m=nominal_tip[:2])
+    with timed("xy_retry.partial_shape_alignment", phase="xy_retry",
+               kind="optimization", view_count=len(shape_views)):
+        partial_shape = estimate_partial_cylinder_alignment(
+            shape_views, nominal_tip_z_socket_m=float(nominal_tip[2]),
+            key_length_m=tip_z,
+            initial_xy_socket_m=nominal_tip[:2])
     alignment = tracked_tip_xy_alignment(
         views, nominal_tip_z_socket_m=float(nominal_tip[2]),
         search_index=search_index,

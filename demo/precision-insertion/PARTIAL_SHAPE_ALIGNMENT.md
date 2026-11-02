@@ -68,6 +68,23 @@ PYTHONPATH=$PWD/demo/precision-insertion \
   --output /tmp/partial_shape_review.json
 ```
 
+Replay every labelled attempt under the canonical object run root:
+
+```bash
+PYTHONPATH=$PWD/demo/precision-insertion \
+  ~/miniconda3/envs/autodex_bodex/bin/python \
+  demo/precision-insertion/review_partial_shape_alignment.py \
+  --attempt-root /mnt/paradex2/hyunsu/precision_insertion/runs/zerodex_capture4/precision-insertion/inspire/precision_key_cylinder_r15_h80 \
+  --output /tmp/partial_shape_all_attempts.json
+```
+
+On 2026-11-02 this discovered 12 saved same-trial attempts. Two labelled
+successful attempts contained enough current-format shape evidence; their
+last fitted XY values were approximately `(0.8, 1.0) mm` and
+`(5.8, -0.5) mm`. The latest wall-contact failure remained approximately
+`(26.0, 22.6) mm` with mutually inconsistent shaft directions. These values
+are correlations in saved evidence, not physical key-pose ground truth.
+
 Before promoting this estimate to live control:
 
 1. recalibrate the capture4 cameras;
