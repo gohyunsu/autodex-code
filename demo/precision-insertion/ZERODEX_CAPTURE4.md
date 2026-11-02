@@ -127,6 +127,9 @@ JSON file and selected in a system/experiment profile rather than patched
 into action code. Runtime choices such as same-trial XY tolerance and maximum
 correction step remain explicit launcher options because they define the
 experiment rather than the FR3/camera installation.
+`run_zerodex_capture4.sh --check` parses this same document without importing
+hardware, records its SHA256 and reports the zero-clearance/uncapped-XY values
+so a run cannot appear to use settings that differ from its static preflight.
 
 The profile also supplies the namespaced camera service manager's remote
 asset root. For service commands in this checkout, load it in the calling

@@ -135,11 +135,14 @@ def inspect_live_inputs(
     """Check current v8 inputs without cameras, CUDA or robot construction."""
     if xy_estimator not in {"vlm", "tracked_tip", "sam_half_ellipse"}:
         raise ValueError("unknown failed-trial XY estimator")
+    stage_policy_path = os.environ.get("PRECISION_STAGE_POLICY", "").strip()
     config_sources = {
         "launch_config": Path(launch_config_path),
         "endpoint_catalog": Path(endpoint_catalog_path),
         **({"robot_config": Path(robot_config_path)}
            if robot_config_path is not None else {}),
+        **({"stage_policy": Path(stage_policy_path)}
+           if stage_policy_path else {}),
     }
     config_namespace = runtime_json_namespace_report(config_sources)
     if config_namespace is not None and config_namespace["violations"]:
@@ -185,6 +188,7 @@ def inspect_live_inputs(
                 not getattr(launch, "upright_cylinder_only", True) or
                 stem == "000")],
         "robot_config": None,
+        "stage_policy": None,
         "xy_estimator": xy_estimator,
         "sam_roi_inputs": None,
         "scope": "static_files_only_no_camera_cuda_or_robot_connection",
@@ -195,6 +199,27 @@ def inspect_live_inputs(
         result["storage_namespace"] = namespace
     if config_namespace is not None:
         result["config_storage_namespace"] = config_namespace
+    if stage_policy_path:
+        from .stage_policy import SCHEMA, load_zerodex_stage_policy
+
+        policy = load_zerodex_stage_policy(stage_policy_path)
+        result["stage_policy"] = {
+            "schema": SCHEMA,
+            "path": str(policy.source),
+            "sha256": hashlib.sha256(policy.source.read_bytes()).hexdigest(),
+            "key_prompt": policy.key_prompt,
+            "axial_waypoint_step_m": policy.axial_waypoint_step_m,
+            "post_lift_settle_s": policy.post_lift_settle_s,
+            "minimum_hand_clearance_m": (
+                policy.path_limits.minimum_hand_clearance_m),
+            "minimum_board_edge_clearance_m": (
+                policy.reset_geometry["minimum_board_edge_clearance_m"]),
+            "retry_max_total_offset_m": (
+                policy.retry_limits.max_total_offset_m),
+            "alignment_minimum_views": (
+                policy.alignment_limits.minimum_views),
+            "scope": "static_configuration_only_no_hardware_import",
+        }
     if xy_estimator == "sam_half_ellipse":
         from .franka_integration import _sam_runtime_paths
 

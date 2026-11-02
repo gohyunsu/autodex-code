@@ -23,11 +23,6 @@ from precision_insertion.pickup_execution import PickupExecutionLimits
 from precision_insertion.stage_policy import load_zerodex_stage_policy
 
 
-# Compatibility for the camera-only entry point. The live factory reloads the
-# selected document, so a machine profile may choose another policy file.
-KEY_PROMPT = load_zerodex_stage_policy().key_prompt
-
-
 def _recording_event_marker(*, environment: str, schema: str):
     """Return an optional local event callback for the ZeroDex recorder.
 

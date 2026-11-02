@@ -33,9 +33,10 @@ from precision_insertion.session_launch import (
     load_session_launch, open_session_cameras,
 )
 from precision_insertion.silhouette_compat import prepare_precision_silhouette
+from precision_insertion.stage_policy import load_zerodex_stage_policy
 from precision_insertion.timing_profile import profile_run, timed
 from precision_insertion.world import build_trial_scene_from_session
-from robot_pc_stages import KEY_PROMPT, _key_capture, _tabletop_pose_error_deg
+from robot_pc_stages import _key_capture, _tabletop_pose_error_deg
 
 
 def run_camera_only(
@@ -70,6 +71,8 @@ def run_camera_only(
                       allow_nan=False)
             stream.write("\n")
     with profile_run(output):
+        with timed("startup.stage_policy", phase="startup", kind="io"):
+            stage_policy = load_zerodex_stage_policy()
         with timed("startup.launch_config", phase="startup", kind="io"):
             launch = load_session_launch(
                 launch_config, evidence_dir_override=output / "socket_evidence")
@@ -137,7 +140,7 @@ def run_camera_only(
                 with timed("startup.key_placement_wait", phase="startup",
                            kind="operator"):
                     wait_for_key()
-                capture_settings = _key_capture()
+                capture_settings = _key_capture(stage_policy)
                 # These settings are consumed by the live planning wrapper,
                 # not by the shared camera/pose admission primitive.
                 capture_settings.pop("max_key_state_skew_s")
@@ -152,7 +155,8 @@ def run_camera_only(
                         calibrated_camera_ids=set(launch.camera_ids),
                         intrinsics_full=launch.intrinsics_full,
                         extrinsics_full=launch.extrinsics_full,
-                        image_hw=launch.image_hw, key_prompt=KEY_PROMPT,
+                        image_hw=launch.image_hw,
+                        key_prompt=stage_policy.key_prompt,
                         view_limits=launch.view_limits,
                         request_id_factory=None,
                         registered_key_assistance=None,
@@ -161,7 +165,7 @@ def run_camera_only(
                         silhouette_loss_threshold=0.003,
                         **capture_settings)
         with timed("key.scene_and_classification", phase="key"):
-            tabletop_pose_error_deg = _tabletop_pose_error_deg()
+            tabletop_pose_error_deg = _tabletop_pose_error_deg(stage_policy)
             scene = build_trial_scene_from_session(
                 mode=launch.mode, shared_root=launch.shared_root,
                 calibration=started.calibration,

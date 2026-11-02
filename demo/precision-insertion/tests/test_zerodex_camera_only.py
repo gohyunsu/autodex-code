@@ -113,7 +113,7 @@ def test_camera_only_reuses_socket_key_and_catalog_without_robot(
                             events.append("select") or {
                                 "status": "candidates_available",
                                 "candidates": [{"key": ["table", "0", "1"]}]}))
-    monkeypatch.setattr(camera_only, "_key_capture", lambda: {
+    monkeypatch.setattr(camera_only, "_key_capture", lambda _policy=None: {
         "max_key_state_skew_s": 5., "capture_timeout_s": 120.,
         "image_write_timeout_s": 90.,
     })

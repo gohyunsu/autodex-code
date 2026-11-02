@@ -140,6 +140,9 @@ def test_static_preflight_reads_v8_files_without_opening_robot(
     vlm_cache = tmp_path / "qwen-cache"
     vlm_cache.mkdir()
     monkeypatch.setenv("PRECISION_VLM_MODEL_ID", str(vlm_cache))
+    stage_policy = (Path(__file__).resolve().parents[1] / "config" /
+                    "zerodex_capture4_stage_policy.json")
+    monkeypatch.setenv("PRECISION_STAGE_POLICY", str(stage_policy))
     report = live_runtime.inspect_live_inputs(
         launch_config_path=launch_path, endpoint_catalog_path=catalog_path,
         robot_config_path=robot_path)
@@ -154,6 +157,13 @@ def test_static_preflight_reads_v8_files_without_opening_robot(
     assert report["robot_config"]["stage_factory_syntax_valid"] is True
     assert report["robot_config"]["stage_factory_module_on_path"] is False
     assert report["robot_config"]["stage_factory_imported"] is False
+    assert report["stage_policy"]["path"] == str(stage_policy.resolve())
+    assert report["stage_policy"]["minimum_hand_clearance_m"] == 0
+    assert report["stage_policy"]["minimum_board_edge_clearance_m"] == 0
+    assert report["stage_policy"]["retry_max_total_offset_m"] is None
+    assert report["stage_policy"]["alignment_minimum_views"] == 2
+    assert report["stage_policy"]["scope"] == (
+        "static_configuration_only_no_hardware_import")
     assert report["robot_config"]["vlm"] == {
         "mode": "local",
         "configured_model_id": None,
