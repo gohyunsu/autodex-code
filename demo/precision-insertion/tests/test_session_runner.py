@@ -1331,6 +1331,27 @@ def test_initial_preferred_v8_candidate_only_applies_to_first_capture(
     assert seen == [KEY_B, None]
 
 
+def test_fixed_candidate_is_reused_and_other_grasps_are_excluded(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    runner.catalog["candidates"] = [
+        {"key": list(KEY_A)}, {"key": list(KEY_B)}]
+    runner.catalog_sha256 = session_runner._digest(runner.catalog)
+    runner._initial_preferred_candidate = KEY_A
+    runner._fixed_candidate = True
+    runner._attempted.add(KEY_A)
+    seen = []
+
+    def fake_plan(**kwargs):
+        seen.append((kwargs["preferred_candidate"], kwargs["attempted"]))
+        return _report(runner, kwargs["key_observation"], key=KEY_A)
+
+    monkeypatch.setattr(session_runner, "plan_admitted_key_trial", fake_plan)
+    _plan(runner, _observation("key_1", 10.0))
+    _plan(runner, _observation("key_2", 11.0))
+    assert seen == [(KEY_A, (KEY_B,)), (KEY_A, (KEY_B,))]
+
+
 def test_verified_insertion_ends_session_without_reset_or_next_trial(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)

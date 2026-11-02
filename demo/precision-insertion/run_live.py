@@ -143,6 +143,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="skip the initial key-placement prompt")
     parser.add_argument("--initial-candidate",
                         help="eligible v8 key for the first pickup plan, e.g. table/0/20237")
+    parser.add_argument(
+        "--fixed-candidate", action="store_true",
+        help="reuse --initial-candidate for every fresh pickup and do not "
+             "fall through to another grasp")
     parser.add_argument("--exclude-candidate", action="append", default=[],
                         help="skip one previously observed failed grasp in this session")
     args = parser.parse_args(argv)
@@ -152,6 +156,8 @@ def main(argv: list[str] | None = None) -> int:
         if len(parts) != 3 or any(not part for part in parts):
             parser.error("--initial-candidate needs scene/pose/grasp")
         initial_candidate = tuple(parts)
+    if args.fixed_candidate and initial_candidate is None:
+        parser.error("--fixed-candidate requires --initial-candidate")
     excluded_candidates = []
     for value in args.exclude_candidate:
         parts = value.split("/")
@@ -220,6 +226,7 @@ def main(argv: list[str] | None = None) -> int:
         reuse_session_evidence_dir=args.reuse_session_evidence,
         key_already_placed=args.key_already_placed,
         initial_preferred_candidate=initial_candidate,
+        fixed_candidate=args.fixed_candidate,
         excluded_candidates=tuple(excluded_candidates))
     output = options.run_output_dir.expanduser().resolve()
     report_path = output / "action_loop_result.json"

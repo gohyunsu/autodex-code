@@ -48,6 +48,7 @@ class RunLiveOptions:
     reuse_session_evidence_dir: Path | None = None
     key_already_placed: bool = False
     initial_preferred_candidate: tuple[str, str, str] | None = None
+    fixed_candidate: bool = False
     excluded_candidates: tuple[tuple[str, str, str], ...] = ()
     launch_snapshot: object | None = None
 
@@ -333,6 +334,7 @@ def run_integrated_live_session(
                 init_ports=options.init_ports, launch_snapshot=launch,
                 begin_pre_socket_warmup=integration.begin_pre_socket_warmup,
                 initial_preferred_candidate=options.initial_preferred_candidate,
+                fixed_candidate=options.fixed_candidate,
                 excluded_candidates=options.excluded_candidates)
         if on_result is not None:
             on_result(result)

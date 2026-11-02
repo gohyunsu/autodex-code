@@ -227,6 +227,9 @@ fi
 if [[ -n ${PRECISION_INITIAL_CANDIDATE:-} ]]; then
   EXTRA_ARGS+=(--initial-candidate "$PRECISION_INITIAL_CANDIDATE")
 fi
+if [[ ${PRECISION_FIXED_CANDIDATE:-0} == 1 ]]; then
+  EXTRA_ARGS+=(--fixed-candidate)
+fi
 if [[ -n ${PRECISION_EXCLUDED_CANDIDATES:-} ]]; then
   IFS=, read -ra excluded_candidates <<< "$PRECISION_EXCLUDED_CANDIDATES"
   for excluded_candidate in "${excluded_candidates[@]}"; do

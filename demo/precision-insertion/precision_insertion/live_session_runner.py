@@ -97,6 +97,7 @@ def open_verified_session(
     producer_manifest: dict | None = None,
     calibration_snapshot=None,
     initial_preferred_candidate: tuple[str, str, str] | None = None,
+    fixed_candidate: bool = False,
     excluded_candidates: tuple[tuple[str, str, str], ...] = (),
     upright_cylinder_only: bool = True,
 ) -> OpenedPrecisionSession:
@@ -175,6 +176,7 @@ def open_verified_session(
         max_xy_retries=max_xy_retries,
         xy_update_weight=xy_update_weight,
         initial_preferred_candidate=initial_preferred_candidate,
+        fixed_candidate=fixed_candidate,
         excluded_candidates=excluded_candidates,
         upright_cylinder_only=upright_cylinder_only)
     binding_path = target / "source_evidence_binding.json"

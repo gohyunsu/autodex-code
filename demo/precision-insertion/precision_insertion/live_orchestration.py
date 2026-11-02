@@ -137,6 +137,7 @@ def open_live_precision_session(
     launch_snapshot=None,
     reuse_session_evidence_dir: Path | None = None,
     initial_preferred_candidate: tuple[str, str, str] | None = None,
+    fixed_candidate: bool = False,
     excluded_candidates: tuple[tuple[str, str, str], ...] = (),
     begin_pre_socket_warmup: Callable[[], Future | None] | None = None,
 ) -> Iterator[LivePrecisionSession]:
@@ -260,6 +261,7 @@ def open_live_precision_session(
                 producer_manifest=getattr(started, "producer_manifest", None),
                 calibration_snapshot=getattr(started, "calibration", None),
                 initial_preferred_candidate=initial_preferred_candidate,
+                fixed_candidate=fixed_candidate,
                 excluded_candidates=excluded_candidates,
                 upright_cylinder_only=getattr(
                     launch, "upright_cylinder_only", True))
@@ -281,6 +283,7 @@ def run_live_precision_session(
     init_ports: tuple[int, int, int] | None = None,
     launch_snapshot=None,
     initial_preferred_candidate: tuple[str, str, str] | None = None,
+    fixed_candidate: bool = False,
     excluded_candidates: tuple[tuple[str, str, str], ...] = (),
     begin_pre_socket_warmup: Callable[[], Future | None] | None = None,
 ) -> ActionLoopResult:
@@ -307,6 +310,7 @@ def run_live_precision_session(
             launch_snapshot=launch_snapshot,
             reuse_session_evidence_dir=reuse_session_evidence_dir,
             initial_preferred_candidate=initial_preferred_candidate,
+            fixed_candidate=fixed_candidate,
             excluded_candidates=excluded_candidates,
             begin_pre_socket_warmup=begin_pre_socket_warmup) as live:
         # Stage adapters and load the VLM while the key is still absent.

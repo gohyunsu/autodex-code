@@ -13,6 +13,14 @@ if [[ -n ${PRECISION_SYSTEM_PROFILE:-} ]]; then
 fi
 source "$SCRIPT_DIR/config/zerodex_capture4.env.sh"
 source "$SCRIPT_DIR/config/nas_namespace.sh"
+if [[ -n ${PRECISION_EXPERIMENT_PROFILE:-} ]]; then
+  precision_experiment_profile=$PRECISION_EXPERIMENT_PROFILE
+  if [[ $precision_experiment_profile != /* ]]; then
+    precision_experiment_profile="$SCRIPT_DIR/config/experiments/$precision_experiment_profile"
+  fi
+  source "$precision_experiment_profile"
+  unset precision_experiment_profile
+fi
 for precision_path_var in \
   PRECISION_NAS_PROJECT_ROOT PRECISION_SHARED_ROOT PRECISION_STAGE_ROOT \
   PRECISION_RUN_OUTPUT_ROOT PRECISION_RECORDING_RECEIPT_ROOT \
@@ -31,18 +39,6 @@ export PRECISION_POST_LIFT_SETTLE_S=${PRECISION_POST_LIFT_SETTLE_S:-2.0}
 # cuRobo world. Start that work while capture4 acquires/refines the next key.
 # A caller can set 0 for a measured serial-latency comparison.
 export PRECISION_PREWARM_FIXED_WORLD=${PRECISION_PREWARM_FIXED_WORLD:-1}
-# Previously selected upright grasps are only ordering hints. Every new
-# tabletop observation still runs the normal v8 pickup and insertion checks;
-# an infeasible preferred grasp falls through to the remaining candidates.
-# An explicitly empty override disables the hint.
-if [[ -z ${PRECISION_INITIAL_CANDIDATE+x} ]]; then
-  case $PRECISION_GAP_MM in
-    # This grasp reached the released, human-confirmed inside-socket state in
-    # two recorded 5 mm episodes. The former hint 208 has only offline plans.
-    5) export PRECISION_INITIAL_CANDIDATE=table/0/20195 ;;
-    10) export PRECISION_INITIAL_CANDIDATE=table/0/20267 ;;
-  esac
-fi
 if [[ $PRECISION_GAP_MM == 5 && -z ${PRECISION_EXCLUDED_CANDIDATES+x} ]]; then
   # In two corrected-hold replays 20096 intersected the socket at 20 mm;
   # three released trials with this grasp left the key outside the socket.

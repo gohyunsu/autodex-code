@@ -151,6 +151,7 @@ class SessionRunner:
         catalog: dict, shared_root: Path, output_dir: Path,
         max_xy_retries: int | None, xy_update_weight: float = 1.0,
         initial_preferred_candidate: tuple[str, str, str] | None = None,
+        fixed_candidate: bool = False,
         excluded_candidates: tuple[tuple[str, str, str], ...] = (),
         upright_cylinder_only: bool = True,
     ) -> None:
@@ -181,6 +182,13 @@ class SessionRunner:
                             and row.get("eligible") is True
                             for row in catalog["candidates"])):
                 raise ValueError("initial preferred candidate must be an eligible v8 catalog key")
+        if type(fixed_candidate) is not bool:
+            raise TypeError("fixed_candidate must be a boolean")
+        if fixed_candidate and initial_preferred_candidate is None:
+            raise ValueError("fixed_candidate requires an initial preferred candidate")
+        if (fixed_candidate and
+                initial_preferred_candidate in set(excluded_candidates)):
+            raise ValueError("fixed candidate cannot also be excluded")
         if any(len(key) != 3 or any(not isinstance(part, str) or not part
                                    for part in key)
                for key in excluded_candidates):
@@ -224,6 +232,7 @@ class SessionRunner:
         self._attempted: set[tuple[str, str, str]] = set()
         self._excluded_candidates = set(excluded_candidates)
         self._initial_preferred_candidate = initial_preferred_candidate
+        self._fixed_candidate = fixed_candidate
         self._pending_next_trial_xy: dict | None = None
         self._future_xy_corrections_used = 0
         self._same_capture_planning_rejects: set[tuple[str, str, str]] = set()
@@ -296,6 +305,7 @@ class SessionRunner:
             "upright_cylinder_only": self.upright_cylinder_only,
             "initial_preferred_candidate": (None if initial_preferred_candidate is None
                                             else list(initial_preferred_candidate)),
+            "fixed_candidate": fixed_candidate,
             "excluded_candidates": [list(key) for key in sorted(excluded_candidates)],
             "scope": "evidence_and_preflight_only_not_robot_motion_authorization",
             "robot_ready": False,
@@ -561,7 +571,18 @@ class SessionRunner:
         exclusions = set(self._attempted) | self._excluded_candidates
         pending_xy = self._pending_next_trial_xy
         preferred = (self._initial_preferred_candidate
-                     if self._capture_id is None else None)
+                     if self._fixed_candidate or self._capture_id is None else None)
+        if self._fixed_candidate:
+            assert preferred is not None
+            # Repeatability experiments deliberately hold the grasp identity
+            # fixed across fresh physical pickups.  A rejection from this
+            # exact observation remains effective below; session-level
+            # ``attempted`` history does not silently switch to another grasp.
+            exclusions.discard(preferred)
+            exclusions.update(
+                tuple(row["key"])
+                for row in self.catalog["candidates"]
+                if tuple(row.get("key", ())) != preferred)
         if pending_xy is not None:
             preferred = tuple(pending_xy["candidate_id"].split("/"))
             # One new physical pickup of the same grasp is permitted even

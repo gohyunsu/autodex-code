@@ -32,9 +32,19 @@ export PRECISION_GAP_MM=5
 export PRECISION_REUSE_SESSION_EVIDENCE=/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/camera_only/socket_remeasure_20261030_04/socket_evidence
 export PRECISION_KEY_ALREADY_PLACED=1
 export PRECISION_LABEL_MODE=manual
+export PRECISION_EXPERIMENT_PROFILE=fixed_grasp_repeatability_5mm.env.sh
 bash demo/precision-insertion/run_zerodex_capture4.sh --check
 bash demo/precision-insertion/run_zerodex_capture4.sh --run
 ```
+
+The experiment profile is separate from the ZeroDex machine profile. It
+selects gap `5`, candidate `table/0/20195`, and the fixed-candidate policy.
+Every fresh key observation replans the same grasp; session attempt history
+cannot silently switch to another grasp. If that grasp has no plan for the
+current observation, the trial reports no plan instead of falling through.
+Leave `PRECISION_EXPERIMENT_PROFILE` unset for ordinary adaptive candidate
+selection. Direct CLI equivalent: `--initial-candidate table/0/20195
+--fixed-candidate`.
 
 The final command moves the robot. If the socket or board moved, unset
 `PRECISION_REUSE_SESSION_EVIDENCE`, remove the key for a new socket-only
@@ -516,10 +526,10 @@ start the adapter if another experiment owns the cameras.
   The matching `candidate_priority_review_20261029.json` lists the 108
   eligible upright candidates and distinguishes the 11 with archived
   post-squeeze fidelity measurements from those without one.
-  The current 5 mm launch preference is the later twice-inserted
-  `table/0/20195`; fresh-scene planning still tests it normally. Set
-  `PRECISION_INITIAL_CANDIDATE=table/0/208` to reproduce the older planned
-  priority, or `PRECISION_INITIAL_CANDIDATE=` to use catalog order.
+  Candidate preferences are no longer embedded in the launcher. Use an
+  experiment profile or set `PRECISION_INITIAL_CANDIDATE=table/0/208` to
+  reproduce the older planned priority. With no setting, catalog order is
+  used.
   `PRECISION_EXCLUDED_CANDIDATES=` explicitly clears the default exclusion
   of `table/0/20096` for a controlled comparison.
 - The ZeroDex launcher sets `PRECISION_PREWARM_FIXED_WORLD=1` for both newly
@@ -1330,11 +1340,9 @@ rig's *measured* clear-view joints. These are offline plan checks; the key's
 pose and the robot's start state must be measured again for a new trial.
 Use `--initial-candidate table/0/20267` to request it first in the live
 launcher; normal candidate planning still checks the fresh observation.
-The ZeroDex launcher now supplies this as its default initial preference
-when `PRECISION_GAP_MM=10`. `PRECISION_INITIAL_CANDIDATE=` disables the
-preference, and an explicit candidate value replaces it. Other socket gaps
-retain the original candidate order. This changes only planning order and
-adds no candidate rejection or robot-motion criterion.
+The launcher does not hard-code a gap-specific grasp: an experiment profile
+or explicit `PRECISION_INITIAL_CANDIDATE` supplies it. This changes only
+planning order unless `--fixed-candidate` is also selected.
 
 The fresh-key trial planner now also checks the existing socket release
 opening ramp at each cylinder candidate's nominal 20 mm endpoint. If that
