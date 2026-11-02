@@ -38,6 +38,9 @@ from precision_insertion.live_runtime import (  # noqa: E402
     RunLiveOptions, inspect_live_inputs, run_integrated_live_session,
 )
 from precision_insertion.config import select_mode  # noqa: E402
+from precision_insertion.project_layout import (  # noqa: E402
+    runtime_json_namespace_report,
+)
 from precision_insertion.timing_profile import (  # noqa: E402
     profile_run, timed, timing_directory,
 )
@@ -186,6 +189,17 @@ def main(argv: list[str] | None = None) -> int:
         report["exp_name"] = args.exp_name
         print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
         return 0
+    config_namespace = runtime_json_namespace_report({
+        "launch_config": args.launch_config,
+        "endpoint_catalog": args.endpoint_catalog,
+        **({"robot_config": args.robot_config}
+           if args.robot_config is not None else {}),
+    })
+    if config_namespace is not None and config_namespace["violations"]:
+        first = config_namespace["violations"][0]
+        parser.error(
+            "runtime JSON path resolves outside the allowed NAS namespace: "
+            f"{first['source']}:{first['field']}={first['path']}")
     if init_ports is None:
         parser.error("live run requires explicit frame-bound init daemon ports")
     if args.integration is None:

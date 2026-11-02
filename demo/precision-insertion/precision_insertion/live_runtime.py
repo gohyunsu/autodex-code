@@ -19,6 +19,9 @@ from .action_loop import ActionLoopResult
 from .labeling import LABEL_MODES
 from .session_launch import load_session_launch
 from .live_session_runner import preflight_endpoint_catalog_file
+from .project_layout import (
+    runtime_json_namespace_report, runtime_namespace_report,
+)
 from .timing_profile import timed
 
 
@@ -131,6 +134,18 @@ def inspect_live_inputs(
     """Check current v8 inputs without cameras, CUDA or robot construction."""
     if xy_estimator not in {"vlm", "tracked_tip", "sam_half_ellipse"}:
         raise ValueError("unknown failed-trial XY estimator")
+    config_sources = {
+        "launch_config": Path(launch_config_path),
+        "endpoint_catalog": Path(endpoint_catalog_path),
+        **({"robot_config": Path(robot_config_path)}
+           if robot_config_path is not None else {}),
+    }
+    config_namespace = runtime_json_namespace_report(config_sources)
+    if config_namespace is not None and config_namespace["violations"]:
+        first = config_namespace["violations"][0]
+        raise ValueError(
+            "runtime JSON path resolves outside the allowed NAS namespace: "
+            f"{first['source']}:{first['field']}={first['path']}")
     launch = load_session_launch(
         launch_config_path, allow_existing_evidence=True)
     if launch.mode.family != "cylinder":
@@ -174,11 +189,11 @@ def inspect_live_inputs(
         "scope": "static_files_only_no_camera_cuda_or_robot_connection",
         "robot_ready": False,
     }
-    from .project_layout import runtime_namespace_report
-
     namespace = runtime_namespace_report()
     if namespace is not None:
         result["storage_namespace"] = namespace
+    if config_namespace is not None:
+        result["config_storage_namespace"] = config_namespace
     if xy_estimator == "sam_half_ellipse":
         from .franka_integration import _sam_runtime_paths
 

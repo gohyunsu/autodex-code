@@ -7,9 +7,10 @@ names here instead of embedding another copy of the workstation layout.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
-from typing import Mapping
+from typing import Iterator, Mapping
 
 
 DEFAULT_NAS_PROJECT_ROOT = Path(
@@ -32,6 +33,30 @@ _RUNTIME_PATH_VARIABLES = (
     "PRECISION_PARADEX_ROOT",
     "PRECISION_FR3_INSPIRE_URDF",
 )
+
+
+def _classify_path(path: Path, *, allowed: Path, mount: Path) -> dict:
+    resolved = path.expanduser().resolve(strict=False)
+    on_nas = resolved == mount or mount in resolved.parents
+    within_allowed = (
+        not on_nas or resolved == allowed or allowed in resolved.parents)
+    return {
+        "path": str(resolved),
+        "storage": "nas" if on_nas else "local",
+        "within_allowed_nas_root": within_allowed,
+    }
+
+
+def _absolute_json_strings(value, field: str = "") -> Iterator[tuple[str, str]]:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            child_field = f"{field}.{key}" if field else str(key)
+            yield from _absolute_json_strings(child, child_field)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from _absolute_json_strings(child, f"{field}[{index}]")
+    elif isinstance(value, str) and value.startswith("/"):
+        yield field, value
 
 
 def nas_project_root(value: str | Path | None = None) -> Path:
@@ -88,23 +113,78 @@ def runtime_namespace_report(
         raw = values.get(name)
         if not raw:
             continue
-        path = Path(raw).expanduser().resolve(strict=False)
-        on_nas = path == mount or mount in path.parents
-        within_allowed = not on_nas or path == allowed or allowed in path.parents
-        row = {
-            "variable": name,
-            "path": str(path),
-            "storage": "nas" if on_nas else "local",
-            "within_allowed_nas_root": within_allowed,
-        }
+        row = {"variable": name, **_classify_path(
+            Path(raw), allowed=allowed, mount=mount)}
         entries.append(row)
-        if not within_allowed:
+        if not row["within_allowed_nas_root"]:
             violations.append(row)
     return {
         "schema": "precision_insertion_runtime_namespace_v1",
         "nas_mount_root": str(mount),
         "allowed_nas_root": str(allowed),
         "paths": entries,
+        "violations": violations,
+        "all_nas_paths_within_allowed_root": not violations,
+    }
+
+
+def runtime_json_namespace_report(
+    sources: Mapping[str, str | Path],
+    environ: Mapping[str, str] | None = None,
+) -> dict | None:
+    """Audit every absolute path embedded in active runtime JSON inputs.
+
+    Valid local paths remain allowed. Only paths resolving below the ParaDex2
+    mount but outside the configured user namespace are violations.
+    """
+    values = os.environ if environ is None else environ
+    allowed_value = values.get("PRECISION_ALLOWED_NAS_ROOT")
+    if not allowed_value:
+        return None
+    allowed = Path(allowed_value).expanduser().resolve(strict=False)
+    mount = Path(values.get(
+        "PRECISION_NAS_MOUNT_ROOT", "/mnt/paradex2"
+    )).expanduser().resolve(strict=False)
+    references = 0
+    unique: dict[str, dict] = {}
+    violations: list[dict] = []
+    source_counts: dict[str, int] = {}
+    for source_name, source_value in sources.items():
+        source = Path(source_value).expanduser().resolve(strict=False)
+        source_row = _classify_path(source, allowed=allowed, mount=mount)
+        if not source_row["within_allowed_nas_root"]:
+            violations.append({
+                "source": source_name,
+                "source_path": str(source),
+                "field": "$source",
+                **source_row,
+            })
+            source_counts[source_name] = 0
+            continue
+        record = json.loads(source.read_text(encoding="utf-8"))
+        count = 0
+        for field, raw in _absolute_json_strings(record):
+            count += 1
+            references += 1
+            row = _classify_path(Path(raw), allowed=allowed, mount=mount)
+            unique.setdefault(row["path"], row)
+            if not row["within_allowed_nas_root"]:
+                violations.append({
+                    "source": source_name,
+                    "source_path": str(source),
+                    "field": field,
+                    **row,
+                })
+        source_counts[source_name] = count
+    return {
+        "schema": "precision_insertion_runtime_json_namespace_v1",
+        "nas_mount_root": str(mount),
+        "allowed_nas_root": str(allowed),
+        "sources": {name: str(Path(path).expanduser().resolve(strict=False))
+                    for name, path in sources.items()},
+        "absolute_path_references": references,
+        "unique_absolute_paths": len(unique),
+        "references_by_source": source_counts,
         "violations": violations,
         "all_nas_paths_within_allowed_root": not violations,
     }

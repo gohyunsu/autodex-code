@@ -70,10 +70,15 @@ below `/mnt/paradex2` is admitted only below `/mnt/paradex2/hyunsu`; local
 copies below `/home/hyunsu` remain valid. This is a storage namespace
 contract, not a grasp, planning, perception, or insertion rejection rule.
 The static `--check` result also records every configured runtime path under
-`storage_namespace`; any path below the ParaDex2 mount but outside
-`/mnt/paradex2/hyunsu` is listed explicitly. This report is provenance only
-and does not add a robot outcome gate. Repeated-use latency caches may stay
-local: the SAM checkpoint under `~/precision_insertion_project/cache`, Python
+`storage_namespace`. It recursively audits absolute paths embedded in the
+active launch, endpoint-catalog and robot-profile JSON files under
+`config_storage_namespace`; the live entry point performs the same audit
+before camera or robot integration is opened. A path below the ParaDex2 mount
+but outside `/mnt/paradex2/hyunsu` is rejected, while ordinary local paths
+remain valid. This is only the required project-storage boundary, not a grasp,
+planning, perception, insertion, or robot-outcome gate. The capture4 ParaDex
+camera exception described below is unchanged. Repeated-use latency caches may
+stay local: the SAM checkpoint under `~/precision_insertion_project/cache`, Python
 environments, the project-owned ParaDex checkout, and the temporary timing
 buffer under `/tmp`. Authoritative assets, run ledgers and development output
 remain in this NAS project.
