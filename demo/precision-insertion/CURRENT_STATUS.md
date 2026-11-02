@@ -36,6 +36,27 @@ Last audited: **2026-11-03**, with the robot, hand and cameras off.
   `attempt_3c8ff1b830d347a2b8c45aa7ae1a5363` and
   `attempt_43e8596aec534c959c18b3a5e16f5f92` store human-observed insertion
   success for fixed grasp `table/0/20195`.
+- The 2026-11-03 read-only outcome audit found 16 pickup attempts: 13/15
+  manually labelled lifts succeeded, 12 reached the labelled pre-insertion
+  hold, 9 executed an insertion stroke and 2 ended with the released key
+  inside the socket. Only 1/9 executed insertion strokes has the newer,
+  independent `tip_entry_success` label. These are a development funnel, not
+  a success-rate estimate, because conditions and code revisions changed
+  across the attempts.
+- The corresponding Qwen/manual audit has 15 paired lift labels (13/15
+  agreement), 12 paired pre-insertion labels (12/12, all positive) and 6
+  paired released-key labels (6/6, including two positives and four
+  negatives). This is useful regression evidence, but the lift false
+  positives and missing negative pre-insertion examples rule out autonomous
+  label claims for now.
+- Historical closed-loop evidence contains 57 saved observations. Only four
+  are metric multi-view endpoint corrections; most are single-view planar or
+  measured-motion temporal hypotheses. The two observed insertion successes
+  both acquired a metric endpoint before converging. Large single-view drift
+  in older failed attempts predates commit `3c87fd9`, which now permits one
+  active probe and returns to the original hold unless the recapture produces
+  a real multi-view 3D endpoint. That revised behavior is covered by a
+  regression test but has not yet been exercised on the powered robot.
 - This physical evidence proves that the route has run; it does **not** prove
   robustness. Later saved attempts include both grasp and insertion failures,
   which remain part of the evaluation dataset.
