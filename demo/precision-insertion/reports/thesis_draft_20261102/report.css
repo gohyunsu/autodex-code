@@ -1,0 +1,103 @@
+@page {
+  size: A4;
+  margin: 30mm 25mm 18mm 25mm;
+  @bottom-center { content: counter(page); }
+}
+
+@page:first {
+  @bottom-center { content: none; }
+}
+
+html {
+  font-family: "Noto Serif CJK KR", "Noto Serif KR", serif;
+  font-size: 11pt;
+  line-height: 1.72;
+  color: #111;
+}
+
+body {
+  max-width: none;
+  margin: 0;
+}
+
+header#title-block-header {
+  min-height: 220mm;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  page-break-after: always;
+}
+
+header#title-block-header p { text-align: center; }
+
+h1.title { font-size: 24pt; margin: 0 0 9mm; }
+p.subtitle { font-size: 17pt; margin: 0 0 22mm; }
+p.author { font-size: 14pt; line-height: 2.0; }
+p.date { font-size: 16pt; font-weight: 600; }
+
+nav#TOC {
+  page-break-after: always;
+}
+
+nav#TOC::before {
+  content: "목차";
+  display: block;
+  text-align: center;
+  font-weight: 700;
+  font-size: 16pt;
+  margin-bottom: 8mm;
+}
+
+h1 {
+  font-size: 16pt;
+  text-align: center;
+  margin: 12mm 0 8mm;
+  page-break-before: always;
+}
+
+h1:first-of-type { page-break-before: auto; }
+h2 { font-size: 14pt; margin-top: 9mm; }
+h3 { font-size: 12pt; margin-top: 7mm; }
+p { text-align: justify; margin: 0 0 4.2mm; }
+li { margin-bottom: 1.5mm; }
+
+img {
+  display: block;
+  max-width: 100%;
+  max-height: 185mm;
+  margin: 5mm auto 2mm;
+  page-break-inside: avoid;
+}
+
+figure { page-break-inside: avoid; margin: 7mm 0; }
+figcaption {
+  text-align: center;
+  font-size: 9.5pt;
+  line-height: 1.45;
+  margin: 1mm 6mm 5mm;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 5mm 0;
+  font-size: 9.5pt;
+  line-height: 1.45;
+  page-break-inside: avoid;
+}
+
+th, td { border: 0.4pt solid #555; padding: 2.2mm; vertical-align: top; }
+th { background: #eceff2; text-align: center; }
+
+pre, code {
+  font-family: "Noto Sans Mono CJK KR", monospace;
+  font-size: 9.5pt;
+}
+
+.math.display { margin: 6mm 0; text-align: center; }
+a { color: #000; text-decoration: none; }
+
+/* Pandoc preserves raw LaTeX page-break commands as empty blocks in some
+   conversions; explicit chapter page breaks above provide the PDF layout. */
