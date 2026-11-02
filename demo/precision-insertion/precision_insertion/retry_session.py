@@ -104,7 +104,10 @@ def _with_independent_projected_axis(
         insertion_axis_socket=axis["insertion_axis_socket"],
         axis_tilt_deg=axis["axis_tilt_deg"],
         axis_observation=axis,
-        xy_source=source)
+        # The independently fitted shaft direction does not change how XY
+        # was measured.  Preserve the XY source/status contract and record
+        # the additional orientation evidence under its own field.
+        axis_source=source)
 
 
 def _preinsert_xy_cameras(frame_rows: Mapping, capture: Mapping,

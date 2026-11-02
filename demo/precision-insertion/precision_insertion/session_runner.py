@@ -3310,10 +3310,14 @@ class SessionRunner:
         expected_sources = {
             "diagnostic_metric_xy_correction": {
                 "multiview_tip_and_axis",
-                "multiview_tip_xy_vertical_axis_assumption"},
+                "multiview_tip_xy_vertical_axis_assumption",
+                # Compatibility with reports written before axis evidence
+                # stopped overwriting the underlying XY source.
+                "sam3_tip_plus_independent_shaft_axis"},
             "diagnostic_planar_xy_hypothesis": {
                 "single_view_nominal_tip_height_plane",
-                "robust_multiview_nominal_tip_height_plane"},
+                "robust_multiview_nominal_tip_height_plane",
+                "sam3_tip_plus_independent_shaft_axis"},
             "diagnostic_exploratory_xy_step": {
                 "no_metric_measurement_exploratory_search"},
         }

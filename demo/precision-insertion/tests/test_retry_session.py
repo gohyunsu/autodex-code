@@ -66,6 +66,26 @@ def test_xy_backend_outage_needs_a_successful_model_response():
     retry_session._require_any_xy_vlm_response([failed, responded])
 
 
+def test_independent_axis_does_not_replace_xy_measurement_source(monkeypatch):
+    monkeypatch.setattr(retry_session, "estimate_projected_axis",
+                        lambda _views, minimum_views: {
+                            "status": "diagnostic_metric_axis",
+                            "insertion_axis_socket": [0.0, 0.0, -1.0],
+                            "axis_tilt_deg": 0.0,
+                        })
+    alignment = {
+        "status": "diagnostic_planar_xy_hypothesis",
+        "xy_source": "robust_multiview_nominal_tip_height_plane",
+    }
+    result = retry_session._with_independent_projected_axis(
+        alignment, [object(), object(), object()],
+        source="sam3_tip_plus_independent_shaft_axis")
+    assert result["xy_source"] == (
+        "robust_multiview_nominal_tip_height_plane")
+    assert result["axis_source"] == "sam3_tip_plus_independent_shaft_axis"
+    assert result["insertion_axis_socket"] == [0.0, 0.0, -1.0]
+
+
 def _inputs(tmp_path, monkeypatch):
     args = _setup(tmp_path)
     mode = args["mode"]

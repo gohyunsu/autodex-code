@@ -363,6 +363,7 @@ def test_zerodex_session_forwards_direct_lying_planning_policy(
 @pytest.mark.parametrize("xy_source", [
     "multiview_tip_and_axis",  # Qwen line estimate
     "multiview_tip_xy_vertical_axis_assumption",  # tracked/SAM face point
+    "sam3_tip_plus_independent_shaft_axis",  # legacy combined-source report
 ])
 @pytest.mark.parametrize("increment", [(0.0006, -0.0008), (0.0, 0.0)])
 @pytest.mark.parametrize("force_stop", [False, True])

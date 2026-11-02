@@ -105,7 +105,8 @@ def mask_overlay(panel: Image.Image, record: dict, crop: list[int],
 
 
 def draw_panel(image_path: Path, record: dict, camera: str, observation: dict,
-               run_dir: Path, fixture_root: Path | None) -> Image.Image:
+               run_dir: Path, fixture_root: Path | None, *,
+               socket_pose_outlier: bool = False) -> Image.Image:
     crop = list(map(int, record["crop_xyxy"]))
     panel = Image.open(image_path).convert("RGB").crop(tuple(crop))
     panel = mask_overlay(panel, record, crop, observation)
@@ -165,7 +166,9 @@ def draw_panel(image_path: Path, record: dict, camera: str, observation: dict,
 
     used = camera in alignment.get("inlier_cameras", [])
     reason = record.get("reason", "unknown").replace("_", " ")
-    status = "used" if used else ("observed" if fit is not None else reason)
+    status = ("used" if used else
+              "socket-pose outlier" if socket_pose_outlier else
+              "observed / rejected" if fit is not None else reason)
     draw.rounded_rectangle((8, 8, 247, 50), radius=10,
                            fill=(9, 19, 30, 215))
     label = f"{camera}  |  {status}"
@@ -174,6 +177,28 @@ def draw_panel(image_path: Path, record: dict, camera: str, observation: dict,
     draw.text((20, 16), label, font=font(17 if len(label) > 25 else 21,
                                         bold=used),
               fill=("#ffffff" if used else "#cbd5df"))
+    return panel.resize((PANEL, PANEL), LANCZOS)
+
+
+def draw_unprocessed_panel(image_path: Path, camera: str, run_dir: Path,
+                           fixture_root: Path | None, *,
+                           status: str) -> Image.Image:
+    """Show a captured view that the estimator did not process."""
+    image = Image.open(image_path).convert("RGB")
+    ring_full = socket_ring(run_dir, camera, fixture_root)
+    center = np.mean(np.asarray(ring_full, dtype=float), axis=0)
+    side = min(512, image.width, image.height)
+    x0 = int(np.clip(round(center[0] - side/2), 0, image.width-side))
+    y0 = int(np.clip(round(center[1] - side/2), 0, image.height-side))
+    crop = [x0, y0, x0+side, y0+side]
+    panel = image.crop(tuple(crop))
+    draw = ImageDraw.Draw(panel)
+    ring = [local(p, crop) for p in ring_full]
+    draw.line(ring + ring[:1], fill=SOCKET_POSE, width=4)
+    draw.rounded_rectangle((8, 8, 365, 50), radius=10,
+                           fill=(9, 19, 30, 215))
+    draw.text((20, 16), f"{camera}  |  {status}", font=font(18),
+              fill="#cbd5df")
     return panel.resize((PANEL, PANEL), LANCZOS)
 
 
@@ -220,7 +245,8 @@ def convergence_plot(observations: list[dict], current: int) -> Image.Image:
 
 def compose(observations: list[dict], index: int, run_dir: Path,
             fixture_root: Path | None, shift: dict | None,
-            excluded_cameras: set[str]) -> Image.Image:
+            excluded_cameras: set[str], *, show_all_views: bool,
+            socket_pose_outliers: set[str]) -> Image.Image:
     observation = observations[index]
     canvas = Image.new("RGB", CANVAS, PANEL_BACKGROUND)
     draw = ImageDraw.Draw(canvas)
@@ -253,13 +279,42 @@ def compose(observations: list[dict], index: int, run_dir: Path,
     records = {r["camera_id"]: r
                for r in observation["alignment"]["sam_half_ellipse_views"]}
     inlier_set = set(inliers)
-    cameras = [camera for camera in sorted(records)
-               if camera in inlier_set and camera not in excluded_cameras]
     raw = Path(observation["raw_bundle"]) / "images"
-    for x, camera in zip(panel_positions(len(cameras)), cameras):
-        panel = draw_panel(raw/f"{camera}.png", records[camera], camera,
-                           observation, run_dir, fixture_root)
-        canvas.paste(panel, (x, PANEL_Y))
+    available_cameras = sorted(path.stem for path in raw.glob("*.png"))
+    cameras = [camera for camera in (
+                   available_cameras if show_all_views else sorted(records))
+               if camera not in excluded_cameras and
+               (show_all_views or camera in inlier_set)]
+    if cameras:
+        for x, camera in zip(panel_positions(len(cameras)), cameras):
+            if camera in records:
+                panel = draw_panel(
+                    raw/f"{camera}.png", records[camera], camera,
+                    observation, run_dir, fixture_root,
+                    socket_pose_outlier=(camera in socket_pose_outliers))
+            else:
+                panel = draw_unprocessed_panel(
+                    raw/f"{camera}.png", camera, run_dir, fixture_root,
+                    status=("not processed / socket-pose outlier"
+                            if camera in socket_pose_outliers else
+                            "not processed"))
+            canvas.paste(panel, (x, PANEL_Y))
+    else:
+        # An abstaining iteration has no inlier view by definition. Keep the
+        # iteration in the animation without presenting an excluded view as
+        # measurement evidence.
+        draw.rounded_rectangle((320, PANEL_Y, 1600, PANEL_Y + PANEL),
+                               radius=24, fill="#0b131d",
+                               outline="#394857", width=3)
+        draw.text((CANVAS[0]//2, PANEL_Y + 160),
+                  "No valid key-tip view",
+                  anchor="mm", font=font(42, bold=True), fill="#ffb347")
+        draw.text((CANVAS[0]//2, PANEL_Y + 225),
+                  observation["alignment"]["reason"].replace("_", " "),
+                  anchor="mm", font=font(25), fill="#dce5ed")
+        draw.text((CANVAS[0]//2, PANEL_Y + 285),
+                  "No image estimate was accepted in this iteration.",
+                  anchor="mm", font=font(22), fill="#aebbc7")
 
     plot = convergence_plot(observations, index)
     canvas.paste(plot, (42, 654))
@@ -338,6 +393,10 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--exclude-camera", action="append", default=[],
                         help="Omit one camera from the rendered grids only")
+    parser.add_argument(
+        "--all-views", action="store_true",
+        help=("Render every recorded view and label whether it was used; "
+              "the default renders estimator inliers only"))
     args = parser.parse_args()
     attempt = args.attempt_dir.resolve()
     run_dir = args.session_run_dir.resolve()
@@ -355,24 +414,28 @@ def main() -> None:
     # of older evidence that predates the recorded selection.
     socket_selection = observations[0].get(
         "socket_geometry_view_selection", {})
-    excluded_cameras.update(socket_selection.get(
+    socket_pose_outliers = set(socket_selection.get(
         "excluded_camera_ids", []))
+    if not args.all_views:
+        excluded_cameras.update(socket_pose_outliers)
 
     shift_paths = sorted((attempt/"same_trial_xy"/"shifts").glob("*/report.json"))
-    # Active-observation runs also contain descriptive auxiliary moves such
-    # as ``000_lateral_0`` and ``001_post_lateral_correction``.  The frame
-    # grid associates only the canonical, numeric correction following each
-    # observation; keep the auxiliary reports on disk without trying to cast
-    # their names to iteration numbers.
-    shifts = {int(path.parent.name): read(path) for path in shift_paths
-              if path.parent.name.isdigit()}
+    # A move may carry a descriptive suffix (for example the return after an
+    # unverified planar probe).  Its numeric prefix still identifies the
+    # observation that requested it.  The later axial-height restore is a
+    # separate move and must not be displayed as that observation's XY move.
+    shifts = {}
+    for path in shift_paths:
+        prefix = path.parent.name.split("_", 1)[0]
+        if prefix.isdigit():
+            shifts[int(prefix)] = read(path)
     frames = []
     records = []
     for index, observation in enumerate(observations):
-        shift_index = index if index < len(observations)-1 else index+1
-        shift = shifts.get(shift_index)
+        shift = shifts.get(index)
         frame = compose(observations, index, run_dir, args.fixture_root, shift,
-                        excluded_cameras)
+                        excluded_cameras, show_all_views=args.all_views,
+                        socket_pose_outliers=socket_pose_outliers)
         path = output/f"iteration_{index:02d}.png"
         frame.save(path)
         frames.append(frame)
@@ -407,7 +470,9 @@ def main() -> None:
         "attempt_dir": str(attempt),
         "session_run_dir": str(run_dir),
         "excluded_cameras": sorted(excluded_cameras),
-        "endpoint_iteration_views": "inliers_only",
+        "endpoint_iteration_views": (
+            "all_recorded_views_with_used_status" if args.all_views else
+            "inliers_only"),
         "socket_geometry_view_selection": socket_selection,
         "gif": str(gif),
         "final_result_frame": None if final is None else str(final_path),
