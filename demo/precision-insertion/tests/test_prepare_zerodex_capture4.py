@@ -5,7 +5,9 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from prepare_zerodex_capture4 import build  # noqa: E402
+import prepare_zerodex_capture4 as prepare  # noqa: E402
+
+build = prepare.build
 
 
 def test_builder_uses_configured_capture_ip_and_camera_ids(tmp_path):
@@ -37,3 +39,34 @@ def test_builder_uses_configured_capture_ip_and_camera_ids(tmp_path):
     assert launch["capture_ips"] == ["192.0.2.4"]
     assert launch["camera_ids"] == ["100", "200", "300", "400"]
     assert launch["board_fit_camera_ids"] == ["100", "200", "400"]
+    runtime = json.loads((output / "franka_runtime.json").read_text(
+        encoding="utf-8"))
+    assert runtime["held_motion_monitor"]["daemon_binary_path"] == str(
+        output / "robot_deps/restored/home/robot/paradex/cpp/"
+                 "franka_daemon/build/franka_daemon")
+
+
+def test_cli_defaults_use_independent_project_roots(
+    tmp_path, monkeypatch, capsys,
+):
+    nas = tmp_path / "nas_project"
+    local = tmp_path / "local_project"
+    monkeypatch.setenv("PRECISION_NAS_PROJECT_ROOT", str(nas))
+    monkeypatch.setenv("PRECISION_LOCAL_PROJECT_ROOT", str(local))
+    monkeypatch.setattr(prepare, "build", lambda **kwargs: {
+        key: str(value) if isinstance(value, Path) else value
+        for key, value in kwargs.items()
+    })
+    result = prepare.main([
+        "--source-stage", str(tmp_path / "source"),
+        "--calibration-dir", str(tmp_path / "calibration"),
+        "--c2r-npy", str(tmp_path / "C2R.npy"),
+    ])
+    assert result == 0
+    record = json.loads(capsys.readouterr().out)
+    shared = nas / "runtime/active_shared_data"
+    assert record["shared_root"] == str(shared)
+    assert record["output_dir"] == str(
+        shared / "AutoDex/precision_insertion/zerodex_capture4")
+    assert record["qwen_model_dir"] == str(
+        local / "cache/models/Qwen3-VL-2B-Instruct")

@@ -14,6 +14,10 @@ import os
 from pathlib import Path
 import shutil
 
+from precision_insertion.project_layout import (
+    local_project_root, nas_project_root,
+)
+
 
 # Use all cameras as inputs. ChArUco fitting removes per-corner reprojection
 # outliers, and the socket-only fit records a fresh per-capture inlier set.
@@ -78,9 +82,13 @@ def build(*, source_stage: Path, shared_root: Path, calibration_dir: Path,
         if key not in {"workers", "worker_root"}
     }
     runtime["vlm"].update(mode="local", model_id=str(qwen_model_dir))
-    runtime["held_motion_monitor"]["daemon_binary_path"] = (
-        str(shared_root.parent / "paradex" / "cpp" / "franka_daemon" /
-            "build" / "franka_daemon"))
+    # The ZeroDex launcher and the generated runtime record must identify the
+    # same project-owned controller binary.  Older versions guessed a
+    # ``shared_root.parent/paradex`` path from the AutoDex machine layout;
+    # that path is unrelated to this self-contained stage.
+    runtime["held_motion_monitor"]["daemon_binary_path"] = str(
+        output_dir / "robot_deps" / "restored" / "home" / "robot" /
+        "paradex" / "cpp" / "franka_daemon" / "build" / "franka_daemon")
     _write_json(output_dir / "franka_runtime.json", runtime)
 
     catalogs = []
@@ -101,16 +109,18 @@ def build(*, source_stage: Path, shared_root: Path, calibration_dir: Path,
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-stage", type=Path, required=True)
-    parser.add_argument("--shared-root", type=Path,
-                        default=Path.home() / "shared_data")
+    parser.add_argument("--shared-root", type=Path, default=None,
+                        help=("project runtime shared-data root; defaults to "
+                              "PRECISION_NAS_PROJECT_ROOT/runtime/"
+                              "active_shared_data"))
     parser.add_argument("--calibration-dir", type=Path, required=True)
     parser.add_argument("--c2r-npy", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path,
-                        default=Path.home() / "shared_data" / "AutoDex" /
-                                "precision_insertion" / "zerodex_capture4")
-    parser.add_argument("--qwen-model-dir", type=Path,
-                        default=Path.home() / "shared_data" / "AutoDex" /
-                                "models" / "Qwen3-VL-2B-Instruct")
+    parser.add_argument("--output-dir", type=Path, default=None,
+                        help=("generated stage; defaults below the selected "
+                              "project shared-data root"))
+    parser.add_argument("--qwen-model-dir", type=Path, default=None,
+                        help=("local Qwen cache; defaults below "
+                              "PRECISION_LOCAL_PROJECT_ROOT"))
     parser.add_argument("--capture-ip", default=os.environ.get(
         "PRECISION_CAPTURE4_IP", "147.46.219.136"))
     parser.add_argument("--camera-ids", type=_serials, default=_serials(
@@ -122,6 +132,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--default-gap-mm", type=int, default=5,
                         help="gap in the generated launch template; the runner may override it")
     args = parser.parse_args(argv)
+    if args.shared_root is None:
+        args.shared_root = nas_project_root() / "runtime" / "active_shared_data"
+    if args.output_dir is None:
+        args.output_dir = (args.shared_root / "AutoDex" /
+                           "precision_insertion" / "zerodex_capture4")
+    if args.qwen_model_dir is None:
+        args.qwen_model_dir = (local_project_root() / "cache" / "models" /
+                               "Qwen3-VL-2B-Instruct")
     print(json.dumps(build(**vars(args)), indent=2))
     return 0
 

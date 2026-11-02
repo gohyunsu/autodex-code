@@ -737,18 +737,23 @@ the required Python imports; these commands are for rebuilding it.
 
 The profile can be rebuilt with `prepare_zerodex_capture4.py --source-stage
 <commissioned-stage> --calibration-dir <capture4-calibration> --c2r-npy
-<valid-C2R.npy>`. This copies/rebinds camera/runtime assets, but deliberately
-does not copy the AutoDex right-angle mount catalogs. Screen each socket gap
-with the ZeroDex straight-mount URDF; for example:
+<valid-C2R.npy>`. Its defaults now resolve through
+`PRECISION_NAS_PROJECT_ROOT` and `PRECISION_LOCAL_PROJECT_ROOT`; it no longer
+falls back to the old `~/shared_data/AutoDex` tree. The generated controller
+identity points to the same stage-owned `robot_deps` binary used by
+`run_zerodex_franka_daemon.sh`. This copies/rebinds camera/runtime assets, but
+deliberately does not copy the AutoDex right-angle mount catalogs. Screen each
+socket gap with the ZeroDex straight-mount URDF; for example:
 
 ```bash
 cd /home/hyunsu/autodex-code
+source demo/precision-insertion/config/zerodex_capture4.env.sh
 export PRECISION_FR3_INSPIRE_URDF="$PWD/autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf"
 export PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src"
 /home/hyunsu/.venvs/precision-vlm/bin/python demo/precision-insertion/run_pipeline.py screen-catalog \
-  --shared-root /home/hyunsu/shared_data --mode cylinder --gap-mm 20 \
+  --shared-root "$PRECISION_SHARED_ROOT" --mode cylinder --gap-mm 20 \
   --min-hand-clearance-mm 0 \
-  --output /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/recipient_gap20_endpoint_catalog_straight.json
+  --output "$PRECISION_STAGE_ROOT/recipient_gap20_endpoint_catalog_straight.json"
 ```
 
 As of 2026-10-28, all six default `_straight.json` catalogs have been
@@ -853,13 +858,14 @@ for this demo's stock 50 Hz ParaDex follower and measured wrench/hand trace.
 
 ```bash
 cd /home/hyunsu/autodex-code
+source demo/precision-insertion/config/zerodex_capture4.env.sh
 python3 demo/precision-insertion/manage_zerodex_capture4_services.py start
 bash demo/precision-insertion/run_zerodex_capture4.sh --check
 PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" \
 /home/hyunsu/.venvs/precision-vlm/bin/python \
   demo/precision-insertion/probe_zerodex_socket.py \
-  --launch-config /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/launch.json \
-  --evidence-dir /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/socket_probe_NEW
+  --launch-config "$PRECISION_STAGE_ROOT/launch.json" \
+  --evidence-dir "$PRECISION_DEV_ROOT/camera_only/socket_probe_NEW"
 python3 demo/precision-insertion/manage_zerodex_capture4_services.py stop
 ```
 
@@ -867,11 +873,13 @@ If the board is unlit, measure only the new transport without relaxing board
 pose criteria:
 
 ```bash
+cd /home/hyunsu/autodex-code
+source demo/precision-insertion/config/zerodex_capture4.env.sh
 PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" \
 /home/hyunsu/.venvs/precision-vlm/bin/python \
   demo/precision-insertion/probe_zerodex_inline_frames.py \
-  --launch-config /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/launch.json \
-  --evidence-dir /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/runs/inline_probe_NEW \
+  --launch-config "$PRECISION_STAGE_ROOT/launch.json" \
+  --evidence-dir "$PRECISION_DEV_ROOT/camera_only/inline_probe_NEW" \
   --target key
 ```
 
@@ -945,9 +953,11 @@ To test a complete camera-only fixed-socket session with a lit board and the
 key absent, start the isolated services, then run:
 
 ```bash
+cd /home/hyunsu/autodex-code
+source demo/precision-insertion/config/zerodex_capture4.env.sh
 PYTHONPATH="$PWD:$PWD/demo/precision-insertion:$PWD/src" \
 /home/hyunsu/.venvs/precision-vlm/bin/python demo/precision-insertion/run_pipeline.py start-session \
-  --config /home/hyunsu/shared_data/AutoDex/precision_insertion/zerodex_capture4/launch.json \
+  --config "$PRECISION_STAGE_ROOT/launch.json" \
   --capture --init-port-mask 15006 --init-port-pose 15007 --init-port-cmd 16893
 ```
 
