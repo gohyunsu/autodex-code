@@ -89,10 +89,10 @@ export PRECISION_VLM_CAMERA_IDS=${PRECISION_VLM_CAMERA_IDS:-26053248,25322639,25
 # socket-pose inliers select the actual endpoint views before Qwen/SAM work.
 export PRECISION_XY_PREFERRED_CAMERA_IDS=${PRECISION_XY_PREFERRED_CAMERA_IDS:-$PRECISION_CAPTURE4_CAMERA_IDS}
 export PRECISION_PREINSERT_AUDIT_OVERLAY=${PRECISION_PREINSERT_AUDIT_OVERLAY:-0}
-# Six reviewed released-key episodes (five with a 5 mm socket, one with a
-# 10 mm socket) replayed correctly with this three-view A/B vote. XY
-# grounding still has all four cameras available.
-export PRECISION_FINAL_VLM_CAMERA_IDS=${PRECISION_FINAL_VLM_CAMERA_IDS:-26053248,25322639,25305462}
+# Use the three lowest-residual inliers from this session's socket-only fit.
+# The capture and stored evidence still contain all four views. An experiment
+# may explicitly set PRECISION_FINAL_VLM_CAMERA_IDS to replay a fixed subset.
+export PRECISION_FINAL_VLM_VIEW_COUNT=${PRECISION_FINAL_VLM_VIEW_COUNT:-3}
 export PRECISION_VISIBLE_GRIP_CAMERA_IDS=${PRECISION_VISIBLE_GRIP_CAMERA_IDS:-$PRECISION_VLM_CAMERA_IDS}
 
 # Existing local CUDA headers are needed by nvdiffrast's first-use build.

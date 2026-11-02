@@ -13,12 +13,16 @@ from dataclasses import asdict
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 
 import cv2
 from PIL import Image
 
 from .frame_provenance import bounded_capture_skew_s, image_sha256
+from .camera_selection import (
+    limit_ranked_camera_selection, socket_consistent_alignment_cameras,
+)
 from .insertion_checkpoint import (
     _admitted_measurement, _metric_record, verify_preinsert_raw_capture,
 )
@@ -201,6 +205,7 @@ def assess_released_insertion_checkpoint(
     label_mode: str = "vlm_only", manual_annotation: dict | None = None,
     final_camera_ids: list[str] | None = None,
     final_capture: RawCameraCapture | None = None,
+    session_calibration_record: dict | None = None,
 ) -> dict:
     """Create the released-key task label while retaining controller metrics."""
     _safe_id(attempt_id, "attempt ID")
@@ -233,6 +238,29 @@ def assess_released_insertion_checkpoint(
     # comparison.  Both captures retain their own frame provenance below.
     available_cameras = (set(initial["frame_evidence"]) &
                          set(final["frame_evidence"]))
+    selection_basis = None
+    fixed_final_views = os.environ.get(
+        "PRECISION_FINAL_VLM_CAMERA_IDS", "").strip()
+    if session_calibration_record is not None:
+        calibration_sha256 = hashlib.sha256(json.dumps(
+            dict(session_calibration_record), sort_keys=True,
+            separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")).hexdigest()
+        if calibration_sha256 != session_calibration_sha256:
+            raise ValueError("released checkpoint used another session calibration")
+    if (final_camera_ids is None and not fixed_final_views and
+            session_calibration_record is not None):
+        raw_limit = os.environ.get("PRECISION_FINAL_VLM_VIEW_COUNT", "3")
+        try:
+            view_limit = int(raw_limit)
+        except ValueError as exc:
+            raise ValueError(
+                "PRECISION_FINAL_VLM_VIEW_COUNT must be an integer") from exc
+        selection_basis = limit_ranked_camera_selection(
+            socket_consistent_alignment_cameras(
+                session_calibration_record, sorted(available_cameras)),
+            view_limit)
+        final_camera_ids = selection_basis["selected_camera_ids"]
     preferred_cameras = final_assessment_cameras(
         available_cameras, selected=final_camera_ids)
     cameras, socket_visible = final_cameras_with_visible_socket(
@@ -324,6 +352,8 @@ def assess_released_insertion_checkpoint(
             "preferred": preferred_cameras,
             "selected": cameras,
             "socket_projected_visible": socket_visible,
+            **({"session_selection": selection_basis}
+               if selection_basis is not None else {}),
         },
         "minimum_visual_views": minimum_visual_views,
         "max_phase_skew_s": max_phase_skew_s,
@@ -423,10 +453,14 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
             set(final["frame_evidence"]),
             ((initial.get("consistency", {}).get("socket_exclusion") or {})
              .get("per_camera", {})))
-        if (selection != {"preferred": preferred, "selected": expected,
-                          "socket_projected_visible": visibility} or
+        if (selection.get("selected") != expected or
+                selection.get("socket_projected_visible") != visibility or
                 set(expected) != grouped["final_clear_view"]):
             raise ValueError("released-insertion socket view selection changed")
+        basis = selection.get("session_selection")
+        if (basis is not None and
+                set(basis.get("selected_camera_ids", [])) != set(preferred)):
+            raise ValueError("released-insertion session view ranking changed")
     policy = report.get("visual_input_policy")
     new_policy = policy in ("final_socket_crop_token_v1",
                             "final_socket_crop_token_v2",

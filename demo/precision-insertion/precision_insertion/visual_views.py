@@ -1,4 +1,4 @@
-"""Choose the operator's fixed camera views for visual assessments."""
+"""Resolve available camera views and optional experiment overrides."""
 
 from __future__ import annotations
 

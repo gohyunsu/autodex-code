@@ -2856,7 +2856,8 @@ class SessionRunner:
             max_phase_skew_s=max_phase_skew_s,
             minimum_visual_views=minimum_visual_views,
             label_mode=label_mode, manual_annotation=manual_annotation,
-            final_capture=final_capture)
+            final_capture=final_capture,
+            session_calibration_record=self.calibration.record)
         output = (self._attempt_dir / "released_insertion_assessments" /
                   f"{self._insertion_assessment_index:03d}")
         checkpoint = write_released_insertion_checkpoint(report, output)
