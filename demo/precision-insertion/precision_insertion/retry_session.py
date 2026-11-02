@@ -1145,6 +1145,7 @@ def _compute_sam_half_ellipse_alignment(
         dilation_px=0).per_camera
     metric_quorum = threading.Event()
     sam_gate = threading.Lock()
+    required_views = alignment_limits.minimum_views
 
     # Local Qwen can decode independent camera boxes in one GPU pass. Keep
     # the exact per-view prompt and crop; SAM still consumes each returned box
@@ -1314,7 +1315,7 @@ def _compute_sam_half_ellipse_alignment(
     def sufficient(completed: Mapping[int, tuple]) -> bool:
         views = [completed[index][0] for index in sorted(completed)
                  if completed[index][0] is not None]
-        if len(views) < 3:
+        if len(views) < required_views:
             return False
         trial = tracked_tip_xy_alignment(
             views, nominal_tip_z_socket_m=float(nominal_tip[2]),
@@ -1323,42 +1324,59 @@ def _compute_sam_half_ellipse_alignment(
             min_parallax_deg=alignment_limits.min_parallax_deg,
             max_nominal_tip_height_error_m=max_nominal_tip_height_error_m)
         if (trial["status"] != "diagnostic_metric_xy_correction" or
-                len(trial.get("inlier_cameras", ())) < 3):
+                len(trial.get("inlier_cameras", ())) < required_views):
             return False
         metric_quorum.set()
         return True
 
     preferred = tuple(camera.strip() for camera in os.environ.get(
         "PRECISION_XY_PREFERRED_CAMERA_IDS", "").split(",") if camera.strip())
-    if preferred:
-        if len(preferred) < 3 or len(set(preferred)) != len(preferred):
-            raise ValueError("preferred XY cameras need three distinct IDs")
-        by_camera = {frame.camera_id: frame for frame in frames}
-        ordered = ([by_camera[camera] for camera in preferred
-                    if camera in by_camera] +
-                   [frame for frame in frames
-                    if frame.camera_id not in preferred])
-        first, fallback = ordered[:3], ordered[3:]
-        # On capture4, the first three views often cannot resolve the held
-        # key, so the fourth is needed. One local Qwen batch is faster than
-        # two consecutive 3+1 batches; keep the existing SAM view order and
-        # stop rule unchanged.
-        if (type(batch_size) is int and
-                batch_size >= len(ordered) and
-                callable(infer_many)):
+    if preferred and (
+            len(preferred) < required_views or
+            len(set(preferred)) != len(preferred)):
+        raise ValueError(
+            "preferred XY cameras need distinct IDs and at least the "
+            "configured minimum view count")
+    by_camera = {frame.camera_id: frame for frame in frames}
+    preferred_present = [camera for camera in preferred if camera in by_camera]
+    ordered = ([by_camera[camera] for camera in preferred_present] +
+               [frame for frame in frames
+                if frame.camera_id not in preferred_present])
+    local_batched = (
+        len(ordered) > required_views and type(batch_size) is int and
+        batch_size >= len(ordered) and callable(infer_many))
+    if preferred or local_batched:
+        primary_count = (max(required_views, len(preferred_present))
+                         if preferred else required_views)
+        first, fallback = ordered[:primary_count], ordered[primary_count:]
+        # On capture4, the initial views may not resolve the held key, so
+        # later views may be needed. One local Qwen batch is faster
+        # than consecutive batches; SAM then advances one ranked view at a
+        # time and stops as soon as the configured metric quorum is present.
+        if local_batched:
             prefetch_boxes(ordered)
         else:
             prefetch_boxes(first)
         measured = map_view_calls(backend, first, measure)
         first_metric = sufficient({i: row for i, row in enumerate(measured)})
-        if not first_metric and fallback:
-            prefetch_boxes(fallback)
-            measured.extend(map_view_calls(backend, fallback, measure))
+        fallback_processed = []
+        if not first_metric:
+            if not local_batched:
+                prefetch_boxes(fallback)
+            for frame in fallback:
+                measured.extend(map_view_calls(backend, [frame], measure))
+                fallback_processed.append(frame.camera_id)
+                if sufficient({i: row for i, row in enumerate(measured)}):
+                    break
         view_selection = {
+            "method": ("explicit_camera_priority" if preferred else
+                       "session_ranked_minimum_view_quorum"),
+            "required_metric_views": required_views,
             "preferred_camera_ids": list(preferred),
             "processed_camera_ids": [row[1]["camera_id"] for row in measured],
             "fallback_camera_ids": [frame.camera_id for frame in fallback],
-            "fallback_used": not first_metric and bool(fallback),
+            "fallback_processed_camera_ids": fallback_processed,
+            "fallback_used": bool(fallback_processed),
         }
     elif (len(frames) > 3 and
           getattr(backend, "independent_remote_inference", False) and

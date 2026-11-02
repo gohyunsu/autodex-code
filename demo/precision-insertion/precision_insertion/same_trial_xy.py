@@ -21,7 +21,9 @@ import numpy as np
 from PIL import Image
 
 from .assets import AssetPaths
-from .camera_selection import socket_consistent_alignment_cameras
+from .camera_selection import (
+    limit_ranked_camera_selection, socket_consistent_alignment_cameras,
+)
 from .axis_jacobian import (
     plan_jacobian_linear_stroke, plan_jacobian_tip_axis_alignment,
 )
@@ -302,11 +304,12 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
     cameras = assessment_cameras(rows)
     socket_view_selection = socket_consistent_alignment_cameras(
         runner.calibration.record, cameras)
-    selected_cameras = set(socket_view_selection["selected_camera_ids"])
+    socket_view_selection = limit_ranked_camera_selection(
+        socket_view_selection,
+        len(socket_view_selection["selected_camera_ids"]))
+    selected_cameras = socket_view_selection["selected_camera_ids"]
     frames = []
-    for camera in cameras:
-        if camera not in selected_cameras:
-            continue
+    for camera in selected_cameras:
         image = images[camera]
         frames.append(LabeledFrame(
             camera, "preinsert_hold", rows[camera]["timestamp_s"],

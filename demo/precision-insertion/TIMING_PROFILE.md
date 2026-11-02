@@ -554,11 +554,14 @@ through the production SAM3/geometry code returned the same status
 (`abstain`), no metric XY, and identical per-view reasons in both episodes.
 The raw Qwen answers and times are in
 `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/qwen_split_quartet_20195_20261029.json`.
-The local batch-capable backend now asks all four key-box questions in one
-batch even when SAM still tests the preferred three views first. The fourth
-SAM view is still used only when the first three do not yield metric XY.
-This changes no motion or XY admission rule. The component saving is about
-0.27 s after model warmup; it is not a measured live-session speedup.
+The local batch-capable backend asks all four key-box questions in one batch.
+SAM then follows the current session's socket-residual ranking and stops as
+soon as `alignment_limits.minimum_views` (two in the capture4 profile) form a
+metric reconstruction. It evaluates the next ranked view one at a time only
+when that quorum is absent. This removes the former hard-coded three-view
+quorum without changing the triangulation's reprojection/parallax checks.
+The Qwen component saving is about 0.27 s after model warmup; the additional
+SAM saving depends on how many views are usable and awaits a live trace.
 
 A separate SAM3 batch probe on the first snapshot returned masks with IoU
 at least 0.9996 against serial inference. Its warm four-view runtime was

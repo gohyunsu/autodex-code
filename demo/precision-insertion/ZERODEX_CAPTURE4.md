@@ -1562,12 +1562,11 @@ probe, so its `pose_ok: false` fields do not evaluate FoundPose accuracy.
 ## 2026-10-28 four-view same-trial XY execution
 
 The ZeroDex launcher captures all four capture4 cameras and defaults to the
-Qwen-box + SAM3 half-ellipse key-face estimator for XY. This historical run computed the
-tip from `25305462`, `25322639`, and `25322642` first. Only when those views
-do not yield a consistent three-view metric point does it run Qwen/SAM3 on
-`26053248`. `PRECISION_XY_PREFERRED_CAMERA_IDS` changes the priority order;
-an empty value restores the original all-view processing. Camera acquisition,
-raw evidence, and other VLM checkpoint selections remain four-view.
+Qwen-box + SAM3 half-ellipse key-face estimator for XY. This historical run
+computed the tip from `25305462`, `25322639`, and `25322642` first. Only when
+those views did not yield a consistent three-view metric point did it run
+Qwen/SAM3 on `26053248`. Camera acquisition and raw evidence remained
+four-view.
 The recorded 5 mm-gap attempt `attempt_9542c1bd6c174baa9cc8a7f5b3a03211`
 picked, lifted, transferred, and executed three held-key XY shifts. The four
 camera observations are under `same_trial_xy/observations/000.json` through
@@ -1583,9 +1582,13 @@ yielded metric XY in all four; compared with the archived four-view robust
 fit, the XY coordinate difference was below 0.7 mm per axis. These four
 images are one held-grasp trajectory, so this supports the camera priority
 for the current fixture but does not establish general 3-view accuracy.
-The current launcher no longer fixes that three-view priority: it orders all
-capture4 cameras and processes the socket-pose inliers selected in the current
-session.
+The current launcher no longer fixes that three-view priority. It orders this
+session's socket-pose inliers by ascending socket-centre residual, batches all
+Qwen boxes once, and runs SAM in that order until the configured minimum of
+two views yields metric geometry. If the first pair is insufficient it adds
+the next ranked camera one at a time. `PRECISION_XY_PREFERRED_CAMERA_IDS` is
+empty by default and is now only an explicit experiment override. No camera
+serial is permanently excluded, and all four captured frames remain saved.
 
 No insertion command was sent. Offline replay from the saved final joint
 state and frozen collision world reproduced `axial_waypoint_unreachable`:

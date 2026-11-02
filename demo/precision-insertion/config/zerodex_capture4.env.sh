@@ -87,9 +87,10 @@ export PRECISION_CAPTURE4_CAMERA_IDS=${PRECISION_CAPTURE4_CAMERA_IDS:-26053248,2
 # encode a permanent camera blacklist in the machine profile.
 export PRECISION_BOARD_FIT_CAMERA_IDS=${PRECISION_BOARD_FIT_CAMERA_IDS:-$PRECISION_CAPTURE4_CAMERA_IDS}
 export PRECISION_VLM_CAMERA_IDS=${PRECISION_VLM_CAMERA_IDS:-26053248,25322639,25305462,25322642}
-# Ordering is no longer a fixed three-camera choice. Each session's
-# socket-pose inliers select the actual endpoint views before Qwen/SAM work.
-export PRECISION_XY_PREFERRED_CAMERA_IDS=${PRECISION_XY_PREFERRED_CAMERA_IDS:-$PRECISION_CAPTURE4_CAMERA_IDS}
+# By default each session's socket-pose inliers are ordered by their measured
+# centre residual. Set an explicit comma-separated order only for a controlled
+# camera-priority experiment; no serial is permanently preferred.
+export PRECISION_XY_PREFERRED_CAMERA_IDS=${PRECISION_XY_PREFERRED_CAMERA_IDS-}
 # Use the three lowest-residual inliers from this session's socket-only fit.
 # The capture and stored evidence still contain all four views. An experiment
 # may explicitly set PRECISION_FINAL_VLM_CAMERA_IDS to replay a fixed subset.

@@ -342,7 +342,8 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
                 backend=BoxBackend(), sam_segmentor=MaskBackend(),
                 intrinsics_full=intrinsics, extrinsics_full=extrinsics,
                 alignment_limits=SimpleNamespace(
-                    max_reprojection_px=5., min_parallax_deg=1.),
+                    max_reprojection_px=5., min_parallax_deg=1.,
+                    minimum_views=3),
                 search_index=0, max_nominal_tip_height_error_m=.03)
         return
     backend = BoxBackend()
@@ -353,7 +354,8 @@ def test_same_saved_frame_qwen_roi_sam_center_maps_to_full_pixels(
             backend=backend, sam_segmentor=MaskBackend(),
             intrinsics_full=intrinsics, extrinsics_full=extrinsics,
             alignment_limits=SimpleNamespace(
-                max_reprojection_px=5., min_parallax_deg=1.),
+                max_reprojection_px=5., min_parallax_deg=1.,
+                minimum_views=3),
             search_index=0, max_nominal_tip_height_error_m=.03))
     assert alignment["estimator"] == "sam3_half_ellipse_key_face_proxy"
     assert backend.batch_calls == (
@@ -497,7 +499,8 @@ def test_remote_sam_tip_uses_first_metric_quorum_or_later_views(
                 backend=backend, sam_segmentor=segmentor,
                 intrinsics_full=intrinsics, extrinsics_full=extrinsics,
                 alignment_limits=SimpleNamespace(
-                    max_reprojection_px=5., min_parallax_deg=1.),
+                    max_reprojection_px=5., min_parallax_deg=1.,
+                    minimum_views=3),
                 search_index=0, max_nominal_tip_height_error_m=.03))
         assert alignment["status"] == "diagnostic_metric_xy_correction"
         assert len(alignment["sam_half_ellipse_views"]) == (
@@ -513,7 +516,7 @@ def test_remote_sam_tip_uses_first_metric_quorum_or_later_views(
 
 
 @pytest.mark.parametrize("one_bad", [False, True])
-def test_capture4_batches_four_boxes_but_only_segments_fourth_if_needed(
+def test_capture4_batches_boxes_and_segments_until_policy_quorum(
     tmp_path, monkeypatch, one_bad,
 ):
     monkeypatch.setattr(
@@ -531,8 +534,7 @@ def test_capture4_batches_four_boxes_but_only_segments_fourth_if_needed(
                         lambda *_: SimpleNamespace(task_geometry=geometry))
     monkeypatch.setattr(retry_session, "validated_frozen_socket_pose",
                         lambda **_: np.eye(4))
-    monkeypatch.setenv("PRECISION_XY_PREFERRED_CAMERA_IDS",
-                       "cam_a,cam_b,cam_c")
+    monkeypatch.delenv("PRECISION_XY_PREFERRED_CAMERA_IDS", raising=False)
     key = np.eye(4)
     key[:3, :3] = [[1., 0., 0.], [0., 0., 1.], [0., -1., 0.]]
     key[2, 3] = 1.
@@ -591,16 +593,18 @@ def test_capture4_batches_four_boxes_but_only_segments_fourth_if_needed(
         backend=backend, sam_segmentor=segmentor,
         intrinsics_full=intrinsics, extrinsics_full=extrinsics,
         alignment_limits=SimpleNamespace(
-            max_reprojection_px=5., min_parallax_deg=1.),
+            max_reprojection_px=5., min_parallax_deg=1.,
+            minimum_views=2),
         search_index=0, max_nominal_tip_height_error_m=.03)
     assert alignment["status"] == "diagnostic_metric_xy_correction"
     assert backend.batches == [["cam_a", "cam_b", "cam_c", "cam_d"]]
     assert backend.singles == []
-    assert segmentor.calls == (["cam_a", "cam_b", "cam_c", "cam_d"]
-                               if one_bad else ["cam_a", "cam_b", "cam_c"])
+    assert segmentor.calls == (["cam_a", "cam_b", "cam_c"]
+                               if one_bad else ["cam_a", "cam_b"])
     assert alignment["camera_selection"]["fallback_used"] is one_bad
     assert len(alignment["camera_selection"]["processed_camera_ids"]) == (
-        4 if one_bad else 3)
+        3 if one_bad else 2)
+    assert alignment["camera_selection"]["required_metric_views"] == 2
 
 
 def test_sam_roi_mask_bytes_are_saved_with_the_xy_diagnostic(tmp_path):
