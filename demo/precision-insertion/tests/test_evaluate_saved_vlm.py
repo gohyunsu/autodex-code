@@ -3,6 +3,7 @@
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 from PIL import Image
@@ -11,6 +12,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import evaluate_saved_vlm  # noqa: E402
+
+
+def test_documented_script_entrypoint_resolves_repository_packages(tmp_path):
+    script = Path(__file__).resolve().parents[1] / "evaluate_saved_vlm.py"
+    result = subprocess.run(
+        [sys.executable, "-I", str(script), "--help"], cwd=tmp_path,
+        capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert "--manifest" in result.stdout
 
 
 def _digest(path):

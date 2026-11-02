@@ -23,8 +23,10 @@ from PIL import Image
 
 
 DEMO_DIR = Path(__file__).resolve().parent
-if str(DEMO_DIR) not in sys.path:
-    sys.path.insert(0, str(DEMO_DIR))
+REPO_ROOT = DEMO_DIR.parents[1]
+for module_root in (str(REPO_ROOT), str(DEMO_DIR)):
+    if module_root not in sys.path:
+        sys.path.insert(0, module_root)
 
 from precision_insertion.observer import (  # noqa: E402
     LabeledFrame, effective_local_vlm_model_id, load_vlm_backend,

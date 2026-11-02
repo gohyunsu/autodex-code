@@ -278,6 +278,14 @@ saved `released_vlm_dataset_20261029/evaluation_camera_summary_20261029.json`;
 it reproduced the same four aggregate labels and per-camera counts. The
 paired initial images were retained and hashed, while Qwen again received
 only the final session-socket crop.
+The current production code was replayed once more on 2026-11-03 after the
+ZeroDex branch split. It again produced 4/4 aggregate labels, with 4/4 for
+`25322639`, 4/4 for `26053248`, and 3/4 for `25305462`; the latter missed the
+single inside case. The report and stock timing sidecar are under
+`released_vlm_dataset_20261029/replay_20261103_cpu/`. This check used CPU
+because the booted realtime kernel had loaded the NVIDIA modules but had no
+`/dev/nvidia*` device nodes. Its 24.51 s VLM occupied time is therefore only
+a functional prompt/crop replay and must not be reported as live GPU latency.
 An additional **socket-only negative control** used the production prompt,
 session-projected socket crop, 384 px minimum long side, and 768×576 fit on
 eight archived views: four from a 5 mm socket session and four from a 10 mm
