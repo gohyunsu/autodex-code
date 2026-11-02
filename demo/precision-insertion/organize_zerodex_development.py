@@ -246,18 +246,22 @@ def runtime_mutable_inventory(*, stage_root: Path,
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stage-runs", type=Path, default=(
-        Path.home() / "shared_data/AutoDex/precision_insertion/zerodex_capture4/runs"))
+    parser.add_argument(
+        "--stage-runs", type=Path,
+        help="explicit pre-separation runs directory to migrate")
     parser.add_argument("--temp-root", type=Path, default=Path("/tmp"))
     parser.add_argument("--development-root", type=Path, default=Path(
         os.environ.get("PRECISION_DEV_ROOT",
-                       str(Path.home() / "precision_insertion_project/development/zerodex_capture4"))))
+                       str(nas_project_root() /
+                           "development/zerodex_capture4"))))
     parser.add_argument("--organize-nas-history", action="store_true")
     parser.add_argument("--organize-runtime-mutables", action="store_true")
     parser.add_argument("--check-runtime-mutables", action="store_true")
     parser.add_argument("--stage-root", type=Path, default=Path(
         os.environ.get("PRECISION_STAGE_ROOT",
-                       str(Path.home() / "shared_data/AutoDex/precision_insertion/zerodex_capture4"))))
+                       str(nas_project_root() /
+                           "runtime/active_shared_data/AutoDex/"
+                           "precision_insertion/zerodex_capture4"))))
     parser.add_argument("--nas-project-root", type=Path, default=Path(
         nas_project_root()))
     args = parser.parse_args()
@@ -281,6 +285,8 @@ def main() -> None:
             hyunsu_root=args.nas_project_root.parent,
             project_root=args.nas_project_root), indent=2))
         return
+    if args.stage_runs is None:
+        parser.error("legacy stage migration needs explicit --stage-runs")
     print(json.dumps(organize(
         stage_runs=args.stage_runs, temp_root=args.temp_root,
         development_root=args.development_root), indent=2))

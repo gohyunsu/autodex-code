@@ -158,6 +158,12 @@ def inspect_live_inputs(
         raise ValueError(
             "runtime JSON path resolves outside the allowed NAS namespace: "
             f"{first['source']}:{first['field']}={first['path']}")
+    if (config_namespace is not None and
+            config_namespace["legacy_path_references"]):
+        first = config_namespace["legacy_path_references"][0]
+        raise ValueError(
+            "ZeroDex runtime JSON still references a legacy AutoDex asset "
+            f"root: {first['source']}:{first['field']}={first['path']}")
     launch = load_session_launch(
         launch_config_path, allow_existing_evidence=True)
     if launch.mode.family != "cylinder":
@@ -206,6 +212,11 @@ def inspect_live_inputs(
     }
     namespace = runtime_namespace_report()
     if namespace is not None:
+        if namespace["legacy_path_references"]:
+            first = namespace["legacy_path_references"][0]
+            raise ValueError(
+                "ZeroDex runtime variable still references a legacy AutoDex "
+                f"asset root: {first['variable']}={first['path']}")
         result["storage_namespace"] = namespace
     if config_namespace is not None:
         result["config_storage_namespace"] = config_namespace

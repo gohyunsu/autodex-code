@@ -81,6 +81,14 @@ camera exception described below is unchanged. Repeated-use latency caches may
 stay local: the SAM checkpoint and Qwen model under
 `~/precision_insertion_project/cache/models`, Python environments, the
 project-owned ParaDex checkout, and the temporary timing buffer under `/tmp`.
+The profile also names the pre-separation AutoDex asset roots explicitly.
+Static preflight and live startup reject active variables or embedded JSON
+paths that resolve into those roots. The `AutoDex/` directory *inside* this
+project remains valid because it is the inherited v8 asset schema, not the old
+shared-data store. Current `--check` reports both
+`all_nas_paths_within_allowed_root=true` and
+`all_runtime_paths_independent=true`. This is a storage provenance check and
+does not add a grasp, perception, planning, alignment or insertion criterion.
 The machine profile selects the local Qwen copy when it exists, while static
 preflight reports its effective path without loading CUDA. Authoritative
 assets, run ledgers and development output remain in this NAS project. The

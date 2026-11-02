@@ -18,6 +18,11 @@ DEFAULT_NAS_PROJECT_ROOT = Path(
 DEFAULT_LOCAL_PROJECT_ROOT = Path.home() / "precision_insertion_project"
 DEFAULT_CAPTURE4_PROJECT_ROOT = Path(
     "/home/capture4/shared_data/hyunsu/precision_insertion")
+DEFAULT_LEGACY_ASSET_ROOTS = (
+    Path.home() / "shared_data/AutoDex",
+    Path("/home/robot/shared_data/AutoDex"),
+    Path.home() / "NAS-ParaDex2/AutoDex",
+)
 
 _RUNTIME_PATH_VARIABLES = (
     "PRECISION_NAS_PROJECT_ROOT",
@@ -38,15 +43,29 @@ _RUNTIME_PATH_VARIABLES = (
 )
 
 
-def _classify_path(path: Path, *, allowed: Path, mount: Path) -> dict:
+def _legacy_asset_roots(values: Mapping[str, str]) -> tuple[Path, ...]:
+    raw = values.get("PRECISION_LEGACY_ASSET_ROOTS")
+    selected = ((part for part in raw.split(os.pathsep) if part) if raw
+                else (str(path) for path in DEFAULT_LEGACY_ASSET_ROOTS))
+    return tuple(Path(part).expanduser().resolve(strict=False)
+                 for part in selected)
+
+
+def _classify_path(path: Path, *, allowed: Path, mount: Path,
+                   legacy_roots: tuple[Path, ...] = ()) -> dict:
     resolved = path.expanduser().resolve(strict=False)
     on_nas = resolved == mount or mount in resolved.parents
     within_allowed = (
         not on_nas or resolved == allowed or allowed in resolved.parents)
+    legacy_root = next((root for root in legacy_roots
+                        if resolved == root or root in resolved.parents), None)
     return {
         "path": str(resolved),
         "storage": "nas" if on_nas else "local",
         "within_allowed_nas_root": within_allowed,
+        "legacy_asset_root": (str(legacy_root)
+                              if legacy_root is not None else None),
+        "independent_project_path": legacy_root is None,
     }
 
 
@@ -119,23 +138,30 @@ def runtime_namespace_report(
     mount = Path(values.get(
         "PRECISION_NAS_MOUNT_ROOT", "/mnt/paradex2"
     )).expanduser().resolve(strict=False)
-    entries, violations = [], []
+    legacy_roots = _legacy_asset_roots(values)
+    entries, violations, legacy_references = [], [], []
     for name in _RUNTIME_PATH_VARIABLES:
         raw = values.get(name)
         if not raw:
             continue
         row = {"variable": name, **_classify_path(
-            Path(raw), allowed=allowed, mount=mount)}
+            Path(raw), allowed=allowed, mount=mount,
+            legacy_roots=legacy_roots)}
         entries.append(row)
         if not row["within_allowed_nas_root"]:
             violations.append(row)
+        if not row["independent_project_path"]:
+            legacy_references.append(row)
     return {
         "schema": "precision_insertion_runtime_namespace_v1",
         "nas_mount_root": str(mount),
         "allowed_nas_root": str(allowed),
+        "legacy_asset_roots": [str(path) for path in legacy_roots],
         "paths": entries,
         "violations": violations,
+        "legacy_path_references": legacy_references,
         "all_nas_paths_within_allowed_root": not violations,
+        "all_runtime_paths_independent": not legacy_references,
     }
 
 
@@ -156,13 +182,17 @@ def runtime_json_namespace_report(
     mount = Path(values.get(
         "PRECISION_NAS_MOUNT_ROOT", "/mnt/paradex2"
     )).expanduser().resolve(strict=False)
+    legacy_roots = _legacy_asset_roots(values)
     references = 0
     unique: dict[str, dict] = {}
     violations: list[dict] = []
+    legacy_references: list[dict] = []
     source_counts: dict[str, int] = {}
     for source_name, source_value in sources.items():
         source = Path(source_value).expanduser().resolve(strict=False)
-        source_row = _classify_path(source, allowed=allowed, mount=mount)
+        source_row = _classify_path(
+            source, allowed=allowed, mount=mount,
+            legacy_roots=legacy_roots)
         if not source_row["within_allowed_nas_root"]:
             violations.append({
                 "source": source_name,
@@ -172,15 +202,31 @@ def runtime_json_namespace_report(
             })
             source_counts[source_name] = 0
             continue
+        if not source_row["independent_project_path"]:
+            legacy_references.append({
+                "source": source_name,
+                "source_path": str(source),
+                "field": "$source",
+                **source_row,
+            })
         record = json.loads(source.read_text(encoding="utf-8"))
         count = 0
         for field, raw in _absolute_json_strings(record):
             count += 1
             references += 1
-            row = _classify_path(Path(raw), allowed=allowed, mount=mount)
+            row = _classify_path(
+                Path(raw), allowed=allowed, mount=mount,
+                legacy_roots=legacy_roots)
             unique.setdefault(row["path"], row)
             if not row["within_allowed_nas_root"]:
                 violations.append({
+                    "source": source_name,
+                    "source_path": str(source),
+                    "field": field,
+                    **row,
+                })
+            if not row["independent_project_path"]:
+                legacy_references.append({
                     "source": source_name,
                     "source_path": str(source),
                     "field": field,
@@ -191,11 +237,14 @@ def runtime_json_namespace_report(
         "schema": "precision_insertion_runtime_json_namespace_v1",
         "nas_mount_root": str(mount),
         "allowed_nas_root": str(allowed),
+        "legacy_asset_roots": [str(path) for path in legacy_roots],
         "sources": {name: str(Path(path).expanduser().resolve(strict=False))
                     for name, path in sources.items()},
         "absolute_path_references": references,
         "unique_absolute_paths": len(unique),
         "references_by_source": source_counts,
         "violations": violations,
+        "legacy_path_references": legacy_references,
         "all_nas_paths_within_allowed_root": not violations,
+        "all_runtime_paths_independent": not legacy_references,
     }

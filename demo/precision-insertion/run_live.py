@@ -43,7 +43,7 @@ from precision_insertion.live_runtime import (  # noqa: E402
 )
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.project_layout import (  # noqa: E402
-    nas_project_root, runtime_json_namespace_report,
+    nas_project_root, runtime_json_namespace_report, runtime_namespace_report,
 )
 from precision_insertion.timing_profile import (  # noqa: E402
     profile_run, timed, timing_directory,
@@ -210,6 +210,19 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(
             "runtime JSON path resolves outside the allowed NAS namespace: "
             f"{first['source']}:{first['field']}={first['path']}")
+    if (config_namespace is not None and
+            config_namespace["legacy_path_references"]):
+        first = config_namespace["legacy_path_references"][0]
+        parser.error(
+            "ZeroDex runtime JSON still references a legacy AutoDex asset "
+            f"root: {first['source']}:{first['field']}={first['path']}")
+    runtime_namespace = runtime_namespace_report()
+    if (runtime_namespace is not None and
+            runtime_namespace["legacy_path_references"]):
+        first = runtime_namespace["legacy_path_references"][0]
+        parser.error(
+            "ZeroDex runtime variable still references a legacy AutoDex "
+            f"asset root: {first['variable']}={first['path']}")
     if init_ports is None:
         parser.error("live run requires explicit frame-bound init daemon ports")
     if args.integration is None:

@@ -45,6 +45,24 @@ def test_runtime_namespace_reports_only_nas_paths_outside_hyunsu():
     assert local["within_allowed_nas_root"] is True
 
 
+def test_runtime_namespace_reports_legacy_autodex_asset_path():
+    report = runtime_namespace_report({
+        "PRECISION_NAS_MOUNT_ROOT": "/mnt/paradex2",
+        "PRECISION_ALLOWED_NAS_ROOT": "/mnt/paradex2/hyunsu",
+        "PRECISION_LEGACY_ASSET_ROOTS": (
+            "/home/hyunsu/shared_data/AutoDex:/home/robot/shared_data/AutoDex"),
+        "PRECISION_SAM_CHECKPOINT": (
+            "/home/robot/shared_data/AutoDex/weights/sam3/sam3.pt"),
+        "PRECISION_RUN_OUTPUT_ROOT": (
+            "/mnt/paradex2/hyunsu/precision_insertion/runs"),
+    })
+    assert report is not None
+    assert report["all_nas_paths_within_allowed_root"] is True
+    assert report["all_runtime_paths_independent"] is False
+    assert [row["variable"] for row in report["legacy_path_references"]] == [
+        "PRECISION_SAM_CHECKPOINT"]
+
+
 def test_runtime_json_namespace_audits_nested_absolute_paths(tmp_path):
     launch = tmp_path / "launch.json"
     launch.write_text(
@@ -63,6 +81,25 @@ def test_runtime_json_namespace_audits_nested_absolute_paths(tmp_path):
     assert report["references_by_source"] == {"launch_config": 3}
     assert report["all_nas_paths_within_allowed_root"] is False
     assert report["violations"][0]["field"] == "nested[0].bad"
+
+
+def test_runtime_json_namespace_reports_legacy_asset_reference(tmp_path):
+    launch = tmp_path / "launch.json"
+    launch.write_text(
+        '{"shared_root":"/home/robot/shared_data/AutoDex"}',
+        encoding="utf-8")
+    report = runtime_json_namespace_report(
+        {"launch_config": launch}, {
+            "PRECISION_NAS_MOUNT_ROOT": "/mnt/paradex2",
+            "PRECISION_ALLOWED_NAS_ROOT": "/mnt/paradex2/hyunsu",
+            "PRECISION_LEGACY_ASSET_ROOTS": (
+                "/home/hyunsu/shared_data/AutoDex:"
+                "/home/robot/shared_data/AutoDex"),
+        })
+    assert report is not None
+    assert report["all_nas_paths_within_allowed_root"] is True
+    assert report["all_runtime_paths_independent"] is False
+    assert report["legacy_path_references"][0]["field"] == "shared_root"
 
 
 def test_runtime_json_namespace_does_not_read_outside_source(tmp_path):

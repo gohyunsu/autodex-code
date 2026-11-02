@@ -28,6 +28,8 @@ for precision_path_var in \
   PRECISION_DEV_ROOT PRECISION_SAM_CHECKPOINT; do
   precision_require_allowed_nas_path \
     "$precision_path_var" "${!precision_path_var:-}"
+  precision_require_independent_runtime_path \
+    "$precision_path_var" "${!precision_path_var:-}"
 done
 unset precision_path_var
 export PRECISION_GAP_MM=${PRECISION_GAP_MM:-5}

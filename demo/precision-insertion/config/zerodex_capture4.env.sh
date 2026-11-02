@@ -13,6 +13,7 @@ export PRECISION_LOCAL_PROJECT_ROOT=${PRECISION_LOCAL_PROJECT_ROOT:-$HOME/precis
 # NAS mount.
 export PRECISION_NAS_MOUNT_ROOT=/mnt/paradex2
 export PRECISION_ALLOWED_NAS_ROOT=/mnt/paradex2/hyunsu
+export PRECISION_LEGACY_ASSET_ROOTS=${PRECISION_LEGACY_ASSET_ROOTS:-$HOME/shared_data/AutoDex:/home/robot/shared_data/AutoDex:$HOME/NAS-ParaDex2/AutoDex}
 export PRECISION_NAS_PROJECT_ROOT=${PRECISION_NAS_PROJECT_ROOT:-/mnt/paradex2/hyunsu/precision_insertion}
 export PRECISION_SHARED_ROOT=${PRECISION_SHARED_ROOT:-$PRECISION_NAS_PROJECT_ROOT/runtime/active_shared_data}
 # The AutoDex directory name inside this project is the v8 asset schema.

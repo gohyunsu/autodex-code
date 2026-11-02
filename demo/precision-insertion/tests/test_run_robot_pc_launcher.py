@@ -133,6 +133,28 @@ def test_zerodex_profile_rejects_only_nas_paths_outside_hyunsu(tmp_path):
     assert "active cylindrical recipient stage is missing" in allowed.stderr
 
 
+def test_zerodex_launcher_rejects_legacy_local_asset_override(tmp_path):
+    demo = Path(__file__).resolve().parents[1]
+    root = demo.parents[1]
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    completed = subprocess.run(
+        ["bash", str(demo / "run_zerodex_capture4.sh"), "--check"],
+        env={
+            **os.environ,
+            "PRECISION_REPO_ROOT": str(root),
+            "PRECISION_STAGE_ROOT": str(stage),
+            "PRECISION_SAM_CHECKPOINT": (
+                "/home/robot/shared_data/AutoDex/weights/sam3/sam3.pt"),
+            "PRECISION_LEGACY_ASSET_ROOTS": (
+                "/home/hyunsu/shared_data/AutoDex:"
+                "/home/robot/shared_data/AutoDex"),
+        },
+        capture_output=True, text=True)
+    assert completed.returncode == 2
+    assert "legacy AutoDex asset root" in completed.stderr
+
+
 def test_zerodex_launcher_provides_demo_collision_compat(tmp_path):
     demo = Path(__file__).resolve().parents[1]
     root = demo.parents[1]

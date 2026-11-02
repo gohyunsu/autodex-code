@@ -276,6 +276,25 @@ def test_static_preflight_rejects_embedded_path_outside_allowed_nas(
             endpoint_catalog_path=catalog)
 
 
+def test_static_preflight_rejects_legacy_autodex_asset_reference(
+        monkeypatch, tmp_path):
+    launch = tmp_path / "launch.json"
+    catalog = tmp_path / "catalog.json"
+    launch.write_text(
+        '{"shared_root":"/home/robot/shared_data/AutoDex"}\n',
+        encoding="utf-8")
+    catalog.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setenv("PRECISION_NAS_MOUNT_ROOT", "/mnt/paradex2")
+    monkeypatch.setenv("PRECISION_ALLOWED_NAS_ROOT", "/mnt/paradex2/hyunsu")
+    monkeypatch.setenv(
+        "PRECISION_LEGACY_ASSET_ROOTS",
+        "/home/hyunsu/shared_data/AutoDex:/home/robot/shared_data/AutoDex")
+    with pytest.raises(ValueError, match="legacy AutoDex asset root"):
+        live_runtime.inspect_live_inputs(
+            launch_config_path=launch,
+            endpoint_catalog_path=catalog)
+
+
 def test_stage_module_path_check_does_not_execute_package(monkeypatch, tmp_path):
     package = tmp_path / "robot_pc_package"
     package.mkdir()

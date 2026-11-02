@@ -26,6 +26,10 @@ runtime-stage and `/tmp` diagnostics. It leaves symlinks at those old paths
 for saved evidence. New development output needs no post-run copy because
 `PRECISION_DEV_ROOT` already points into the NAS project. Full recordings are
 still uploaded separately after a run.
+The generic legacy migration mode now requires an explicit `--stage-runs`
+source; it no longer defaults to the old `~/shared_data/AutoDex` tree. The
+runtime-mutable and NAS-history modes derive their defaults from
+`PRECISION_NAS_PROJECT_ROOT`/`PRECISION_DEV_ROOT`.
 
 The runtime-mutable audit is read-only and can run even when the NAS is
 mounted read-only:

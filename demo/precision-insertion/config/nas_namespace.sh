@@ -25,3 +25,24 @@ precision_require_allowed_nas_path() {
       ;;
   esac
 }
+
+precision_require_independent_runtime_path() {
+  local label=$1
+  local value=${2:-}
+  [[ -z $value ]] && return 0
+  [[ -z ${PRECISION_LEGACY_ASSET_ROOTS:-} ]] && return 0
+
+  local resolved legacy raw_roots=$PRECISION_LEGACY_ASSET_ROOTS
+  resolved=$(realpath -m -- "$value")
+  local IFS=:
+  for legacy in $raw_roots; do
+    [[ -z $legacy ]] && continue
+    legacy=$(realpath -m -- "$legacy")
+    case "$resolved" in
+      "$legacy"|"$legacy"/*)
+        echo "$label resolves into a legacy AutoDex asset root: $resolved" >&2
+        return 2
+        ;;
+    esac
+  done
+}
