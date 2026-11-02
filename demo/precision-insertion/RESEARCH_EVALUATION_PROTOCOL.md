@@ -312,15 +312,17 @@ As of 2026-11-03, it finds 15 paired lift labels (13/15 agreement, with two
 false-positive `held` decisions), 12 paired transfer labels (12/12, but every
 human label is positive), and six paired final labels (two true positives and
 four true negatives). These figures describe the decisions saved during the
-original episodes, not a replay of a newer prompt. The current capture4 lift
-policy (`precision_insertion_visible_grip_v5`) was subsequently replayed on
-the same 15 cases: it required two positive cameras, disabled the ambiguous
-fingertip recrop, and produced no false `held` on the two recorded misses,
-while returning one of the 13 held cases as `miss` and one miss as
-`unobservable`. This is still an in-sample replay; the next live collection
-must be reported separately. The summary normalizes only camera serials and
-capture timestamps when grouping semantic prompts and keeps the exact
-full-prompt digests for provenance. The sample size and class balance are
+original episodes, not a replay of a newer prompt. The same summary now also
+reaggregates the saved primary per-view lift votes with the current capture4
+two-view rule (`precision_insertion_visible_grip_v5`): 13/14 binary decisions
+agree, one case abstains, false `held` is 0/2, and one true held case becomes
+`miss`. It intentionally does not reuse the historical fingertip recrop. This
+isolates vote aggregation only; it neither reruns Qwen nor evaluates a new
+prompt. The separate exact production-path replay remains in
+`replay_saved_lift_vlm.py`. Both are in-sample evidence, so the next live
+collection must be reported separately. The summary normalizes only camera
+serials and capture timestamps when grouping semantic prompts and keeps the
+exact full-prompt digests for provenance. The sample size and class balance are
 insufficient for an automatic-label accuracy claim; they define the negative
 examples that the next controlled collection must add.
 

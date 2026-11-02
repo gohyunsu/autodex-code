@@ -17,6 +17,9 @@ ASSESSMENTS = {
     "insertion_success": "released_insertion_assessments",
 }
 
+CURRENT_LIFT_REPLAY_POLICY = (
+    "precision_insertion_visible_grip_v5_two_view_consensus")
+
 
 def _latest_report(attempt: Path, directory: str) -> Path | None:
     reports = sorted((attempt / directory).glob("*/report.json"))
@@ -74,6 +77,33 @@ def _visual_policy(report: dict) -> tuple[str, str | None, str | None]:
     # digest that preserves the rest of every prompt.
     semantic_prompts = [_semantic_prompt(prompt) for prompt in prompts]
     return policy, _prompt_digest(semantic_prompts), _prompt_digest(prompts)
+
+
+def _replay_current_lift_vote(report: dict) -> tuple[str | None, bool | None]:
+    """Apply the current capture4 vote rule to already saved per-view votes.
+
+    This does not rerun Qwen and therefore does not claim current-model
+    performance.  It isolates the effect of replacing the historical v3
+    one-view consensus/fingertip rescue with the current primary-crop rule:
+    two YES views mean ``held``, all NO views mean ``miss``, and every mixed
+    one-view result abstains.
+    """
+    visual = report.get("visual")
+    aggregation = (visual.get("aggregation")
+                   if isinstance(visual, dict) else None)
+    per_view = (aggregation.get("per_view")
+                if isinstance(aggregation, dict) else None)
+    if not isinstance(per_view, list) or len(per_view) < 2:
+        return None, None
+    votes = [row.get("yes") for row in per_view
+             if isinstance(row, dict) and type(row.get("yes")) is bool]
+    if len(votes) != len(per_view):
+        return None, None
+    if sum(vote is True for vote in votes) >= 2:
+        return "held", True
+    if all(vote is False for vote in votes):
+        return "miss", False
+    return "unobservable", None
 
 
 def _agreement(rows: list[dict]) -> dict:
@@ -137,6 +167,9 @@ def summarize(attempt_root: Path) -> dict:
                 continue
             visual_policy, prompt_sha256, full_prompt_sha256 = (
                 _visual_policy(report))
+            replay_class, replay_value = (
+                _replay_current_lift_vote(report)
+                if stage == "grasp_success" else (None, None))
             rows.append({
                 "attempt_id": attempt.name,
                 "candidate_id": result.get("candidate_id"),
@@ -151,6 +184,8 @@ def summarize(attempt_root: Path) -> dict:
                 "visual_policy": visual_policy,
                 "prompt_sha256": prompt_sha256,
                 "full_prompt_sha256": full_prompt_sha256,
+                "current_policy_replay_class": replay_class,
+                "current_policy_replay_value": replay_value,
                 "report": str(report_path),
             })
 
@@ -166,8 +201,23 @@ def summarize(attempt_root: Path) -> dict:
                 **_agreement(policy_rows),
             }
         stages[stage] = {**_agreement(selected), "policies": policies}
+        if stage == "grasp_success":
+            replay_rows = [{**row, "vlm_value":
+                            row["current_policy_replay_value"]}
+                           for row in selected
+                           if row["current_policy_replay_class"] is not None]
+            stages[stage]["current_policy_replay"] = {
+                "policy": CURRENT_LIFT_REPLAY_POLICY,
+                "source_assessments": len(replay_rows),
+                "abstentions": sum(
+                    row["current_policy_replay_class"] == "unobservable"
+                    for row in replay_rows),
+                **_agreement(replay_rows),
+                "scope": (
+                    "saved_per_view_vote_reaggregation_only_no_model_rerun"),
+            }
     return {
-        "schema": "precision_insertion_saved_label_summary_v3",
+        "schema": "precision_insertion_saved_label_summary_v4",
         "attempt_root": str(root),
         "attempts_scanned": len(attempts),
         "stages": stages,

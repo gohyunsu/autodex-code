@@ -46,9 +46,12 @@ Last audited: **2026-11-03**, with the robot, hand and cameras off.
 - The corresponding Qwen/manual audit has 15 paired lift labels (13/15
   agreement), 12 paired pre-insertion labels (12/12, all positive) and 6
   paired released-key labels (6/6, including two positives and four
-  negatives). This is useful regression evidence, but the lift false
-  positives and missing negative pre-insertion examples rule out autonomous
-  label claims for now.
+  negatives). Reaggregating the saved **primary per-view votes** with the
+  current two-view lift rule, without rerunning Qwen, gives 13/14 agreement,
+  one abstention, no false positives and one false negative. This isolates the
+  aggregation-policy change but is not a current-model evaluation. Missing
+  negative pre-insertion examples and the small released-key set still rule
+  out autonomous label claims.
 - Historical closed-loop evidence contains 57 saved observations. Only four
   are metric multi-view endpoint corrections; most are single-view planar or
   measured-motion temporal hypotheses. The two observed insertion successes

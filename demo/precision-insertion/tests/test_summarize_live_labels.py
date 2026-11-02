@@ -109,3 +109,48 @@ def test_dynamic_image_manifest_does_not_split_semantic_prompt(tmp_path):
     stage = summarize(tmp_path)["stages"]["grasp_success"]
     assert len(stage["prompt_sha256_values"]) == 1
     assert len(stage["full_prompt_sha256_values"]) == 2
+
+
+def test_current_lift_policy_replay_uses_primary_multiview_votes(tmp_path):
+    cases = [
+        ("attempt_two_yes", True, [True, True, False, False], "held"),
+        ("attempt_all_no", False, [False, False, False, False], "miss"),
+        ("attempt_one_yes", False, [True, False, False, False],
+         "unobservable"),
+    ]
+    for attempt, manual, votes, _expected in cases:
+        path = tmp_path / attempt / "lift_assessments/000/report.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({
+            "manual_annotation": {"value": manual, "note": ""},
+            # Historical saved aggregate may disagree with the new vote rule.
+            "vlm_label": {"value": True, "class": "held"},
+            "visual": {"aggregation": {
+                "schema": "precision_insertion_visible_grip_v3",
+                "per_view": [
+                    {"camera_id": f"cam{index}", "yes": vote}
+                    for index, vote in enumerate(votes)
+                ],
+                "finger_focus_retry": {"per_view": [
+                    {"camera_id": "cam0", "yes": True},
+                    {"camera_id": "cam1", "yes": True},
+                ]},
+            }},
+        }), encoding="utf-8")
+
+    summary = summarize(tmp_path)
+    rows = {row["attempt_id"]: row for row in summary["comparisons"]}
+    for attempt, _manual, _votes, expected in cases:
+        assert rows[attempt]["current_policy_replay_class"] == expected
+    replay = summary["stages"]["grasp_success"]["current_policy_replay"]
+    assert replay["source_assessments"] == 3
+    assert replay["abstentions"] == 1
+    assert replay["paired_labels"] == 2
+    assert replay["correct"] == 2
+    assert replay["accuracy"] == 1.0
+    assert replay["confusion"] == {
+        "true_positive": 1,
+        "true_negative": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+    }
