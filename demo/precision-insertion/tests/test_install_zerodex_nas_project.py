@@ -59,7 +59,7 @@ def test_restored_profile_uses_restored_shared_data(tmp_path, schema):
     (bundle / "rigs/zerodex_capture4/main_pc_system/current").mkdir(parents=True)
     (bundle / "assets/shared_data").mkdir(parents=True)
     records = []
-    for repo in ("autodex-code", "paradex"):
+    for repo in ("autodex-code", "paradex", "nvdiffrast"):
         archive_name = f"{repo}.tar.gz"
         with tarfile.open(bundle / "code" / archive_name, "w:gz") as archive:
             member = tarfile.TarInfo("README")
@@ -79,4 +79,9 @@ def test_restored_profile_uses_restored_shared_data(tmp_path, schema):
     subprocess.run([
         "bash", "-c", 'source "$1"; test "$PRECISION_SHARED_ROOT" = "$2"',
         "bash", profile, str(destination / "shared_data"),
+    ], check=True)
+    subprocess.run([
+        "bash", "-c",
+        'source "$1"; test "$PRECISION_NVDIFFRAST_SOURCE" = "$2"',
+        "bash", profile, str(destination / "nvdiffrast"),
     ], check=True)

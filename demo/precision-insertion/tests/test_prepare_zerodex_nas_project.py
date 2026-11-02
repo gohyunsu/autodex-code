@@ -114,3 +114,22 @@ def test_verify_project_marks_v1_inventory_as_incomplete(tmp_path):
     assert report["project_files_manifested"] is False
     assert report["inventory_complete"] is False
     assert report["reproduction_ready"] is False
+
+
+def test_verify_project_requires_renderer_source_for_zerodex_bundle(tmp_path):
+    root = _bundle(tmp_path)
+    manifest_path = root / "PROJECT_MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["project"] = "precision_insertion"
+    manifest["rig"] = "zerodex_capture4"
+    manifest_path.write_text(json.dumps(manifest))
+
+    report = verify_project(
+        nas_root=root, verify_sha256=False, repo=None)
+
+    assert report["required_code_repositories"] == [
+        "autodex-code", "nvdiffrast", "paradex"]
+    assert report["missing_code_repositories"] == [
+        "autodex-code", "nvdiffrast", "paradex"]
+    assert report["declared_integrity_ok"] is False
+    assert report["reproduction_ready"] is False

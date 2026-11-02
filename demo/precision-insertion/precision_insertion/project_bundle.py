@@ -193,6 +193,17 @@ def verify_project(
     duplicates = sorted(
         path for path in set(declared_paths) if declared_paths.count(path) > 1)
     supported_schema = manifest.get("schema") in SUPPORTED_SCHEMAS
+    required_code_repositories = (
+        {"autodex-code", "paradex", "nvdiffrast"}
+        if (manifest.get("project") == "precision_insertion" and
+            manifest.get("rig") == "zerodex_capture4")
+        else set()
+    )
+    declared_code_repositories = {
+        str(row.get("repository", "")) for row in manifest.get("code", [])
+    }
+    missing_code_repositories = sorted(
+        required_code_repositories - declared_code_repositories)
     declared_asset_count = manifest.get("asset_file_count")
     asset_count_matches = (
         not isinstance(declared_asset_count, int) or
@@ -275,7 +286,8 @@ def verify_project(
         }
     integrity_ok = (
         supported_schema and not declared_failures and not duplicates and
-        asset_count_matches and not package_reference_failures)
+        asset_count_matches and not package_reference_failures and
+        not missing_code_repositories)
     reproduction_ready = (
         integrity_ok and inventory_complete and runtime_view_ok and
         (checkout is None or checkout["current_commit_archived"]))
@@ -292,6 +304,8 @@ def verify_project(
         "declared_failures": declared_failures,
         "duplicate_declared_paths": duplicates,
         "package_reference_failures": package_reference_failures,
+        "required_code_repositories": sorted(required_code_repositories),
+        "missing_code_repositories": missing_code_repositories,
         "untracked_managed_files": untracked,
         "missing_inventory_files": missing_from_inventory,
         "project_files_manifested": bool(manifest.get("project_files")),

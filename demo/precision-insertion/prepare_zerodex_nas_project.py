@@ -74,7 +74,8 @@ def _source_archive(repo: Path, destination: Path) -> dict:
             "archive": archive.name, "sha256": _sha256(archive)}
 
 
-def refresh_code(*, nas_root: Path, paradex_repo: Path) -> dict:
+def refresh_code(*, nas_root: Path, paradex_repo: Path,
+                 nvdiffrast_repo: Path) -> dict:
     """Update tracked code without retransferring large runtime assets."""
     manifest_path = nas_root / "PROJECT_MANIFEST.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -103,8 +104,11 @@ def refresh_code(*, nas_root: Path, paradex_repo: Path) -> dict:
         for row in manifest["asset_packages"]]
     old_archives = {row["archive"] for row in manifest["code"]}
     code = nas_root / "code"
-    snapshots = [_source_archive(REPO, code),
-                 _source_archive(paradex_repo.expanduser().resolve(), code)]
+    snapshots = [
+        _source_archive(REPO, code),
+        _source_archive(paradex_repo.expanduser().resolve(), code),
+        _source_archive(nvdiffrast_repo.expanduser().resolve(), code),
+    ]
     manifest["code"] = snapshots
     manifest["rig_files"] = _rig_inventory(nas_root)
     foundation = nas_root / "assets/capture4_foundationpose"
@@ -179,6 +183,7 @@ def _package_socket_representations(shared: Path, nas_root: Path) -> list[dict]:
 
 
 def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
+          nvdiffrast_repo: Path,
           source_stage: Path | None, capture4_host: str | None = None,
           ssh_port: int = 77,
           capture4_source_archive: Path | None = None,
@@ -243,8 +248,11 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
         _copy_file(shared / runtime / name, assets / runtime / name)
     _copy_file(shared / "AutoDex/weights/sam3/sam3.pt",
                assets / "AutoDex/weights/sam3/sam3.pt")
-    snapshots = [_source_archive(REPO, code),
-                 _source_archive(paradex_repo.expanduser().resolve(), code)]
+    snapshots = [
+        _source_archive(REPO, code),
+        _source_archive(paradex_repo.expanduser().resolve(), code),
+        _source_archive(nvdiffrast_repo.expanduser().resolve(), code),
+    ]
     (envs / "precision-vlm.pip-freeze.txt").write_text(
         subprocess.check_output(
             [str(Path.home() / ".venvs/precision-vlm/bin/python"),
@@ -322,6 +330,14 @@ def main() -> None:
                             "PRECISION_PARADEX_ROOT",
                             str(Path.home() /
                                 "precision_insertion_project/vendor/paradex"))))
+    parser.add_argument(
+        "--nvdiffrast-repo", type=Path,
+        default=Path(os.environ.get(
+            "PRECISION_NVDIFFRAST_ROOT",
+            str(Path.home() /
+                "precision_insertion_project/vendor/nvdiffrast"))),
+        help=("project-owned nvdiffrast Git checkout to archive; the final "
+              "bundle never depends on a source tree outside hyunsu"))
     parser.add_argument("--source-stage", type=Path,
                         default=(Path(os.environ["PRECISION_NAS_LINK_STAGE"])
                                  if "PRECISION_NAS_LINK_STAGE" in os.environ
@@ -355,11 +371,14 @@ def main() -> None:
     if args.refresh_code_only:
         print(json.dumps(refresh_code(
             nas_root=args.nas_root,
-            paradex_repo=args.paradex_repo), indent=2))
+            paradex_repo=args.paradex_repo,
+            nvdiffrast_repo=args.nvdiffrast_repo), indent=2))
         return
     print(json.dumps(build(
         source_shared=args.source_shared, nas_root=args.nas_root,
-        paradex_repo=args.paradex_repo, source_stage=args.source_stage,
+        paradex_repo=args.paradex_repo,
+        nvdiffrast_repo=args.nvdiffrast_repo,
+        source_stage=args.source_stage,
         capture4_host=args.capture4_host, ssh_port=args.ssh_port,
         capture4_source_archive=args.capture4_source_archive,
         paradex_system=args.paradex_system), indent=2))

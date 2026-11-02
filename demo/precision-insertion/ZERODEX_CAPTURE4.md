@@ -860,10 +860,10 @@ an overlapping initial VLM snapshot; it did not wait for the NAS source PNG.
 This change mainly helps the session's socket capture and full-image QA or
 recovery requests. It is not a measured 20–40 s saving on every trial.
 
-`requirements-local-vlm.txt` does not install the renderer. The working
-`nvdiffrast v0.3.3` source is already at
-`/home/hyunsu/shared_data/nvdiffrast`; install a copy into `precision-vlm`
-without editing that NAS source. The same environment needs the FoundationPose
+`requirements-local-vlm.txt` does not install the renderer. A restored
+project exports `PRECISION_NVDIFFRAST_SOURCE` to its archived, project-owned
+`nvdiffrast v0.3.3` checkout; install a temporary copy into `precision-vlm`
+without editing that source. The same environment needs the FoundationPose
 imports, including Open3D, ruamel.yaml, transformations and scikit-learn.
 The ZeroDex launcher sets the existing local CUDA toolkit/header paths for
 the renderer's first-use JIT. The saved-view replay in the review document
@@ -871,13 +871,16 @@ checks the full local refinement path without opening cameras or the robot.
 
 ```bash
 renderer_build=$(mktemp -d /tmp/precision-nvdiffrast.XXXXXX)
-cp -a /home/hyunsu/shared_data/nvdiffrast "$renderer_build/source"
+cp -a "$PRECISION_NVDIFFRAST_SOURCE" "$renderer_build/source"
 /home/hyunsu/.venvs/precision-vlm/bin/python -m pip install \
   --no-build-isolation --no-deps "$renderer_build/source"
 ```
 
 The current local `precision-vlm` environment already has this renderer and
-the required Python imports; these commands are for rebuilding it.
+the required Python imports; these commands are for rebuilding it. The NAS
+project builder archives this source beside the AutoDex fork and ParaDex, so a
+restored project never needs to read the older NAS path outside
+`/mnt/paradex2/hyunsu/precision_insertion`.
 
 The profile can be rebuilt with `prepare_zerodex_capture4.py --source-stage
 <commissioned-stage> --calibration-dir <capture4-calibration> --c2r-npy

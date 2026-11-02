@@ -113,7 +113,20 @@ kept under `development/zerodex_capture4/audits/filesystem/`.
 
 ## Build or refresh the project bundle
 
-Run after committing code changes:
+The bundle archives three exact Git revisions: the precision-insertion fork,
+ParaDex, and NVLabs `nvdiffrast`. The last source is needed only to reproduce
+the renderer environment; it is not opened on the live path. Before the first
+bundle build on this PC, make a project-owned source checkout. This is a
+one-time migration copy; it does not modify the older source and may be
+removed after the NAS bundle has passed its full SHA256 audit.
+
+```bash
+mkdir -p /home/hyunsu/precision_insertion_project/vendor
+git clone --local /home/hyunsu/shared_data/nvdiffrast \
+  /home/hyunsu/precision_insertion_project/vendor/nvdiffrast
+```
+
+Run the builder after committing code changes:
 
 ```bash
 cd /home/hyunsu/autodex-code
@@ -137,7 +150,8 @@ PYTHONPATH=demo/precision-insertion \
   --verify-project --nas-root "$PRECISION_NAS_PROJECT_ROOT"
 ```
 
-`--verify-project` checks every declared path and size, detects untracked or
+`--verify-project` checks every declared path and size, requires source
+snapshots for `autodex-code`, `paradex`, and `nvdiffrast`, detects untracked or
 missing files in the managed asset/code/rig/restore/environment trees, checks
 that runtime symlinks remain inside this project, and compares the archived
 fork commit with the current checkout. `--verify-project-sha256` additionally
@@ -150,7 +164,9 @@ The read-only 2026-11-03 audit of the existing v1 bundle correctly reports it
 as not yet reproduction-ready: its fork archive is at `f0f9f1d`, two reset
 provenance JSON files changed size after that manifest, five asset files and
 the rig-runtime link are not inventoried, and v1 does not inventory the
-installer/readmes/environment locks. The active runtime view itself has 96
+installer/readmes/environment locks. It also lacks a project-owned
+`nvdiffrast` source snapshot; the installed environment points back to a
+deleted temporary build directory. The active runtime view itself has 96
 project-local symlinks with no broken or outside-project target. The NAS was
 mounted read-only during this audit, so the evidence was not rewritten to
 look current. Once it is writable, run `--refresh-code-only` from the final
@@ -164,9 +180,10 @@ manifest hashes the resulting files. The builder does not move source files or
 start the robot.
 It sources the capture4 perception snapshot from local
 `~/precision_insertion_project/restore/` and ParaDex system settings from
-`~/precision_insertion_project/vendor/paradex/system/current`. Use
-`--capture4-source-archive` or `--paradex-system` to override those locations
-when rebuilding on another machine.
+`~/precision_insertion_project/vendor/paradex/system/current`. The renderer
+snapshot defaults to `~/precision_insertion_project/vendor/nvdiffrast`. Use
+`--capture4-source-archive`, `--paradex-system`, or `--nvdiffrast-repo` to
+override those project-owned inputs when rebuilding on another machine.
 
 ## Restore on a comparable PC
 
