@@ -143,13 +143,14 @@ def test_zerodex_launcher_provides_demo_collision_compat(tmp_path):
         (stage / name).write_text("{}\n", encoding="utf-8")
     fake_check = tmp_path / "fake_check"
     fake_check.write_text(
-        "#!/bin/sh\nprintf 'PYTHONPATH=%s\\nPREWARM=%s\\nPRELOAD=%s\\nRETAIN=%s\\nHOST=%s\\nFR3=%s\\nEXCLUDED=%s\\nPOLICY=%s\\n' "
+        "#!/bin/sh\nprintf 'PYTHONPATH=%s\\nPREWARM=%s\\nPRELOAD=%s\\nRETAIN=%s\\nHOST=%s\\nFR3=%s\\nEXCLUDED=%s\\nPOLICY=%s\\nALIGNMENT=%s\\n' "
         "\"$PYTHONPATH\" \"$PRECISION_PREWARM_FIXED_WORLD\" "
         "\"$PRECISION_PRELOAD_VLM\" \"$PRECISION_CHECKPOINT_RETAIN_ORIGINAL\" "
         "\"$PRECISION_CAPTURE4_SSH_HOST\" "
         "\"$PRECISION_ZERODEX_FR3_FCI_IP\" "
         "\"$PRECISION_EXCLUDED_CANDIDATES\" "
-        "\"$PRECISION_CANDIDATE_POLICY_PROFILE\"\n",
+        "\"$PRECISION_CANDIDATE_POLICY_PROFILE\" "
+        "\"$PRECISION_SAME_TRIAL_ALIGNMENT_SOURCE\"\n",
         encoding="utf-8")
     fake_check.chmod(0o755)
     env = dict(os.environ, PRECISION_STAGE_ROOT=str(stage),
@@ -171,6 +172,16 @@ def test_zerodex_launcher_provides_demo_collision_compat(tmp_path):
     assert "EXCLUDED=table/0/20096" in completed.stdout
     assert "POLICY=" in completed.stdout
     assert "config/candidate_policies/cylinder_gap5.env.sh" in completed.stdout
+    assert "ALIGNMENT=endpoint" in completed.stdout
+
+    partial_shape_env = dict(
+        env,
+        PRECISION_EXPERIMENT_PROFILE=(
+            "fixed_grasp_partial_shape_alignment_5mm.env.sh"))
+    partial_shape = subprocess.run(
+        ["bash", str(demo / "run_zerodex_capture4.sh"), "--check"],
+        env=partial_shape_env, capture_output=True, text=True, check=True)
+    assert "ALIGNMENT=partial_shape" in partial_shape.stdout
 
     policy_disabled_env = dict(env, PRECISION_CANDIDATE_POLICY_PROFILE="")
     policy_disabled_env.pop("PRECISION_EXCLUDED_CANDIDATES", None)

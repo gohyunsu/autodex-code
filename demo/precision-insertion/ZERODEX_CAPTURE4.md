@@ -1,22 +1,22 @@
 # ZeroDex capture4 profile (kds-Z790)
 
-## Current restart state (2026-10-30)
+## Current restart state (2026-11-02)
 
-The moved 5 mm socket was measured again with the key absent. All four
-capture4 views produced a socket mask and the board-constrained body fit
-saved the robot-frame socket centre at approximately
-`(0.688378, 0.042290, 0.062958) m`. The current session evidence is
-`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/camera_only/socket_remeasure_20261030_04/socket_evidence`.
-Do not reuse the older `_03` bundle after this fixture move.
+The robot and Inspire hand are currently off. The newest saved 5 mm socket
+measurement used by the latest physical runs is
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/camera_only/20261102_171947_692640196_627800/socket_evidence`.
+Its robot-frame socket translation is approximately
+`(0.676919, 0.074908, 0.062940) m`. All four views produced a body mask;
+the per-capture pose cluster retained cameras `25322639`, `25322642`, and
+`26053248` and excluded `25305462` for that measurement only. This is not a
+persistent camera blacklist.
 
-The held-key Jacobian continuation now accepts the runtime's detached-key
-collision world (fixed table and socket, with the carried key checked by the
-separate held-geometry audit). Local Qwen construction is also serialized
-after cuRobo CUDA-graph warmup, avoiding concurrent allocations that
-invalidated graph capture. The complete demo test suite passed after these
-changes (`1448 passed, 5 skipped`); commits `ed66e16` and `e830af1` are on
-`feat/zerodex-precision-insertion`. This is code-level evidence, not a claim
-that a post-fix physical insertion has completed.
+Reuse this evidence only while the board and socket have physically remained
+fixed since that capture. If either moved, omit
+`PRECISION_REUSE_SESSION_EVIDENCE`, measure the socket once with the key
+absent, and use the newly created evidence for the session. The older
+2026-10-30 `_03`/`_04` bundles describe earlier fixture locations and are not
+current restart inputs.
 
 Run outputs and active assets stay under the independent
 `/mnt/paradex2/hyunsu/precision_insertion` project; the capture4 camera
@@ -29,16 +29,22 @@ the key upright on the board, use:
 ```bash
 cd /home/hyunsu/autodex-code
 export PRECISION_GAP_MM=5
-export PRECISION_REUSE_SESSION_EVIDENCE=/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/camera_only/socket_remeasure_20261030_04/socket_evidence
+export PRECISION_REUSE_SESSION_EVIDENCE=/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/camera_only/20261102_171947_692640196_627800/socket_evidence
 export PRECISION_KEY_ALREADY_PLACED=1
 export PRECISION_LABEL_MODE=manual
-export PRECISION_EXPERIMENT_PROFILE=fixed_grasp_repeatability_5mm.env.sh
+export PRECISION_EXPERIMENT_PROFILE=fixed_grasp_endpoint_alignment_5mm.env.sh
 bash demo/precision-insertion/run_zerodex_capture4.sh --check
+# Run this only after Franka, Inspire, FCI and the daemon are ready:
 bash demo/precision-insertion/run_zerodex_capture4.sh --run
 ```
 
-The experiment profile is separate from the ZeroDex machine profile. It
-selects gap `5`, candidate `table/0/20195`, and the fixed-candidate policy.
+The experiment profile is separate from the ZeroDex machine profile. The
+endpoint baseline above selects gap `5`, candidate `table/0/20195`, the
+fixed-candidate policy, and endpoint/temporal alignment. Its controlled A/B
+counterpart is
+`fixed_grasp_partial_shape_alignment_5mm.env.sh`; it changes only the
+same-trial alignment source to `partial_shape`, which falls back to the
+endpoint/temporal result when a multi-view shape fit is unavailable.
 Every fresh key observation replans the same grasp; session attempt history
 cannot silently switch to another grasp. If that grasp has no plan for the
 current observation, the trial reports no plan instead of falling through.
