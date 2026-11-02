@@ -41,14 +41,35 @@ def test_mask_only_estimator_is_request_scoped(monkeypatch):
 
     daemon.cmd_receiver.event_info["run"] = {
         "request_id": 44, "skip_foundpose": True}
+
     def failed_run(self):
         assert self.fp.estimate_one_view() is None
         raise RuntimeError("capture failed")
+
     monkeypatch.setattr(adapter.InitDaemon, "_do_run", failed_run)
     with pytest.raises(RuntimeError, match="capture failed"):
         daemon._do_run()
     assert daemon.fp is original
     assert daemon._precision_active_request_id is None
+
+
+def test_capture_directory_mapping_uses_machine_profile_roots(monkeypatch):
+    daemon = adapter.PrecisionInitDaemon.__new__(adapter.PrecisionInitDaemon)
+    daemon.fp = object()
+    daemon._precision_active_request_id = None
+    daemon._precision_undistorted = {}
+    daemon.cmd_receiver = SimpleNamespace(event_info={"run": {
+        "request_id": 42,
+        "save_capture_dir": "/main/project/runs/episode/raw",
+    }})
+    monkeypatch.setenv("PRECISION_MAIN_PROJECT_ROOT", "/main/project")
+    monkeypatch.setenv("PRECISION_CAPTURE4_PROJECT_ROOT", "/capture/project")
+    seen = []
+    monkeypatch.setattr(
+        adapter.InitDaemon, "_do_run",
+        lambda self: seen.append(dict(self.cmd_receiver.event_info["run"])))
+    daemon._do_run()
+    assert seen[0]["save_capture_dir"] == "/capture/project/runs/episode/raw"
 
 
 def test_mask_only_init_skips_socket_foundpose_and_key_init_can_load(monkeypatch):

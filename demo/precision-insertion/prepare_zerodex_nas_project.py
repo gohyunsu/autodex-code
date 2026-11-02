@@ -16,6 +16,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+from precision_insertion.project_layout import nas_project_root
+
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
@@ -324,9 +326,7 @@ def main() -> None:
     parser.add_argument("--source-shared", type=Path,
                         default=Path.home() / "shared_data")
     parser.add_argument("--nas-root", type=Path,
-                        default=Path(os.environ.get(
-                            "PRECISION_NAS_PROJECT_ROOT",
-                            "/mnt/paradex2/hyunsu/precision_insertion")))
+                        default=nas_project_root())
     parser.add_argument("--paradex-repo", type=Path,
                         default=Path.home() / "paradex")
     parser.add_argument("--source-stage", type=Path,

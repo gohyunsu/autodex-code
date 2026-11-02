@@ -19,6 +19,10 @@ import shlex
 import subprocess
 import time
 
+from precision_insertion.project_layout import (
+    capture4_project_root, nas_project_root,
+)
+
 
 HOST = os.environ.get("PRECISION_CAPTURE4_SSH_HOST", "capture4@147.46.219.136")
 SSH_PORT = os.environ.get("PRECISION_CAPTURE4_SSH_PORT", "77")
@@ -40,12 +44,12 @@ FILES = (
     "demo/precision-insertion/precision_insertion/camera_transport.py",
     "demo/precision-insertion/precision_insertion/sam3_batch.py",
     "demo/precision-insertion/precision_insertion/frame_provenance.py",
+    "demo/precision-insertion/precision_insertion/project_layout.py",
 )
 PORTS = {"camera": 5480, "snapshot": 6894, "precision": 16893}
 READY_PORTS = frozenset((5480, 5481, 5482, 5009, 6894, 15006, 15007, 16893))
 _PORT_RE = re.compile(r":(\d+)$")
-PROJECT = Path(os.environ.get("PRECISION_NAS_PROJECT_ROOT",
-                              "/mnt/paradex2/hyunsu/precision_insertion"))
+PROJECT = nas_project_root()
 VENDOR = REMOTE / "vendor"
 CACHE = REMOTE / "cache"
 PERCEPTION_ASSETS = (
@@ -112,9 +116,7 @@ def prepare_assets() -> None:
                   if row["path"].startswith("assets/capture4_cache/")]
     cache_digest = hashlib.sha256(json.dumps(
         cache_rows, sort_keys=True).encode("utf-8")).hexdigest()
-    source = Path(os.environ.get(
-        "PRECISION_CAPTURE4_PROJECT_ROOT",
-        str(REMOTE_HOME / "shared_data/hyunsu/precision_insertion")))
+    source = capture4_project_root()
     remote_archive = source / "rigs/zerodex_capture4" / archive.name
     _ssh(f"mkdir -p {shlex.quote(str(VENDOR))} {shlex.quote(str(CACHE))}; "
          f"if test \"$(cat {shlex.quote(str(VENDOR / '.source_sha256'))} 2>/dev/null)\" != {shlex.quote(digest)}; then "
@@ -178,6 +180,7 @@ def _command(kind: str, *, exposure_us: float | None = None) -> str:
     stage = Path(os.environ.get(
         "PRECISION_CAPTURE4_ASSET_ROOT",
         str(CACHE / "shared_data")))
+    capture_project = capture4_project_root()
     sam3_batch = os.environ.get("PRECISION_SAM3_BATCH", "auto")
     if sam3_batch not in ("auto", "0", "1"):
         raise ValueError("PRECISION_SAM3_BATCH must be auto, 0, or 1")
@@ -187,7 +190,10 @@ def _command(kind: str, *, exposure_us: float | None = None) -> str:
     return (f"exec env HF_HUB_OFFLINE=1 XFORMERS_DISABLED=1 "
             f"HF_HOME={CACHE / 'huggingface'} TORCH_HOME={CACHE / 'torch'} "
             f"PRECISION_SAM3_BATCH={sam3_batch} AUTODEX_STOCK_ROOT={REMOTE} "
-            f"PRECISION_CAPTURE_ASSET_ROOT={stage} PYTHONPATH={pythonpath} "
+            f"PRECISION_CAPTURE_ASSET_ROOT={stage} "
+            f"PRECISION_MAIN_PROJECT_ROOT={PROJECT} "
+            f"PRECISION_CAPTURE4_PROJECT_ROOT={capture_project} "
+            f"PYTHONPATH={pythonpath} "
             f"{python} {module_root}/precision_init_daemon.py "
             "--port-mask 15006 --port-pose 15007 --port-cmd 16893")
 

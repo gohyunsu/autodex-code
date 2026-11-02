@@ -31,6 +31,18 @@ JSON files and links large immutable directories without copying model data.
 `restore/`, `code/`, and `environments/` are for installation and reproduction;
 `runs/` and `development/` contain outputs and are never input asset roots.
 
+Machine-dependent roots are defined once by the launcher profile and shared
+by the standalone Python tools through
+`precision_insertion/project_layout.py`:
+
+- `PRECISION_NAS_PROJECT_ROOT` is this main-PC project root.
+- `PRECISION_CAPTURE4_PROJECT_ROOT` is capture4's mounted view of the same
+  project files.
+
+The capture4 adapter receives both roots when its persistent perception
+service starts. It rebases `save_capture_dir` by path relative to the project
+root; it no longer embeds either machine's absolute prefix in daemon logic.
+
 The asset tree uses the existing `AssetPaths` layout. One project bundle covers
 gap sizes 1, 3, 5, 10, 15 and 20 mm for the cylindrical key. The current
 launcher selects 5 mm by default. The archived square-mode code remains in

@@ -12,6 +12,8 @@ import json
 import os
 from pathlib import Path
 
+from precision_insertion.project_layout import nas_project_root
+
 
 LINKED_DIRECTORIES = frozenset({
     Path("AutoDex/candidates"),
@@ -75,7 +77,7 @@ def link_runtime(project: Path) -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", type=Path,
-                        default=Path("/mnt/paradex2/hyunsu/precision_insertion"))
+                        default=nas_project_root())
     args = parser.parse_args()
     print(json.dumps(link_runtime(args.project), indent=2))
 

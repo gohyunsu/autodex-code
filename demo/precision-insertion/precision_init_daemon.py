@@ -34,6 +34,9 @@ from precision_insertion.camera_transport import (  # noqa: E402
     RecordingReader, install_init_provenance,
 )
 from precision_insertion.sam3_batch import segment_batch  # noqa: E402
+from precision_insertion.project_layout import (  # noqa: E402
+    map_main_project_path_to_capture4,
+)
 
 
 class _MaskOnlyEstimator:
@@ -85,11 +88,11 @@ class PrecisionInitDaemon(InitDaemon):
     def _do_run(self) -> None:
         info = self.cmd_receiver.event_info.get("run", {}) or {}
         source = info.get("save_capture_dir")
-        project_prefix = "/mnt/paradex2/hyunsu/precision_insertion/"
-        if isinstance(source, str) and source.startswith(project_prefix):
-            info["save_capture_dir"] = str(
-                Path("/home/capture4/shared_data/hyunsu/precision_insertion") /
-                source[len(project_prefix):])
+        if isinstance(source, str):
+            info["save_capture_dir"] = str(map_main_project_path_to_capture4(
+                source,
+                main_root=os.environ.get("PRECISION_MAIN_PROJECT_ROOT"),
+                capture_root=os.environ.get("PRECISION_CAPTURE4_PROJECT_ROOT")))
         request_id = info.get("request_id")
         if type(request_id) is not int or request_id <= 0:
             raise ValueError("precision FoundPose run needs request ID")

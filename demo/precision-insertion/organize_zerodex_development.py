@@ -16,6 +16,8 @@ from pathlib import Path
 import re
 import shutil
 
+from precision_insertion.project_layout import nas_project_root
+
 
 KEEP_RUN_NAMES = {"session_evidence", "recordings"}
 KEEP_RUN_PREFIXES = ("live_", "socket_session_")
@@ -204,8 +206,7 @@ def main() -> None:
         os.environ.get("PRECISION_STAGE_ROOT",
                        str(Path.home() / "shared_data/AutoDex/precision_insertion/zerodex_capture4"))))
     parser.add_argument("--nas-project-root", type=Path, default=Path(
-        os.environ.get("PRECISION_NAS_PROJECT_ROOT",
-                       "/mnt/paradex2/hyunsu/precision_insertion")))
+        nas_project_root()))
     args = parser.parse_args()
     if args.organize_runtime_mutables:
         print(json.dumps(organize_runtime_mutables(

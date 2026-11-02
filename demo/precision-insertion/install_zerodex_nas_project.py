@@ -14,6 +14,10 @@ from pathlib import Path
 import subprocess
 import tarfile
 
+from precision_insertion.project_layout import (
+    capture4_project_root, nas_project_root,
+)
+
 
 def _package_already_copied(
     package_path: Path, extract_to: str, asset_paths: set[str],
@@ -126,10 +130,10 @@ def install(bundle: Path, destination: Path,
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", type=Path,
-                        default=Path("/mnt/paradex2/hyunsu/precision_insertion"))
+                        default=nas_project_root())
     parser.add_argument("--destination", type=Path, required=True)
-    parser.add_argument("--capture4-nas-root", default=(
-        "/home/capture4/shared_data/hyunsu/precision_insertion"))
+    parser.add_argument("--capture4-nas-root",
+                        default=str(capture4_project_root()))
     args = parser.parse_args()
     print(json.dumps(install(args.bundle, args.destination,
                              capture4_nas_root=args.capture4_nas_root), indent=2))
