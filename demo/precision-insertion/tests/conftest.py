@@ -1,5 +1,6 @@
 """Shared fake continuation for composition tests without a cuRobo GPU."""
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -8,6 +9,19 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
+@pytest.fixture(autouse=True)
+def isolate_precision_runtime_environment(monkeypatch):
+    """Keep a sourced live profile out of unit-test fixtures and assets.
+
+    Individual tests set the variables they exercise after this fixture runs.
+    In particular, an ambient ``PRECISION_FR3_INSPIRE_URDF`` must never turn a
+    temporary mesh fixture into a write to the active robot description.
+    """
+    for name in tuple(os.environ):
+        if name.startswith("PRECISION_"):
+            monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture
