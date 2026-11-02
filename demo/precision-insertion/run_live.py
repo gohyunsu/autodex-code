@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one precision-insertion session with an AutoDex-PC integration module.
+"""Run one independent precision-insertion session with an integration module.
 
 This CLI is intentionally opt-in for robot motion. It calls the demo-local
 session loop, not stock run_pipeline.py or run_auto.py. The integration module
@@ -39,7 +39,7 @@ from precision_insertion.live_runtime import (  # noqa: E402
 )
 from precision_insertion.config import select_mode  # noqa: E402
 from precision_insertion.project_layout import (  # noqa: E402
-    runtime_json_namespace_report,
+    nas_project_root, runtime_json_namespace_report,
 )
 from precision_insertion.timing_profile import (  # noqa: E402
     profile_run, timed, timing_directory,
@@ -58,11 +58,10 @@ def default_run_output(launch_config: Path, exp_name: str) -> Path:
         raise ValueError("launch config needs an explicit socket/key mode")
     mode = select_mode(record["mode"].get("family"),
                        record["mode"].get("gap_mm"))
-    project_runs = os.environ.get("PRECISION_RUN_OUTPUT_ROOT")
-    object_root = (Path(project_runs).expanduser() / exp_name / "inspire" /
-                   mode.key_object if project_runs else
-                   Path.home() / "shared_data" / "AutoDex" / "experiment" /
-                   exp_name / "inspire" / mode.key_object)
+    project_runs = Path(os.environ.get(
+        "PRECISION_RUN_OUTPUT_ROOT",
+        str(nas_project_root() / "runs/zerodex_capture4"))).expanduser()
+    object_root = project_runs / exp_name / "inspire" / mode.key_object
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     return object_root / "_pipeline_runs" / run_id
 
@@ -72,11 +71,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--launch-config", type=Path, required=True)
     parser.add_argument("--endpoint-catalog", type=Path, required=True)
     parser.add_argument("--exp-name", "--exp_name", default="precision-insertion",
-                        help="AutoDex experiment name (default: precision-insertion)")
+                        help="experiment name (default: precision-insertion)")
     parser.add_argument("--output-dir", type=Path,
                         help="new run directory; ZeroDex profile defaults to the NAS project runs tree")
     parser.add_argument("--integration",
-                        help="importable AutoDex-PC module:factory")
+                        help="importable robot/camera module:factory")
     parser.add_argument("--preflight", action="store_true",
                         help="validate static v8 inputs without cameras or robot")
     parser.add_argument("--robot-config", type=Path,

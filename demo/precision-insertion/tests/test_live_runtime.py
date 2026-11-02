@@ -88,16 +88,19 @@ def test_live_cli_rejects_implicit_stock_init_ports_before_motion(
     assert "explicit frame-bound init daemon ports" in capsys.readouterr().err
 
 
-def test_default_exp_path_matches_stock_autodex_hierarchy(monkeypatch, tmp_path):
+def test_default_exp_path_uses_independent_project_runs(monkeypatch, tmp_path):
     mode = select_mode("cylinder", 20)
     launch = tmp_path / "launch.json"
     launch.write_text(json.dumps({"mode": {"family": "cylinder",
                                            "gap_mm": 20}}), encoding="utf-8")
+    project = tmp_path / "precision_insertion"
+    monkeypatch.delenv("PRECISION_RUN_OUTPUT_ROOT", raising=False)
+    monkeypatch.setenv("PRECISION_NAS_PROJECT_ROOT", str(project))
     output = run_live.default_run_output(tmp_path / "launch.json",
                                          "precision-insertion")
-    assert output.parent.parent == (Path.home() / "shared_data" / "AutoDex" /
-                                    "experiment" / "precision-insertion" /
-                                    "inspire" / mode.key_object)
+    assert output.parent.parent == (
+        project / "runs/zerodex_capture4/precision-insertion/inspire" /
+        mode.key_object)
     assert output.parent.name == "_pipeline_runs"
     with pytest.raises(ValueError, match="path-safe"):
         run_live.default_run_output(tmp_path / "launch.json", "../other")

@@ -1,5 +1,11 @@
 # Precision insertion demo
 
+> **Current operations:** use [OPERATIONS.md](OPERATIONS.md). It contains the
+> short, ordered ZeroDex capture4 procedure, active file map, storage contract,
+> runtime sequence and external prerequisites. Dated AutoDex-PC commands and
+> the long investigation narrative below are historical evidence, not the
+> default for the current rig.
+
 **Current capture4 execution:** use
 [`run_zerodex_capture4.sh`](run_zerodex_capture4.sh) and
 [`ZERODEX_CAPTURE4.md`](ZERODEX_CAPTURE4.md). This profile defaults to four

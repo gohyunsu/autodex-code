@@ -1,4 +1,4 @@
-"""Cylinder wiring for the current AutoDex FR3 pipeline.
+"""Cylinder wiring for the current precision-insertion FR3 pipeline.
 
 This factory only supplies limits and the live feedback gate. The existing
 AutoDex v8 planner, camera session, completion-checked stock executor, local

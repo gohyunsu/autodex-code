@@ -1,4 +1,4 @@
-"""One explicit AutoDex-PC integration contract for the live demo CLI."""
+"""One explicit robot/camera integration contract for the live demo CLI."""
 
 from __future__ import annotations
 
