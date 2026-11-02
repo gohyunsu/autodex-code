@@ -1,5 +1,47 @@
 # Released-key VLM review (2026-10-29)
 
+For ongoing manual-mode collection, summarize every saved human/VLM pair
+without loading Qwen again:
+
+```bash
+python3 demo/precision-insertion/summarize_live_labels.py \
+  --attempt-root "$PRECISION_RUN_OUTPUT_ROOT/precision-insertion/inspire/precision_key_cylinder_r15_h80"
+```
+
+The report separates grasp, pre-insertion transport, and released insertion
+labels and records TP/TN/FP/FN plus the source report for every comparison.
+It evaluates only already-saved labels; it does not claim physical ground
+truth beyond the human annotation or rerun inference with a new prompt.
+
+## Live-label audit and capture4 lift v4 (2026-11-02)
+
+The saved ZeroDex dataset currently contains 15 paired lift labels, 12 paired
+pre-insertion labels, and 6 paired released-insertion labels. The old lift v3
+rule agrees with 13/15 human lift labels; both disagreements are false
+positives after the hand struck the upright key and left the hand empty. One
+false positive came from accepting one positive view. The other came from an
+all-negative wide crop followed by a positive fingertip retry: its retry crop
+contains only the empty black-fingertip gap, checkerboard, and white robot
+shells. A human-positive low-visibility case also needed that retry, so merely
+removing the retry would exchange a false positive for a false negative.
+
+New capture4 reports therefore use `precision_insertion_visible_grip_v4`:
+
+- at least two cameras must independently answer YES for `held`;
+- one positive camera is `unobservable`, not a positive label;
+- the prompt describes the target as a separate long straight beige-white
+  cylinder extending between black pads, and explicitly assigns an empty gap,
+  checkerboard, or white robot shells to NO;
+- the fingertip retry remains available for low-visibility true grasps and
+  uses the same geometry-specific prompt.
+
+The historical v3 prompt and one-view consensus remain in the verifier, so
+old immutable reports still replay exactly. The v4 prompt has not yet been
+rerun on the 15 saved lift cases because this PC's NVIDIA device nodes are
+currently unavailable. Manual mode continues to store both answers while the
+human annotation remains the execution label; v4 is not claimed as validated
+until that saved-image replay is completed.
+
 The four-case sections below document the earlier v4 final prompt and 384 px
 crop. The current v5 method and six human-labeled ZeroDex episodes are in
 [SAVED_ZERODEX_VISION_REVIEW_20261029.md](SAVED_ZERODEX_VISION_REVIEW_20261029.md).

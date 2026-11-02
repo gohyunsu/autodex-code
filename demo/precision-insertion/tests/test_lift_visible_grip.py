@@ -145,7 +145,7 @@ def test_capture4_straight_mount_batches_three_hand_crops(tmp_path):
 
         def infer_many(self, requests):
             self.calls.append(requests)
-            return ["YES", "NO", "NO"]
+            return ["YES", "YES", "NO"]
 
     backend = BatchedAnswers()
     frames = [
@@ -164,6 +164,37 @@ def test_capture4_straight_mount_batches_three_hand_crops(tmp_path):
     assert visual.parsed["class"] == "held"
     verify_visible_grip(visual.to_record(), set(selected), tmp_path,
                         calibration=calibration, joint_q=joints)
+
+
+def test_capture4_one_yes_is_not_multiview_confirmation(tmp_path):
+    selected = ("26053248", "25322639", "25305462")
+    calibration, joints, _ = _geometry()
+    for camera in selected:
+        calibration["camera_calibration"]["intrinsics_full"][camera] = (
+            calibration["camera_calibration"]["intrinsics_full"][CAMERAS[0]])
+        calibration["camera_calibration"]["extrinsics_full"][camera] = (
+            calibration["camera_calibration"]["extrinsics_full"][CAMERAS[0]])
+    straight_urdf = (Path(__file__).resolve().parents[3] / "autodex" /
+                     "planner/src/curobo/content/assets/robot" /
+                     "fr3_inspire_description/fr3_inspire.urdf")
+
+    class BatchedAnswers:
+        visible_grip_camera_ids = selected
+
+        @staticmethod
+        def infer_many(requests):
+            assert len(requests) == 3
+            return ["NO", "YES", "NO"]
+
+    frames = [LabeledFrame(camera, phase, float(stamp),
+                           Image.new("RGB", (100, 100), "white"))
+              for camera in selected
+              for phase, stamp in (("before_grasp", 1), ("after_lift", 2))]
+    visual = observe_visible_grip(
+        BatchedAnswers(), frames, tmp_path, calibration=calibration,
+        joint_q=joints, robot_urdf=straight_urdf)
+    assert visual.parsed["class"] == "unobservable"
+    assert visual.parsed["confirming_views"] == [selected[1]]
 
 
 @pytest.mark.parametrize("retry_answers,expected", [

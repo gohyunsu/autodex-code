@@ -34,6 +34,7 @@ from .observer import (
 )
 from .lift_visible_grip import (SCHEMA as VISIBLE_GRIP_SCHEMA,
                                 CAPTURE4_SCHEMA as CAPTURE4_VISIBLE_GRIP_SCHEMA,
+                                CAPTURE4_SCHEMA_V3 as CAPTURE4_VISIBLE_GRIP_SCHEMA_V3,
                                 LEGACY_SCHEMA as LEGACY_VISIBLE_GRIP_SCHEMA,
                                 observe_visible_grip, verify_visible_grip)
 from .raw_camera_capture import verify_raw_camera_capture
@@ -549,7 +550,8 @@ def verify_lift_checkpoint(report_path: Path) -> dict:
             raise ValueError("raw lift frame times no longer bracket execution")
     visual = report["visual"]
     if visual.get("aggregation", {}).get("schema") in {
-            VISIBLE_GRIP_SCHEMA, CAPTURE4_VISIBLE_GRIP_SCHEMA,
+            VISIBLE_GRIP_SCHEMA, CAPTURE4_VISIBLE_GRIP_SCHEMA_V3,
+            CAPTURE4_VISIBLE_GRIP_SCHEMA,
             LEGACY_VISIBLE_GRIP_SCHEMA}:
         verify_visible_grip(visual, phase_cameras["before_grasp"],
                             bundles["before_grasp"],

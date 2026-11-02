@@ -31,11 +31,16 @@ LEGACY_QUESTIONS = {
 LEGACY_IMAGE_SIZE = {"24122734": 384, "25322638": 512}
 LEGACY_SCHEMA = "precision_insertion_visible_grip_v1"
 SCHEMA = "precision_insertion_visible_grip_v2"
-CAPTURE4_SCHEMA = "precision_insertion_visible_grip_v3"
-HAND_PROMPT = (
+CAPTURE4_SCHEMA_V3 = "precision_insertion_visible_grip_v3"
+CAPTURE4_SCHEMA = "precision_insertion_visible_grip_v4"
+HAND_PROMPT_V3 = (
     "Is the small solid white cylindrical peg visibly held by the robot's "
     "black fingers in this image? The robot also has white finger shells. "
     "Reply only YES or NO.")
+HAND_PROMPT = (
+    "Ignore the white robot shells. Is a separate long straight beige-white "
+    "cylinder visibly extending between the black fingertip pads? An empty "
+    "gap or checkerboard alone means NO. Reply only YES or NO.")
 HAND_CROP_SIDE = 650
 FINGER_CROP_SIDE = 320
 HAND_IMAGE_SIZE = 640
@@ -169,7 +174,8 @@ def _hand_answer(backend: ImageVLM, camera: str, frame: LabeledFrame,
                  calibration: Mapping, hand_transform: np.ndarray,
                  *, focus_local: np.ndarray = HAND_FOCUS,
                  side_px: int = HAND_CROP_SIDE,
-                 stage: str = "post_lift") -> dict:
+                 stage: str = "post_lift",
+                 prompt: str = HAND_PROMPT) -> dict:
     prepared, transform, roi, pixel = _hand_input(
         camera, frame, calibration, hand_transform,
         focus_local=focus_local, side_px=side_px)
@@ -179,11 +185,12 @@ def _hand_answer(backend: ImageVLM, camera: str, frame: LabeledFrame,
                stage=stage, camera_id=camera, image_count=1,
                image_sizes=[list(prepared[0].size)],
                model=getattr(backend, "model", None)):
-        raw = (infer_for_camera(camera, prepared, HAND_PROMPT)
+        raw = (infer_for_camera(camera, prepared, prompt)
                if callable(infer_for_camera) else backend.infer(
-                   prepared, HAND_PROMPT))
+                   prepared, prompt))
     return _hand_row(camera, frame, raw, transform, roi, pixel,
                      time.perf_counter() - start,
+                     prompt=prompt,
                      method=("measured_fr3_inspire_fingertip_fk_and_undistorted_camera"
                              if side_px == FINGER_CROP_SIDE else
                              "measured_fr3_inspire_fk_and_undistorted_camera"))
@@ -205,13 +212,14 @@ def _hand_input(camera: str, frame: LabeledFrame, calibration: Mapping,
 def _hand_row(camera: str, frame: LabeledFrame, raw: str, transform: dict,
               roi: tuple[int, int, int, int], pixel: list[float],
               latency_s: float, *,
+              prompt: str = HAND_PROMPT,
               method: str = "measured_fr3_inspire_fk_and_undistorted_camera") -> dict:
     if not isinstance(raw, str):
         raise TypeError("lift VLM response must be text")
     return {
         "camera_id": camera,
         "image_order": [f"after_lift/{camera}@{frame.timestamp_s:.6f}"],
-        "prompt": HAND_PROMPT, "raw_answer": raw,
+        "prompt": prompt, "raw_answer": raw,
         "yes": _vote(raw),
         "latency_s": latency_s,
         "input_transform": transform,
@@ -222,7 +230,7 @@ def _hand_row(camera: str, frame: LabeledFrame, raw: str, transform: dict,
     }
 
 
-def _hand_result(rows: list[dict]) -> dict:
+def _hand_result_v3(rows: list[dict]) -> dict:
     confirmed = [row["camera_id"] for row in rows
                  if row["yes"] is True]
     if confirmed:
@@ -236,6 +244,25 @@ def _hand_result(rows: list[dict]) -> dict:
     else:
         label = "unobservable"
         evidence = "Close hand views do not resolve the key"
+    return {"class": label, "evidence": evidence,
+            "evidence_views": [row["camera_id"] for row in rows]
+            if label != "unobservable" else [],
+            "confirming_views": confirmed}
+
+
+def _hand_result(rows: list[dict]) -> dict:
+    """Require multiview agreement for new capture4 lift observations."""
+    confirmed = [row["camera_id"] for row in rows
+                 if row["yes"] is True]
+    if len(confirmed) >= 2:
+        label = "held"
+        evidence = "Two close hand views show the gripped key"
+    elif all(row["yes"] is False for row in rows):
+        label = "miss"
+        evidence = "No close hand view shows a gripped key"
+    else:
+        label = "unobservable"
+        evidence = "Close hand views do not agree that the key is held"
     return {"class": label, "evidence": evidence,
             "evidence_views": [row["camera_id"] for row in rows]
             if label != "unobservable" else [],
@@ -257,6 +284,21 @@ def _finger_retry_result(primary: list[dict], retry: list[dict]) -> dict:
     return result
 
 
+def _finger_retry_result_v3(primary: list[dict], retry: list[dict]) -> dict:
+    """Reproduce the historical v3 one-view primary consensus exactly."""
+    result = _hand_result_v3(primary)
+    if (result["class"] == "miss" and
+            sum(row["yes"] is True for row in retry) >= 2):
+        return {
+            "class": "held",
+            "evidence": "Two fingertip views show the gripped key",
+            "evidence_views": [row["camera_id"] for row in retry],
+            "confirming_views": [row["camera_id"] for row in retry
+                                 if row["yes"] is True],
+        }
+    return result
+
+
 def observe_visible_grip(
     backend: ImageVLM, frames: Sequence[LabeledFrame], before_bundle: Path,
     *, calibration: Mapping, joint_q: Sequence[float], robot_urdf: Path,
@@ -264,6 +306,8 @@ def observe_visible_grip(
     paired = {(frame.phase, frame.camera_id): frame for frame in frames}
     cameras = {frame.camera_id for frame in frames}
     selected = tuple(getattr(backend, "visible_grip_camera_ids", CAMERAS))
+    capture4 = selected != CAMERAS
+    prompt = HAND_PROMPT if capture4 else HAND_PROMPT_V3
     if (len(paired) != len(frames) or
             len(frames) != 2 * len(cameras) or
             any((phase, camera) not in paired
@@ -291,21 +335,22 @@ def observe_visible_grip(
                        camera_ids=list(selected), image_count=len(selected),
                        model=getattr(backend, "model", None)):
                 answers = backend.infer_many(
-                    [(prepared, HAND_PROMPT) for prepared, _, _, _ in inputs])
+                    [(prepared, prompt) for prepared, _, _, _ in inputs])
         elapsed = time.perf_counter() - started
         if len(answers) != len(selected):
             raise RuntimeError("lift VLM batch returned the wrong number of views")
         rows = [_hand_row(
             camera, paired["after_lift", camera], answer, transform, roi,
-            pixel, elapsed)
+            pixel, elapsed, prompt=prompt)
             for camera, (prepared, transform, roi, pixel), answer
             in zip(selected, inputs, answers)]
     else:
         rows = map_view_calls(
             backend, list(selected),
             lambda camera: _hand_answer(
-                backend, camera, paired["after_lift", camera], calibration, hand))
-    parsed = _hand_result(rows)
+                backend, camera, paired["after_lift", camera], calibration, hand,
+                prompt=prompt))
+    parsed = _hand_result(rows) if capture4 else _hand_result_v3(rows)
     retry_rows = None
     retry_latency_s = 0.
     if (parsed["class"] == "miss" and
@@ -333,7 +378,8 @@ def observe_visible_grip(
             retry_rows = [_hand_row(
                 camera, paired["after_lift", camera], answer, transform,
                 roi, pixel, retry_latency_s,
-                method="measured_fr3_inspire_fingertip_fk_and_undistorted_camera")
+                method="measured_fr3_inspire_fingertip_fk_and_undistorted_camera",
+                prompt=HAND_PROMPT)
                 for camera, (prepared, transform, roi, pixel), answer
                 in zip(selected, retry_inputs, retry_answers)]
         else:
@@ -342,7 +388,7 @@ def observe_visible_grip(
                 lambda camera: _hand_answer(
                     backend, camera, paired["after_lift", camera], calibration,
                     hand, focus_local=finger_focus, side_px=FINGER_CROP_SIDE,
-                    stage="post_lift_finger_retry"))
+                    stage="post_lift_finger_retry", prompt=HAND_PROMPT))
             retry_latency_s = sum(row["latency_s"] for row in retry_rows)
         parsed = _finger_retry_result(rows, retry_rows)
     order = tuple(
@@ -425,7 +471,10 @@ def verify_visible_grip(visual: dict, cameras: set[str],
     rows = aggregation.get("per_view")
     schema = aggregation.get("schema")
     selected = (list(CAMERAS) if schema == SCHEMA else
-                aggregation.get("camera_ids") if schema == CAPTURE4_SCHEMA else None)
+                aggregation.get("camera_ids")
+                if schema in {CAPTURE4_SCHEMA_V3, CAPTURE4_SCHEMA} else None)
+    historical_consensus = schema in {SCHEMA, CAPTURE4_SCHEMA_V3}
+    expected_prompt = HAND_PROMPT_V3 if historical_consensus else HAND_PROMPT
     if (not isinstance(selected, list) or len(selected) < 2 or
             len(set(selected)) != len(selected) or
             not set(selected) <= cameras or
@@ -449,7 +498,7 @@ def verify_visible_grip(visual: dict, cameras: set[str],
                       if item.startswith(f"after_lift/{camera}@")), None)
         if order is None or row.get("image_order") != [order]:
             raise ValueError("visible grip image order changed")
-        if (row.get("prompt") != HAND_PROMPT or
+        if (row.get("prompt") != expected_prompt or
                 not isinstance(row.get("raw_answer"), str) or
                 row.get("yes") is not _vote(row["raw_answer"])):
             raise ValueError("visible grip prompt or answer changed")
@@ -479,7 +528,9 @@ def verify_visible_grip(visual: dict, cameras: set[str],
     retry = aggregation.get("finger_focus_retry")
     retry_rows = None
     if retry is not None:
-        if (_hand_result(rows)["class"] != "miss" or
+        primary_result = (_hand_result_v3(rows) if historical_consensus
+                          else _hand_result(rows))
+        if (primary_result["class"] != "miss" or
                 not isinstance(retry, dict) or
                 retry.get("crop_side_px") != FINGER_CROP_SIDE or
                 not isinstance(retry.get("per_view"), list) or
@@ -495,7 +546,7 @@ def verify_visible_grip(visual: dict, cameras: set[str],
             crop = row.get("crop", {})
             size = crop.get("original_image_size_wh")
             if (order is None or row.get("image_order") != [order] or
-                    row.get("prompt") != HAND_PROMPT or
+                    row.get("prompt") != expected_prompt or
                     not isinstance(row.get("raw_answer"), str) or
                     row.get("yes") is not _vote(row["raw_answer"]) or
                     transform.get("max_size") !=
@@ -516,8 +567,13 @@ def verify_visible_grip(visual: dict, cameras: set[str],
                     not np.allclose(crop.get("projected_hand_px", []), pixel,
                                     atol=1e-6, rtol=0)):
                 raise ValueError("visible grip fingertip crop changed")
-    expected = (_finger_retry_result(rows, retry_rows) if retry_rows is not None
-                else _hand_result(rows))
+    if retry_rows is not None:
+        expected = (_finger_retry_result_v3(rows, retry_rows)
+                    if historical_consensus else
+                    _finger_retry_result(rows, retry_rows))
+    else:
+        expected = (_hand_result_v3(rows) if historical_consensus
+                    else _hand_result(rows))
     if (visual.get("parsed") != expected or
             visual.get("raw_answer") != json.dumps(expected, sort_keys=True) or
             visual.get("parse_error") is not None):
