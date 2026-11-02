@@ -1,7 +1,9 @@
 # Cylinder insertion: prompt and axial-control contract
 
-This document records the stage semantics and the current runtime. The VLM reads **raw, undistorted AutoDex camera
-images**. CAD overlays are saved for humans, never sent as visual evidence.
+This document records the stage semantics and the current runtime. On the
+active ZeroDex profile the VLM reads **raw, undistorted capture4 camera
+images**. The historical AutoDex profile follows the same evidence rule. CAD
+overlays are saved for humans, never sent as visual evidence.
 All precision keys and sockets are white. Segmentation prompts must identify
 the loose key and fixed socket by shape and location, not a different color.
 The runtime rejects stale color words before a SAM request.
@@ -28,7 +30,7 @@ saved live-camera socket-only SAM3 replay using the exact prompt
 mask in one. This checks the prompt against this scene, not the mask's full
 object coverage or metric pose accuracy.
 
-## 2. VLM checkpoints: exact per-camera input and proposed short text
+## 2. Current model checkpoints and exact per-camera evidence
 
 Send one camera's image(s) per request to the default local Qwen backend;
 aggregate parsed votes across cameras afterward. Label the image order in
@@ -37,28 +39,31 @@ the model's raw answer, parsed answer, camera ID, source image hashes and
 prompt version. The short strings below are the **model-facing core**;
 transport code can add image dimensions and JSON schema constraints.
 
-| Stage | Images, in order | Model-facing question | JSON fields | Downstream use |
+| Stage | Images, in order | Model-facing question | Parsed output | Downstream use |
 | --- | --- | --- | --- | --- |
-| Lift | `before_grasp` (initial tabletop capture), `after_lift` from the **same camera** | `Is the same white peg visibly held after the lift? Do not infer from closed fingers or occlusion.` | JSON keys `class`, `evidence_views`, `evidence`; `class` is exactly one of `held`, `miss`, `slip`, `unobservable` | Grasp outcome; if not held, do not start transfer. |
+| Lift | One undistorted `after_lift` crop centered by measured FR3/Inspire FK, independently for each camera | `Is the small solid white cylindrical peg visibly held by the robot's black fingers in this image? The robot also has white finger shells. Reply only YES or NO.` | One `YES`/`NO` token per view; deterministic aggregation requires at least two `YES` cameras for `held`, treats one `YES` as `unobservable`, and does not run the ambiguous fingertip recrop | Grasp outcome. The initial frame remains saved for provenance, but is not a v5 inference image. |
 | Transfer / preinsert | `after_lift`, `preinsert` from the **same camera** | `Is the same peg still held above the socket, with a roughly compatible axis? Judge visible pixels only.` | Same JSON keys; `class` is exactly one of `coarse_match`, `gross_misalignment`, `slip_or_miss`, `unobservable` | Detect lost key or gross arrival error; not a metric XY estimate. |
-| Final released state | `initial_tabletop`, `final_clear_view` from the **same camera**, after opening the hand and clearing the view | `Is the peg visibly inside the socket now? Disappearance or an empty hand is not proof.` | JSON keys `visual_class`, `evidence_views`, `evidence`; `visual_class` is exactly one of `inside_socket`, `outside_socket`, `unobservable` | Visual task label; this is **not** a claim of measured 20 mm depth. |
-| Failed trial, next-trial XY | The already saved **raw preinsert** image from each camera; no post-failure recapture | `Mark the visible insertion-tip center and two separated points on the peg axis. Use image pixels; return null for hidden features.` | `{"tip_px":[x,y]|null,"axis_line_px":[[x1,y1],[x2,y2]]|null}` | Calibrated multi-view geometry computes socket-frame millimetres. The VLM never outputs robot-frame millimetres. |
+| Final released state | One socket-centered `final_clear_view` crop per selected camera, after opening the hand and clearing the view | `If the solid key protrudes from inside the circular socket rim, answer INSIDE. If the rim is empty, answer OUTSIDE; if hidden, answer UNCLEAR.` | One class token per view, followed by deterministic camera majority | Visual task label; the initial tabletop frames remain in the evidence bundle but are not sent to the current final classifier. This is **not** a claim of measured 20 mm depth. |
+| Same-trial alignment | One dynamically projected crop of the already saved **raw preinsert** image from each ranked socket-pose-inlier camera | Qwen: `Find the WHITE CYLINDRICAL KEY directly held by the BLACK ROBOT HAND... Return the tight bounding box...`; SAM3: `white cylinder` | Qwen box, SAM mask, distal half-ellipse center and visible shaft direction. Calibrated image geometry produces socket-frame XY/tilt; the VLM never outputs robot-frame millimetres. | Move, recapture and repeat inside the same held-key attempt. The same observation is retained for next-trial diagnosis if insertion later fails. |
 
-For label requests, the implementation retains `evidence_views` because the
-current observer validates it. Use the sole camera's ID for a decisive
-per-camera result; use `[]` when unobservable. In particular, the
-active [`observe_preinsert_temporal_views`](precision_insertion/observer.py)
-sends each camera's ordered raw `after_lift`/`preinsert` pair. The saved
-checkpoint binds both source manifests, camera/frame IDs, timestamps, PNG
-hashes, prompt and raw answer, and replays parsing. The historical
-`observe_preinsert_raw_views` remains a single-frame diagnostic only. The released-state
-pair is already wired in [`observe_released_insertion_visual`](precision_insertion/observer.py).
-The existing prompts are longer; shortening them must preserve these
-semantics and parser tests, not merely replace string literals.
+For closed-set JSON requests, the implementation retains `evidence_views`
+because the observer validates it. Use the sole camera's ID for a decisive
+per-camera result; use `[]` when unobservable. Lift v5 and the final
+socket-crop classifier instead use short class tokens per camera and save the
+deterministic aggregate separately. In particular, the active
+[`observe_preinsert_temporal_views`](precision_insertion/observer.py) sends
+each camera's ordered raw `after_lift`/`preinsert` pair. The saved checkpoint
+binds both source manifests, camera/frame IDs, timestamps, PNG hashes, prompt
+and raw answer, and replays parsing. The historical
+`observe_preinsert_raw_views` remains a single-frame diagnostic only. The
+released-state source pair is wired in
+[`observe_released_insertion_visual`](precision_insertion/observer.py), while
+the current model request uses only the final socket crop. Shortening prompts
+must preserve these semantics and parser tests, not merely replace strings.
 
-The request formatter should construct the **literal model input** like this
-for each camera, substituting the stage's image names, question, field and
-allowed values from the table:
+For the transfer JSON request, the formatter constructs the **literal model
+input** like this for each camera, substituting the stage's image names,
+question, field and allowed values from the table:
 
 ```text
 Camera {camera_id}. Image 1: {before}. Image 2: {after}.
@@ -69,21 +74,26 @@ evidence_views = ["{camera_id}"] for a visible conclusion, otherwise [].
 evidence = one short phrase about visible pixels.
 ```
 
-For the XY request there is just one image, so include its undistorted width
-and height and substitute the existing exact JSON keys `tip_px`,
-`axis_line_px`, `evidence`. Do not put a pipe-delimited list of labels inside
-a JSON string: that could be copied literally instead of choosing one value.
+The alignment request uses a single projected crop and the exact normalized
+Qwen box schema shown in the table. The crop origin, scale, source-image hash
+and undistorted calibration are saved. Qwen coordinates are restored to
+native camera pixels before SAM3 and calibrated geometry. The default
+endpoint route fuses visible end centers across eligible cameras and measured
+motion over successive holds. The optional partial-shape route jointly fits
+socket-frame `(x, y, tilt_x, tilt_y)` to the mask-derived end center and shaft
+direction; cylinder yaw is intentionally absent. Missing shape geometry
+falls back to endpoint/temporal evidence and does not end the episode.
 
-The pixel-grounding request should use the full undistorted image, or a crop
-with its exact origin and scale saved. Validate coordinates against that
-image. Convert crop pixels back to original camera pixels **before**
-calibrated triangulation. Fuse camera rays/shaft lines with reprojection
-residuals, then compute the cylinder's XY displacement in the frozen socket
-frame. The saved result affects the **next** physical attempt only:
-`offset_next = offset_current + 1.0 * measured_XY_error`, with the existing
-per-attempt 10 mm step cap and no cumulative cap. A visually unobservable
-key cannot yield a measured tip center; fallback behavior, if used, must be
-logged distinctly from VLM-derived metric correction.
+The resulting correction is first used **inside the same held-key attempt**:
+one wrist increment is capped at 10 mm, the robot recaptures at the new hold,
+and the loop continues until the configured convergence condition or no new
+metric correction is available. A single-view planar estimate may be used
+only as one active-observation probe; it is returned unless a later true
+multiview observation confirms it. If insertion later fails, the same saved
+preinsert evidence can update the next physical attempt as
+`offset_next = offset_current + 1.0 * measured_XY_error`, again with a 10 mm
+per-update cap and no cumulative cap. An unavailable observation is recorded
+as unavailable; it is never converted to a zero-error measurement.
 
 ## 3. Socket-axis stroke and Jacobian control
 

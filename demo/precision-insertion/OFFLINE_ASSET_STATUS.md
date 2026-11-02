@@ -1,5 +1,13 @@
 # Offline asset/use status (2026-10-11)
 
+> **Archived AutoDex-era inventory.** This file preserves the October 11
+> producer/handoff evidence and its old `~/shared_data/AutoDex` paths. It is
+> not an execution guide for the current ZeroDex capture4 branch. Use
+> [OPERATIONS.md](OPERATIONS.md) for commands and
+> [ZERODEX_NAS_PROJECT.md](ZERODEX_NAS_PROJECT.md) for the independent
+> `/mnt/paradex2/hyunsu/precision_insertion` asset/runtime contract. The
+> current launcher rejects active references to the legacy roots named below.
+
 For the newer ten-mode inventory and AutoDex-PC/NAS handoff order, see
 [ROBOT_PC_HANDOFF_20261012.md](ROBOT_PC_HANDOFF_20261012.md).
 
