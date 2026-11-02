@@ -579,12 +579,18 @@ waiting on the operator inside each label stage. The offline replay and its
 limits are documented in `EPISODE_CONSISTENCY_20261029.md`; neither change
 has yet been timed in a new physical episode.
 
-This profile lives on branch `feat/zerodex-precision-insertion`. The AutoDex
-camera/robot profile and `src/execution` sources are not changed. The local
-kds-Z790 PC runs session orchestration, Qwen VLM and planning. Capture4
-(`147.46.219.136`, SSH port `77`) provides four cameras and a persistent
-SAM3/FoundPose process. Its existing ParaDex checkout, global `system/current`
-configuration, calibration and Python environments are **not edited**.
+This profile lives on branch `feat/zerodex-precision-insertion`. The stock
+AutoDex entry points (`run_auto.py`, `run_pipeline.py`, and `scene_cfg.py`)
+and camera/robot profile are not changed. The branch still has the four
+explicit low-level adapter surfaces listed in [PLAN.md](PLAN.md): optional
+socket mask-only initialization, an explicit planner URDF, board-9 tabletop
+measurement, and the parameterized FR3 executor with its three small stream
+helpers. All task policy and the ZeroDex state machine remain under this
+demo. The local kds-Z790 PC runs session orchestration, Qwen VLM and planning.
+Capture4 (`147.46.219.136`, SSH port `77`) provides four cameras and a
+persistent SAM3/FoundPose process. Its existing ParaDex checkout, global
+`system/current` configuration, calibration and Python environments are
+**not edited**.
 For the robot-free replay of previously lit four-camera socket/key photographs,
 see [SAVED_CAPTURE4_SCENE_20261028.md](SAVED_CAPTURE4_SCENE_20261028.md).
 

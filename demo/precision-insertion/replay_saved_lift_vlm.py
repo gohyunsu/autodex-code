@@ -129,7 +129,7 @@ def _verified_cases(attempt_root: Path) -> tuple[list[dict], tuple[int, int]]:
 
 
 def _open_backend(vlm: dict, *, ceiling: tuple[int, int], output: Path,
-                  model_override: Path | None):
+                  model_override: Path | None, allow_cpu: bool = False):
     model_id = str(model_override.expanduser().resolve()) if model_override else (
         vlm["model_id"])
     image_size = (tuple(vlm["classification_image_size"])
@@ -143,7 +143,7 @@ def _open_backend(vlm: dict, *, ceiling: tuple[int, int], output: Path,
             log_path=output.with_suffix(".distributed.jsonl"))
     return load_vlm_backend(
         mode="local", model_id=model_id, max_input_size=ceiling,
-        max_new_tokens=vlm["max_new_tokens"], require_cuda=True,
+        max_new_tokens=vlm["max_new_tokens"], require_cuda=not allow_cpu,
         require_native_pixels=bool(vlm.get("require_native_pixels", True)),
         **({"classification_image_size": image_size}
            if image_size is not None else {}))
@@ -200,7 +200,8 @@ def run(args: argparse.Namespace) -> dict:
     else:
         backend = _open_backend(
             vlm, ceiling=ceiling, output=output,
-            model_override=args.model_id)
+            model_override=args.model_id,
+            allow_cpu=getattr(args, "allow_cpu", False))
         backend.supports_visible_grip_lift = True
         backend.supports_finger_focus_retry = True
         rows = []
@@ -252,6 +253,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model-id", type=Path,
                         help="optional local model path override")
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument(
+        "--allow-cpu", action="store_true",
+        help="allow a slow offline local-model replay without CUDA; live "
+             "runtime requirements are unchanged")
     parser.add_argument("--profile", action="store_true")
     args = parser.parse_args(argv)
     context = profile_run(args.output) if args.profile else None

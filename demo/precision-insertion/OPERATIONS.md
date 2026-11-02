@@ -32,6 +32,12 @@ exception. Live assets and outputs never use another NAS user's directory.
 - latency schema and reports: `TIMING_PROFILE.md`
 - experiment protocol: `RESEARCH_EVALUATION_PROTOCOL.md`
 
+The AutoDex executable entry points are unchanged. Four optional low-level
+adapter surfaces and three executor helper modules still live outside this
+demo; [PLAN.md](PLAN.md) is their exact allowlist and compatibility contract.
+Do not describe the branch as byte-identical to stock AutoDex, and do not add
+another shared-file dependency without updating that boundary and its tests.
+
 ## Before a run
 
 The robot may remain off for the first two checks.

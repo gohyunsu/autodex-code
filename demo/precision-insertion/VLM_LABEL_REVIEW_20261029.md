@@ -88,6 +88,10 @@ PYTHONPATH="$PWD/demo/precision-insertion:$PWD" \
   --output "$PRECISION_DEV_ROOT/reviews/lift_v5_replay_$(date +%Y%m%d_%H%M%S).json"
 ```
 
+The replay keeps CUDA mandatory by default, matching the live local-model
+route. Add `--allow-cpu` only for a slow, robot-free audit when the NVIDIA
+device nodes are unavailable; this flag does not relax the live launcher.
+
 The four-case sections below document the earlier v4 final prompt and 384 px
 crop. The current v5 method and six human-labeled ZeroDex episodes are in
 [SAVED_ZERODEX_VISION_REVIEW_20261029.md](SAVED_ZERODEX_VISION_REVIEW_20261029.md).
