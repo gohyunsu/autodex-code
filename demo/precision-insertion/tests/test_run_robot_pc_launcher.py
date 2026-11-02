@@ -143,10 +143,12 @@ def test_zerodex_launcher_provides_demo_collision_compat(tmp_path):
         (stage / name).write_text("{}\n", encoding="utf-8")
     fake_check = tmp_path / "fake_check"
     fake_check.write_text(
-        "#!/bin/sh\nprintf 'PYTHONPATH=%s\\nPREWARM=%s\\nPRELOAD=%s\\nHOST=%s\\nFR3=%s\\n' "
+        "#!/bin/sh\nprintf 'PYTHONPATH=%s\\nPREWARM=%s\\nPRELOAD=%s\\nHOST=%s\\nFR3=%s\\nEXCLUDED=%s\\nPOLICY=%s\\n' "
         "\"$PYTHONPATH\" \"$PRECISION_PREWARM_FIXED_WORLD\" "
         "\"$PRECISION_PRELOAD_VLM\" \"$PRECISION_CAPTURE4_SSH_HOST\" "
-        "\"$PRECISION_ZERODEX_FR3_FCI_IP\"\n",
+        "\"$PRECISION_ZERODEX_FR3_FCI_IP\" "
+        "\"$PRECISION_EXCLUDED_CANDIDATES\" "
+        "\"$PRECISION_CANDIDATE_POLICY_PROFILE\"\n",
         encoding="utf-8")
     fake_check.chmod(0o755)
     env = dict(os.environ, PRECISION_STAGE_ROOT=str(stage),
@@ -164,6 +166,17 @@ def test_zerodex_launcher_provides_demo_collision_compat(tmp_path):
     assert "PRELOAD=1" in completed.stdout
     assert "HOST=capture4@147.46.219.136" in completed.stdout
     assert "FR3=172.16.1.11" in completed.stdout
+    assert "EXCLUDED=table/0/20096" in completed.stdout
+    assert "POLICY=" in completed.stdout
+    assert "config/candidate_policies/cylinder_gap5.env.sh" in completed.stdout
+
+    policy_disabled_env = dict(env, PRECISION_CANDIDATE_POLICY_PROFILE="")
+    policy_disabled_env.pop("PRECISION_EXCLUDED_CANDIDATES", None)
+    policy_disabled = subprocess.run(
+        ["bash", str(demo / "run_zerodex_capture4.sh"), "--check"],
+        env=policy_disabled_env, capture_output=True, text=True, check=True)
+    assert "EXCLUDED=\n" in policy_disabled.stdout
+    assert "POLICY=\n" in policy_disabled.stdout
 
     env["PRECISION_CAPTURE4_SSH_HOST"] = "capture4@example.test"
     overridden_host = subprocess.run(

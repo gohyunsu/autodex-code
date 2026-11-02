@@ -39,10 +39,16 @@ export PRECISION_POST_LIFT_SETTLE_S=${PRECISION_POST_LIFT_SETTLE_S:-2.0}
 # cuRobo world. Start that work while capture4 acquires/refines the next key.
 # A caller can set 0 for a measured serial-latency comparison.
 export PRECISION_PREWARM_FIXED_WORLD=${PRECISION_PREWARM_FIXED_WORLD:-1}
-if [[ $PRECISION_GAP_MM == 5 && -z ${PRECISION_EXCLUDED_CANDIDATES+x} ]]; then
-  # In two corrected-hold replays 20096 intersected the socket at 20 mm;
-  # three released trials with this grasp left the key outside the socket.
-  export PRECISION_EXCLUDED_CANDIDATES=table/0/20096
+if [[ -z ${PRECISION_CANDIDATE_POLICY_PROFILE+x} && $PRECISION_GAP_MM == 5 ]]; then
+  export PRECISION_CANDIDATE_POLICY_PROFILE="$SCRIPT_DIR/config/candidate_policies/cylinder_gap5.env.sh"
+fi
+if [[ -n ${PRECISION_CANDIDATE_POLICY_PROFILE:-} ]]; then
+  precision_candidate_policy=$PRECISION_CANDIDATE_POLICY_PROFILE
+  if [[ $precision_candidate_policy != /* ]]; then
+    precision_candidate_policy="$SCRIPT_DIR/config/candidate_policies/$precision_candidate_policy"
+  fi
+  source "$precision_candidate_policy"
+  unset precision_candidate_policy
 fi
 export PRECISION_ENDPOINT_CATALOG=${PRECISION_ENDPOINT_CATALOG:-$PRECISION_STAGE_ROOT/recipient_gap${PRECISION_GAP_MM}_endpoint_catalog_straight.json}
 

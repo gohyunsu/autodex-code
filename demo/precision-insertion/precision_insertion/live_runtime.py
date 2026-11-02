@@ -174,6 +174,11 @@ def inspect_live_inputs(
         "scope": "static_files_only_no_camera_cuda_or_robot_connection",
         "robot_ready": False,
     }
+    from .project_layout import runtime_namespace_report
+
+    namespace = runtime_namespace_report()
+    if namespace is not None:
+        result["storage_namespace"] = namespace
     if xy_estimator == "sam_half_ellipse":
         from .franka_integration import _sam_runtime_paths
 

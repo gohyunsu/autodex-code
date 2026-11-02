@@ -69,6 +69,14 @@ reused-session and output path before use. A path that resolves anywhere
 below `/mnt/paradex2` is admitted only below `/mnt/paradex2/hyunsu`; local
 copies below `/home/hyunsu` remain valid. This is a storage namespace
 contract, not a grasp, planning, perception, or insertion rejection rule.
+The static `--check` result also records every configured runtime path under
+`storage_namespace`; any path below the ParaDex2 mount but outside
+`/mnt/paradex2/hyunsu` is listed explicitly. This report is provenance only
+and does not add a robot outcome gate. Repeated-use latency caches may stay
+local: the SAM checkpoint under `~/precision_insertion_project/cache`, Python
+environments, the project-owned ParaDex checkout, and the temporary timing
+buffer under `/tmp`. Authoritative assets, run ledgers and development output
+remain in this NAS project.
 On capture4, the existing `/home/capture4/paradex` installation remains an
 explicit exception for camera acquisition and shared-memory reading. Our
 FoundPose/SAM3 source and weights use the namespaced capture4 adapter and this
@@ -150,6 +158,13 @@ later starts. `manage_zerodex_capture4_services.py start` launches the
 namespaced services; there is no source or model transfer per episode. The
 launch profile points capture4 FoundPose at its local cached copy of these
 project assets. The NAS copy is read only during one-time preparation.
+
+Fixture-specific candidate exclusions are versioned under
+`config/candidate_policies/` and selected by
+`PRECISION_CANDIDATE_POLICY_PROFILE`. The default 5 mm profile preserves the
+experiment-backed exclusion of `table/0/20096`; setting the variable to an
+empty value disables that profile. The launcher therefore contains no hidden
+candidate ID or general-purpose conservative filter.
 
 ## Record each pipeline run without NAS I/O
 
