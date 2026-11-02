@@ -43,6 +43,13 @@ cd /home/hyunsu/autodex-code
 PRECISION_GAP_MM=5 \
   bash demo/precision-insertion/run_zerodex_capture4.sh --check
 
+# Read-only: audits the independent NAS bundle inventory and current code
+# snapshot. This does not open CUDA, cameras, Franka or Inspire.
+source demo/precision-insertion/config/zerodex_capture4.env.sh
+PYTHONPATH=demo/precision-insertion \
+  "$PRECISION_CHECK_PY" demo/precision-insertion/prepare_zerodex_nas_project.py \
+  --verify-project --nas-root "$PRECISION_NAS_PROJECT_ROOT"
+
 # Read-only remote status; does not start or change camera services.
 python3 demo/precision-insertion/manage_zerodex_capture4_services.py check
 ```
@@ -50,6 +57,9 @@ python3 demo/precision-insertion/manage_zerodex_capture4_services.py check
 The static report must identify the effective local Qwen directory as
 `~/precision_insertion_project/cache/models/Qwen3-VL-2B-Instruct`. It checks
 path presence only; it deliberately does not load CUDA or open the robot.
+The bundle verifier is independent of the live launcher. A nonzero result
+means the handoff inventory or archived code snapshot needs refreshing; it is
+not an added grasp, perception, planning or insertion failure condition.
 
 For a camera/perception-only session with no robot command:
 

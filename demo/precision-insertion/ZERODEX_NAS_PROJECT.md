@@ -6,7 +6,7 @@ code; the old AutoDex experiment directory is not this project's archive.
 
 | Path under project root | Contents |
 | --- | --- |
-| `code/` | Exact tracked AutoDex fork and ParaDex source archives, with commits and SHA256 in `PROJECT_MANIFEST.json` |
+| `code/` | Tracked precision-insertion fork and ParaDex source archives, with commits and SHA256 in `PROJECT_MANIFEST.json`; the verifier reports whether the fork archive matches the current checkout |
 | `assets/shared_data/` | Object meshes, all six cylindrical sockets, key and extracted 5 mm socket FoundPose representations, v8 grasps, reset candidates, scenes, fixture geometry, Qwen, SAM3, capture4 calibration, launch/catalog templates, robot dependency bundle |
 | `runtime/active_shared_data/` | Active path-correct `AssetPaths` tree: heavy files link into `assets/shared_data`, small JSON files contain project-local paths. This is the live `PRECISION_SHARED_ROOT`. |
 | `runtime/session_inputs/` | Frozen input JSON for the 2026-10-30 socket remeasurement. Retained because its evidence ledger records these exact paths. |
@@ -119,6 +119,34 @@ recopying runtime assets:
 ```bash
 python3 demo/precision-insertion/prepare_zerodex_nas_project.py --refresh-code-only
 ```
+
+Verify the resulting bundle without opening a camera, CUDA context or robot:
+
+```bash
+source demo/precision-insertion/config/zerodex_capture4.env.sh
+PYTHONPATH=demo/precision-insertion \
+  "$PRECISION_CHECK_PY" demo/precision-insertion/prepare_zerodex_nas_project.py \
+  --verify-project --nas-root "$PRECISION_NAS_PROJECT_ROOT"
+```
+
+`--verify-project` checks every declared path and size, detects untracked or
+missing files in the managed asset/code/rig/restore/environment trees, checks
+that runtime symlinks remain inside this project, and compares the archived
+fork commit with the current checkout. `--verify-project-sha256` additionally
+rereads and hashes every declared file; use it for a final handoff, not on the
+live critical path. Project manifest v2 records symlink targets and the
+installer, documentation and environment locks that v1 omitted. Neither mode
+is invoked by the robot launcher or changes an execution outcome.
+
+The read-only 2026-11-03 audit of the existing v1 bundle correctly reports it
+as not yet reproduction-ready: its fork archive is at `f0f9f1d`, two reset
+provenance JSON files changed size after that manifest, five asset files and
+the rig-runtime link are not inventoried, and v1 does not inventory the
+installer/readmes/environment locks. The active runtime view itself has 96
+project-local symlinks with no broken or outside-project target. The NAS was
+mounted read-only during this audit, so the evidence was not rewritten to
+look current. Once it is writable, run `--refresh-code-only` from the final
+committed checkout, then the metadata verifier and finally the SHA256 verifier.
 
 Large unchanged NAS source files are hardlinked where available, and local
 runtime files are copied into the project tree. Socket representations are

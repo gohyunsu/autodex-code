@@ -61,7 +61,10 @@ def install(bundle: Path, destination: Path,
     destination = destination.expanduser().resolve()
     manifest = json.loads((bundle / "PROJECT_MANIFEST.json").read_text(
         encoding="utf-8"))
-    if manifest.get("schema") != "precision_insertion_reproducible_project_v1":
+    if manifest.get("schema") not in {
+        "precision_insertion_reproducible_project_v1",
+        "precision_insertion_reproducible_project_v2",
+    }:
         raise ValueError("not a precision insertion project bundle")
     destination.mkdir(parents=True, exist_ok=True)
     for record in manifest["code"]:

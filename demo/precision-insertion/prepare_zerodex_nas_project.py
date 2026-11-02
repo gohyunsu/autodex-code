@@ -9,7 +9,6 @@ pipeline's AssetPaths contract; run artifacts and videos live outside assets.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,6 +16,14 @@ import subprocess
 import tempfile
 
 from precision_insertion.project_layout import nas_project_root
+from precision_insertion.project_bundle import (
+    inventory_tree as _inventory_tree,
+    project_inventory as _project_inventory,
+    refresh_inventory as _refresh_inventory,
+    rig_inventory as _rig_inventory,
+    sha256_file as _sha256,
+    verify_project,
+)
 
 
 HERE = Path(__file__).resolve().parent
@@ -57,14 +64,6 @@ def _copy_file(source: Path, destination: Path) -> None:
                        check=True)
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(4 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def _source_archive(repo: Path, destination: Path) -> dict:
     commit = _git(repo, "rev-parse", "HEAD")
     archive = destination / f"{repo.name}_{commit[:12]}.tar.gz"
@@ -73,13 +72,6 @@ def _source_archive(repo: Path, destination: Path) -> dict:
                         "-o", str(archive), "HEAD"], check=True)
     return {"repository": repo.name, "commit": commit,
             "archive": archive.name, "sha256": _sha256(archive)}
-
-
-def _rig_inventory(nas_root: Path) -> list[dict]:
-    rig = nas_root / "rigs" / "zerodex_capture4"
-    return [{"path": str(path.relative_to(nas_root)),
-             "bytes": path.stat().st_size, "sha256": _sha256(path)}
-            for path in sorted(rig.rglob("*")) if path.is_file() and not path.is_symlink()]
 
 
 def refresh_code(*, nas_root: Path, paradex_repo: Path) -> dict:
@@ -141,12 +133,18 @@ def refresh_code(*, nas_root: Path, paradex_repo: Path) -> dict:
              and not row["path"].startswith(socket_prefixes)},
          **updates}.values(),
         key=lambda row: row["path"])
+    manifest["assets"] = _refresh_inventory(
+        manifest["assets"], nas_root / "assets", nas_root)
+    manifest["restore_files"] = _refresh_inventory(
+        list(manifest.get("restore_files", [])), nas_root / "restore", nas_root)
     manifest["asset_file_count"] = len(manifest["assets"])
     _copy_file(HERE / "install_zerodex_nas_project.py",
                nas_root / "install_project.py")
     _copy_file(HERE / "ZERODEX_NAS_PROJECT.md", nas_root / "README.md")
     _copy_file(HERE / "DEVELOPMENT_ARTIFACTS.md",
                nas_root / "development" / "README.md")
+    manifest["schema"] = "precision_insertion_reproducible_project_v2"
+    manifest["project_files"] = _project_inventory(nas_root)
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8")
@@ -291,14 +289,9 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
     _copy_file(HERE / "ZERODEX_NAS_PROJECT.md", nas_root / "README.md")
     _copy_file(HERE / "DEVELOPMENT_ARTIFACTS.md",
                nas_root / "development" / "README.md")
-    records = []
-    for path in sorted((nas_root / "assets").rglob("*")):
-        if path.is_file() and not path.is_symlink():
-            records.append({"path": str(path.relative_to(nas_root)),
-                            "bytes": path.stat().st_size,
-                            "sha256": _sha256(path)})
+    records = _inventory_tree(nas_root / "assets", nas_root)
     manifest = {
-        "schema": "precision_insertion_reproducible_project_v1",
+        "schema": "precision_insertion_reproducible_project_v2",
         "project": "precision_insertion", "rig": "zerodex_capture4",
         "source_shared_root": str(shared),
         "cylindrical_gap_mm": list(GAPS),
@@ -306,11 +299,8 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
         "rig_files": _rig_inventory(nas_root),
         "code": snapshots, "assets": records,
         "asset_packages": packages,
-        "restore_files": [
-            {"path": str(path.relative_to(nas_root)),
-             "bytes": path.stat().st_size, "sha256": _sha256(path)}
-            for path in sorted((nas_root / "restore").rglob("*"))
-            if path.is_file()],
+        "restore_files": _inventory_tree(nas_root / "restore", nas_root),
+        "project_files": _project_inventory(nas_root),
         "asset_file_count": len(records),
         "runtime_nas_upload": "separate_post_run_command_only",
     }
@@ -328,7 +318,10 @@ def main() -> None:
     parser.add_argument("--nas-root", type=Path,
                         default=nas_project_root())
     parser.add_argument("--paradex-repo", type=Path,
-                        default=Path.home() / "paradex")
+                        default=Path(os.environ.get(
+                            "PRECISION_PARADEX_ROOT",
+                            str(Path.home() /
+                                "precision_insertion_project/vendor/paradex"))))
     parser.add_argument("--source-stage", type=Path,
                         default=(Path(os.environ["PRECISION_NAS_LINK_STAGE"])
                                  if "PRECISION_NAS_LINK_STAGE" in os.environ
@@ -344,7 +337,21 @@ def main() -> None:
                         help="local project-owned ParaDex system/current directory")
     parser.add_argument("--refresh-code-only", action="store_true",
                         help="update committed source archives and README without recopying assets")
+    verify = parser.add_mutually_exclusive_group()
+    verify.add_argument("--verify-project", action="store_true",
+                        help="read-only missing/size/inventory audit")
+    verify.add_argument("--verify-project-sha256", action="store_true",
+                        help="read-only full-byte SHA256 handoff audit")
     args = parser.parse_args()
+    if args.verify_project or args.verify_project_sha256:
+        report = verify_project(
+            nas_root=args.nas_root,
+            verify_sha256=args.verify_project_sha256,
+            repo=REPO)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        if not report["reproduction_ready"]:
+            raise SystemExit(1)
+        return
     if args.refresh_code_only:
         print(json.dumps(refresh_code(
             nas_root=args.nas_root,

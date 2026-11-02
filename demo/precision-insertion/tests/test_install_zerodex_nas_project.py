@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tarfile
 
+import pytest
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -46,7 +48,11 @@ def test_socket_handoff_models_are_not_nested_after_restore(tmp_path):
     assert not (target / name).exists()
 
 
-def test_restored_profile_uses_restored_shared_data(tmp_path):
+@pytest.mark.parametrize("schema", [
+    "precision_insertion_reproducible_project_v1",
+    "precision_insertion_reproducible_project_v2",
+])
+def test_restored_profile_uses_restored_shared_data(tmp_path, schema):
     bundle = tmp_path / "bundle"
     destination = tmp_path / "installed"
     (bundle / "code").mkdir(parents=True)
@@ -62,7 +68,7 @@ def test_restored_profile_uses_restored_shared_data(tmp_path):
         records.append({"repository": repo, "archive": archive_name,
                         "commit": "test-commit"})
     (bundle / "PROJECT_MANIFEST.json").write_text(json.dumps({
-        "schema": "precision_insertion_reproducible_project_v1",
+        "schema": schema,
         "code": records,
         "assets": [],
         "asset_packages": [],
