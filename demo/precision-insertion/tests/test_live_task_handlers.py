@@ -358,9 +358,10 @@ def test_same_trial_xy_reobserves_and_replans_from_final_hold(
     assert bound._same_trial_handoff == tmp_path / "corrected_handoff.json"
 
 
-def test_unverified_single_view_probe_returns_to_nominal_when_tracking_lost(
-        tmp_path, monkeypatch):
-    """A planar single-view hypothesis must not drive blind correction steps."""
+@pytest.mark.parametrize("tracking", ["lost", "tracked"])
+def test_unverified_single_view_probe_returns_without_multiview_tip(
+        tmp_path, monkeypatch, tracking):
+    """Image motion alone cannot promote a planar probe to a 3D tip."""
     bound, runner, *_ = _handler(tmp_path)
     runner._attempt_dir = tmp_path / "attempts" / runner.active_attempt.attempt_id
     bound._preinsert_bundle = tmp_path / "first_preinsert"
@@ -394,6 +395,12 @@ def test_unverified_single_view_probe_returns_to_nominal_when_tracking_lost(
 
     def feedback(**kwargs):
         feedback_steps.append(kwargs["measured_xy_socket_m"])
+        if tracking == "tracked":
+            return {
+                "status": "tracked", "reason": "test",
+                "fused_xy_socket_m": [0.006, 0.0],
+                "camera_id": "front",
+            }
         return {"status": "lost", "reason": "test"}
 
     def shift(**kwargs):

@@ -356,12 +356,16 @@ class LiveTaskHandlers:
                         "tip_socket_m": None,
                         "xy_correction_socket_m": None,
                     })
+            # A temporal match proves that an image feature followed the
+            # commanded wrist motion; it does not prove that the feature is
+            # the key tip rather than a repeatedly selected socket edge.
+            # Confirm a single-view active probe only when the recapture
+            # yields an actual multi-view 3D tip. Otherwise return the probe
+            # and continue from the nominal hold without accumulating drift.
             planar_probe_confirmed = (
-                unverified_planar_origin is not None and (
-                    observed["alignment"]["status"] ==
-                    "diagnostic_metric_xy_correction" or
-                    observed.get("temporal_feedback", {}).get("status") ==
-                    "tracked"))
+                unverified_planar_origin is not None and
+                observed["alignment"]["status"] ==
+                "diagnostic_metric_xy_correction")
             if planar_probe_confirmed:
                 unverified_planar_origin = None
             return_unverified_planar = (
