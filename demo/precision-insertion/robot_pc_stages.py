@@ -219,6 +219,8 @@ def configure(core, live, options) -> dict:
                     options, "same_trial_alignment_source", "endpoint"),
                 "same_trial_max_step_m": getattr(
                     options, "same_trial_max_step_m", .003),
+                "same_trial_axial_fallback_depth_m": getattr(
+                    options, "same_trial_axial_fallback_depth_m", .010),
                 "same_trial_axis_tolerance_rad": getattr(
                     options, "same_trial_axis_tolerance_rad", None),
                 "same_trial_max_tilt_step_rad": getattr(

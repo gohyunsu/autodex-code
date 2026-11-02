@@ -42,6 +42,7 @@ class RunLiveOptions:
     xy_update_weight: float = 1.0
     same_trial_xy_tolerance_m: float | None = None
     same_trial_max_step_m: float = .003
+    same_trial_axial_fallback_depth_m: float = .010
     same_trial_axis_tolerance_rad: float | None = None
     same_trial_max_tilt_step_rad: float = math.radians(3.)
     same_trial_observation_raise_m: float = 0.
@@ -133,6 +134,7 @@ def inspect_live_inputs(
     robot_config_path: Path | None = None,
     xy_estimator: str = "vlm",
     same_trial_alignment_source: str = "endpoint",
+    same_trial_axial_fallback_depth_m: float = .010,
 ) -> dict:
     """Check current v8 inputs without cameras, CUDA or robot construction."""
     if xy_estimator not in {"vlm", "tracked_tip", "sam_half_ellipse"}:
@@ -143,6 +145,10 @@ def inspect_live_inputs(
             xy_estimator != "sam_half_ellipse"):
         raise ValueError(
             "partial-shape alignment needs the SAM half-ellipse estimator")
+    if (not math.isfinite(same_trial_axial_fallback_depth_m) or
+            same_trial_axial_fallback_depth_m <= 0):
+        raise ValueError(
+            "same-trial axial fallback depth must be positive metres")
     stage_policy_path = os.environ.get("PRECISION_STAGE_POLICY", "").strip()
     config_sources = {
         "launch_config": Path(launch_config_path),
@@ -206,6 +212,8 @@ def inspect_live_inputs(
         "final_vlm_view_policy": None,
         "xy_estimator": xy_estimator,
         "same_trial_alignment_source": same_trial_alignment_source,
+        "same_trial_axial_fallback_depth_m": (
+            same_trial_axial_fallback_depth_m),
         "sam_roi_inputs": None,
         "scope": "static_files_only_no_camera_cuda_or_robot_connection",
         "robot_ready": False,
@@ -372,6 +380,10 @@ def run_integrated_live_session(
     if (not math.isfinite(options.same_trial_max_step_m) or
             options.same_trial_max_step_m <= 0):
         raise ValueError("same-trial XY step must be positive metres")
+    if (not math.isfinite(options.same_trial_axial_fallback_depth_m) or
+            options.same_trial_axial_fallback_depth_m <= 0):
+        raise ValueError(
+            "same-trial axial fallback depth must be positive metres")
     if (options.same_trial_axis_tolerance_rad is not None and
             (not math.isfinite(options.same_trial_axis_tolerance_rad) or
              options.same_trial_axis_tolerance_rad <= 0 or

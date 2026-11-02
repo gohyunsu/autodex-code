@@ -86,6 +86,7 @@ class LiveTaskHandlers:
     sam_segmentor: object | None = None
     same_trial_xy_tolerance_m: float | None = None
     same_trial_max_step_m: float = .003
+    same_trial_axial_fallback_depth_m: float = .010
     same_trial_axis_tolerance_rad: float | None = None
     same_trial_max_tilt_step_rad: float = np.deg2rad(3.)
     same_trial_max_shifts: int | None = None
@@ -932,6 +933,8 @@ class LiveTaskHandlers:
                         read_state=self.read_state,
                         total_xy_m=total, residual_xy_m=final_residual,
                         residual_source=residual_source,
+                        fallback_depth_m=(
+                            self.same_trial_axial_fallback_depth_m),
                         observations=observations,
                         shifts=shifts,
                         final_preinsert_bundle=self._preinsert_bundle)

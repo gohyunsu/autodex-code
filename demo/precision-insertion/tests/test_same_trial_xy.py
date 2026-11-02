@@ -715,6 +715,7 @@ def test_corrected_axial_screens_measured_hand_endpoint_before_planning(
             path_limits=SimpleNamespace(minimum_hand_clearance_m=0.),
             read_state=lambda: state, total_xy_m=(0., 0.),
             residual_xy_m=(0., 0.), residual_source="test",
+            fallback_depth_m=.010,
             observations=[], shifts=[], final_preinsert_bundle=tmp_path)
     failure = json.loads((tmp_path / "attempt/guarded_axial_handoffs/000/plan_failure.json").read_text())
     assert stopped.value.report_path == (
@@ -796,6 +797,7 @@ def test_corrected_axial_falls_back_from_20mm_collision_to_10mm(
         path_limits=SimpleNamespace(minimum_hand_clearance_m=0.),
         read_state=lambda: state, total_xy_m=(0., 0.),
         residual_xy_m=(0., 0.), residual_source="metric_multiview",
+        fallback_depth_m=.010,
         observations=[], shifts=[], final_preinsert_bundle=final)
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["target_depth_m"] == .010

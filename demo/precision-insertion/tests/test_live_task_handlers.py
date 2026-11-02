@@ -355,6 +355,7 @@ def test_same_trial_xy_reobserves_and_replans_from_final_hold(
     assert seen[-1][1]["residual_source"] == (
         "last_metric_plus_completed_held_motion" if predicted else
         "current_metric_multiview")
+    assert seen[-1][1]["fallback_depth_m"] == .010
     assert bound._same_trial_handoff == tmp_path / "corrected_handoff.json"
 
 

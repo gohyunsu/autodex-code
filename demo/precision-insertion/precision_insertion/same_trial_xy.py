@@ -759,6 +759,7 @@ def plan_corrected_axial_handoff(*, runner, planner,
                                 read_state, total_xy_m,
                                 residual_xy_m,
                                 residual_source: str,
+                                fallback_depth_m: float,
                                 observations: list[Path],
                                 shifts: list[Path],
                                 final_preinsert_bundle: Path) -> Path:
@@ -841,17 +842,20 @@ def plan_corrected_axial_handoff(*, runner, planner,
         return targets, endpoint, planned, "sampled_planning_pass"
 
     requested_depth = runner.mode.target_depth_m
+    if (not math.isfinite(fallback_depth_m) or fallback_depth_m <= 0 or
+            fallback_depth_m >= requested_depth):
+        raise ValueError(
+            "corrected axial fallback depth must be below target depth")
     targets, endpoint, planned, status = attempt_depth(requested_depth)
     depth_attempts.append({
         "target_depth_m": requested_depth, "status": status,
         "endpoint_pass": endpoint["endpoint_pass"],
         "planning": None if planned is None else planned.to_record(),
     })
-    fallback_depth = .010
     if status != "sampled_planning_pass":
-        targets, endpoint, planned, status = attempt_depth(fallback_depth)
+        targets, endpoint, planned, status = attempt_depth(fallback_depth_m)
         depth_attempts.append({
-            "target_depth_m": fallback_depth, "status": status,
+            "target_depth_m": fallback_depth_m, "status": status,
             "endpoint_pass": endpoint["endpoint_pass"],
             "planning": None if planned is None else planned.to_record(),
         })
@@ -897,7 +901,7 @@ def plan_corrected_axial_handoff(*, runner, planner,
         "requested_target_depth_m": requested_depth,
         "depth_fallback": {
             "used": used_fallback,
-            "fallback_target_depth_m": fallback_depth,
+            "fallback_target_depth_m": fallback_depth_m,
             "trigger": (depth_attempts[0]["status"] if used_fallback else None),
             "attempts": depth_attempts,
         },

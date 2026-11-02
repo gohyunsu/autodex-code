@@ -119,6 +119,10 @@ def main(argv: list[str] | None = None) -> int:
         "--same-trial-max-step-mm", type=float, default=3.,
         help="maximum XY movement between pre-insertion photographs (default: 3 mm)")
     parser.add_argument(
+        "--same-trial-axial-fallback-depth-mm", type=float, default=10.,
+        help="insertion depth retried when the corrected full-depth endpoint "
+             "or path does not plan (default: 10 mm)")
+    parser.add_argument(
         "--same-trial-axis-tolerance-deg", type=float,
         help="within-episode cylindrical key-axis convergence target; this "
              "controls reobservation, not insertion admission")
@@ -195,7 +199,9 @@ def main(argv: list[str] | None = None) -> int:
             endpoint_catalog_path=args.endpoint_catalog,
             robot_config_path=args.robot_config,
             xy_estimator=args.xy_estimator,
-            same_trial_alignment_source=args.same_trial_alignment_source)
+            same_trial_alignment_source=args.same_trial_alignment_source,
+            same_trial_axial_fallback_depth_m=(
+                args.same_trial_axial_fallback_depth_mm / 1000.))
         report["exp_name"] = args.exp_name
         print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
         return 0
@@ -247,6 +253,8 @@ def main(argv: list[str] | None = None) -> int:
             None if args.same_trial_xy_tolerance_mm is None else
             args.same_trial_xy_tolerance_mm / 1000.),
         same_trial_max_step_m=args.same_trial_max_step_mm / 1000.,
+        same_trial_axial_fallback_depth_m=(
+            args.same_trial_axial_fallback_depth_mm / 1000.),
         same_trial_axis_tolerance_rad=(
             None if args.same_trial_axis_tolerance_deg is None else
             math.radians(args.same_trial_axis_tolerance_deg)),

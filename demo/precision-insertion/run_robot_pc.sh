@@ -176,6 +176,7 @@ echo "[pipeline] using existing camera, perception and Franka services"
 echo "[pipeline] VLM camera IDs: $PRECISION_VLM_CAMERA_IDS"
 echo "[pipeline] failed-trial XY estimator: $PRECISION_XY_ESTIMATOR"
 echo "[pipeline] same-trial alignment source: ${PRECISION_SAME_TRIAL_ALIGNMENT_SOURCE:-endpoint}"
+echo "[pipeline] corrected axial fallback depth: ${PRECISION_SAME_TRIAL_AXIAL_FALLBACK_DEPTH_MM:-10} mm"
 echo "[pipeline] next-trial XY update weight: $XY_UPDATE_WEIGHT"
 if [[ "$MODE" == --run && "$PRECISION_XY_ESTIMATOR" == tracked_tip ]]; then
   bash demo/precision-insertion/manage_robot_pc_services.sh check-tracker
@@ -191,6 +192,8 @@ fi
 if [[ -n ${PRECISION_SAME_TRIAL_XY_TOLERANCE_MM:-} ]]; then
   EXTRA_ARGS+=(--same-trial-xy-tolerance-mm "$PRECISION_SAME_TRIAL_XY_TOLERANCE_MM")
   EXTRA_ARGS+=(--same-trial-max-step-mm "${PRECISION_SAME_TRIAL_MAX_STEP_MM:-3}")
+  EXTRA_ARGS+=(--same-trial-axial-fallback-depth-mm \
+    "${PRECISION_SAME_TRIAL_AXIAL_FALLBACK_DEPTH_MM:-10}")
   if [[ -n ${PRECISION_SAME_TRIAL_AXIS_TOLERANCE_DEG:-} ]]; then
     EXTRA_ARGS+=(--same-trial-axis-tolerance-deg \
       "$PRECISION_SAME_TRIAL_AXIS_TOLERANCE_DEG")

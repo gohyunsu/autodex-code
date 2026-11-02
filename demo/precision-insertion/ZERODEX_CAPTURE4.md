@@ -255,7 +255,10 @@ pixels remain in the ordinary run evidence.
 After closed-loop alignment, the corrected axial handoff first screens and
 plans the canonical 20 mm endpoint. If the hand/socket endpoint or sampled
 held path cannot pass, the same measured hold is rebuilt for a 10 mm endpoint
-and planned once. The handoff records the requested and effective depths plus
+and planned once. The fallback depth is an explicit experiment setting,
+`PRECISION_SAME_TRIAL_AXIAL_FALLBACK_DEPTH_MM` (ZeroDex default `10`), and is
+forwarded through the launcher and live runtime rather than embedded in the
+planner function. The handoff records the requested and effective depths plus
 both attempt reports, so release and outcome labelling use the path that was
 actually executed. This is a pre-motion geometric/path fallback; a physical
 force stop during an already executing stroke retains the normal ascent and

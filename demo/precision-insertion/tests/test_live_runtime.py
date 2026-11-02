@@ -106,6 +106,7 @@ def test_live_static_preflight_forwards_alignment_source(
     ]) == 0
     assert observed["xy_estimator"] == "sam_half_ellipse"
     assert observed["same_trial_alignment_source"] == "partial_shape"
+    assert observed["same_trial_axial_fallback_depth_m"] == .010
     assert json.loads(capsys.readouterr().out)["schema"] == "test"
 
 
@@ -380,6 +381,7 @@ def test_cli_saves_completed_action_before_integration_cleanup(
 
     def interrupted(options, *, integration_spec, on_result):
         assert integration_spec == "test:factory"
+        assert options.same_trial_axial_fallback_depth_m == pytest.approx(.0075)
         output.mkdir()
         completed = SimpleNamespace(
             status="success", to_record=lambda: {"status": "success"})
@@ -395,6 +397,7 @@ def test_cli_saves_completed_action_before_integration_cleanup(
         "--integration", "test:factory", "--enable-robot-motion",
         "--init-port-mask", "15006", "--init-port-pose", "15007",
         "--init-port-cmd", "16893", "--output-dir", str(output),
+        "--same-trial-axial-fallback-depth-mm", "7.5",
     ]
     if interrupt_cleanup:
         with pytest.raises(KeyboardInterrupt):
@@ -502,5 +505,19 @@ def test_invalid_xy_weight_is_rejected_before_robot_integration(
         tmp_path / "launch.json", tmp_path / "catalog.json",
         tmp_path / "run", xy_update_weight=weight, enable_robot_motion=True)
     with pytest.raises(ValueError, match="XY update weight"):
+        live_runtime.run_integrated_live_session(
+            options, integration_spec="ignored:factory")
+
+
+@pytest.mark.parametrize("depth", [0.0, -0.1, float("nan")])
+def test_invalid_same_trial_axial_fallback_is_rejected_before_robot_integration(
+        monkeypatch, tmp_path, depth):
+    monkeypatch.setattr(live_runtime, "load_runtime_integration", lambda *_a:
+                        pytest.fail("bad fallback must not construct robot adapter"))
+    options = live_runtime.RunLiveOptions(
+        tmp_path / "launch.json", tmp_path / "catalog.json",
+        tmp_path / "run", same_trial_axial_fallback_depth_m=depth,
+        enable_robot_motion=True)
+    with pytest.raises(ValueError, match="axial fallback depth"):
         live_runtime.run_integrated_live_session(
             options, integration_spec="ignored:factory")

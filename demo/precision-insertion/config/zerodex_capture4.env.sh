@@ -34,6 +34,10 @@ export PRECISION_SAME_TRIAL_XY_TOLERANCE_MM=${PRECISION_SAME_TRIAL_XY_TOLERANCE_
 # Take a new image after each held-key correction; one correction may move up
 # to 10 mm, while the loop has no cumulative XY cap.
 export PRECISION_SAME_TRIAL_MAX_STEP_MM=${PRECISION_SAME_TRIAL_MAX_STEP_MM-10}
+# If the corrected 20 mm endpoint/path does not plan, retry the same measured
+# hold at this shallower insertion depth.  Keep it explicit in the run profile
+# rather than burying the experiment setting in Python control code.
+export PRECISION_SAME_TRIAL_AXIAL_FALLBACK_DEPTH_MM=${PRECISION_SAME_TRIAL_AXIAL_FALLBACK_DEPTH_MM-10}
 export PRECISION_SAME_TRIAL_ALIGNMENT_SOURCE=${PRECISION_SAME_TRIAL_ALIGNMENT_SOURCE-endpoint}
 # Align the symmetry-reduced cylinder axis in the same photograph/move/
 # rephotograph loop. These values are convergence and motion-step settings,
