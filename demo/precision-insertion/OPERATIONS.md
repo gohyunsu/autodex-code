@@ -151,7 +151,11 @@ upload.
 - The NAS mount must be writable for a live run. Static `--check` remains
   read-only.
 - `/dev/nvidia*` must exist and `nvidia-smi` must work before local Qwen/SAM or
-  cuRobo CUDA execution. Model-file presence alone does not prove this.
+  cuRobo CUDA execution. Model-file presence alone does not prove this. On
+  this PREEMPT_RT host, the 535.309.01 modules can be loaded while the device
+  nodes are still absent after reboot. In that state run
+  `sudo /usr/sbin/ub-device-create`, then verify `nvidia-smi`; this creates
+  device nodes only and does not start the robot or precision pipeline.
 - Robot, Inspire hand, FCI and the Franka daemon are required only for
   `--run`/`--plan-only`.
 - Do not start a second capture4 adapter if another experiment owns its

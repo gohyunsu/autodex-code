@@ -475,6 +475,16 @@ start the adapter if another experiment owns the cameras.
 - Measured ZeroDex clear view: `clear_view_arm_q.json` beside the runtime file;
   loaded only by the ZeroDex integration factory, never by stock AutoDex
 - Straight-mount cylinder catalogs: `recipient_gap{1,3,5,10,15,20}_endpoint_catalog_straight.json`
+  On 2026-11-02, hardware-free `--check` passed for all six gaps with 126
+  catalogued candidates each; eligible counts were respectively
+  `111, 111, 114, 114, 113, 111`, and both cylinder tabletop stems were
+  represented. The generic all-mode asset auditor additionally asks for a
+  FoundPose representation of every socket and reports that file absent for
+  gaps 1, 3, 10, 15 and 20. This is not an active-route input:
+  `board_constrained_body` measures the fixed socket from calibrated board
+  geometry and its body/silhouette assets. A future switch to FoundPose-based
+  socket localization would require those five representations; the current
+  launcher does not silently claim that alternate mode is ready.
 - Franka/Inspire mount: `autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf`
 - Qwen weights: the authoritative copy is
   `/mnt/paradex2/hyunsu/precision_insertion/runtime/active_shared_data/AutoDex/models/Qwen3-VL-2B-Instruct`.
@@ -778,7 +788,11 @@ scheduling`, and starting it with `sudo` failed with `Running kernel does not
 have realtime capabilities`. The operator installed Ubuntu 22.04's
 `6.8.1-1061-realtime` HWE kernel; `/sys/kernel/realtime` now reads `1`.
 NVIDIA 535.309.01 was built for that kernel with DKMS, and the host's
-`nvidia-smi` reports an RTX 3090. Do not silently change the daemon to
+RTX 3090 was verified with `nvidia-smi`. On 2026-11-02 the modules were still
+loaded after a later reboot but `/dev/nvidia*` had not been recreated, so
+`nvidia-smi` could not open the driver. In that specific state the operator
+must run `sudo /usr/sbin/ub-device-create` and recheck `nvidia-smi` before a
+CUDA run. Do not silently change the daemon to
 libfranka's `RealtimeConfig::kIgnore`; the RT kernel is now available.
 Franka's [FCI real-time kernel instructions](https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html)
 recommend Ubuntu Pro's real-time kernel for Ubuntu 22.04. Canonical's
