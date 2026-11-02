@@ -87,8 +87,10 @@ def audit(repo: Path, policy: dict, *, baseline: str | None = None) -> dict:
     _git(repo, "cat-file", "-e", f"{declared}^{{commit}}")
     resolved_base = _git(repo, "rev-parse", declared)
     head = _git(repo, "rev-parse", "HEAD")
+    # Compare the baseline with the current index and worktree, not only HEAD,
+    # so an uncommitted shared-runtime edit cannot disappear from the audit.
     changed_output = _git(
-        repo, "diff", "--name-only", f"{resolved_base}..{head}", "--",
+        repo, "diff", "--name-only", resolved_base, "--",
         *_string_list(policy, "shared_runtime_prefixes"))
     changed = [line for line in changed_output.splitlines() if line]
     classification = classify_changes(changed, policy)
@@ -97,6 +99,7 @@ def audit(repo: Path, policy: dict, *, baseline: str | None = None) -> dict:
         "repo_root": str(repo),
         "baseline_commit": resolved_base,
         "head_commit": head,
+        "comparison_target": "index_and_worktree",
         "policy_schema": policy["schema"],
         **classification,
         "scope": "development_audit_not_live_execution_gate"

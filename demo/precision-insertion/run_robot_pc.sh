@@ -4,10 +4,10 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-ROOT=${PRECISION_REPO_ROOT:-/home/robot/autodex-precision-insertion}
+ROOT=${PRECISION_REPO_ROOT:-$(cd -- "$SCRIPT_DIR/../.." && pwd)}
 STAGE=${PRECISION_STAGE_ROOT:-}
-PY=${PRECISION_PLANNER_PY:-/home/robot/anaconda3/envs/planner/bin/python}
-CHECK_PY=${PRECISION_CHECK_PY:-/home/robot/anaconda3/envs/flir_env/bin/python}
+PY=${PRECISION_PLANNER_PY:-python3}
+CHECK_PY=${PRECISION_CHECK_PY:-python3}
 MODE=${1:---run}
 GAP_MM=${PRECISION_GAP_MM:-20}
 SCENE_MODE=${PRECISION_SCENE_MODE:-charuco_board}
