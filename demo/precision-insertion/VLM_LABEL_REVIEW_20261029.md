@@ -10,8 +10,14 @@ python3 demo/precision-insertion/summarize_live_labels.py \
 
 The report separates grasp, pre-insertion transport, and released insertion
 labels and records TP/TN/FP/FN plus the source report for every comparison.
-It evaluates only already-saved labels; it does not claim physical ground
-truth beyond the human annotation or rerun inference with a new prompt.
+It also stratifies every stage by the recorded visual-policy schema and lists
+the exact prompt SHA256 values found within each policy. Dynamic camera/frame
+labels can change an exact hash without changing the policy, so hashes remain
+audit provenance rather than metric buckets. Do not quote pooled accuracy when
+multiple policies are present: the per-policy rows distinguish historical
+behavior from the current runtime. It evaluates only already-saved labels; it
+does not claim physical ground truth beyond the human annotation or rerun
+inference with a new prompt.
 
 ## Live-label audit and capture4 lift v4 (2026-11-02)
 

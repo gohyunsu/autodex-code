@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import hashlib
 import json
 from pathlib import Path
 
@@ -19,6 +20,79 @@ ASSESSMENTS = {
 def _latest_report(attempt: Path, directory: str) -> Path | None:
     reports = sorted((attempt / directory).glob("*/report.json"))
     return reports[-1] if reports else None
+
+
+def _visual_policy(report: dict) -> tuple[str, str | None]:
+    visual = report.get("visual")
+    if not isinstance(visual, dict):
+        visual = {}
+    aggregation = visual.get("aggregation")
+    crops = visual.get("input_crops")
+    policy = report.get("visual_input_policy")
+    if not isinstance(policy, str) or not policy:
+        policy = visual.get("schema")
+    if not isinstance(policy, str) or not policy:
+        if isinstance(aggregation, dict):
+            policy = aggregation.get("schema")
+        if ((not isinstance(policy, str) or not policy) and
+                isinstance(crops, dict)):
+            policy = crops.get("schema")
+    if not isinstance(policy, str) or not policy:
+        policy = "unrecorded_legacy"
+
+    prompts = []
+
+    def collect(value):
+        if isinstance(value, dict):
+            prompt = value.get("prompt")
+            if isinstance(prompt, str) and prompt:
+                prompts.append(prompt)
+            for child in value.values():
+                collect(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect(child)
+
+    collect(visual)
+    unique = sorted(set(prompts))
+    digest = (hashlib.sha256(json.dumps(
+        unique, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+              if unique else None)
+    return policy, digest
+
+
+def _agreement(rows: list[dict]) -> dict:
+    paired = [row for row in rows
+              if type(row["manual_value"]) is bool and
+              type(row["vlm_value"]) is bool]
+    confusion = Counter(
+        ("positive" if row["manual_value"] else "negative",
+         "positive" if row["vlm_value"] else "negative")
+        for row in paired)
+    correct = sum(row["manual_value"] == row["vlm_value"]
+                  for row in paired)
+    prompt_sha256_values = sorted({str(row["prompt_sha256"])
+                                   for row in rows
+                                   if row.get("prompt_sha256")})
+    return {
+        "saved_assessments": len(rows),
+        "manual_labels": sum(type(row["manual_value"]) is bool
+                             for row in rows),
+        "vlm_labels": sum(type(row["vlm_value"]) is bool
+                          for row in rows),
+        "paired_labels": len(paired),
+        "correct": correct,
+        "accuracy": (correct / len(paired) if paired else None),
+        "prompt_sha256": (prompt_sha256_values[0]
+                          if len(prompt_sha256_values) == 1 else None),
+        "prompt_sha256_values": prompt_sha256_values,
+        "confusion": {
+            "true_positive": confusion[("positive", "positive")],
+            "true_negative": confusion[("negative", "negative")],
+            "false_positive": confusion[("negative", "positive")],
+            "false_negative": confusion[("positive", "negative")],
+        },
+    }
 
 
 def summarize(attempt_root: Path) -> dict:
@@ -42,6 +116,7 @@ def summarize(attempt_root: Path) -> dict:
             vlm_value = vlm.get("value") if isinstance(vlm, dict) else None
             if type(manual_value) is not bool and type(vlm_value) is not bool:
                 continue
+            visual_policy, prompt_sha256 = _visual_policy(report)
             rows.append({
                 "attempt_id": attempt.name,
                 "candidate_id": result.get("candidate_id"),
@@ -53,44 +128,32 @@ def summarize(attempt_root: Path) -> dict:
                               if isinstance(vlm, dict) else None),
                 "manual_note": (manual.get("note", "")
                                 if isinstance(manual, dict) else ""),
+                "visual_policy": visual_policy,
+                "prompt_sha256": prompt_sha256,
                 "report": str(report_path),
             })
 
     stages = {}
     for stage in ASSESSMENTS:
         selected = [row for row in rows if row["stage"] == stage]
-        paired = [row for row in selected
-                  if type(row["manual_value"]) is bool and
-                  type(row["vlm_value"]) is bool]
-        confusion = Counter(
-            ("positive" if row["manual_value"] else "negative",
-             "positive" if row["vlm_value"] else "negative")
-            for row in paired)
-        correct = sum(row["manual_value"] == row["vlm_value"]
-                      for row in paired)
-        stages[stage] = {
-            "saved_assessments": len(selected),
-            "manual_labels": sum(type(row["manual_value"]) is bool
-                                 for row in selected),
-            "vlm_labels": sum(type(row["vlm_value"]) is bool
-                              for row in selected),
-            "paired_labels": len(paired),
-            "correct": correct,
-            "accuracy": (correct / len(paired) if paired else None),
-            "confusion": {
-                "true_positive": confusion[("positive", "positive")],
-                "true_negative": confusion[("negative", "negative")],
-                "false_positive": confusion[("negative", "positive")],
-                "false_negative": confusion[("positive", "negative")],
-            },
-        }
+        policies = {}
+        for policy in sorted({row["visual_policy"] for row in selected}):
+            policy_rows = [row for row in selected
+                           if row["visual_policy"] == policy]
+            policies[policy] = {
+                "visual_policy": policy,
+                **_agreement(policy_rows),
+            }
+        stages[stage] = {**_agreement(selected), "policies": policies}
     return {
-        "schema": "precision_insertion_saved_label_summary_v1",
+        "schema": "precision_insertion_saved_label_summary_v2",
         "attempt_root": str(root),
         "attempts_scanned": len(attempts),
         "stages": stages,
         "comparisons": rows,
-        "scope": "saved_label_agreement_no_model_rerun_or_physical_truth_claim",
+        "scope": (
+            "saved_label_agreement_stratified_by_recorded_vlm_policy_"
+            "no_model_rerun_or_physical_truth_claim"),
     }
 
 
