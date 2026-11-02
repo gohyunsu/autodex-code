@@ -24,6 +24,23 @@ def _run(root: Path, name: str, candidate: str) -> None:
                     time.sleep(.001)
 
 
+def _result(root: Path, name: str, *, success: bool) -> None:
+    attempt_id = f"attempt_{name}"
+    output = root / attempt_id
+    output.mkdir(parents=True)
+    (output / "result.json").write_text(json.dumps({
+        "schema": "precision_insertion_episode_result_v1",
+        "episode_id": attempt_id,
+        "attempt_type": "insertion",
+        "status": "observed_success" if success else "observed_failure",
+        "success": success,
+        "failure_code": None,
+        "labels": {"grasp_success": True,
+                   "insertion_success": success},
+        "diagnostic_labels": {"tip_entry_success": success},
+    }))
+
+
 def test_multi_run_timing_reports_median_and_human_wait(tmp_path):
     _run(tmp_path, "run_a", "table/0/20195")
     _run(tmp_path, "run_b", "table/0/20195")
@@ -50,6 +67,29 @@ def test_multi_run_timing_candidate_filter(tmp_path):
     result = summarize(tmp_path, candidate_id="table/0/20195")
     assert result["discovered_run_count"] == 1
     assert result["runs"][0]["candidate_ids"] == ["table/0/20195"]
+
+
+def test_multi_run_timing_joins_and_filters_episode_outcomes(tmp_path):
+    object_root = tmp_path / "precision_key"
+    timing_root = object_root / "_pipeline_runs"
+    timing_root.mkdir(parents=True)
+    _run(timing_root, "success", "table/0/20195")
+    _run(timing_root, "failure", "table/0/20195")
+    _result(object_root, "success", success=True)
+    _result(object_root, "failure", success=False)
+
+    all_runs = summarize(timing_root, candidate_id="table/0/20195")
+    assert all_runs["task_outcome_counts"] == {"failure": 1, "success": 1}
+    by_name = {row["run_id"]: row for row in all_runs["runs"]}
+    assert by_name["success"]["task_outcome"] == "success"
+    assert by_name["success"]["attempt_results"][0][
+        "diagnostic_labels"]["tip_entry_success"] is True
+    assert by_name["failure"]["task_outcome"] == "failure"
+
+    successes = summarize(timing_root, task_outcome="success")
+    assert successes["discovered_run_count"] == 1
+    assert successes["runs"][0]["run_id"] == "success"
+    assert successes["task_outcome_filter"] == "success"
 
 
 def test_multi_run_timing_can_filter_exact_runtime_configuration(tmp_path):

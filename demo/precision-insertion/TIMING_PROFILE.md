@@ -70,6 +70,7 @@ wait separate:
 python3 demo/precision-insertion/summarize_timing_runs.py \
   --timing-root /mnt/paradex2/hyunsu/precision_insertion/runs/zerodex_capture4/precision-insertion/inspire/precision_key_cylinder_r15_h80/_pipeline_runs \
   --candidate-id table/0/20195 \
+  --task-outcome success \
   --output /tmp/precision-timing-runs.json
 ```
 
@@ -95,6 +96,17 @@ matching trace, while `statistics_runtime_configurations` excludes unfinished
 traces unless `--include-incomplete` is set. This prevents an all-legacy group
 from being mistaken for a homogeneous condition merely because every run is
 missing the same identity field.
+
+The aggregator joins each timed `attempt_id` to the sibling
+`attempt_*/result.json` written by the episode ledger. `task_outcome` is
+therefore the saved task label, not the timing process exit status. Use
+`--task-outcome success` or `failure` to compare completed outcomes;
+`partial` means one attempt has a result but another attempt in the same run
+does not, and `unrecorded` means no attempt in that run reached a final task
+label. Each run row retains `process_status`, all stage labels and the
+separate `diagnostic_labels.tip_entry_success` when that newer label exists.
+This keeps a clean process exit, visual inside-socket success and smooth tip
+entry from being conflated in latency analysis.
 
 ## ZeroDex capture4: two successful 5 mm episodes (2026-10-29)
 
@@ -151,7 +163,9 @@ of time.
 Across the eight saved runs that contain fixed grasp `table/0/20195`, the
 median instrumented envelope was 352.34 s, the median manual-review wait was
 208.16 s, and the median non-human envelope was 156.12 s. Median Qwen
-inference occupied 3.36 s. These are descriptive historical values only: all
+inference occupied 3.36 s. Joining those same traces to the episode ledger
+finds two task-success runs, two task-failure runs, one partial run and three
+without a final task label. These are descriptive historical values only: all
 eight manifests predate runtime-configuration recording, so their aggregate
 reports `runtime_configuration_comparison_available=false`. The current
 endpoint/partial-shape A/B profiles and timing manifest resolve this for new

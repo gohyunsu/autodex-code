@@ -68,16 +68,70 @@ def _configuration_identity(timing_dir: Path) -> tuple[str, dict[str, Any] | Non
     return digest, config
 
 
+def _attempt_result_root(timing_dir: Path) -> Path | None:
+    """Locate episode results beside the canonical ``_pipeline_runs`` tree."""
+    pipeline_runs = timing_dir.parent
+    if pipeline_runs.name != "_pipeline_runs":
+        return None
+    return pipeline_runs.parent
+
+
+def _attempt_outcomes(timing_dir: Path, summary: dict[str, Any],
+                      ) -> tuple[list[dict[str, Any]], str]:
+    """Join a run trace to its saved insertion results without guessing labels."""
+    result_root = _attempt_result_root(timing_dir)
+    rows = []
+    for attempt_id in sorted(summary.get("attempts", {})):
+        path = None if result_root is None else (
+            result_root / attempt_id / "result.json")
+        if path is None or not path.is_file():
+            rows.append({"attempt_id": attempt_id, "status": "unrecorded",
+                         "success": None, "result_path": None})
+            continue
+        result = json.loads(path.read_text(encoding="utf-8"))
+        success = result.get("success")
+        if (result.get("schema") != "precision_insertion_episode_result_v1" or
+                result.get("episode_id") != attempt_id or
+                (success is not None and type(success) is not bool)):
+            raise ValueError(f"invalid episode result for {attempt_id}: {path}")
+        rows.append({
+            "attempt_id": attempt_id,
+            "attempt_type": result.get("attempt_type"),
+            "status": result.get("status"),
+            "success": success,
+            "failure_code": result.get("failure_code"),
+            "labels": result.get("labels"),
+            "diagnostic_labels": result.get("diagnostic_labels"),
+            "result_path": str(path),
+        })
+    recorded = [row for row in rows if row["success"] is not None]
+    if any(row["success"] is True for row in recorded):
+        outcome = "success"
+    elif recorded and len(recorded) == len(rows):
+        outcome = "failure"
+    elif recorded:
+        outcome = "partial"
+    else:
+        outcome = "unrecorded"
+    return rows, outcome
+
+
 def _run_row(events: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     summary = summarize_events(events)
     timing_dir = events.parent
     config_sha256, config = _configuration_identity(timing_dir)
+    attempt_results, task_outcome = _attempt_outcomes(timing_dir, summary)
+    timing_manifest = json.loads(
+        (timing_dir / "manifest.json").read_text(encoding="utf-8"))
     return summary, {
         "run_id": timing_dir.name.removesuffix(".timing"),
         "timing_dir": str(timing_dir),
         "unfinished_span_count": summary["unfinished_span_count"],
         "complete": summary["unfinished_span_count"] == 0,
         "candidate_ids": _candidates(summary),
+        "process_status": timing_manifest.get("status"),
+        "task_outcome": task_outcome,
+        "attempt_results": attempt_results,
         "runtime_configuration_sha256": config_sha256,
         "runtime_configuration": config,
         "attempt_ids": sorted(summary.get("attempts", {})),
@@ -172,6 +226,7 @@ def _configuration_population(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def summarize(timing_root: Path, *, candidate_id: str | None = None,
+              task_outcome: str | None = None,
               runtime_configuration_sha256: str | None = None,
               include_incomplete: bool = False) -> dict[str, Any]:
     root = timing_root.expanduser().resolve()
@@ -184,6 +239,8 @@ def summarize(timing_root: Path, *, candidate_id: str | None = None,
             errors.append({"events": str(events), "error": str(exc)})
             continue
         if ((candidate_id is None or candidate_id in row["candidate_ids"]) and
+                (task_outcome is None or
+                 row["task_outcome"] == task_outcome) and
                 (runtime_configuration_sha256 is None or
                  row["runtime_configuration_sha256"] ==
                  runtime_configuration_sha256)):
@@ -199,12 +256,15 @@ def summarize(timing_root: Path, *, candidate_id: str | None = None,
         "schema": "precision_insertion_multi_run_timing_summary_v2",
         "timing_root": str(root),
         "candidate_filter": candidate_id,
+        "task_outcome_filter": task_outcome,
         "runtime_configuration_filter": runtime_configuration_sha256,
         "statistics_include_incomplete": include_incomplete,
         "discovered_run_count": len(rows),
         "complete_run_count": sum(row["complete"] for row in rows),
         "incomplete_run_count": sum(not row["complete"] for row in rows),
         "statistics_run_count": len(selected),
+        "task_outcome_counts": dict(sorted(Counter(
+            row["task_outcome"] for row in rows).items())),
         # Keep the original flat fields for report consumers, but do not use
         # the boolean alone: all-legacy data previously appeared as "not
         # mixed" even though its identity was unknowable.
@@ -255,12 +315,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timing-root", required=True, type=Path)
     parser.add_argument("--candidate-id")
+    parser.add_argument(
+        "--task-outcome", choices=("success", "failure", "partial",
+                                    "unrecorded"),
+        help="filter by task result joined from attempt_*/result.json")
     parser.add_argument("--runtime-configuration-sha256")
     parser.add_argument("--include-incomplete", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     result = summarize(
         args.timing_root, candidate_id=args.candidate_id,
+        task_outcome=args.task_outcome,
         runtime_configuration_sha256=args.runtime_configuration_sha256,
         include_incomplete=args.include_incomplete)
     encoded = json.dumps(result, indent=2, sort_keys=True) + "\n"
