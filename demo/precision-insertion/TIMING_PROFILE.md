@@ -28,6 +28,10 @@ sibling `.../_pipeline_runs/RUN_ID.timing/` containing:
   `ordered_actions` likewise reports `human_wait_s` and
   `automatic_elapsed_s`, so a thesis table can compare autonomous execution
   without silently counting the time taken to answer a terminal prompt.
+  Failed spans retain the exception string already present in the append-only
+  event trace, and failed `ordered_actions` expose the same field. The timing
+  reporter prints these causes innermost-first, so a planning or recovery
+  failure is not reduced to an unexplained `outcome=failure`.
   Live CLI runs also record `python_pre_profile_s`, `profile_body_s` and
   `python_process_to_profile_body_end_s`. The first value covers Python module
   imports, argument parsing and output-path setup that happen before the

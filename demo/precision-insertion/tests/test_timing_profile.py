@@ -172,8 +172,31 @@ def test_profile_keeps_failure_trace(tmp_path):
     directory = timing_directory(output)
     summary = json.loads((directory / "timing_summary.json").read_text())
     assert summary["groups"]["socket.capture"]["failures"] == 1
+    failed = next(row for row in summary["spans"]
+                  if row["name"] == "socket.capture")
+    assert failed["exception"] == "RuntimeError('capture failed')"
     manifest = json.loads((directory / "manifest.json").read_text())
     assert manifest["status"] == "failure"
+
+
+def test_failed_action_summary_preserves_root_cause(tmp_path, capsys):
+    output = tmp_path / "failed_action"
+    with pytest.raises(ValueError, match="reset proposal scene changed"):
+        with profile_run(output):
+            with timed("action.recover_held_key_then_reobserve",
+                       phase="trial", kind="action",
+                       attempt_id="attempt_9", candidate_id="table/0/20195"):
+                raise ValueError("reset proposal scene changed")
+    summary = json.loads((timing_directory(output) /
+                          "timing_summary.json").read_text())
+    action = summary["ordered_actions"][0]
+    assert action["outcome"] == "failure"
+    assert action["exception"] == (
+        "ValueError('reset proposal scene changed')")
+    assert report_timing.main([str(timing_directory(output)), "--tree"]) == 0
+    printed = capsys.readouterr().out
+    assert "Failure causes (innermost first)" in printed
+    assert "reset proposal scene changed" in printed
 
 
 def test_profile_manifest_records_reproducible_nonsecret_configuration(

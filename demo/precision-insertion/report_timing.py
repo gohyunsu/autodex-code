@@ -73,12 +73,19 @@ def main(argv: list[str] | None = None) -> int:
                   f"{row['occupied_s']:10.3f} {row['count']:6d}")
 
     if summary["ordered_actions"]:
-        print("\nAction sequence                     elapsed_s    human_s automatic_s")
+        print("\nAction sequence                     outcome  elapsed_s    human_s automatic_s")
         for action in summary["ordered_actions"]:
             print(f"{action['name'][:35]:35} "
+                  f"{action['outcome'][:8]:8} "
                   f"{action['inclusive_s']:9.3f} "
                   f"{action['human_wait_s']:10.3f} "
                   f"{action['automatic_elapsed_s']:11.3f}")
+
+    failed = [row for row in spans if "exception" in row]
+    if failed:
+        print("\nFailure causes (innermost first)")
+        for row in sorted(failed, key=lambda item: item["duration_s"]):
+            print(f"{row['name']}: {row['exception']}")
 
     indexed = {row["span_id"]: row for row in spans}
     if args.tree:
@@ -102,7 +109,8 @@ def main(argv: list[str] | None = None) -> int:
                   f" [{row['duration_s']:.3f}, {row['self_s']:.3f}, "
                   f"{row['child_cumulative_s']:.3f}, "
                   f"{row['child_overlap_s']:.3f}]"
-                  f"{'  ' + detail if detail else ''}")
+                  f"{'  ' + detail if detail else ''}"
+                  f"{'  !! ' + row['exception'] if 'exception' in row else ''}")
     by_candidate = defaultdict(lambda: defaultdict(float))
     for row in spans:
         parent = row

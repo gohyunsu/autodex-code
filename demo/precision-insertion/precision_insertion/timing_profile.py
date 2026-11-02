@@ -252,7 +252,7 @@ def summarize_events(events_path: Path) -> dict:
             starts[span_id] = row
         elif row.get("edge") == "end" and span_id in starts:
             begun = starts.pop(span_id)
-            completed.append({
+            completed_row = {
                 "span_id": span_id,
                 "parent_id": begun.get("parent_id"),
                 "attempt_id": begun.get("attempt_id"),
@@ -262,7 +262,11 @@ def summarize_events(events_path: Path) -> dict:
                 "duration_s": row["duration_s"],
                 "start_pipeline_s": begun["pipeline_time_s"],
                 "end_pipeline_s": row["pipeline_time_s"],
-            })
+            }
+            exception = row.get("attributes", {}).get("exception")
+            if isinstance(exception, str) and exception:
+                completed_row["exception"] = exception
+            completed.append(completed_row)
     children: dict[str, list[tuple[float, float]]] = defaultdict(list)
     for row in completed:
         if row["parent_id"] is not None:
@@ -397,6 +401,8 @@ def summarize_events(events_path: Path) -> dict:
             "end_pipeline_s": row["end_pipeline_s"],
             "inclusive_s": row["duration_s"],
             "self_s": row["self_s"],
+            **({"exception": row["exception"]}
+               if "exception" in row else {}),
             "human_wait_s": round(human_occupied, 9),
             "automatic_elapsed_s": round(max(
                 0.0, row["duration_s"] - human_occupied), 9),
