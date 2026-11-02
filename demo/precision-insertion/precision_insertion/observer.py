@@ -34,6 +34,15 @@ LOCAL_QWEN_CACHE_NAME = "Qwen3-VL-2B-Instruct"
 RELEASED_SOCKET_IMAGE_SIZE = (768, 576)
 
 
+def camera_routed_batch_prompt(
+    backend: ImageVLM, camera: str, prompt: str,
+) -> str:
+    """Bind a remote batched request to its camera; keep local prompts exact."""
+    if getattr(backend, "independent_remote_inference", False):
+        return f"Camera {camera}. {prompt}"
+    return prompt
+
+
 def effective_local_vlm_model_id(
     model_id: str | None = None, *, environ=None, project_root=None,
 ) -> str:
@@ -888,13 +897,13 @@ def observe_released_insertion_visual(
         return final, images, transform
 
     def observation_from_answer(camera: str, final: LabeledFrame,
-                                transform: dict, answer: str,
+                                transform: dict, answer: str, prompt: str,
                                 latency_s: float) -> VLMObservation:
         parsed, error = _released_socket_token_result(
             answer, camera, version=prompt_version)
         return VLMObservation(
             "released_insertion_visual", parsed, answer,
-            _released_socket_token_prompt(prompt_version),
+            prompt,
             (f"final_clear_view/{camera}@{final.timestamp_s:.6f}",),
             error, _backend_model(backend), latency_s,
             input_transform=transform)
@@ -912,7 +921,7 @@ def observe_released_insertion_visual(
                       if callable(infer_for_camera) else
                       backend.infer(images, prompt))
         return observation_from_answer(
-            camera, final, transform, answer,
+            camera, final, transform, answer, prompt,
             time.perf_counter() - started)
 
     # Local Qwen can decode independent camera questions in one GPU pass.
@@ -920,7 +929,9 @@ def observe_released_insertion_visual(
     infer_many = getattr(backend, "infer_many", None)
     if callable(infer_many):
         prepared = [request_for_camera(camera) for camera in cameras]
-        prompt = _released_socket_token_prompt(prompt_version)
+        prompts = [camera_routed_batch_prompt(
+            backend, camera, _released_socket_token_prompt(prompt_version))
+            for camera in cameras]
         started = time.perf_counter()
         with timed("vlm.view_batch", phase="vlm", kind="inference",
                    view_count=len(cameras), parallel_workers=1,
@@ -930,14 +941,15 @@ def observe_released_insertion_visual(
                        camera_ids=cameras, image_count=len(cameras),
                        model=_backend_model(backend)):
                 answers = infer_many([
-                    (images, prompt) for _, images, _ in prepared])
+                    (images, prompt)
+                    for (_, images, _), prompt in zip(prepared, prompts)])
         elapsed = time.perf_counter() - started
         if len(answers) != len(cameras):
             raise RuntimeError("released socket batch returned wrong view count")
         observations = [observation_from_answer(
-            camera, final, transform, answer, elapsed)
-            for camera, (final, _, transform), answer
-            in zip(cameras, prepared, answers)]
+            camera, final, transform, answer, prompt, elapsed)
+            for camera, (final, _, transform), answer, prompt
+            in zip(cameras, prepared, answers, prompts)]
         total_latency_s = elapsed
     else:
         observations = map_view_calls(backend, cameras, observe_camera)
@@ -958,6 +970,9 @@ def observe_released_insertion_visual(
             "per_view": per_view,
             "completed_camera_ids": cameras,
             "vote_rule": "configured_camera_majority",
+            **({"execution_mode": "distributed_host_batch"}
+               if callable(infer_many) and getattr(
+                   backend, "independent_remote_inference", False) else {}),
         })
 
 
@@ -1008,8 +1023,11 @@ def verify_released_socket_token_consensus(
     aggregation = visual.get("aggregation", {})
     ordered = sorted(cameras)
     rows = aggregation.get("per_view")
+    execution_mode = aggregation.get("execution_mode")
+    routed_batch = execution_mode == "distributed_host_batch"
     if (aggregation.get("schema") !=
             "precision_insertion_released_socket_token_consensus_v1" or
+            execution_mode not in (None, "distributed_host_batch") or
             aggregation.get("completed_camera_ids") != ordered or
             aggregation.get("vote_rule") != "configured_camera_majority" or
             not isinstance(rows, list) or len(rows) != len(ordered) or
@@ -1023,7 +1041,10 @@ def verify_released_socket_token_consensus(
         if (expected_order is None or row.get("stage") !=
                 "released_insertion_visual" or
                 row.get("image_order") != [expected_order] or
-                row.get("prompt") != _released_socket_token_prompt(prompt_version) or
+                row.get("prompt") != (
+                    f"Camera {camera}. {_released_socket_token_prompt(prompt_version)}"
+                    if routed_batch else
+                    _released_socket_token_prompt(prompt_version)) or
                 row.get("parsed") != parsed or row.get("parse_error") != error):
             raise ValueError("released socket token or source frame changed")
     expected = _consensus_parsed(

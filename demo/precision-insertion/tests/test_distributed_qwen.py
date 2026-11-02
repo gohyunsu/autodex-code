@@ -585,6 +585,38 @@ def test_final_and_released_visuals_use_early_per_camera_consensus():
         pool.shutdown(wait=True)
 
 
+def test_released_visual_batch_routes_each_camera_to_remote_worker():
+    class RoutedBatch:
+        model = "saved-test-model"
+        independent_remote_inference = True
+
+        def infer_many(self, requests):
+            cameras = []
+            for images, prompt in requests:
+                assert len(images) == 1
+                match = re.match(r"Camera (\d+)\. ", prompt)
+                assert match is not None
+                cameras.append(match.group(1))
+            assert cameras == ["1", "2", "3"]
+            return ["INSIDE", "INSIDE", "OUTSIDE"]
+
+    image = Image.new("RGB", (32, 32), "white")
+    cameras = ("1", "2", "3")
+    frames = [LabeledFrame(camera, phase, stamp, image)
+              for camera in cameras
+              for phase, stamp in (("initial_tabletop", 1.0),
+                                   ("final_clear_view", 2.0))]
+    saved = observe_released_insertion_visual(
+        RoutedBatch(), frames).to_record()
+    assert saved["parsed"]["visual_class"] == "inside_socket"
+    assert saved["aggregation"]["execution_mode"] == "distributed_host_batch"
+    verify_released_socket_token_consensus(saved, set(cameras))
+    tampered = json.loads(json.dumps(saved))
+    tampered["aggregation"].pop("execution_mode")
+    with pytest.raises(ValueError, match="token or source frame changed"):
+        verify_released_socket_token_consensus(tampered, set(cameras))
+
+
 def test_xy_and_metric_grounding_fan_out_to_selected_workers():
     class FiveWorkers:
         model = "saved-test-model"

@@ -174,14 +174,15 @@ source/output runtime configurations, and the exact camera-to-worker mapping.
 Model weights remain in the separately managed project asset tree and are not
 duplicated into the worker package.
 
-The lift v4 first pass and optional fingertip retry keep one four-view batch
-on that shared capture4 worker.  Each request now carries its camera ID in the
-prompt envelope (`Camera <serial>.`) so the distributed router can bind the
-image to the correct worker channel; the classification question itself is
-unchanged.  Reports record `distributed_host_batch` and the exact routed
-prompt per view.  The verifier accepts that form only when the recorded
-execution mode is distributed, while historical local v3/v4 reports continue
-to replay with their original unprefixed prompts.
+Every independent per-camera batch is bound to its camera before dispatch.
+The lift v4 first pass, optional fingertip retry, and released-key socket
+classification add a routing-only prompt envelope (`Camera <serial>.`) when
+the backend is distributed; their classification questions are unchanged.
+The pre-insertion closed-set and metric-grounding prompts already carry the
+same camera identity. Reports retain the exact per-view prompt, and stages
+whose local prompt has no camera token record `distributed_host_batch` so
+their verifier accepts the envelope only for that execution mode. Historical
+local reports continue to replay with their original unprefixed prompts.
 
 Only an explicitly exported `PRECISION_ROBOT_CONFIG` selects this alternate
 backend. Keep the local backend for physical runs until a saved-checkpoint A/B

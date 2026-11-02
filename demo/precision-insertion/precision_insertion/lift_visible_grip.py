@@ -12,6 +12,7 @@ import numpy as np
 from PIL import Image
 
 from .observer import (ImageVLM, LabeledFrame, VLMObservation,
+                       camera_routed_batch_prompt,
                        resize_classification_images)
 from .timing_profile import timed
 from .view_parallel import map_view_calls
@@ -56,13 +57,6 @@ def _digest(value: object) -> str:
 def _vote(answer: str) -> bool | None:
     value = answer.strip().upper()
     return True if value == "YES" else False if value == "NO" else None
-
-
-def _batch_prompt(backend: ImageVLM, camera: str, prompt: str) -> str:
-    """Bind remote batch requests to cameras without changing local prompts."""
-    if getattr(backend, "independent_remote_inference", False):
-        return f"Camera {camera}. {prompt}"
-    return prompt
 
 
 def _mask_roi(mask_path: Path, image_size: tuple[int, int]) -> tuple[int, ...]:
@@ -342,7 +336,7 @@ def observe_visible_grip(
                        camera_ids=list(selected), image_count=len(selected),
                        model=getattr(backend, "model", None)):
                 request_prompts = [
-                    _batch_prompt(backend, camera, prompt)
+                    camera_routed_batch_prompt(backend, camera, prompt)
                     for camera in selected]
                 answers = backend.infer_many([
                     (prepared, request_prompt)
@@ -382,7 +376,7 @@ def observe_visible_grip(
                            camera_ids=list(selected), image_count=len(selected),
                            model=getattr(backend, "model", None)):
                     retry_prompts = [
-                        _batch_prompt(backend, camera, HAND_PROMPT)
+                        camera_routed_batch_prompt(backend, camera, HAND_PROMPT)
                         for camera in selected]
                     retry_answers = backend.infer_many([
                         (prepared, request_prompt)
