@@ -160,6 +160,13 @@ def summarize(timing_root: Path, *, candidate_id: str | None = None,
     rows = [row for _, row in loaded]
     configuration_counts = Counter(
         row["runtime_configuration_sha256"] for row in rows)
+    unrecorded_configuration_runs = configuration_counts.get(
+        "unrecorded_legacy", 0)
+    recorded_configuration_runs = len(rows) - unrecorded_configuration_runs
+    recorded_configuration_identities = {
+        identity for identity in configuration_counts
+        if identity != "unrecorded_legacy"
+    }
     return {
         "schema": "precision_insertion_multi_run_timing_summary_v1",
         "timing_root": str(root),
@@ -173,6 +180,12 @@ def summarize(timing_root: Path, *, candidate_id: str | None = None,
         "runtime_configuration_counts": dict(sorted(
             configuration_counts.items())),
         "mixed_runtime_configurations": len(configuration_counts) > 1,
+        "recorded_runtime_configuration_count": recorded_configuration_runs,
+        "unrecorded_runtime_configuration_count": unrecorded_configuration_runs,
+        "recorded_runtime_configuration_identity_count": len(
+            recorded_configuration_identities),
+        "runtime_configuration_comparison_available": (
+            bool(rows) and unrecorded_configuration_runs == 0),
         "load_errors": errors,
         "overall": {
             "span_envelope_s": _stats([

@@ -82,7 +82,11 @@ It also reports the exact runtime-configuration SHA256 saved by current runs.
 If `mixed_runtime_configurations` is true, do not present the pooled latency as
 one experimental condition; select one identity with
 `--runtime-configuration-sha256`. Historical traces without that manifest
-field are explicitly grouped as `unrecorded_legacy`.
+field are explicitly grouped as `unrecorded_legacy`. Check
+`runtime_configuration_comparison_available` before treating a group as a
+controlled comparison: it is false whenever even one selected trace lacks a
+recorded configuration. `recorded_runtime_configuration_count` and
+`unrecorded_runtime_configuration_count` expose the exact split.
 
 ## ZeroDex capture4: two successful 5 mm episodes (2026-10-29)
 
@@ -135,6 +139,17 @@ latency priorities remain avoiding unnecessary physical correction steps and
 operator wait. Local Qwen placement is already fast enough in this trace that
 moving all label inference to capture4 would not recover a comparable amount
 of time.
+
+Across the eight saved runs that contain fixed grasp `table/0/20195`, the
+median instrumented envelope was 352.34 s, the median manual-review wait was
+208.16 s, and the median non-human envelope was 156.12 s. Median Qwen
+inference occupied 3.36 s. These are descriptive historical values only: all
+eight manifests predate runtime-configuration recording, so their aggregate
+reports `runtime_configuration_comparison_available=false`. The current
+endpoint/partial-shape A/B profiles and timing manifest resolve this for new
+runs; no speedup or method comparison should be claimed from the legacy pool.
+The machine-readable aggregate is stored under
+`/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/reviews/latency_20261102/`.
 
 This trace reused a frozen socket session but still spent 14.05 s building a
 provisional world and then waited 13.26 s for it before loading Qwen.  A
