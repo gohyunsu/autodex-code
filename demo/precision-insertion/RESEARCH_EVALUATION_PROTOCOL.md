@@ -163,32 +163,75 @@ rate.
 
 ## 6. Outcome and failure accounting
 
-Use a funnel rather than only one success rate. Each row needs an explicit
-denominator:
+Use an **execution funnel** rather than only one success rate. Each row needs
+an explicit denominator:
 
-1. candidate planned;
-2. pickup/squeeze executed;
+1. physical pickup started;
+2. pickup/squeeze execution record completed;
 3. key still held after the 2 s lift-settle snapshot (`grasp_success`);
-4. key still held at pre-insertion (`preinsert_reached`);
-5. endpoint/axis observation available;
-6. closed-loop target reached or loop ended by its configured budget;
-7. insertion stroke executed;
-8. key tip entered the socket during guarded descent, before opening the hand
+4. held transfer execution record completed;
+5. key still held at pre-insertion (`preinsert_reached`);
+6. guarded insertion execution record completed;
+7. key tip entered the socket during guarded descent, before opening the hand
    (`tip_entry_success`, manual process-quality label);
-9. key released inside the socket (`insertion_success`, final task outcome).
+8. key released inside the socket (`insertion_success`, final task outcome).
+
+Do **not** put endpoint observability or closed-loop convergence between stages
+5 and 6 in this funnel. The configured pipeline may continue with the nominal
+target when a metric endpoint is unavailable, so those rows are not mandatory
+predecessors of insertion. Report a separate alignment branch among attempts
+that reached pre-insertion:
+
+- first-snapshot metric endpoint available;
+- any metric endpoint available during the loop;
+- physical XY/tilt correction attempted;
+- configured alignment target reached;
+- nominal/default insertion after unavailable endpoint evidence;
+- loop ended before an insertion execution record.
+
+Candidate/planner availability is another pre-physical table, not a physical
+success stage. This separation prevents a planning rejection, missing visual
+measurement and physical insertion failure from sharing one denominator.
 
 Report:
 
-- end-to-end success: stage 9 / all started physical trials;
+- end-to-end success: stage 8 / all started physical trials;
 - conditional grasp success: stage 3 / stage 2;
-- conditional transfer success: stage 4 / stage 3;
-- conditional smooth-entry success: stage 8 / stage 7;
-- conditional final task success: stage 9 / stage 7;
+- conditional transfer success: stage 5 / stage 3;
+- conditional smooth-entry success: stage 7 / stage 6;
+- conditional final task success: stage 8 / stage 6;
 - release-assisted entry: `tip_entry_success=false` and
   `insertion_success=true`, reported separately rather than counted as smooth
   insertion;
 - planning availability separately from physical failure;
 - Wilson confidence intervals for proportions.
+
+For every manually judged stage, report label coverage separately. A missing
+label is not a positive outcome, but it is also not evidence of a physical
+negative. Therefore give both (a) observed successes divided by all eligible
+executions, explicitly described as an end-to-end completion/lower-bound
+measure, and (b) success among labeled executions. Do not present an unlabeled
+episode as a measured miss.
+
+The saved execution records can be summarized without camera, GPU or robot
+access:
+
+```bash
+python3 demo/precision-insertion/summarize_outcomes.py \
+  --attempt-root "$PRECISION_RUN_OUTPUT_ROOT/precision-insertion/inspire/precision_key_cylinder_r15_h80" \
+  --gap-mm 5
+```
+
+As of 2026-11-02, the saved 5 mm corpus has 16 physical pickup starts, 13
+human-positive grasps among 15 labeled lifts, 12 positive pre-insertion holds,
+9 guarded insertion execution records and 2 final inside-socket labels. Only
+1/9 insertion executions has a `tip_entry_success` annotation, so no smooth-
+entry rate is yet supported. Among the 12 pre-insertion holds, one first
+snapshot and three attempts at any iteration have a metric multi-view endpoint;
+eight attempted a physical correction, five ended with an `aligned` choice,
+and seven proceeded to insertion without any metric endpoint. These are pilot
+accounting figures, not an ablation: sessions, candidates and historical
+policies are mixed unless the command is filtered further.
 
 The current final label is visual `inside_socket` after release. It is not an
 independent proof of exactly 20 mm depth. Use that wording in the thesis, or
@@ -211,7 +254,8 @@ matrix and failure examples instead of silently replacing human labels.
 4. **Closed-loop sequence:** iteration 0…K with tip center, socket center,
    correction arrow and measured residual. Add a small plot of XY residual and
    tilt versus iteration under the images.
-5. **Outcome funnel:** counts and conditional percentages at the nine stages.
+5. **Outcome funnel:** counts and conditional percentages at the eight
+   execution stages, plus a separate alignment-observability branch.
 6. **Latency:** median/IQR stacked bars for perception, planning, motion,
    VLM/SAM, evidence I/O and human wait. Plot human wait separately.
 7. **Failure taxonomy:** representative miss/slip, transfer loss, endpoint
