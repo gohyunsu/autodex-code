@@ -44,6 +44,8 @@ class CompletionCheckedFrankaMixin:
     def _follow(
         self, arm_traj, hand_traj=None, speed=None,
         abort_on_contact=False, stop_wrench_z=None,
+        stop_wrench_delta_axis_n=None,
+        stop_wrench_reference_force=None, stop_wrench_axis=None,
         slowdown_wrist_target=None, slowdown_wrist_references=None,
         proximity_hand_traj=None,
     ):
@@ -83,6 +85,9 @@ class CompletionCheckedFrankaMixin:
                     abort_on_contact=(abort_on_contact or
                                       bool(getattr(self, "_holding_object", False))),
                     stop_wrench_z=stop_wrench_z,
+                    stop_wrench_delta_axis_n=stop_wrench_delta_axis_n,
+                    stop_wrench_reference_force=stop_wrench_reference_force,
+                    stop_wrench_axis=stop_wrench_axis,
                     slowdown_wrist_target=slowdown_wrist_target,
                     slowdown_wrist_references=slowdown_wrist_references,
                     proximity_hand_traj=proximity_hand_traj)
@@ -117,7 +122,9 @@ class CompletionCheckedFrankaMixin:
             raise RuntimeError("FR3 stream stop was not acknowledged")
         # A deliberate force-stop is *not* endpoint completion. Its caller
         # receives the stock contact flag and must handle the partial stroke.
-        if stop_wrench_z is not None and self._last_stop_on_contact:
+        if ((stop_wrench_z is not None or
+             stop_wrench_delta_axis_n is not None) and
+                self._last_stop_on_contact):
             return result
         if (not isinstance(state, dict) or
                 np.asarray(state.get("qpos", [])).shape != (7,) or

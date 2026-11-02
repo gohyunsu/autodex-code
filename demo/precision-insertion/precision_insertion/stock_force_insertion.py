@@ -1,7 +1,9 @@
 """AutoDex FR3 force-stop stroke and immediate reverse-path withdrawal.
 
 The 20 mm axial path is planned elsewhere. This adapter uses the stock
-Franka follower's 12 N wrist-Z contact stop and configured held speed cap.
+Franka follower with a 12 N *incremental* force stop along the measured
+socket axis and the configured held speed cap. The pre-insertion wrench is
+the reference, so carried load and sensor bias are not mistaken for contact.
 It never labels physical key depth or visual task success.
 """
 
@@ -56,16 +58,28 @@ class FrankaForceStopInsertionAdapter:
         return self.executor.stop_and_acknowledge()
 
     def follow_stock_force_insertion(self, axial: np.ndarray, *,
+                                     baseline_force_robot_n: np.ndarray,
+                                     force_axis_robot: np.ndarray,
                                      force_threshold_n: float = STOCK_PLACE_FORCE_N) -> dict:
         path = np.asarray(axial, dtype=np.float64)
+        baseline = np.asarray(baseline_force_robot_n, dtype=np.float64)
+        axis = np.asarray(force_axis_robot, dtype=np.float64)
+        axis_norm = float(np.linalg.norm(axis))
         if (path.ndim != 2 or path.shape[1] != 13 or len(path) < 2 or
                 not np.isfinite(path).all() or
+                baseline.shape != (3,) or not np.isfinite(baseline).all() or
+                axis.shape != (3,) or not np.isfinite(axis).all() or
+                axis_norm <= 0 or
                 not math.isfinite(force_threshold_n) or force_threshold_n <= 0):
             raise ValueError("stock insertion needs a finite full-joint axial path")
+        axis = axis / axis_norm
         started = time.time()
         # Deliberately omit speed: stock traj_speed and the executor's
         # configured held-object cap apply. The follower stops on contact.
-        self.executor._follow(path[:, :7], stop_wrench_z=force_threshold_n,
+        self.executor._follow(path[:, :7],
+                              stop_wrench_delta_axis_n=force_threshold_n,
+                              stop_wrench_reference_force=baseline,
+                              stop_wrench_axis=axis,
                               abort_on_contact=True)
         contact = bool(self.executor._last_stop_on_contact)
         # The required completion-checked _follow already stops the velocity
@@ -88,6 +102,13 @@ class FrankaForceStopInsertionAdapter:
             "safety_abort": contact,
             "retreat_completed": contact and retreat is not None,
             "force_threshold_n": force_threshold_n,
+            "force_metric": "increment_from_preinsert_along_socket_axis",
+            "baseline_force_robot_n": baseline.tolist(),
+            "force_axis_robot": axis.tolist(),
+            "contact_force_increment_axis_n": (
+                None if contact_state is None else float(np.dot(
+                    np.asarray(contact_state["wrench"], dtype=np.float64)[:3]
+                    - baseline, axis))),
             "contact_wrench": (None if contact_state is None else
                                np.asarray(contact_state["wrench"],
                                           dtype=np.float64).tolist()),

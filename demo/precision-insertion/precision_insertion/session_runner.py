@@ -123,7 +123,8 @@ from .session_policy import (
     SessionDecision, decide_after_attempt, decide_after_trial_preflight,
 )
 from .trial_preflight import (
-    TrialPreflight, plan_admitted_key_trial, write_trial_preflight_artifacts,
+    TrialPreflight, admitted_key_pose_robot, plan_admitted_key_trial,
+    write_trial_preflight_artifacts,
 )
 from .xy_retry import XYRetryAssessment
 from .uncertainty_margin import SurfaceDeviationBounds
@@ -2092,11 +2093,7 @@ class SessionRunner:
              and held_relation.T_key_hand_command is not None
              else held_relation.T_key_hand),
             name="failed-return post-lift T_key_hand")
-        c2r = validate_se3(self.calibration.record.get("c2r"),
-                           name="session C2R")
-        rest = validate_se3(
-            np.linalg.inv(c2r) @ self._preflight.key_pose_world,
-            name="original tabletop key rest pose")
+        rest = admitted_key_pose_robot(self._preflight)
         held = plan_repose_held_from_state(
             planner=planner, trial_scene=self._preflight.trial_scene,
             shared_root=self.shared_root, calibration=self.calibration,
@@ -2144,9 +2141,7 @@ class SessionRunner:
             raise ValueError("original-pose comparison needs a live trial and key")
         c2r = validate_se3(self.calibration.record.get("c2r"),
                            name="session C2R")
-        original = validate_se3(
-            np.linalg.inv(c2r) @ self._preflight.key_pose_world,
-            name="trial-start T_robot_key")
+        original = admitted_key_pose_robot(self._preflight)
         landed = validate_se3(
             np.linalg.inv(c2r) @ key_observation.pose_world,
             name="reset-landed T_robot_key")

@@ -61,9 +61,14 @@ in [TRIAL_20261020_094911.md](TRIAL_20261020_094911.md).
 ## Active cylinder force-stop route (2026-10-13)
 
 The 20 mm cylinder stroke now uses the current AutoDex FR3 executor's
-`_follow(..., stop_wrench_z=12.0, abort_on_contact=True)` through
+`_follow(..., stop_wrench_delta_axis_n=12.0, ...)` through
 `FrankaForceStopInsertionAdapter`. It keeps the executor's normal
-`traj_speed` and held-object speed cap. On detected force, it stops the
+`traj_speed` and held-object speed cap. The pre-insertion force sample is the
+reference and the detector projects only the subsequent force increment onto
+the measured robot-frame socket axis. Static held-key/adapter load therefore
+does not consume the 12 N contact margin. The follower reuses the FR3 state
+packet already read for path tracking; there is no second ZMQ state read per
+tick. On detected incremental force, it stops the
 stream, follows the already planned socket-axis path backward to preinsert
 with the key gripped, records `force_abort`, and sends the held key through
 the existing return-to-original-pose action. The FR3 integration now records
@@ -518,6 +523,9 @@ runner must not call `src.execution.run_auto.main()` or require edits to the
 existing AutoDex execution files (`run_auto.py`, `run_pipeline.py`, or
 `scene_cfg.py`). AutoDex/ParaDex hardware and perception APIs may be reused
 through explicit adapters, while insertion-specific orchestration lives here.
+The only shared follower extension used by this demo is an optional
+axis-relative, baseline-subtracted wrench stop. Existing callers that use the
+original absolute `stop_wrench_z` argument retain their original behavior.
 
 `run_live.py` now assembles the opt-in cylinder execution loop. The first-party
 [`robot_pc_stages.py`](robot_pc_stages.py) supplies all ten board-9 cylinder

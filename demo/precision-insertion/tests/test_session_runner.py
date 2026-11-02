@@ -164,13 +164,34 @@ def _report(runner, observation, *, status="sampled_planning_pass",
             key if status == "sampled_planning_pass" else None),
         attempted_candidates=attempted, pose_class={"stem": "000"},
         repose_target_stems=repose_targets,
-        trial_scene={"mesh": {"target": {}, "fixture_socket": {}}},
+        trial_scene={"mesh": {
+            "target": {"pose": [0., 0., 0., 1., 0., 0., 0.]},
+            "fixture_socket": {},
+        }},
         key_observation_id=observation.capture_id,
         key_pose_world=observation.pose_world,
         start_q_acquisition_timestamp_s=(
             observation.selected_acquisition_timestamp_s),
         session_calibration_sha256=runner.session_sha256,
         catalog_sha256=runner.catalog_sha256)
+
+
+def test_admitted_key_pose_uses_table_supported_planning_target(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    raw = _observation("key_1", 10.0)
+    raw_pose = raw.pose_world.copy()
+    raw_pose[2, 3] = -.007
+    raw = replace(raw, pose_world=raw_pose)
+    report = _report(runner, raw)
+    report.trial_scene["mesh"]["target"]["pose"] = [
+        .42, -.08, .0618, 1., 0., 0., 0.]
+    runner._preflight = report
+
+    admitted = session_runner.admitted_key_pose_robot(runner._preflight)
+
+    np.testing.assert_allclose(admitted[:3, 3], [.42, -.08, .0618])
+    assert admitted[2, 3] != raw.pose_world[2, 3]
 
 
 def _runner(monkeypatch, tmp_path, *, xy_update_weight=1.0,

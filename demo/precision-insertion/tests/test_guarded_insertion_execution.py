@@ -70,6 +70,7 @@ def _setup(tmp_path: Path, monkeypatch):
     runner = object.__new__(SessionRunner)
     runner.mode = select_mode("cylinder", 1.)
     runner.session_sha256 = "a" * 64
+    runner.calibration = SimpleNamespace(socket_pose_robot=np.eye(4))
     runner._attempt_dir = tmp_path / "attempt"
     runner._attempt_dir.mkdir()
     runner._attempt = SimpleNamespace(
@@ -229,9 +230,13 @@ def test_stock_force_stroke_needs_no_contact_review_and_saves_ascent(
         def __init__(self):
             self.calls = 0
 
-        def follow_stock_force_insertion(self, path):
+        def follow_stock_force_insertion(
+                self, path, *, baseline_force_robot_n, force_axis_robot):
             self.calls += 1
             np.testing.assert_array_equal(path, axial)
+            np.testing.assert_array_equal(
+                baseline_force_robot_n, args["pre_state"].wrench[:3])
+            np.testing.assert_array_equal(force_axis_robot, [0., 0., 1.])
             return {
                 "schema": "precision_insertion_stock_force_result_v1",
                 "started_at_s": 102.55, "completed_at_s": 102.65,

@@ -66,7 +66,8 @@ def test_corrected_return_uses_attempt_sources_and_opens_after_held_motion(
         calibration=SimpleNamespace(record={"c2r": np.eye(4).tolist()}),
         _preflight=SimpleNamespace(
             key_pose_world=np.eye(4),
-            trial_scene={"mesh": {"target": {"pose": [0.] * 7}}}),
+                trial_scene={"mesh": {"target": {
+                    "pose": [0., 0., 0., 1., 0., 0., 0.]}}}),
         shared_root=tmp_path, mode=object())
     events = []
     executor = SimpleNamespace(

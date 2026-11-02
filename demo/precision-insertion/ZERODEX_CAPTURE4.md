@@ -162,6 +162,15 @@ force stop during an already executing stroke retains the normal ascent and
 recovery route rather than silently changing depth. Offline grasp admission
 still requires the canonical 20 mm endpoint.
 
+The live force stop is relative to the pre-insertion hold, not an absolute
+wrist-Z reading. Let `f0` be the force already present at the hold, `f(t)` the
+force from the existing FR3 state packet, and `a_s` the normalized measured
+socket axis in the robot frame. Contact is reported when
+`|(f(t)-f0)·a_s| > 12 N`. This avoids the 2026-11-02 false stop where the
+stationary held setup already read approximately `+12.6 N` before descent.
+It adds one three-vector subtraction and dot product per follower tick, with
+no extra camera, planner, network, or robot-state query.
+
 If neither corrected endpoint can be planned while the key remains held,
 `corrected_hold_recovery.py` reads this attempt's executed XY, transfer and
 lift archives, checks their reversed route with the existing planner, then

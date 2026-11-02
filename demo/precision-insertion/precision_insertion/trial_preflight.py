@@ -193,6 +193,23 @@ class TrialPreflight:
         }
 
 
+def admitted_key_pose_robot(trial: TrialPreflight) -> np.ndarray:
+    """Return the table-supported key pose actually admitted for planning.
+
+    ``key_pose_world`` intentionally retains the raw perception result. The
+    stock scene builder can raise a slightly table-penetrating estimate onto
+    the measured support plane. Physical return/reset must use the resulting
+    scene target rather than reconstructing the uncorrected perception input.
+    """
+    target = trial.trial_scene.get("mesh", {}).get("target")
+    if not isinstance(target, dict):
+        raise ValueError("trial scene has no admitted key target")
+    pose = np.asarray(target.get("pose"), dtype=np.float64)
+    if pose.shape != (7,) or not np.all(np.isfinite(pose)):
+        raise ValueError("trial scene admitted key pose is invalid")
+    return validate_se3(cart2se3(pose), name="admitted tabletop key pose")
+
+
 def write_trial_preflight_artifacts(
     result: TrialPreflight, output_dir: Path,
 ) -> Path:

@@ -317,7 +317,11 @@ def _execute_stock_force_stroke(
         **base, "schema": "precision_insertion_stock_force_started_v1",
         "requested_at_s": _wall_time()})
     try:
-        result = adapter.follow_stock_force_insertion(axial.copy())
+        result = adapter.follow_stock_force_insertion(
+            axial.copy(),
+            baseline_force_robot_n=pre_state.wrench[:3].copy(),
+            force_axis_robot=np.asarray(
+                runner.calibration.socket_pose_robot, dtype=np.float64)[:3, 2])
         if (not isinstance(result, dict) or
                 result.get("schema") !=
                 "precision_insertion_stock_force_result_v1" or

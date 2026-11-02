@@ -21,6 +21,7 @@ from .held_reverse_route import plan_held_reverse_route
 from .live_robot_state import LiveRobotState
 from .path_audit import PathAuditLimits
 from .timing_profile import timed
+from .trial_preflight import admitted_key_pose_robot
 
 
 def _sha(path: Path) -> str:
@@ -135,8 +136,7 @@ class StockCorrectedHoldRecovery:
             lift_report, "lift", attempt.attempt_id)
         transfer, transfer_source = _source_archive(
             transfer_report, "transfer", attempt.attempt_id)
-        c2r = np.asarray(runner.calibration.record["c2r"], dtype=np.float64)
-        original = np.linalg.inv(c2r) @ runner._preflight.key_pose_world
+        original = admitted_key_pose_robot(runner._preflight)
         current_key = propagate_held_key_pose(
             planner=self.planner,
             failed_key_pose=np.asarray(

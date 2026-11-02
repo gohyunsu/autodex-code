@@ -113,6 +113,31 @@ def test_incomplete_stream_stops_without_final_hand_or_arm_command():
         stopped._follow(path, stop_wrench_z=12., abort_on_contact=True)
         assert stopped._last_stop_on_contact and contact.stops == 1
 
+        # A static carried-load bias above the old absolute threshold is not
+        # contact. Only the force increment along the supplied socket axis is.
+        biased = Arm(wrench=12.6)
+        relative = executor(biased, ctrl_dt=1.)
+        try:
+            relative._follow(
+                path, stop_wrench_delta_axis_n=12.,
+                stop_wrench_reference_force=np.array([0., 0., 12.6]),
+                stop_wrench_axis=np.array([0., 0., 1.]),
+                abort_on_contact=True)
+        except RuntimeError as exc:
+            assert "stalled reference" in str(exc)
+        else:
+            raise AssertionError("nonmoving bias test unexpectedly completed")
+        assert not relative._last_stop_on_contact
+
+        incremental_contact = Arm(wrench=25.)
+        relative_contact = executor(incremental_contact)
+        relative_contact._follow(
+            path, stop_wrench_delta_axis_n=12.,
+            stop_wrench_reference_force=np.array([0., 0., 12.6]),
+            stop_wrench_axis=np.array([0., 0., 1.]),
+            abort_on_contact=True)
+        assert relative_contact._last_stop_on_contact
+
         unacknowledged_contact = Arm(
             wrench=13., stop_response={"type": "error", "message": "offline"})
         try:

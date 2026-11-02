@@ -688,6 +688,9 @@ class FrankaExecutor:
     def _follow(self, arm_traj: np.ndarray, hand_traj: Optional[np.ndarray] = None,
                 speed: Optional[float] = None, abort_on_contact: bool = False,
                 stop_wrench_z: Optional[float] = None,
+                stop_wrench_delta_axis_n: Optional[float] = None,
+                stop_wrench_reference_force: Optional[np.ndarray] = None,
+                stop_wrench_axis: Optional[np.ndarray] = None,
                 slowdown_wrist_target: Optional[np.ndarray] = None,
                 slowdown_wrist_references=None,
                 proximity_hand_traj: Optional[np.ndarray] = None):
@@ -740,6 +743,31 @@ class FrankaExecutor:
         stream→position mode switch, which makes the clunk between segments)."""
         traj = np.atleast_2d(np.asarray(arm_traj, dtype=np.float64))[:, :7]
         self._last_stop_on_contact = False
+        relative_wrench_stop = (stop_wrench_delta_axis_n is not None or
+                                stop_wrench_reference_force is not None or
+                                stop_wrench_axis is not None)
+        if relative_wrench_stop:
+            if (stop_wrench_delta_axis_n is None or
+                    stop_wrench_reference_force is None or
+                    stop_wrench_axis is None):
+                raise ValueError(
+                    "relative wrench stop needs threshold, reference and axis")
+            if (not np.isfinite(stop_wrench_delta_axis_n) or
+                    stop_wrench_delta_axis_n <= 0):
+                raise ValueError("relative wrench stop threshold must be positive")
+            wrench_reference = np.asarray(
+                stop_wrench_reference_force, dtype=np.float64)
+            wrench_axis = np.asarray(stop_wrench_axis, dtype=np.float64)
+            axis_norm = float(np.linalg.norm(wrench_axis))
+            if (wrench_reference.shape != (3,) or wrench_axis.shape != (3,) or
+                    not np.all(np.isfinite(wrench_reference)) or
+                    not np.all(np.isfinite(wrench_axis)) or axis_norm <= 0):
+                raise ValueError(
+                    "relative wrench stop needs finite 3D reference and axis")
+            wrench_axis = wrench_axis / axis_norm
+        else:
+            wrench_reference = None
+            wrench_axis = None
         n = len(traj)
         if n == 0:
             return
@@ -939,10 +967,19 @@ class FrankaExecutor:
                         hand_traj[min(k_arm, len(hand_traj) - 1)])
                     self.hand.move(hand_cmd)
                     self._last_hand_action = hand_cmd
-                if stop_wrench_z is not None:
-                    wz = float(self.arm.get_data()["wrench"][2])
-                    if abs(wz) > stop_wrench_z:
-                        print(f"[franka] contact wrench_z={wz:.1f}N — stop descent")
+                if stop_wrench_z is not None or relative_wrench_stop:
+                    force = np.asarray(arm_state["wrench"][:3], dtype=np.float64)
+                    wrench_value = (
+                        float(np.dot(force - wrench_reference, wrench_axis))
+                        if relative_wrench_stop else float(force[2]))
+                    wrench_threshold = (stop_wrench_delta_axis_n
+                                        if relative_wrench_stop
+                                        else stop_wrench_z)
+                    if abs(wrench_value) > wrench_threshold:
+                        label = ("delta_force_axis" if relative_wrench_stop
+                                 else "wrench_z")
+                        print(f"[franka] contact {label}={wrench_value:.1f}N "
+                              "— stop descent")
                         self._last_stop_on_contact = True
                         return                          # stop here (no final land)
                 if self.arm.is_error():

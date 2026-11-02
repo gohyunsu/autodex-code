@@ -48,11 +48,19 @@ def test_stock_force_stop_ascends_without_speed_override(monkeypatch):
     adapter = stock.FrankaForceStopInsertionAdapter(executor)
     axial = np.zeros((5, 13))
     axial[:, 0] = np.linspace(0., .08, 5)
-    result = adapter.follow_stock_force_insertion(axial)
+    result = adapter.follow_stock_force_insertion(
+        axial, baseline_force_robot_n=np.array([0., 0., .5]),
+        force_axis_robot=np.array([0., 0., 2.]))
     assert result["safety_abort"] is True
     assert result["retreat_completed"] is True
     assert len(calls) == 2
-    assert calls[0][1]["stop_wrench_z"] == 12.
+    assert calls[0][1]["stop_wrench_delta_axis_n"] == 12.
+    np.testing.assert_allclose(
+        calls[0][1]["stop_wrench_reference_force"], [0., 0., .5])
+    np.testing.assert_allclose(calls[0][1]["stop_wrench_axis"], [0., 0., 1.])
+    assert result["force_metric"] == (
+        "increment_from_preinsert_along_socket_axis")
+    assert result["contact_force_increment_axis_n"] == 12.5
     assert all("speed" not in kwargs for _, kwargs in calls)
     np.testing.assert_allclose(calls[1][0][0], axial[2, :7])
     np.testing.assert_allclose(calls[1][0][-1], axial[0, :7])
@@ -68,7 +76,9 @@ def test_stock_normal_completion_does_not_withdraw(monkeypatch):
     axial = np.zeros((3, 13))
     axial[:, 0] = [0., .01, .02]
     result = stock.FrankaForceStopInsertionAdapter(
-        executor).follow_stock_force_insertion(axial)
+        executor).follow_stock_force_insertion(
+            axial, baseline_force_robot_n=np.array([0., 0., 11.5]),
+            force_axis_robot=np.array([0., 0., 1.]))
     assert result["safety_abort"] is False
     assert result["retreat_completed"] is False
     assert len(calls) == 1
