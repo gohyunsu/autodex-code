@@ -116,14 +116,17 @@ kept under `development/zerodex_capture4/audits/filesystem/`.
 The bundle archives three exact Git revisions: the precision-insertion fork,
 ParaDex, and NVLabs `nvdiffrast`. The last source is needed only to reproduce
 the renderer environment; it is not opened on the live path. Before the first
-bundle build on this PC, make a project-owned source checkout. This is a
-one-time migration copy; it does not modify the older source and may be
-removed after the NAS bundle has passed its full SHA256 audit.
+bundle build on this PC, make a project-owned checkout of the revision pinned
+by `environments/capture4-gotrack.pip-freeze.txt`. This does not modify any
+shared checkout and may be removed after the NAS bundle has passed its full
+SHA256 audit.
 
 ```bash
 mkdir -p /home/hyunsu/precision_insertion_project/vendor
-git clone --local /home/hyunsu/shared_data/nvdiffrast \
+git clone https://github.com/NVlabs/nvdiffrast.git \
   /home/hyunsu/precision_insertion_project/vendor/nvdiffrast
+git -C /home/hyunsu/precision_insertion_project/vendor/nvdiffrast \
+  checkout --detach 253ac4fcea7de5f396371124af597e6cc957bfae
 ```
 
 Run the builder after committing code changes:
@@ -166,7 +169,12 @@ provenance JSON files changed size after that manifest, five asset files and
 the rig-runtime link are not inventoried, and v1 does not inventory the
 installer/readmes/environment locks. It also lacks a project-owned
 `nvdiffrast` source snapshot; the installed environment points back to a
-deleted temporary build directory. The active runtime view itself has 96
+deleted temporary build directory. The exact environment-pinned source
+commit `253ac4fcea7de5f396371124af597e6cc957bfae` is now staged as a clean
+project-owned checkout at
+`~/precision_insertion_project/vendor/nvdiffrast`; its Git object store and a
+test `git archive` were verified. It is not part of the NAS handoff until the
+refresh below runs successfully. The active runtime view itself has 96
 project-local symlinks with no broken or outside-project target. The NAS was
 mounted read-only during this audit, so the evidence was not rewritten to
 look current. Once it is writable, run `--refresh-code-only` from the final

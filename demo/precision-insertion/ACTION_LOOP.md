@@ -100,12 +100,15 @@ applies the saved bias to the next attempt's wrist target. Failed pose
 admission never falls back to the nominal BODex relation.
 
 [`LiveTaskHandlers`](precision_insertion/live_task_handlers.py) connects the
-first non-contact transfer and 20 mm guarded insertion to their existing
-execution/checkpoint primitives. It reuses the opened AutoDex camera IDs,
-records a separate pre-insertion arrival label, and then passes the guarded
-controller's depth/alignment/force record plus final images to the insertion
-checkpoint. Its robot adapters, raw-frame producers and numeric limits are
-injected on the AutoDex PC. The separate
+first non-contact transfer, same-trial alignment and guarded insertion to
+their existing execution/checkpoint primitives. It reuses the opened camera
+IDs, records a separate pre-insertion arrival label, and repeatedly captures
+the held key while applying measured, bounded wrist corrections before the
+first insertion stroke. It then replans the socket-axis path from the measured
+corrected hold and passes the guarded controller's execution record plus final
+images to the insertion checkpoint. Its robot adapters, raw-frame producers
+and numeric limits are injected by the selected rig integration; the active
+ZeroDex profile binds them in `zerodex_franka_integration.py`. The separate
 [`LiveGroundedRetryHandlers`](precision_insertion/live_retry_handlers.py)
 reads the saved pre-contact raw multi-view snapshot and records
 candidate/pose-specific next-attempt advice. A force stop first takes the
@@ -115,8 +118,12 @@ pickup plan are mandatory before that candidate is tried again. The next physica
 attempt adjusts its calibrated wrist command, while the CAD key insertion
 goal remains socket-centered and endpoint/path checks are rerun. Square
 tip/shoulder grounding supplies XY and tilt but **not yaw**; a yaw error
-needs separate evidence or a different grasp. No same-attempt lateral shift
-or second guarded stroke is registered in the live action mapping.
+needs separate evidence or a different grasp. Same-trial lateral and
+symmetry-reduced axis motions occur only at the pre-insertion hold and are
+followed by fresh images. After the first guarded stroke there is no hidden
+second insertion: success exits, while failure follows the released-key or
+held-key recovery route and may preserve separately labelled next-trial
+advice.
 
 [`LiveReposePlanningHandlers`](precision_insertion/live_repose_handlers.py)
 handles pose exhaustion without another key exposure. Its target selector
