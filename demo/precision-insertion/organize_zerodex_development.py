@@ -192,6 +192,58 @@ def organize_runtime_mutables(*, stage_root: Path,
             "existing_count": len(existing)}
 
 
+def _tree_bytes(path: Path) -> int:
+    if path.is_symlink():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    return sum(entry.stat().st_size for entry in path.rglob("*")
+               if entry.is_file() and not entry.is_symlink())
+
+
+def runtime_mutable_inventory(*, stage_root: Path,
+                              development_root: Path) -> dict:
+    """Describe captures/runs misplaced in the immutable runtime tree.
+
+    This is read-only and is safe while the NAS is mounted read-only.  It
+    reports the exact move that ``organize_runtime_mutables`` will perform
+    once the project namespace is writable.
+    """
+    stage_root = stage_root.expanduser().resolve()
+    development_root = development_root.expanduser().resolve()
+    destination_root = development_root / "legacy_runtime_mutables"
+    candidates = [stage_root / "runs", *sorted(stage_root.glob("*_request_*"))]
+    rows = []
+    for source in candidates:
+        if source.is_symlink():
+            target = source.resolve()
+            if target.is_relative_to(destination_root):
+                rows.append({
+                    "source": str(source), "status": "already_migrated",
+                    "destination": str(target), "bytes": _tree_bytes(target),
+                })
+            continue
+        if not source.exists():
+            continue
+        category = "stage_runs" if source.name == "runs" else "raw_captures"
+        destination = destination_root / category / source.name
+        rows.append({
+            "source": str(source), "status": "misplaced_runtime_mutable",
+            "destination": str(destination), "bytes": _tree_bytes(source),
+            "destination_exists": destination.exists(),
+        })
+    misplaced = [row for row in rows
+                 if row["status"] == "misplaced_runtime_mutable"]
+    return {
+        "schema": "precision_insertion_runtime_mutable_inventory_v1",
+        "stage_root": str(stage_root),
+        "development_root": str(development_root),
+        "misplaced_count": len(misplaced),
+        "misplaced_bytes": sum(row["bytes"] for row in misplaced),
+        "rows": rows,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage-runs", type=Path, default=(
@@ -202,12 +254,23 @@ def main() -> None:
                        str(Path.home() / "precision_insertion_project/development/zerodex_capture4"))))
     parser.add_argument("--organize-nas-history", action="store_true")
     parser.add_argument("--organize-runtime-mutables", action="store_true")
+    parser.add_argument("--check-runtime-mutables", action="store_true")
     parser.add_argument("--stage-root", type=Path, default=Path(
         os.environ.get("PRECISION_STAGE_ROOT",
                        str(Path.home() / "shared_data/AutoDex/precision_insertion/zerodex_capture4"))))
     parser.add_argument("--nas-project-root", type=Path, default=Path(
         nas_project_root()))
     args = parser.parse_args()
+    selected = sum((args.organize_nas_history,
+                    args.organize_runtime_mutables,
+                    args.check_runtime_mutables))
+    if selected > 1:
+        parser.error("choose at most one organization mode")
+    if args.check_runtime_mutables:
+        print(json.dumps(runtime_mutable_inventory(
+            stage_root=args.stage_root,
+            development_root=args.development_root), indent=2))
+        return
     if args.organize_runtime_mutables:
         print(json.dumps(organize_runtime_mutables(
             stage_root=args.stage_root,

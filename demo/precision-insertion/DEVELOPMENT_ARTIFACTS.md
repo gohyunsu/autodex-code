@@ -27,6 +27,24 @@ for saved evidence. New development output needs no post-run copy because
 `PRECISION_DEV_ROOT` already points into the NAS project. Full recordings are
 still uploaded separately after a run.
 
+The runtime-mutable audit is read-only and can run even when the NAS is
+mounted read-only:
+
+```bash
+cd ~/autodex-code
+source demo/precision-insertion/config/zerodex_capture4.env.sh
+PYTHONPATH=demo/precision-insertion \
+  "$PRECISION_CHECK_PY" demo/precision-insertion/organize_zerodex_development.py \
+  --check-runtime-mutables
+```
+
+After the NAS is writable, migrate exactly the reported paths with
+`--organize-runtime-mutables`. The mover keeps relative compatibility
+symlinks and records every destination in `RUNTIME_MUTABLE_MIGRATION.json`.
+The 2026-11-03 read-only audit found 10 pre-separation capture directories
+(213,397,382 bytes) still awaiting that migration; it did not move or delete
+them.
+
 New camera-only runs default to `camera_only/`; timing defaults to `timing/`.
 Other diagnostic tools that require an explicit `--output-dir` should use a
 date-named directory under `probes/` or `planning/`.

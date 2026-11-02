@@ -8,7 +8,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from organize_zerodex_development import organize_runtime_mutables  # noqa: E402
+from organize_zerodex_development import (  # noqa: E402
+    organize_runtime_mutables, runtime_mutable_inventory)
 from link_zerodex_nas_runtime import link_runtime  # noqa: E402
 
 
@@ -22,6 +23,13 @@ def test_runtime_mutables_move_to_development_with_relative_links(tmp_path):
     (capture / "images").mkdir(parents=True)
     (capture / "images/cam.png").write_bytes(b"pixels")
     development = tmp_path / "development/zerodex_capture4"
+
+    inventory = runtime_mutable_inventory(
+        stage_root=stage, development_root=development)
+    assert inventory["misplaced_count"] == 2
+    assert inventory["misplaced_bytes"] == len(b"{}\n") + len(b"pixels")
+    assert {Path(row["source"]).name for row in inventory["rows"]} == {
+        "runs", "socket_000_request_42"}
 
     first = organize_runtime_mutables(
         stage_root=stage, development_root=development)
@@ -40,6 +48,11 @@ def test_runtime_mutables_move_to_development_with_relative_links(tmp_path):
         stage_root=stage, development_root=development)
     assert second["moved_count"] == 0
     assert second["existing_count"] == 2
+    inventory = runtime_mutable_inventory(
+        stage_root=stage, development_root=development)
+    assert inventory["misplaced_count"] == 0
+    assert {row["status"] for row in inventory["rows"]} == {
+        "already_migrated"}
 
 
 def test_runtime_linker_does_not_create_mutable_runs_in_asset_view(tmp_path):

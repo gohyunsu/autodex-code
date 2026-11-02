@@ -198,13 +198,16 @@ encoding and writing the full-resolution frame repeatedly. This changes only
 storage I/O, not perception admission or task outcomes. The capture4
 recorder is deployed once with `manage_zerodex_capture4_services.py deploy`.
 
-Pre-separation outputs that once lived beside static launch assets were moved
+Pre-separation outputs that once lived beside static launch assets are moved
 to `development/zerodex_capture4/legacy_runtime_mutables`. The original paths
-are relative symlinks, so historical reports remain readable without keeping
-the bytes in the runtime asset view. The migration is recorded in
-`development/zerodex_capture4/RUNTIME_MUTABLE_MIGRATION.json`. Re-running
-`link_zerodex_nas_runtime.py` no longer creates a mutable `runs/` directory
-inside `runtime/active_shared_data`.
+become relative symlinks, so historical reports remain readable without
+keeping the bytes in the runtime asset view. Completed moves are recorded in
+`development/zerodex_capture4/RUNTIME_MUTABLE_MIGRATION.json`. A read-only
+`organize_zerodex_development.py --check-runtime-mutables` inventory reports
+anything still misplaced; on 2026-11-03 it found 10 capture directories
+(213,397,382 bytes) that could not yet be moved because the NAS mount was
+read-only. Re-running `link_zerodex_nas_runtime.py` no longer creates a
+mutable `runs/` directory inside `runtime/active_shared_data`.
 
 A file-access trace of `run_zerodex_capture4.sh --check` on 2026-10-30
 observed 196 NAS pathname operations over 40 unique resolved prefixes/files.
