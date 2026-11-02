@@ -162,6 +162,9 @@ def test_static_preflight_reads_v8_files_without_opening_robot(
     assert report["stage_policy"]["minimum_board_edge_clearance_m"] == 0
     assert report["stage_policy"]["retry_max_total_offset_m"] is None
     assert report["stage_policy"]["alignment_minimum_views"] == 2
+    assert report["stage_policy"]["tabletop_pose_error_deg"] == 20
+    assert report["stage_policy"]["post_lift_settle_s"] == 2
+    assert report["stage_policy"]["preinsert_render_audit_overlay"] is False
     assert report["stage_policy"]["scope"] == (
         "static_configuration_only_no_hardware_import")
     assert report["robot_config"]["vlm"] == {

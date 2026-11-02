@@ -31,10 +31,7 @@ done
 unset precision_path_var
 export PRECISION_GAP_MM=${PRECISION_GAP_MM:-5}
 export PRECISION_XY_ESTIMATOR=${PRECISION_XY_ESTIMATOR:-sam_half_ellipse}
-export PRECISION_TABLETOP_POSE_ERROR_DEG=${PRECISION_TABLETOP_POSE_ERROR_DEG:-20}
 export PRECISION_PRELOAD_VLM=${PRECISION_PRELOAD_VLM:-1}
-# Observe whether the grasp remains held briefly after the lift completes.
-export PRECISION_POST_LIFT_SETTLE_S=${PRECISION_POST_LIFT_SETTLE_S:-2.0}
 # The first live pickup previously spent 21.97 s initializing the fixed
 # cuRobo world. Start that work while capture4 acquires/refines the next key.
 # A caller can set 0 for a measured serial-latency comparison.

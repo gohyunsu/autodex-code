@@ -208,8 +208,11 @@ def inspect_live_inputs(
             "path": str(policy.source),
             "sha256": hashlib.sha256(policy.source.read_bytes()).hexdigest(),
             "key_prompt": policy.key_prompt,
+            "tabletop_pose_error_deg": policy.tabletop_pose_error_deg,
             "axial_waypoint_step_m": policy.axial_waypoint_step_m,
             "post_lift_settle_s": policy.post_lift_settle_s,
+            "preinsert_render_audit_overlay": (
+                policy.preinsert["render_audit_overlay"]),
             "minimum_hand_clearance_m": (
                 policy.path_limits.minimum_hand_clearance_m),
             "minimum_board_edge_clearance_m": (

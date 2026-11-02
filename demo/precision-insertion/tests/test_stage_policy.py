@@ -21,7 +21,9 @@ def test_default_stage_policy_records_current_runtime_values(monkeypatch):
     assert policy.path_limits.minimum_hand_clearance_m == 0
     assert policy.retry_limits.max_total_offset_m is None
     assert policy.alignment_limits.minimum_views == 2
-    assert policy.preinsert["render_audit_overlay"] is True
+    assert policy.tabletop_pose_error_deg == 20
+    assert policy.post_lift_settle_s == 2
+    assert policy.preinsert["render_audit_overlay"] is False
 
 
 def test_environment_selects_an_explicit_stage_policy(tmp_path, monkeypatch):

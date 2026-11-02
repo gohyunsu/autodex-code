@@ -88,7 +88,6 @@ export PRECISION_VLM_CAMERA_IDS=${PRECISION_VLM_CAMERA_IDS:-26053248,25322639,25
 # Ordering is no longer a fixed three-camera choice. Each session's
 # socket-pose inliers select the actual endpoint views before Qwen/SAM work.
 export PRECISION_XY_PREFERRED_CAMERA_IDS=${PRECISION_XY_PREFERRED_CAMERA_IDS:-$PRECISION_CAPTURE4_CAMERA_IDS}
-export PRECISION_PREINSERT_AUDIT_OVERLAY=${PRECISION_PREINSERT_AUDIT_OVERLAY:-0}
 # Use the three lowest-residual inliers from this session's socket-only fit.
 # The capture and stored evidence still contain all four views. An experiment
 # may explicitly set PRECISION_FINAL_VLM_CAMERA_IDS to replay a fixed subset.

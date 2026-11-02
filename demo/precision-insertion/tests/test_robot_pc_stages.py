@@ -56,7 +56,8 @@ def test_board9_binding_assembles_all_current_actions_without_hardware():
     assert parameters["stages"]["retry"]["retry_limits"].max_total_offset_m is None
     assert parameters["stages"]["task"]["insertion_limits"].max_execution_duration_s == 90
     assert parameters["stages"]["task"]["handoff_parameters"] == {}
-    assert parameters["stages"]["task"]["preinsert_parameters"]["render_audit_overlay"]
+    assert not parameters["stages"]["task"]["preinsert_parameters"]["render_audit_overlay"]
+    assert parameters["stages"]["lift"]["post_lift_settle_s"] == 2
     assert parameters["shared"]["motion_interlock"]()
     assert calls == []
 
