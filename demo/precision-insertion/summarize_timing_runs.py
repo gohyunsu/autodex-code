@@ -138,6 +138,39 @@ def _actions(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _configuration_population(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Describe whether a timing population is one reproducible condition.
+
+    ``unrecorded_legacy`` is not a real configuration identity. In
+    particular, two legacy traces do not prove that they used the same code
+    or settings merely because both omitted the field.
+    """
+    counts = Counter(row["runtime_configuration_sha256"] for row in rows)
+    unrecorded = counts.get("unrecorded_legacy", 0)
+    recorded = len(rows) - unrecorded
+    identities = {identity for identity in counts
+                  if identity != "unrecorded_legacy"}
+    if not rows:
+        status = "no_runs"
+    elif unrecorded == len(rows):
+        status = "unknown"
+    elif unrecorded:
+        status = "partially_recorded"
+    elif len(identities) == 1:
+        status = "known_single"
+    else:
+        status = "known_mixed"
+    return {
+        "counts": dict(sorted(counts.items())),
+        "recorded_run_count": recorded,
+        "unrecorded_run_count": unrecorded,
+        "recorded_identity_count": len(identities),
+        "comparison_available": bool(rows) and unrecorded == 0,
+        "mixing_status": status,
+        "controlled_single_condition": status == "known_single",
+    }
+
+
 def summarize(timing_root: Path, *, candidate_id: str | None = None,
               runtime_configuration_sha256: str | None = None,
               include_incomplete: bool = False) -> dict[str, Any]:
@@ -155,20 +188,15 @@ def summarize(timing_root: Path, *, candidate_id: str | None = None,
                  row["runtime_configuration_sha256"] ==
                  runtime_configuration_sha256)):
             loaded.append((summary, row))
-    selected = [summary for summary, row in loaded
-                if include_incomplete or row["complete"]]
+    selected_pairs = [(summary, row) for summary, row in loaded
+                      if include_incomplete or row["complete"]]
+    selected = [summary for summary, _row in selected_pairs]
     rows = [row for _, row in loaded]
-    configuration_counts = Counter(
-        row["runtime_configuration_sha256"] for row in rows)
-    unrecorded_configuration_runs = configuration_counts.get(
-        "unrecorded_legacy", 0)
-    recorded_configuration_runs = len(rows) - unrecorded_configuration_runs
-    recorded_configuration_identities = {
-        identity for identity in configuration_counts
-        if identity != "unrecorded_legacy"
-    }
+    discovered_configs = _configuration_population(rows)
+    statistics_configs = _configuration_population(
+        [row for _summary, row in selected_pairs])
     return {
-        "schema": "precision_insertion_multi_run_timing_summary_v1",
+        "schema": "precision_insertion_multi_run_timing_summary_v2",
         "timing_root": str(root),
         "candidate_filter": candidate_id,
         "runtime_configuration_filter": runtime_configuration_sha256,
@@ -177,15 +205,27 @@ def summarize(timing_root: Path, *, candidate_id: str | None = None,
         "complete_run_count": sum(row["complete"] for row in rows),
         "incomplete_run_count": sum(not row["complete"] for row in rows),
         "statistics_run_count": len(selected),
-        "runtime_configuration_counts": dict(sorted(
-            configuration_counts.items())),
-        "mixed_runtime_configurations": len(configuration_counts) > 1,
-        "recorded_runtime_configuration_count": recorded_configuration_runs,
-        "unrecorded_runtime_configuration_count": unrecorded_configuration_runs,
-        "recorded_runtime_configuration_identity_count": len(
-            recorded_configuration_identities),
-        "runtime_configuration_comparison_available": (
-            bool(rows) and unrecorded_configuration_runs == 0),
+        # Keep the original flat fields for report consumers, but do not use
+        # the boolean alone: all-legacy data previously appeared as "not
+        # mixed" even though its identity was unknowable.
+        "runtime_configuration_counts": discovered_configs["counts"],
+        "mixed_runtime_configurations": (
+            discovered_configs["mixing_status"] in {
+                "known_mixed", "partially_recorded"}),
+        "runtime_configuration_mixing_status": discovered_configs[
+            "mixing_status"],
+        "recorded_runtime_configuration_count": discovered_configs[
+            "recorded_run_count"],
+        "unrecorded_runtime_configuration_count": discovered_configs[
+            "unrecorded_run_count"],
+        "recorded_runtime_configuration_identity_count": discovered_configs[
+            "recorded_identity_count"],
+        "runtime_configuration_comparison_available": discovered_configs[
+            "comparison_available"],
+        "discovered_runtime_configurations": discovered_configs,
+        "statistics_runtime_configurations": statistics_configs,
+        "statistics_pool_is_controlled_condition": statistics_configs[
+            "controlled_single_condition"],
         "load_errors": errors,
         "overall": {
             "span_envelope_s": _stats([

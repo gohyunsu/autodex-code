@@ -341,6 +341,11 @@ python3 demo/precision-insertion/summarize_timing_runs.py \
   --candidate-id table/0/20195
 ```
 
+Before reporting a pooled median, require
+`statistics_pool_is_controlled_condition: true`. An all-legacy pool reports
+`runtime_configuration_mixing_status: unknown`; it is not evidence that the
+runs shared one code and runtime condition.
+
 ## 9. Suggested report structure
 
 The department guide specifies 10–30 A4 pages for the final thesis and, for a

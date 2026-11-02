@@ -87,6 +87,14 @@ field are explicitly grouped as `unrecorded_legacy`. Check
 controlled comparison: it is false whenever even one selected trace lacks a
 recorded configuration. `recorded_runtime_configuration_count` and
 `unrecorded_runtime_configuration_count` expose the exact split.
+`runtime_configuration_mixing_status` makes the distinction explicit:
+`known_single`, `known_mixed`, `partially_recorded`, `unknown`, or `no_runs`.
+Use `statistics_pool_is_controlled_condition` for the actual rows entering the
+reported medians. `discovered_runtime_configurations` still describes every
+matching trace, while `statistics_runtime_configurations` excludes unfinished
+traces unless `--include-incomplete` is set. This prevents an all-legacy group
+from being mistaken for a homogeneous condition merely because every run is
+missing the same identity field.
 
 ## ZeroDex capture4: two successful 5 mm episodes (2026-10-29)
 

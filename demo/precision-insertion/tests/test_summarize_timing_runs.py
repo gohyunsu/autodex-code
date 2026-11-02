@@ -35,6 +35,8 @@ def test_multi_run_timing_reports_median_and_human_wait(tmp_path):
     assert result["unrecorded_runtime_configuration_count"] == 0
     assert result["recorded_runtime_configuration_identity_count"] == 1
     assert result["runtime_configuration_comparison_available"] is True
+    assert result["runtime_configuration_mixing_status"] == "known_single"
+    assert result["statistics_pool_is_controlled_condition"] is True
     assert result["overall"]["span_envelope_s"]["median"] > 0
     assert result["overall"]["human_wait_occupied_s"]["median"] > 0
     assert result["operations"]["trial.lift_motion"]["present_runs"] == 2
@@ -68,6 +70,9 @@ def test_multi_run_timing_can_filter_exact_runtime_configuration(tmp_path):
     assert all_runs["unrecorded_runtime_configuration_count"] == 1
     assert all_runs["recorded_runtime_configuration_identity_count"] == 1
     assert all_runs["runtime_configuration_comparison_available"] is False
+    assert all_runs["runtime_configuration_mixing_status"] == (
+        "partially_recorded")
+    assert all_runs["statistics_pool_is_controlled_condition"] is False
     configured = next(row for row in all_runs["runs"]
                       if row["run_id"] == "run_b")
     filtered = summarize(
@@ -92,3 +97,34 @@ def test_multi_run_timing_marks_all_legacy_configuration_unknown(tmp_path):
     assert result["unrecorded_runtime_configuration_count"] == 2
     assert result["recorded_runtime_configuration_identity_count"] == 0
     assert result["runtime_configuration_comparison_available"] is False
+    assert result["runtime_configuration_mixing_status"] == "unknown"
+    assert result["statistics_runtime_configurations"][
+        "mixing_status"] == "unknown"
+    assert result["statistics_pool_is_controlled_condition"] is False
+
+
+def test_multi_run_timing_separates_discovered_from_statistics_config(
+        tmp_path):
+    _run(tmp_path, "complete", "table/0/20195")
+    # This trace is discoverable but excluded from default statistics. Its
+    # different configuration must not make the complete-run pool look mixed.
+    _run(tmp_path, "incomplete", "table/0/20195")
+    events = tmp_path / "incomplete.timing" / "events.jsonl"
+    rows = [json.loads(line) for line in events.read_text().splitlines()]
+    rows = [row for row in rows if not (
+        row.get("edge") == "end" and row.get("name") == "live.session")]
+    events.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    manifest = tmp_path / "incomplete.timing" / "manifest.json"
+    value = json.loads(manifest.read_text())
+    value["runtime_configuration"] = {
+        "schema": "test_runtime_v1", "mode": "different"}
+    manifest.write_text(json.dumps(value))
+
+    result = summarize(tmp_path)
+    assert result["discovered_run_count"] == 2
+    assert result["statistics_run_count"] == 1
+    assert result["discovered_runtime_configurations"][
+        "mixing_status"] == "known_mixed"
+    assert result["statistics_runtime_configurations"][
+        "mixing_status"] == "known_single"
+    assert result["statistics_pool_is_controlled_condition"] is True
