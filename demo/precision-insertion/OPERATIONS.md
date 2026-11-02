@@ -4,6 +4,11 @@ This is the short operational source of truth for the current
 `feat/zerodex-precision-insertion` profile. Historical AutoDex-PC commands in
 the other dated reports are evidence, not commands for this rig.
 
+The implementation/verification ledger is
+[`CURRENT_STATUS.md`](CURRENT_STATUS.md). It distinguishes implemented code,
+physical evidence and external prerequisites so that an old TODO or a passing
+offline catalogue is not mistaken for current robot validation.
+
 ## Machine ownership
 
 | Resource | Owner in the live run |
