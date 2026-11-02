@@ -136,6 +136,44 @@ defaults.
 hardware, records its SHA256 and reports the zero-clearance/uncapped-XY values
 so a run cannot appear to use settings that differ from its static preflight.
 
+### Optional capture4 Qwen placement
+
+The default remains local Qwen on kds-Z790. The saved `table/0/20195` traces
+attribute a median 3.36 s to all VLM inference in a run, so moving the model is
+not assumed to improve end-to-end latency. There is now an optional capture4
+configuration for an A/B timing experiment:
+
+- all four camera IDs share one Qwen process and one loaded model on capture4;
+- their requests are decoded in one GPU batch rather than loading four model
+  copies or serializing four SSH processes;
+- `capture4@147.46.219.136:77`, its Python, model, and worker paths live in the
+  machine-specific
+  [`zerodex_capture4_qwen_workers.json`](config/zerodex_capture4_qwen_workers.json);
+- the worker reads submitted PNG bytes only. It does not open cameras, ParaDex,
+  or the robot.
+
+Prepare the project-owned worker package and an alternate runtime JSON without
+changing the default:
+
+```bash
+cd /home/hyunsu/autodex-code
+source demo/precision-insertion/config/zerodex_capture4.env.sh
+/home/hyunsu/.venvs/precision-vlm/bin/python \
+  demo/precision-insertion/setup_capture_qwen.py \
+  --source-config "$PRECISION_STAGE_ROOT/franka_runtime.json" \
+  --output-config "$PRECISION_STAGE_ROOT/franka_runtime_capture4_qwen.json" \
+  --worker-root "$PRECISION_NAS_PROJECT_ROOT/runtime/qwen_worker" \
+  --workers-json demo/precision-insertion/config/zerodex_capture4_qwen_workers.json
+PRECISION_ROBOT_CONFIG="$PRECISION_STAGE_ROOT/franka_runtime_capture4_qwen.json" \
+  bash demo/precision-insertion/run_zerodex_capture4.sh --check
+```
+
+Only an explicitly exported `PRECISION_ROBOT_CONFIG` selects this alternate
+backend. Keep the local backend for physical runs until a saved-checkpoint A/B
+test shows that model load plus PNG/SSH round trip is lower on the current
+capture4 load. This is resource placement only; prompts, crops, view consensus,
+labels, and motion decisions remain identical.
+
 The profile also supplies the namespaced camera service manager's remote
 asset root. For service commands in this checkout, load it in the calling
 shell first:

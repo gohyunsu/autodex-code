@@ -184,6 +184,27 @@ def test_static_preflight_reads_v8_files_without_opening_robot(
     assert report["robot_ready"] is False
     assert report["xy_estimator"] == "vlm"
 
+    distributed = json.loads(robot_path.read_text(encoding="utf-8"))
+    worker = {
+        "host": "capture4@192.0.2.4", "ssh_port": 77,
+        "python": "/home/capture4/python",
+        "model_dir": "/home/capture4/model",
+        "worker_root": "/home/capture4/qwen_worker",
+    }
+    distributed["vlm"] = {
+        "mode": "distributed", "worker_root": "/home/hyunsu/qwen_worker",
+        "workers": {camera: worker for camera in ("100", "200", "300", "400")},
+    }
+    robot_path.write_text(json.dumps(distributed), encoding="utf-8")
+    distributed_report = live_runtime.inspect_live_inputs(
+        launch_config_path=launch_path, endpoint_catalog_path=catalog_path,
+        robot_config_path=robot_path)
+    assert distributed_report["robot_config"]["vlm"] == {
+        "mode": "distributed", "camera_count": 4, "host_count": 1,
+        "workers": distributed["vlm"]["workers"],
+        "scope": "configuration_only_no_ssh_or_model_load",
+    }
+
     sam_python = tmp_path / "sam_python"
     sam_python.write_text("#!/bin/sh\n", encoding="utf-8")
     sam_python.chmod(0o755)

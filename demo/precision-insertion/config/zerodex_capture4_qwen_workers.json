@@ -1,0 +1,30 @@
+{
+  "25305462": {
+    "host": "capture4@147.46.219.136",
+    "model_dir": "/home/capture4/shared_data/hyunsu/precision_insertion/assets/shared_data/AutoDex/models/Qwen3-VL-2B-Instruct",
+    "python": "/home/capture4/anaconda3/envs/planner/bin/python",
+    "ssh_port": 77,
+    "worker_root": "/home/capture4/shared_data/hyunsu/precision_insertion/runtime/qwen_worker"
+  },
+  "25322639": {
+    "host": "capture4@147.46.219.136",
+    "model_dir": "/home/capture4/shared_data/hyunsu/precision_insertion/assets/shared_data/AutoDex/models/Qwen3-VL-2B-Instruct",
+    "python": "/home/capture4/anaconda3/envs/planner/bin/python",
+    "ssh_port": 77,
+    "worker_root": "/home/capture4/shared_data/hyunsu/precision_insertion/runtime/qwen_worker"
+  },
+  "25322642": {
+    "host": "capture4@147.46.219.136",
+    "model_dir": "/home/capture4/shared_data/hyunsu/precision_insertion/assets/shared_data/AutoDex/models/Qwen3-VL-2B-Instruct",
+    "python": "/home/capture4/anaconda3/envs/planner/bin/python",
+    "ssh_port": 77,
+    "worker_root": "/home/capture4/shared_data/hyunsu/precision_insertion/runtime/qwen_worker"
+  },
+  "26053248": {
+    "host": "capture4@147.46.219.136",
+    "model_dir": "/home/capture4/shared_data/hyunsu/precision_insertion/assets/shared_data/AutoDex/models/Qwen3-VL-2B-Instruct",
+    "python": "/home/capture4/anaconda3/envs/planner/bin/python",
+    "ssh_port": 77,
+    "worker_root": "/home/capture4/shared_data/hyunsu/precision_insertion/runtime/qwen_worker"
+  }
+}

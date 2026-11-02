@@ -117,14 +117,22 @@ def _vlm_settings(value: object) -> dict:
                 not isinstance(settings.get("worker_root"), str) or
                 not Path(settings["worker_root"]).is_absolute() or
                 not isinstance(settings.get("workers"), dict) or
-                len(settings["workers"]) != 5 or
+                not 1 <= len(settings["workers"]) <= 8 or
                 any(not isinstance(camera, str) or
                     not isinstance(spec, dict) or
-                    set(spec) != {"host", "python", "model_dir"} or
+                    not {"host", "python", "model_dir"} <= set(spec) <=
+                    {"host", "python", "model_dir", "worker_root",
+                     "ssh_port"} or
                     not isinstance(spec["host"], str) or
                     not isinstance(spec["python"], str) or
                     not isinstance(spec["model_dir"], str) or
-                    not Path(spec["model_dir"]).is_absolute()
+                    not Path(spec["model_dir"]).is_absolute() or
+                    "ssh_port" in spec and (
+                        type(spec["ssh_port"]) is not int or
+                        not 1 <= spec["ssh_port"] <= 65535) or
+                    "worker_root" in spec and (
+                        not isinstance(spec["worker_root"], str) or
+                        not Path(spec["worker_root"]).is_absolute())
                     for camera, spec in settings["workers"].items())) or
             settings["classification_image_size"] is not None and (
                 not isinstance(settings["classification_image_size"], (list, tuple)) or

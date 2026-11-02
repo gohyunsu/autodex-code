@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 from pathlib import Path
@@ -10,7 +11,7 @@ import shlex
 import sys
 import threading
 import time
-from io import StringIO
+from io import BytesIO, StringIO
 
 import numpy as np
 import pytest
@@ -59,6 +60,178 @@ def test_capture_worker_startup_owns_one_gpu_slot(monkeypatch):
             "/tmp/precision-insertion-qwen-worker.lock"]
 
 
+def test_capture4_cameras_share_one_loaded_remote_model(monkeypatch):
+    commands = []
+    processes = []
+
+    class Process:
+        pass
+
+    def popen(args, **_kwargs):
+        commands.append(args)
+        process = Process()
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(distributed_qwen.subprocess, "Popen", popen)
+    monkeypatch.setattr(DistributedQwenBackend, "_wait_ready",
+                        lambda self, **_kwargs: None)
+    cameras = ("26053248", "25322639", "25305462", "25322642")
+    spec = {
+        "host": "capture4@147.46.219.136",
+        "ssh_port": 77,
+        "python": "/home/capture4/anaconda3/envs/flir_env/bin/python",
+        "model_dir": "/home/capture4/precision/models/qwen",
+        "worker_root": "/home/capture4/precision/qwen_worker",
+    }
+    backend = DistributedQwenBackend(
+        model_id="/home/hyunsu/precision/models/qwen",
+        worker_root=Path("/home/hyunsu/precision/qwen_worker"),
+        workers={camera: dict(spec) for camera in cameras},
+        max_input_size=(2048, 1536), max_new_tokens=64,
+        classification_image_size=(384, 288))
+    assert len(commands) == 1
+    assert commands[0][:2] == ["ssh", "-T"]
+    assert commands[0][commands[0].index("-p") + 1] == "77"
+    assert "capture4@147.46.219.136" in commands[0]
+    command = shlex.split(commands[0][-1])
+    assert command[command.index("--camera-ids") + 1].split(",") == sorted(cameras)
+    assert backend.max_parallel_views == 1
+    assert len({id(backend._channels[camera][0]) for camera in cameras}) == 1
+
+
+def test_remote_worker_accepts_multiple_camera_ids(monkeypatch):
+    class FakeCuda:
+        @staticmethod
+        def get_device_name(_index):
+            return "test GPU"
+
+        @staticmethod
+        def memory_allocated():
+            return 0
+
+    class FakeModel:
+        def __init__(self, **_kwargs):
+            pass
+
+    monkeypatch.setitem(sys.modules, "torch", type("FakeTorch", (), {
+        "cuda": FakeCuda})())
+    monkeypatch.setattr(distributed_qwen_worker, "LocalQwenModel", FakeModel)
+    monkeypatch.setattr(sys, "stdin", StringIO(
+        '{"type":"shutdown","camera_id":"25322642"}\n'))
+    output = StringIO()
+    distributed_qwen_worker.serve(
+        camera_ids=("26053248", "25322642"), model_id="unused",
+        max_input_size=(640, 480), protocol=output)
+    rows = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert rows[0]["camera_ids"] == ["26053248", "25322642"]
+    assert rows[1] == {"type": "stopped",
+                       "camera_ids": ["26053248", "25322642"]}
+
+
+def test_remote_worker_batches_cameras_on_one_model(monkeypatch):
+    class FakeCuda:
+        @staticmethod
+        def get_device_name(_index):
+            return "test GPU"
+
+        @staticmethod
+        def memory_allocated():
+            return 0
+
+        @staticmethod
+        def reset_peak_memory_stats():
+            pass
+
+        @staticmethod
+        def max_memory_allocated():
+            return 123
+
+    class Reply:
+        def __init__(self, answer):
+            self.answer = answer
+
+    class FakeModel:
+        def __init__(self, **_kwargs):
+            pass
+
+        def infer_batch_images_prompt(self, requests, *, max_new_tokens):
+            assert max_new_tokens == 12
+            return [Reply(f"answer-{index}")
+                    for index, _ in enumerate(requests)]
+
+    image = Image.new("RGB", (32, 32), "white")
+    stream = BytesIO()
+    image.save(stream, format="PNG")
+    encoded = base64.b64encode(stream.getvalue()).decode("ascii")
+    request = {
+        "type": "infer_many", "request_id": "batch-1",
+        "requests": [
+            {"camera_id": camera, "images_png_base64": [encoded],
+             "prompt": f"Camera: {camera}."}
+            for camera in ("100", "200")
+        ],
+        "max_new_tokens": 12, "native_pixels": False,
+    }
+    shutdown = {"type": "shutdown", "camera_id": "100"}
+    monkeypatch.setitem(sys.modules, "torch", type("FakeTorch", (), {
+        "cuda": FakeCuda})())
+    monkeypatch.setattr(distributed_qwen_worker, "LocalQwenModel", FakeModel)
+    monkeypatch.setattr(sys, "stdin", StringIO(
+        json.dumps(request) + "\n" + json.dumps(shutdown) + "\n"))
+    output = StringIO()
+    distributed_qwen_worker.serve(
+        camera_ids=("100", "200"), model_id="unused",
+        max_input_size=(640, 480), protocol=output)
+    rows = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert rows[1]["type"] == "batch_result"
+    assert [(row["camera_id"], row["answer"])
+            for row in rows[1]["results"]] == [
+                ("100", "answer-0"), ("200", "answer-1")]
+    assert rows[1]["cuda_peak_bytes"] == 123
+
+
+def test_backend_batches_same_host_requests(monkeypatch):
+    class Process:
+        def __init__(self):
+            self.stdin = StringIO()
+            self.stdout = StringIO(json.dumps({
+                "type": "batch_result", "request_id": "fixed",
+                "results": [
+                    {"camera_id": "100", "answer": "first",
+                     "image_sizes": [[32, 32]]},
+                    {"camera_id": "200", "answer": "second",
+                     "image_sizes": [[32, 32]]},
+                ],
+                "inference_s": .5, "cuda_peak_bytes": 123,
+            }) + "\n")
+
+        def poll(self):
+            return None
+
+    process = Process()
+    channel = (process, threading.Lock(), Path("/tmp/qwen-batch.log"))
+    backend = object.__new__(DistributedQwenBackend)
+    backend._channels = {"100": channel, "200": channel}
+    backend.max_new_tokens = 32
+    backend.native_pixel_coordinates = True
+    backend.log_path = None
+    backend._log_lock = threading.Lock()
+    monkeypatch.setattr(distributed_qwen.uuid, "uuid4",
+                        lambda: type("ID", (), {"hex": "fixed"})())
+    monkeypatch.setattr(distributed_qwen.select, "select",
+                        lambda streams, *_args: (streams, [], []))
+    image = Image.new("RGB", (32, 32), "white")
+    answers = backend.infer_many([
+        ([image], "Camera: 100. Return JSON"),
+        ([image], "Camera: 200. Return JSON"),
+    ])
+    assert answers == ["first", "second"]
+    sent = json.loads(process.stdin.getvalue())
+    assert sent["type"] == "infer_many"
+    assert [row["camera_id"] for row in sent["requests"]] == ["100", "200"]
+
+
 def test_capture_worker_shutdown_releases_model_process(monkeypatch):
     class MemoryStream(StringIO):
         def close(self):
@@ -82,6 +255,43 @@ def test_capture_worker_shutdown_releases_model_process(monkeypatch):
     backend.close()
     assert json.loads(process.stdin.saved.strip()) == {
         "type": "shutdown", "camera_id": "24122734"}
+
+
+def test_shared_capture_worker_starts_and_stops_once(monkeypatch):
+    class MemoryStream(StringIO):
+        def close(self):
+            self.saved = self.getvalue()
+            super().close()
+
+    class Process:
+        def __init__(self):
+            self.stdin = MemoryStream()
+            self.stdout = StringIO(json.dumps({
+                "type": "ready", "camera_ids": ["100", "200"],
+            }) + "\n")
+            self.wait_calls = 0
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout):
+            assert timeout == 15.
+            self.wait_calls += 1
+            return 0
+
+    process = Process()
+    channel = (process, threading.Lock(), Path("/tmp/shared-qwen.log"))
+    backend = object.__new__(DistributedQwenBackend)
+    backend._channels = {"100": channel, "200": channel}
+    backend._background_pools = []
+    monkeypatch.setattr(distributed_qwen.select, "select",
+                        lambda streams, *_args: (streams, [], []))
+    backend._wait_ready(timeout_s=1.)
+    backend.close()
+    assert process.wait_calls == 1
+    shutdown = json.loads(process.stdin.saved.strip())
+    assert shutdown["type"] == "shutdown"
+    assert shutdown["camera_id"] in {"100", "200"}
 
 
 @pytest.mark.parametrize("failure,reply,expected", [

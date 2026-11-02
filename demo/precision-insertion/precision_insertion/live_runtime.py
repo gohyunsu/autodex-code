@@ -247,6 +247,26 @@ def inspect_live_inputs(
         effective_vlm_model = Path(_vlm_model_id(
             parsed["vlm"], Path(launch.shared_root))).expanduser().resolve(
                 strict=False)
+        if parsed["vlm"]["mode"] == "distributed":
+            workers = parsed["vlm"]["workers"]
+            vlm_report = {
+                "mode": "distributed",
+                "camera_count": len(workers),
+                "host_count": len({spec["host"]
+                                   for spec in workers.values()}),
+                "workers": workers,
+                "scope": "configuration_only_no_ssh_or_model_load",
+            }
+        else:
+            vlm_report = {
+                "mode": parsed["vlm"]["mode"],
+                "configured_model_id": parsed["vlm"]["model_id"],
+                "effective_model_id": str(effective_vlm_model),
+                "environment_override": bool(
+                    os.environ.get("PRECISION_VLM_MODEL_ID", "").strip()),
+                "model_directory_exists": effective_vlm_model.is_dir(),
+                "scope": "path_presence_only_no_cuda_model_load",
+            }
         result["robot_config"] = {
             "path": str(source),
             "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
@@ -258,15 +278,7 @@ def inspect_live_inputs(
             "exposure_sampler_configured": parsed["sampling"] is not None,
             "held_motion_monitor_configured": (
                 parsed["held_motion_monitor"] is not None),
-            "vlm": {
-                "mode": parsed["vlm"]["mode"],
-                "configured_model_id": parsed["vlm"]["model_id"],
-                "effective_model_id": str(effective_vlm_model),
-                "environment_override": bool(
-                    os.environ.get("PRECISION_VLM_MODEL_ID", "").strip()),
-                "model_directory_exists": effective_vlm_model.is_dir(),
-                "scope": "path_presence_only_no_cuda_model_load",
-            },
+            "vlm": vlm_report,
         }
     return result
 

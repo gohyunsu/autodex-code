@@ -1,8 +1,9 @@
-"""One-camera, persistent Qwen worker reached over the capture PC's SSH stdin.
+"""One-GPU persistent Qwen worker reached over a capture PC's SSH stdin.
 
 The worker reads only image bytes sent by the robot PC. It does not open a
 camera, start ParaDex, or control the robot. All protocol messages are JSON
-lines on stdout; model progress and errors stay on stderr.
+lines on stdout; model progress and errors stay on stderr. One loaded model
+may serve every selected camera attached to the same capture PC.
 """
 
 from __future__ import annotations
@@ -66,58 +67,120 @@ def _images(payload: dict) -> list[Image.Image]:
     return images
 
 
-def serve(*, camera_id: str, model_id: str,
+def _camera_ids(*, camera_id: str | None,
+                camera_ids: tuple[str, ...] | None) -> tuple[str, ...]:
+    values = camera_ids if camera_ids is not None else (camera_id,)
+    if (not values or any(not isinstance(value, str) or not value
+                          for value in values) or len(set(values)) != len(values)):
+        raise ValueError("worker needs unique camera IDs")
+    return tuple(values)
+
+
+def serve(*, camera_id: str | None = None,
+          camera_ids: tuple[str, ...] | None = None, model_id: str,
           max_input_size: tuple[int, int], protocol=None) -> None:
+    selected = _camera_ids(camera_id=camera_id, camera_ids=camera_ids)
     if protocol is None:
         protocol = _isolate_protocol_stdout()
     import torch
 
     model = LocalQwenModel(model_id=model_id, max_input_size=max_input_size)
-    print(json.dumps({"type": "ready", "camera_id": camera_id,
-                      "model_id": model_id,
-                      "gpu_name": torch.cuda.get_device_name(0),
-                      "cuda_allocated_bytes": torch.cuda.memory_allocated()}),
+    ready = {"type": "ready", "camera_ids": list(selected),
+             "model_id": model_id,
+             "gpu_name": torch.cuda.get_device_name(0),
+             "cuda_allocated_bytes": torch.cuda.memory_allocated()}
+    if len(selected) == 1:
+        ready["camera_id"] = selected[0]
+    print(json.dumps(ready),
           file=protocol, flush=True)
     for line in sys.stdin:
         request = None
         try:
             request = json.loads(line)
+            requested_camera = request.get("camera_id")
             if (request.get("type") == "shutdown" and
-                    request.get("camera_id") == camera_id):
-                print(json.dumps({"type": "stopped", "camera_id": camera_id}),
+                    requested_camera in selected):
+                print(json.dumps({"type": "stopped",
+                                  "camera_ids": list(selected)}),
                       file=protocol, flush=True)
                 break
-            if request.get("type") != "infer" or request.get("camera_id") != camera_id:
-                raise ValueError("request is for another camera")
-            images = _images(request)
-            if request.get("native_pixels") is True:
-                images = _native_images(model, images)
-            prompt = request.get("prompt")
             tokens = request.get("max_new_tokens")
             torch.cuda.reset_peak_memory_stats()
             started = time.perf_counter()
-            answer = model.infer_images_prompt(
-                images, prompt, max_new_tokens=tokens).answer
-            reply = {"type": "result", "request_id": request.get("request_id"),
-                     "camera_id": camera_id, "answer": answer,
-                     "inference_s": time.perf_counter() - started,
-                     "cuda_peak_bytes": torch.cuda.max_memory_allocated(),
-                     "image_sizes": [list(image.size) for image in images]}
+            if request.get("type") == "infer":
+                if requested_camera not in selected:
+                    raise ValueError("request is for another camera")
+                images = _images(request)
+                if request.get("native_pixels") is True:
+                    images = _native_images(model, images)
+                answer = model.infer_images_prompt(
+                    images, request.get("prompt"),
+                    max_new_tokens=tokens).answer
+                reply = {
+                    "type": "result", "request_id": request.get("request_id"),
+                    "camera_id": requested_camera, "answer": answer,
+                    "inference_s": time.perf_counter() - started,
+                    "cuda_peak_bytes": torch.cuda.max_memory_allocated(),
+                    "image_sizes": [list(image.size) for image in images],
+                }
+            elif request.get("type") == "infer_many":
+                payloads = request.get("requests")
+                if (not isinstance(payloads, list) or
+                        not 1 <= len(payloads) <= len(selected)):
+                    raise ValueError("batch request needs selected camera payloads")
+                requested = [payload.get("camera_id")
+                             if isinstance(payload, dict) else None
+                             for payload in payloads]
+                if (len(set(requested)) != len(requested) or
+                        any(camera not in selected for camera in requested)):
+                    raise ValueError("batch request camera IDs are invalid")
+                prepared = []
+                sizes = []
+                for payload in payloads:
+                    images = _images(payload)
+                    if request.get("native_pixels") is True:
+                        images = _native_images(model, images)
+                    prepared.append((images, payload.get("prompt")))
+                    sizes.append([list(image.size) for image in images])
+                answers = model.infer_batch_images_prompt(
+                    prepared, max_new_tokens=tokens)
+                if len(answers) != len(payloads):
+                    raise RuntimeError("Qwen batch reply count changed")
+                reply = {
+                    "type": "batch_result",
+                    "request_id": request.get("request_id"),
+                    "results": [
+                        {"camera_id": camera, "answer": answer.answer,
+                         "image_sizes": image_sizes}
+                        for camera, answer, image_sizes in
+                        zip(requested, answers, sizes)
+                    ],
+                    "inference_s": time.perf_counter() - started,
+                    "cuda_peak_bytes": torch.cuda.max_memory_allocated(),
+                }
+            else:
+                raise ValueError("unsupported worker request")
         except Exception as exc:
             reply = {"type": "error", "request_id": request.get("request_id")
                      if isinstance(request, dict) else None,
-                     "camera_id": camera_id, "error": repr(exc)}
+                     "camera_id": request.get("camera_id")
+                     if isinstance(request, dict) else None,
+                     "error": repr(exc)}
         print(json.dumps(reply, ensure_ascii=False), file=protocol, flush=True)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--camera-id", required=True)
+    camera_group = parser.add_mutually_exclusive_group(required=True)
+    camera_group.add_argument("--camera-id")
+    camera_group.add_argument("--camera-ids")
     parser.add_argument("--model-id", required=True)
     parser.add_argument("--max-width", required=True, type=int)
     parser.add_argument("--max-height", required=True, type=int)
     args = parser.parse_args()
-    serve(camera_id=args.camera_id, model_id=args.model_id,
+    selected = (tuple(part for part in args.camera_ids.split(",") if part)
+                if args.camera_ids is not None else None)
+    serve(camera_id=args.camera_id, camera_ids=selected, model_id=args.model_id,
           max_input_size=(args.max_width, args.max_height))
 
 
