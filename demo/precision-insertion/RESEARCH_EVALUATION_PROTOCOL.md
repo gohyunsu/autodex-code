@@ -141,6 +141,44 @@ or use a tighter socket for a meaningful precision claim. The current 5 mm
 radial-gap fixture is a bring-up condition; include at least one tighter
 condition if the thesis claims precision rather than pipeline completion.
 
+### 4.1 Saved-evidence audit of the partial-shape route
+
+The read-only replay below was rerun on 2026-11-03 over every saved ZeroDex
+attempt containing same-trial observations. It uses the immutable SAM masks,
+camera calibration and socket pose; it does not contact a camera or robot.
+
+```bash
+python3 demo/precision-insertion/review_partial_shape_alignment.py \
+  --attempt-root \
+    "$PRECISION_RUN_OUTPUT_ROOT/precision-insertion/inspire/precision_key_cylinder_r15_h80" \
+  --output /tmp/precision_partial_shape_review.json
+```
+
+The 12 attempts contain 57 pre-insertion observations. Eighteen observations
+have enough visible multiview cylinder geometry for a four-parameter fit and
+39 fall back to endpoint/temporal evidence. The current live selector would
+use 14 of those fits and fall back on the remaining 43 observations; lack of a
+shape fit therefore does not stop an episode.
+
+Both human-confirmed final insertions have a valid shape fit. Replaying their
+recorded iterations yields XY residual sequences of `16.90 -> 14.16 -> 11.08
+-> 7.76 -> 4.93 -> 1.32 mm` and `13.50 -> 12.95 -> 10.14 -> 7.68 -> 5.87
+mm`. Their last fitted axis tilts are 0.73 and 3.27 degrees. Two recorded
+failure attempts also produce formal fits, but their last XY residuals are
+34.46 and 44.27 mm and their axis tilts are 54.94 and 33.93 degrees. Those
+fits remain in the report but are outside the already commissioned 10-degree
+alignment-model range, so the selector uses the endpoint/temporal fallback
+rather than ending the trial or issuing a shape-based motion.
+
+Changing the robust image-loss scale from 2 to 4, 8 and 16 px leaves the
+availability (18 fits), live selection count (14) and success/failure
+separation essentially unchanged. This is encouraging in-sample evidence for
+the explicit `fixed_grasp_partial_shape_alignment_5mm.env.sh` A/B profile, not
+a reason to silently make it the base runtime or an accuracy claim. Shape
+availability is still sparse, the two successful episodes were originally
+controlled by the endpoint route, and no counterfactual physical execution
+of every shape-derived command has yet been performed.
+
 ## 5. Experimental matrix
 
 ### 5.1 Repeatability experiment
@@ -274,11 +312,17 @@ As of 2026-11-03, it finds 15 paired lift labels (13/15 agreement, with two
 false-positive `held` decisions), 12 paired transfer labels (12/12, but every
 human label is positive), and six paired final labels (two true positives and
 four true negatives). These figures describe the decisions saved during the
-original episodes, not a replay of a newer prompt. The summary normalizes only
-camera serials and capture timestamps when grouping semantic prompts and keeps
-the exact full-prompt digests for provenance. The sample size and class balance
-are insufficient for an automatic-label accuracy claim; they define the
-negative examples that the next controlled collection must add.
+original episodes, not a replay of a newer prompt. The current capture4 lift
+policy (`precision_insertion_visible_grip_v5`) was subsequently replayed on
+the same 15 cases: it required two positive cameras, disabled the ambiguous
+fingertip recrop, and produced no false `held` on the two recorded misses,
+while returning one of the 13 held cases as `miss` and one miss as
+`unobservable`. This is still an in-sample replay; the next live collection
+must be reported separately. The summary normalizes only camera serials and
+capture timestamps when grouping semantic prompts and keeps the exact
+full-prompt digests for provenance. The sample size and class balance are
+insufficient for an automatic-label accuracy claim; they define the negative
+examples that the next controlled collection must add.
 
 ## 7. Required figures
 
