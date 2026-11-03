@@ -34,10 +34,15 @@ SESSION=/mnt/paradex2/hyunsu/precision_insertion/calibration/zerodex_capture4/ex
 "$PRECISION_PLANNER_PY" demo/precision-insertion/capture_zerodex_extrinsic.py \
   --launch-config "$PRECISION_STAGE_ROOT/launch.json" \
   --board-config demo/precision-insertion/config/zerodex_charuco_board11_50mm.json \
-  --session-dir "$SESSION"
+  --session-dir "$SESSION" \
+  --monitor
 ```
 
-Press Enter once for each new board placement and `q` when finished. Capture
+The monitor displays a refreshing 2-by-2 grid with full-resolution ChArUco
+detections overlaid. Press `c` once for each new board placement and `q` when
+finished. Only the preview is resized; saved calibration images remain
+2048 by 1536 pixels. Without `--monitor`, the same tool uses Enter to capture.
+Capture
 roughly 15--25 placements spanning the shared workspace. Include front/back,
 left/right, high/low in the image, plus moderate pitch, roll, and yaw. Keep a
 set of central placements visible in all four cameras; other placements may

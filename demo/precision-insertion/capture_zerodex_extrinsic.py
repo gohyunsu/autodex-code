@@ -63,6 +63,28 @@ def _save_capture(session_dir: Path, index: int, snapshot, detector) -> dict:
     return record
 
 
+def _preview_grid(snapshot, detector, *, tile_width: int) -> tuple[np.ndarray, dict]:
+    """Build a display-only 2x2 grid; saved images remain full resolution."""
+    order = ("26053248", "25322639", "25305462", "25322642")
+    tiles = []
+    counts = {}
+    for serial in order:
+        image = snapshot.images_bgr[serial]
+        corners, ids = detect(detector, image)
+        counts[serial] = int(len(ids))
+        overlay = draw_detection(image, corners, ids)
+        tile_height = int(round(tile_width * image.shape[0] / image.shape[1]))
+        tile = cv2.resize(
+            overlay, (tile_width, tile_height), interpolation=cv2.INTER_AREA)
+        label = f"{serial} | {len(ids)} corners"
+        cv2.putText(tile, label, (18, 38), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9, (0, 0, 0), 4, cv2.LINE_AA)
+        cv2.putText(tile, label, (18, 38), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9, (0, 255, 255), 2, cv2.LINE_AA)
+        tiles.append(tile)
+    return np.vstack((np.hstack(tiles[:2]), np.hstack(tiles[2:]))), counts
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--launch-config", type=Path, required=True)
@@ -70,7 +92,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--session-dir", type=Path, required=True)
     parser.add_argument("--once", action="store_true",
                         help="capture one observation without an interactive loop")
+    parser.add_argument("--monitor", action="store_true",
+                        help="show a refreshing 4-view overlay; c saves and q exits")
+    parser.add_argument("--preview-tile-width", type=int, default=640,
+                        help="display width per camera; source images stay full resolution")
     args = parser.parse_args(argv)
+    if args.once and args.monitor:
+        parser.error("--once and --monitor are mutually exclusive")
+    if args.preview_tile_width < 240:
+        parser.error("--preview-tile-width must be at least 240 pixels")
     session_dir = args.session_dir.expanduser().resolve()
     session_dir.mkdir(parents=True, exist_ok=True)
     board_info, _, detector = load_board(args.board_config)
@@ -94,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
             acquisition_mode=launch.camera_acquisition_mode):
         with open_session_cameras(launch) as cameras:
             while True:
-                if not args.once:
+                if not args.once and not args.monitor:
                     answer = input(
                         "Move the board to a new shared view, then press Enter "
                         "to capture (q to finish): ").strip().lower()
@@ -106,6 +136,18 @@ def main(argv: list[str] | None = None) -> int:
                     acquisition_metadata_for_request=(
                         cameras.acquisition_metadata_for_request),
                     timeout_s=launch.board_timeout_s)
+                if args.monitor:
+                    grid, counts = _preview_grid(
+                        snapshot, detector,
+                        tile_width=args.preview_tile_width)
+                    cv2.imshow(
+                        "Precision insertion extrinsic | c: capture | q: quit",
+                        grid)
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord("q"):
+                        break
+                    if key != ord("c"):
+                        continue
                 record = _save_capture(
                     session_dir, _next_index(session_dir), snapshot, detector)
                 counts = {serial: row["corner_count"]
@@ -114,6 +156,8 @@ def main(argv: list[str] | None = None) -> int:
                                   "corners": counts}, sort_keys=True))
                 if args.once:
                     break
+    if args.monitor:
+        cv2.destroyAllWindows()
     return 0
 
 
