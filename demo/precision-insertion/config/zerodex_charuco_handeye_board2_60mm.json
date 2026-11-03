@@ -1,0 +1,15 @@
+{
+  "board_id": "2",
+  "description": "Existing AutoDex end-effector hand-eye board 2",
+  "numX": 5,
+  "numY": 6,
+  "checkerLengthM": 0.06,
+  "markerLengthM": 0.05,
+  "dict_type": "6X6_250",
+  "markerIDs": [
+    15, 16, 17, 18, 19,
+    20, 21, 22, 23, 24,
+    25, 26, 27, 28, 29
+  ],
+  "setLegacyPattern": true
+}

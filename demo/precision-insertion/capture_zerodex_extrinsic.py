@@ -18,6 +18,12 @@ import cv2
 import numpy as np
 
 from calibration.charuco import detect, draw_detection, load_board
+from calibration.monitor import (
+    append_capture_centres,
+    load_capture_centres,
+    preview_grid,
+    TkMonitor,
+)
 from precision_insertion.camera_stream import open_autodex_camera_stream
 from precision_insertion.live_capture import collect_board_snapshot
 from precision_insertion.session_launch import load_session_launch, open_session_cameras
@@ -63,66 +69,6 @@ def _save_capture(session_dir: Path, index: int, snapshot, detector) -> dict:
     return record
 
 
-def _preview_grid(snapshot, detector, *, tile_width: int) -> tuple[np.ndarray, dict]:
-    """Build a display-only 2x2 grid; saved images remain full resolution."""
-    order = ("26053248", "25322639", "25305462", "25322642")
-    tiles = []
-    counts = {}
-    for serial in order:
-        image = snapshot.images_bgr[serial]
-        corners, ids = detect(detector, image)
-        counts[serial] = int(len(ids))
-        overlay = draw_detection(image, corners, ids)
-        tile_height = int(round(tile_width * image.shape[0] / image.shape[1]))
-        tile = cv2.resize(
-            overlay, (tile_width, tile_height), interpolation=cv2.INTER_AREA)
-        label = f"{serial} | {len(ids)} corners"
-        cv2.putText(tile, label, (18, 38), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.9, (0, 0, 0), 4, cv2.LINE_AA)
-        cv2.putText(tile, label, (18, 38), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.9, (0, 255, 255), 2, cv2.LINE_AA)
-        tiles.append(tile)
-    return np.vstack((np.hstack(tiles[:2]), np.hstack(tiles[2:]))), counts
-
-
-class _TkMonitor:
-    """Small GUI independent of the headless OpenCV wheel used for planning."""
-
-    def __init__(self) -> None:
-        import tkinter as tk
-
-        self._tk = tk
-        self._root = tk.Tk()
-        self._root.title("Precision insertion extrinsic | c: capture | q: quit")
-        self._label = tk.Label(self._root)
-        self._label.pack()
-        self._command: str | None = None
-        self._root.bind_all("<KeyPress-c>", lambda _event: self._set("capture"))
-        self._root.bind_all("<KeyPress-q>", lambda _event: self._set("quit"))
-        self._root.protocol("WM_DELETE_WINDOW", lambda: self._set("quit"))
-        self._photo = None
-
-    def _set(self, command: str) -> None:
-        self._command = command
-
-    def show(self, image_bgr: np.ndarray) -> str | None:
-        from PIL import Image, ImageTk
-
-        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-        self._photo = ImageTk.PhotoImage(Image.fromarray(image_rgb))
-        self._label.configure(image=self._photo)
-        self._root.update_idletasks()
-        self._root.update()
-        command, self._command = self._command, None
-        return command
-
-    def close(self) -> None:
-        try:
-            self._root.destroy()
-        except self._tk.TclError:
-            pass
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--launch-config", type=Path, required=True)
@@ -156,7 +102,10 @@ def main(argv: list[str] | None = None) -> int:
     evidence_token = session_dir / ("_connection_" + uuid4().hex)
     launch = load_session_launch(
         args.launch_config, evidence_dir_override=evidence_token)
-    monitor = _TkMonitor() if args.monitor else None
+    history = load_capture_centres(session_dir, launch.camera_ids)
+    monitor = (TkMonitor(
+        "Precision insertion extrinsic | c: capture | q: quit")
+        if args.monitor else None)
     with open_autodex_camera_stream(
             launch.pc_list, capture_ips=launch.capture_ips,
             name="precision_extrinsic_capture", warmup_s=1,
@@ -176,9 +125,10 @@ def main(argv: list[str] | None = None) -> int:
                         cameras.acquisition_metadata_for_request),
                     timeout_s=launch.board_timeout_s)
                 if args.monitor:
-                    grid, _counts = _preview_grid(
+                    grid, _counts = preview_grid(
                         snapshot, detector,
-                        tile_width=args.preview_tile_width)
+                        tile_width=args.preview_tile_width,
+                        history=history)
                     command = monitor.show(grid)
                     if command == "quit":
                         break
@@ -186,6 +136,8 @@ def main(argv: list[str] | None = None) -> int:
                         continue
                 record = _save_capture(
                     session_dir, _next_index(session_dir), snapshot, detector)
+                append_capture_centres(
+                    history, record["capture_index"], snapshot, detector)
                 counts = {serial: row["corner_count"]
                           for serial, row in record["views"].items()}
                 print(json.dumps({"capture": record["capture_index"],

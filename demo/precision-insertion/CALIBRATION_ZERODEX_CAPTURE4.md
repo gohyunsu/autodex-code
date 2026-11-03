@@ -81,3 +81,94 @@ The solution directory is new and separate from the active runtime. Review
 its per-camera reprojection statistics and overlays before using it for
 hand-eye calibration. Activate the new extrinsics and their matching hand-eye
 result together; do not combine new extrinsics with the old `C2R.npy`.
+
+## FR3 hand-eye with the existing AutoDex board 2
+
+The rigid board currently attached to the FR3 is not board 11. A live
+four-view probe on 2026-11-03 decoded marker IDs 15 through 29, identifying it
+as the existing AutoDex hand-eye board 2:
+
+- 5 by 6 checker squares
+- 60 mm checker edge
+- 50 mm marker edge
+- OpenCV `DICT_6X6_250`
+- legacy ChArUco layout
+
+The project-owned metric definition is
+[`config/zerodex_charuco_handeye_board2_60mm.json`](config/zerodex_charuco_handeye_board2_60mm.json).
+The shared ParaDex board configuration is read-only and is not changed.
+
+Start the Franka daemon in its own terminal after selecting the Desk mode that
+will be used for hand-guiding:
+
+```bash
+cd /home/hyunsu/autodex-code
+sudo bash demo/precision-insertion/run_zerodex_franka_daemon.sh
+```
+
+In a second terminal, start the read-only teaching capture. This process never
+commands robot motion:
+
+```bash
+cd /home/hyunsu/autodex-code
+source demo/precision-insertion/config/zerodex_capture4.env.sh
+export PYTHONPATH="$PRECISION_REPO_ROOT/demo/precision-insertion:$PRECISION_REPO_ROOT:$PRECISION_PARADEX_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+
+CAM_CAL=/mnt/paradex2/hyunsu/precision_insertion/calibration/zerodex_capture4/extrinsic_solutions/20261103_board11_4cam_v1
+HE_SESSION=/mnt/paradex2/hyunsu/precision_insertion/calibration/zerodex_capture4/handeye_sessions/20261103_board2_ee_fr3_manual_v1
+
+"$PRECISION_PLANNER_PY" demo/precision-insertion/capture_zerodex_handeye.py \
+  --launch-config "$PRECISION_STAGE_ROOT/launch.json" \
+  --board-config demo/precision-insertion/config/zerodex_charuco_handeye_board2_60mm.json \
+  --camera-calibration-dir "$CAM_CAL" \
+  --session-dir "$HE_SESSION"
+```
+
+The monitor shows the four full camera views as a 2-by-2 grid. Green marks are
+the current detected ChArUco corners. The white cross/magenta ring is the
+current board centre. Numbered coloured circles are centres of already saved
+poses. Move the arm by hand, release it, wait until it is stationary, and
+press `c`. Press `q` to finish. Capture roughly 15--25 poses with translation
+and rotations about multiple axes. The software records every requested pose;
+it does not add a hidden visual-quality acceptance threshold.
+
+Each capture stores the measured seven-joint vector and `T_robot_ee` alongside
+the synchronized camera data. It also refreshes `trajectory_qpos.npy`,
+`trajectory_T_robot_ee.npy`, and the human-readable `trajectory.json`. Thus the
+exact taught pose sequence can be repeated later.
+
+Solve the two rigid transforms jointly using all saved four-view pixels:
+
+```bash
+HE_SOLUTION=/mnt/paradex2/hyunsu/precision_insertion/calibration/zerodex_capture4/handeye_solutions/20261103_board2_ee_fr3_v1
+
+"$PRECISION_PLANNER_PY" demo/precision-insertion/solve_zerodex_handeye.py \
+  --session-dir "$HE_SESSION" \
+  --camera-calibration-dir "$CAM_CAL" \
+  --board-config demo/precision-insertion/config/zerodex_charuco_handeye_board2_60mm.json \
+  --output-dir "$HE_SOLUTION"
+```
+
+`C2R.npy` is `T_world_robot`, matching the precision-insertion runtime. The
+solver also writes the estimated rigid board mounting transform to
+`T_ee_board.npy` and pixel residuals to `report.json`.
+
+To repeat the same learned waypoint sequence and automatically recapture it,
+start the daemon and run:
+
+```bash
+REPLAY_SESSION=/mnt/paradex2/hyunsu/precision_insertion/calibration/zerodex_capture4/handeye_sessions/20261103_board2_ee_fr3_replay_v1
+
+"$PRECISION_PLANNER_PY" demo/precision-insertion/replay_zerodex_handeye.py \
+  --launch-config "$PRECISION_STAGE_ROOT/launch.json" \
+  --board-config demo/precision-insertion/config/zerodex_charuco_handeye_board2_60mm.json \
+  --camera-calibration-dir "$CAM_CAL" \
+  --trajectory-session "$HE_SESSION" \
+  --session-dir "$REPLAY_SESSION" \
+  --speed-scale 0.1 \
+  --settle-s 0.5 \
+  --monitor
+```
+
+The replay command does move the FR3. Its joint speed and stationary dwell are
+explicit command-line parameters rather than values embedded in the code.
