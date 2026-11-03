@@ -281,12 +281,13 @@ class LiveTaskHandlers:
         anchor_xy_motion = None
         anchor_axis_motion = None
         # A single-view tip-height-plane estimate is an image-grounded probe,
-        # not yet a metrically confirmed correction.  Remember the measured
-        # hold before each such probe so that one inconsistent follow-up image
-        # returns only that probe and continues with the nominal insertion.
-        # Multi-view corrections retain the existing measured-motion
-        # continuation behavior.
+        # not yet a metrically confirmed correction. Remember the measured
+        # hold before each such probe. If its follow-up image is inconsistent,
+        # return the probe and continue the observation sequence from that
+        # measured hold; an unverified probe must never turn into a nominal
+        # insertion or a fabricated zero residual.
         unverified_planar_origin = None
+        rejected_planar_probe = False
         pending_capture_write = None
         temporal_feedback_enabled = self.xy_estimator == "sam_half_ellipse"
         if temporal_feedback_enabled:
@@ -367,6 +368,20 @@ class LiveTaskHandlers:
                     self.alignment_limits.max_axis_tilt_deg
                     if self.same_trial_alignment_source == "partial_shape"
                     else None))
+            if (observed["alignment"]["status"] ==
+                    "diagnostic_metric_xy_correction"):
+                rejected_planar_probe = False
+            elif (rejected_planar_probe and
+                    observed["alignment"]["status"] ==
+                    "diagnostic_planar_xy_hypothesis"):
+                observed["alignment"].update({
+                    "status": "abstain",
+                    "reason": "single_view_probe_already_rejected",
+                    "xy_source": "none",
+                    "inlier_cameras": [],
+                    "tip_socket_m": None,
+                    "xy_correction_socket_m": None,
+                })
             # A temporal match proves that an image feature followed the
             # commanded wrist motion; it does not prove that the feature is
             # the key tip rather than a repeatedly selected socket edge.
@@ -490,11 +505,22 @@ class LiveTaskHandlers:
                     total = (np.asarray(total, float) + np.asarray(
                         motion["measured_increment_socket_m"], float)).tolist()
                     axis_raise += motion["measured_axis_increment_socket_m"]
-                final_residual = [0., 0.]
-                residual_source = (
-                    "nominal_after_unverified_single_view_probe")
                 unverified_planar_origin = None
-                break
+                rejected_planar_probe = True
+                predicted_residual = None
+                previous_observation = None
+                previous_motion = None
+                previous_camera_id = None
+                previous_xy = None
+                anchor_observation = None
+                anchor_xy_motion = None
+                anchor_axis_motion = None
+                current = runner.current_decision()
+                raw, capture, pending_capture_write = self._capture_deferred(
+                    runner=runner, decision=current,
+                    callback=self.capture_preinsert, phase="preinsert")
+                self._preinsert_bundle = raw
+                continue
             if axis_choice["status"] == "tilt":
                 # Correct orientation first. Tilting about the observed key
                 # tip leaves its lateral position unchanged; the mandatory

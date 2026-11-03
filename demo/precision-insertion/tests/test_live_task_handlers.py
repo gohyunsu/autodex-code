@@ -360,9 +360,9 @@ def test_same_trial_xy_reobserves_and_replans_from_final_hold(
 
 
 @pytest.mark.parametrize("tracking", ["lost", "tracked"])
-def test_unverified_single_view_probe_returns_without_multiview_tip(
+def test_unverified_single_view_probe_returns_and_keeps_observing(
         tmp_path, monkeypatch, tracking):
-    """Image motion alone cannot promote a planar probe to a 3D tip."""
+    """A rejected planar probe returns, recaptures, and then uses 3D evidence."""
     bound, runner, *_ = _handler(tmp_path)
     runner._attempt_dir = tmp_path / "attempts" / runner.active_attempt.attempt_id
     bound._preinsert_bundle = tmp_path / "first_preinsert"
@@ -378,17 +378,21 @@ def test_unverified_single_view_probe_returns_without_multiview_tip(
     runner.mode = "cylinder"
     runner.shared_root = tmp_path
     runner.calibration = SimpleNamespace(record={})
-    corrections = iter(([.009, 0.], None))
+    observations = iter((
+        ("diagnostic_planar_xy_hypothesis", [.009, 0.], ["front"]),
+        ("abstain", None, []),
+        ("diagnostic_metric_xy_correction", [.0005, 0.],
+         ["front", "side"]),
+    ))
     feedback_steps = []
     shift_index = 0
     handed = {}
 
     def measure(**_kwargs):
-        correction = next(corrections)
+        status, correction, cameras = next(observations)
         return {"alignment": {
-            "status": ("diagnostic_planar_xy_hypothesis" if correction
-                       is not None else "abstain"),
-            "inlier_cameras": (["front"] if correction is not None else []),
+            "status": status,
+            "inlier_cameras": cameras,
             "xy_correction_socket_m": correction,
             "sam_half_ellipse_views": [],
             "nominal_tip_z_socket_m": .04,
@@ -429,15 +433,14 @@ def test_unverified_single_view_probe_returns_without_multiview_tip(
     monkeypatch.setattr(live_task_handlers, "plan_corrected_axial_handoff",
                         lambda **kwargs: (handed.update(kwargs) or
                                           tmp_path / "handoff.json"))
-    monkeypatch.setattr(live_task_handlers, "write_raw_camera_capture",
-                        lambda *_args, **_kwargs: None)
+    bound._capture_deferred = lambda **_kwargs: (
+        tmp_path / "recaptured_preinsert", None, None)
     bound._refine_current_hold(runner)
     assert len(feedback_steps) == 1
     np.testing.assert_allclose(feedback_steps[0], [.003, 0.])
     np.testing.assert_allclose(handed["total_xy_m"], [0., 0.])
-    np.testing.assert_allclose(handed["residual_xy_m"], [0., 0.])
-    assert handed["residual_source"] == (
-        "nominal_after_unverified_single_view_probe")
+    np.testing.assert_allclose(handed["residual_xy_m"], [-.0005, 0.])
+    assert handed["residual_source"] == "current_metric_multiview"
 
 
 def test_corrected_plan_failure_records_stop_without_insertion(tmp_path, monkeypatch):
