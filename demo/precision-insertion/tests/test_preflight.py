@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -182,6 +183,24 @@ def test_preflight_replans_held_lift_and_all_axial_waypoints(monkeypatch):
     assert result.to_record()["robot_ready"] is False
     assert result.to_record()["held_hand_source"] == "commanded_nominal"
     assert len(result.to_record()["planner_query_records"]) == 12
+
+
+def test_pickup_is_checked_against_catalog_relation_not_insertion_correction(
+        monkeypatch):
+    fixture = _fixture()
+    planner = _Planner()
+    pickup, scene, calibration, targets, limits = fixture
+    corrected = dataclasses.replace(
+        targets, T_key_hand=_pose(0.01))
+
+    monkeypatch.setattr(
+        "precision_insertion.preflight.audit_held_joint_paths",
+        lambda **kwargs: {"sampled_clear": True, "failures": []})
+    result = _run(
+        planner, (pickup, scene, calibration, corrected, limits),
+        pickup_T_key_hand=np.eye(4))
+
+    assert result.status == "sampled_planning_pass"
 
 
 def test_query_or_sampled_geometry_failure_does_not_promote_plan(monkeypatch):

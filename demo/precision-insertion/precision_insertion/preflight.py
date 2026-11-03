@@ -104,6 +104,7 @@ def _goal_met(actual: np.ndarray, expected: np.ndarray,
 def plan_insertion_after_pickup(
     *, planner, pickup_plan, trial_scene: dict,
     shared_root: Path, calibration, targets: InsertionTargets,
+    pickup_T_key_hand: np.ndarray | None = None,
     held_hand_q: np.ndarray, held_hand_source: str,
     limits: PathAuditLimits, axial_waypoint_step_m: float,
     exact_distances: bool = True,
@@ -152,7 +153,15 @@ def plan_insertion_after_pickup(
                             name="fresh T_robot_key")
     if not pickup_plan.success or pickup_plan.lift_preflight is None:
         raise ValueError("AutoDex pickup did not pass approach and lift preflight")
-    expected_wrist = key_pose @ targets.T_key_hand
+    # A learned socket-XY command correction changes only the insertion
+    # wrist target.  Pickup was planned with the catalog grasp relation and
+    # must be checked against that original relation, not against the later
+    # insertion correction.
+    pickup_relation = (targets.T_key_hand if pickup_T_key_hand is None
+                       else validate_se3(
+                           pickup_T_key_hand,
+                           name="pickup catalog T_key_hand"))
+    expected_wrist = key_pose @ pickup_relation
     requested_wrist = validate_se3(pickup_plan.wrist_se3,
                                    name="selected pickup wrist")
     if not _goal_met(requested_wrist, expected_wrist, limits):

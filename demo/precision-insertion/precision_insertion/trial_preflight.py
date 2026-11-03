@@ -465,6 +465,7 @@ def plan_fresh_key_trial(
             hand_in_key = validate_se3(np.load(
                 Path(candidate["candidate_dir"]) / "wrist_se3.npy",
                 allow_pickle=False), name="v8 T_key_hand")
+            pickup_hand_in_key = hand_in_key.copy()
             correction = (tuple(map(float, retry_correction))
                           if key == retry_candidate and stem == retry_pose_stem
                           else (0.0, 0.0))
@@ -483,6 +484,7 @@ def plan_fresh_key_trial(
                 trial = plan_insertion_after_pickup(
                     planner=planner, pickup_plan=pickup, trial_scene=scene,
                     shared_root=root, calibration=calibration, targets=targets,
+                    pickup_T_key_hand=pickup_hand_in_key,
                     held_hand_q=hold, held_hand_source="commanded_nominal",
                     limits=limits, axial_waypoint_step_m=axial_waypoint_step_m,
                     exact_distances=False)
