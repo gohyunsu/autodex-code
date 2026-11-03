@@ -1847,15 +1847,14 @@ confirmation. The measured net XY motion was approximately
 `(-20.24, -31.08) mm`; this was dead reckoning from a single-view seed, not
 closed-loop image convergence.
 
-The session socket evidence independently showed per-view centre residuals
-of 13.85 mm for `25305462` and 0.47--0.54 mm for the other three cameras.
-Socket-only fitting now forms a relative median/MAD centre cluster for every
-capture and computes `T_robot_socket` from that capture's inliers. It records
-`socket_pose_inlier_camera_ids`, excluded IDs, all raw per-view residuals and
-the selection calculation. Camera serials are never blacklisted: a later
-socket-only measurement recomputes the set. The same-trial endpoint estimator
-reuses the recorded socket-pose inliers, while the lossless raw capture still
-contains all camera frames. Review GIFs use that same inlier set by default.
+The archived session socket evidence showed different per-view centre
+estimates. That diagnostic previously drove a median/MAD camera selection.
+The current socket-only implementation no longer compares centre residuals or
+selects an inlier camera subset. It records each view's board-plane XY
+estimate and computes `T_robot_socket` as one median over every available
+socket mask. The same-trial endpoint estimator likewise receives every
+checkpoint camera; its calibrated key observations determine geometric
+agreement independently of the socket-only capture.
 
 A single-view nominal-tip-height-plane estimate is now treated as a probe
 hypothesis. It may command one bounded step. Tracking the same image feature

@@ -103,8 +103,10 @@ def fit_board_socket_body(
     the board normal.  Each mask centroid supplies a board-plane intersection
     at the height of the mask region (wall, flange or their union). Region
     choice uses the known mesh silhouette and the acquired mask, not another
-    learned model or a new pass/fail threshold. The median combines the
-    resulting board XY points; axial yaw is unobservable for this cylinder.
+    learned model or a new pass/fail threshold. One median over every
+    available view combines the resulting board XY points; there is no
+    camera-centre consistency ranking or per-session view selection. Axial
+    yaw is unobservable for this cylinder.
     """
     if (not masks or set(masks) != set(intrinsics_undist) or
             set(masks) != set(extrinsics_camera_world)):
@@ -199,34 +201,7 @@ def fit_board_socket_body(
         points = np.asarray(board_points)
         xy = np.column_stack(((points - board[:3, 3]) @ x_axis,
                               (points - board[:3, 3]) @ y_axis))
-        initial_median_xy = np.median(xy, axis=0)
-        initial_residual_mm = np.linalg.norm(
-            xy - initial_median_xy, axis=1) * 1000.0
-        # Select the socket pose from this capture's internally consistent
-        # centre cluster. Camera IDs are never blacklisted: a new socket-only
-        # capture recomputes this set. The relative scale floor avoids
-        # dropping equivalent views merely because the MAD is numerically
-        # tiny, while retaining at least two views for the fixture pose.
-        if len(xy) >= 3:
-            residual_median = float(np.median(initial_residual_mm))
-            residual_mad = float(np.median(np.abs(
-                initial_residual_mm-residual_median)))
-            residual_scale = max(
-                1.4826*residual_mad, .1*max(residual_median, 1e-9))
-            selection_cutoff_mm = residual_median + 3.*residual_scale
-            inlier_indices = np.flatnonzero(
-                initial_residual_mm <= selection_cutoff_mm)
-            if len(inlier_indices) < 2:
-                inlier_indices = np.argsort(initial_residual_mm)[:2]
-        else:
-            residual_median = float(np.median(initial_residual_mm))
-            residual_mad = 0.
-            selection_cutoff_mm = None
-            inlier_indices = np.arange(len(xy))
-        median_xy = np.median(xy[inlier_indices], axis=0)
-        residual_mm = np.linalg.norm(xy - median_xy, axis=1) * 1000.0
-        pairwise_mm = np.linalg.norm(
-            xy[:, None, :] - xy[None, :, :], axis=2) * 1000.0
+        median_xy = np.median(xy, axis=0)
         pose_robot = np.eye(4)
         pose_robot[:3, :3] = rotation
         pose_robot[:3, 3] = (board[:3, 3] + median_xy[0] * x_axis
@@ -240,7 +215,7 @@ def fit_board_socket_body(
             per_view[camera] = _region_iou(
                 _project_hull(rings, pose_robot, E, K), mask, mask_bounds)
     diagnostics = {
-        "method": "board_normal_mesh_region_mask_robust_inlier_median",
+        "method": "board_normal_mesh_region_mask_all_view_median",
         "body_radius_m": radius, "body_bottom_z_m": bottom,
         "body_top_z_m": top, "per_view_iou": per_view,
         "flange_radius_m": flange_radius,
@@ -251,26 +226,12 @@ def fit_board_socket_body(
         "mean_body_iou": float(np.mean(list(per_view.values()))),
         "per_view_board_xy_m": {
             camera: xy[index].tolist() for index, camera in enumerate(sorted(masks))},
-        "per_view_center_residual_mm": {
-            camera: float(residual_mm[index])
-            for index, camera in enumerate(sorted(masks))},
-        "per_view_initial_center_residual_mm": {
-            camera: float(initial_residual_mm[index])
-            for index, camera in enumerate(sorted(masks))},
-        "socket_pose_inlier_camera_ids": [
-            sorted(masks)[index] for index in inlier_indices],
-        "socket_pose_excluded_camera_ids": [
-            camera for index, camera in enumerate(sorted(masks))
-            if index not in set(inlier_indices.tolist())],
-        "socket_pose_selection": {
-            "method": "median_mad_relative_cluster",
-            "median_initial_residual_mm": residual_median,
-            "mad_initial_residual_mm": residual_mad,
-            "cutoff_mm": selection_cutoff_mm,
-            "minimum_views_retained": min(2, len(xy)),
-            "scope": "per_capture_pose_estimation_not_camera_blacklist",
+        "socket_pose_camera_ids": sorted(masks),
+        "socket_pose_aggregation": {
+            "method": "median_all_available_views",
+            "camera_count": len(masks),
+            "scope": "no_camera_center_consistency_comparison_or_selection",
         },
-        "maximum_pairwise_center_disagreement_mm": float(np.max(pairwise_mm)),
         "board_xy_m": median_xy.tolist(),
     }
     return validate_se3(world_robot @ pose_robot,

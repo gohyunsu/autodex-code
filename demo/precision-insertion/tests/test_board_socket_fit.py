@@ -89,8 +89,9 @@ def test_board_socket_fit_keeps_axis_upright_with_one_flange_mask(
     assert diagnostic["per_view_selected_region"] == {
         "cam_0": "wall", "cam_1": "wall", "cam_2": "wall",
         "cam_3": "flange"}
-    assert diagnostic["maximum_pairwise_center_disagreement_mm"] > 0
-    assert set(diagnostic["per_view_center_residual_mm"]) == set(cameras)
+    assert diagnostic["socket_pose_camera_ids"] == sorted(cameras)
+    assert diagnostic["socket_pose_aggregation"]["method"] == (
+        "median_all_available_views")
 
 
 def test_two_flange_only_views_use_flange_height_not_wall_midpoint(tmp_path):
@@ -114,11 +115,11 @@ def test_two_flange_only_views_use_flange_height_not_wall_midpoint(tmp_path):
     assert np.linalg.norm(pose[:3, 3]) < .002
     assert diagnostic["per_view_selected_region"] == {
         "left": "flange", "right": "flange"}
-    assert diagnostic["maximum_pairwise_center_disagreement_mm"] < 2
+    assert diagnostic["socket_pose_camera_ids"] == sorted(cameras)
     assert min(diagnostic["per_view_iou"].values()) > .98
 
 
-def test_socket_pose_excludes_only_current_capture_center_outlier(tmp_path):
+def test_socket_pose_uses_every_available_view_without_center_selection(tmp_path):
     mesh = tmp_path / "socket.obj"
     mesh.write_text("\n".join(
         f"v {r * np.cos(a)} {r * np.sin(a)} {z}"
@@ -139,10 +140,12 @@ def test_socket_pose_excludes_only_current_capture_center_outlier(tmp_path):
         extrinsics_camera_world=cameras, c2r=np.eye(4),
         board_pose_robot=np.diag([1.0, -1.0, -1.0, 1.0]),
         raw_mesh=mesh)
-    assert diagnostic["socket_pose_inlier_camera_ids"] == [
-        "cam_0", "cam_1", "cam_2"]
-    assert diagnostic["socket_pose_excluded_camera_ids"] == ["cam_3"]
-    assert diagnostic["per_view_center_residual_mm"]["cam_3"] > 10
+    assert diagnostic["socket_pose_camera_ids"] == sorted(cameras)
+    assert diagnostic["socket_pose_aggregation"] == {
+        "method": "median_all_available_views",
+        "camera_count": 4,
+        "scope": "no_camera_center_consistency_comparison_or_selection",
+    }
     assert np.linalg.norm(pose[:3, 3]) < .003
 
 

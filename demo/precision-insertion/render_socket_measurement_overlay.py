@@ -3,8 +3,8 @@
 
 The figure is diagnostic only. It overlays the saved SAM mask and the frozen
 socket bore/axis on the exact captured pixels; it does not rerun perception or
-change the session calibration. View labels report the per-session robust
-socket-centre selection rather than a persistent camera blacklist.
+change the session calibration. Every available socket view participates in
+the saved all-view median.
 """
 
 from __future__ import annotations
@@ -91,13 +91,11 @@ def render(evidence_dir: Path, output: Path) -> dict:
     geometry = json.loads(geometry_path.read_text(encoding="utf-8"))
     refinement = record["socket_capture_refinements"][0]
     body_fit = refinement["stock_selection"]["body_fit"]
-    inliers = set(body_fit["socket_pose_inlier_camera_ids"])
-    excluded = set(body_fit["socket_pose_excluded_camera_ids"])
+    used_cameras = set(body_fit["socket_pose_camera_ids"])
     rim, center, axis_tip = _socket_geometry(record, geometry)
 
     panels: dict[str, np.ndarray] = {}
     rows = {}
-    residuals = body_fit["per_view_center_residual_mm"]
     per_view_iou = refinement["per_view_iou"]
     for serial in SERIAL_ORDER:
         image_path = root / f"socket/socket_000/images/{serial}.png"
@@ -121,18 +119,12 @@ def render(evidence_dir: Path, output: Path) -> dict:
                        cv2.MARKER_CROSS, 30, 4, cv2.LINE_AA)
         cv2.arrowedLine(view, tuple(axis_px[0]), tuple(axis_px[1]),
                         (40, 230, 80), 5, cv2.LINE_AA, tipLength=.18)
-        used = serial in inliers
-        residual = (float(residuals[serial])
-                    if serial in residuals else None)
+        used = serial in used_cameras
         if used:
             status, color = "used", (70, 230, 90)
-        elif serial in excluded:
-            status, color = "excluded this session", (80, 120, 255)
         else:
             status, color = "socket mask unavailable", (80, 190, 255)
-        residual_label = (f"  {residual:.2f} mm"
-                          if residual is not None else "")
-        label = f"{serial}  {status}{residual_label}"
+        label = f"{serial}  {status}"
         cv2.putText(view, label, (34, 62), cv2.FONT_HERSHEY_SIMPLEX,
                     1.15, (20, 20, 20), 7, cv2.LINE_AA)
         cv2.putText(view, label, (34, 62), cv2.FONT_HERSHEY_SIMPLEX,
@@ -140,7 +132,6 @@ def render(evidence_dir: Path, output: Path) -> dict:
         panels[serial] = view
         rows[serial] = {
             "used_for_socket_center": used,
-            "center_residual_mm": residual,
             "mask_iou": (float(per_view_iou[serial])
                          if serial in per_view_iou else None),
             "frame_id": payload["frame_evidence"][serial]["frame_id"],

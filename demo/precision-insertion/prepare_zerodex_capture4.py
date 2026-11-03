@@ -20,7 +20,8 @@ from precision_insertion.project_layout import (
 
 
 # Use all cameras as inputs. ChArUco fitting removes per-corner reprojection
-# outliers, and the socket-only fit records a fresh per-capture inlier set.
+# outliers. The socket-only fit aggregates every available camera without a
+# per-capture centre-consistency view-selection stage.
 # Camera serials are therefore never permanently blacklisted by this profile.
 CAMERAS = ("26053248", "25322639", "25305462", "25322642")
 BOARD_FIT_CAMERAS = CAMERAS
