@@ -176,6 +176,8 @@ explicit command-line parameters rather than values embedded in the code.
 If a run is interrupted after saving earlier poses, append
 `--start-waypoint N` to resume at source waypoint `N` in the same output
 session. Each capture records that source index explicitly.
-If the daemon's single joint move profile trips a velocity reflex, set
-`--max-joint-step-rad 0.03` to interpolate the same joint-space line into
-smaller blocking moves. Intermediate points are not calibration captures.
+The default `velocity_stream` mode follows each straight joint-space segment
+with minimum-jerk time scaling and the same daemon velocity stream used by the
+live pipeline. It records the measured endpoint without adding a visual or
+joint-error admission gate. `--motion-mode blocking` retains the daemon's
+single blocking joint command as an explicit alternative.

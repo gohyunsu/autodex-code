@@ -32,6 +32,61 @@ from precision_insertion.live_capture import collect_board_snapshot
 from precision_insertion.session_launch import load_session_launch, open_session_cameras
 
 
+def _move_joint_velocity_stream(
+        robot: FrankaController, target: np.ndarray, *, max_speed: float,
+        control_dt: float, position_gain: float, converge_s: float) -> float:
+    """Follow the straight joint-space segment with a smooth velocity stream."""
+    start = np.asarray(robot.get_data()["qpos"], dtype=np.float64)
+    delta = np.asarray(target, dtype=np.float64) - start
+    extent = float(np.max(np.abs(delta)))
+    # A minimum-jerk scalar has peak derivative 1.875. Five controller ticks
+    # keep even a tiny move continuous rather than degenerating to one sample.
+    duration = max(5.0 * control_dt, 1.875 * extent / max_speed)
+    command_validity_ms = max(100, int(np.ceil(4.0 * control_dt * 1000.0)))
+    started = time.monotonic()
+    try:
+        while True:
+            tick = time.monotonic()
+            u = min(1.0, (tick - started) / duration)
+            blend = 10.0 * u**3 - 15.0 * u**4 + 6.0 * u**5
+            blend_rate = (30.0 * u**2 - 60.0 * u**3 + 30.0 * u**4) / duration
+            reference = start + blend * delta
+            feedforward = blend_rate * delta
+            measured = np.asarray(robot.get_data()["qpos"], dtype=np.float64)
+            velocity = feedforward + position_gain * (reference - measured)
+            peak = float(np.max(np.abs(velocity)))
+            if peak > max_speed:
+                velocity *= max_speed / peak
+            response = robot.set_joint_velocity(
+                velocity, duration_ms=command_validity_ms)
+            if response.get("type") == "error":
+                raise RuntimeError(f"joint velocity stream failed: {response}")
+            if u >= 1.0:
+                break
+            time.sleep(max(0.0, control_dt - (time.monotonic() - tick)))
+
+        converge_until = time.monotonic() + converge_s
+        while time.monotonic() < converge_until:
+            tick = time.monotonic()
+            measured = np.asarray(robot.get_data()["qpos"], dtype=np.float64)
+            velocity = position_gain * (target - measured)
+            peak = float(np.max(np.abs(velocity)))
+            if peak > max_speed:
+                velocity *= max_speed / peak
+            response = robot.set_joint_velocity(
+                velocity, duration_ms=command_validity_ms)
+            if response.get("type") == "error":
+                raise RuntimeError(f"joint velocity convergence failed: {response}")
+            time.sleep(max(0.0, control_dt - (time.monotonic() - tick)))
+    finally:
+        robot.set_joint_velocity(np.zeros(7), duration_ms=100)
+        time.sleep(0.08)
+        response = robot.stop_streaming()
+        if response.get("type") == "error":
+            raise RuntimeError(f"could not stop joint velocity stream: {response}")
+    return time.monotonic() - started
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--launch-config", type=Path, required=True)
@@ -44,9 +99,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-port", type=int, default=5556)
     parser.add_argument("--speed-scale", type=float, default=0.1)
     parser.add_argument("--settle-s", type=float, default=0.5)
-    parser.add_argument("--max-joint-step-rad", type=float, default=0.0,
-                        help=("linearly split each move so no commanded joint "
-                              "increment exceeds this value; 0 sends one move"))
+    parser.add_argument("--motion-mode", choices=("velocity_stream", "blocking"),
+                        default="velocity_stream")
+    parser.add_argument("--joint-speed-rad-s", type=float, default=0.2)
+    parser.add_argument("--control-dt-s", type=float, default=0.02)
+    parser.add_argument("--stream-position-gain", type=float, default=2.0)
+    parser.add_argument("--stream-converge-s", type=float, default=0.5)
     parser.add_argument("--start-waypoint", type=int, default=0,
                         help="source trajectory index to replay first")
     parser.add_argument("--monitor", action="store_true")
@@ -60,8 +118,9 @@ def main(argv: list[str] | None = None) -> int:
     if not 0 <= args.start_waypoint < len(qposes):
         parser.error(
             f"--start-waypoint must be in [0, {len(qposes) - 1}]")
-    if args.max_joint_step_rad < 0:
-        parser.error("--max-joint-step-rad cannot be negative")
+    if (args.joint_speed_rad_s <= 0 or args.control_dt_s <= 0 or
+            args.stream_position_gain <= 0 or args.stream_converge_s < 0):
+        parser.error("joint stream parameters must be positive (converge may be zero)")
     session = args.session_dir.expanduser().resolve()
     session.mkdir(parents=True, exist_ok=True)
     board_info, _, detector = load_board(args.board_config)
@@ -90,7 +149,11 @@ def main(argv: list[str] | None = None) -> int:
         "start_waypoint": args.start_waypoint,
         "speed_scale": args.speed_scale,
         "settle_s": args.settle_s,
-        "max_joint_step_rad": args.max_joint_step_rad,
+        "motion_mode": args.motion_mode,
+        "joint_speed_rad_s": args.joint_speed_rad_s,
+        "control_dt_s": args.control_dt_s,
+        "stream_position_gain": args.stream_position_gain,
+        "stream_converge_s": args.stream_converge_s,
     })
     _json(manifest, manifest_record)
 
@@ -115,21 +178,21 @@ def main(argv: list[str] | None = None) -> int:
             with open_session_cameras(launch) as cameras:
                 for waypoint_index in range(args.start_waypoint, len(qposes)):
                     qpos = qposes[waypoint_index]
-                    current = np.asarray(robot.get_data()["qpos"], dtype=float)
-                    delta = qpos - current
-                    segment_count = (1 if args.max_joint_step_rad == 0 else
-                                     max(1, int(np.ceil(
-                                         np.max(np.abs(delta)) /
-                                         args.max_joint_step_rad))))
-                    for segment_index in range(1, segment_count + 1):
-                        target = current + delta * (segment_index / segment_count)
+                    if args.motion_mode == "velocity_stream":
+                        motion_duration_s = _move_joint_velocity_stream(
+                            robot, qpos,
+                            max_speed=args.joint_speed_rad_s,
+                            control_dt=args.control_dt_s,
+                            position_gain=args.stream_position_gain,
+                            converge_s=args.stream_converge_s)
+                    else:
+                        motion_started = time.monotonic()
                         response = robot.move(
-                            target, is_servo=False,
-                            speed_scale=args.speed_scale)
+                            qpos, is_servo=False, speed_scale=args.speed_scale)
                         if response.get("type") == "error":
                             raise RuntimeError(
-                                f"waypoint {waypoint_index} segment "
-                                f"{segment_index}/{segment_count} failed: {response}")
+                                f"waypoint {waypoint_index} move failed: {response}")
+                        motion_duration_s = time.monotonic() - motion_started
                     time.sleep(args.settle_s)
                     before = _state(robot)
                     snapshot = collect_board_snapshot(
@@ -150,7 +213,8 @@ def main(argv: list[str] | None = None) -> int:
                     print(json.dumps({
                         "capture": index,
                         "source_waypoint": waypoint_index,
-                        "motion_segments": segment_count,
+                        "motion_mode": args.motion_mode,
+                        "motion_duration_s": motion_duration_s,
                         "corners": counts,
                     }, sort_keys=True))
                     if monitor is not None:
