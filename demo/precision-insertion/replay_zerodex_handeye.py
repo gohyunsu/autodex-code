@@ -44,6 +44,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-port", type=int, default=5556)
     parser.add_argument("--speed-scale", type=float, default=0.1)
     parser.add_argument("--settle-s", type=float, default=0.5)
+    parser.add_argument("--max-joint-step-rad", type=float, default=0.0,
+                        help=("linearly split each move so no commanded joint "
+                              "increment exceeds this value; 0 sends one move"))
     parser.add_argument("--start-waypoint", type=int, default=0,
                         help="source trajectory index to replay first")
     parser.add_argument("--monitor", action="store_true")
@@ -57,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
     if not 0 <= args.start_waypoint < len(qposes):
         parser.error(
             f"--start-waypoint must be in [0, {len(qposes) - 1}]")
+    if args.max_joint_step_rad < 0:
+        parser.error("--max-joint-step-rad cannot be negative")
     session = args.session_dir.expanduser().resolve()
     session.mkdir(parents=True, exist_ok=True)
     board_info, _, detector = load_board(args.board_config)
@@ -85,6 +90,7 @@ def main(argv: list[str] | None = None) -> int:
         "start_waypoint": args.start_waypoint,
         "speed_scale": args.speed_scale,
         "settle_s": args.settle_s,
+        "max_joint_step_rad": args.max_joint_step_rad,
     })
     _json(manifest, manifest_record)
 
@@ -109,11 +115,21 @@ def main(argv: list[str] | None = None) -> int:
             with open_session_cameras(launch) as cameras:
                 for waypoint_index in range(args.start_waypoint, len(qposes)):
                     qpos = qposes[waypoint_index]
-                    response = robot.move(
-                        qpos, is_servo=False, speed_scale=args.speed_scale)
-                    if response.get("type") == "error":
-                        raise RuntimeError(
-                            f"waypoint {waypoint_index} move failed: {response}")
+                    current = np.asarray(robot.get_data()["qpos"], dtype=float)
+                    delta = qpos - current
+                    segment_count = (1 if args.max_joint_step_rad == 0 else
+                                     max(1, int(np.ceil(
+                                         np.max(np.abs(delta)) /
+                                         args.max_joint_step_rad))))
+                    for segment_index in range(1, segment_count + 1):
+                        target = current + delta * (segment_index / segment_count)
+                        response = robot.move(
+                            target, is_servo=False,
+                            speed_scale=args.speed_scale)
+                        if response.get("type") == "error":
+                            raise RuntimeError(
+                                f"waypoint {waypoint_index} segment "
+                                f"{segment_index}/{segment_count} failed: {response}")
                     time.sleep(args.settle_s)
                     before = _state(robot)
                     snapshot = collect_board_snapshot(
@@ -134,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(json.dumps({
                         "capture": index,
                         "source_waypoint": waypoint_index,
+                        "motion_segments": segment_count,
                         "corners": counts,
                     }, sort_keys=True))
                     if monitor is not None:
