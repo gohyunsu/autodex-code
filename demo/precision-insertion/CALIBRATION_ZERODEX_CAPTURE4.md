@@ -181,3 +181,49 @@ with minimum-jerk time scaling and the same daemon velocity stream used by the
 live pipeline. It records the measured endpoint without adding a visual or
 joint-error admission gate. `--motion-mode blocking` retains the daemon's
 single blocking joint command as an explicit alternative.
+
+## Final reprojection debug artifacts
+
+Both calibration solvers automatically create `debug_reprojection/` below
+their solution directory. These files visualize the final solved parameters;
+they are diagnostic outputs and do not introduce an additional acceptance
+gate into calibration or runtime execution.
+
+- green circle: observed ChArUco corner
+- magenta cross: corner projected with the final calibrated transforms
+- yellow line: pixel reprojection residual
+
+Each numbered pose directory contains the full-resolution camera overlays and
+a four-view `grid.png`. `reprojection_4view.gif` steps through every captured
+pose, while `report.json` records global, per-camera, and per-pose pixel-error
+statistics.
+
+Existing solutions can be rendered again without resolving calibration. For
+the current extrinsic result:
+
+```bash
+EXT_SESSION=/mnt/paradex2/hyunsu/precision_insertion/calibration/zerodex_capture4/extrinsic_sessions/20261103_board11_4cam
+EXT_SOLUTION=/mnt/paradex2/hyunsu/precision_insertion/calibration/zerodex_capture4/extrinsic_solutions/20261103_board11_4cam_v1
+
+"$PRECISION_PLANNER_PY" demo/precision-insertion/render_zerodex_calibration_debug.py extrinsic \
+  --session-dir "$EXT_SESSION" \
+  --board-config demo/precision-insertion/config/zerodex_charuco_board11_50mm.json \
+  --intrinsics "$EXT_SOLUTION/intrinsics.json" \
+  --extrinsics "$EXT_SOLUTION/extrinsics.json" \
+  --output-dir "$EXT_SOLUTION/debug_reprojection"
+```
+
+For the current replayed hand-eye result:
+
+```bash
+HE_REPLAY_SESSION=/mnt/paradex2/hyunsu/precision_insertion/calibration/zerodex_capture4/handeye_sessions/20261103_board2_ee_fr3_replay_v1
+HE_REPLAY_SOLUTION=/mnt/paradex2/hyunsu/precision_insertion/calibration/zerodex_capture4/handeye_solutions/20261103_board2_ee_fr3_replay_v1
+
+"$PRECISION_PLANNER_PY" demo/precision-insertion/render_zerodex_calibration_debug.py handeye \
+  --session-dir "$HE_REPLAY_SESSION" \
+  --board-config demo/precision-insertion/config/zerodex_charuco_handeye_board2_60mm.json \
+  --camera-calibration-dir "$CAM_CAL" \
+  --c2r "$HE_REPLAY_SOLUTION/C2R.npy" \
+  --ee-board "$HE_REPLAY_SOLUTION/T_ee_board.npy" \
+  --output-dir "$HE_REPLAY_SOLUTION/debug_reprojection"
+```

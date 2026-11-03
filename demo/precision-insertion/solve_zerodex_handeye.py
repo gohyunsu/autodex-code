@@ -19,6 +19,7 @@ from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
 from calibration.charuco import load_board
+from calibration.reprojection_debug import render_handeye_debug
 
 
 def _transform(vector: np.ndarray) -> np.ndarray:
@@ -186,6 +187,13 @@ def main(argv: list[str] | None = None) -> int:
     output.mkdir(parents=True, exist_ok=False)
     np.save(output / "C2R.npy", world_robot)
     np.save(output / "T_ee_board.npy", ee_board)
+    debug = render_handeye_debug(
+        session_dir=args.session_dir.expanduser().resolve(),
+        board_config=args.board_config.expanduser().resolve(),
+        camera_calibration_dir=camera_dir,
+        c2r_path=output / "C2R.npy",
+        ee_board_path=output / "T_ee_board.npy",
+        output_dir=output / "debug_reprojection")
     report = {
         "schema_version": 1,
         "transform_convention": {
@@ -209,6 +217,12 @@ def main(argv: list[str] | None = None) -> int:
             "median_px": float(np.median(errors)),
             "max_px": float(np.max(errors)),
             "per_camera": per_camera,
+        },
+        "debug_reprojection": {
+            "directory": str(output / "debug_reprojection"),
+            "mean_px": debug["mean_px"],
+            "median_px": debug["median_px"],
+            "max_px": debug["max_px"],
         },
         "T_world_robot": world_robot.tolist(),
         "T_ee_board": ee_board.tolist(),

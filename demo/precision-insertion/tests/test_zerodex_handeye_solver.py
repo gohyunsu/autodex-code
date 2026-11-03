@@ -57,7 +57,9 @@ def test_joint_handeye_reprojection_recovers_world_robot_and_board_mount(tmp_pat
     for index, robot_ee in enumerate(robot_poses):
         capture = session / f"{index:04d}"
         markers = capture / "markers_2d"
+        images = capture / "images"
         markers.mkdir(parents=True)
+        images.mkdir()
         record = {
             "capture_index": index,
             "robot_after": {"T_robot_ee": robot_ee.tolist()},
@@ -70,6 +72,8 @@ def test_joint_handeye_reprojection_recovers_world_robot_and_board_mount(tmp_pat
                 points, rvec, camera_board[:3, 3], K, np.zeros(4))
             np.save(markers / f"{camera}_corner.npy", pixels.reshape(-1, 2))
             np.save(markers / f"{camera}_id.npy", ids)
+            cv2.imwrite(str(images / f"{camera}.png"),
+                        np.zeros((1536, 2048, 3), dtype=np.uint8))
 
     output = tmp_path / "solution"
     assert main([
@@ -82,3 +86,4 @@ def test_joint_handeye_reprojection_recovers_world_robot_and_board_mount(tmp_pat
     assert np.allclose(np.load(output / "T_ee_board.npy"), ee_board, atol=2e-5)
     report = json.loads((output / "report.json").read_text())
     assert report["reprojection"]["mean_px"] < 1e-4
+    assert (output / "debug_reprojection" / "report.json").is_file()

@@ -19,6 +19,7 @@ from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
 from calibration.charuco import load_board
+from calibration.reprojection_debug import render_extrinsic_debug
 
 
 def _T(rvec: np.ndarray, tvec: np.ndarray) -> np.ndarray:
@@ -176,6 +177,12 @@ def main(argv: list[str] | None = None) -> int:
         indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (output / "intrinsics.json").write_text(json.dumps(
         intrinsics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    debug = render_extrinsic_debug(
+        session_dir=args.session_dir.expanduser().resolve(),
+        board_config=args.board_config.expanduser().resolve(),
+        intrinsics_path=output / "intrinsics.json",
+        extrinsics_path=output / "extrinsics.json",
+        output_dir=output / "debug_reprojection")
     report = {
         "schema_version": 1,
         "world_frame": f"camera_{reference}",
@@ -192,6 +199,12 @@ def main(argv: list[str] | None = None) -> int:
             "median_px": float(np.median(np.linalg.norm(all_residuals, axis=1))),
             "max_px": float(np.max(np.linalg.norm(all_residuals, axis=1))),
             "per_camera": per_camera,
+        },
+        "debug_reprojection": {
+            "directory": str(output / "debug_reprojection"),
+            "mean_px": debug["mean_px"],
+            "median_px": debug["median_px"],
+            "max_px": debug["max_px"],
         },
     }
     (output / "report.json").write_text(
