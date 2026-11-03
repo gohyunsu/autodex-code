@@ -99,14 +99,9 @@ export PRECISION_CAPTURE4_CAMERA_IDS=${PRECISION_CAPTURE4_CAMERA_IDS:-26053248,2
 # encode a permanent camera blacklist in the machine profile.
 export PRECISION_BOARD_FIT_CAMERA_IDS=${PRECISION_BOARD_FIT_CAMERA_IDS:-$PRECISION_CAPTURE4_CAMERA_IDS}
 export PRECISION_VLM_CAMERA_IDS=${PRECISION_VLM_CAMERA_IDS:-26053248,25322639,25305462,25322642}
-# By default each session's socket-pose inliers are ordered by their measured
-# centre residual. Set an explicit comma-separated order only for a controlled
-# camera-priority experiment; no serial is permanently preferred.
-export PRECISION_XY_PREFERRED_CAMERA_IDS=${PRECISION_XY_PREFERRED_CAMERA_IDS-}
-# Use the three lowest-residual inliers from this session's socket-only fit.
-# The capture and stored evidence still contain all four views. An experiment
-# may explicitly set PRECISION_FINAL_VLM_CAMERA_IDS to replay a fixed subset.
-export PRECISION_FINAL_VLM_VIEW_COUNT=${PRECISION_FINAL_VLM_VIEW_COUNT:-3}
+# Socket-only pose fitting estimates the fixture pose but never selects later
+# visual inputs.  Every commissioned camera reaches the key endpoint and final
+# label pipelines unless an explicit experiment sets FINAL_VLM_CAMERA_IDS.
 export PRECISION_VISIBLE_GRIP_CAMERA_IDS=${PRECISION_VISIBLE_GRIP_CAMERA_IDS:-$PRECISION_VLM_CAMERA_IDS}
 
 # Existing local CUDA headers are needed by nvdiffrast's first-use build.

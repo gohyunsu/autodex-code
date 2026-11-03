@@ -408,16 +408,9 @@ def main() -> None:
         (attempt/"same_trial_xy"/"observations").glob("*.json"))]
     if not observations:
         raise ValueError("attempt has no same-trial XY observations")
-    # New runs bind endpoint estimation to the socket-pose inliers selected
-    # during this session's socket-only measurement. Use that same view set
-    # in the review GIF; explicit CLI exclusions remain available for replay
-    # of older evidence that predates the recorded selection.
-    socket_selection = observations[0].get(
-        "socket_geometry_view_selection", {})
-    socket_pose_outliers = set(socket_selection.get(
-        "excluded_camera_ids", []))
-    if not args.all_views:
-        excluded_cameras.update(socket_pose_outliers)
+    # Runtime endpoint estimation receives every available checkpoint view.
+    # Explicit CLI exclusions affect only this review rendering.
+    socket_pose_outliers: set[str] = set()
 
     shift_paths = sorted((attempt/"same_trial_xy"/"shifts").glob("*/report.json"))
     # A move may carry a descriptive suffix (for example the return after an
@@ -473,7 +466,7 @@ def main() -> None:
         "endpoint_iteration_views": (
             "all_recorded_views_with_used_status" if args.all_views else
             "inliers_only"),
-        "socket_geometry_view_selection": socket_selection,
+        "camera_input_policy": observations[0].get("camera_input_policy", {}),
         "gif": str(gif),
         "final_result_frame": None if final is None else str(final_path),
         "iterations": records,

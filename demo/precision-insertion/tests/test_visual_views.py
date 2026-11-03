@@ -13,9 +13,6 @@ from precision_insertion.visual_views import (  # noqa: E402
     assessment_cameras, final_assessment_cameras,
     final_cameras_with_visible_socket, final_view_policy,
 )
-from precision_insertion.camera_selection import (  # noqa: E402
-    limit_ranked_camera_selection, socket_consistent_alignment_cameras,
-)
 
 
 def test_selected_triplet_is_used_instead_of_all_captured_views(monkeypatch):
@@ -53,11 +50,8 @@ def test_final_label_defaults_to_existing_views(monkeypatch):
 
 def test_final_view_policy_reports_dynamic_or_explicit_selection(monkeypatch):
     monkeypatch.delenv("PRECISION_FINAL_VLM_CAMERA_IDS", raising=False)
-    monkeypatch.setenv("PRECISION_FINAL_VLM_VIEW_COUNT", "3")
     assert final_view_policy() == {
-        "method": "session_socket_pose_inliers",
-        "view_count": 3,
-        "ranking": "ascending_session_socket_center_residual_mm",
+        "method": "all_available_views",
         "scope": "configuration_only_no_camera_access",
     }
     monkeypatch.setenv("PRECISION_FINAL_VLM_CAMERA_IDS", "300,100,200")
@@ -105,26 +99,6 @@ def test_moved_socket_replaces_only_an_offscreen_final_view():
     projections["200"]["projected_hull_bbox_px"] = [110, 110, 210, 210]
     assert final_cameras_with_visible_socket(
         preferred, available, projections)[0] == preferred
-
-
-def test_final_views_follow_current_session_socket_fit_not_fixed_serials():
-    cameras = ["25305462", "25322639", "25322642", "26053248"]
-    record = {"socket_capture_refinements": [{"stock_selection": {
-        "body_fit": {
-            "socket_pose_inlier_camera_ids": [
-                "25322639", "25322642", "26053248"],
-            "per_view_center_residual_mm": {
-                "25305462": 14.91, "25322639": .43,
-                "25322642": .84, "26053248": .27,
-            },
-        },
-    }}]}
-    selected = limit_ranked_camera_selection(
-        socket_consistent_alignment_cameras(record, cameras), 3)
-    assert selected["selected_camera_ids"] == [
-        "26053248", "25322639", "25322642"]
-    assert selected["excluded_camera_ids"] == ["25305462"]
-    assert selected["method"] == "session_socket_pose_inliers"
 
 
 @pytest.mark.parametrize("selection", [

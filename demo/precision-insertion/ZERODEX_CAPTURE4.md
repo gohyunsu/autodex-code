@@ -829,28 +829,22 @@ the CAD wall, base flange, and whole-body silhouettes. It backprojects at
 the selected region's height rather than assuming every mask depicts the
 wall. Per-view region choice, IoUs and board-XY disagreement are saved as
 diagnostics; no additional acceptance threshold was introduced. The
-The 2026-10-30 socket-only capture is now the current saved baseline while
+2026-10-30 socket-only capture is now the current saved baseline while
 the board, fixture and camera geometry remain unchanged; see the restart
 instructions above.
 
 The launch uses all four serials `26053248`, `25322639`, `25305462`,
-`25322642`. General VLM and same-trial XY observations use four views;
-the released-key final label uses the three lowest-residual inliers from that
-session's socket-only board/body fit. Thus no camera serial is permanently
-excluded: moving the socket or recalibrating a camera changes the next
-session's selection. All four raw frames remain stored. If a selected camera
-cannot see the projected socket at all, another available view with a visible
-projection is substituted and recorded. The crop follows the measured socket
-position; no VLM pixel rectangle is fixed across sessions. Selection affects
-only the final visual vote, not four-camera XY grounding or robot motion.
-`PRECISION_FINAL_VLM_VIEW_COUNT` defaults to 3. An explicit
-`PRECISION_FINAL_VLM_CAMERA_IDS` remains available for a controlled replay.
-`run_zerodex_capture4.sh --check` reports which of these two policies is
-active without opening a camera or loading a model.
-A saved-frame probe that ranked views by projected socket *area* misclassified
-an inside case, so area is deliberately not the ranking metric; calibrated
-socket-centre residual is. See
-[VLM_LABEL_REVIEW_20261029.md](VLM_LABEL_REVIEW_20261029.md).
+`25322642`. Socket-only centre residuals remain localization diagnostics but
+never select later camera inputs. Same-trial endpoint estimation and the
+released-key final label receive every available checkpoint view. Each view's
+actual key/socket observation is recorded, and calibrated multi-view geometry
+decides which detected measurements agree. All four raw frames remain stored.
+The crop follows the measured socket position; no VLM pixel rectangle is fixed
+across sessions. `PRECISION_FINAL_VLM_CAMERA_IDS` remains available only for a
+controlled explicit-subset experiment. `run_zerodex_capture4.sh --check`
+reports the all-available or explicit policy without opening a camera or
+loading a model. See [VLM_LABEL_REVIEW_20261029.md](VLM_LABEL_REVIEW_20261029.md)
+for the earlier view-selection study.
 Socket/key SAM3 perception still uses the four available views. Board 9 is
 registered from this profile inside
 the local Python process, not in ParaDex's global configuration. Capture4's
@@ -1604,13 +1598,12 @@ yielded metric XY in all four; compared with the archived four-view robust
 fit, the XY coordinate difference was below 0.7 mm per axis. These four
 images are one held-grasp trajectory, so this supports the camera priority
 for the current fixture but does not establish general 3-view accuracy.
-The current launcher no longer fixes that three-view priority. It orders this
-session's socket-pose inliers by ascending socket-centre residual, batches all
-Qwen boxes once, and runs SAM in that order until the configured minimum of
-two views yields metric geometry. If the first pair is insufficient it adds
-the next ranked camera one at a time. `PRECISION_XY_PREFERRED_CAMERA_IDS` is
-empty by default and is now only an explicit experiment override. No camera
-serial is permanently excluded, and all four captured frames remain saved.
+The current launcher no longer fixes that three-view priority and does not use
+socket-only centre residuals to select endpoint views. It batches Qwen boxes
+for every available checkpoint camera, runs SAM on every returned key ROI,
+and gives all valid per-view measurements to the calibrated robust fit. No
+camera serial is permanently excluded, and all four captured frames and
+per-view rejection reasons remain saved.
 
 No insertion command was sent. Offline replay from the saved final joint
 state and frozen collision world reproduced `axial_waypoint_unreachable`:

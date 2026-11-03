@@ -19,9 +19,6 @@ import cv2
 from PIL import Image
 
 from .frame_provenance import bounded_capture_skew_s, image_sha256
-from .camera_selection import (
-    limit_ranked_camera_selection, socket_consistent_alignment_cameras,
-)
 from .insertion_checkpoint import (
     _admitted_measurement, _metric_record, verify_preinsert_raw_capture,
 )
@@ -238,7 +235,6 @@ def assess_released_insertion_checkpoint(
     # comparison.  Both captures retain their own frame provenance below.
     available_cameras = (set(initial["frame_evidence"]) &
                          set(final["frame_evidence"]))
-    selection_basis = None
     view_policy = final_view_policy()
     effective_view_policy = (
         {"method": "explicit_argument", "camera_ids": list(final_camera_ids),
@@ -251,14 +247,6 @@ def assess_released_insertion_checkpoint(
         ).encode("utf-8")).hexdigest()
         if calibration_sha256 != session_calibration_sha256:
             raise ValueError("released checkpoint used another session calibration")
-    if (final_camera_ids is None and
-            view_policy["method"] == "session_socket_pose_inliers" and
-            session_calibration_record is not None):
-        selection_basis = limit_ranked_camera_selection(
-            socket_consistent_alignment_cameras(
-                session_calibration_record, sorted(available_cameras)),
-            view_policy["view_count"])
-        final_camera_ids = selection_basis["selected_camera_ids"]
     preferred_cameras = final_assessment_cameras(
         available_cameras, selected=final_camera_ids)
     cameras, socket_visible = final_cameras_with_visible_socket(
@@ -351,8 +339,6 @@ def assess_released_insertion_checkpoint(
             "preferred": preferred_cameras,
             "selected": cameras,
             "socket_projected_visible": socket_visible,
-            **({"session_selection": selection_basis}
-               if selection_basis is not None else {}),
         },
         "minimum_visual_views": minimum_visual_views,
         "max_phase_skew_s": max_phase_skew_s,
@@ -456,15 +442,11 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
                 selection.get("socket_projected_visible") != visibility or
                 set(expected) != grouped["final_clear_view"]):
             raise ValueError("released-insertion socket view selection changed")
-        basis = selection.get("session_selection")
-        if (basis is not None and
-                set(basis.get("selected_camera_ids", [])) != set(preferred)):
-            raise ValueError("released-insertion session view ranking changed")
         if "selection_policy" in selection:
             policy = selection["selection_policy"]
             if policy.get("method") not in {
                     "explicit_argument", "explicit_camera_ids",
-                    "session_socket_pose_inliers"}:
+                    "all_available_views"}:
                 raise ValueError("released-insertion view policy is invalid")
     policy = report.get("visual_input_policy")
     new_policy = policy in ("final_socket_crop_token_v1",

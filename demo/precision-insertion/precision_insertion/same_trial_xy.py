@@ -21,9 +21,6 @@ import numpy as np
 from PIL import Image
 
 from .assets import AssetPaths
-from .camera_selection import (
-    limit_ranked_camera_selection, socket_consistent_alignment_cameras,
-)
 from .axis_jacobian import (
     plan_jacobian_linear_stroke, plan_jacobian_tip_axis_alignment,
 )
@@ -303,14 +300,8 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
     bundle = Path(raw_bundle).expanduser().resolve()
     rows, images = _alignment_frame_inputs(bundle, capture)
     cameras = assessment_cameras(rows)
-    socket_view_selection = socket_consistent_alignment_cameras(
-        runner.calibration.record, cameras)
-    socket_view_selection = limit_ranked_camera_selection(
-        socket_view_selection,
-        len(socket_view_selection["selected_camera_ids"]))
-    selected_cameras = socket_view_selection["selected_camera_ids"]
     frames = []
-    for camera in selected_cameras:
+    for camera in cameras:
         image = images[camera]
         frames.append(LabeledFrame(
             camera, "preinsert_hold", rows[camera]["timestamp_s"],
@@ -383,7 +374,11 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
             map(float, nominal_key_xy_shift_socket_m)),
         "nominal_key_axis_raise_socket_m": float(
             nominal_key_axis_raise_socket_m),
-        "socket_geometry_view_selection": socket_view_selection,
+        "camera_input_policy": {
+            "method": "all_available_checkpoint_views",
+            "camera_ids": list(cameras),
+            "scope": "no_socket_residual_camera_selection",
+        },
         "sam_mask_files": mask_records,
         "alignment": alignment,
         "vlm_observations": [item.to_record() for item in observations],

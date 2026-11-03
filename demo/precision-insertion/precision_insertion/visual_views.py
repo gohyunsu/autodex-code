@@ -22,19 +22,8 @@ def final_view_policy() -> dict:
             "camera_ids": selected,
             "scope": "configuration_only_no_camera_access",
         }
-    raw_count = os.environ.get("PRECISION_FINAL_VLM_VIEW_COUNT", "3")
-    try:
-        count = int(raw_count)
-    except ValueError as exc:
-        raise ValueError(
-            "PRECISION_FINAL_VLM_VIEW_COUNT must be an integer") from exc
-    if not 2 <= count <= 5:
-        raise ValueError(
-            "PRECISION_FINAL_VLM_VIEW_COUNT must be from two to five")
     return {
-        "method": "session_socket_pose_inliers",
-        "view_count": count,
-        "ranking": "ascending_session_socket_center_residual_mm",
+        "method": "all_available_views",
         "scope": "configuration_only_no_camera_access",
     }
 

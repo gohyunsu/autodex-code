@@ -204,7 +204,7 @@ def test_profile_manifest_records_reproducible_nonsecret_configuration(
     policy = tmp_path / "stage_policy.json"
     policy.write_text('{"post_lift_settle_s": 2.0}\n', encoding="utf-8")
     monkeypatch.setenv("PRECISION_STAGE_POLICY", str(policy))
-    monkeypatch.setenv("PRECISION_FINAL_VLM_VIEW_COUNT", "3")
+    monkeypatch.setenv("PRECISION_FINAL_VLM_CAMERA_IDS", "100,200,300")
     monkeypatch.setenv("GEMINI_API_KEY", "must-not-be-recorded")
 
     with profile_run(tmp_path / "run"):
@@ -214,7 +214,8 @@ def test_profile_manifest_records_reproducible_nonsecret_configuration(
         (timing_directory(tmp_path / "run") / "manifest.json").read_text(
             encoding="utf-8"))
     config = manifest["runtime_configuration"]
-    assert config["environment"]["PRECISION_FINAL_VLM_VIEW_COUNT"] == "3"
+    assert config["environment"]["PRECISION_FINAL_VLM_CAMERA_IDS"] == (
+        "100,200,300")
     assert "GEMINI_API_KEY" not in config["environment"]
     assert config["input_files"]["PRECISION_STAGE_POLICY"]["sha256"] == (
         hashlib.sha256(policy.read_bytes()).hexdigest())
