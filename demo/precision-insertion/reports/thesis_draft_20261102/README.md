@@ -24,6 +24,8 @@ Before submission, confirm the submission and degree dates on the cover.
   `/mnt/paradex2/hyunsu/precision_insertion/runs/zerodex_capture4/precision-insertion/inspire/precision_key_cylinder_r15_h80/_pipeline_runs/20261030_222800_220645_219060`
 - Canonical visualization:
   `/mnt/paradex2/hyunsu/precision_insertion/runs/zerodex_capture4/2026/10/30/20261030_222800_220645_219060/visualizations/closed_loop_multiview_without_25305462`
+- Thesis presentation GIFs and physical execution clip:
+  `/mnt/paradex2/hyunsu/precision_insertion/development/zerodex_capture4/visualizations/thesis_20261103/success_20261030`
 
 Camera `25305462` is omitted only from figures for this episode because it was
 physically disturbed after calibration. The report does not define a permanent
