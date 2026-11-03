@@ -52,11 +52,21 @@ def run_camera_only(
     if output.exists():
         raise FileExistsError(output)
     output.mkdir(parents=True)
-    if gap_mm is not None:
+    calibration_dir = os.environ.get("PRECISION_CALIB_DIR")
+    c2r_npy = os.environ.get("PRECISION_C2R_NPY")
+    if gap_mm is not None or calibration_dir or c2r_npy:
         # Mirror run_robot_pc.sh: keep the immutable stage template and save
-        # the exact per-run socket mode beside the camera-only evidence.
+        # the exact per-run mode and active rig calibration beside the
+        # camera-only evidence.
         launch_record = json.loads(Path(launch_config).read_text(encoding="utf-8"))
-        launch_record["mode"] = {"family": "cylinder", "gap_mm": gap_mm}
+        if gap_mm is not None:
+            launch_record["mode"] = {"family": "cylinder", "gap_mm": gap_mm}
+        if calibration_dir:
+            launch_record["calib_dir"] = str(
+                Path(calibration_dir).expanduser().resolve())
+        if c2r_npy:
+            launch_record["c2r_npy"] = str(
+                Path(c2r_npy).expanduser().resolve())
         camera_ids = tuple(value.strip() for value in os.environ.get(
             "PRECISION_CAPTURE4_CAMERA_IDS", "").split(",") if value.strip())
         board_fit_camera_ids = tuple(value.strip() for value in os.environ.get(

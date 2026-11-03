@@ -208,6 +208,36 @@ def test_camera_only_gap_override_keeps_catalog_and_launch_consistent(
         "gap_mm"] == 20
 
 
+def test_camera_only_snapshots_active_calibration_overrides(tmp_path, monkeypatch):
+    template = tmp_path / "stage_launch.json"
+    template.write_text(camera_only.json.dumps({
+        "mode": {"family": "cylinder", "gap_mm": 5},
+        "calib_dir": "/old/cameras", "c2r_npy": "/old/C2R.npy",
+    }), encoding="utf-8")
+    calibration = tmp_path / "new_cameras"
+    calibration.mkdir()
+    c2r = tmp_path / "new_C2R.npy"
+    c2r.write_bytes(b"test")
+    output = tmp_path / "run"
+    monkeypatch.setenv("PRECISION_CALIB_DIR", str(calibration))
+    monkeypatch.setenv("PRECISION_C2R_NPY", str(c2r))
+
+    def inspect_launch(path, *, evidence_dir_override):
+        record = camera_only.json.loads(path.read_text(encoding="utf-8"))
+        assert record["calib_dir"] == str(calibration.resolve())
+        assert record["c2r_npy"] == str(c2r.resolve())
+        raise RuntimeError("verified calibration override")
+
+    monkeypatch.setattr(camera_only, "load_session_launch", inspect_launch)
+    monkeypatch.setattr(camera_only, "profile_run", lambda _path: nullcontext())
+    monkeypatch.setattr(camera_only, "timed",
+                        lambda *_args, **_kwargs: nullcontext())
+    with pytest.raises(RuntimeError, match="verified calibration override"):
+        camera_only.run_camera_only(
+            launch_config=template, endpoint_catalog=tmp_path / "gap5.json",
+            output_dir=output, wait_for_key=lambda: None)
+
+
 def test_camera_only_launcher_forwards_gap_mm(tmp_path):
     launcher = Path(__file__).resolve().parents[1] / "run_zerodex_capture4.sh"
     fake_planner = tmp_path / "fake_planner"

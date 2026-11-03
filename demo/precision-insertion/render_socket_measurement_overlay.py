@@ -20,7 +20,10 @@ import numpy as np
 SERIAL_ORDER = ("26053248", "25322639", "25305462", "25322642")
 
 
-def _project(record: dict, serial: str, points_robot: np.ndarray) -> np.ndarray:
+def _project(
+        record: dict, serial: str, points_robot: np.ndarray,
+        image_space: str,
+) -> np.ndarray:
     camera = record["camera_calibration"]
     intrinsic = camera["intrinsics_full"][serial]
     camera_from_world = np.asarray(
@@ -32,10 +35,19 @@ def _project(record: dict, serial: str, points_robot: np.ndarray) -> np.ndarray:
         world_from_robot[:3, :3] @ points_robot.T
     ).T + world_from_robot[:3, 3]
     rotation_vector, _ = cv2.Rodrigues(camera_from_world[:, :3])
+    if image_space == "autodex_undistorted_full_frame":
+        camera_matrix = intrinsic["K_undist"]
+        distortion = None
+    elif image_space == "camera_distorted_full_frame":
+        camera_matrix = intrinsic["K_orig"]
+        distortion = intrinsic["dist_params"]
+    else:
+        raise ValueError(f"unsupported saved socket image space: {image_space}")
     pixels, _ = cv2.projectPoints(
         points_world, rotation_vector, camera_from_world[:, 3],
-        np.asarray(intrinsic["K_orig"], dtype=np.float64),
-        np.asarray(intrinsic["dist_params"], dtype=np.float64))
+        np.asarray(camera_matrix, dtype=np.float64),
+        (None if distortion is None else
+         np.asarray(distortion, dtype=np.float64)))
     return np.rint(pixels.reshape(-1, 2)).astype(np.int32)
 
 
@@ -85,6 +97,8 @@ def render(evidence_dir: Path, output: Path) -> dict:
 
     panels: dict[str, np.ndarray] = {}
     rows = {}
+    residuals = body_fit["per_view_center_residual_mm"]
+    per_view_iou = refinement["per_view_iou"]
     for serial in SERIAL_ORDER:
         image_path = root / f"socket/socket_000/images/{serial}.png"
         mask_path = root / f"socket/socket_000/masks/{serial}.png"
@@ -97,19 +111,28 @@ def render(evidence_dir: Path, output: Path) -> dict:
         view[selected] = np.rint(
             .62 * view[selected] + .38 * np.array([0, 210, 255])
         ).clip(0, 255).astype(np.uint8)
-        rim_px = _project(record, serial, rim)
-        center_px = _project(record, serial, center[None])[0]
-        axis_px = _project(record, serial, np.stack([center, axis_tip]))
+        image_space = payload["mask_payload_metadata"][serial]["image_space"]
+        rim_px = _project(record, serial, rim, image_space)
+        center_px = _project(record, serial, center[None], image_space)[0]
+        axis_px = _project(
+            record, serial, np.stack([center, axis_tip]), image_space)
         cv2.polylines(view, [rim_px], True, (255, 235, 0), 5, cv2.LINE_AA)
         cv2.drawMarker(view, tuple(center_px), (255, 235, 0),
                        cv2.MARKER_CROSS, 30, 4, cv2.LINE_AA)
         cv2.arrowedLine(view, tuple(axis_px[0]), tuple(axis_px[1]),
                         (40, 230, 80), 5, cv2.LINE_AA, tipLength=.18)
         used = serial in inliers
-        status = "used" if used else "excluded this session"
-        color = (70, 230, 90) if used else (80, 120, 255)
-        residual = float(body_fit["per_view_center_residual_mm"][serial])
-        label = f"{serial}  {status}  {residual:.2f} mm"
+        residual = (float(residuals[serial])
+                    if serial in residuals else None)
+        if used:
+            status, color = "used", (70, 230, 90)
+        elif serial in excluded:
+            status, color = "excluded this session", (80, 120, 255)
+        else:
+            status, color = "socket mask unavailable", (80, 190, 255)
+        residual_label = (f"  {residual:.2f} mm"
+                          if residual is not None else "")
+        label = f"{serial}  {status}{residual_label}"
         cv2.putText(view, label, (34, 62), cv2.FONT_HERSHEY_SIMPLEX,
                     1.15, (20, 20, 20), 7, cv2.LINE_AA)
         cv2.putText(view, label, (34, 62), cv2.FONT_HERSHEY_SIMPLEX,
@@ -118,8 +141,10 @@ def render(evidence_dir: Path, output: Path) -> dict:
         rows[serial] = {
             "used_for_socket_center": used,
             "center_residual_mm": residual,
-            "mask_iou": float(refinement["per_view_iou"][serial]),
+            "mask_iou": (float(per_view_iou[serial])
+                         if serial in per_view_iou else None),
             "frame_id": payload["frame_evidence"][serial]["frame_id"],
+            "image_space": image_space,
         }
 
     canvas = np.full((1080, 1920, 3), (26, 31, 36), dtype=np.uint8)

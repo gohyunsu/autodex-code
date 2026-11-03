@@ -14,6 +14,8 @@ SCENE_MODE=${PRECISION_SCENE_MODE:-charuco_board}
 TABLE_SURFACE_Z_M=${PRECISION_TABLE_SURFACE_Z_M:-}
 CAMERA_IDS=${PRECISION_CAPTURE4_CAMERA_IDS:-}
 BOARD_FIT_CAMERA_IDS=${PRECISION_BOARD_FIT_CAMERA_IDS:-}
+CALIB_DIR=${PRECISION_CALIB_DIR:-}
+C2R_NPY=${PRECISION_C2R_NPY:-}
 
 source "$SCRIPT_DIR/config/nas_namespace.sh"
 
@@ -62,6 +64,8 @@ precision_require_allowed_nas_path PRECISION_ROBOT_CONFIG "$ROBOT"
 precision_require_allowed_nas_path PRECISION_RUN_OUTPUT_ROOT "$RUN_OUTPUT_ROOT"
 precision_require_allowed_nas_path PRECISION_REUSE_SESSION_EVIDENCE \
   "${PRECISION_REUSE_SESSION_EVIDENCE:-}"
+precision_require_allowed_nas_path PRECISION_CALIB_DIR "$CALIB_DIR"
+precision_require_allowed_nas_path PRECISION_C2R_NPY "$C2R_NPY"
 for required in "$LAUNCH_TEMPLATE" "$CATALOG" "$ROBOT"; do
   if [[ ! -f "$required" ]]; then
     echo "active recipient-stage input is missing: $required" >&2
@@ -73,7 +77,8 @@ if [[ "$MODE" == --check ]]; then
   CHECK_LAUNCH=$(mktemp /tmp/precision-launch-check.XXXXXX.json)
   trap 'rm -f "$CHECK_LAUNCH"' EXIT
   "$CHECK_PY" - "$LAUNCH_TEMPLATE" "$CHECK_LAUNCH" "$GAP_MM" "$SCENE_MODE" \
-    "$TABLE_SURFACE_Z_M" "$CAMERA_IDS" "$BOARD_FIT_CAMERA_IDS" <<'PY'
+    "$TABLE_SURFACE_Z_M" "$CAMERA_IDS" "$BOARD_FIT_CAMERA_IDS" \
+    "$CALIB_DIR" "$C2R_NPY" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -81,7 +86,7 @@ import sys
 record = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 record["mode"] = {"family": "cylinder", "gap_mm": int(sys.argv[3])}
 scene_mode, table_z = sys.argv[4:6]
-camera_ids, board_fit_camera_ids = sys.argv[6:8]
+camera_ids, board_fit_camera_ids, calib_dir, c2r_npy = sys.argv[6:10]
 if camera_ids:
     record["camera_ids"] = [value.strip() for value in camera_ids.split(",")
                             if value.strip()]
@@ -89,6 +94,10 @@ if board_fit_camera_ids:
     record["board_fit_camera_ids"] = [
         value.strip() for value in board_fit_camera_ids.split(",")
         if value.strip()]
+if calib_dir:
+    record["calib_dir"] = calib_dir
+if c2r_npy:
+    record["c2r_npy"] = c2r_npy
 record["scene_mode"] = scene_mode
 record["socket_perception_mode"] = ("ignore_sil_loss" if scene_mode == "board_free"
                                     else "board_constrained_body")
@@ -129,7 +138,8 @@ fi
 LAUNCH="$LAUNCH_DIR/launch_$RUN_TAG.json"
 "$CHECK_PY" - "$LAUNCH_TEMPLATE" "$LAUNCH" "$RUN_TAG" "$GAP_MM" \
   "${PRECISION_REUSE_SESSION_EVIDENCE:-}" "$LAUNCH_DIR" "$SCENE_MODE" "$TABLE_SURFACE_Z_M" \
-  "$CAPTURE_ROOT" "$CAMERA_IDS" "$BOARD_FIT_CAMERA_IDS" <<'PY'
+  "$CAPTURE_ROOT" "$CAMERA_IDS" "$BOARD_FIT_CAMERA_IDS" \
+  "$CALIB_DIR" "$C2R_NPY" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -137,7 +147,7 @@ import sys
 template, output, run_tag = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 gap_mm, reused_evidence, launch_dir = int(sys.argv[4]), sys.argv[5], Path(sys.argv[6])
 scene_mode, table_z, capture_root = sys.argv[7:10]
-camera_ids, board_fit_camera_ids = sys.argv[10:12]
+camera_ids, board_fit_camera_ids, calib_dir, c2r_npy = sys.argv[10:14]
 record = json.loads(template.read_text(encoding="utf-8"))
 record["mode"] = {"family": "cylinder", "gap_mm": gap_mm}
 if camera_ids:
@@ -147,6 +157,10 @@ if board_fit_camera_ids:
     record["board_fit_camera_ids"] = [
         value.strip() for value in board_fit_camera_ids.split(",")
         if value.strip()]
+if calib_dir:
+    record["calib_dir"] = calib_dir
+if c2r_npy:
+    record["c2r_npy"] = c2r_npy
 record["capture_root"] = capture_root
 record["scene_mode"] = scene_mode
 record["socket_perception_mode"] = ("ignore_sil_loss" if scene_mode == "board_free"

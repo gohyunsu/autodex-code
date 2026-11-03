@@ -2,8 +2,22 @@
 
 This calibration path belongs to the precision-insertion ZeroDex profile. It
 uses only cameras `26053248`, `25322639`, `25305462`, and `25322642`. It does
-not edit ParaDex `system/current`, the shared capture4 checkout, or an active
-runtime calibration.
+not edit ParaDex `system/current` or the shared capture4 checkout.
+
+## Active runtime binding
+
+The ZeroDex precision-insertion profile selects its commissioned calibration
+in `config/zerodex_capture4_calibration.env.sh`. The current pair is:
+
+- camera intrinsics/extrinsics: `20261103_board11_4cam_v1`
+- robot-to-camera-world hand-eye: `20261103_board2_ee_fr3_replay_v1/C2R.npy`
+
+`run_zerodex_capture4.sh` copies these paths into every effective launch JSON.
+The session then freezes both matrices and a canonical calibration SHA256 in
+`session_calibration.json`. The dated solution directories remain immutable;
+commissioning a later result means changing only this system calibration
+profile rather than copying files into ParaDex or embedding paths in control
+logic.
 
 ## Board
 
