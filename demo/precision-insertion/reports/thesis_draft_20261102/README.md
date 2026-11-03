@@ -14,8 +14,7 @@ preliminary experiments and future work inside the thesis structure.
 - `assets/source/`: presentation-style composites used only to derive the
   camera-specific evidence crops
 
-Before submission, replace `[성명 확인 필요]` on the cover with the advisor's
-full Korean name and confirm the submission and degree dates.
+Before submission, confirm the submission and degree dates on the cover.
 
 ## Physical evidence
 
