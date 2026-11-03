@@ -85,6 +85,44 @@ def _preview_grid(snapshot, detector, *, tile_width: int) -> tuple[np.ndarray, d
     return np.vstack((np.hstack(tiles[:2]), np.hstack(tiles[2:]))), counts
 
 
+class _TkMonitor:
+    """Small GUI independent of the headless OpenCV wheel used for planning."""
+
+    def __init__(self) -> None:
+        import tkinter as tk
+
+        self._tk = tk
+        self._root = tk.Tk()
+        self._root.title("Precision insertion extrinsic | c: capture | q: quit")
+        self._label = tk.Label(self._root)
+        self._label.pack()
+        self._command: str | None = None
+        self._root.bind_all("<KeyPress-c>", lambda _event: self._set("capture"))
+        self._root.bind_all("<KeyPress-q>", lambda _event: self._set("quit"))
+        self._root.protocol("WM_DELETE_WINDOW", lambda: self._set("quit"))
+        self._photo = None
+
+    def _set(self, command: str) -> None:
+        self._command = command
+
+    def show(self, image_bgr: np.ndarray) -> str | None:
+        from PIL import Image, ImageTk
+
+        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        self._photo = ImageTk.PhotoImage(Image.fromarray(image_rgb))
+        self._label.configure(image=self._photo)
+        self._root.update_idletasks()
+        self._root.update()
+        command, self._command = self._command, None
+        return command
+
+    def close(self) -> None:
+        try:
+            self._root.destroy()
+        except self._tk.TclError:
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--launch-config", type=Path, required=True)
@@ -118,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     evidence_token = session_dir / ("_connection_" + uuid4().hex)
     launch = load_session_launch(
         args.launch_config, evidence_dir_override=evidence_token)
+    monitor = _TkMonitor() if args.monitor else None
     with open_autodex_camera_stream(
             launch.pc_list, capture_ips=launch.capture_ips,
             name="precision_extrinsic_capture", warmup_s=1,
@@ -137,16 +176,13 @@ def main(argv: list[str] | None = None) -> int:
                         cameras.acquisition_metadata_for_request),
                     timeout_s=launch.board_timeout_s)
                 if args.monitor:
-                    grid, counts = _preview_grid(
+                    grid, _counts = _preview_grid(
                         snapshot, detector,
                         tile_width=args.preview_tile_width)
-                    cv2.imshow(
-                        "Precision insertion extrinsic | c: capture | q: quit",
-                        grid)
-                    key = cv2.waitKey(1) & 0xFF
-                    if key == ord("q"):
+                    command = monitor.show(grid)
+                    if command == "quit":
                         break
-                    if key != ord("c"):
+                    if command != "capture":
                         continue
                 record = _save_capture(
                     session_dir, _next_index(session_dir), snapshot, detector)
@@ -156,8 +192,8 @@ def main(argv: list[str] | None = None) -> int:
                                   "corners": counts}, sort_keys=True))
                 if args.once:
                     break
-    if args.monitor:
-        cv2.destroyAllWindows()
+    if monitor is not None:
+        monitor.close()
     return 0
 
 

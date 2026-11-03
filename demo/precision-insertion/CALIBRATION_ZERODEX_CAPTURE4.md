@@ -38,10 +38,12 @@ SESSION=/mnt/paradex2/hyunsu/precision_insertion/calibration/zerodex_capture4/ex
   --monitor
 ```
 
-The monitor displays a refreshing 2-by-2 grid with full-resolution ChArUco
+The Tk/Pillow monitor displays a refreshing 2-by-2 grid with full-resolution ChArUco
 detections overlaid. Press `c` once for each new board placement and `q` when
 finished. Only the preview is resized; saved calibration images remain
-2048 by 1536 pixels. Without `--monitor`, the same tool uses Enter to capture.
+2048 by 1536 pixels. It does not require OpenCV HighGUI, which is absent from
+the planning environment's headless OpenCV build. Without `--monitor`, the
+same tool uses Enter to capture.
 Capture
 roughly 15--25 placements spanning the shared workspace. Include front/back,
 left/right, high/low in the image, plus moderate pitch, roll, and yaw. Keep a
