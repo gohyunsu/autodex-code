@@ -44,6 +44,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-port", type=int, default=5556)
     parser.add_argument("--speed-scale", type=float, default=0.1)
     parser.add_argument("--settle-s", type=float, default=0.5)
+    parser.add_argument("--start-waypoint", type=int, default=0,
+                        help="source trajectory index to replay first")
     parser.add_argument("--monitor", action="store_true")
     parser.add_argument("--preview-tile-width", type=int, default=640)
     args = parser.parse_args(argv)
@@ -52,6 +54,9 @@ def main(argv: list[str] | None = None) -> int:
     qposes = np.load(trajectory_path).astype(np.float64)
     if qposes.ndim != 2 or qposes.shape[1] != 7 or len(qposes) == 0:
         raise ValueError(f"expected non-empty (N, 7) trajectory: {trajectory_path}")
+    if not 0 <= args.start_waypoint < len(qposes):
+        parser.error(
+            f"--start-waypoint must be in [0, {len(qposes) - 1}]")
     session = args.session_dir.expanduser().resolve()
     session.mkdir(parents=True, exist_ok=True)
     board_info, _, detector = load_board(args.board_config)
@@ -72,7 +77,16 @@ def main(argv: list[str] | None = None) -> int:
             "target_mount": "rigid_on_end_effector",
             "speed_scale": args.speed_scale,
             "settle_s": args.settle_s,
+            "replay_invocations": [],
         })
+    manifest_record = json.loads(manifest.read_text(encoding="utf-8"))
+    manifest_record.setdefault("replay_invocations", []).append({
+        "started_at": datetime.now().astimezone().isoformat(),
+        "start_waypoint": args.start_waypoint,
+        "speed_scale": args.speed_scale,
+        "settle_s": args.settle_s,
+    })
+    _json(manifest, manifest_record)
 
     launch = load_session_launch(
         args.launch_config,
@@ -93,7 +107,8 @@ def main(argv: list[str] | None = None) -> int:
                 name="precision_handeye_replay", warmup_s=1,
                 acquisition_mode=launch.camera_acquisition_mode):
             with open_session_cameras(launch) as cameras:
-                for waypoint_index, qpos in enumerate(qposes):
+                for waypoint_index in range(args.start_waypoint, len(qposes)):
+                    qpos = qposes[waypoint_index]
                     response = robot.move(
                         qpos, is_servo=False, speed_scale=args.speed_scale)
                     if response.get("type") == "error":
@@ -111,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
                     index = _next(session)
                     record = _save(
                         session, index, snapshot, detector, before, after)
+                    record["source_waypoint"] = waypoint_index
+                    _json(session / f"{index:04d}" / "capture.json", record)
                     append_capture_points(history, index, snapshot, detector)
                     counts = {serial: row["corner_count"]
                               for serial, row in record["views"].items()}

@@ -173,3 +173,6 @@ REPLAY_SESSION=/mnt/paradex2/hyunsu/precision_insertion/calibration/zerodex_capt
 
 The replay command does move the FR3. Its joint speed and stationary dwell are
 explicit command-line parameters rather than values embedded in the code.
+If a run is interrupted after saving earlier poses, append
+`--start-waypoint N` to resume at source waypoint `N` in the same output
+session. Each capture records that source index explicitly.
