@@ -20,8 +20,8 @@ import numpy as np
 
 from calibration.charuco import load_board
 from calibration.monitor import (
-    append_capture_centres,
-    load_capture_centres,
+    append_capture_points,
+    load_capture_points,
     preview_grid,
     TkMonitor,
 )
@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     launch = load_session_launch(
         args.launch_config,
         evidence_dir_override=session / ("_connection_" + uuid4().hex))
-    history = load_capture_centres(session, launch.camera_ids)
+    history = load_capture_points(session, launch.camera_ids)
     robot = FrankaController(
         args.daemon_host, command_port=args.command_port,
         state_port=args.state_port)
@@ -111,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
                     index = _next(session)
                     record = _save(
                         session, index, snapshot, detector, before, after)
-                    append_capture_centres(history, index, snapshot, detector)
+                    append_capture_points(history, index, snapshot, detector)
                     counts = {serial: row["corner_count"]
                               for serial, row in record["views"].items()}
                     print(json.dumps({

@@ -14,8 +14,8 @@ _HISTORY_COLOURS = (
 )
 
 
-def load_capture_centres(session_dir, camera_ids) -> dict[str, list[tuple[int, float, float]]]:
-    """Load prior full-resolution ChArUco centroids for monitor history."""
+def load_capture_points(session_dir, camera_ids) -> dict[str, list[tuple[int, np.ndarray]]]:
+    """Load prior full-resolution ChArUco points for monitor history."""
     history = {str(camera): [] for camera in camera_ids}
     if not session_dir.exists():
         return history
@@ -29,25 +29,27 @@ def load_capture_centres(session_dir, camera_ids) -> dict[str, list[tuple[int, f
                 continue
             corners = np.load(path).reshape(-1, 2)
             if len(corners):
-                centre = np.mean(corners, axis=0)
-                history[camera].append((index, float(centre[0]), float(centre[1])))
+                history[camera].append((index, corners.astype(np.float32)))
     return history
 
 
-def append_capture_centres(history, index: int, snapshot, detector) -> None:
+def append_capture_points(history, index: int, snapshot, detector) -> None:
     """Append a just-saved observation without re-reading the session."""
     for camera, image in snapshot.images_bgr.items():
         corners, ids = detect(detector, image)
         if len(ids):
-            centre = np.mean(corners, axis=0)
             history.setdefault(camera, []).append(
-                (index, float(centre[0]), float(centre[1])))
+                (index, corners.astype(np.float32)))
 
 
-def _draw_centres(image, current_corners, prior) -> np.ndarray:
+def _draw_points(image, current_corners, prior) -> np.ndarray:
     overlay = image.copy()
-    for index, x, y in prior:
+    for index, corners in prior:
         colour = _HISTORY_COLOURS[index % len(_HISTORY_COLOURS)]
+        for x, y in np.asarray(corners).reshape(-1, 2):
+            cv2.circle(overlay, (int(round(x)), int(round(y))),
+                       4, colour, -1, cv2.LINE_AA)
+        x, y = np.mean(corners, axis=0)
         point = (int(round(x)), int(round(y)))
         cv2.circle(overlay, point, 10, colour, 3, cv2.LINE_AA)
         cv2.putText(overlay, str(index), (point[0] + 12, point[1] - 8),
@@ -72,7 +74,7 @@ def preview_grid(snapshot, detector, *, tile_width: int,
         corners, ids = detect(detector, image)
         counts[serial] = int(len(ids))
         overlay = draw_detection(image, corners, ids)
-        overlay = _draw_centres(
+        overlay = _draw_points(
             overlay, corners, [] if history is None else history.get(serial, []))
         tile_height = int(round(tile_width * image.shape[0] / image.shape[1]))
         tile = cv2.resize(

@@ -126,8 +126,9 @@ HE_SESSION=/mnt/paradex2/hyunsu/precision_insertion/calibration/zerodex_capture4
 
 The monitor shows the four full camera views as a 2-by-2 grid. Green marks are
 the current detected ChArUco corners. The white cross/magenta ring is the
-current board centre. Numbered coloured circles are centres of already saved
-poses. Move the arm by hand, release it, wait until it is stationary, and
+current board centre. Thin coloured points are all corners from already saved
+poses, and their numbered coloured circles mark the corresponding centres.
+Move the arm by hand, release it, wait until it is stationary, and
 press `c`. Press `q` to finish. Capture roughly 15--25 poses with translation
 and rotations about multiple axes. The software records every requested pose;
 it does not add a hidden visual-quality acceptance threshold.
