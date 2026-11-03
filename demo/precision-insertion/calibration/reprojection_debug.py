@@ -18,6 +18,7 @@ _CAMERA_ORDER = ("26053248", "25322639", "25305462", "25322642")
 _OBSERVED = (0, 255, 0)
 _PREDICTED = (255, 0, 255)
 _RESIDUAL = (0, 255, 255)
+_OUTLINE = (0, 0, 0)
 
 
 def _full_transform(value) -> np.ndarray:
@@ -78,15 +79,19 @@ def _draw(image: np.ndarray, observed: np.ndarray, ids: np.ndarray,
     for x, y in predicted_all:
         point = (int(round(x)), int(round(y)))
         if 0 <= point[0] < width and 0 <= point[1] < height:
-            cv2.drawMarker(overlay, point, _PREDICTED,
-                           cv2.MARKER_TILTED_CROSS, 12, 2, cv2.LINE_AA)
+            cv2.circle(overlay, point, 13, _OUTLINE, -1, cv2.LINE_AA)
+            cv2.circle(overlay, point, 10, _PREDICTED, -1, cv2.LINE_AA)
     errors = []
     for pixel, identifier in zip(observed, ids):
         predicted = predicted_all[int(identifier)]
         p_observed = tuple(np.rint(pixel).astype(int))
         p_predicted = tuple(np.rint(predicted).astype(int))
-        cv2.line(overlay, p_observed, p_predicted, _RESIDUAL, 2, cv2.LINE_AA)
-        cv2.circle(overlay, p_observed, 5, _OBSERVED, -1, cv2.LINE_AA)
+        cv2.line(overlay, p_observed, p_predicted, _OUTLINE, 7, cv2.LINE_AA)
+        cv2.line(overlay, p_observed, p_predicted, _RESIDUAL, 4, cv2.LINE_AA)
+        cv2.circle(overlay, p_predicted, 13, _OUTLINE, -1, cv2.LINE_AA)
+        cv2.circle(overlay, p_predicted, 10, _PREDICTED, -1, cv2.LINE_AA)
+        cv2.circle(overlay, p_observed, 8, _OUTLINE, -1, cv2.LINE_AA)
+        cv2.circle(overlay, p_observed, 6, _OBSERVED, -1, cv2.LINE_AA)
         errors.append(float(np.linalg.norm(pixel - predicted)))
     mean = float(np.mean(errors)) if errors else None
     label = (f"{camera} | n={len(errors)} | mean={mean:.2f}px"
@@ -100,6 +105,7 @@ def _draw(image: np.ndarray, observed: np.ndarray, ids: np.ndarray,
 def _save_debug(
         output_dir: Path, session_dir: Path, board_points: np.ndarray,
         intrinsics: dict, cameras: tuple[str, ...], camera_board_for_capture,
+        save_per_view: bool,
 ) -> dict:
     output_dir.mkdir(parents=True, exist_ok=False)
     ordered = tuple(camera for camera in _CAMERA_ORDER if camera in cameras)
@@ -126,7 +132,8 @@ def _save_debug(
                 board_points, transforms[camera], intrinsics[camera])
             overlay, errors = _draw(
                 image, observed, ids, predicted, camera)
-            cv2.imwrite(str(capture_output / f"{camera}.png"), overlay)
+            if save_per_view:
+                cv2.imwrite(str(capture_output / f"{camera}.png"), overlay)
             all_errors.extend(errors)
             capture_errors.extend(errors)
             per_camera[camera].extend(errors)
@@ -148,7 +155,11 @@ def _save_debug(
                        float(np.max(capture_errors))),
         })
     if grids:
-        frames = [Image.open(path).convert("RGB") for path in grids]
+        frames = []
+        for path in grids:
+            with Image.open(path) as image:
+                frames.append(image.convert("RGB").quantize(
+                    colors=256, method=Image.Quantize.FASTOCTREE))
         frames[0].save(
             output_dir / "reprojection_4view.gif", save_all=True,
             append_images=frames[1:], duration=900, loop=0,
@@ -184,7 +195,8 @@ def _save_debug(
 
 def render_extrinsic_debug(
         *, session_dir: Path, board_config: Path, intrinsics_path: Path,
-        extrinsics_path: Path, output_dir: Path) -> dict:
+        extrinsics_path: Path, output_dir: Path,
+        save_per_view: bool = True) -> dict:
     """Estimate one board pose per capture with fixed solved cameras and render."""
     intrinsics = json.loads(intrinsics_path.read_text(encoding="utf-8"))
     extrinsics_raw = json.loads(extrinsics_path.read_text(encoding="utf-8"))
@@ -237,13 +249,15 @@ def render_extrinsic_debug(
                 for camera in ordered}
 
     return _save_debug(
-        output_dir, session_dir, board_points, intrinsics, cameras, transforms)
+        output_dir, session_dir, board_points, intrinsics, cameras, transforms,
+        save_per_view)
 
 
 def render_handeye_debug(
         *, session_dir: Path, board_config: Path,
         camera_calibration_dir: Path, c2r_path: Path,
-        ee_board_path: Path, output_dir: Path) -> dict:
+        ee_board_path: Path, output_dir: Path,
+        save_per_view: bool = True) -> dict:
     """Render fixed-camera and fixed-board-mount hand-eye reprojections."""
     intrinsics = json.loads(
         (camera_calibration_dir / "intrinsics.json").read_text(encoding="utf-8"))
@@ -266,4 +280,5 @@ def render_handeye_debug(
                 for camera in ordered}
 
     return _save_debug(
-        output_dir, session_dir, board_points, intrinsics, cameras, transforms)
+        output_dir, session_dir, board_points, intrinsics, cameras, transforms,
+        save_per_view)

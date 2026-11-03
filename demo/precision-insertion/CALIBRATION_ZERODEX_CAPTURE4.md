@@ -189,14 +189,17 @@ their solution directory. These files visualize the final solved parameters;
 they are diagnostic outputs and do not introduce an additional acceptance
 gate into calibration or runtime execution.
 
-- green circle: observed ChArUco corner
-- magenta cross: corner projected with the final calibrated transforms
+- green dot: observed ChArUco corner
+- magenta dot: corner projected with the final calibrated transforms
 - yellow line: pixel reprojection residual
 
 Each numbered pose directory contains the full-resolution camera overlays and
 a four-view `grid.png`. `reprojection_4view.gif` steps through every captured
 pose, while `report.json` records global, per-camera, and per-pose pixel-error
 statistics.
+Pass `--grid-only` to the standalone renderer when only the grids, GIF, and
+report are needed and duplicate full-resolution per-camera overlays should not
+be stored.
 
 Existing solutions can be rendered again without resolving calibration. For
 the current extrinsic result:

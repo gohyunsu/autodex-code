@@ -24,6 +24,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--extrinsics", type=Path)
     parser.add_argument("--c2r", type=Path)
     parser.add_argument("--ee-board", type=Path)
+    parser.add_argument(
+        "--grid-only", action="store_true",
+        help="save grids/GIF/report without duplicate full-resolution views")
     args = parser.parse_args(argv)
     if args.kind == "extrinsic":
         if args.intrinsics is None or args.extrinsics is None:
@@ -33,7 +36,8 @@ def main(argv: list[str] | None = None) -> int:
             board_config=args.board_config,
             intrinsics_path=args.intrinsics,
             extrinsics_path=args.extrinsics,
-            output_dir=args.output_dir)
+            output_dir=args.output_dir,
+            save_per_view=not args.grid_only)
     else:
         if (args.camera_calibration_dir is None or args.c2r is None or
                 args.ee_board is None):
@@ -46,7 +50,8 @@ def main(argv: list[str] | None = None) -> int:
             camera_calibration_dir=args.camera_calibration_dir,
             c2r_path=args.c2r,
             ee_board_path=args.ee_board,
-            output_dir=args.output_dir)
+            output_dir=args.output_dir,
+            save_per_view=not args.grid_only)
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0
 
