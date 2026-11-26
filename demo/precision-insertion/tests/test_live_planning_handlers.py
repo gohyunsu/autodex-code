@@ -87,16 +87,21 @@ def test_capture_then_continue_uses_same_key_and_measured_state(
     monkeypatch.setattr(live_planning_handlers, "prepare_next_live_key",
                         prepare_next_live_key)
     ids = iter(["key_001", "key_002"])
+    prepared_callbacks = []
     bound = live_planning_handlers.LiveKeyPlanningHandlers(
         live=live, planner=object(),
         state_for_observation=lambda _: state,
         limits=object(), key_prompt="white key excluding white socket",
         key_parameters=PARAMETERS,
-        capture_id_factory=lambda: next(ids))
+        capture_id_factory=lambda: next(ids),
+        on_prepared=prepared_callbacks.append)
     result = run_session_actions(runner, handlers=bound.handlers())
     assert result.status == "needs_handler"
     assert result.decision.action == "execution_gate_required"
     assert len(capture_calls) == 1
+    assert len(prepared_callbacks) == 1
+    assert prepared_callbacks[0].observation is observation
+    assert prepared_callbacks[0].preflight.status == "candidate_budget_exhausted"
     assert capture_calls[0]["capture_id"] == "key_001"
     assert capture_calls[0]["runner"] is runner
     assert capture_calls[0]["capture_root"] == live.cameras.launch.capture_root

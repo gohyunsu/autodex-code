@@ -84,6 +84,7 @@ class LiveTaskHandlers:
     xy_estimator: str = "vlm"
     same_trial_alignment_source: str = "endpoint"
     sam_segmentor: object | None = None
+    mvgotrack: object | None = None
     same_trial_xy_tolerance_m: float | None = None
     same_trial_max_step_m: float = .003
     same_trial_axial_fallback_depth_m: float = .010
@@ -155,6 +156,16 @@ class LiveTaskHandlers:
             runner=runner, decision=decision, callback=callback, phase=phase)
         return output, capture, begin_capture_write(
             capture, output, phase=phase, writer=write_raw_camera_capture)
+
+    def _next_alignment_observation(
+        self, *, runner, decision, capture: RawCameraCapture | None,
+    ):
+        """Use tracker frames directly; image estimators take a new snapshot."""
+        if self.xy_estimator == "mvgotrack":
+            return self._preinsert_bundle, capture, None
+        return self._capture_deferred(
+            runner=runner, decision=decision,
+            callback=self.capture_preinsert, phase="preinsert")
 
     def transfer_and_observe(self, runner, decision: SessionDecision) -> None:
         attempt = self._require(runner, decision,
@@ -312,6 +323,7 @@ class LiveTaskHandlers:
                     xy_estimator=self.xy_estimator,
                     alignment_source=self.same_trial_alignment_source,
                     sam_segmentor=self.sam_segmentor,
+                    mvgotrack=self.mvgotrack,
                     capture=capture,
                     pending_capture_write=pending_capture_write)
             if pending_capture_write is not None:
@@ -516,9 +528,9 @@ class LiveTaskHandlers:
                 anchor_xy_motion = None
                 anchor_axis_motion = None
                 current = runner.current_decision()
-                raw, capture, pending_capture_write = self._capture_deferred(
-                    runner=runner, decision=current,
-                    callback=self.capture_preinsert, phase="preinsert")
+                raw, capture, pending_capture_write = (
+                    self._next_alignment_observation(
+                        runner=runner, decision=current, capture=capture))
                 self._preinsert_bundle = raw
                 continue
             if axis_choice["status"] == "tilt":
@@ -565,9 +577,9 @@ class LiveTaskHandlers:
                 axis_raise += motion["measured_axis_increment_socket_m"]
                 predicted_residual = (current_residual + measured_step).tolist()
                 current = runner.current_decision()
-                raw, capture, pending_capture_write = self._capture_deferred(
-                    runner=runner, decision=current,
-                    callback=self.capture_preinsert, phase="preinsert")
+                raw, capture, pending_capture_write = (
+                    self._next_alignment_observation(
+                        runner=runner, decision=current, capture=capture))
                 self._preinsert_bundle = raw
                 continue
             returned_lateral_this_iteration = False
@@ -668,9 +680,10 @@ class LiveTaskHandlers:
                     total = [a + b for a, b in zip(
                         total, motion["measured_increment_socket_m"])]
                     current = runner.current_decision()
-                    raw, capture, pending_capture_write = self._capture_deferred(
-                        runner=runner, decision=current,
-                        callback=self.capture_preinsert, phase="preinsert")
+                    raw, capture, pending_capture_write = (
+                        self._next_alignment_observation(
+                            runner=runner, decision=current,
+                            capture=capture))
                     self._preinsert_bundle = raw
                     continue
             if lateral_viewpoints is not None:
@@ -708,9 +721,10 @@ class LiveTaskHandlers:
                                  observation_lateral_offset).tolist()
                         axis_raise += motion["measured_axis_increment_socket_m"]
                         current = runner.current_decision()
-                        raw, capture, pending_capture_write = self._capture_deferred(
-                            runner=runner, decision=current,
-                            callback=self.capture_preinsert, phase="preinsert")
+                        raw, capture, pending_capture_write = (
+                            self._next_alignment_observation(
+                                runner=runner, decision=current,
+                                capture=capture))
                         self._preinsert_bundle = raw
                         break
                 if observation_lateral_offset is not None:
@@ -757,9 +771,10 @@ class LiveTaskHandlers:
                             motion["measured_increment_socket_m"])]
                     axis_raise += motion["measured_axis_increment_socket_m"]
                     current = runner.current_decision()
-                    raw, capture, pending_capture_write = self._capture_deferred(
-                        runner=runner, decision=current,
-                        callback=self.capture_preinsert, phase="preinsert")
+                    raw, capture, pending_capture_write = (
+                        self._next_alignment_observation(
+                            runner=runner, decision=current,
+                            capture=capture))
                     self._preinsert_bundle = raw
                     continue
             if choice["status"] == "aligned":
@@ -904,9 +919,9 @@ class LiveTaskHandlers:
                                 "measured_axis_increment_socket_m"]),
                     }
             current = runner.current_decision()
-            raw, capture, pending_capture_write = self._capture_deferred(
-                runner=runner, decision=current,
-                callback=self.capture_preinsert, phase="preinsert")
+            raw, capture, pending_capture_write = (
+                self._next_alignment_observation(
+                    runner=runner, decision=current, capture=capture))
             self._preinsert_bundle = raw
         if axis_raise != 0.:
             with timed("trial.same_trial_observation_return",

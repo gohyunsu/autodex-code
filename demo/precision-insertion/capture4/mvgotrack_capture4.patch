@@ -1,0 +1,7 @@
+--- a/deploy/live_tracker.py
++++ b/deploy/live_tracker.py
+@@ -1814,2 +1814,3 @@
+-        if torch.cuda.get_device_name(0) != "NVIDIA GeForce RTX 3090":
++        if (torch.cuda.get_device_name(0) != "NVIDIA GeForce RTX 3090" and
++                not os.environ.get("MVGOTRACK_ANY_GPU")):
+             raise RuntimeError("Physical GPU mapping differs; expected RTX 3090")

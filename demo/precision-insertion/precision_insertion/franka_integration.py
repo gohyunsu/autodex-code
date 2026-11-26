@@ -48,6 +48,9 @@ from .raw_camera_capture import RawCameraCapture
 from .sam_roi_backend import DeferredSamRoiBackend, SamRoiBackend
 from .tip_frame_window import fetch_tip_frame_window
 from .visual_views import assessment_cameras
+from .mvgotrack_runtime import (
+    MVGoTrackRuntime, MVGoTrackRuntimeConfig,
+)
 
 
 _SCHEMA = "precision_insertion_franka_integration_v1"
@@ -304,6 +307,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     vlm_load_future = None
     sam_load_pool = None
     sam_segmentor = None
+    mvgotrack_runtime = None
     sam_log = (options.run_output_dir.parent /
                f".{options.run_output_dir.name}.sam_roi_worker.{uuid4().hex}.stderr.log"
                if sam_paths is not None else None)
@@ -398,6 +402,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             context.run, preload_local_backend)
 
     def components(live):
+        nonlocal mvgotrack_runtime
         with timed("startup.robot_pc_stage_factory", phase="startup"):
             parameters = build_stages(core, live, options)
         if (not isinstance(parameters, Mapping) or
@@ -450,13 +455,27 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             family=family,
             retain_original=retain_original_value == "1")
         if family == "cylinder" and "retry" in stages:
-            stages["retry"]["xy_estimator"] = options.xy_estimator
+            # MV-GoTrack is a live held-object estimator.  After release it is
+            # no longer the failed-trial image estimator; keep that existing
+            # path on its VLM implementation.
+            stages["retry"]["xy_estimator"] = (
+                "vlm" if options.xy_estimator == "mvgotrack" else
+                options.xy_estimator)
             if sam_segmentor is not None:
                 stages["retry"]["sam_segmentor"] = sam_segmentor
         if family == "cylinder" and "task" in stages:
             stages["task"]["xy_estimator"] = options.xy_estimator
             if sam_segmentor is not None:
                 stages["task"]["sam_segmentor"] = sam_segmentor
+        if (family == "cylinder" and options.xy_estimator == "mvgotrack"):
+            if mvgotrack_runtime is not None:
+                raise RuntimeError("MV-GoTrack runtime was already assembled")
+            mvgotrack_runtime = MVGoTrackRuntime(
+                MVGoTrackRuntimeConfig.from_environment(),
+                runner=live.opened.runner)
+            stages["key_planning"]["on_prepared"] = (
+                mvgotrack_runtime.initialize)
+            stages["task"]["mvgotrack"] = mvgotrack_runtime
         if (family == "cylinder" and options.xy_estimator == "tracked_tip"
                 and "task" in stages):
             if _TIP_CAMERA_ID not in live.cameras.launch.camera_ids:
@@ -632,22 +651,29 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                     backend.close()
         finally:
             try:
-                if sam_segmentor is not None:
-                    with timed("cleanup.sam_roi_close", phase="cleanup"):
-                        sam_segmentor.close()
+                if mvgotrack_runtime is not None:
+                    with timed("cleanup.mvgotrack_close", phase="cleanup"):
+                        mvgotrack_runtime.close()
             finally:
                 try:
-                    if sam_load_pool is not None:
-                        with timed("cleanup.sam_load_join", phase="cleanup",
-                                   kind="wait"):
-                            sam_load_pool.shutdown(wait=True)
-                    if (sam_log is not None and sam_log.is_file() and
-                            options.run_output_dir.is_dir()):
-                        sam_log.replace(
-                            options.run_output_dir / "sam_roi_worker.stderr.log")
+                    if sam_segmentor is not None:
+                        with timed("cleanup.sam_roi_close", phase="cleanup"):
+                            sam_segmentor.close()
                 finally:
-                    with timed("cleanup.franka_core_close", phase="cleanup"):
-                        core.close()
+                    try:
+                        if sam_load_pool is not None:
+                            with timed("cleanup.sam_load_join", phase="cleanup",
+                                       kind="wait"):
+                                sam_load_pool.shutdown(wait=True)
+                        if (sam_log is not None and sam_log.is_file() and
+                                options.run_output_dir.is_dir()):
+                            sam_log.replace(
+                                options.run_output_dir /
+                                "sam_roi_worker.stderr.log")
+                    finally:
+                        with timed("cleanup.franka_core_close",
+                                   phase="cleanup"):
+                            core.close()
 
     def begin_pre_socket_warmup():
         nonlocal warmup_pool

@@ -294,19 +294,31 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
                          xy_estimator: str = "vlm",
                          alignment_source: str = "endpoint",
                          sam_segmentor=None,
+                         mvgotrack=None,
                          capture: RawCameraCapture | None = None,
                          pending_capture_write=None) -> dict:
     """Call the existing calibrated multiview tip/axis estimator on raw PNGs."""
     bundle = Path(raw_bundle).expanduser().resolve()
-    rows, images = _alignment_frame_inputs(bundle, capture)
-    cameras = assessment_cameras(rows)
-    frames = []
-    for camera in cameras:
-        image = images[camera]
-        frames.append(LabeledFrame(
-            camera, "preinsert_hold", rows[camera]["timestamp_s"],
-            Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))))
     calibration = runner.calibration.record["camera_calibration"]
+    if xy_estimator == "mvgotrack":
+        if mvgotrack is None:
+            raise ValueError("MV-GoTrack estimator needs its live runtime")
+        alignment = mvgotrack.measure(runner=runner)
+        geometry_sha = _sha(AssetPaths(
+            Path(runner.shared_root), runner.mode).task_geometry)
+        observations = []
+        mask_records = []
+        tracker_pose = alignment.get("tracker_pose", {})
+        cameras = sorted(tracker_pose.get("frame_ids", {}))
+    else:
+        rows, images = _alignment_frame_inputs(bundle, capture)
+        cameras = assessment_cameras(rows)
+        frames = []
+        for camera in cameras:
+            image = images[camera]
+            frames.append(LabeledFrame(
+                camera, "preinsert_hold", rows[camera]["timestamp_s"],
+                Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))))
     if xy_estimator == "sam_half_ellipse":
         if sam_segmentor is None:
             raise ValueError("SAM half-ellipse needs its prepared ROI worker")
@@ -352,8 +364,9 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
             nominal_key_xy_shift_socket_m=nominal_key_xy_shift_socket_m,
             nominal_key_axis_raise_socket_m=nominal_key_axis_raise_socket_m)
         mask_records = []
-    else:
-        raise ValueError("same-trial XY supports vlm or sam_half_ellipse")
+    elif xy_estimator != "mvgotrack":
+        raise ValueError(
+            "same-trial XY supports vlm, sam_half_ellipse or mvgotrack")
     if pending_capture_write is not None:
         if Path(pending_capture_write.output).resolve() != bundle:
             raise ValueError("pending capture writer belongs to another bundle")
@@ -375,7 +388,9 @@ def measure_preinsert_xy(*, runner, raw_bundle: Path, backend,
         "nominal_key_axis_raise_socket_m": float(
             nominal_key_axis_raise_socket_m),
         "camera_input_policy": {
-            "method": "all_available_checkpoint_views",
+            "method": ("continuous_tracker_frames" if
+                       xy_estimator == "mvgotrack" else
+                       "all_available_checkpoint_views"),
             "camera_ids": list(cameras),
             "scope": "no_socket_residual_camera_selection",
         },

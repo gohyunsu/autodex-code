@@ -55,6 +55,7 @@ class LiveKeyPlanningHandlers:
     key_prompt: str
     key_parameters: Mapping[str, object]
     before_preflight: Callable[[], None] | None = None
+    on_prepared: Callable[[PreparedLiveKeyTrial], None] | None = None
     capture_id_factory: Callable[[], str] = _new_capture_id
     latest: PreparedLiveKeyTrial | None = field(default=None, init=False)
 
@@ -63,6 +64,8 @@ class LiveKeyPlanningHandlers:
                 not callable(self.capture_id_factory) or
                 (self.before_preflight is not None and
                  not callable(self.before_preflight)) or
+                (self.on_prepared is not None and
+                 not callable(self.on_prepared)) or
                 not isinstance(self.key_prompt, str) or
                 not self.key_prompt.strip() or
                 not isinstance(self.key_parameters, Mapping)):
@@ -126,6 +129,11 @@ class LiveKeyPlanningHandlers:
             before_preflight=self.before_preflight,
             **dict(self.key_parameters))
         self.latest = prepared
+        if self.on_prepared is not None:
+            # FoundPose is the one absolute initializer.  The callback runs
+            # after v8 preflight has accepted the same observation, but still
+            # before pickup can be selected by the action loop.
+            self.on_prepared(prepared)
 
     def continue_same_capture(self, runner, decision: SessionDecision) -> None:
         """Exhaust a pilot prefix without incorrectly reacquiring the key."""

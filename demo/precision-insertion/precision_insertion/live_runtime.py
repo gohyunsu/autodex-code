@@ -137,7 +137,8 @@ def inspect_live_inputs(
     same_trial_axial_fallback_depth_m: float = .010,
 ) -> dict:
     """Check current v8 inputs without cameras, CUDA or robot construction."""
-    if xy_estimator not in {"vlm", "tracked_tip", "sam_half_ellipse"}:
+    if xy_estimator not in {
+            "vlm", "tracked_tip", "sam_half_ellipse", "mvgotrack"}:
         raise ValueError("unknown failed-trial XY estimator")
     if same_trial_alignment_source not in {"endpoint", "partial_shape"}:
         raise ValueError("unknown same-trial alignment source")
@@ -215,6 +216,7 @@ def inspect_live_inputs(
         "same_trial_axial_fallback_depth_m": (
             same_trial_axial_fallback_depth_m),
         "sam_roi_inputs": None,
+        "mvgotrack": None,
         "scope": "static_files_only_no_camera_cuda_or_robot_connection",
         "robot_ready": False,
     }
@@ -265,6 +267,21 @@ def inspect_live_inputs(
             "checkpoint": str(checkpoint),
             "checkpoint_size_bytes": checkpoint.stat().st_size,
             "scope": "file_presence_only_no_cuda_model_load",
+        }
+    elif xy_estimator == "mvgotrack":
+        from .mvgotrack_runtime import MVGoTrackRuntimeConfig
+
+        tracker = MVGoTrackRuntimeConfig.from_environment()
+        tracker.validate()
+        result["mvgotrack"] = {
+            "endpoint": tracker.endpoint,
+            "ssh_host": tracker.ssh_host,
+            "ssh_port": tracker.ssh_port,
+            "remote_manager": str(tracker.remote_manager),
+            "remote_session_root": str(tracker.remote_session_root),
+            "timeout_s": tracker.timeout_s,
+            "stop_on_close": tracker.stop_on_close,
+            "scope": "configuration_only_no_ssh_or_tracker_start",
         }
     if robot_config_path is not None:
         from .franka_integration import (
@@ -365,7 +382,8 @@ def run_integrated_live_session(
         raise ValueError("manual labeling needs a named annotator")
     if options.label_mode == "evidence_fused":
         raise ValueError("current cylinder live loop needs vlm_only or manual labels")
-    if options.xy_estimator not in {"vlm", "tracked_tip", "sam_half_ellipse"}:
+    if options.xy_estimator not in {
+            "vlm", "tracked_tip", "sam_half_ellipse", "mvgotrack"}:
         raise ValueError("unknown next-trial XY estimator")
     if options.same_trial_alignment_source not in {"endpoint", "partial_shape"}:
         raise ValueError("unknown same-trial alignment source")

@@ -99,11 +99,13 @@ def main(argv: list[str] | None = None) -> int:
         "vlm_only", "manual"), default="vlm_only",
         help="task labels: VLM only or interactive human with independent VLM evidence")
     parser.add_argument("--xy-estimator", choices=("vlm", "tracked_tip",
-                                                  "sam_half_ellipse"),
+                                                  "sam_half_ellipse",
+                                                  "mvgotrack"),
                         default="vlm", help="failed-trial XY point estimator; "
                         "tracked_tip uses saved preinsert images and initial key masks; "
                         "sam_half_ellipse runs Qwen box then warmed SAM3 on "
-                        "the same saved image ROI")
+                        "the same saved image ROI; mvgotrack continuously "
+                        "tracks the FoundPose-initialized cylindrical key")
     parser.add_argument(
         "--same-trial-xy-tolerance-mm", type=float,
         help="opt in to repeated pre-insertion XY observation and planned "

@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Manage an isolated capture4 MV-GoTrack process for precision insertion."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import time
+
+
+ROOT = Path(os.environ.get(
+    "PRECISION_MVGOTRACK_ROOT",
+    "/home/capture4/precision_insertion_mvgotrack"))
+PYTHON = Path(os.environ.get(
+    "PRECISION_MVGOTRACK_PYTHON",
+    "/home/capture4/anaconda3/envs/gotrack_cu128/bin/python"))
+SOURCE = ROOT / "MV-GoTrack"
+STATE = ROOT / "state"
+CAMERAS = ("26053248", "25322639", "25305462", "25322642")
+
+
+def _pid(name: str) -> int | None:
+    path = STATE / f"{name}.pid"
+    if not path.is_file():
+        return None
+    value = int(path.read_text().strip())
+    try:
+        os.kill(value, 0)
+    except ProcessLookupError:
+        path.unlink(missing_ok=True)
+        return None
+    return value
+
+
+def _spawn(name: str, command: list[str]) -> int:
+    STATE.mkdir(parents=True, exist_ok=True)
+    log = (STATE / f"{name}.log").open("ab", buffering=0)
+    environment = dict(os.environ)
+    environment["MVGOTRACK_ANY_GPU"] = "1"
+    process = subprocess.Popen(
+        command, stdin=subprocess.DEVNULL, stdout=log,
+        stderr=subprocess.STDOUT, start_new_session=True, env=environment)
+    (STATE / f"{name}.pid").write_text(f"{process.pid}\n")
+    return process.pid
+
+
+def _stop(name: str) -> None:
+    pid = _pid(name)
+    if pid is None:
+        return
+    os.killpg(pid, signal.SIGTERM)
+    for _ in range(50):
+        if _pid(name) is None:
+            return
+        time.sleep(.1)
+    os.killpg(pid, signal.SIGKILL)
+    (STATE / f"{name}.pid").unlink(missing_ok=True)
+
+
+def _ensure_stream() -> None:
+    if _pid("stream") is None:
+        _spawn("stream", [
+            str(PYTHON), str(ROOT / "mvgotrack_stream.py"),
+            "--cameras", *CAMERAS, "--port", "5484"])
+
+
+def _tracker_command(args) -> list[str]:
+    endpoint = args.endpoint.replace("147.46.219.136", "0.0.0.0")
+    return [
+        str(PYTHON), str(SOURCE / "deploy/live_tracker.py"),
+        "--source", "stream", "--endpoint", endpoint,
+        "--mesh", str(args.mesh), "--object", args.object,
+        "--init-pose", str(args.init_pose),
+        "--cameras", *CAMERAS,
+        "--cam-param", str(ROOT / "cam_param"),
+        "--pc-json", str(ROOT / "pc.json"),
+        "--control-file", str(STATE / "tracker.control.json"),
+        "--output", str(Path(args.session) / "tracker_output"),
+        "--engine", "auto", "--min-score", "0",
+        "--max-workspace-m", "0", "--max-jump-m", "0",
+    ]
+
+
+def start_or_reinit(args) -> None:
+    _ensure_stream()
+    if _pid("tracker") is not None:
+        subprocess.run([
+            str(PYTHON), str(SOURCE / "deploy/live_tracker.py"),
+            "--reinit", str(args.init_pose),
+            "--control-file", str(STATE / "tracker.control.json"),
+            "--object", args.object, "--mesh", str(args.mesh),
+        ], check=True)
+        return
+    _spawn("tracker", _tracker_command(args))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="action", required=True)
+    start = sub.add_parser("start-or-reinit")
+    start.add_argument("--session", type=Path, required=True)
+    start.add_argument("--object", required=True)
+    start.add_argument("--mesh", type=Path, required=True)
+    start.add_argument("--init-pose", type=Path, required=True)
+    start.add_argument("--endpoint", required=True)
+    sub.add_parser("stop")
+    sub.add_parser("status")
+    args = parser.parse_args()
+    if args.action == "start-or-reinit":
+        start_or_reinit(args)
+    elif args.action == "stop":
+        _stop("tracker")
+        _stop("stream")
+    else:
+        print(json.dumps({"tracker_pid": _pid("tracker"),
+                          "stream_pid": _pid("stream")}, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
