@@ -5,6 +5,7 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextvars import copy_context
 from dataclasses import dataclass, field
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,48 @@ from .mvgotrack import MVGoTrackSubscriber, alignment_from_tracker
 from .timing_profile import timed
 
 
+DEFAULT_CAPTURE4_CAMERAS = (
+    "26053248", "25322639", "25305462", "25322642")
+
+
+def _camera_subset_sha256(path: Path, camera_ids: tuple[str, ...]) -> str:
+    values = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(values, dict):
+        raise ValueError(f"camera calibration is not a mapping: {path}")
+    missing = [camera for camera in camera_ids if camera not in values]
+    if missing:
+        raise ValueError(f"camera calibration lacks {missing}: {path}")
+    payload = json.dumps(
+        {camera: values[camera] for camera in camera_ids},
+        sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def calibration_identity(
+    calibration_dir: Path,
+    camera_ids: tuple[str, ...] = DEFAULT_CAPTURE4_CAMERAS,
+) -> str:
+    """Return the world-frame identity shared with capture4's tracker."""
+    root = Path(calibration_dir).expanduser().resolve()
+    if len(camera_ids) < 2 or len(set(camera_ids)) != len(camera_ids):
+        raise ValueError("MV-GoTrack calibration needs unique camera IDs")
+    intrinsic = _camera_subset_sha256(root / "intrinsics.json", camera_ids)
+    extrinsic = _camera_subset_sha256(root / "extrinsics.json", camera_ids)
+    cameras = ",".join(camera_ids)
+    return f"precision_calib_v1:{cameras}:{intrinsic}:{extrinsic}"
+
+
+def require_matching_camera_world(
+    expected: str | None,
+    received: str | None,
+) -> None:
+    """Reject a tracker pose expressed in another calibrated world frame."""
+    if expected is not None and received != expected:
+        raise RuntimeError(
+            "MV-GoTrack camera world differs from the active FoundPose "
+            f"calibration: expected {expected}, received {received}")
+
+
 @dataclass(frozen=True)
 class MVGoTrackRuntimeConfig:
     endpoint: str
@@ -29,6 +72,8 @@ class MVGoTrackRuntimeConfig:
     remote_session_root: Path
     timeout_s: float = 180.
     stop_on_close: bool = True
+    calibration_dir: Path | None = None
+    camera_ids: tuple[str, ...] = DEFAULT_CAPTURE4_CAMERAS
 
     @classmethod
     def from_environment(cls) -> "MVGoTrackRuntimeConfig":
@@ -50,6 +95,13 @@ class MVGoTrackRuntimeConfig:
                 "PRECISION_MVGOTRACK_TIMEOUT_S", "180")),
             stop_on_close=(os.environ.get(
                 "PRECISION_MVGOTRACK_STOP_ON_CLOSE", "1") == "1"),
+            calibration_dir=(
+                None if not os.environ.get("PRECISION_CALIB_DIR") else
+                Path(os.environ["PRECISION_CALIB_DIR"]).expanduser().resolve()),
+            camera_ids=tuple(filter(None, (
+                value.strip() for value in os.environ.get(
+                    "PRECISION_CAPTURE4_CAMERA_IDS",
+                    ",".join(DEFAULT_CAPTURE4_CAMERAS)).split(",")))),
         )
 
     def validate(self) -> None:
@@ -59,6 +111,13 @@ class MVGoTrackRuntimeConfig:
                 not self.remote_session_root.is_absolute() or
                 not np.isfinite(self.timeout_s) or self.timeout_s <= 0):
             raise ValueError("invalid MV-GoTrack capture4 runtime configuration")
+        if self.calibration_dir is not None:
+            calibration_identity(self.calibration_dir, self.camera_ids)
+
+    @property
+    def expected_calibration_session(self) -> str | None:
+        return (None if self.calibration_dir is None else
+                calibration_identity(self.calibration_dir, self.camera_ids))
 
 
 @dataclass
@@ -122,6 +181,8 @@ class MVGoTrackRuntime:
             "pose_world": observation.pose_world.tolist(),
             "source_capture_dir": str(observation.source_capture_dir),
             "tracker_endpoint": self.config.endpoint,
+            "expected_calibration_session": (
+                self.config.expected_calibration_session),
         }
         (local / "initialization.json").write_text(
             json.dumps(metadata, indent=2, sort_keys=True) + "\n",
@@ -148,6 +209,9 @@ class MVGoTrackRuntime:
         with timed("mvgotrack.first_pose", phase="tracker", kind="wait"):
             first = self._subscriber.wait_for_valid(
                 after_seq=before, timeout_s=self.config.timeout_s)
+        require_matching_camera_world(
+            self.config.expected_calibration_session,
+            getattr(first, "calibration_session", None))
         self._last_seq = first.seq
         self._remote_session = remote
         self._initialized_capture_id = observation.capture_id

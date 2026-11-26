@@ -98,6 +98,21 @@ ssh -p 77 capture4@147.46.219.136 \
   'sha256sum /home/capture4/precision_insertion_mvgotrack/cam_param/{intrinsics,extrinsics}.json'
 ```
 
+For a calibration-only refresh while the experiment-owned tracker is stopped:
+
+```bash
+source demo/precision-insertion/config/zerodex_capture4.env.sh
+bash demo/precision-insertion/sync_mvgotrack_calibration_capture4.sh
+```
+
+The capture4 manager publishes a canonical calibration identity computed from
+the four selected camera entries. The main runtime computes the same identity
+from `PRECISION_CALIB_DIR` and compares it with the first tracked pose before
+pickup. JSON formatting and unused camera entries are ignored; an actual
+intrinsic/extrinsic mismatch in one of the four tracker views is rejected as a
+coordinate-frame configuration error. This is not a tracking-confidence or
+task-outcome threshold.
+
 Status and logs:
 
 ```bash

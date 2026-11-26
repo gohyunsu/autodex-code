@@ -120,7 +120,8 @@ def test_tracker_message_uses_native_valid_without_score_gate():
     assert row.valid and row.score == -100.
 
 
-def test_capture4_manager_disables_optional_tracker_loss_gates(tmp_path):
+def test_capture4_manager_disables_optional_tracker_loss_gates(
+        tmp_path, monkeypatch):
     """The experiment-owned launcher must not reintroduce pose-quality gates."""
     manager_path = Path(__file__).resolve().parents[1] / (
         "capture4/manage_mvgotrack.py")
@@ -129,6 +130,13 @@ def test_capture4_manager_disables_optional_tracker_loss_gates(tmp_path):
     assert spec is not None and spec.loader is not None
     manager = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(manager)
+    remote = tmp_path / "remote"
+    calibration = remote / "cam_param"
+    calibration.mkdir(parents=True)
+    values = {camera: [camera] for camera in manager.CAMERAS}
+    (calibration / "intrinsics.json").write_text(json.dumps(values) + "\n")
+    (calibration / "extrinsics.json").write_text(json.dumps(values) + "\n")
+    monkeypatch.setattr(manager, "ROOT", remote)
     args = SimpleNamespace(
         endpoint="tcp://147.46.219.136:5591",
         mesh=tmp_path / "key.obj", object="key",

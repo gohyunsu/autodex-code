@@ -42,6 +42,8 @@ if [[ "$remote_checkpoint_sha" != "$checkpoint_sha" ]]; then
 fi
 scp -P "$PORT" "$CAM_PARAM/intrinsics.json" "$CAM_PARAM/extrinsics.json" \
   "$HOST:$REMOTE/cam_param/"
+local_intrinsics_sha=$(sha256sum "$CAM_PARAM/intrinsics.json" | awk '{print $1}')
+local_extrinsics_sha=$(sha256sum "$CAM_PARAM/extrinsics.json" | awk '{print $1}')
 scp -P "$PORT" \
   "$HERE/capture4/mvgotrack_stream.py" \
   "$HERE/capture4/manage_mvgotrack.py" \
@@ -54,3 +56,8 @@ ssh -p "$PORT" "$HOST" \
   "chmod 755 '$REMOTE/manage_mvgotrack.py' '$REMOTE/mvgotrack_stream.py' && \
    printf '%s\n' '{\"capture4\":{\"ip\":\"127.0.0.1\",\"cam_list\":[\"26053248\",\"25322639\",\"25305462\",\"25322642\"]}}' > '$REMOTE/pc.json' && \
    MVGOTRACK_ANY_GPU=1 '$REMOTE/manage_mvgotrack.py' status"
+remote_hashes=$(ssh -p "$PORT" "$HOST" \
+  "sha256sum '$REMOTE/cam_param/intrinsics.json' '$REMOTE/cam_param/extrinsics.json'")
+grep -q "$local_intrinsics_sha" <<<"$remote_hashes"
+grep -q "$local_extrinsics_sha" <<<"$remote_hashes"
+printf '%s\n' "$remote_hashes"
