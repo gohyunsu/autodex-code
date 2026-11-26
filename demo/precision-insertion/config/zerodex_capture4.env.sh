@@ -17,6 +17,12 @@ export PRECISION_ALLOWED_NAS_ROOT=/mnt/paradex2/hyunsu
 export PRECISION_LEGACY_ASSET_ROOTS=${PRECISION_LEGACY_ASSET_ROOTS:-$HOME/shared_data/AutoDex:/home/robot/shared_data/AutoDex:$HOME/NAS-ParaDex2/AutoDex}
 export PRECISION_NAS_PROJECT_ROOT=${PRECISION_NAS_PROJECT_ROOT:-/mnt/paradex2/hyunsu/precision_insertion}
 source "$precision_profile_dir/zerodex_capture4_calibration.env.sh"
+# The support plane was measured once with the temporary ChArUco board.  Live
+# board-free sessions consume the saved plane and do not require the board to
+# remain in the workspace.  Keep this in the machine profile so both the
+# profile wrapper and a directly sourced run_robot_pc.sh resolve the same
+# measured surface.
+export PRECISION_TABLE_PLANE_CONFIG=${PRECISION_TABLE_PLANE_CONFIG:-$PRECISION_LOCAL_PROJECT_ROOT/calibration/table_plane/current/table_plane.json}
 export PRECISION_SHARED_ROOT=${PRECISION_SHARED_ROOT:-$PRECISION_NAS_PROJECT_ROOT/runtime/active_shared_data}
 # The AutoDex directory name inside this project is the v8 asset schema.
 # This profile never reads or writes the old ~/shared_data/AutoDex tree.

@@ -100,18 +100,15 @@ Use the normal ZeroDex environment plus the MV profile:
 
 ```bash
 cd /home/hyunsu/autodex-code
-source demo/precision-insertion/config/zerodex_capture4.env.sh
-source demo/precision-insertion/config/experiments/mvgotrack_axis_alignment_capture4_remote_qwen.env.sh
-
-bash demo/precision-insertion/run_robot_pc.sh --check
+PRECISION_EXPERIMENT_PROFILE=mvgotrack_axis_alignment_capture4_remote_qwen.env.sh \
+  bash demo/precision-insertion/run_zerodex_capture4.sh --check
 ```
 
 With the commissioned robot services running and explicit motion permission:
 
 ```bash
-source demo/precision-insertion/config/zerodex_capture4.env.sh
-source demo/precision-insertion/config/experiments/mvgotrack_axis_alignment_capture4_remote_qwen.env.sh
-bash demo/precision-insertion/run_robot_pc.sh --run
+PRECISION_EXPERIMENT_PROFILE=mvgotrack_axis_alignment_capture4_remote_qwen.env.sh \
+  bash demo/precision-insertion/run_zerodex_capture4.sh --run
 ```
 
 The profile enables XY and axis correction and keeps the ordinary 10 mm
