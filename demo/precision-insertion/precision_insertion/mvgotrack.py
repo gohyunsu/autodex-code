@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
+from queue import SimpleQueue
 import threading
 import time
 from typing import Mapping
@@ -33,6 +34,7 @@ from .world import validated_frozen_socket_pose
 
 
 TRACKED_POSE_SCHEMA = "forgehand.tracked_pose.v1"
+_JOURNAL_STOP = object()
 
 
 @dataclass(frozen=True)
@@ -99,10 +101,76 @@ class MVGoTrackPose:
         }
 
 
+class MVGoTrackPoseJournal:
+    """Asynchronously preserve every received pose without gating control.
+
+    The subscriber must remain responsive even when the run directory is on
+    NAS.  It therefore enqueues immutable JSON records and a separate writer
+    owns file I/O.  A writer failure is exposed through ``error`` for offline
+    evidence auditing; it is deliberately not raised into robot execution.
+    """
+
+    def __init__(self, path: Path):
+        self.path = Path(path).expanduser().resolve()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._queue: SimpleQueue[dict | object] = SimpleQueue()
+        self._error: str | None = None
+        self._closed = False
+        self._thread = threading.Thread(
+            target=self._write, name="precision-mvgotrack-journal",
+            daemon=True)
+        self._thread.start()
+
+    @property
+    def error(self) -> str | None:
+        return self._error
+
+    def append(self, pose: MVGoTrackPose) -> None:
+        if self._closed or self._error is not None:
+            return
+        record = pose.to_record()
+        record["received_unix_ns"] = time.time_ns()
+        record["received_monotonic_ns"] = time.monotonic_ns()
+        self._queue.put(record)
+
+    def _write(self) -> None:
+        try:
+            with self.path.open("x", encoding="utf-8", buffering=1) as stream:
+                while True:
+                    record = self._queue.get()
+                    if record is _JOURNAL_STOP:
+                        return
+                    stream.write(json.dumps(
+                        record, sort_keys=True, separators=(",", ":")) + "\n")
+        except BaseException as exc:  # evidence failure must not stop motion
+            self._error = repr(exc)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._queue.put(_JOURNAL_STOP)
+        self._thread.join(timeout=5.0)
+        if self._thread.is_alive():
+            self._error = "journal writer did not stop within 5 seconds"
+            return
+        if self._error is not None:
+            error_path = self.path.with_name(self.path.stem + "_error.json")
+            try:
+                error_path.write_text(json.dumps({
+                    "schema": "precision_insertion_mvgotrack_journal_error_v1",
+                    "journal": str(self.path),
+                    "error": self._error,
+                }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            except OSError:
+                pass
+
+
 class MVGoTrackSubscriber:
     """Keep the newest tracker message while robot stages continue to run."""
 
-    def __init__(self, endpoint: str, *, expected_object: str):
+    def __init__(self, endpoint: str, *, expected_object: str,
+                 journal_path: Path | None = None):
         if (not isinstance(endpoint, str) or not endpoint.startswith("tcp://") or
                 not isinstance(expected_object, str) or not expected_object):
             raise ValueError("MV-GoTrack needs a TCP endpoint and object name")
@@ -122,6 +190,8 @@ class MVGoTrackSubscriber:
         self._latest: MVGoTrackPose | None = None
         self._error: BaseException | None = None
         self._closed = False
+        self._journal = (None if journal_path is None else
+                         MVGoTrackPoseJournal(journal_path))
         self._thread = threading.Thread(
             target=self._receive, name="precision-mvgotrack-sub", daemon=True)
         self._thread.start()
@@ -138,6 +208,8 @@ class MVGoTrackSubscriber:
                 pose = MVGoTrackPose.from_message(message)
                 if pose.object_name != self.expected_object:
                     continue
+                if self._journal is not None:
+                    self._journal.append(pose)
                 with self._condition:
                     self._latest = pose
                     self._condition.notify_all()
@@ -185,6 +257,8 @@ class MVGoTrackSubscriber:
         self._thread.join(timeout=2.)
         self._socket.close(linger=0)
         self._context.term()
+        if self._journal is not None:
+            self._journal.close()
 
 
 def symmetry_reduced_alignment(

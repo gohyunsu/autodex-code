@@ -172,9 +172,10 @@ def test_runtime_initializes_capture4_from_accepted_foundpose_before_measurement
             return {"schema": "forgehand.tracked_pose.v1", "seq": 22}
 
     class Subscriber:
-        def __init__(self, endpoint, expected_object):
+        def __init__(self, endpoint, expected_object, journal_path=None):
             events.append(("subscriber", endpoint, expected_object))
             self.closed = False
+            self.journal_path = journal_path
 
         @staticmethod
         def newest_seq():
@@ -220,6 +221,8 @@ def test_runtime_initializes_capture4_from_accepted_foundpose_before_measurement
     assert (local / "key.obj").read_bytes() == mesh.read_bytes()
     assert json.loads((local / "first_pose.json").read_text())["seq"] == 22
     assert events[0] == ("subscriber", "tcp://capture4:5591", "key")
+    assert runtime._subscriber.journal_path == (
+        runner.output_dir / "mvgotrack/mvgotrack_pose_stream.jsonl")
     assert ("wait", {"after_seq": 21, "timeout_s": 4.}) in events
     start = [row for row in events
              if row[0] == "ssh" and "start-or-reinit" in row[1]]

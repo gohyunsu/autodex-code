@@ -78,6 +78,9 @@ def test_episode_owned_continuity_audit_completes_u1(tmp_path):
         "first_seq": 1,
         "last_seq": 10,
         "sample_count": 10,
+        "sequence_strictly_increasing": True,
+        "calibration_sessions": ["calib:test"],
+        "objects": ["precision_key_cylinder_r15_h80"],
         "phase_sample_counts": {
             "pickup": 2, "lift": 3, "transfer": 3, "precontact_hold": 2,
         },

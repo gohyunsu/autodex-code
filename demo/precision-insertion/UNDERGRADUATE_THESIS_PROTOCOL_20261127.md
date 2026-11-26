@@ -218,6 +218,26 @@ initializer, first pose, pose stream or continuity audit, so the U1 completion
 count is zero.  This result does not invalidate the legacy demonstration
 videos; it says they cannot support the newer continuous-tracking claim.
 
+Future MV-GoTrack runs now write
+`mvgotrack/mvgotrack_pose_stream.jsonl` asynchronously from the subscriber.
+The I/O thread is evidence-only: it neither delays pose consumption nor turns
+a journal error into a robot failure.  After a run, join that stream to the
+main-PC timing trace without inventing a score or pose-jump threshold:
+
+```bash
+python3 scripts/precision_layer/build_mvgotrack_continuity_audit.py \
+  RUN_ID \
+  RUN_DIR/mvgotrack/mvgotrack_pose_stream.jsonl \
+  RUN_DIR.timing/events.jsonl \
+  --output RUN_DIR/mvgotrack/mvgotrack_continuity_audit.json
+```
+
+The compiler uses `received_unix_ns` from the main PC and the trace's UTC
+motion spans.  A pass means at least one native-valid pose was observed in
+each of pickup, lift, transfer and stopped pre-contact alignment, with one
+calibration identity and strictly increasing tracker sequence numbers.  It
+does not use tracker score, workspace, pose-jump or inter-frame-gap limits.
+
 ## 11. Completion gates
 
 1. **Instrumentation freeze:** one end effector, measured fixture/clearance,

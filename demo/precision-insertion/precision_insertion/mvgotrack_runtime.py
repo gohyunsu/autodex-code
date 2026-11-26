@@ -101,12 +101,13 @@ class MVGoTrackRuntime:
         observation = prepared.observation
         if observation.family != "cylinder":
             raise ValueError("MV-GoTrack mode is defined for the cylindrical key")
-        if self._subscriber is None:
-            self._subscriber = MVGoTrackSubscriber(
-                self.config.endpoint, expected_object=observation.key_object)
         local = (Path(self.runner.output_dir) / "mvgotrack" /
                  f"init_{observation.capture_id}")
         local.mkdir(parents=True, exist_ok=False)
+        if self._subscriber is None:
+            self._subscriber = MVGoTrackSubscriber(
+                self.config.endpoint, expected_object=observation.key_object,
+                journal_path=(local.parent / "mvgotrack_pose_stream.jsonl"))
         pose = local / "T_world_key.txt"
         np.savetxt(pose, observation.pose_world, fmt="%.12g")
         paths = AssetPaths(Path(self.runner.shared_root), self.runner.mode)

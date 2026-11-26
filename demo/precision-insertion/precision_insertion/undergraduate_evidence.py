@@ -130,6 +130,8 @@ def _valid_continuity_audit(payload: Mapping[str, object], run_id: str) -> bool:
     counts = payload.get("phase_sample_counts")
     interval = payload.get("interval_unix_ns")
     references = payload.get("evidence_refs")
+    calibrations = payload.get("calibration_sessions")
+    objects = payload.get("objects")
     required_phases = ("pickup", "lift", "transfer", "precontact_hold")
     return bool(
         payload.get("schema") == CONTINUITY_AUDIT_SCHEMA and
@@ -141,6 +143,11 @@ def _valid_continuity_audit(payload: Mapping[str, object], run_id: str) -> bool:
         payload["last_seq"] > payload["first_seq"] and
         isinstance(payload.get("sample_count"), int) and
         payload["sample_count"] >= len(required_phases) and
+        payload.get("sequence_strictly_increasing") is True and
+        isinstance(calibrations, list) and len(calibrations) == 1 and
+        isinstance(calibrations[0], str) and bool(calibrations[0]) and
+        isinstance(objects, list) and len(objects) == 1 and
+        isinstance(objects[0], str) and bool(objects[0]) and
         isinstance(counts, dict) and
         all(isinstance(counts.get(phase), int) and counts[phase] >= 1
             for phase in required_phases) and
@@ -151,6 +158,168 @@ def _valid_continuity_audit(payload: Mapping[str, object], run_id: str) -> bool:
         isinstance(references, list) and bool(references) and
         all(isinstance(reference, str) and reference for reference in references)
     )
+
+
+_CONTINUITY_PHASE_SPANS = {
+    "pickup": "trial.pickup_squeeze",
+    "lift": "trial.lift_motion",
+    "transfer": "trial.transfer_motion",
+    "precontact_hold": "trial.same_trial_alignment",
+}
+
+
+def _completed_timing_spans(path: Path) -> list[dict]:
+    starts: dict[str, dict] = {}
+    completed: list[dict] = []
+    for raw in Path(path).read_text(encoding="utf-8").splitlines():
+        row = json.loads(raw)
+        span_id = row.get("span_id")
+        if not isinstance(span_id, str):
+            continue
+        if row.get("edge") == "start":
+            starts[span_id] = row
+        elif row.get("edge") == "end" and span_id in starts:
+            start = starts.pop(span_id)
+            completed.append({
+                "span_id": span_id,
+                "name": start.get("name"),
+                "attempt_id": start.get("attempt_id"),
+                "start_utc_ns": start.get("utc_ns"),
+                "end_utc_ns": row.get("utc_ns"),
+                "outcome": row.get("outcome"),
+            })
+    return completed
+
+
+def _tracker_rows(path: Path) -> list[dict]:
+    rows: list[dict] = []
+    for raw in Path(path).read_text(encoding="utf-8").splitlines():
+        row = json.loads(raw)
+        if (isinstance(row, dict) and
+                row.get("schema") == "forgehand.tracked_pose.v1" and
+                isinstance(row.get("seq"), int) and
+                isinstance(row.get("received_unix_ns"), int)):
+            rows.append(row)
+    return rows
+
+
+def compile_continuity_audit(
+    *,
+    run_id: str,
+    pose_stream: Path,
+    timing_events: Path,
+    attempt_id: str | None = None,
+) -> dict:
+    """Join tracker and motion clocks into the offline U1 continuity record.
+
+    The computation uses the main-PC receive timestamp recorded beside each
+    tracker message, so no capture-PC wall-clock assumption is needed.  It
+    applies no score, jump, workspace or inter-frame-gap threshold.
+    """
+
+    spans = _completed_timing_spans(timing_events)
+    if attempt_id is None:
+        candidates = sorted({
+            str(span["attempt_id"]) for span in spans
+            if span.get("attempt_id") is not None and
+            span.get("name") in _CONTINUITY_PHASE_SPANS.values()
+        })
+        complete = []
+        for candidate in candidates:
+            names = {span["name"] for span in spans
+                     if span.get("attempt_id") == candidate and
+                     span.get("outcome") == "success"}
+            if set(_CONTINUITY_PHASE_SPANS.values()) <= names:
+                complete.append(candidate)
+        if len(complete) != 1:
+            return {
+                "schema": CONTINUITY_AUDIT_SCHEMA,
+                "run_id": run_id,
+                "interval": "pickup_start_to_precontact_hold",
+                "verdict": "fail",
+                "reason": "expected_exactly_one_complete_attempt",
+                "candidate_attempt_ids": complete,
+                "evidence_refs": [str(pose_stream), str(timing_events)],
+            }
+        attempt_id = complete[0]
+
+    selected: dict[str, dict] = {}
+    for phase, name in _CONTINUITY_PHASE_SPANS.items():
+        matches = [span for span in spans
+                   if span.get("attempt_id") == attempt_id and
+                   span.get("name") == name and
+                   span.get("outcome") == "success"]
+        if len(matches) != 1:
+            return {
+                "schema": CONTINUITY_AUDIT_SCHEMA,
+                "run_id": run_id,
+                "interval": "pickup_start_to_precontact_hold",
+                "verdict": "fail",
+                "attempt_id": attempt_id,
+                "reason": f"missing_or_ambiguous_phase:{phase}",
+                "evidence_refs": [str(pose_stream), str(timing_events)],
+            }
+        span = matches[0]
+        if (not isinstance(span["start_utc_ns"], int) or
+                not isinstance(span["end_utc_ns"], int) or
+                span["end_utc_ns"] <= span["start_utc_ns"]):
+            raise ValueError(f"invalid UTC interval for {phase}")
+        selected[phase] = span
+
+    rows = _tracker_rows(pose_stream)
+    interval_start = selected["pickup"]["start_utc_ns"]
+    interval_end = selected["precontact_hold"]["end_utc_ns"]
+    interval_rows = [row for row in rows
+                     if interval_start <= row["received_unix_ns"] <= interval_end]
+    valid_rows = [row for row in interval_rows if row.get("valid") is True]
+    phase_counts = {
+        phase: sum(
+            span["start_utc_ns"] <= row["received_unix_ns"] <=
+            span["end_utc_ns"] and row.get("valid") is True
+            for row in interval_rows)
+        for phase, span in selected.items()
+    }
+    sequences = [row["seq"] for row in interval_rows]
+    monotonic_sequences = all(
+        later > earlier for earlier, later in zip(sequences, sequences[1:]))
+    calibrations = sorted({str(row["calib_session"])
+                           for row in valid_rows
+                           if isinstance(row.get("calib_session"), str) and
+                           row["calib_session"]})
+    objects = sorted({str(row["object"]) for row in valid_rows
+                      if isinstance(row.get("object"), str) and row["object"]})
+    passed = bool(
+        valid_rows and all(count >= 1 for count in phase_counts.values()) and
+        monotonic_sequences and len(calibrations) == 1 and len(objects) == 1)
+    result = {
+        "schema": CONTINUITY_AUDIT_SCHEMA,
+        "run_id": run_id,
+        "attempt_id": attempt_id,
+        "interval": "pickup_start_to_precontact_hold",
+        "verdict": "pass" if passed else "fail",
+        "first_seq": valid_rows[0]["seq"] if valid_rows else 0,
+        "last_seq": valid_rows[-1]["seq"] if valid_rows else 0,
+        "sample_count": len(valid_rows),
+        "native_invalid_sample_count": len(interval_rows) - len(valid_rows),
+        "phase_sample_counts": phase_counts,
+        "interval_unix_ns": {
+            "pickup_start": interval_start,
+            "precontact_hold": interval_end,
+        },
+        "sequence_strictly_increasing": monotonic_sequences,
+        "calibration_sessions": calibrations,
+        "objects": objects,
+        "thresholds": {
+            "score": None,
+            "pose_jump": None,
+            "workspace": None,
+            "maximum_interframe_gap": None,
+        },
+        "evidence_refs": [str(pose_stream), str(timing_events)],
+    }
+    if not passed:
+        result["reason"] = "phase_coverage_or_identity_incomplete"
+    return result
 
 
 def audit_run(paths: RunPaths, *, run_root: Path) -> dict:
