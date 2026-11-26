@@ -15,6 +15,10 @@ The corresponding task-agnostic evaluation contract is
 families with compositional constraint programs and independent hold-outs for
 geometry, layout, graph composition and upstream policy.
 
+The stage dependencies, current evidence boundary and exact transition gates
+for both the undergraduate and RSS tracks are maintained in
+`RESEARCH_PROGRAM_EVIDENCE_MAP_20261127.md`.
+
 ## 1. Scope and central question
 
 The project is not three independent attempts to solve one cylinder-insertion
