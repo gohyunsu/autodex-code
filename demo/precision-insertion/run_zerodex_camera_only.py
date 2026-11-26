@@ -34,6 +34,7 @@ from precision_insertion.session_launch import (
 )
 from precision_insertion.silhouette_compat import prepare_precision_silhouette
 from precision_insertion.stage_policy import load_zerodex_stage_policy
+from precision_insertion.table_surface import load_table_surface_z
 from precision_insertion.timing_profile import profile_run, timed
 from precision_insertion.world import build_trial_scene_from_session
 from robot_pc_stages import _key_capture, _tabletop_pose_error_deg
@@ -54,7 +55,8 @@ def run_camera_only(
     output.mkdir(parents=True)
     calibration_dir = os.environ.get("PRECISION_CALIB_DIR")
     c2r_npy = os.environ.get("PRECISION_C2R_NPY")
-    if gap_mm is not None or calibration_dir or c2r_npy:
+    scene_mode = os.environ.get("PRECISION_SCENE_MODE")
+    if gap_mm is not None or calibration_dir or c2r_npy or scene_mode is not None:
         # Mirror run_robot_pc.sh: keep the immutable stage template and save
         # the exact per-run mode and active rig calibration beside the
         # camera-only evidence.
@@ -75,6 +77,23 @@ def run_camera_only(
             launch_record["camera_ids"] = list(camera_ids)
         if board_fit_camera_ids:
             launch_record["board_fit_camera_ids"] = list(board_fit_camera_ids)
+        if scene_mode is not None:
+            launch_record["scene_mode"] = scene_mode
+        if scene_mode == "board_free":
+            table_z = os.environ.get("PRECISION_TABLE_SURFACE_Z_M")
+            if table_z is None:
+                table_config = os.environ.get("PRECISION_TABLE_PLANE_CONFIG")
+                if not table_config:
+                    table_config = str(Path(launch_config).resolve().parent /
+                                       "table_plane.json")
+                table_z = load_table_surface_z(table_config)
+            launch_record["table_surface_z_m"] = float(table_z)
+            launch_record["socket_perception_mode"] = "ignore_sil_loss"
+            for key in ("board_id", "minimum_board_corners",
+                        "board_capture_phase", "board_fit_camera_ids"):
+                launch_record.pop(key, None)
+        elif scene_mode not in (None, "charuco_board"):
+            raise ValueError("unknown precision scene mode")
         launch_config = output / "launch.json"
         with launch_config.open("x", encoding="utf-8") as stream:
             json.dump(launch_record, stream, indent=2, sort_keys=True,
@@ -86,8 +105,12 @@ def run_camera_only(
         with timed("startup.launch_config", phase="startup", kind="io"):
             launch = load_session_launch(
                 launch_config, evidence_dir_override=output / "socket_evidence")
-        if (launch.mode.family != "cylinder" or
-                launch.socket_perception_mode != "board_constrained_body" or
+        valid_socket_mode = (
+            launch.scene_mode == "charuco_board" and
+            launch.socket_perception_mode == "board_constrained_body" or
+            launch.scene_mode == "board_free" and
+            launch.socket_perception_mode != "board_constrained_body")
+        if (launch.mode.family != "cylinder" or not valid_socket_mode or
                 tuple(launch.pc_list) != ("capture4",)):
             raise ValueError("camera-only probe needs the capture4 cylinder profile")
         with timed("startup.catalog_load", phase="startup", kind="io"):
@@ -134,7 +157,7 @@ def run_camera_only(
                 if socket_only:
                     report = {
                         "schema": "precision_insertion_zerodex_socket_only_session_v1",
-                        "scope": "real_camera_board_and_socket_no_key_or_robot",
+                        "scope": "real_camera_socket_no_key_or_robot",
                         "mode": {"family": launch.mode.family,
                                  "gap_mm": launch.mode.gap_mm},
                         "socket_evidence_dir": str(started.evidence_dir),
@@ -234,10 +257,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.reuse_session_evidence is None:
         if args.key_already_placed:
-            print("Key already on board: this fresh socket/key capture is a one-off diagnostic; its baseline includes the key.")
+            print("Key already in view: this fresh socket/key capture is a one-off diagnostic; its baseline includes the key.")
         else:
-            print("Leave the fixed socket on board 9 and REMOVE the key before starting.")
-            input("Press Enter to measure board and socket... ")
+            print("Leave the fixed socket in place and REMOVE the key before starting.")
+            input("Press Enter to measure the socket... ")
     else:
         print("Reusing the saved fixed-socket session; leave the socket unmoved.")
     def wait_for_key() -> None:

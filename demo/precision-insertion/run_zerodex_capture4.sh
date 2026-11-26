@@ -33,6 +33,8 @@ for precision_path_var in \
 done
 unset precision_path_var
 export PRECISION_GAP_MM=${PRECISION_GAP_MM:-5}
+export PRECISION_SCENE_MODE=${PRECISION_SCENE_MODE:-board_free}
+export PRECISION_TABLE_PLANE_CONFIG=${PRECISION_TABLE_PLANE_CONFIG:-$PRECISION_LOCAL_PROJECT_ROOT/calibration/table_plane/current/table_plane.json}
 export PRECISION_XY_ESTIMATOR=${PRECISION_XY_ESTIMATOR:-sam_half_ellipse}
 export PRECISION_PRELOAD_VLM=${PRECISION_PRELOAD_VLM:-1}
 # The first live pickup previously spent 21.97 s initializing the fixed

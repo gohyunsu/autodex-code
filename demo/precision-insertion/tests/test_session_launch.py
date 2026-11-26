@@ -293,12 +293,14 @@ def test_board_free_launch_requires_explicit_height_and_foundpose(tmp_path):
     with pytest.raises(ValueError, match="table_surface_z_m"):
         launch.load_session_launch(config)
     record["table_surface_z_m"] = .04
+    record["minimum_socket_refined_iou"] = 0.0
     config.write_text(json.dumps(record), encoding="utf-8")
     loaded = launch.load_session_launch(config)
     assert loaded.readiness()["scene_mode"] == "board_free"
     assert "board_id" not in loaded.readiness()
     assert loaded.board_id is None
     assert loaded.table_surface_z_m == .04
+    assert loaded.minimum_socket_refined_iou == 0.0
     record["socket_perception_mode"] = "board_constrained_body"
     config.write_text(json.dumps(record), encoding="utf-8")
     with pytest.raises(ValueError, match="board-free scene needs FoundPose"):

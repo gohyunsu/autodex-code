@@ -10,8 +10,9 @@ PY=${PRECISION_PLANNER_PY:-python3}
 CHECK_PY=${PRECISION_CHECK_PY:-python3}
 MODE=${1:---run}
 GAP_MM=${PRECISION_GAP_MM:-20}
-SCENE_MODE=${PRECISION_SCENE_MODE:-charuco_board}
+SCENE_MODE=${PRECISION_SCENE_MODE:-board_free}
 TABLE_SURFACE_Z_M=${PRECISION_TABLE_SURFACE_Z_M:-}
+TABLE_PLANE_CONFIG=${PRECISION_TABLE_PLANE_CONFIG:-}
 CAMERA_IDS=${PRECISION_CAPTURE4_CAMERA_IDS:-}
 BOARD_FIT_CAMERA_IDS=${PRECISION_BOARD_FIT_CAMERA_IDS:-}
 CALIB_DIR=${PRECISION_CALIB_DIR:-}
@@ -31,9 +32,6 @@ fi
 if [[ "$SCENE_MODE" != charuco_board && "$SCENE_MODE" != board_free ]]; then
   echo "PRECISION_SCENE_MODE must be charuco_board or board_free" >&2; exit 2
 fi
-if [[ "$SCENE_MODE" == board_free && -z "$TABLE_SURFACE_Z_M" ]]; then
-  echo "board_free needs explicit PRECISION_TABLE_SURFACE_Z_M (metres in robot base frame)" >&2; exit 2
-fi
 if [[ -z "$STAGE" ]]; then
   echo "PRECISION_STAGE_ROOT must name the active cylindrical recipient stage" >&2
   exit 2
@@ -44,6 +42,21 @@ if [[ ! -d "$STAGE" ]]; then
   exit 2
 fi
 STAGE=$(realpath -e "$STAGE")
+if [[ "$SCENE_MODE" == board_free && -z "$TABLE_SURFACE_Z_M" ]]; then
+  TABLE_PLANE_CONFIG=${TABLE_PLANE_CONFIG:-$STAGE/table_plane.json}
+  if [[ ! -f "$TABLE_PLANE_CONFIG" ]]; then
+    echo "board_free needs PRECISION_TABLE_PLANE_CONFIG or explicit PRECISION_TABLE_SURFACE_Z_M" >&2
+    exit 2
+  fi
+  TABLE_SURFACE_Z_M=$(
+    "$CHECK_PY" - "$TABLE_PLANE_CONFIG" "$SCRIPT_DIR" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[2])
+from precision_insertion.table_surface import load_table_surface_z
+print(load_table_surface_z(sys.argv[1]))
+PY
+  )
+fi
 
 cd "$ROOT"
 export PYTHONPATH="${PRECISION_CUROBO_PYTHONPATH:+$PRECISION_CUROBO_PYTHONPATH:}${PRECISION_PARADEX_ROOT:+$PRECISION_PARADEX_ROOT:}${PRECISION_EXTRA_PYTHONPATH:+$PRECISION_EXTRA_PYTHONPATH:}$ROOT:$ROOT/demo/precision-insertion:$ROOT/src"
@@ -66,6 +79,8 @@ precision_require_allowed_nas_path PRECISION_REUSE_SESSION_EVIDENCE \
   "${PRECISION_REUSE_SESSION_EVIDENCE:-}"
 precision_require_allowed_nas_path PRECISION_CALIB_DIR "$CALIB_DIR"
 precision_require_allowed_nas_path PRECISION_C2R_NPY "$C2R_NPY"
+precision_require_allowed_nas_path PRECISION_TABLE_PLANE_CONFIG \
+  "$TABLE_PLANE_CONFIG"
 for required in "$LAUNCH_TEMPLATE" "$CATALOG" "$ROBOT"; do
   if [[ ! -f "$required" ]]; then
     echo "active recipient-stage input is missing: $required" >&2
@@ -103,7 +118,8 @@ record["socket_perception_mode"] = ("ignore_sil_loss" if scene_mode == "board_fr
                                     else "board_constrained_body")
 if scene_mode == "board_free":
     record["table_surface_z_m"] = float(table_z)
-    for key in ("board_id", "minimum_board_corners", "board_capture_phase"):
+    for key in ("board_id", "minimum_board_corners", "board_capture_phase",
+                "board_fit_camera_ids"):
         record.pop(key, None)
 record["evidence_dir"] = str(Path(sys.argv[2]).with_suffix(".evidence"))
 Path(sys.argv[2]).write_text(json.dumps(record), encoding="utf-8")
@@ -132,7 +148,7 @@ mkdir -p "$CAPTURE_ROOT"
 # Board registration is profile-local. Keep one tiny board description next
 # to this run's raw captures instead of sending captures back into the static
 # runtime asset directory.
-if [[ -f "$STAGE/charuco_board9.json" ]]; then
+if [[ "$SCENE_MODE" == charuco_board && -f "$STAGE/charuco_board9.json" ]]; then
   cp -f "$STAGE/charuco_board9.json" "$CAPTURE_ROOT/charuco_board9.json"
 fi
 LAUNCH="$LAUNCH_DIR/launch_$RUN_TAG.json"
@@ -167,7 +183,8 @@ record["socket_perception_mode"] = ("ignore_sil_loss" if scene_mode == "board_fr
                                     else "board_constrained_body")
 if scene_mode == "board_free":
     record["table_surface_z_m"] = float(table_z)
-    for key in ("board_id", "minimum_board_corners", "board_capture_phase"):
+    for key in ("board_id", "minimum_board_corners", "board_capture_phase",
+                "board_fit_camera_ids"):
         record.pop(key, None)
 fresh_evidence = launch_dir / f"session_evidence_{run_tag}"
 if fresh_evidence.exists():

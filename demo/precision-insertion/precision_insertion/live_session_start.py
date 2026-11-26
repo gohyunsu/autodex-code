@@ -106,8 +106,9 @@ def start_precision_session(
             not math.isfinite(minimum_socket_refined_iou) or
             not 0 <= minimum_socket_refined_iou <= 1 or
             (minimum_socket_refined_iou == 0 and
-             socket_perception_mode != "board_constrained_body")):
-        raise ValueError("socket IoU limit must be positive, or 0 for body-fit logging only")
+             socket_perception_mode == "iou")):
+        raise ValueError(
+            "socket IoU limit must be positive when the IoU gate is active")
     if socket_perception_mode not in ("iou", "ignore_sil_loss",
                                       "board_constrained_body"):
         raise ValueError("unknown socket perception mode")

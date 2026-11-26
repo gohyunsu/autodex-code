@@ -49,7 +49,7 @@ def refine_socket_capture(
         raise ValueError("refinement needs matching captured/admitted evidence")
     threshold = float(minimum_refined_iou)
     if (not math.isfinite(threshold) or not 0 <= threshold <= 1 or
-            (threshold == 0 and perception_mode != "board_constrained_body")):
+            (threshold == 0 and perception_mode == "iou")):
         raise ValueError("socket refinement needs a valid body/mesh IoU limit")
     if (not isinstance(perception_mode, str) or
             perception_mode not in ("iou", "ignore_sil_loss",
@@ -150,9 +150,10 @@ def refine_socket_capture(
                     not 0 <= float(score) <= 1
                     for score in per_view.values())):
         raise ValueError("refined socket has invalid per-view IoU scores")
-    gate = ("all_view_iou" if all(float(score) >= threshold
-                                  for score in per_view.values())
-            else ("stock_ignore_sil_loss" if perception_mode == "ignore_sil_loss"
+    gate = ("stock_ignore_sil_loss"
+            if perception_mode == "ignore_sil_loss"
+            else ("all_view_iou" if all(float(score) >= threshold
+                                        for score in per_view.values())
                   else "stock_silhouette"))
     stock_record = _json_native(selection)
     stock_record["post_refinement_mean_iou"] = float(mean_iou)

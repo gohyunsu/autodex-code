@@ -385,9 +385,9 @@ def load_session_launch(
     if (type(score_limit) not in (int, float) or
             not math.isfinite(score_limit) or
             not 0 <= score_limit <= 1 or
-            (score_limit == 0 and
-             socket_perception_mode != "board_constrained_body")):
-        raise ValueError("socket IoU limit must be in (0,1], or 0 for body-fit logging only")
+            (score_limit == 0 and socket_perception_mode == "iou")):
+        raise ValueError(
+            "socket IoU limit must be in (0,1] when the IoU gate is active")
     values["minimum_socket_refined_iou"] = float(score_limit)
     upright_cylinder_only = record.get("upright_cylinder_only", True)
     if type(upright_cylinder_only) is not bool:

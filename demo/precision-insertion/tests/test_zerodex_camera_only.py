@@ -31,7 +31,8 @@ def test_camera_only_reuses_socket_key_and_catalog_without_robot(
     evidence = tmp_path / "run" / "socket_evidence"
     calibration = SimpleNamespace()
     launch = SimpleNamespace(
-        mode=mode, socket_perception_mode="board_constrained_body",
+        mode=mode, scene_mode="charuco_board",
+        socket_perception_mode="board_constrained_body",
         pc_list=("capture4",), capture_ips=("192.0.2.1",),
         shared_root=shared, capture_root=capture,
         camera_acquisition_mode="stream", camera_ids={"a", "b"},

@@ -384,6 +384,8 @@ def test_stock_ignore_sil_loss_replays_without_claiming_a_loss_gate(
             })
 
     first, second = map(ignored, _refinements(args))
+    first = replace(first, minimum_refined_iou=0.0)
+    second = replace(second, minimum_refined_iou=0.0)
     session = calibrate_session(**{
         **args, "socket_capture_refinements": (first, second)})
     saved = write_session_calibration(session, tmp_path / "ignore_loss.json")

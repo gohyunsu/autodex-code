@@ -110,6 +110,21 @@ def test_stock_ignore_sil_loss_retains_refinement_and_records_policy(
     assert row.stock_selection["perception_mode"] == "ignore_sil_loss"
 
 
+def test_stock_ignore_sil_loss_accepts_zero_reporting_threshold(
+        tmp_path, monkeypatch):
+    capture, admission, stock, raw_mesh, _ = _setup(
+        tmp_path, monkeypatch, per_view={"cam_a": .92, "cam_b": .72},
+        stock_result=(np.eye(4), {
+            "best_serial": "cam_a", "n_candidates": 2, "n_masks": 2,
+            "sil_loss": .0043}))
+    row = refine_socket_capture(
+        capture=capture, admission=admission, init_orchestrator=stock,
+        socket_object="socket", raw_mesh=raw_mesh, minimum_refined_iou=0.0,
+        perception_mode="ignore_sil_loss")
+    assert row.minimum_refined_iou == 0.0
+    assert row.refinement_gate == "stock_ignore_sil_loss"
+
+
 def test_rejects_stock_failure_or_changed_renderer_mesh(tmp_path, monkeypatch):
     capture, admission, stock, raw_mesh, _ = _setup(
         tmp_path, monkeypatch, stock_result=(None, {"sil_reject": True}))

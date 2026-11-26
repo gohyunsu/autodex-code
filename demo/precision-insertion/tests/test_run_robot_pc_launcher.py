@@ -24,6 +24,7 @@ def test_run_launcher_forwards_xy_update_weight(tmp_path):
                PRECISION_STAGE_ROOT=str(stage),
                PRECISION_CHECK_PY=sys.executable,
                PRECISION_PLANNER_PY=str(fake_planner),
+               PRECISION_SCENE_MODE="charuco_board",
                PRECISION_XY_UPDATE_WEIGHT="0.4",
                PRECISION_SAME_TRIAL_XY_TOLERANCE_MM="2.5",
                PRECISION_SAME_TRIAL_OBSERVATION_YAW_DEG="60")
@@ -59,6 +60,7 @@ def test_run_launcher_applies_current_camera_profile_to_effective_launch(tmp_pat
         os.environ, PRECISION_REPO_ROOT=str(root),
         PRECISION_STAGE_ROOT=str(stage), PRECISION_CHECK_PY=sys.executable,
         PRECISION_PLANNER_PY=str(fake_planner),
+        PRECISION_SCENE_MODE="charuco_board",
         PRECISION_RUN_OUTPUT_ROOT=str(run_root), PRECISION_RUN_TAG="profile",
         PRECISION_CAPTURE4_CAMERA_IDS="cam0,cam1,cam2,cam3",
         PRECISION_BOARD_FIT_CAMERA_IDS="cam0,cam1,cam2,cam3",
@@ -90,6 +92,7 @@ def test_zerodex_run_keeps_control_and_episode_outputs_out_of_assets(tmp_path):
     env = dict(
         os.environ, PRECISION_REPO_ROOT=str(root),
         PRECISION_STAGE_ROOT=str(stage), PRECISION_GAP_MM="5",
+        PRECISION_SCENE_MODE="charuco_board",
         PRECISION_RUN_OUTPUT_ROOT=str(run_root),
         PRECISION_RUN_TAG="20261030_test_run",
         PRECISION_CHECK_PY=sys.executable,
@@ -110,6 +113,52 @@ def test_zerodex_run_keeps_control_and_episode_outputs_out_of_assets(tmp_path):
         run_root / "_control/20261030_test_run/raw_captures")
     assert Path(launch["capture_root"]).is_dir()
     assert not (stage / "runs").exists()
+
+
+def test_run_launcher_defaults_to_measured_board_free_table(tmp_path):
+    demo = Path(__file__).resolve().parents[1]
+    root = demo.parents[1]
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "launch.json").write_text(json.dumps({
+        "board_id": "9",
+        "minimum_board_corners": 36,
+        "board_capture_phase": "socket_present_partial",
+        "board_fit_camera_ids": ["cam0", "cam1"],
+    }), encoding="utf-8")
+    (stage / "recipient_gap20_endpoint_catalog.json").write_text(
+        "{}\n", encoding="utf-8")
+    (stage / "franka_runtime.json").write_text("{}\n", encoding="utf-8")
+    table_plane = tmp_path / "table_plane.json"
+    table_plane.write_text(json.dumps({
+        "schema": "precision_insertion_table_plane_v1",
+        "table_surface_z_m": 0.06336083895817991,
+    }), encoding="utf-8")
+    fake_planner = tmp_path / "fake_planner"
+    fake_planner.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n",
+                            encoding="utf-8")
+    fake_planner.chmod(0o755)
+    run_root = tmp_path / "runs"
+    env = dict(
+        os.environ, PRECISION_REPO_ROOT=str(root),
+        PRECISION_STAGE_ROOT=str(stage), PRECISION_CHECK_PY=sys.executable,
+        PRECISION_PLANNER_PY=str(fake_planner),
+        PRECISION_TABLE_PLANE_CONFIG=str(table_plane),
+        PRECISION_RUN_OUTPUT_ROOT=str(run_root),
+        PRECISION_RUN_TAG="board_free")
+    env.pop("PRECISION_SCENE_MODE", None)
+    env.pop("PRECISION_TABLE_SURFACE_Z_M", None)
+    subprocess.run(["bash", str(demo / "run_robot_pc.sh"), "--run"],
+                   env=env, capture_output=True, text=True, check=True)
+    effective = json.loads(
+        (run_root / "_control/board_free/launch_board_free.json").read_text(
+            encoding="utf-8"))
+    assert effective["scene_mode"] == "board_free"
+    assert effective["socket_perception_mode"] == "ignore_sil_loss"
+    assert effective["table_surface_z_m"] == 0.06336083895817991
+    for key in ("board_id", "minimum_board_corners", "board_capture_phase",
+                "board_fit_camera_ids"):
+        assert key not in effective
 
 
 def test_zerodex_profile_rejects_only_nas_paths_outside_hyunsu(tmp_path):
