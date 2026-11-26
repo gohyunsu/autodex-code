@@ -48,9 +48,10 @@ audit.
 - The corresponding remote-Qwen profile also passes static preflight. Its
   generated runtime maps all four serials to one capture4 host/process. A real
   SSH worker smoke test loaded Qwen3-VL-2B-Instruct on the RTX 5060 Ti and
-  returned the expected synthetic-image label in 0.615 s round trip, with
-  4.30 GB peak CUDA allocation. This verifies process, model, CUDA and
-  transport wiring only.
+  returned the expected synthetic-image label. The latest 2026-11-27 repeat
+  measured 3.592 s cold ready time and 0.589 s inference round trip; an earlier
+  instrumented run recorded 4.30 GB peak CUDA allocation. This verifies
+  process, model, CUDA and transport wiring only.
 - The current calibration profile resolves the final extrinsic solution at
   `~/calibration/zerodex_capture4/extrinsic/20261118_232125/solution_filtered`
   and hand-eye transform at
@@ -143,7 +144,7 @@ audit.
 
 | Item | Current evidence / next action |
 | --- | --- |
-| Current hardware execution | The RT kernel is active and a local Franka daemon process is listening on ports 5555/5556, but the 2026-11-27 audit could not route to `172.16.1.11`; no live robot state or motion was claimed. Restore the robot Ethernet route/FCI connection before using the existing daemon, and select either `franka_gripper` (default) or `inspire`. The audit intentionally issued no motion command. |
+| Current hardware execution | The RT kernel is active, `enp4s0` is up at `172.16.1.10/24`, and a local Franka daemon process is listening on ports 5555/5556. The 2026-11-27 repeat still left `172.16.1.11` unresolved at ARP (`INCOMPLETE`) and returned `Destination Host Unreachable`; no live robot state or motion was claimed. Restore the robot-side power/cable/switch/IP/Desk path before using the existing daemon, and select either `franka_gripper` (default) or `inspire`. The audit intentionally issued no motion command. |
 | Local cuRobo GPU preflight | The first gripper preflight exposed and fixed both a stale `~/shared_data/AutoDex` planner-YAML fallback and the explicit-YAML 1,024-seed regression. With the restored FR3 32-seed profile and stock Franka gripper collision spheres, the real local-CUDA diagnostic passed `side_down` pickup, approach and held lift while the unrelated GPU process remained resident. It then reported `transfer_unreachable` for the hypothetical socket placement; no physical scene or robot command was involved. On 2026-11-27 `/dev/nvidia*`, `nvidia-smi`, and PyTorch CUDA were available again on the RTX 3090. |
 | Physical gripper/MV-GoTrack run | Code, assets, capture4 services and tracker deployment are present, but the new gripper pickup-to-insertion route and same-session tracker initialization have not been physically exercised. First run GPU cuRobo preflight, then initialize tracking from a fresh accepted key pose; do not substitute an arbitrary or stale tracker initializer. |
 | Reproduction bundle | The writable NAS manifest now archives merged AutoDex commit `299ddc3`, ParaDex `e2cd4fd`, and nvdiffrast `253ac4f`, and retains 6,861 declared asset files. `--refresh-code-only` no longer scans or mutates the established asset/rig inventories. Both NFS and SMB full-tree verification later entered remote-filesystem response waits while traversing the runtime view, so the post-refresh metadata/SHA256 audit remains to be repeated when NAS metadata service is responsive; the manifest and all three declared code archives are present from both mount views. |

@@ -1,7 +1,8 @@
 # MV-GoTrack commissioning status
 
 Date: 2026-11-27  
-Scope: read-only/static checks; no camera acquisition and no robot motion
+Scope: static checks plus an isolated capture4 Qwen inference probe; no camera
+acquisition and no robot motion
 
 This record separates a configured software path from a physically validated
 tracking episode.  It is evidence for undergraduate-thesis completion gate 2,
@@ -74,6 +75,32 @@ The capture4 manager invokes the native tracker with the four commissioned
 cameras and with `min-score`, workspace and pose-jump rejection disabled.  The
 precision runner likewise adds no confidence, age, workspace or task-success
 gate to tracker output.
+
+## Capture4 Qwen execution check
+
+The remote-Qwen experiment profile passed the same static preflight with all
+four camera IDs mapped to one persistent capture4 worker.  A fresh end-to-end
+probe then started that worker over its normal SSH request stream, loaded the
+deployed Qwen3-VL-2B-Instruct model on the RTX 5060 Ti, submitted one lossless
+RGB PNG, received the requested `WHITE_CIRCLE` label and shut the worker down
+cleanly.  The measured cold ready time was `3.592 s` and the inference
+round-trip was `0.589 s`.  This proves the deployed model, CUDA runtime, SSH
+transport and request protocol; it is not a task-label accuracy result.
+
+At the end of this check, `manage_mvgotrack.py status` still reported
+`stream_pid=null` and `tracker_pid=null`.  That is the intended idle state:
+the normal live state machine starts tracking only from the accepted
+same-session key pose.
+
+## Franka connection check
+
+The host is running `6.8.1-1061-realtime`, `enp4s0` is up with
+`172.16.1.10/24`, and the selected route to `172.16.1.11` uses that interface.
+The robot address nevertheless remains `INCOMPLETE` in the ARP table and two
+ICMP probes returned `Destination Host Unreachable`.  Local daemon ports 5555
+and 5556 are listening.  Therefore no current robot state or motion can be
+claimed until the robot-side power/cable/switch/IP/Desk path responds; no
+robot command was issued during this check.
 
 ## Evidence still required
 
