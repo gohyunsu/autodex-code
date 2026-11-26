@@ -52,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     if launch.init_frame_transport != "inline_png":
         parser.error("the launch does not select inline PNG transport")
     output.mkdir(parents=True)
+    capture_root = output / "capture"
     object_name = (launch.mode.key_object if args.target == "key"
                    else launch.mode.socket_object)
     prompt = args.prompt or ("white plastic cylindrical key" if args.target == "key"
@@ -78,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
                 init_orchestrator=cameras.init_orchestrator,
                 socket_object=object_name,
                 capture_id="inline_probe_" + uuid4().hex[:12],
-                socket_prompt=prompt, capture_root=launch.capture_root,
+                socket_prompt=prompt, capture_root=capture_root,
                 calibrated_camera_ids=launch.camera_ids,
                 acquisition_metadata_for_request=(
                     cameras.acquisition_metadata_for_request),
@@ -125,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         "camera_count": len(capture.masks),
         "board_fit": board_fit,
         "raw_png_dir": (None if args.pose_only else str(
-            launch.capture_root /
+            capture_root /
             f"{capture.capture_id}_request_{capture.request_id}" / "images")),
         "frames": {serial: {
             "frame_id": capture.masks[serial]["frame_id"],
