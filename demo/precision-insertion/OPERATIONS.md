@@ -15,7 +15,8 @@ offline catalogue is not mistaken for current robot validation.
 | --- | --- |
 | Four camera acquisition streams | capture4's existing ParaDex installation |
 | Namespaced exposure, SAM3 and FoundPose services | the separate capture4 adapter |
-| cuRobo, insertion state machine, SAM key-tip ROI and Qwen | this kds-Z790 PC |
+| MV-GoTrack and distributed Qwen | capture4 RTX 5060 Ti |
+| cuRobo, insertion state machine and Franka control | this kds-Z790 RTX 3090 PC |
 | Franka FCI streaming and selected Inspire/gripper control | this kds-Z790 PC |
 | Static assets and authoritative run records | `/mnt/paradex2/hyunsu/precision_insertion` |
 | Repeated-use model caches | `~/precision_insertion_project/cache/models` |
@@ -77,9 +78,11 @@ PYTHONPATH=demo/precision-insertion \
 python3 demo/precision-insertion/manage_zerodex_capture4_services.py check
 ```
 
-The static report must identify the effective local Qwen directory as
-`~/precision_insertion_project/cache/models/Qwen3-VL-2B-Instruct`. It checks
-path presence only; it deliberately does not load CUDA or open the robot.
+For the local-Qwen profile the static report identifies
+`~/precision_insertion_project/cache/models/Qwen3-VL-2B-Instruct`.  The
+recommended MV-GoTrack profile instead uses the isolated capture4 deployment
+described below. Static checks validate paths only; they deliberately do not
+load CUDA or open the robot.
 The bundle verifier is independent of the live launcher. A nonzero result
 means the handoff inventory or archived code snapshot needs refreshing; it is
 not an added grasp, perception, planning or insertion failure condition.
@@ -103,9 +106,34 @@ Then launch one run:
 
 ```bash
 cd /home/hyunsu/autodex-code
+PRECISION_END_EFFECTOR=franka_gripper \
+PRECISION_EXPERIMENT_PROFILE=mvgotrack_axis_alignment_capture4_remote_qwen.env.sh \
 PRECISION_GAP_MM=5 \
   bash demo/precision-insertion/run_zerodex_capture4.sh --run
 ```
+
+The recommended profile keeps both GPU-heavy visual models beside the camera
+streams while leaving deterministic robot planning/control on kds. It creates
+one persistent Qwen process for all four camera IDs; one model is not loaded
+per view. Prepare or verify that experiment-owned deployment without changing
+capture4's shared camera environments or services:
+
+```bash
+cd /home/hyunsu/autodex-code
+bash demo/precision-insertion/deploy_qwen_capture4.sh --check
+
+PRECISION_END_EFFECTOR=franka_gripper \
+PRECISION_EXPERIMENT_PROFILE=mvgotrack_axis_alignment_capture4_remote_qwen.env.sh \
+  bash demo/precision-insertion/run_zerodex_capture4.sh --check
+```
+
+`--deploy` is required only to create or refresh
+`/home/capture4/precision_insertion_qwen`. The worker receives selected
+lossless PNG pixels over one SSH request stream; it never opens a camera and
+never controls the robot. A 2026-11-27 synthetic-image smoke test measured
+4.39 s cold model load, 0.615 s inference round trip and 4.30 GB CUDA peak
+allocation on capture4. This is a transport/runtime check, not VLM accuracy or
+full-episode latency evidence.
 
 The default experiment labels are manual while the same snapshots and Qwen
 answers are retained. The current profile uses the four commissioned capture4
@@ -164,7 +192,7 @@ Pipeline records are written under:
 
 ```text
 /mnt/paradex2/hyunsu/precision_insertion/
-  runs/zerodex_capture4/precision-insertion/inspire/<key>/_pipeline_runs/<run>/
+  runs/zerodex_capture4/precision-insertion/<end_effector>/<key>/_pipeline_runs/<run>/
   runs/zerodex_capture4/_recording_receipts/<run>/
   development/zerodex_capture4/                 # offline diagnostics only
 ```
@@ -193,12 +221,15 @@ upload.
 
 - The NAS mount must be writable for a live run. Static `--check` remains
   read-only.
-- `/dev/nvidia*` must exist and `nvidia-smi` must work before local Qwen/SAM or
-  cuRobo CUDA execution. Model-file presence alone does not prove this. On
-  this PREEMPT_RT host, the 535.309.01 modules can be loaded while the device
-  nodes are still absent after reboot. In that state run
-  `sudo /usr/sbin/ub-device-create`, then verify `nvidia-smi`; this creates
-  device nodes only and does not start the robot or precision pipeline.
+- `/dev/nvidia*` must exist and `nvidia-smi` must work before local cuRobo CUDA
+  execution. Model-file presence alone does not prove this. On this PREEMPT_RT
+  host, the 535.309.01 modules can be loaded while the device nodes are absent
+  after reboot. In that state run `sudo /sbin/ub-device-create --verbose`,
+  then verify `nvidia-smi`; this creates device nodes only and does not start
+  the robot or precision pipeline. The nodes and PyTorch CUDA access were
+  verified on 2026-11-27. The latest full-chain gripper preflight then reached
+  cuRobo world construction but exhausted the remaining RTX 3090 memory while
+  another process occupied 6.62 GB; rerun it after that unrelated job exits.
 - Robot, Inspire hand, FCI and the Franka daemon are required only for
   `--run`/`--plan-only`.
 - Do not start a second capture4 adapter if another experiment owns its

@@ -9,6 +9,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import setup_capture_qwen  # noqa: E402
 
 
+def test_versioned_capture4_workers_share_isolated_gpu_process():
+    demo = Path(__file__).resolve().parents[1]
+    workers = json.loads((
+        demo / "config/capture4_qwen_workers.json").read_text(
+            encoding="utf-8"))
+    assert set(workers) == {
+        "26053248", "25322639", "25305462", "25322642"}
+    assert {row["host"] for row in workers.values()} == {
+        "capture4@147.46.219.136"}
+    assert {row["ssh_port"] for row in workers.values()} == {77}
+    assert {row["python"] for row in workers.values()} == {
+        "/home/capture4/precision_insertion_qwen/venv/bin/python"}
+    assert {row["worker_root"] for row in workers.values()} == {
+        "/home/capture4/precision_insertion_qwen/worker"}
+    assert {row["model_dir"] for row in workers.values()} == {
+        "/home/capture4/precision_insertion_qwen/model/Qwen3-VL-2B-Instruct"}
+
+
 def test_setup_uses_explicit_shared_host_mapping(tmp_path, capsys):
     source = tmp_path / "franka_runtime.json"
     output = tmp_path / "franka_runtime_capture4_qwen.json"

@@ -6,9 +6,9 @@ timing contracts remain in [`OPERATIONS.md`](OPERATIONS.md),
 [`ACTION_LOOP.md`](ACTION_LOOP.md) and [`TIMING_PROFILE.md`](TIMING_PROFILE.md).
 Historical dated reports are evidence, not current run instructions.
 
-Last audited: **2026-11-26** on kds-Z790. The read-only capture4 service
-probe passed; no local Franka daemon was running and no robot command was
-issued during this audit.
+Last audited: **2026-11-27** on kds-Z790. The read-only capture4 service and
+distributed-Qwen probes passed; no robot command was issued during this
+audit.
 
 ## Implemented
 
@@ -23,6 +23,7 @@ issued during this audit.
 | Full action loop | The active profile supplies all ten stage handlers: key planning, pickup, lift, held relation, transfer/insertion, retry diagnosis, held return, transfer recovery, repose planning and repose execution. |
 | Same-trial correction | Pre-insertion capture, metric endpoint/partial-shape observation, bounded wrist correction, recapture and measured-motion feedback run before the first insertion stroke. The active profile permits a 10 mm per-update step and has no cumulative XY cap. |
 | Continuous key tracking | The `mvgotrack_axis_alignment_capture4.env.sh` profile sends the accepted same-session SAM3+FoundPose 6D key pose and mesh to the isolated capture4 tracker immediately after pose/state admission. Capture4 initialization and its first pose overlap local cuRobo candidate preflight; the post-planning join completes before pickup can be selected. At the stopped pre-insertion hold it consumes a newer pose, reduces the cylinder pose under its D-infinity symmetry, and supplies XY plus optional axis correction. |
+| Distributed visual inference | `mvgotrack_axis_alignment_capture4_remote_qwen.env.sh` keeps MV-GoTrack and one four-camera persistent Qwen worker on capture4. Camera IDs share one model and same-host batch path; kds retains cuRobo, the state machine and Franka control. The deployment is isolated under `/home/capture4/precision_insertion_qwen` and does not modify shared capture services or Conda environments. |
 | Insertion execution | The corrected hold is replanned along the measured socket axis. If the corrected 20 mm endpoint/path is unavailable, the profile tries the configured 10 mm axial fallback. |
 | Failed-attempt recovery | A released insertion failure first reuses its saved pre-insertion image for next-attempt XY advice, then perceives and restores the released key to the original tabletop pose. Model, saved-input or advice-validation errors are recorded as unavailable diagnostics and cannot suppress that recovery. |
 | Labels | Manual collection stores the independent Qwen result too. Grasp, pre-insertion arrival, descent-time tip entry and released-key `inside_socket` outcome remain separate fields. |
@@ -43,6 +44,12 @@ issued during this audit.
   remote manager/session paths and both tabletop grasp candidates. Selecting
   `PRECISION_END_EFFECTOR=inspire` remains an independent supported route; it
   is not removed or silently translated to a parallel-gripper command.
+- The corresponding remote-Qwen profile also passes static preflight. Its
+  generated runtime maps all four serials to one capture4 host/process. A real
+  SSH worker smoke test loaded Qwen3-VL-2B-Instruct on the RTX 5060 Ti and
+  returned the expected synthetic-image label in 0.615 s round trip, with
+  4.30 GB peak CUDA allocation. This verifies process, model, CUDA and
+  transport wiring only.
 - The current calibration profile resolves the final extrinsic solution at
   `~/calibration/zerodex_capture4/extrinsic/20261118_232125/solution_filtered`
   and hand-eye transform at
@@ -110,7 +117,7 @@ issued during this audit.
 | Item | Current evidence / next action |
 | --- | --- |
 | Current hardware execution | The local Franka daemon is not running. After CUDA is restored, start the RT daemon and select either `franka_gripper` (default) or `inspire`; the current audit intentionally issued no motion command. |
-| CUDA runtime | The PREEMPT_RT kernel and NVIDIA 535.309.01 modules are loaded and the RTX 3090 is bound to the driver, but `/dev/nvidia*` is absent, `nvidia-smi` fails and PyTorch reports zero CUDA devices. An unprivileged `/sbin/ub-device-create --dry-run --verbose` detects the RTX 3090 and requests exactly `/dev/nvidiactl`, `/dev/nvidia0`, `/dev/nvidia-uvm`, `/dev/nvidia-uvm-tools` and `/dev/nvidia-modeset`; each creation fails only because it requires root. Run `sudo /sbin/ub-device-create --verbose`, then verify `nvidia-smi` before Qwen/SAM/curobo execution. |
+| Local cuRobo GPU preflight | `/dev/nvidia*`, `nvidia-smi` and precision-environment PyTorch CUDA now pass on the PREEMPT_RT host. The first gripper preflight exposed and fixed a stale `~/shared_data/AutoDex` planner-YAML fallback. The rerun reached real cuRobo world construction but OOMed because an unrelated process held 6.62 GB while cuRobo held 15.71 GB and requested 3.43 GB more. Rerun the same read-only preflight after that process exits; do not terminate it automatically. |
 | Physical gripper/MV-GoTrack run | Code, assets, capture4 services and tracker deployment are present, but the new gripper pickup-to-insertion route and same-session tracker initialization have not been physically exercised. First run GPU cuRobo preflight, then initialize tracking from a fresh accepted key pose; do not substitute an arbitrary or stale tracker initializer. |
 | Reproduction bundle | The NAS is currently mounted read-only. A 2026-11-03 metadata audit found the live runtime view internally valid, but the archived checkout remains at `f0f9f1d` rather than the current branch, `nvdiffrast` is absent from the archived code inventory, two reset `source_evidence.json` files no longer match their recorded sizes, and twelve managed paths are unmanifested. The tested `--refresh-code-only` path rescans these managed trees as well as archiving all three code repositories, but applying it and then running full SHA256 verification must wait for a writable mount. |
 | VLM accuracy claim | Saved replay supports development, but class balance and independent held-out trials are insufficient for a general accuracy claim. Manual labels remain authoritative during data collection. |

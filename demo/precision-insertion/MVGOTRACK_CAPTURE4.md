@@ -34,9 +34,10 @@ implementation as the image-based mode.
 
 ## Process boundary
 
-- kds-Z790 main PC: FoundPose, session state machine, D∞ reduction, cuRobo,
-  FR3/Inspire control, final VLM label.
-- capture4: four-camera SHM read-only HTTP streamer and MV-GoTrack GPU process.
+- kds-Z790 main PC: session state machine, D∞ reduction, cuRobo and
+  FR3/Inspire-or-gripper control.
+- capture4: four-camera SHM read-only HTTP streamer, namespaced SAM3/FoundPose,
+  MV-GoTrack and (in the remote-Qwen profile) one shared Qwen GPU process.
 - Pose transport: ZMQ `forgehand.tracked_pose.v1` on
   `tcp://147.46.219.136:5591`.
 
@@ -59,6 +60,12 @@ Validated on 2026-11-26:
 The live tracker was not initialized against a physical key during this setup,
 because an accepted same-session FoundPose initializer was not available. That
 is the remaining hardware validation, not a missing code path.
+
+The companion Qwen deployment is independently namespaced at
+`/home/capture4/precision_insertion_qwen`. All four camera IDs share one model
+process and same-host batch request path; Qwen does not open the cameras. This
+avoids duplicating model weights four times and removes local-3090 contention
+between visual labeling and cuRobo.
 
 ## Deploy or refresh capture4
 
@@ -94,7 +101,7 @@ Use the normal ZeroDex environment plus the MV profile:
 ```bash
 cd /home/hyunsu/autodex-code
 source demo/precision-insertion/config/zerodex_capture4.env.sh
-source demo/precision-insertion/config/experiments/mvgotrack_axis_alignment_capture4.env.sh
+source demo/precision-insertion/config/experiments/mvgotrack_axis_alignment_capture4_remote_qwen.env.sh
 
 bash demo/precision-insertion/run_robot_pc.sh --check
 ```
@@ -103,7 +110,7 @@ With the commissioned robot services running and explicit motion permission:
 
 ```bash
 source demo/precision-insertion/config/zerodex_capture4.env.sh
-source demo/precision-insertion/config/experiments/mvgotrack_axis_alignment_capture4.env.sh
+source demo/precision-insertion/config/experiments/mvgotrack_axis_alignment_capture4_remote_qwen.env.sh
 bash demo/precision-insertion/run_robot_pc.sh --run
 ```
 
