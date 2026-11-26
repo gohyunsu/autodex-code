@@ -23,6 +23,7 @@ from .live_robot_state import (
 )
 from .end_effector import end_effector_spec
 from .mount_geometry import link8_to_hand
+from .planner_factory import selected_fr3_planner_config_options
 from .timing_profile import timed
 
 
@@ -156,6 +157,7 @@ def open_franka_core(
         from autodex.planner import GraspPlanner
 
         planner_factory = lambda: GraspPlanner(
+            **selected_fr3_planner_config_options(spec),
             hand=spec.planner_hand, robot_urdf_path=str(mount_urdf))
     # cuRobo loads CUDA during planner construction. Do that before opening a
     # robot connection, so a missing GPU never touches the Franka daemon.

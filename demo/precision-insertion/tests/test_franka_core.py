@@ -89,7 +89,11 @@ def test_franka_core_passes_one_selected_mount_to_planner_and_executor(
                         "completion_checked_franka_class",
                         lambda: executor_factory)
     core = franka_core.open_franka_core(_settings())
+    from precision_insertion.planner_factory import (
+        selected_fr3_planner_config_options,
+    )
     assert seen["planner"] == {
+        **selected_fr3_planner_config_options(),
         "hand": "fr3_inspire", "robot_urdf_path": str(urdf)}
     assert seen["executor"]["hand_name"] == "inspire"
     assert seen["executor"]["object_safety_speed_scale"] == .4

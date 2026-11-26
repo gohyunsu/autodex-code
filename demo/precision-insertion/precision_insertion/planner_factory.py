@@ -6,7 +6,37 @@ from pathlib import Path
 
 from .assets import AssetPaths
 from .config import TaskMode
-from .end_effector import end_effector_spec
+from .end_effector import EndEffectorSpec, end_effector_spec
+
+
+_CUROBO_CONTENT = (
+    Path(__file__).resolve().parents[3] / "autodex" / "planner" / "src" /
+    "curobo" / "content")
+
+
+def selected_fr3_planner_config_options(
+    spec: EndEffectorSpec | None = None,
+) -> dict[str, str]:
+    """Bind FR3 planner YAML, spheres and meshes to this checkout.
+
+    The original AutoDex planner defaults intentionally remain rooted at
+    ``~/shared_data/AutoDex``.  ZeroDex is a separate checkout/runtime, so an
+    explicit planner construction must not silently fall back to that tree.
+    """
+    selected = end_effector_spec() if spec is None else spec
+    names = {
+        "inspire": ("fr3_inspire.yml", "inspire_floating.yml"),
+        "franka_gripper": (
+            "fr3_gripper.yml", "franka_gripper_floating.yml"),
+    }
+    robot_name, hand_name = names[selected.name]
+    config_root = _CUROBO_CONTENT / "configs" / "robot"
+    return {
+        "robot_cfg_path": str(config_root / robot_name),
+        "hand_cfg_path": str(config_root / hand_name),
+        "external_robot_configs_path": str(config_root),
+        "external_asset_path": str(_CUROBO_CONTENT / "assets"),
+    }
 
 
 def new_offline_fr3_planner(
@@ -16,8 +46,10 @@ def new_offline_fr3_planner(
     """Use the same URDF choice as live planning and held-path geometry."""
     from autodex.planner import GraspPlanner
 
+    spec = end_effector_spec()
     options = {
-        "hand": end_effector_spec().planner_hand,
+        **selected_fr3_planner_config_options(spec),
+        "hand": spec.planner_hand,
         "robot_urdf_path": str(AssetPaths(
             Path(shared_root).expanduser().resolve(), mode).robot_urdf),
     }

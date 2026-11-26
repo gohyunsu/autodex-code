@@ -309,7 +309,9 @@ class GraspPlanner:
     def __init__(self, robot_cfg_path: Optional[str] = None, hand_cfg_path: Optional[str] = None,
                  hand: str = "allegro", use_cuda_graph: bool = True,
                  verbose_planning: bool = False,
-                 robot_urdf_path: Optional[str] = None):
+                 robot_urdf_path: Optional[str] = None,
+                 external_robot_configs_path: Optional[str] = None,
+                 external_asset_path: Optional[str] = None):
         if robot_cfg_path is None:
             robot_file, hand_file, self._collision_act_dist, self._num_trajopt_seeds, self._interpolation_type = self.HAND_CONFIGS.get(hand, self.HAND_CONFIGS["allegro"])
             robot_cfg_path = os.path.join(robot_configs_path, robot_file)
@@ -327,8 +329,15 @@ class GraspPlanner:
         # (e.g. /home/robot/RSS_2026/planner/src/curobo/content/) which only
         # ships xarm_allegro spheres — xarm_inspire / xarm_inspire_left live
         # under shared_data/AutoDex/content/configs/robot/spheres/.
-        _ext_robot = robot_configs_path
-        _ext_asset = os.path.join(project_dir, "content", "assets")
+        # Preserve the historical AutoDex content roots by default.  A
+        # self-contained runtime may explicitly bind both roots to the same
+        # vendored cuRobo content tree as ``robot_cfg_path``; otherwise an
+        # explicit YAML would still resolve its spheres from ~/shared_data.
+        _ext_robot = (robot_configs_path if external_robot_configs_path is None
+                      else os.path.abspath(external_robot_configs_path))
+        _ext_asset = (os.path.join(project_dir, "content", "assets")
+                      if external_asset_path is None
+                      else os.path.abspath(external_asset_path))
         for _cfg in (self._robot_cfg, self._hand_cfg):
             _cfg.setdefault("kinematics", {})
             _cfg["kinematics"]["external_robot_configs_path"] = _ext_robot
