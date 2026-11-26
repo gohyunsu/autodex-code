@@ -19,7 +19,6 @@ from precision_insertion.project_layout import nas_project_root
 from precision_insertion.project_bundle import (
     inventory_tree as _inventory_tree,
     project_inventory as _project_inventory,
-    refresh_inventory as _refresh_inventory,
     sha256_file as _sha256,
     verify_project,
 )
@@ -97,15 +96,27 @@ def refresh_code(*, nas_root: Path, paradex_repo: Path,
         else:
             old_packages.rename(restore_packages)
         (nas_root / "assets/packages").rmdir()
+    package_prefix = "assets/packages/foundpose/"
+    restore_prefix = "restore/foundpose_packages/"
+    package_rows = [
+        row for row in manifest["assets"]
+        if row["path"].startswith(package_prefix)
+    ]
+    manifest["assets"] = [
+        row for row in manifest["assets"]
+        if not row["path"].startswith(package_prefix)
+    ]
     migrated = list(manifest.get("restore_files", []))
-    for row in manifest["assets"]:
-        if row["path"].startswith("assets/packages/foundpose/"):
-            migrated.append({**row, "path": row["path"].replace(
-                "assets/packages/foundpose/", "restore/foundpose_packages/", 1)})
-    manifest["restore_files"] = migrated
+    migrated.extend({
+        **row,
+        "path": row["path"].replace(package_prefix, restore_prefix, 1),
+    } for row in package_rows)
+    manifest["restore_files"] = list({
+        row["path"]: row for row in migrated
+    }.values())
     manifest["asset_packages"] = [
         {**row, "path": row["path"].replace(
-            "assets/packages/foundpose/", "restore/foundpose_packages/", 1)}
+            package_prefix, restore_prefix, 1)}
         for row in manifest["asset_packages"]]
     old_archives = {row["archive"] for row in manifest["code"]}
     code = nas_root / "code"
@@ -119,18 +130,11 @@ def refresh_code(*, nas_root: Path, paradex_repo: Path,
             repository_name="nvdiffrast"),
     ]
     manifest["code"] = snapshots
-    # This operation refreshes source archives, not runtime assets. Reuse the
-    # declared digest whenever a managed file has the same byte size, while
-    # still discovering new files and rehashing size changes. Full SHA256
-    # verification remains the explicit follow-up audit below. This avoids
-    # rereading multi-gigabyte rig and FoundPose trees on every code refresh.
-    manifest["rig_files"] = _refresh_inventory(
-        list(manifest.get("rig_files", [])),
-        nas_root / "rigs" / "zerodex_capture4", nas_root)
-    manifest["assets"] = _refresh_inventory(
-        manifest["assets"], nas_root / "assets", nas_root)
-    manifest["restore_files"] = _refresh_inventory(
-        list(manifest.get("restore_files", [])), nas_root / "restore", nas_root)
+    # This is deliberately a source-only operation. The asset, restore and rig
+    # inventories were established by the bundle build and are immutable here;
+    # walking them made a small code refresh depend on millions of NAS metadata
+    # operations. Operators can run the explicit project verifier afterwards,
+    # with SHA256 enabled when a full byte audit is desired.
     manifest["asset_file_count"] = len(manifest["assets"])
     _copy_file(HERE / "install_zerodex_nas_project.py",
                nas_root / "install_project.py")

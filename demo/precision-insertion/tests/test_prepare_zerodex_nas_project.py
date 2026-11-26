@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 import subprocess
 
-import precision_insertion.project_bundle as project_bundle
 from precision_insertion.project_bundle import verify_project
 
 
@@ -166,9 +165,9 @@ def test_verify_project_requires_renderer_source_for_zerodex_bundle(tmp_path):
     assert report["reproduction_ready"] is False
 
 
-def test_refresh_code_upgrades_v1_inventory_and_archives_three_git_sources(
+def test_refresh_code_upgrades_v1_manifest_and_archives_three_git_sources(
         tmp_path, monkeypatch):
-    """The read-only NAS audit's exact v1 failure class is repairable.
+    """A v1 manifest can receive complete code provenance without asset I/O.
 
     Runtime ParaDex may be a metadata-free import tree; refresh_code receives
     the separate Git source checkout and must produce a complete v2 handoff
@@ -183,14 +182,13 @@ def test_refresh_code_upgrades_v1_inventory_and_archives_three_git_sources(
 
     root = tmp_path / "project"
     asset = root / "assets/asset.bin"
-    untracked = root / "assets/new.bin"
-    restore = root / "restore/package.tar"
+    package = root / "assets/packages/foundpose/package.tar"
     rig = root / "rigs/zerodex_capture4/rig.json"
     environment = root / "environments/python.txt"
     old_archive = root / "code/old_autodex.tar.gz"
     for path, payload in (
-            (asset, b"current-asset"), (untracked, b"new"),
-            (restore, b"restore"), (rig, b"rig"),
+            (asset, b"current-asset"),
+            (package, b"restore"), (rig, b"rig"),
             (environment, b"environment"), (old_archive, b"old")):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(payload)
@@ -204,13 +202,19 @@ def test_refresh_code_upgrades_v1_inventory_and_archives_three_git_sources(
         "rig": "zerodex_capture4",
         "source_shared_root": "/unused/source",
         "rig_runtime": "rigs/zerodex_capture4/runtime",
-        # Deliberately stale and incomplete, matching the current NAS audit.
-        "assets": [{"path": "assets/asset.bin", "bytes": 1,
-                    "sha256": "stale"}],
-        "asset_file_count": 1,
-        "asset_packages": [{"path": "restore/package.tar",
+        "assets": [
+            _record(root, "assets/asset.bin"),
+            _record(root, "assets/packages/foundpose/package.tar"),
+        ],
+        "asset_file_count": 2,
+        "asset_packages": [{"path": "assets/packages/foundpose/package.tar",
                             "extract_to": "AutoDex/foundpose_assets/socket"}],
-        "restore_files": [_record(root, "restore/package.tar")],
+        "restore_files": [],
+        "rig_files": [
+            _record(root, "rigs/zerodex_capture4/rig.json"),
+            {"path": "rigs/zerodex_capture4/runtime", "kind": "symlink",
+             "target": "../../assets"},
+        ],
         "code": [{"repository": "autodex-code", "commit": "old",
                   "archive": old_archive.name,
                   "sha256": _record(root, "code/old_autodex.tar.gz")["sha256"]}],
@@ -223,7 +227,7 @@ def test_refresh_code_upgrades_v1_inventory_and_archives_three_git_sources(
     report = verify_project(nas_root=root, verify_sha256=True, repo=main)
     updated = json.loads((root / "PROJECT_MANIFEST.json").read_text())
 
-    assert refreshed["asset_file_count"] == 2
+    assert refreshed["asset_file_count"] == 1
     assert updated["schema"] == "precision_insertion_reproducible_project_v2"
     assert sorted(row["repository"] for row in updated["code"]) == [
         "autodex-code", "nvdiffrast", "paradex"]
@@ -233,9 +237,9 @@ def test_refresh_code_upgrades_v1_inventory_and_archives_three_git_sources(
     assert report["declared_failures"] == []
 
 
-def test_refresh_code_reuses_unchanged_asset_and_rig_hashes(
+def test_refresh_code_preserves_managed_inventories_without_scanning(
         tmp_path, monkeypatch):
-    """A code-only refresh must not reread unchanged large managed files."""
+    """A code-only refresh must leave runtime inventories byte-for-byte stable."""
     prepare = _load_prepare_module()
     sources = tmp_path / "sources"
     main = _git_repo(sources / "autodex-code", "main")
@@ -243,23 +247,17 @@ def test_refresh_code_reuses_unchanged_asset_and_rig_hashes(
     nvdiffrast = _git_repo(sources / "nvdiffrast", "renderer")
     monkeypatch.setattr(prepare, "REPO", main)
     root = _bundle(tmp_path)
-    protected = {
-        (root / "assets/asset.bin").resolve(),
-        (root / "rigs/zerodex_capture4/rig.json").resolve(),
-    }
-    original = project_bundle.sha256_file
-
-    def reject_protected_rehash(path):
-        assert Path(path).resolve() not in protected
-        return original(path)
-
-    monkeypatch.setattr(project_bundle, "sha256_file", reject_protected_rehash)
+    manifest_path = root / "PROJECT_MANIFEST.json"
+    before = json.loads(manifest_path.read_text())
+    (root / "assets/new-unmanaged.bin").write_bytes(b"do-not-discover")
     prepare.refresh_code(
         nas_root=root, paradex_repo=paradex,
         nvdiffrast_repo=nvdiffrast)
+    after = json.loads(manifest_path.read_text())
 
-    report = verify_project(nas_root=root, verify_sha256=False, repo=main)
-    assert report["reproduction_ready"] is True
+    assert after["assets"] == before["assets"]
+    assert after["rig_files"] == before["rig_files"]
+    assert after["restore_files"] == before["restore_files"]
 
 
 def test_refresh_code_uses_stable_repository_ids_from_any_worktree_name(
