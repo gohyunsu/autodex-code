@@ -145,3 +145,97 @@ def test_runtime_measurement_waits_for_frame_after_stopped_hold(monkeypatch):
     result = runtime.measure(runner=runner)
     assert calls == [{"after_seq": 12, "timeout_s": 4.}]
     assert result == {"runner": runner, "pose": pose}
+
+
+def test_runtime_initializes_capture4_from_accepted_foundpose_before_measurement(
+        tmp_path, monkeypatch):
+    mesh = tmp_path / "key.obj"
+    mesh.write_text("v 0 0 0\n")
+    runner = SimpleNamespace(
+        output_dir=tmp_path / "run", shared_root=tmp_path, mode=object())
+    observation = SimpleNamespace(
+        family="cylinder", capture_id="key_capture_7", key_object="key",
+        pose_world=np.diag([1., -1., -1., 1.]),
+        source_capture_dir=tmp_path / "source_capture")
+    prepared = SimpleNamespace(observation=observation)
+    events = []
+
+    class Pose:
+        seq = 22
+
+        @staticmethod
+        def to_record():
+            return {"schema": "forgehand.tracked_pose.v1", "seq": 22}
+
+    class Subscriber:
+        def __init__(self, endpoint, expected_object):
+            events.append(("subscriber", endpoint, expected_object))
+            self.closed = False
+
+        @staticmethod
+        def newest_seq():
+            return 21
+
+        def wait_for_valid(self, **kwargs):
+            events.append(("wait", kwargs))
+            return Pose()
+
+        def close(self):
+            self.closed = True
+            events.append(("subscriber_close",))
+
+    monkeypatch.setattr(mvgotrack_runtime, "MVGoTrackSubscriber", Subscriber)
+    monkeypatch.setattr(
+        mvgotrack_runtime, "AssetPaths",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            raw_mesh=lambda object_name: mesh))
+    runtime = mvgotrack_runtime.MVGoTrackRuntime(
+        mvgotrack_runtime.MVGoTrackRuntimeConfig(
+            endpoint="tcp://capture4:5591", ssh_host="capture4",
+            ssh_port=77, remote_manager=Path("/manager"),
+            remote_session_root=Path("/sessions"), timeout_s=4.),
+        runner=runner)
+
+    def fake_ssh(*args, check=True):
+        events.append(("ssh", args, check))
+        return SimpleNamespace(stdout="tracker ready\n")
+
+    def fake_scp(source, destination):
+        events.append(("scp", Path(source).name, destination))
+
+    monkeypatch.setattr(runtime, "_ssh", fake_ssh)
+    monkeypatch.setattr(runtime, "_scp", fake_scp)
+    runtime.initialize(prepared)
+
+    local = runner.output_dir / "mvgotrack" / "init_key_capture_7"
+    np.testing.assert_allclose(
+        np.loadtxt(local / "T_world_key.txt"), observation.pose_world)
+    metadata = json.loads((local / "initialization.json").read_text())
+    assert metadata["pose_source"] == "accepted_sam3_foundpose_tabletop"
+    assert metadata["key_object"] == "key"
+    assert (local / "key.obj").read_bytes() == mesh.read_bytes()
+    assert json.loads((local / "first_pose.json").read_text())["seq"] == 22
+    assert events[0] == ("subscriber", "tcp://capture4:5591", "key")
+    assert ("wait", {"after_seq": 21, "timeout_s": 4.}) in events
+    start = [row for row in events
+             if row[0] == "ssh" and "start-or-reinit" in row[1]]
+    assert len(start) == 1
+    assert start[0][1][0:2] == ("/manager", "start-or-reinit")
+    assert runtime._initialized_capture_id == "key_capture_7"
+    assert runtime._last_seq == 22
+
+    runtime.close()
+    assert any(row[0] == "ssh" and row[1][1] == "stop" for row in events)
+    assert ("subscriber_close",) in events
+
+
+def test_runtime_refuses_non_cylinder_initializer(tmp_path):
+    runtime = mvgotrack_runtime.MVGoTrackRuntime(
+        mvgotrack_runtime.MVGoTrackRuntimeConfig(
+            endpoint="tcp://127.0.0.1:5591", ssh_host="capture4",
+            ssh_port=77, remote_manager=Path("/manager"),
+            remote_session_root=Path("/sessions"), timeout_s=4.),
+        runner=SimpleNamespace(output_dir=tmp_path))
+    prepared = SimpleNamespace(observation=SimpleNamespace(family="square"))
+    with pytest.raises(ValueError, match="cylindrical key"):
+        runtime.initialize(prepared)

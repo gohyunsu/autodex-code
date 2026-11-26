@@ -111,10 +111,9 @@ def _tabletop_cylinder_axis_layout(
     axis_local: np.ndarray,
 ) -> str:
     """Choose the upright or side tabletop geometry from the view majority."""
-    board = validate_se3(calibration.board["T_robot_board"],
-                         name="measured board pose")
+    up_robot, _ = _support_plane_robot(calibration)
     c2r = validate_se3(calibration.record["c2r"], name="session C2R")
-    up_world = c2r[:3, :3] @ -board[:3, 2]
+    up_world = c2r[:3, :3] @ up_robot
     axial_cosines = [abs(float(np.dot(
         pose[:3, :3] @ axis_local, up_world))) for pose in poses.values()]
     # The two v8 tabletop classes are separated by the geometric 45-degree
@@ -123,18 +122,51 @@ def _tabletop_cylinder_axis_layout(
             else "side_down")
 
 
-def _support_side_down_key_on_board(
+def _support_plane_robot(calibration) -> tuple[np.ndarray, float]:
+    """Return the session support-plane up vector and signed offset.
+
+    The legacy ChArUco profile supplies a full board pose.  The default
+    board-free profile supplies the commissioned horizontal table height.
+    Both describe the same robot-frame plane ``dot(point, up) = offset``.
+    """
+    support = calibration.board
+    if not isinstance(support, dict):
+        raise ValueError("session support surface is missing")
+    if "T_robot_board" in support:
+        pose = validate_se3(support["T_robot_board"],
+                            name="measured board pose")
+        up = -pose[:3, 2]
+        offset = float(np.dot(pose[:3, 3], up))
+    else:
+        height = support.get("table_surface_z_m")
+        if (support.get("source") != "configured_table_surface" or
+                type(height) not in (int, float) or
+                not math.isfinite(float(height))):
+            raise ValueError("board-free session has no calibrated table plane")
+        up = np.asarray([0., 0., 1.], dtype=np.float64)
+        offset = float(height)
+    return up, offset
+
+
+def _has_session_support_plane(calibration) -> bool:
+    support = getattr(calibration, "board", None)
+    return isinstance(support, dict) and (
+        "T_robot_board" in support or
+        support.get("source") == "configured_table_surface" and
+        type(support.get("table_surface_z_m")) in (int, float) and
+        math.isfinite(float(support["table_surface_z_m"])))
+
+
+def _support_side_down_key_on_table(
     pose_world: np.ndarray, *, calibration, shared_root: Path,
     mode: TaskMode,
 ) -> tuple[np.ndarray, float]:
-    """Condition a refined side-down key on its measured tabletop plane."""
+    """Condition a refined side-down key on its session support plane."""
     from .board_socket_fit import _mesh_vertices
 
-    board = validate_se3(calibration.board["T_robot_board"],
-                         name="measured board pose")
+    up, plane_offset = _support_plane_robot(calibration)
     c2r = validate_se3(calibration.record["c2r"], name="session C2R")
     robot_pose = np.linalg.inv(c2r) @ validate_se3(pose_world)
-    up = -board[:3, 2]
     axis = robot_pose[:3, 2]
     horizontal = axis - float(np.dot(axis, up)) * up
     horizontal_norm = float(np.linalg.norm(horizontal))
@@ -157,8 +189,7 @@ def _support_side_down_key_on_board(
                 "raw_mesh" / f"{mode.key_object}.obj")
     vertices = _mesh_vertices(raw_mesh)
     transformed = vertices @ robot_pose[:3, :3].T + robot_pose[:3, 3]
-    offset = float(np.dot(board[:3, 3], up) -
-                   np.min(transformed @ up))
+    offset = float(plane_offset - np.min(transformed @ up))
     robot_pose[:3, 3] += offset * up
     return validate_se3(c2r @ robot_pose), offset
 
@@ -397,7 +428,7 @@ def _admit_key_capture_common(
     if not callable(getattr(init_orchestrator, "refine_from_payloads", None)):
         raise ValueError("AutoDex IoU/silhouette key selector is unavailable")
     tabletop_layout = None
-    if stock_tabletop_cylinder and "T_robot_board" in calibration.board:
+    if stock_tabletop_cylinder and _has_session_support_plane(calibration):
         tabletop_layout = _tabletop_cylinder_axis_layout(
             poses, calibration=calibration, axis_local=axis)
     stock_tabletop_layout = tabletop_layout
@@ -457,10 +488,13 @@ def _admit_key_capture_common(
     if pose is None or not isinstance(diagnostics, dict):
         raise ValueError("AutoDex key pose refinement failed")
     if tabletop_layout == "side_down":
-        pose, support_offset = _support_side_down_key_on_board(
+        pose, support_offset = _support_side_down_key_on_table(
             pose, calibration=calibration, shared_root=shared_root,
             mode=mode)
-        diagnostics["board_support_offset_m"] = support_offset
+        diagnostics["support_surface_offset_m"] = support_offset
+        # Keep the historical evidence field for ChArUco sessions only.
+        if "T_robot_board" in calibration.board:
+            diagnostics["board_support_offset_m"] = support_offset
     diagnostics["tabletop_axis_layout"] = tabletop_layout
     selected = diagnostics.get("best_serial")
     if selected not in admitted_ids:
@@ -513,6 +547,8 @@ def _admit_key_capture_common(
         "stock_initial_iou": diagnostics.get("stock_initial_iou"),
         "stock_axis_layout": diagnostics.get("stock_axis_layout"),
         "tabletop_axis_layout": diagnostics.get("tabletop_axis_layout"),
+        "support_surface_offset_m": diagnostics.get(
+            "support_surface_offset_m"),
         "board_support_offset_m": diagnostics.get("board_support_offset_m"),
     }
     return KeyPoseObservation(
