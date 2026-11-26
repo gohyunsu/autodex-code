@@ -24,9 +24,10 @@ that tree. The previous implementation remains recoverable at
 execution-side helper were replaced by local `tests/test_fixture_world.py`,
 `geometry.py`, and `world.py`.
 
-Four low-level integration surfaces still differ from `main` and form an
-explicit adapter boundary: `autodex/perception/init_orchestrator.py`,
-`autodex/planner/planner.py`, `src/execution/charuco_tabletop.py`, and
+The low-level integration surfaces that differ from `main` form an explicit
+adapter boundary: `autodex/perception/init_orchestrator.py`,
+`autodex/planner/planner.py`, the stock-gripper robot assets/configuration,
+`autodex/utils/robot_config.py`, `src/execution/charuco_tabletop.py`, and
 `src/execution/franka_executor.py`. Their optional interfaces are described
 below. Existing callers keep their original defaults. New precision-specific
 runtime policy must remain in this demo; extending this allowlist requires a
@@ -49,7 +50,8 @@ The remaining shared adapter surface is intentionally narrow:
 | --- | --- | --- |
 | `InitOrchestrator.init_object(mask_only=...)` | Socket body fitting needs SAM without loading/running FoundPose. | Default `False` preserves stock initialization; capture requests still use the same calibrated images. |
 | `GraspPlanner(..., robot_urdf_path=...)` | Select the commissioned straight FR3/Inspire mount from the ZeroDex profile. | Default `None` preserves the YAML URDF and all planning settings. |
-| `measure_tabletop_from_images(..., board_id, minimum_board_corners)` | ZeroDex capture4 uses ChArUco board 9 and can triangulate the visible, board-spanning subset. | Defaults remain board 11 and all 54 corners. |
+| Stock-gripper URDF/YAML/sphere files and `FR3_GRIPPER_LINK_TO_WRIST` | Supply the nine-DoF FR3 + stock parallel-gripper kinematic and collision model without replacing the preserved thirteen-DoF Inspire model. | They are selected only by `PRECISION_END_EFFECTOR=franka_gripper`; Inspire paths and defaults remain available. |
+| `measure_tabletop_from_images(..., board_id, minimum_board_corners)` | Preserves the optional legacy ChArUco profile and its visible-subset triangulation. The default ZeroDex profile is board-free and does not call this path. | Defaults remain board 11 and all 54 corners for unchanged callers. |
 | `FrankaExecutor` parameterization and stream helpers | Apply the selected link8-to-hand transform, completion feedback, measured stream progress and task-owned speed profile through the existing ParaDex Franka daemon. | AutoDex entry points are unchanged; the precision integration passes the optional values explicitly. |
 
 `follow_progress.py`, `reset_scene.py`, and `stream_timing.py` are small pure

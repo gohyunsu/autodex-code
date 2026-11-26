@@ -9,6 +9,12 @@
   "shared_runtime_allowlist": [
     "autodex/perception/init_orchestrator.py",
     "autodex/planner/planner.py",
+    "autodex/planner/src/curobo/content/assets/robot/fr3_gripper_description/fr3_gripper.urdf",
+    "autodex/planner/src/curobo/content/assets/robot/fr3_gripper_description/franka_gripper_floating.urdf",
+    "autodex/planner/src/curobo/content/configs/robot/fr3_gripper.yml",
+    "autodex/planner/src/curobo/content/configs/robot/franka_gripper_floating.yml",
+    "autodex/planner/src/curobo/content/configs/robot/spheres/fr3_gripper.yml",
+    "autodex/utils/robot_config.py",
     "src/execution/charuco_tabletop.py",
     "src/execution/follow_progress.py",
     "src/execution/franka_executor.py",

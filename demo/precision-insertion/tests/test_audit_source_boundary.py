@@ -51,3 +51,21 @@ def test_new_shared_runtime_edit_fails_without_affecting_demo_files():
     assert report["passed"] is False
     assert report["unexpected_shared_runtime_changes"] == [
         "autodex/new_runtime_policy.py"]
+
+
+def test_versioned_policy_declares_dual_end_effector_assets():
+    policy = audit_source_boundary.load_policy(
+        SCRIPT.parent / "config" / "source_boundary.json")
+    allowed = set(policy["shared_runtime_allowlist"])
+    assert {
+        "autodex/planner/src/curobo/content/assets/robot/"
+        "fr3_gripper_description/fr3_gripper.urdf",
+        "autodex/planner/src/curobo/content/assets/robot/"
+        "fr3_gripper_description/franka_gripper_floating.urdf",
+        "autodex/planner/src/curobo/content/configs/robot/fr3_gripper.yml",
+        "autodex/planner/src/curobo/content/configs/robot/"
+        "franka_gripper_floating.yml",
+        "autodex/planner/src/curobo/content/configs/robot/spheres/"
+        "fr3_gripper.yml",
+        "autodex/utils/robot_config.py",
+    } <= allowed
