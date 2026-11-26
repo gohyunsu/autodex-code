@@ -72,15 +72,15 @@ audit.
 - The isolated capture4 MV-GoTrack deployment now carries the same active
   four-camera calibration as kds-Z790. Both machines compute the identity
   `precision_calib_v1:26053248,25322639,25305462,25322642:7d412a3ae834d0e7b53f9cfd4576fe1e4b63f409d95ec4e9ecede07322384f70:a43905fc73e2186548b70a7402ad84eb7bf14eed7a261a37a192605c5bf95a4d`.
-  The focused calibration/track tests passed 15/15, the complete remote-branch
-  demo suite passed 1604 tests with 4 skipped, and the active board-free
+  The focused calibration/track tests passed 15/15, and the active board-free
   gripper/MV-GoTrack/Qwen profile passed static preflight.
 - The source-boundary audit run from a clean shared clone of commit
   `b76ad347ad266f3ae05c19abe0f6f16d4f29913c` reports zero stock-entrypoint
   changes and zero unexpected shared-runtime changes. This avoids treating
   unrelated calibration work in the development checkout as part of the
   precision runtime.
-- The complete demo test suite last passed with **1617 passed, 4 skipped**.
+- The final merged branch at `299ddc3` passed the complete demo suite with
+  **1616 passed, 4 skipped**.
 - A real local-CUDA synthetic gripper diagnostic now preserves the FR3
   profile's 32 trajectory-optimization seeds even though the ZeroDex planner
   binds explicit checkout-local robot YAML paths. The former generic
@@ -133,9 +133,9 @@ audit.
 | Item | Current evidence / next action |
 | --- | --- |
 | Current hardware execution | The RT kernel is active and a local Franka daemon process is listening on ports 5555/5556, but the 2026-11-27 audit could not route to `172.16.1.11`; no live robot state or motion was claimed. Restore the robot Ethernet route/FCI connection before using the existing daemon, and select either `franka_gripper` (default) or `inspire`. The audit intentionally issued no motion command. |
-| Local cuRobo GPU preflight | The first gripper preflight exposed and fixed both a stale `~/shared_data/AutoDex` planner-YAML fallback and the explicit-YAML 1,024-seed regression. With the restored FR3 32-seed profile and stock Franka gripper collision spheres, the real local-CUDA diagnostic passed `side_down` pickup, approach and held lift while the unrelated 6.62 GB process remained resident. It then reported `transfer_unreachable` for the hypothetical socket placement; no physical scene or robot command was involved. At the end of this audit the NVIDIA kernel modules were loaded but `/dev/nvidia*` had disappeared again, so run `sudo /sbin/ub-device-create --verbose` before the next CUDA query. |
+| Local cuRobo GPU preflight | The first gripper preflight exposed and fixed both a stale `~/shared_data/AutoDex` planner-YAML fallback and the explicit-YAML 1,024-seed regression. With the restored FR3 32-seed profile and stock Franka gripper collision spheres, the real local-CUDA diagnostic passed `side_down` pickup, approach and held lift while the unrelated GPU process remained resident. It then reported `transfer_unreachable` for the hypothetical socket placement; no physical scene or robot command was involved. On 2026-11-27 `/dev/nvidia*`, `nvidia-smi`, and PyTorch CUDA were available again on the RTX 3090. |
 | Physical gripper/MV-GoTrack run | Code, assets, capture4 services and tracker deployment are present, but the new gripper pickup-to-insertion route and same-session tracker initialization have not been physically exercised. First run GPU cuRobo preflight, then initialize tracking from a fresh accepted key pose; do not substitute an arbitrary or stale tracker initializer. |
-| Reproduction bundle | The NAS is currently mounted read-only. A 2026-11-03 metadata audit found the live runtime view internally valid, but the archived checkout remains at `f0f9f1d` rather than the current branch, `nvdiffrast` is absent from the archived code inventory, two reset `source_evidence.json` files no longer match their recorded sizes, and twelve managed paths are unmanifested. The tested `--refresh-code-only` path rescans these managed trees as well as archiving all three code repositories, but applying it and then running full SHA256 verification must wait for a writable mount. |
+| Reproduction bundle | The writable NAS manifest now archives merged AutoDex commit `299ddc3`, ParaDex `e2cd4fd`, and nvdiffrast `253ac4f`, and retains 6,861 declared asset files. `--refresh-code-only` no longer scans or mutates the established asset/rig inventories. Both NFS and SMB full-tree verification later entered remote-filesystem response waits while traversing the runtime view, so the post-refresh metadata/SHA256 audit remains to be repeated when NAS metadata service is responsive; the manifest and all three declared code archives are present from both mount views. |
 | VLM accuracy claim | Saved replay supports development, but class balance and independent held-out trials are insufficient for a general accuracy claim. Manual labels remain authoritative during data collection. |
 | Robust insertion claim | Two observed successes are not a controlled success-rate experiment. Repeat fixed-grasp/fixed-socket trials and report stage-wise confidence intervals before making this claim. |
 | All recovery orientations | Code paths and assets exist, but every reset/reorient direction has not been physically exercised on this rig. Do not present catalogue/preflight evidence as physical success. |
