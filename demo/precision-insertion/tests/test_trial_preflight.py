@@ -169,7 +169,12 @@ def test_fresh_trial_tries_next_grasp_after_pickup_or_insertion_preflight_failur
         return InsertionPreflight(
             status, None, None, None, {"sampled_clear": status ==
                                       "sampled_planning_pass"},
-            0, np.zeros(6), "commanded_nominal", ())
+            0, np.zeros(6), "commanded_nominal", ({
+                "stage": "transfer", "success": status ==
+                "sampled_planning_pass",
+                "failure_stage": (None if status == "sampled_planning_pass"
+                                  else "ik"),
+            },))
 
     monkeypatch.setattr(
         "precision_insertion.trial_preflight.plan_insertion_after_pickup",
@@ -190,6 +195,10 @@ def test_fresh_trial_tries_next_grasp_after_pickup_or_insertion_preflight_failur
         "world_setup_s": 0.15, "filter_s": 0.03,
         "n_world_collision": 1, "n_valid": 0,
         "jacobian_lift_failures": {}}
+    assert result.attempted_candidates[1]["insertion_planner_queries"] == [{
+        "stage": "transfer", "success": False, "failure_stage": "ik"}]
+    assert result.attempted_candidates[2]["insertion_planner_queries"] == [{
+        "stage": "transfer", "success": True, "failure_stage": None}]
     assert result.to_record()["robot_ready"] is False
 
 

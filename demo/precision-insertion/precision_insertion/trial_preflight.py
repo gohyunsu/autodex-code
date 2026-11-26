@@ -518,6 +518,13 @@ def plan_fresh_key_trial(
                     limits=limits, axial_waypoint_step_m=axial_waypoint_step_m,
                     exact_distances=False)
             row["insertion_preflight_status"] = trial.status
+            # Preserve cuRobo's stage/failure/timing records even when this
+            # candidate is rejected and the trial continues to another grasp.
+            # This is evidence only: it does not add a planning gate or change
+            # candidate selection.
+            row["insertion_planner_queries"] = [
+                dict(query) for query in trial.planner_query_records
+            ]
             if trial.status == "sampled_held_path_rejected":
                 row["sampled_audit_rejection"] = _rejected_path_summary(
                     trial, planner=planner, targets=targets)
