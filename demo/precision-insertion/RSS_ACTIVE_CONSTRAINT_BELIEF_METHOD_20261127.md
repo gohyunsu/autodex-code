@@ -303,3 +303,8 @@ evidence.
 6. held-out base-policy adapter;
 7. modular real benchmark;
 8. VLA compiler and end-to-end semantic evaluation.
+
+The current `precision_layer.evaluator` implements the backend-independent
+signed-margin vocabulary. It consumes metric evidence supplied by a simulator,
+CAD engine or real metrology backend; it is not itself a physics engine. This
+keeps the predicate semantics frozen while the physics backend is replaced.
