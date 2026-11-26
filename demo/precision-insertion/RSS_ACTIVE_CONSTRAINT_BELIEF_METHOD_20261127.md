@@ -319,5 +319,14 @@ keeps the predicate semantics frozen while the physics backend is replaced.
 MuJoCo frames and geom pairs are mapped into the same relative-transform,
 signed-separation, displacement and manifold-distance evidence without task
 dispatch. The existing cylinder reproduction can therefore be used as a pilot
-data source, while RSS geometry diversity still requires a new procedural
-world generator.
+data source, while RSS geometry diversity still requires a final validated
+procedural mesh-family generator.
+
+`precision_layer.procedural_mujoco` is the R1-alpha world generator. It creates
+development and disjoint held-out primitive geometry families, development and
+held-out layout generators, corrupted nominal trajectories and privileged
+margin traces for the same constraint vocabulary. The companion corpus writer
+stores programs, scenes, MuJoCo worlds, trajectories and labels separately.
+This establishes an executable supervision contract, not the final RSS data:
+mesh-family diversity, realistic visual/proprioceptive observations and
+multiple independently implemented base policies are still required.

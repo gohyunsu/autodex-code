@@ -50,7 +50,7 @@ cross-manifestation real evidence.
 | U4: commissioning pilot | blinded outcome labels and invalid-trial accounting | pilot estimates effect size, runtime and invalid rate without entering the final analysis | missing |
 | U5: undergraduate final study | frozen randomized `O/V/P/VP` matrix | preregistered trial count, paired evidence, Wilson intervals and declared contrasts | missing |
 | R0: task-agnostic program contract | constraint-program schema and split audit | structural tests plus rejection of Z1--Z4 leakage | implemented and unit-tested; no generated benchmark corpus yet |
-| R1: procedural constraint world | generator for geometry, layouts, graph compositions and corrupted nominal trajectories | train/validation/test index whose joint hold-out passes the leakage audit | structural generator, margin evaluator and declarative MuJoCo evidence adapter exist; the adapter matches the independent radial metric in one cylinder pilot, but procedural held-out geometry and trajectories are missing |
+| R1: procedural constraint world | generator for geometry, layouts, graph compositions and corrupted nominal trajectories | train/validation/test index whose joint hold-out passes the leakage audit | alpha primitive MuJoCo corpus now writes audited programs, held-out geometry/layout worlds, corrupted trajectories and privileged margin traces; validated mesh generators, observation corruption, independent real policy rollouts and richer contact remain missing |
 | R2: active-constraint identifiability | point-state, raw-history and explicit-belief estimators | calibrated margin/contact predictions on held-out graph compositions | missing |
 | R3: decision value of belief | matched controllers and action/time budgets | posterior-aware controller beats point-state MPC and implicit recurrent residual | missing |
 | R4: policy-agnostic zero-shot transfer | at least three upstream interfaces with one policy class held out | the same frozen layer improves planner, imitation/diffusion and held-out VLA/policy class | missing |
@@ -137,9 +137,10 @@ unrelated task-specific success criteria.
 
 ### RSS track
 
-1. connect the structural constraint-program generator to physics geometry,
-   trajectories and privileged predicate labels;
-2. generate a joint Z1--Z4 split and run `python3 -m
+1. replace the alpha primitive worlds with validated mesh-family generators,
+   observation/calibration corruption and genuinely independent upstream
+   policy implementations;
+2. generate each candidate joint Z1--Z4 split and run `python3 -m
    precision_layer.audit INDEX.json`;
 3. train no controller yet: first compare point state, raw history and an
    explicit constraint belief on held-out margin/contact inference;
@@ -151,6 +152,17 @@ environment with `scripts/precision_layer/validate_blind_assembly_adapter.py`.
 That check validates frame and metric semantics only. It does not pass R1,
 because one cylinder family contains neither the required geometry diversity
 nor held-out constraint compositions.
+
+The R1-alpha corpus is generated with:
+
+```bash
+PYTHONPATH=. /path/to/python-with-mujoco \
+  scripts/precision_layer/generate_physics_corpus.py OUTPUT_DIR
+```
+
+It deliberately records `passes_R1: false`. Primitive shape holdout and
+task-name-free margin traces prove that the data contract is executable, but
+they are not a publishable zero-shot benchmark by themselves.
 
 ## 8. Completion rule
 
