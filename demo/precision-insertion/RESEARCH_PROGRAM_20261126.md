@@ -10,6 +10,11 @@ The authoritative RSS scope is now
 passage below are diagnostic examples, not a restriction of the method to two
 task families.
 
+The corresponding task-agnostic evaluation contract is
+`RSS_ZERO_SHOT_PRECISION_BENCHMARK_20261127.md`.  It replaces named task
+families with compositional constraint programs and independent hold-outs for
+geometry, layout, graph composition and upstream policy.
+
 ## 1. Scope and central question
 
 The project is not three independent attempts to solve one cylinder-insertion

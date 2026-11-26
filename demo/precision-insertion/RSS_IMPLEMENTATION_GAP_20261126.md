@@ -85,13 +85,14 @@ RSS primary experiment.
 
 ### 4.1 Geometry and dataset layer
 
-1. `ConstraintSceneManifest`
+1. `ConstraintSceneManifest` and `PrecisionConstraintProgram`
    - manipulated-object and environment mesh digests/poses;
    - task family, goal region and available primitives;
    - required, allowed and forbidden contact relations;
    - disturbance tolerances;
    - geometry/layout generator families and split;
-   - symmetry/equivalence contract.
+   - symmetry/equivalence contract;
+   - variable-size stages and predicates independent of task/archetype names.
 2. Geometry-family generators for prismatic/spatial mating pairs and dense
    narrow-passage payload/neighbour scenes.
 3. Exact or validated collision representation that preserves clearance.
@@ -126,8 +127,9 @@ RSS primary experiment.
 2. shared constrained objective with family-appropriate primitive libraries;
 3. posterior-mean and full-posterior action adapters;
 4. family-specific goal detector plus common forbidden-disturbance contract;
-5. research-episode schema adapters for modular, blind, implicit and proposed
-   methods;
+5. `precision_layer_episode_v1` adapters for modular, blind, implicit and
+   proposed methods; retain `precision_research_episode_v1` for the cylinder
+   thesis rather than forcing RSS episodes into insertion-like coordinates;
 6. synchronized posterior/action/contact-identity/outcome replay.
 
 ## 5. Recommended package boundary

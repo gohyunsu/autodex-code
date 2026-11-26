@@ -233,6 +233,13 @@ special model code.  ContactBench assets can provide an external reference
 suite; custom modular fixtures provide controlled metrology and tolerance
 sweeps.
 
+The preregistered split, leakage audit, base-policy interface, metrics and
+machine-readable evidence contract are specified in
+`RSS_ZERO_SHOT_PRECISION_BENCHMARK_20261127.md`.  The RSS record uses
+`config/precision_constraint_program.schema.json` and
+`config/precision_layer_episode.schema.json`; the older cylinder research
+episode schema is not generalized by silently changing its semantics.
+
 ## 9. Research questions
 
 - **RQ1 — representation:** does a constraint-set encoder trained on random

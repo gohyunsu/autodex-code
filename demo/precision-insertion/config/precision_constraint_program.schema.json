@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://snuvclab.org/schemas/precision-constraint-program-v1.json",
+  "title": "Task-agnostic precision constraint program",
+  "description": "A compositional specification of geometric and contact constraints. Task names are optional metadata and never select method code.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "program_id", "vocabulary_version", "entities", "stages", "generalization_contract", "provenance"],
+  "properties": {
+    "schema": {"const": "precision_constraint_program_v1"},
+    "program_id": {"type": "string", "minLength": 1},
+    "vocabulary_version": {"type": "string", "minLength": 1},
+    "human_description": {"type": ["string", "null"]},
+    "entities": {
+      "type": "array",
+      "minItems": 2,
+      "items": {"$ref": "#/$defs/entity"}
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/stage"}
+    },
+    "generalization_contract": {"$ref": "#/$defs/generalizationContract"},
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["created_at", "program_revision", "generator_revision"],
+      "properties": {
+        "created_at": {"type": "string", "format": "date-time"},
+        "program_revision": {"type": "string", "minLength": 1},
+        "generator_revision": {"type": "string", "minLength": 1},
+        "source_manifest": {"type": ["string", "null"]},
+        "notes": {"type": ["string", "null"]}
+      }
+    }
+  },
+  "$defs": {
+    "fileRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entity_id", "role", "geometry", "state_source"],
+      "properties": {
+        "entity_id": {"type": "string", "minLength": 1},
+        "role": {"enum": ["manipulated", "target", "environment", "robot", "tool", "other"]},
+        "geometry": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/fileRef"}]},
+        "state_source": {"enum": ["fixed_calibration", "online_estimate", "robot_kinematics"]}
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage_id", "predecessors", "predicates", "terminal_success"],
+      "properties": {
+        "stage_id": {"type": "string", "minLength": 1},
+        "predecessors": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "predicates": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/predicate"}},
+        "terminal_success": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "available_action_primitives": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+      }
+    },
+    "predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["predicate_id", "type", "entities", "reference_frame", "evaluator", "parameters", "hard", "terminal_role"],
+      "properties": {
+        "predicate_id": {"type": "string", "minLength": 1},
+        "type": {"enum": ["pose_equality", "signed_clearance", "required_contact", "forbidden_contact", "disturbance_budget", "path_manifold"]},
+        "entities": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "reference_frame": {"type": "string", "minLength": 1},
+        "evaluator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name from the frozen, versioned constraint vocabulary; never a task-specific code path."
+        },
+        "parameters": {"type": "object"},
+        "tolerance": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["value", "unit"],
+          "properties": {
+            "value": {"type": "number", "minimum": 0},
+            "unit": {"type": "string", "minLength": 1}
+          }
+        },
+        "hard": {"type": "boolean"},
+        "activation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": {
+            "mode": {"enum": ["always", "stage_active", "after_predicate", "belief_event"]},
+            "depends_on": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+          }
+        },
+        "terminal_role": {"enum": ["none", "success", "failure"]}
+      }
+    },
+    "generalizationContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "geometry",
+        "layout",
+        "composition",
+        "upstream_policy",
+        "allowed_test_time_operations",
+        "known_geometry_at_test",
+        "test_specific_demonstrations",
+        "test_specific_gradient_updates"
+      ],
+      "properties": {
+        "geometry": {"enum": ["seen_instance", "held_out_instance", "held_out_family"]},
+        "layout": {"enum": ["seen_instance", "held_out_instance", "held_out_generator"]},
+        "composition": {"enum": ["seen_graph", "held_out_combination", "held_out_topology"]},
+        "upstream_policy": {"enum": ["seen_policy", "held_out_policy", "held_out_policy_class"]},
+        "allowed_test_time_operations": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "state_estimation",
+              "deterministic_geometry_processing",
+              "deterministic_action_optimization",
+              "parameter_learning"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "known_geometry_at_test": {"type": "boolean"},
+        "test_specific_demonstrations": {"type": "integer", "minimum": 0},
+        "test_specific_gradient_updates": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

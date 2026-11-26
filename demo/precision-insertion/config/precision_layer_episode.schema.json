@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://snuvclab.org/schemas/precision-layer-episode-v1.json",
+  "title": "Zero-shot precision execution layer episode",
+  "description": "Task-name-independent record for evaluating a precision layer attached to a frozen nominal manipulation policy.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "run_id", "episode_id", "constraint_program", "base_policy", "precision_layer", "split", "timeline", "outcome", "metrics", "evidence"],
+  "properties": {
+    "schema": {"const": "precision_layer_episode_v1"},
+    "run_id": {"type": "string", "minLength": 1},
+    "episode_id": {"type": "string", "minLength": 1},
+    "constraint_program": {"$ref": "#/$defs/digestedRef"},
+    "base_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_class", "name", "version", "frozen"],
+      "properties": {
+        "policy_class": {"enum": ["model_based", "imitation", "diffusion", "vla", "teleoperation_replay", "other"]},
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "checkpoint_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "frozen": {"const": true},
+        "action_interface": {"type": ["string", "null"]}
+      }
+    },
+    "precision_layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "name", "version", "estimator", "controller", "uses_online_parameter_updates"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "estimator": {"type": "string", "minLength": 1},
+        "controller": {"type": "string", "minLength": 1},
+        "checkpoint_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "uses_online_parameter_updates": {"type": "boolean"}
+      }
+    },
+    "split": {"$ref": "#/$defs/split"},
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code_revision": {"type": ["string", "null"]},
+        "calibration_id": {"type": ["string", "null"]},
+        "robot": {"type": ["string", "null"]},
+        "end_effector": {"type": ["string", "null"]},
+        "random_seed": {"type": ["integer", "null"]}
+      }
+    },
+    "timeline": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/event"}},
+    "belief_snapshots": {"type": "array", "items": {"$ref": "#/$defs/beliefSnapshot"}},
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["program_success", "primary_category", "label_source"],
+      "properties": {
+        "program_success": {"type": "boolean"},
+        "primary_category": {"enum": ["goal_reached", "constraint_violation", "nominal_policy_failure", "state_estimation_failure", "execution_failure", "time_or_action_budget_exhausted"]},
+        "violated_predicates": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "label_source": {"enum": ["independent_metrology", "physical_sensor", "human", "simulation", "combined"]},
+        "notes": {"type": ["string", "null"]}
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tolerance_level", "constraint_violations", "interventions"],
+      "properties": {
+        "tolerance_level": {"type": "number", "minimum": 0},
+        "constraint_violations": {"type": "integer", "minimum": 0},
+        "maximum_violation": {"type": ["number", "null"], "minimum": 0},
+        "violation_duration_s": {"type": ["number", "null"], "minimum": 0},
+        "environment_disturbance": {"type": ["number", "null"], "minimum": 0},
+        "interventions": {"type": "integer", "minimum": 0},
+        "intervention_rate": {"type": ["number", "null"], "minimum": 0},
+        "residual_action_norm": {"type": ["number", "null"], "minimum": 0},
+        "execution_time_s": {"type": ["number", "null"], "minimum": 0},
+        "posterior_nll": {"type": ["number", "null"]},
+        "active_constraint_brier": {"type": ["number", "null"], "minimum": 0},
+        "credible_set_coverage": {"type": ["boolean", "null"]},
+        "inference_latency_ms": {"type": ["number", "null"], "minimum": 0}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["episode_log"],
+      "properties": {
+        "episode_log": {"type": "string", "minLength": 1},
+        "sensor_logs": {"type": "array", "items": {"type": "string"}},
+        "belief_logs": {"type": "array", "items": {"type": "string"}},
+        "action_logs": {"type": "array", "items": {"type": "string"}},
+        "videos": {"type": "array", "items": {"type": "string"}},
+        "metrology": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  },
+  "$defs": {
+    "digestedRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "sha256"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "split": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["geometry", "layout", "composition", "upstream_policy"],
+      "properties": {
+        "geometry": {"enum": ["seen_instance", "held_out_instance", "held_out_family"]},
+        "layout": {"enum": ["seen_instance", "held_out_instance", "held_out_generator"]},
+        "composition": {"enum": ["seen_graph", "held_out_combination", "held_out_topology"]},
+        "upstream_policy": {"enum": ["seen_policy", "held_out_policy", "held_out_policy_class"]}
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "stage_id", "type", "started_at", "ended_at", "status"],
+      "properties": {
+        "event_id": {"type": "string", "minLength": 1},
+        "stage_id": {"type": "string", "minLength": 1},
+        "type": {"enum": ["observe", "nominal_action", "belief_update", "residual_action", "physical_interaction", "verification", "recovery"]},
+        "started_at": {"type": "string", "format": "date-time"},
+        "ended_at": {"type": "string", "format": "date-time"},
+        "status": {"enum": ["completed", "failed", "skipped"]},
+        "detail": {"type": ["string", "null"]}
+      }
+    },
+    "beliefSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timestamp", "stage_id", "predicate_beliefs"],
+      "properties": {
+        "timestamp": {"type": "string", "format": "date-time"},
+        "stage_id": {"type": "string", "minLength": 1},
+        "predicate_beliefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["predicate_id", "probability_active", "probability_violation"],
+            "properties": {
+              "predicate_id": {"type": "string", "minLength": 1},
+              "residual_mean": {"type": ["number", "null"]},
+              "residual_std": {"type": ["number", "null"], "minimum": 0},
+              "probability_active": {"type": "number", "minimum": 0, "maximum": 1},
+              "probability_violation": {"type": "number", "minimum": 0, "maximum": 1}
+            }
+          }
+        },
+        "contact_identity_probabilities": {"type": ["object", "null"], "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}}
+      }
+    }
+  }
+}
